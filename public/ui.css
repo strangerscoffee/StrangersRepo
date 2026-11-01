@@ -507,3 +507,16 @@ table.rk-grid .rk-corner{font-size:10px;width:40px}
 .tlunit input{width:100%;text-align:right;font-variant-numeric:tabular-nums}
 .tlunit .tlh{grid-column:1/-1;white-space:pre-line;color:var(--muted);font-size:12.5px}
 #tlChips{margin:0}
+
+/* Closed days: Today's "Closed today?" control and Setup's closures */
+.chiprow.wrap{flex-wrap:wrap;overflow:visible;margin:0;padding:0}
+#closeDay[hidden]{display:none}
+.closeday{border-radius:16px;padding:10px 14px;background:var(--sunk)}
+.closeday summary{cursor:pointer;font-weight:600;color:var(--accent);min-height:28px;display:flex;align-items:center}
+.closeday[open]{display:grid;gap:10px}
+.closeday .row,#closurePanel .row{flex-wrap:wrap}
+.closeday input[type=text]{flex:1 1 220px;width:auto}
+.banner.closedday{background:var(--sunk);color:var(--fg);border-color:var(--line);font-weight:600}
+#clList .lrow{cursor:default;gap:8px;box-sizing:border-box}
+#clList .lrow .t{min-width:0}
+#clList .lrow .btn,#clList .lrow .pill{flex:none}

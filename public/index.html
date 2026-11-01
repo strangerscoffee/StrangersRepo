@@ -83,6 +83,7 @@
     <div class="steps glass" id="daySteps"></div>
     <div class="stack tight" id="dayAlerts"></div>
     <div class="banner" id="closedNote" hidden></div>
+    <div id="closeDay" hidden></div>
     <section class="panel" id="siteNotePanel" hidden>
       <h3 id="siteNoteTitle">Site notes</h3>
       <div class="docview" id="siteNote"></div>
@@ -409,6 +410,20 @@
       <div class="toggles" id="siTabs"></div>
       <div class="label">Prove it checks used at this site</div>
       <div class="toggles" id="siProve"></div>
+    </section>
+    <section class="panel" id="closurePanel">
+      <div class="row spread"><h2>Closures &amp; holidays</h2><span class="pill">Saved straight away</span></div>
+      <p class="note">Days the site is shut outside its usual opening days: bank holidays, Christmas, maintenance or an unexpected closure. A closed day is never counted as incomplete or missed. Staff can also mark the day they're on as closed from Today.</p>
+      <div class="fields">
+        <div class="field"><label class="label" for="clFrom">Closed from</label><input type="date" id="clFrom"></div>
+        <div class="field"><label class="label" for="clTo">To (leave empty for one day)</label><input type="date" id="clTo"></div>
+        <div class="field wide"><label class="label" for="clReason">Reason</label><input type="text" id="clReason" placeholder="e.g. Christmas Day, or Shop refit"></div>
+      </div>
+      <div class="chiprow wrap" id="clChips"></div>
+      <div class="toggles"><label for="clAll"><input type="checkbox" id="clAll">Close all four sites on these dates</label></div>
+      <div class="row"><button class="btn" id="clAdd">Add closure</button><span class="by" id="clMsg" role="status"></span></div>
+      <div class="label">Closures</div>
+      <div class="list glass" id="clList"></div>
     </section>
     <section class="panel">
       <div class="row spread"><h2>Fridges &amp; freezers</h2><span class="pill">Only this site</span></div>
