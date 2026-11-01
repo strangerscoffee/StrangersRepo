@@ -105,6 +105,10 @@ function normSettings(raw){
 }
 const activeCfg=s=>({...s,opening:s.opening.filter(c=>!c.off),closing:s.closing.filter(c=>!c.off),weekly:s.weekly.filter(c=>!c.off)});
 const isClosed=(date,s)=>(s||S.settings).closedDays.includes(parse(date).getDay());
+// A day marked closed with a reason (Christmas, maintenance, an unexpected closure): days/<date>.closed. It counts as
+// closed whatever was recorded, so it's never shown as incomplete or missed.
+const closure=d=>d&&d.closed&&d.closed.reason?d.closed:null;
+const CLOSE_REASONS=["Bank holiday","Christmas","Maintenance or repairs","Staff shortage","Power or water off","Private event"];
 const tabOn=(t,s)=>!(s||S.settings).hide[t];
 S.settings=normSettings(null);S.cfg=activeCfg(S.settings);
 
@@ -378,7 +382,11 @@ function renderDayInner(){
     for(const{kind,t,ts}of a.tasks)
       al.append(alertEl(t.name,`${kind==="cleaning"?"Cleaning":"Extra check"} · ${(t.freq||"").replace(/^./,c=>c.toUpperCase())} · ${ts.text.toLowerCase()}`,R?null:["Done",()=>completeTask(kind,t,a.id,"")]));
   }
-  const cn=$("#closedNote");cn.hidden=!isClosed(S.date);cn.textContent=`${curSite().name} is set as closed on ${parse(S.date).toLocaleDateString("en-GB",{weekday:"long"})}s. You can still record checks if it opened.`;
+  const cl=closure(d);
+  const cn=$("#closedNote");cn.hidden=!cl&&!isClosed(S.date);
+  cn.textContent=cl?`Closed: ${cl.reason}. Marked by ${nameOf(cl.by)}, ${when(cl.at)}. This day isn't counted as incomplete.`:`${curSite().name} is set as closed on ${parse(S.date).toLocaleDateString("en-GB",{weekday:"long"})}s. You can still record checks if it opened.`;
+  cn.classList.toggle("closedday",!!cl);
+  renderCloseDay(d);
   const info=S.settings.info||{};
   $("#siteNotePanel").hidden=!info.note;$("#siteNoteTitle").textContent=`${curSite().name} notes`;
   $("#siteNote").replaceChildren(renderBody(info.note||""));
@@ -474,7 +482,7 @@ function renderWeek(){
   const strip=$("#weekDays");strip.replaceChildren();
   for(let i=0;i<7;i++){
     const date=addDays(wk,i),dd=S.days[date],st=dayStatus(dd,null,date),t=today();
-    const cls=date===t?"today":date>t?"future":dd&&dd.signed&&st.complete?"ok":st.any?"part":isClosed(date)?"closed":"bad";
+    const cls=closure(dd)?"closed":date===t?"today":date>t?"future":dd&&dd.signed&&st.complete?"ok":st.any?"part":isClosed(date)?"closed":"bad";
     const lbl=parse(date).toLocaleDateString("en-GB",{weekday:"short"});
     strip.append(el("button",{class:"wday "+cls,type:"button",disabled:date>t,"aria-label":`${nice(date)}: ${cls==="ok"?"signed off":cls==="part"?"partly done":cls==="bad"?"nothing recorded":cls==="closed"?"closed":""}`,onclick:()=>goDay(date)},
       el("span",{text:lbl.slice(0,1)}),el("b",{text:String(parse(date).getDate())}),el("span",{class:"d"})));
@@ -520,7 +528,8 @@ function renderHistory(){
     const dd=parse(date);
     if(date<first||date>end){grid.append(el("span",{class:"cd out",text:String(dd.getDate())}));continue}
     if(diaryStart()&&date<diaryStart()&&(hardStart()||!S.days[date])){grid.append(el("span",{class:"cd out",title:"Before the diary started",text:String(dd.getDate())}));continue}
-    const d=S.days[date],st=dayStatus(d,null,date),shut=isClosed(date)&&!st.any;
+    const d=S.days[date],st=dayStatus(d,null,date),shut=!!closure(d)||isClosed(date)&&!st.any;
+    if(closure(d))exc.push([date,"Closed: "+closure(d).reason,""]);
     if(!shut){trading++;if(st.complete)complete++;else if(date<end&&!st.any)missed++}
     const cls=shut?"closed":st.complete||(d&&d.signed)?"ok":st.any?"part":date<end?"bad":"";
     grid.append(el("button",{class:"cd "+cls+(date===end?" today":"")+(st.issue?" hot":""),type:"button",title:nice(date),"aria-label":nice(date),onclick:()=>goDay(date)},String(dd.getDate())));
@@ -750,7 +759,7 @@ function renderTempLog(){
   for(let date=t;date>=from;date=addDays(date,-1)){
     if(start&&date<start)break;
     if(diaryStart()&&date<diaryStart()&&!S.days[date])continue;
-    const d=S.days[date],closed=isClosed(date)&&!(d&&dayStatus(d,null,date).any);
+    const d=S.days[date],closed=!!closure(d)||isClosed(date)&&!(d&&dayStatus(d,null,date).any);
     const cells=units.map(u=>{const r=tlReading(d,u),v=r&&r.v!=null?Number(r.v):null;
       if(v!=null){readings++;if(tempState(u.kind,v)==="bad")out++}else if(!closed&&date<t)missing++;
       if(r){ids.push(r.by);if(r.was)ids.push(r.was.by)}
@@ -785,7 +794,7 @@ function renderTempLog(){
       details.push(el("div",{class:"row"},note,saveBtn,el("button",{class:"btn ghost sm",type:"button",onclick:()=>goDay(date)},"Open the day")));
     }
     const amended=cells.some(c=>c.r&&(c.r.was||c.r.amended||c.r.late));
-    list.append(xrow("tl"+date,{title:date===t?"Today":nice(date),sub:closed?"Closed":amended?"Includes a changed or late reading":"",right:[el("span",{class:"tlpills"},...pills)],details}));
+    list.append(xrow("tl"+date,{title:date===t?"Today":nice(date),sub:closed?(closure(d)?"Closed: "+closure(d).reason:"Closed"):amended?"Includes a changed or late reading":"",right:[el("span",{class:"tlpills"},...pills)],details}));
   }
   if(!list.children.length)box.append(el("div",{class:"empty glass",text:"No days in this period."}));else box.append(list);
   const stat=(n,l,c)=>el("div",{class:"stat glass"},el("b",{class:c||"",text:n}),el("span",{text:l}));
@@ -1965,9 +1974,9 @@ function inspectSections(R){
   let open=0,complete=0,partial=0,missing=0,readings=0,outOfRange=0;
   const dayRows=[],tempRows=[],actions=[];
   for(const date of dates){
-    const d=R.days[date],st=dayStatus(d,cfg,date),closed=isClosed(date,s)&&!(st.any),before=date<start;
+    const d=R.days[date],st=dayStatus(d,cfg,date),cl=closure(d),closed=!!cl||isClosed(date,s)&&!(st.any),before=date<start;
     if(before&&(hardStart(s)||!d))continue;
-    if(closed){dayRows.push([pdfDate(date),{t:"Closed",cls:"muted"},"","","",""]);continue}
+    if(closed){dayRows.push([pdfDate(date),{t:cl?"Closed: "+cl.reason:"Closed",cls:"muted"},"","","",cl?`Marked by ${fullName(cl.by)}, ${when(cl.at)}`:""]);continue}
     open++;
     if(!d||!st.any){
       if(date===today()){open--;dayRows.push([pdfDate(date),{t:"Today: not started yet",cls:"warn"},"","","",""]);continue}
@@ -2157,7 +2166,7 @@ function renderReview(){
   p.textContent=left<0?`Overdue since ${nice(due)}`:left===0?"Due today":`Next due ${nice(due)} (${left} days)`;
   p.className="pill "+(left<0?"bad":left<=3?"warn":"ok");
   let comp=0,days=0,temps=0;
-  for(let dt=start;dt<=t;dt=addDays(dt,1)){const st=dayStatus(S.days[dt],null,dt);if(isClosed(dt)&&!st.any)continue;days++;if(st.complete)comp++;if(st.issue)temps++}
+  for(let dt=start;dt<=t;dt=addDays(dt,1)){const st=dayStatus(S.days[dt],null,dt);if(closure(S.days[dt])||isClosed(dt)&&!st.any)continue;days++;if(st.complete)comp++;if(st.issue)temps++}
   const xOver=S.extras.filter(x=>taskState(x).overdue).length,kOver=S.cleaning.filter(x=>taskState(x).overdue).length;
   const pFail=S.prove.filter(r=>r.date>=start&&r.pass===false).length;
   const untrained=S.staff.filter(p=>siteTopics().some(([k])=>!(p.topics&&p.topics[k]))).length;
@@ -2233,13 +2242,13 @@ function renderAllergenDocs(){
 
 /* ---------- needs attention (per site) ---------- */
 function prevTradingDay(s,days){
-  for(let i=1;i<=7;i++){const d=addDays(today(),-i);if(!isClosed(d,s)||(days[d]&&dayStatus(days[d],activeCfg(s),d).any))return d}
+  for(let i=1;i<=7;i++){const d=addDays(today(),-i);if(closure(days[d]))continue;if(!isClosed(d,s)||(days[d]&&dayStatus(days[d],activeCfg(s),d).any))return d}
   return null;
 }
 function siteAttention(id){
   const sm=S.sum[id];if(!sm||!sm.ready)return null;
   const s=sm.settings,cfg=activeCfg(s),t=today();
-  const st=dayStatus(sm.days[t],cfg,t),closedToday=isClosed(t,s)&&!st.any;
+  const st=dayStatus(sm.days[t],cfg,t),closedToday=!!closure(sm.days[t])||isClosed(t,s)&&!st.any;
   const prev=prevTradingDay(s,sm.days),pd=prev?sm.days[prev]:null,pst=prev?dayStatus(pd,cfg,prev):null;
   const tasks=[];
   for(const kind of["cleaning","extras"]){
@@ -2254,6 +2263,57 @@ function siteAttention(id){
   const prevDue=!unused&&!!prev&&!!start&&prev>=start&&!(pd&&pd.signed);
   if(unused)openDue=false;
   return{id,s,cfg,t,st,closedToday,prev,pd,pst,tasks,openDue,prevDue,unused,start,count:(openDue?1:0)+(prevDue?1:0)+tasks.length};
+}
+// Today → "Closed today?": mark the day shown as closed with a reason, or reopen it.
+// Setup → Closures & holidays: plan closures ahead (one day or a run of days, here or at all four sites), and see
+// and remove the ones from the last two months onwards.
+function closureForm(){
+  for(const r of CLOSE_REASONS)$("#clChips").append(el("button",{type:"button",class:"fchip",onclick:()=>{$("#clReason").value=r}},r));
+  $("#clAdd").addEventListener("click",async()=>{
+    const from=$("#clFrom").value,to=$("#clTo").value||from,reason=$("#clReason").value.trim(),msg=$("#clMsg");
+    if(!from){msg.textContent="Choose the date it's closed.";return}
+    if(!reason){msg.textContent="Write why it's closed.";$("#clReason").focus();return}
+    if(to<from){msg.textContent="The end date is before the start.";return}
+    const dates=[];for(let d=from;d<=to;d=addDays(d,1))dates.push(d);
+    if(dates.length>31){msg.textContent="Add up to 31 days at a time.";return}
+    const sites=$("#clAll").checked?SITES.map(x=>x.id):[S.site],closed={reason,...stamp()};
+    msg.textContent="Saving…";const fails=new Set();
+    for(const site of sites)for(const date of dates){
+      try{
+        if(site===S.site)await patchDay(date,{closed});
+        else{const ref=D("days",date,site);try{await ref.update({closed})}catch(e){if(e&&e.code==="not_found")await ref.set({date,closed});else throw e}}
+      }catch(e){fails.add(siteOf(site).name)}
+    }
+    msg.textContent=fails.size?`Couldn't save at the ${[...fails].join(", ")}. Try again.`:"";
+    if(!fails.size){$("#clFrom").value="";$("#clTo").value="";$("#clReason").value="";$("#clAll").checked=false;
+      toast(`Closed ${dates.length===1?nice(from):`${nice(from)} to ${nice(to)}`}${sites.length>1?" at all four sites":""}`)}
+  });
+}
+function renderClosures(){
+  const box=$("#clList");if(!box)return;box.replaceChildren();
+  const R=ro(),from=addDays(today(),-60);
+  const list=Object.entries(S.days).filter(([date,d])=>date>=from&&closure(d)).sort(([a],[b])=>a.localeCompare(b));
+  if(!list.length)box.append(el("div",{class:"empty",text:"No closures in the last two months or coming up."}));
+  for(const[date,d]of list){const cl=closure(d);
+    const del=R?null:el("button",{class:"btn ghost sm danger",type:"button"},"Remove");
+    if(del)armDelete(del,"Remove",async()=>{if(await save(()=>patchDay(date,{closed:null})))toast(`${nice(date)} is no longer closed`)});
+    box.append(el("div",{class:"lrow"},el("span",{class:"t"},el("b",{text:date===today()?"Today":`${nice(date)} ${parse(date).getFullYear()}`}),
+      el("span",{class:"s",text:`${cl.reason} · ${nameOf(cl.by)}`})),date>=today()?el("span",{class:"pill acc",text:"Coming up"}):null,del));
+  }
+  for(const x of["#clFrom","#clTo","#clReason","#clAll","#clAdd"])$(x).disabled=R;
+}
+function renderCloseDay(d){
+  const box=$("#closeDay");if(!box)return;box.replaceChildren();
+  const cl=closure(d),R=ro();box.hidden=R||S.date>today();if(box.hidden)return;
+  const date=S.date,label=date===today()?"today":nice(date);
+  if(cl){box.append(el("button",{class:"btn ghost sm",type:"button",onclick:async()=>{if(await save(()=>patchDay(date,{closed:null})))toast(`${nice(date)} reopened`)}},"Reopen this day"));return}
+  const det=el("details",{class:"closeday"},el("summary",{},`Shop closed ${label}? Mark it closed`));
+  const txt=el("input",{type:"text",id:"cdReason",placeholder:"Why it was closed, e.g. Boiler broken, engineer booked","aria-label":"Why it was closed"});
+  const chips=el("div",{class:"chiprow wrap"},...CLOSE_REASONS.map(r=>el("button",{type:"button",class:"fchip",onclick:()=>{txt.value=r;txt.focus()}},r)));
+  const go=el("button",{class:"btn sm",type:"button",onclick:async()=>{const reason=txt.value.trim();if(!reason){toast("Write why it was closed");txt.focus();return}
+    if(await save(()=>patchDay(date,{closed:{reason,...stamp()}})))toast(`${nice(date)} marked closed`)}},"Mark as closed");
+  det.append(chips,el("div",{class:"row"},txt,go));
+  box.append(det);
 }
 function dueDate(t){const n=FREQ[t.freq],b=t.lastAt||t.importedAt;if(!b||!n)return"";const d=new Date(b);d.setDate(d.getDate()+n);return iso(d)}
 function goDay(date){S.date=date;show("day");renderDay();renderHead()}
@@ -2347,7 +2407,7 @@ function hubSub(id){
     }
     case "prove":{const r=[...S.prove].sort((a,b)=>(b.at||0)-(a.at||0))[0];return r?`Last: ${r.food}, ${r.pass?"pass":"fail"} · ${short(r.date)}`:"No checks recorded yet"}
     case "allergens":return S.allergens.length?`${n(S.allergens.length,"menu item")} · allergen matrix PDF`:"No menu items yet";
-    case "history":{let c=0,tr=0;for(let i=1;i<=28;i++){const d=addDays(t,-i),st=dayStatus(S.days[d],null,d);if(isClosed(d)&&!st.any)continue;tr++;if(st.complete)c++}return `${c} of ${tr} days complete`}
+    case "history":{let c=0,tr=0;for(let i=1;i<=28;i++){const d=addDays(t,-i),st=dayStatus(S.days[d],null,d);if(closure(S.days[d])||isClosed(d)&&!st.any)continue;tr++;if(st.complete)c++}return `${c} of ${tr} days complete`}
     case "eho":{const l=inspSorted()[0];if(!l)return "No inspection recorded";const o=(l.issues||[]).filter(i=>!i.done).length;return `Rating ${l.rating??"–"} · ${o?n(o,"issue")+" open":"no open issues"}`}
     case "plans":{const due=S.plans.filter(d=>reviewState(d).overdue).length;return S.plans.length?`${n(S.plans.length,"document")}${due?` · ${due} due for review`:""}`:"None yet: start from a template"}
     case "templog":{const d=S.days[t],us=S.settings.units;if(!us.length)return "No fridges or freezers set up";
@@ -2488,6 +2548,7 @@ function setupDraft(){const s=S.settings;return JSON.parse(JSON.stringify({start
 function sDirty(){if(!setupDirty){setupDirty=true;$("#setupBar").classList.remove("idle");$("#setupMsg").textContent="Unsaved changes for the "+curSite().name;renderPublish()}}
 function sharedHas(k,t){return !!S.shared&&(S.shared[k]||[]).some(c=>normT(c.t)===normT(t))}
 function renderSetup(){
+  renderClosures();
   $("#setupBar").classList.toggle("idle",!setupDirty);
   if(!setupDirty||!SE){SE=setupDraft();buildSetup()}
   renderPublish();
@@ -2774,7 +2835,7 @@ function subscribeSite(){
   const hub=()=>{if(S.tab==="records"||S.tab==="more")renderNav()};
   const list=(col,key,after,q)=>sub(q||C(col,site),x=>{S[key]=x.docs.map(d=>({id:d.id,...d.data()}));after();hub()});
   sub(D("settings","main",site),x=>{S.settings=normSettings(x.exists?x.data():null);S.cfg=activeCfg(S.settings);fillProve();applyTabs();renderAll()});
-  sub(C("days",site).orderBy("date","desc").limit(400),q=>{const m={};for(const d of q.docs)m[d.id]=d.data();S.days=m;renderDay();renderHistory();renderReview();renderTempLog()});
+  sub(C("days",site).orderBy("date","desc").limit(400),q=>{const m={};for(const d of q.docs)m[d.id]=d.data();S.days=m;renderDay();renderHistory();renderReview();renderTempLog();renderClosures()});
   sub(C("weeks",site).orderBy("week","desc").limit(120),q=>{const m={};for(const d of q.docs)m[d.id]=d.data();S.weeks=m;renderWeek()});
   list("allergens","allergens",renderAllergens);
   list("allergenDocs","allergenDocs",renderAllergenDocs);
@@ -2798,7 +2859,7 @@ function subscribeSummaries(){
     const sm=S.sum[x.id]={settings:normSettings(null),days:{},extras:[],cleaning:[],maintenance:[],got:{}};
     const mark=k=>{sm.got[k]=true;sm.ready=["settings","days","extras","cleaning"].every(n=>sm.got[n]);upd()};
     D("settings","main",x.id).onSnapshot(s=>{sm.settings=normSettings(s.exists?s.data():null);mark("settings")},err);
-    C("days",x.id).orderBy("date","desc").limit(14).onSnapshot(q=>{const m={};for(const d of q.docs)m[d.id]=d.data();sm.days=m;mark("days")},err);
+    C("days",x.id).orderBy("date","desc").limit(60).onSnapshot(q=>{const m={};for(const d of q.docs)m[d.id]=d.data();sm.days=m;mark("days")},err);
     for(const k of["extras","cleaning"])C(k,x.id).onSnapshot(q=>{sm[k]=q.docs.map(d=>({id:d.id,...d.data()}));mark(k)},err);
     // Every site's maintenance jobs, for Maintenance → All sites.
     C("maintenance",x.id).onSnapshot(q=>{sm.maintenance=q.docs.map(d=>({id:d.id,...d.data()}));if(S.tab==="maintenance"&&maintAll)renderMaint()},err);
@@ -2833,7 +2894,7 @@ $("#revSave").addEventListener("click",async()=>{
 document.querySelectorAll(".note.intro").forEach(n=>{n.setAttribute("title","Tap to read more");n.addEventListener("click",()=>n.classList.toggle("full"))});
 
 /* ---------- boot ---------- */
-inspectForm();tempLogForm();buildAlgChecks();buildTaskForm("extras");buildTaskForm("cleaning");proveForm();delivForm();maintForm();supForm();conForm();staffForm();editStaff(null);
+inspectForm();tempLogForm();closureForm();buildAlgChecks();buildTaskForm("extras");buildTaskForm("cleaning");proveForm();delivForm();maintForm();supForm();conForm();staffForm();editStaff(null);
 applyTabs();renderAll();
 (async()=>{
   const[db,user,assets]=await Promise.all([window.claude?.use?.("db"),window.claude?.use?.("user"),window.claude?.use?.("assets")]);

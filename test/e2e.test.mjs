@@ -142,6 +142,34 @@ test("staff journey on the real page", async () => {
   assert.equal(yAm.by, "web:Sam Patel");
   await page.locator("#tlList .xrow").nth(1).locator(".tlh", { hasText: "First recorded as 4°C" }).waitFor();
 
+  // Closed days: mark yesterday closed from Today with a reason; it stops counting as incomplete.
+  await openSection(page, "day");
+  await page.fill("#dayDate", yIso); await page.locator("#dayDate").dispatchEvent("change");
+  await page.locator("#closeDay summary").click();
+  await page.locator("#closeDay .fchip", { hasText: "Maintenance or repairs" }).click();
+  await page.fill("#cdReason", "Boiler broken, engineer booked");
+  await page.locator("#closeDay .btn", { hasText: "Mark as closed" }).click();
+  await page.locator("#closedNote", { hasText: "Closed: Boiler broken, engineer booked" }).waitFor();
+  assert.equal((await api("get", { path: `sites/cafe/days/${yIso}` })).data.closed.reason, "Boiler broken, engineer booked");
+  await openSection(page, "history");
+  const yLabel = await page.evaluate((d) => new Date(d + "T12:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }), yIso);
+  assert.match(await page.locator(`#strip .cd[aria-label="${yLabel}"]`).getAttribute("class"), /\bclosed\b/, "shown as closed, not incomplete");
+  await page.locator("#excList .lrow", { hasText: "Closed: Boiler broken" }).waitFor();
+  // Setup → Closures & holidays: Christmas at all four sites, then remove Boxing Day here.
+  await openSection(page, "setup");
+  await page.fill("#clFrom", "2026-12-25"); await page.fill("#clTo", "2026-12-26");
+  await page.locator("#clChips .fchip", { hasText: "Christmas" }).click();
+  await page.locator('label[for="clAll"]').click();
+  await page.click("#clAdd");
+  await page.locator("#toast", { hasText: "at all four sites" }).waitFor();
+  await page.locator("#clList .lrow", { hasText: "Fri 25 Dec 2026" }).waitFor();
+  for (const base of ["days", "sites/cafe/days", "sites/asg/days", "sites/factory/days"])
+    for (const d of ["2026-12-25", "2026-12-26"]) assert.equal((await api("get", { path: `${base}/${d}` })).data?.closed?.reason, "Christmas", `${base}/${d}`);
+  const boxing = page.locator("#clList .lrow", { hasText: "Sat 26 Dec 2026" }).locator(".btn.danger");
+  await boxing.click(); await boxing.click();
+  await assert.doesNotReject(waitFor(async () => (await api("get", { path: "sites/cafe/days/2026-12-26" })).data.closed === null), "closure removed");
+  assert.equal((await api("get", { path: "sites/asg/days/2026-12-26" })).data.closed.reason, "Christmas", "other sites keep theirs");
+
   // Sign off the week.
   await openSection(page, "week");
   await page.locator("#wkFoot button", { hasText: "Tick all" }).click();

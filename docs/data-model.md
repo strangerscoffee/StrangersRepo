@@ -68,6 +68,7 @@ date
 temps:{<unitId>:{am:{v,by,at}}}
 opening|closing:{items:{<checkId>:bool}, by, at, allDone?:{by,at}}
 problems:{text,by,at}
+closed:{reason,by,at}        // closed outside the usual opening days (holiday, maintenance, unexpected): never counted as incomplete; null when reopened
 signed:{by,at,name}          // name = the signed-in person's name (older entries may lack it)
 ```
 The page writes these with nested `update`s such as `{temps:{u1:{am:{v:3.2,by,at}}}}`, which must merge deeply (see `runtime-api.md`).
