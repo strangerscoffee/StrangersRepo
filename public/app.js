@@ -117,8 +117,26 @@ const tabOn=(t,s)=>!(s||S.settings).hide[t];
 S.settings=normSettings(null);S.cfg=activeCfg(S.settings);
 
 /* ---------- rules ---------- */
+// Temperature boxes with a minus key. Phone number pads (the iPhone's in particular) have no "-", so freezer
+// readings couldn't be typed. Each temperature box is a text box with the decimal pad plus a − button that flips the
+// sign (or starts a reading with "-"). A lone "-" or "." left behind is cleared before it's saved.
+function withMinus(inp){
+  inp.type="text";inp.removeAttribute("step");inp.inputMode="decimal";inp.autocomplete="off";inp.setAttribute("enterkeyhint","done");
+  const tidy=()=>{const v=inp.value.trim().replace(/[\u2212\u2013]/g,"-").replace(",",".");if(v!==inp.value)inp.value=v;if(/^-?\.?$/.test(v)&&v)inp.value=""};
+  inp.addEventListener("input",()=>{const v=inp.value.replace(/[\u2212\u2013]/g,"-").replace(",",".");if(v!==inp.value)inp.value=v});
+  inp.addEventListener("change",tidy);inp.addEventListener("blur",tidy);
+  const btn=el("button",{class:"minus",type:"button","aria-label":"Minus: make this reading below zero",title:"Below zero (−)",
+    onpointerdown:e=>e.preventDefault(), // keep the keyboard open
+    onclick:()=>{if(inp.disabled)return;const v=inp.value.trim();
+      inp.value=v.startsWith("-")?v.slice(1):"-"+v;inp.focus();
+      const end=inp.value.length;try{inp.setSelectionRange(end,end)}catch(e){}
+      inp.dispatchEvent(new Event("input",{bubbles:true}));
+      if(isFinite(Number(inp.value))&&/\d/.test(inp.value))inp.dispatchEvent(new Event("change",{bubbles:true}))}},"−");
+  return el("span",{class:"signin"},btn,inp);
+}
+function minusIn(sel){const inp=$(sel);if(!inp||inp.closest(".signin"))return;const ph=document.createComment("");inp.replaceWith(ph);ph.replaceWith(withMinus(inp))}
 function tempState(kind,v){
-  if(v==null||v==="")return "";
+  if(v==null||v===""||!isFinite(Number(v)))return "";
   if(kind==="freezer")return v<=-18?"ok":v<=-15?"warn":"bad";
   return v<=5?"ok":v<=8?"warn":"bad";
 }
@@ -408,7 +426,7 @@ function renderDayInner(){
     if(v!=="")chips.push(el("span",{class:"chip "+cls,text:`${u.name} ${v}°`}));
     const inp=el("input",{type:"number",step:"0.1",inputmode:"decimal",id,value:v,placeholder:"°C",disabled:R,"aria-label":`${u.name} temperature °C`});
     const mark=el("span",{class:"st","aria-hidden":"true"});
-    const row=el("div",{class:"tf "+cls},el("label",{class:"n",for:id,text:u.name}),el("span",{class:"lim",text:(u.kind==="freezer"?"−18°C or colder":"5°C or below")+(r?` · ${time(r.at)}, ${nameOf(r.by)}`:"")}),el("span",{class:"v"},inp,mark));
+    const row=el("div",{class:"tf "+cls},el("label",{class:"n",for:id,text:u.name}),el("span",{class:"lim",text:(u.kind==="freezer"?"−18°C or colder":"5°C or below")+(r?` · ${time(r.at)}, ${nameOf(r.by)}`:"")}),el("span",{class:"v"},withMinus(inp),mark));
     const paint=()=>{const c=tempState(u.kind,inp.value===""?null:Number(inp.value));row.className="tf "+c;mark.replaceChildren(c==="ok"?svgi(ICON.check):c==="bad"||c==="warn"?svgi(ICON.warn):"")};
     paint();inp.addEventListener("input",paint);
     inp.addEventListener("change",()=>{
@@ -784,7 +802,7 @@ function renderTempLog(){
       if(c.r&&c.r.was)hist.push(`First recorded as ${c.r.was.v}°C, ${when(c.r.was.at)}, ${fullName(c.r.was.by)}`);
       details.push(el("div",{class:"tlunit "+(c.c||"")},
         el("label",{class:"n",for:id},el("b",{text:c.u.name}),el("span",{class:"s",text:c.u.kind==="freezer"?" · −18°C or colder":" · 5°C or below"})),
-        el("span",{class:"v"},inp),
+        el("span",{class:"v"},withMinus(inp)),
         hist.length?el("div",{class:"s tlh",text:hist.join("\n")}):null));
     }
     if(!R){
@@ -868,6 +886,7 @@ async function saveDelivery(outcome){
   if(!supplier){msg.textContent="Choose the supplier first.";return}
   const num=k=>{const v=$("#dv_"+k).value;return v===""?null:Number(v)};
   const chilled=num("chilled"),frozen=num("frozen"),noTemp=$("#dvNoTemp").checked;
+  if([chilled,frozen].some(v=>v!=null&&!isFinite(v))){msg.textContent="Check the temperature: use numbers only, with − for below zero.";return}
   if(!noTemp&&chilled==null&&frozen==null){msg.textContent="Enter the chilled or frozen temperature, or tick “No chilled or frozen food”.";return}
   if(!DV.packaging||!DV.order){msg.textContent="Answer both questions: damage to packaging, and whether it's what you ordered.";return}
   const note=$("#dvNote").value.trim(),p=dlvProblems();
@@ -3005,6 +3024,7 @@ $("#revSave").addEventListener("click",async()=>{
 document.querySelectorAll(".note.intro").forEach(n=>{n.setAttribute("title","Tap to read more");n.addEventListener("click",()=>n.classList.toggle("full"))});
 
 /* ---------- boot ---------- */
+for(const x of["#dv_chilled","#dv_frozen","#pReading"])minusIn(x);
 inspectForm();tempLogForm();closureForm();buildAlgChecks();buildTaskForm("extras");buildTaskForm("cleaning");proveForm();delivForm();maintForm();supForm();conForm();staffForm();editStaff(null);
 applyTabs();renderAll();
 (async()=>{
