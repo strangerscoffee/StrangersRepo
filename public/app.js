@@ -86,7 +86,7 @@ S.role="";S.myName="";
 const ro=()=>!S.canWrite||!S.db;
 // Everyone can open the management sections (suppliers, contacts, HACCP & risk, the last inspection, training,
 // onboarding, the 4-weekly review); only managers and admins can change them, as the Worker enforces.
-const MANAGER_DATA=new Set(["eho","plans","suppliers","contacts","staff","onboarding","review"]);
+const MANAGER_DATA=new Set(["eho","plans","suppliers","contacts","staff","onboarding"]);
 const mro=()=>ro()||S.role==="staff";
 
 /* ---------- sites & per-site paths ---------- */
@@ -383,6 +383,8 @@ function renderDayInner(){
   }else if(a){
     if(a.prevDue){const ps=a.pst,gaps=[];if(ps.open!=="y")gaps.push("opening");if(ps.tN<ps.tTot)gaps.push("temps");if(ps.close!=="y")gaps.push("closing");
       al.append(alertEl(`${nice(a.prev)} wasn't signed off`,gaps.length?"Still to do: "+gaps.join(", "):"Everything was ticked; it just needs signing",["Open",()=>goDay(a.prev)]))}
+    if(tabOn("review")&&S.db&&!S.reviewsLoading){const{due}=reviewPeriod();
+      if(due<today())al.append(alertEl("4-weekly review overdue",`It was due ${nice(due)}. Look back over the last four weeks and answer the questions.`,R?null:["Do it now",()=>show("review")]))}
     for(const{kind,t,ts}of a.tasks)
       al.append(alertEl(t.name,`${kind==="cleaning"?"Cleaning":"Extra check"} · ${(t.freq||"").replace(/^./,c=>c.toUpperCase())} · ${ts.text.toLowerCase()}`,R?null:["Done",()=>completeTask(kind,t,a.id,"")]));
   }
@@ -2259,14 +2261,13 @@ function renderReview(){
   for(const[k,q]of REVIEW_QS){
     const cur=S.rev[k]||{};
     const seg=el("div",{class:"seg",role:"group","aria-label":q});
-    for(const v of["Yes","No"])seg.append(el("button",{type:"button","aria-pressed":String(cur.a===v),disabled:mro(),onclick:()=>{S.rev[k]={...cur,a:v};renderReview()}},v));
-    const det=el("input",{type:"text",id:"rq_"+k,placeholder:"Details (what changed, what you did)",value:cur.d||"",disabled:mro()});
+    for(const v of["Yes","No"])seg.append(el("button",{type:"button","aria-pressed":String(cur.a===v),disabled:ro(),onclick:()=>{S.rev[k]={...cur,a:v};renderReview()}},v));
+    const det=el("input",{type:"text",id:"rq_"+k,placeholder:"Details (what changed, what you did)",value:cur.d||"",disabled:ro()});
     det.addEventListener("input",()=>{S.rev[k]={...(S.rev[k]||{}),d:det.value}});
     qs.append(el("div",{class:"qa"},el("div",{class:"row spread"},el("span",{text:q}),seg),cur.a==="Yes"||cur.d?det:null));
   }
-  $("#revSave").disabled=mro();$("#revNotes").disabled=mro();
-  // Staff read the summary and past reviews; the questions are for the manager who signs it.
-  const ro4=S.role==="staff";qs.hidden=ro4;$("#revNotes").closest(".field").hidden=ro4;$("#revSave").closest(".row").hidden=ro4;$("#revStaffNote").hidden=!ro4;
+  $("#revSave").disabled=ro();$("#revNotes").disabled=ro();
+
   const list=$("#revList");list.replaceChildren();
   if(!S.reviews.length)list.append(el("div",{class:"empty",text:"No reviews signed yet. Your first one is due "+nice(due)+"."}));
   for(const r of S.reviews){
@@ -2431,11 +2432,12 @@ const NAV=[
   {id:"extras",t:"Extra checks",grp:"records",ic:"extras",tile:"teal"},{id:"cleaning",t:"Cleaning",grp:"records",ic:"cleaning",tile:"blue"},
   {id:"prove",t:"Prove it",grp:"records",ic:"prove",tile:"orange"},{id:"allergens",t:"Allergens",grp:"records",ic:"allergens",tile:"red"},
   {id:"templog",t:"Temperature log",grp:"records",ic:"prove",tile:"blue"},
+  {id:"review",t:"4-weekly review",grp:"records",ic:"review",tile:"red"},
   {id:"deliveries",t:"Deliveries",grp:"records",ic:"deliveries",tile:"indigo"},{id:"maintenance",t:"Maintenance",grp:"records",ic:"maintenance",tile:"purple"},
   {id:"eho",t:"Last EHO inspection report",grp:"manage",ic:"eho",tile:"green"},{id:"plans",t:"HACCP & risk",grp:"manage",ic:"plans",tile:"purple"},
   {id:"suppliers",t:"Suppliers",grp:"manage",ic:"suppliers",tile:"orange"},{id:"contacts",t:"Contacts",grp:"manage",ic:"contacts",tile:"green"},
   {id:"staff",t:"Staff training",grp:"manage",ic:"staff",tile:"teal"},{id:"onboarding",t:"Onboarding",grp:"manage",ic:"onboarding",tile:"indigo"},
-  {id:"review",t:"4-weekly review",grp:"manage",ic:"review",tile:"red"},{id:"setup",t:"Setup",grp:"admin",ic:"setup",tile:"grey",sub:"Checks, fridges, opening days and sections"},
+  {id:"setup",t:"Setup",grp:"admin",ic:"setup",tile:"grey",sub:"Checks, fridges, opening days and sections"},
 ];
 const navOf=id=>NAV.find(n=>n.id===id);
 // Sections only managers and admins use. The Worker enforces the same rule on saves (src/access.ts).
@@ -2452,6 +2454,7 @@ function siteState(id){
 // Small status shown beside a section in lists ("1 overdue").
 function navBadge(id){
   if(id==="cleaning"||id==="extras"){const n=S[id].filter(x=>taskState(x).overdue).length;return n?{cls:"bad",text:`${n} overdue`}:null}
+  if(id==="review"&&S.db&&!S.reviewsLoading&&reviewPeriod().due<today())return{cls:"bad",text:"Overdue"};
   if(id==="maintenance"){const n=S.maintenance.filter(m=>m.status!=="done"&&m.priority==="urgent").length;return n?{cls:"bad",text:`${n} urgent`}:null}
   return null;
 }
@@ -2921,7 +2924,8 @@ function subscribeSite(){
   sub(C("weeks",site).orderBy("week","desc").limit(120),q=>{const m={};for(const d of q.docs)m[d.id]=d.data();S.weeks=m;renderWeek()});
   list("allergens","allergens",renderAllergens);
   list("allergenDocs","allergenDocs",renderAllergenDocs);
-  list("reviews","reviews",renderReview,C("reviews",site).orderBy("date","desc").limit(50));
+  S.reviewsLoading=true;
+  list("reviews","reviews",()=>{S.reviewsLoading=false;renderReview();renderDay()},C("reviews",site).orderBy("date","desc").limit(50));
   list("extras","extras",()=>{renderTasks("extras");renderReview()});
   list("cleaning","cleaning",()=>{renderTasks("cleaning");renderReview()});
   list("suppliers","suppliers",()=>{renderSuppliers();renderDeliveries()});
@@ -2971,7 +2975,7 @@ $("#algCancel").addEventListener("click",()=>editAlg(null));
 $("#algSearch").addEventListener("input",renderAllergens);
 armDelete($("#algDelete"),"Remove item",async()=>{if(await save(()=>D("allergens",S.editAlg).delete())){editAlg(null);toast("Item removed")}});
 $("#revSave").addEventListener("click",async()=>{
-  if(mro())return;
+  if(ro())return;
   if(REVIEW_QS.some(([k])=>!(S.rev[k]&&S.rev[k].a))){$("#revMsg").textContent="Answer every question before signing.";return}
   const date=today();
   if(await save(()=>D("reviews",date).set({date,answers:S.rev,notes:$("#revNotes").value.trim(),by:S.me,at:Date.now()}))){S.rev={};$("#revNotes").value="";$("#revMsg").textContent="Review signed and saved."}
