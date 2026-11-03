@@ -40,7 +40,8 @@ export const recordId = (u: User) => "web:" + u.name;
 // Sections and data only managers and admins may change. Staff can still read them (the "Needs attention"
 // summary counts overdue reviews and plans), but the page hides these sections from them.
 const MANAGER_TABS = new Set(["eho", "plans", "suppliers", "contacts", "staff", "onboarding", "review", "setup"]);
-const MANAGER_COLLECTIONS = new Set(["settings", "plans", "inspections", "suppliers", "contacts", "staff", "onboarding", "reviews"]);
+// The 4-weekly review (reviews) is a record staff fill in when it's due, so it isn't in this list.
+const MANAGER_COLLECTIONS = new Set(["settings", "plans", "inspections", "suppliers", "contacts", "staff", "onboarding"]);
 
 export const canOpenTab = (u: User, tab: string) => u.role !== "staff" || !MANAGER_TABS.has(tab);
 

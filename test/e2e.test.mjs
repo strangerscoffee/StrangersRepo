@@ -468,7 +468,7 @@ test("staff journey on the real page", async () => {
   await page.locator("#avatarBtn", { hasText: "AB" }).waitFor();
   assert.deepEqual(await accountMenu(page), ["Switch person", "Set a quick PIN", "Change password", "Sign out"]);
   await page.locator("#tabbar .tab", { hasText: "Records" }).click();
-  assert.deepEqual(await page.locator("#recordsHub .lrow b").allTextContents(), ["Extra checks", "Cleaning", "Prove it", "Allergens", "Temperature log", "Deliveries", "Maintenance"]);
+  assert.deepEqual(await page.locator("#recordsHub .lrow b").allTextContents(), ["Extra checks", "Cleaning", "Prove it", "Allergens", "Temperature log", "4-weekly review", "Deliveries", "Maintenance"]);
 
   // Staff check a delivery: a supplier from the Roastery's list, cream too warm, so it's rejected with a reason.
   const alexCookie = (await ctx.cookies()).map((c) => `${c.name}=${c.value}`).join("; ");
@@ -561,7 +561,7 @@ test("staff journey on the real page", async () => {
   for (const t of ["Food safety records", "Daily diary", "Corrective actions", "Staff training", "Allergen matrix"])
     assert.ok(inPdf.includes(Buffer.from(t, "latin1").toString("hex")), "PDF has " + t);
   await page.locator("#tabbar .tab", { hasText: "More" }).click();
-  assert.deepEqual(await page.locator("#moreHub .lrow b").allTextContents(), ["Last 4 weeks", "EHO inspection mode", "Last EHO inspection report", "HACCP & risk", "Suppliers", "Contacts", "Staff training", "Onboarding", "4-weekly review", "Switch person", "Set a quick PIN", "Change password", "Sign out"]);
+  assert.deepEqual(await page.locator("#moreHub .lrow b").allTextContents(), ["Last 4 weeks", "EHO inspection mode", "Last EHO inspection report", "HACCP & risk", "Suppliers", "Contacts", "Staff training", "Onboarding", "Switch person", "Set a quick PIN", "Change password", "Sign out"]);
   assert.equal(await page.locator("#moreHub .label", { hasText: "Admin" }).count(), 0, "staff don't see Setup");
   // Staff can open the management sections to read them, but there's nothing to change.
   await page.locator("#moreHub .lrow", { hasText: "Suppliers" }).click();
@@ -578,6 +578,21 @@ test("staff journey on the real page", async () => {
   await openSection(page, "staff");
   assert.equal(await page.locator("#tTopicsPanel").isHidden(), true);
   assert.equal(await page.locator("#tImport").isHidden(), true);
+  // The 4-weekly review is a record staff fill in: overdue here (the diary started 1 Sep), so Today reminds them.
+  await openSection(page, "day");
+  const revAlert = page.locator("#dayAlerts .alert", { hasText: "4-weekly review overdue" });
+  await revAlert.waitFor();
+  await revAlert.locator(".btn", { hasText: "Do it now" }).click();
+  await page.locator('[data-panel="review"]').waitFor();
+  assert.equal(await page.locator("#pageTitle").innerText(), "4-weekly review");
+  for (const seg of await page.locator("#revQs .seg").all()) await seg.locator("button", { hasText: "No" }).click();
+  await page.fill("#revNotes", "Nothing changed this period.");
+  await page.click("#revSave");
+  await assert.doesNotReject(waitFor(async () => (await api("query", { path: "reviews" })).docs.some((d) => d.data.by === "web:Alex Brown")), "staff signed the review");
+  await openSection(page, "day");
+  await page.locator("#dayAlerts").waitFor({ state: "attached" });
+  await page.waitForTimeout(500);
+  assert.equal(await page.locator("#dayAlerts .alert", { hasText: "4-weekly review overdue" }).count(), 0, "reminder gone once signed");
   const refused = await fetch(`${srv.base}/api/db/set`, { method: "POST", headers: { "content-type": "application/json", cookie: (await ctx.cookies()).map((c) => `${c.name}=${c.value}`).join("; ") },
     body: JSON.stringify({ path: "suppliers/x", data: { name: "X" } }) });
   assert.equal((await refused.json()).code, "permission_denied");
