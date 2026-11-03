@@ -86,7 +86,7 @@ S.role="";S.myName="";
 const ro=()=>!S.canWrite||!S.db;
 // Everyone can open the management sections (suppliers, contacts, HACCP & risk, the last inspection, training,
 // onboarding, the 4-weekly review); only managers and admins can change them, as the Worker enforces.
-const MANAGER_DATA=new Set(["eho","plans","suppliers","contacts","staff","onboarding"]);
+const MANAGER_DATA=new Set(["eho","plans","suppliers","contacts","onboarding"]);
 const mro=()=>ro()||S.role==="staff";
 
 /* ---------- sites & per-site paths ---------- */
@@ -286,12 +286,14 @@ const FORMS={
   allergens:{panel:"#algFormPanel",add:"Add item",reset:()=>{algNewKind="drink";editAlg(null)}},
   suppliers:{panel:"#sFormPanel",add:"Add supplier",reset:()=>editSupplier(null)},
   contacts:{panel:"#cFormPanel",add:"Add contact",reset:()=>editContact(null)},
-  staff:{panel:"#tFormPanel",add:"Add person",reset:()=>editStaff(null)},
+  // Staff fill in and sign their own training record; managers add and edit anyone's.
+  staff:{panel:"#tFormPanel",get add(){return S.role==="staff"?"My training record":"Add person"},reset:()=>editStaff(S.role==="staff"?myStaff():null)},
   maintenance:{panel:"#mFormPanel",add:"Report a job",reset:()=>editMaint(null)}};
 const formOpen={};
 function setForm(tab,open){
   const f=FORMS[tab],p=$(f.panel);formOpen[tab]=!!open;p.hidden=ro()||(MANAGER_DATA.has(tab)&&mro())||!open;
   if(!p._x){p._x=el("button",{class:"closex",type:"button","aria-label":"Close",onclick:()=>{f.reset();setForm(tab,false)}},"Cancel");p.prepend(p._x)}
+  if(tab==="staff"&&S.role==="staff"&&$("#tMine"))renderStaff();
   if(open&&!p.hidden){p.scrollIntoView({behavior:"smooth",block:"start"});const i=p.querySelector("input[type=text],input:not([type])");if(i)i.focus({preventScroll:true})}
   renderAddBtn();
 }
@@ -1680,6 +1682,12 @@ function renderContacts(){
 // The training topics this site uses: Setup's trainingOff lists the ones it doesn't need.
 // Dates already recorded for a switched-off topic are kept, just not shown or counted.
 const siteTopics=()=>TOPICS.filter(([k])=>!S.settings.trainingOff.includes(k));
+// Staff can fill in and sign only their own record (matched by name, as the Worker checks); managers and admins any.
+const isMine=p=>!!p&&normT(p.name)===normT(S.myName);
+const myStaff=()=>S.staff.find(isMine)||null;
+const canEditStaff=p=>!ro()&&(S.role!=="staff"||isMine(p));
+// The topics a signature covers: those with a date, with the date, so changing any date needs a new signature.
+const signKey=topics=>Object.keys(topics||{}).filter(k=>topics[k]&&topics[k].date).sort().map(k=>k+"="+topics[k].date).join(",");
 function staffForm(){
   const box=$("#tTopics");
   for(const[k,lbl]of TOPICS)box.append(el("div",{class:"field","data-topic":k},el("label",{class:"label",for:"tt_"+k,text:lbl}),el("input",{type:"date",id:"tt_"+k})));
@@ -1697,14 +1705,18 @@ function staffForm(){
   all.addEventListener("change",()=>boxes().forEach(b=>b.checked=all.checked));
   sb.addEventListener("change",e=>{if(e.target!==all)all.checked=boxes().every(b=>b.checked)});
   $("#tSave").addEventListener("click",async()=>{
-    const name=$("#tName").value.trim();if(!name){$("#tMsg").textContent="Add the person's name first.";return}
+    const name=S.role==="staff"?S.myName:$("#tName").value.trim();if(!name){$("#tMsg").textContent="Add the person's name first.";return}
     const sites=boxes().filter(b=>b.checked).map(b=>b.dataset.site);
     if(!sites.length){$("#tMsg").textContent="Tick at least one site to save to.";return}
     const old=S.editStaff?S.staff.find(x=>x.id===S.editStaff):null;
     const topics={};
     for(const[k]of TOPICS){const d=$("#tt_"+k).value;if(d){const prev=old&&old.topics&&old.topics[k];topics[k]=prev&&prev.date===d?prev:{date:d,by:S.me}}}
     const personId=(old&&old.personId)||("p"+Date.now().toString(36)+Math.random().toString(36).slice(2,6));
-    const v={name,role:$("#tRole").value.trim(),start:$("#tStart").value,topics,notes:$("#tNotes").value.trim(),personId,sites,at:Date.now()};
+    // Signing: the person confirms the dates on their own record. A signature stays only while those dates are unchanged.
+    const own=normT(name)===normT(S.myName),sign=own&&$("#tSign").checked;
+    if(S.role==="staff"&&Object.keys(topics).length&&!sign){$("#tMsg").textContent="Tick the box to sign your training record.";$("#tSign").focus();return}
+    const signed=sign?{by:S.me,name:S.myName,at:Date.now(),topics:signKey(topics)}:(old&&old.signed&&old.signed.topics===signKey(topics)?old.signed:null);
+    const v={name,role:$("#tRole").value.trim(),start:$("#tStart").value,topics,notes:$("#tNotes").value.trim(),personId,sites,signed,at:Date.now()};
     const key=normT(old?old.name:name),editId=S.editStaff,here=S.site;
     $("#tSave").disabled=true;$("#tMsg").textContent="Saving…";
     const done=[];
@@ -1717,27 +1729,33 @@ function staffForm(){
       });
       if(ok)done.push(siteOf(site).name);
     }
-    $("#tSave").disabled=mro();
+    $("#tSave").disabled=ro();
     if(done.length){editStaff(null);$("#tMsg").textContent="";toast(`Saved ${name} to ${done.join(", ")}`+(done.length<sites.length?". Some sites couldn't be saved; try again.":""))}
   });
   $("#tCancel").addEventListener("click",()=>editStaff(null));
+  $("#tMineGo").addEventListener("click",()=>{editStaff(myStaff());setForm("staff",true)});
   armDelete($("#tDelete"),"Remove person",async()=>{if(await save(()=>D("staff",S.editStaff).delete())){editStaff(null);toast("Removed")}});
 }
 function editStaff(p){
-  S.editStaff=p?p.id:null;$("#tFormTitle").textContent=p?"Edit "+p.name:"Add a staff member";
-  $("#tName").value=p?p.name:"";$("#tRole").value=p?(p.role||""):"";$("#tStart").value=p?(p.start||""):"";$("#tNotes").value=p?(p.notes||""):"";
+  const staff=S.role==="staff";
+  S.editStaff=p?p.id:null;$("#tFormTitle").textContent=staff?"My training record":p?"Edit "+p.name:"Add a staff member";
+  $("#tName").value=p?p.name:staff?S.myName:"";$("#tName").readOnly=staff;$("#tRole").value=p?(p.role||""):"";$("#tStart").value=p?(p.start||""):"";$("#tNotes").value=p?(p.notes||""):"";
   for(const[k]of TOPICS)$("#tt_"+k).value=p&&p.topics&&p.topics[k]?p.topics[k].date:"";
   $("#tAllDate").value="";
   const on=p&&Array.isArray(p.sites)&&p.sites.length?p.sites:[S.site];
   document.querySelectorAll("#tSites input[data-site]").forEach(b=>b.checked=on.includes(b.dataset.site)||b.dataset.site===S.site&&!!p);
   $("#ts_all").checked=[...document.querySelectorAll("#tSites input[data-site]")].every(b=>b.checked);
-  $("#tCancel").hidden=true;$("#tDelete").hidden=!p;
+  // Sign-off is for the person themself: shown on your own record (or a new one in your name).
+  const own=staff||isMine(p);$("#tSignBox").hidden=!own;
+  $("#tSign").checked=!!(own&&p&&p.signed&&p.signed.topics===signKey(p.topics));
+  $("#tCancel").hidden=true;$("#tDelete").hidden=!p||staff;
   setForm("staff",!!p);
 }
 // Record that someone was trained on one topic today.
 async function trainedToday(p,k){
   const topics={...(p.topics||{}),[k]:{date:today(),by:S.me}};
-  if(await save(()=>D("staff",p.id).update({topics})))toast(`${p.name}: ${TOPICS.find(t=>t[0]===k)[1]} recorded`);
+  // A new date isn't covered by the person's signature: they sign again from their record.
+  if(await save(()=>D("staff",p.id).update({topics,signed:null})))toast(`${p.name}: ${TOPICS.find(t=>t[0]===k)[1]} recorded`);
 }
 // Untick a topic and it's no longer shown or counted at this site. Saved straight to the site's settings.
 async function setTopicOff(k,on){
@@ -1801,18 +1819,22 @@ function renderStaff(){
   $("#tStats").replaceChildren(stat(String(list.length),list.length===1?"person":"people"),stat(String(full),"fully trained","ok"),stat(String(gaps),"training to do",gaps?"warn":"ok"));
   $("#tStats").hidden=!list.length;
   const box=$("#tList");box.replaceChildren();
-  if(!list.length)box.append(el("div",{class:"empty",text:"No one listed yet. Add each member of staff with the dates they were trained."}));
+  if(!list.length)box.append(el("div",{class:"empty",text:S.role==="staff"?"No one listed yet. Tap My training record to add yours.":"No one listed yet. Add each member of staff with the dates they were trained."}));
+  const mine=myStaff(),mp=$("#tMine");
+  mp.hidden=S.role!=="staff"||ro()||formOpen.staff||!!(mine&&mine.signed&&mine.signed.topics===signKey(mine.topics)&&!siteTopics().some(([k])=>!(mine.topics&&mine.topics[k])));
+  if(!mp.hidden)$("#tMineText").textContent=mine?"Fill in any training dates still missing, choose the sites you work at, and sign your record.":"Add your training record: the dates you were trained, the sites you work at, and your signature.";
   for(const p of list){
     const left=todo(p),done=TOPICS.length-left.length;
     box.append(xrow("t"+p.id,{
       lead:ringEl(done,TOPICS.length),title:p.name,
-      sub:[p.role,left.length?`${left.length} to do`:"All training done"].filter(Boolean).join(" · "),
+      sub:[p.role,left.length?`${left.length} to do`:"All training done",Object.keys(p.topics||{}).length?(p.signed&&p.signed.topics===signKey(p.topics)?"Signed":"Not signed"):""].filter(Boolean).join(" · "),
       right:[left.length?el("span",{class:"pill warn",text:`${done}/${TOPICS.length}`}):el("span",{class:"pill ok",text:"Trained"})],
       details:[el("ul",{class:"topics"},...TOPICS.map(([k,l])=>{const t=p.topics&&p.topics[k];
           return el("li",{class:t?"on":""},el("span",{class:"badge "+(t?"done":"")},t?svgi(ICON.check):""),el("span",{class:"t"},el("b",{text:l}),el("span",{class:"s",text:t?"Trained "+short(t.date):"Not yet"})),
-            t||mro()?null:el("button",{class:"btn ghost sm",type:"button",onclick:()=>trainedToday(p,k)},"Trained today"))})),
-        xfacts([["Started",p.start?short(p.start):""],["Sites",Array.isArray(p.sites)&&p.sites.length>1?p.sites.map(x=>siteOf(x).name).join(", "):""],["Notes",p.notes]]),
-        mro()?null:el("div",{class:"row"},el("button",{class:"btn ghost sm",type:"button",onclick:()=>editStaff(p)},"Edit record"))]}));
+            t||!canEditStaff(p)?null:el("button",{class:"btn ghost sm",type:"button",onclick:()=>trainedToday(p,k)},"Trained today"))})),
+        xfacts([["Started",p.start?short(p.start):""],["Sites",Array.isArray(p.sites)&&p.sites.length?p.sites.map(x=>siteOf(x).name).join(", "):""],
+          ["Signed",p.signed&&p.signed.topics===signKey(p.topics)?`${p.signed.name||nameOf(p.signed.by)}, ${short(iso(new Date(p.signed.at)))}`:(Object.keys(p.topics||{}).length?"Not signed yet":"")],["Notes",p.notes]]),
+        canEditStaff(p)?el("div",{class:"row"},el("button",{class:"btn ghost sm",type:"button",onclick:()=>editStaff(p)},isMine(p)&&S.role==="staff"?"Fill in and sign":"Edit record")):null]}));
   }
   const mx=$("#tMatrix");mx.replaceChildren();
   if(list.length){
@@ -1823,7 +1845,7 @@ function renderStaff(){
     mx.append(el("div",{class:"scroll"},el("table",{class:"matrix"},el("thead",{},head),tb)));
   }
   mx.closest("section").hidden=!list.length;
-  $("#tFormPanel").hidden=mro()||!formOpen.staff;
+  $("#tFormPanel").hidden=ro()||!formOpen.staff;
 }
 
 /* ---------- allergens ---------- */
@@ -2436,7 +2458,7 @@ const NAV=[
   {id:"deliveries",t:"Deliveries",grp:"records",ic:"deliveries",tile:"indigo"},{id:"maintenance",t:"Maintenance",grp:"records",ic:"maintenance",tile:"purple"},
   {id:"eho",t:"Last EHO inspection report",grp:"manage",ic:"eho",tile:"green"},{id:"plans",t:"HACCP & risk",grp:"manage",ic:"plans",tile:"purple"},
   {id:"suppliers",t:"Suppliers",grp:"manage",ic:"suppliers",tile:"orange"},{id:"contacts",t:"Contacts",grp:"manage",ic:"contacts",tile:"green"},
-  {id:"staff",t:"Staff training",grp:"manage",ic:"staff",tile:"teal"},{id:"onboarding",t:"Onboarding",grp:"manage",ic:"onboarding",tile:"indigo"},
+  {id:"staff",t:"Staff training",grp:"records",ic:"staff",tile:"teal"},{id:"onboarding",t:"Onboarding",grp:"manage",ic:"onboarding",tile:"indigo"},
   {id:"setup",t:"Setup",grp:"admin",ic:"setup",tile:"grey",sub:"Checks, fridges, opening days and sections"},
 ];
 const navOf=id=>NAV.find(n=>n.id===id);

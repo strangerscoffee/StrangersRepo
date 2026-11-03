@@ -95,7 +95,9 @@ The page writes these with nested `update`s such as `{temps:{u1:{am:{v:3.2,by,at
 
 **Saved to several sites.** Documents in `extras`, `cleaning`, `plans`, `suppliers`, `contacts`, `onboarding`, `allergens` and `allergenDocs` may also carry `linkId` (the same on every copy) and `sites:[siteIds]` (where it was last sent). Saving with sites ticked writes a copy at each one: the copy with the same `linkId` is replaced (for `extras` and `cleaning` only the item's own fields are updated, so each site keeps its own `lastAt`, `lastBy` and `log`); otherwise a new one is added. Suppliers, contacts, allergen items and tasks saved before linking are matched by name; HACCP & risk, onboarding documents and allergen PDFs only by `linkId`. Removing deletes the copy at the current site only. Allergen PDF copies share one `assetId`; the stored file is deleted once no site's `allergenDocs` refers to it.
 
-**`staff/<id>`**: `name, role, start, topics:{<topic>:{date,by}}, notes, personId, sites:[siteIds], at`
+**`staff/<id>`**: `name, role, start, topics:{<topic>:{date,by}}, notes, personId, sites:[siteIds], signed?:{by,name,at,topics}, at`
+
+Records → Staff training. Managers and admins write anyone's record; staff only the one in their own name (matched case-insensitively against their account name, before and after the change) and never delete one. `sites` is where the person works: saving writes a copy at each ticked site. `signed` is the person confirming their own dates; its `topics` is the dated topics as `key=YYYY-MM-DD` joined by commas, sorted, so a signature counts only while those dates are unchanged (the page shows "Not signed" otherwise, and "Trained today" clears it).
 
 Training topics (`<topic>`): `hygiene`, `cross`, `cleaning`, `chilling`, `cooking`, `allergens`, `diary`, `l2`. A site's `trainingOff` (set from Staff training → Topics for this site) lists the topics it doesn't use: they're hidden there and not counted as training to do, and any dates already in `topics` are kept.
 

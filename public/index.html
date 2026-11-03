@@ -354,10 +354,16 @@
       <div class="row applyall"><label class="label" for="tAllDate">Same date for every topic</label><input type="date" id="tAllDate"><button class="btn ghost sm" type="button" id="tAllApply">Apply to all topics</button></div>
       <div class="fields" id="tTopics"></div>
       <div class="field"><label class="label" for="tNotes">Notes</label><textarea id="tNotes" placeholder="e.g. Level 2 certificate from CIEH, expires Oct 2029."></textarea></div>
-      <div class="label">Save to sites</div>
+      <div class="label">Sites I work at</div>
       <div class="toggles" id="tSites"></div>
-      <p class="note">The record is saved at every ticked site, replacing that person's record there. Unticking a site doesn't remove them from it; use Remove person on that site's Staff training tab.</p>
+      <p class="note">The record is saved at every ticked site, replacing that person's record there. Unticking a site doesn't remove the record from it.</p>
+      <div class="toggles signbox" id="tSignBox" hidden><label for="tSign"><input type="checkbox" id="tSign"><span>I confirm I was trained on each topic above on the date shown, and I understand the safe methods.</span></label></div>
       <div class="row"><button class="btn" id="tSave">Save training record</button><button class="btn ghost" id="tCancel" hidden>Cancel edit</button><button class="btn ghost danger" id="tDelete" hidden>Remove person</button><span class="by" id="tMsg"></span></div>
+    </section>
+    <section class="panel" id="tMine" hidden>
+      <h2>Your training record</h2>
+      <p class="note" id="tMineText"></p>
+      <div class="row"><button class="btn" type="button" id="tMineGo">Fill in and sign</button></div>
     </section>
     <p class="note intro">The date each person was trained on each safe method. Train new staff before they handle food, and refresh when methods change.</p>
     <section class="panel" id="tImport" hidden>

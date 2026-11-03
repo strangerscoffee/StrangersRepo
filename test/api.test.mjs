@@ -121,6 +121,17 @@ test("roles: staff record entries but can't change manager sections or use admin
     assert.equal(r.status, 403, path);
     assert.equal(r.body.code, "permission_denied");
   }
+  // Staff training: staff fill in and sign their own record only, and never remove one.
+  assert.equal((await db("set", { path: "sites/asg/staff/own", data: { name: "alex  brown", topics: {} } }, STAFF)).status, 200, "own record");
+  assert.equal((await db("update", { path: "sites/asg/staff/own", patch: { signed: { by: "web:Alex Brown" } } }, STAFF)).status, 200, "sign own record");
+  for (const [op, body] of [
+    ["update", { path: "sites/asg/staff/own", patch: { name: "Sam Patel" } }],
+    ["delete", { path: "sites/asg/staff/own" }],
+    ["set", { path: "sites/asg/staff/other", data: { name: "Sam Patel" } }],
+  ]) assert.equal((await db(op, body, STAFF)).body.code, "permission_denied", op + " " + JSON.stringify(body));
+  assert.equal((await db("set", { path: "sites/asg/staff/other", data: { name: "Sam Patel" } })).status, 200, "managers write anyone's");
+  for (const [op, body] of [["set", { path: "sites/asg/staff/other", data: { name: "Alex Brown" } }], ["update", { path: "sites/asg/staff/other", patch: { topics: {} } }]])
+    assert.equal((await db(op, body, STAFF)).body.code, "permission_denied", "can't take over someone else's record: " + op);
   assert.equal((await db("get", { path: "sites/cafe/settings/main" }, STAFF)).status, 200, "staff can still read");
   assert.equal((await admin("GET", "users", undefined, STAFF)).status, 403);
   // Everyone signed in can list the team (names and roles, never usernames); signed out can't.

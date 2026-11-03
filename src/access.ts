@@ -59,6 +59,20 @@ export function requireWrite(u: User, path: unknown): void {
   }
 }
 
+/* Staff training: staff fill in and sign their own record. A staff member may create or change a staff/<id>
+   document only when it is in their own name (before and after the change), and may never delete one. Managers and
+   admins are unaffected. Everything else in MANAGER_COLLECTIONS stays manager-only. */
+export const isStaffRecordPath = (path: unknown) => typeof path === "string" && path.split("/").slice(-2, -1)[0] === "staff";
+const sameName = (a: unknown, b: string) =>
+  typeof a === "string" && a.trim().toLowerCase().replace(/\s+/g, " ") === b.trim().toLowerCase().replace(/\s+/g, " ");
+export function requireOwnStaffRecord(u: User, op: "set" | "update" | "delete", existingName: unknown, exists: boolean, nextName: unknown): void {
+  const ok =
+    op !== "delete" &&
+    (!exists || sameName(existingName, u.name)) &&
+    (op === "set" ? sameName(nextName, u.name) : nextName === undefined || sameName(nextName, u.name));
+  if (!ok) throw new ApiError(403, "permission_denied", "Staff can only fill in their own training record.");
+}
+
 const WINDOW_MS = 15 * 60 * 1000;
 
 /** Counts a write against the caller's IP; throws rate_limited once over the limit for this 15-minute window. */
