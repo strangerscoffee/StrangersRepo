@@ -520,3 +520,18 @@ table.rk-grid .rk-corner{font-size:10px;width:40px}
 #clList .lrow{cursor:default;gap:8px;box-sizing:border-box}
 #clList .lrow .t{min-width:0}
 #clList .lrow .btn,#clList .lrow .pill{flex:none}
+
+/* Allergens: Drinks and Food sections */
+.algsec{display:grid;gap:10px}
+.algsec+.algsec{margin-top:14px}
+.algsec h2{margin:0}
+.algsec .note{margin:0}
+.algsum{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:8px}
+.algsum-box{border-radius:16px;padding:10px 12px;display:grid;gap:6px}
+.algsum-box .label{margin:0}
+.algsum-box.all{background:var(--bad-bg);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--bad) 35%,transparent)}
+.algsum-box.all .label{color:var(--bad)}
+.algsum-box.none{background:var(--sunk)}
+.algsum-box .chips{display:flex;flex-wrap:wrap;gap:4px}
+.agn{display:inline-block;padding:3px 8px;border-radius:8px;font-size:12px;font-weight:600;border:1px solid var(--line);color:var(--fg)}
+#algMatrix h3{margin:12px 0 4px}

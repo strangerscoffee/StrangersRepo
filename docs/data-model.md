@@ -54,7 +54,7 @@ units:[{id,name,kind:"fridge"|"freezer"}]
 opening|closing|weekly:[{id,t,off?:true,from?}]     // checks; off = turned off at this site; from = YYYY-MM-DD it counts from
 closedDays:[0..6]   // 0 = Sunday
 hide:{<tab>:true}   // sections not used at this site
-proveOff:[<method>]  trainingOff:[<topic>]  info:{address,manager,note}  startDate  startSet?
+proveOff:[<method>]  trainingOff:[<topic>]  allergenSections?  info:{address,manager,note}  startDate  startSet?
 updatedBy, updatedAt, publishedAt?, publishedFrom?
 ```
 A check's `from` is the day it was added (saved in Setup, or published to the site) or switched back on. Days before it don't include that check, so adding checks never makes past days incomplete. Checks without `from` have always applied. End-of-week checks count from the week that contains their `from` date.
@@ -85,7 +85,7 @@ The page writes these with nested `update`s such as `{temps:{u1:{am:{v:3.2,by,at
 
 **`proveit/<id>`**: `date, method, food, reading, unit, pass, action, by, at`
 
-**`allergens/<id>`**: `name, source, contains:[allergen names], notes, by, at, importedFrom?`
+**`allergens/<id>`**: `name, source, contains:[allergen names], notes, kind? ("drink"|"food"), by, at, importedFrom?`. When a site separates allergens into Drinks and Food (settings `allergenSections`; on by default at the Cafe), `kind` puts the item in a section; items without one are drinks.
 
 **`allergenDocs/<id>`**: `title, note, fileName, assetId, size, by, at`. `assetId` is the PDF's key in the KV namespace (`FILES`), served at `/_blob/<assetId>`. No longer uploaded: the allergen matrix PDF is generated on the device from `allergens`. PDFs uploaded before are still listed (Open, Remove) until removed.
 
