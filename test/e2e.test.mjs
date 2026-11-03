@@ -468,7 +468,7 @@ test("staff journey on the real page", async () => {
   await page.locator("#avatarBtn", { hasText: "AB" }).waitFor();
   assert.deepEqual(await accountMenu(page), ["Switch person", "Set a quick PIN", "Change password", "Sign out"]);
   await page.locator("#tabbar .tab", { hasText: "Records" }).click();
-  assert.deepEqual(await page.locator("#recordsHub .lrow b").allTextContents(), ["Extra checks", "Cleaning", "Prove it", "Allergens", "Temperature log", "4-weekly review", "Deliveries", "Maintenance"]);
+  assert.deepEqual(await page.locator("#recordsHub .lrow b").allTextContents(), ["Extra checks", "Cleaning", "Prove it", "Allergens", "Temperature log", "4-weekly review", "Deliveries", "Maintenance", "Staff training"]);
 
   // Staff check a delivery: a supplier from the Roastery's list, cream too warm, so it's rejected with a reason.
   const alexCookie = (await ctx.cookies()).map((c) => `${c.name}=${c.value}`).join("; ");
@@ -561,7 +561,7 @@ test("staff journey on the real page", async () => {
   for (const t of ["Food safety records", "Daily diary", "Corrective actions", "Staff training", "Allergen matrix"])
     assert.ok(inPdf.includes(Buffer.from(t, "latin1").toString("hex")), "PDF has " + t);
   await page.locator("#tabbar .tab", { hasText: "More" }).click();
-  assert.deepEqual(await page.locator("#moreHub .lrow b").allTextContents(), ["Last 4 weeks", "EHO inspection mode", "Last EHO inspection report", "HACCP & risk", "Suppliers", "Contacts", "Staff training", "Onboarding", "Switch person", "Set a quick PIN", "Change password", "Sign out"]);
+  assert.deepEqual(await page.locator("#moreHub .lrow b").allTextContents(), ["Last 4 weeks", "EHO inspection mode", "Last EHO inspection report", "HACCP & risk", "Suppliers", "Contacts", "Onboarding", "Switch person", "Set a quick PIN", "Change password", "Sign out"]);
   assert.equal(await page.locator("#moreHub .label", { hasText: "Admin" }).count(), 0, "staff don't see Setup");
   // Staff can open the management sections to read them, but there's nothing to change.
   await page.locator("#moreHub .lrow", { hasText: "Suppliers" }).click();
@@ -578,6 +578,28 @@ test("staff journey on the real page", async () => {
   await openSection(page, "staff");
   assert.equal(await page.locator("#tTopicsPanel").isHidden(), true);
   assert.equal(await page.locator("#tImport").isHidden(), true);
+  // Staff training is a record staff fill in and sign themselves, choosing the sites they work at.
+  await page.locator("#tList .xrow", { hasText: "Jo Smith" }).locator(".xmain").click();
+  assert.equal(await page.locator("#tList .xrow", { hasText: "Jo Smith" }).locator(".btn", { hasText: /Edit record|Trained today/ }).count(), 0, "can't change someone else's record");
+  await page.locator("#tMine").waitFor();
+  await page.click("#tMineGo");
+  assert.equal(await page.inputValue("#tName"), "Alex Brown");
+  assert.equal(await page.locator("#tName").getAttribute("readonly"), "", "name is locked to their own");
+  assert.equal(await page.locator("#tDelete").isHidden(), true);
+  await page.fill("#tAllDate", "2026-10-22");
+  await page.click("#tAllApply");
+  await page.locator("#tSites label", { hasText: "Cafe" }).click();
+  await page.click("#tSave");
+  assert.match(await page.locator("#tMsg").innerText(), /sign your training record/);
+  await page.locator("#tSignBox label").click();
+  await page.click("#tSave");
+  await page.locator("#tList .xrow", { hasText: "Alex Brown" }).locator(".s", { hasText: /· Signed$/ }).waitFor();
+  const alex = (await api("query", { path: "staff" })).docs.find((d) => d.data.name === "Alex Brown").data;
+  assert.equal(alex.signed.by, "web:Alex Brown");
+  assert.deepEqual(alex.sites.sort(), ["cafe", "roastery"]);
+  assert.ok(Object.values(alex.topics).every((t) => t.date === "2026-10-22"));
+  assert.ok((await api("query", { path: "sites/cafe/staff" })).docs.some((d) => d.data.name === "Alex Brown" && d.data.signed), "saved to the Cafe too");
+  assert.equal(await page.locator("#tMine").isHidden(), true, "prompt gone once signed");
   // The 4-weekly review is a record staff fill in: overdue here (the diary started 1 Sep), so Today reminds them.
   await openSection(page, "day");
   const revAlert = page.locator("#dayAlerts .alert", { hasText: "4-weekly review overdue" });

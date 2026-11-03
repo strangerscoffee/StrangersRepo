@@ -2,7 +2,7 @@
 import { ApiError, Env, SQL_NOW_MS, invalid, readJson, json } from "./http";
 import { parseCollectionPath, parseWebDocPath, encodeDoc, deepMerge } from "./paths";
 import { User } from "./auth";
-import { recordId, requireWrite } from "./access";
+import { isStaffRecordPath, recordId, requireOwnStaffRecord, requireWrite } from "./access";
 
 const BUMP_SEQ = "UPDATE meta SET v = v + 1 WHERE k = 'seq'";
 const CUR_SEQ = "(SELECT v FROM meta WHERE k = 'seq')";
@@ -210,6 +210,16 @@ export async function profiles(env: Env, ids: unknown) {
 const MAX_BODY = 300 * 1024;
 
 /** Routes /api/db/<op> for a signed-in person. Writes are checked against their role. */
+/** Write check: the role rules in access.ts, plus staff writing their own Staff training record. */
+async function requireWriteDoc(env: Env, user: User, op: "set" | "update" | "delete", path: unknown, nextName: unknown) {
+  if (user.role === "staff" && isStaffRecordPath(path)) {
+    const cur = await getDoc(env, parseWebDocPath(path, "write").path);
+    requireOwnStaffRecord(user, op, cur.data?.name, cur.exists, nextName);
+    return;
+  }
+  requireWrite(user, path);
+}
+
 export async function handleDb(req: Request, env: Env, op: string, user: User): Promise<Response> {
   if (req.method !== "POST") throw new ApiError(405, "invalid_argument", "Use POST.");
   const body = await readJson<any>(req, op === "poll" ? 64 * 1024 : MAX_BODY);
@@ -223,15 +233,15 @@ export async function handleDb(req: Request, env: Env, op: string, user: User): 
     case "profiles":
       return json(await profiles(env, body.ids));
     case "set":
-      requireWrite(user, body.path);
+      await requireWriteDoc(env, user, "set", body.path, body.data?.name);
       await setDoc(env, body.path, body.data, recordId(user));
       return json({ ok: true });
     case "update":
-      requireWrite(user, body.path);
+      await requireWriteDoc(env, user, "update", body.path, body.patch?.name);
       await updateDoc(env, body.path, body.patch, recordId(user));
       return json({ ok: true });
     case "delete":
-      requireWrite(user, body.path);
+      await requireWriteDoc(env, user, "delete", body.path, undefined);
       await deleteDoc(env, body.path, recordId(user));
       return json({ ok: true });
   }
