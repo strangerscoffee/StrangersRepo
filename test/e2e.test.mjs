@@ -561,7 +561,23 @@ test("staff journey on the real page", async () => {
   for (const t of ["Food safety records", "Daily diary", "Corrective actions", "Staff training", "Allergen matrix"])
     assert.ok(inPdf.includes(Buffer.from(t, "latin1").toString("hex")), "PDF has " + t);
   await page.locator("#tabbar .tab", { hasText: "More" }).click();
-  assert.deepEqual(await page.locator("#moreHub .lrow b").allTextContents(), ["Last 4 weeks", "EHO inspection mode", "Switch person", "Set a quick PIN", "Change password", "Sign out"]);
+  assert.deepEqual(await page.locator("#moreHub .lrow b").allTextContents(), ["Last 4 weeks", "EHO inspection mode", "Last EHO inspection report", "HACCP & risk", "Suppliers", "Contacts", "Staff training", "Onboarding", "4-weekly review", "Switch person", "Set a quick PIN", "Change password", "Sign out"]);
+  assert.equal(await page.locator("#moreHub .label", { hasText: "Admin" }).count(), 0, "staff don't see Setup");
+  // Staff can open the management sections to read them, but there's nothing to change.
+  await page.locator("#moreHub .lrow", { hasText: "Suppliers" }).click();
+  await page.locator("#sList").getByText("Northern Dairy").first().waitFor();
+  assert.equal(await page.locator("#addBtn").isHidden(), true, "no Add for staff");
+  await page.locator("#sList .xrow", { hasText: "Northern Dairy" }).locator(".xmain").click();
+  assert.equal(await page.locator("#sList .btn", { hasText: "Edit supplier" }).count(), 0, "no Edit for staff");
+  await openSection(page, "plans");
+  await page.locator("#plList .lrow").first().click();
+  await page.locator("#planEditView .riskkey, #planEditView .doc-table").first().waitFor();
+  assert.equal(await page.locator("#plSaveBtn").count(), 0, "plans are read-only for staff");
+  assert.equal(await page.locator("#planEditView textarea:not([disabled])").count(), 0);
+  await page.locator("#plBack").click();
+  await openSection(page, "staff");
+  assert.equal(await page.locator("#tTopicsPanel").isHidden(), true);
+  assert.equal(await page.locator("#tImport").isHidden(), true);
   const refused = await fetch(`${srv.base}/api/db/set`, { method: "POST", headers: { "content-type": "application/json", cookie: (await ctx.cookies()).map((c) => `${c.name}=${c.value}`).join("; ") },
     body: JSON.stringify({ path: "suppliers/x", data: { name: "X" } }) });
   assert.equal((await refused.json()).code, "permission_denied");
