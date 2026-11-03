@@ -279,7 +279,7 @@ const callBtn=(n,label)=>n?el("a",{class:"call",href:"tel:"+String(n).replace(/[
 const FORMS={
   extras:{panel:"#xFormPanel",add:"Add check",reset:()=>editTask("extras",null)},
   cleaning:{panel:"#kFormPanel",add:"Add job",reset:()=>editTask("cleaning",null)},
-  allergens:{panel:"#algFormPanel",add:"Add item",reset:()=>editAlg(null)},
+  allergens:{panel:"#algFormPanel",add:"Add item",reset:()=>{algNewKind="drink";editAlg(null)}},
   suppliers:{panel:"#sFormPanel",add:"Add supplier",reset:()=>editSupplier(null)},
   contacts:{panel:"#cFormPanel",add:"Add contact",reset:()=>editContact(null)},
   staff:{panel:"#tFormPanel",add:"Add person",reset:()=>editStaff(null)},
@@ -1824,37 +1824,62 @@ function renderStaff(){
 const algFilter=new Set();
 const ALG_SHORT={"Cereals with gluten":"Gluten","Sulphur dioxide":"Sulphites"};
 const algShort=a=>ALG_SHORT[a]||a.replace(/ \(.*\)$/,"");
+let algNewKind="drink";
 function renderAllergens(){
-  const items=[...S.allergens].sort((a,b)=>a.name.localeCompare(b.name));
+  const items=[...S.allergens].sort((a,b)=>a.name.localeCompare(b.name)),R=ro(),secOn=algSectionsOn();
   // "Free from" chips: tap allergens a customer must avoid, and the list shows only what's safe.
   const fb=$("#algFilter");fb.replaceChildren(el("span",{class:"s",text:"Free from"}));
   for(const a of ALLERGENS)fb.append(el("button",{type:"button",class:"fchip"+(algFilter.has(a)?" on":""),"aria-pressed":String(algFilter.has(a)),
     onclick:()=>{algFilter.has(a)?algFilter.delete(a):algFilter.add(a);renderAllergens()}},algShort(a)));
   const q=normT($("#algSearch").value);
-  const shown=items.filter(it=>(!q||normT(it.name+" "+(it.source||"")).includes(q))&&![...algFilter].some(a=>(it.contains||[]).includes(a)));
-  const box=$("#algList");box.replaceChildren();
-  if(!items.length)box.append(el("div",{class:"empty",text:`No menu items yet.${ro()?"":" Tap Add item to add your first, then tick the allergens it contains."}`}));
-  else if(!shown.length)box.append(el("div",{class:"empty",text:algFilter.size?`Nothing on the list is free from ${[...algFilter].map(algShort).join(", ")}.`:"No items match."}));
-  for(const it of shown){
-    const has=it.contains||[];
-    box.append(xrow("a"+it.id,{
+  const match=it=>(!q||normT(it.name+" "+(it.source||"")).includes(q))&&![...algFilter].some(a=>(it.contains||[]).includes(a));
+  const row=it=>{const has=it.contains||[];
+    return xrow("a"+it.id,{
       title:it.name,sub:[it.source,it.notes].filter(Boolean).join(" · "),
       right:[el("span",{class:"agl"},...(has.length?has.map(a=>el("span",{class:"ag",text:algShort(a)})):[el("span",{class:"pill ok",text:"None of the 14"})]))],
       details:[xfacts([["Contains",has.join(", ")||"None of the 14 allergens"],["Notes",it.notes],["Source",it.source],["Checked",it.at?new Date(it.at).toLocaleDateString("en-GB")+(it.by?", "+nameOf(it.by):""):""],["Copied from",it.importedFrom?siteOf(it.importedFrom).name:""]]),
-        ro()?null:el("div",{class:"row"},el("button",{class:"btn ghost sm",type:"button",onclick:()=>editAlg(it)},"Edit item"))]}));
-  }
-  const mx=$("#algMatrix");mx.replaceChildren();
-  if(items.length){
+        R?null:el("div",{class:"row"},el("button",{class:"btn ghost sm",type:"button",onclick:()=>editAlg(it)},"Edit item"))]})};
+  const matrix=list=>{
     const head=el("tr",{},el("th",{text:"Item"}),...ALLERGENS.map(a=>el("th",{class:"al",text:algShort(a)})));
     const tb=el("tbody");
-    for(const it of items){const h=new Set(it.contains||[]);
+    for(const it of list){const h=new Set(it.contains||[]);
       tb.append(el("tr",{},el("td",{},el("b",{text:it.name}),it.notes?el("div",{class:"by",text:it.notes}):null),...ALLERGENS.map(a=>el("td",{class:"c"},h.has(a)?el("span",{class:"y",title:a,text:"●"}):""))))}
-    mx.append(el("div",{class:"scroll"},el("table",{class:"matrix"},el("thead",{},head),tb)));
+    return el("div",{class:"scroll"},el("table",{class:"matrix"},el("thead",{},head),tb));
+  };
+  const summary=(list,k)=>{const sm=algSummary(list);return el("div",{class:"algsum"},
+    el("div",{class:"algsum-box"+(sm.inAll.length?" all":" none")},el("div",{class:"label",text:k==="food"?"In every item":"In every drink"}),el("div",{class:"chips"},...(sm.inAll.length?sm.inAll.map(a=>el("span",{class:"ag",text:a})):[el("span",{class:"s",text:"None"})]))),
+    el("div",{class:"algsum-box none"},el("div",{class:"label",text:"Not used"}),el("div",{class:"chips"},...(sm.inNone.length?sm.inNone.map(a=>el("span",{class:"agn",text:a})):[el("span",{class:"s",text:"None"})]))))};
+  const box=$("#algList");box.replaceChildren();box.classList.toggle("glass",!secOn);box.classList.toggle("list",!secOn);
+  const mx=$("#algMatrix");mx.replaceChildren();
+  if(!secOn){
+    const shown=items.filter(match);
+    if(!items.length)box.append(el("div",{class:"empty",text:`No menu items yet.${R?"":" Tap Add item to add your first, then tick the allergens it contains."}`}));
+    else if(!shown.length)box.append(el("div",{class:"empty",text:algFilter.size?`Nothing on the list is free from ${[...algFilter].map(algShort).join(", ")}.`:"No items match."}));
+    for(const it of shown)box.append(row(it));
+    if(items.length)mx.append(matrix(items));
+  }else{
+    for(const[k,title]of ALG_SECTIONS){
+      const list=items.filter(it=>algKind(it)===k),shown=list.filter(match);
+      const add=R?null:el("button",{class:"btn ghost sm",type:"button",onclick:()=>{algNewKind=k;editAlg(null);setForm("allergens",true)}},k==="food"?"Add food":"Add drink");
+      const sec=el("section",{class:"algsec",id:"algsec-"+k},el("div",{class:"row spread"},el("h2",{text:title}),el("div",{class:"row",style:"gap:8px"},el("span",{class:"pill",text:`${list.length} item${list.length===1?"":"s"}`}),add)));
+      if(k==="food"&&list.length)sec.append(el("p",{class:"note",text:algFoodNote()}));
+      if(list.length)sec.append(summary(list,k));
+      const lb=el("div",{class:"list glass"});
+      if(!list.length){
+        lb.append(el("div",{class:"empty",text:`No ${title.toLowerCase()} listed yet.`}));
+        if(k==="food"&&S.site==="cafe"&&!R)lb.append(el("div",{class:"row",style:"padding:0 14px 14px"},el("button",{class:"btn",type:"button",onclick:e=>addCafeBakes(e.currentTarget)},`Add the ${CAFE_BAKES.length} cakes & bakes from the allergen sheet`)));
+      }else if(!shown.length)lb.append(el("div",{class:"empty",text:algFilter.size?`Nothing here is free from ${[...algFilter].map(algShort).join(", ")}.`:"No items match."}));
+      for(const it of shown)lb.append(row(it));
+      sec.append(lb);box.append(sec);
+      if(list.length)mx.append(el("h3",{text:title}),matrix(list));
+    }
   }
   mx.closest("section").hidden=!items.length;
-  $("#algFormPanel").hidden=ro()||!formOpen.allergens;
+  $("#algFormPanel").hidden=R||!formOpen.allergens;
 }
+function setAlgKind(k){const box=$("#algKind");box.dataset.v=k;for(const b of box.querySelectorAll("button"))b.setAttribute("aria-pressed",String(b.dataset.k===k))}
 function buildAlgChecks(){
+  for(const b of document.querySelectorAll("#algKind button"))b.addEventListener("click",()=>setAlgKind(b.dataset.k));
   const c=$("#algChecks");
   ALLERGENS.forEach((a,i)=>{const id="alg_"+i;c.append(el("label",{for:id},el("input",{type:"checkbox",id,value:a}),a))});
 }
@@ -1865,6 +1890,7 @@ function editAlg(it){
   const has=new Set(it?it.contains||[]:[]);
   document.querySelectorAll("#algChecks input").forEach(cb=>cb.checked=has.has(cb.value));
   $("#algCancel").hidden=true;$("#algDelete").hidden=!it;algPick.set(it&&it.sites);
+  $("#algKindRow").hidden=!algSectionsOn();setAlgKind(it?algKind(it):(algNewKind||"drink"));
   setForm("allergens",!!it);
 }
 
@@ -1909,6 +1935,40 @@ function pdfTable(f,cols,rows,opts){f.table(cols.map(c=>({label:c.l,w:c.w,flex:c
 
 /* ---------- allergen matrix PDF ---------- */
 const allergenItems=()=>[...S.allergens].sort((a,b)=>a.name.localeCompare(b.name));
+// Drinks and Food: a site can keep its allergen items in two sections (on by default at the Cafe; Setup turns it on
+// or off per site). An item's kind is "food" or "drink"; items without one are drinks.
+const ALG_SECTIONS=[["drink","Drinks"],["food","Food"]];
+const algSectionsOn=(s,site)=>{s=s||S.settings;return s.allergenSections!=null?!!s.allergenSections:(site||S.site)==="cafe"};
+const algKind=it=>it&&it.kind==="food"?"food":"drink";
+// Shown once above the Food section (and in the PDF and inspection mode). The Cafe's own wording comes from its sheet.
+const algFoodNote=()=>S.site==="cafe"
+  ?"Allergy? Ask us first. Our cakes and pastries are unwrapped and are kept and served together, so allergens can pass between them: every product is marked with every allergen we handle (cereals containing gluten: wheat, oats; tree nuts: hazelnuts, walnuts, almonds, pecan nuts). Do not serve to anyone allergic to a marked allergen. Information comes from our suppliers' allergen specifications and is checked against product labels on delivery. Recipes can change, so always ask."
+  :"Food kept and served together can pass allergens between it. If a customer has an allergy or intolerance, check here and ask a manager before serving.";
+// Allergens found in every item of a list, and the ones in none of them.
+function algSummary(items){
+  const inAll=items.length?ALLERGENS.filter(a=>items.every(it=>(it.contains||[]).includes(a))):[];
+  const inNone=ALLERGENS.filter(a=>!items.some(it=>(it.contains||[]).includes(a)));
+  return{inAll,inNone};
+}
+// The Cafe's cakes & bakes from its allergen sheet (Cakesmiths and Anglia Culinary Suppliers), added in one tap.
+const CAFE_BAKES_CONTAINS=["Cereals with gluten","Eggs","Milk","Tree nuts","Peanuts","Sesame","Soya","Sulphites"];
+const CAFE_BAKES=[["Traditional Pastel de Nata","Cakesmiths · 7201"],["Candied Toffee Apple","Cakesmiths · 4171"],["Ultimate Carrot Traycake","Cakesmiths · 4065"],
+  ["Salted Caramel Brownie","Cakesmiths · 2065"],["Apple & Blackcurrant Crumblejack","Cakesmiths · 9025"],["Morello Cherry Blondie","Cakesmiths · 2191"],
+  ["S'mores Bar","Cakesmiths · 2293","Contains pork gelatine."],["Sticky Toffee with Biscoff® Spread","Cakesmiths · 4087"],["Pumpkin, Maple & Chai","Cakesmiths · 4140"],
+  ["Blackcurrant Ripple","Cakesmiths · 4162"],["Plain Croissant","Anglia Culinary Suppliers"],["Almond Croissant","Anglia Culinary Suppliers"],
+  ["Pain aux Raisins","Anglia Culinary Suppliers"],["Vegan Sausage Roll","Anglia Culinary Suppliers"],["Cheese Twist","Anglia Culinary Suppliers"]];
+async function addCafeBakes(btn){
+  if(ro())return;
+  const have=new Set(S.allergens.filter(i=>algKind(i)==="food").map(i=>normT(i.name)));
+  const todo=CAFE_BAKES.filter(([n])=>!have.has(normT(n)));
+  if(!todo.length){toast("They're all on the list already");return}
+  btn.disabled=true;btn.textContent="Adding…";let n=0;
+  for(const[name,source,extra]of todo){
+    const ok=await save(()=>C("allergens").add({name,source,contains:[...CAFE_BAKES_CONTAINS],notes:extra||"",kind:"food",by:S.me,at:Date.now()}));
+    if(ok)n++;
+  }
+  toast(`Added ${n} cakes & bakes to Food`);
+}
 const ALG_COLS=()=>[{l:"Menu item",w:165,bold:true},...ALLERGENS.map(a=>({l:a,w:27,align:"center",rotate:true})),{l:"Notes: may contain, swaps",flex:1}];
 const algRows=items=>items.map(it=>{const h=new Set(it.contains||[]);
   return[it.name,...ALLERGENS.map(a=>h.has(a)?{tick:true}:""),[it.notes,it.source?"Source: "+it.source:""].filter(Boolean).join("\n")]});
@@ -1921,7 +1981,15 @@ function allergenPdf(){
   const doc=P.create({landscape:true,title:`Allergen matrix - Strangers Coffee ${site.name}`,author:S.myName});
   const f=new P.Flow(doc,{footer:`Strangers Coffee ${site.name} · allergen matrix · made ${longNow()}`,
     header:pdfHeader("Allergen matrix",[`Strangers Coffee ${site.name} · ${addr}`,`The 14 allergens UK law requires you to declare · ${items.length} menu item${items.length===1?"":"s"}${last?" · last changed "+new Date(last).toLocaleDateString("en-GB",{day:"numeric",month:"long",year:"numeric"}):""}`])});
-  pdfTable(f,ALG_COLS(),algRows(items),{rotateHead:true,headH:96,size:8.5});
+  const secs=algSectionsOn()?ALG_SECTIONS.map(([k,t])=>[k,t,items.filter(it=>algKind(it)===k)]).filter(x=>x[2].length):[[null,"",items]];
+  secs.forEach(([k,title,list],i)=>{
+    if(i)f.startPage(false);
+    if(title)f.heading(`${title} allergens`,{size:14});
+    if(k==="food")f.para(algFoodNote(),{size:8.5,color:"#444444"}).gap(4);
+    if(title){const sm=algSummary(list);
+      f.facts([[k==="food"?"In every item":"In every drink",sm.inAll.join(", ")||"None"],["Not used",sm.inNone.join(", ")||"None"]],{size:8.5,labelW:100}).gap(4)}
+    pdfTable(f,ALG_COLS(),algRows(list),{rotateHead:true,headH:96,size:8.5});
+  });
   f.gap(10).para(ALG_KEY,{size:8.5,color:"#444444"});
   P.save(f.finish(),`Allergen matrix - Strangers ${site.name} - ${today()}.pdf`);
 }
@@ -2072,7 +2140,11 @@ function inspectSections(R){
     cols:[{l:"Date",w:80},{l:"Signed by",w:100},{l:"Changes reported",flex:1.4},{l:"Actions taken",flex:1.4}],
     rows:R.reviews.slice().sort((a,b)=>b.date.localeCompare(a.date)).map(r=>[pdfDate(r.date),fullName(r.by),REVIEW_QS.filter(([k])=>r.answers&&r.answers[k]&&r.answers[k].a==="Yes"&&k!=="methods").map(([k,q])=>q.replace(/\?$/,"")+(r.answers[k].d?": "+r.answers[k].d:"")).join("\n")||"None",r.notes||""]),
     empty:"No 4-weekly reviews in this period."});
-  out.push({id:"allergens",title:"Allergen matrix",intro:"The 14 allergens UK law requires you to declare.",cols:ALG_COLS(),rows:algRows(allergenItems()),empty:"No menu items listed.",matrix:true,after:ALG_KEY});
+  if(algSectionsOn()){
+    for(const[k,t]of ALG_SECTIONS){const list=allergenItems().filter(it=>algKind(it)===k),sm=algSummary(list);
+      out.push({id:"allergens-"+k,title:`Allergen matrix: ${t}`,intro:(k==="food"?algFoodNote()+" ":"")+`In every item: ${sm.inAll.join(", ")||"none"}. Not used: ${sm.inNone.join(", ")||"none"}.`,
+        cols:ALG_COLS(),rows:algRows(list),empty:`No ${t.toLowerCase()} listed.`,matrix:true,after:k==="food"?ALG_KEY:""});}
+  }else out.push({id:"allergens",title:"Allergen matrix",intro:"The 14 allergens UK law requires you to declare.",cols:ALG_COLS(),rows:algRows(allergenItems()),empty:"No menu items listed.",matrix:true,after:ALG_KEY});
   out.push({id:"suppliers",title:"Suppliers",
     cols:[{l:"Supplier",flex:1,bold:true},{l:"Supplies",flex:1.2},{l:"Contact",w:90},{l:"Phone",w:85},{l:"Hygiene rating",w:80},{l:"Notes",flex:1.2}],
     rows:S.suppliers.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(x=>[x.name,x.supplies||"",x.contact||"",x.phone||"",x.rating||"",x.notes||""]),empty:"No suppliers listed."});
@@ -2138,7 +2210,7 @@ function inspectPdf(){
   f.heading("Contents",{size:13}).para(secs.map((x,i)=>`${i+1}. ${x.title}${x.plan?` (${x.intro})`:""}`).join("\n"),{size:9});
   f.gap(6);
   secs.forEach((x,i)=>{
-    if(x.plan||x.id==="allergens")f.startPage(false);
+    if(x.plan||x.id==="allergens"||x.id==="allergens-drink"||x.id==="allergens-food")f.startPage(false);
     f.heading(`${i+1}. ${x.title}`,{size:13});
     if(x.intro)f.para(x.intro,{size:8.5,color:"#555555"}).gap(4);
     if(x.stats)f.facts(x.stats.map(([n,l])=>[n,l]),{labelW:70,size:10});
@@ -2544,7 +2616,7 @@ document.addEventListener("keydown",e=>{if(e.key==="Escape"&&!$("#sheetVeil").hi
 /* ---------- setup (per site) & publishing ---------- */
 let SE=null,setupDirty=false;
 const normT=t=>String(t||"").trim().toLowerCase().replace(/\s+/g," ");
-function setupDraft(){const s=S.settings;return JSON.parse(JSON.stringify({startDate:s.startDate||"",startAll:false,info:s.info||{},closedDays:s.closedDays,hide:s.hide,proveOff:s.proveOff,units:s.units,opening:s.opening,closing:s.closing,weekly:s.weekly}))}
+function setupDraft(){const s=S.settings;return JSON.parse(JSON.stringify({allergenSections:algSectionsOn(s),startDate:s.startDate||"",startAll:false,info:s.info||{},closedDays:s.closedDays,hide:s.hide,proveOff:s.proveOff,units:s.units,opening:s.opening,closing:s.closing,weekly:s.weekly}))}
 function sDirty(){if(!setupDirty){setupDirty=true;$("#setupBar").classList.remove("idle");$("#setupMsg").textContent="Unsaved changes for the "+curSite().name;renderPublish()}}
 function sharedHas(k,t){return !!S.shared&&(S.shared[k]||[]).some(c=>normT(c.t)===normT(t))}
 function renderSetup(){
@@ -2569,6 +2641,7 @@ function buildSetup(){
   const bind=(sel,key,def)=>{const n=$(sel);n.value=s.info[key]!=null?s.info[key]:(def||"");n.disabled=R;n.oninput=()=>{s.info[key]=n.value;sDirty()}};
   bind("#siAddr","address",site.addr);bind("#siManager","manager");bind("#siNote","note");
   const st=$("#siStart");st.value=s.startDate||"";st.disabled=R;st.oninput=()=>{s.startDate=st.value;s.startTouched=true;sDirty()};
+  const as=$("#siAlgSec");as.checked=!!s.allergenSections;as.disabled=R;as.onchange=()=>{s.allergenSections=as.checked;sDirty()};
   const sa=$("#siStartAll");sa.checked=!!s.startAll;sa.disabled=R;sa.onchange=()=>{s.startAll=sa.checked;sDirty()};
   toggleBox($("#siDays"),WEEKDAYS,k=>!s.closedDays.includes(k),(k,on)=>{s.closedDays=s.closedDays.filter(x=>x!==k);if(!on)s.closedDays.push(k)});
   toggleBox($("#siTabs"),OPT_TABS,k=>!s.hide[k],(k,on)=>{if(on)delete s.hide[k];else s.hide[k]=true});
@@ -2656,6 +2729,7 @@ async function saveSetup(){
     units:s.units.map(u=>({id:u.id,name:String(u.name||"").trim()||"Unnamed unit",kind:u.kind})),
     opening:cleanList(s.opening,S.settings.fresh?null:S.settings.opening),closing:cleanList(s.closing,S.settings.fresh?null:S.settings.closing),weekly:cleanList(s.weekly,S.settings.fresh?null:S.settings.weekly),updatedBy:S.me,updatedAt:Date.now()};
   if(s.startDate)next.startDate=s.startDate;
+  next.allergenSections=!!s.allergenSections;
   if(s.startTouched||s.startAll)next.startSet=true;
   if(!next.startDate)next.startDate=today();
   if(next.closedDays.length===7){$("#setupMsg").textContent="Leave at least one day open.";return}
@@ -2880,6 +2954,8 @@ $("#algSave").addEventListener("click",async()=>{
   const name=$("#algName").value.trim();if(!name){$("#algConfirm").textContent="Give the item a name first.";return}
   const contains=[...document.querySelectorAll("#algChecks input:checked")].map(c=>c.value);
   const body={name,source:$("#algSupplier").value.trim(),contains,notes:$("#algNotes").value.trim(),by:S.me,at:Date.now()};
+  const old=S.editAlg?S.allergens.find(x=>x.id===S.editAlg):null;
+  if(algSectionsOn())body.kind=$("#algKind").dataset.v||"drink";else if(old&&old.kind)body.kind=old.kind;
   const r=await multiSave("allergens",algPick.get(),body,{editId:S.editAlg,old:S.editAlg?S.allergens.find(x=>x.id===S.editAlg):null});
   if(r){$("#algConfirm").textContent="";toast(`Saved ${name}${r.where}.${r.warn}`);editAlg(null)}
 });

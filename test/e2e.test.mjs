@@ -255,6 +255,21 @@ test("staff journey on the real page", async () => {
   await page.locator("#algList .xrow", { hasText: "Almond croissant" }).waitFor();
   const alg = await api("query", { path: "sites/cafe/allergens" });
   assert.equal(alg.docs[0].data.name, "Almond croissant");
+  // The Cafe keeps Drinks and Food separately; the cakes & bakes from its allergen sheet go into Food in one tap.
+  assert.equal(alg.docs[0].data.kind, "drink", "added from the main Add button: a drink");
+  await page.locator("#algsec-food .btn", { hasText: "Add the 15 cakes & bakes" }).click();
+  await page.locator("#algsec-food .xrow", { hasText: "Cheese Twist" }).waitFor();
+  assert.equal(await page.locator("#algsec-food .xrow").count(), 15);
+  const bakes = (await api("query", { path: "sites/cafe/allergens" })).docs.filter((d) => d.data.kind === "food");
+  assert.equal(bakes.length, 15);
+  const smores = bakes.find((d) => d.data.name === "S'mores Bar").data;
+  assert.equal(smores.notes, "Contains pork gelatine.");
+  assert.equal(smores.source, "Cakesmiths · 2293");
+  assert.deepEqual([...smores.contains].sort(), ["Cereals with gluten", "Eggs", "Milk", "Peanuts", "Sesame", "Soya", "Sulphites", "Tree nuts"]);
+  const foodSum = await page.locator("#algsec-food .algsum").innerText();
+  assert.match(foodSum, /In every item[\s\S]*Peanuts/i);
+  assert.match(foodSum, /Not used[\s\S]*Celery[\s\S]*Mustard/i);
+  assert.equal(await page.locator("#algsec-food .btn", { hasText: "Add the 15 cakes" }).count(), 0, "import offered only while Food is empty");
   assert.equal(alg.docs[0].data.by, "web:Sam Patel");
   assert.deepEqual(alg.docs[0].data.sites, ["cafe", "asg"]);
   await assert.doesNotReject(waitFor(async () => {

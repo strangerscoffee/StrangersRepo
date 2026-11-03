@@ -265,6 +265,7 @@
         <div class="field"><label class="label" for="algName">Item name</label><input type="text" id="algName" placeholder="e.g. Banana bread slice"></div>
         <div class="field"><label class="label" for="algSupplier">Supplier or recipe source</label><input type="text" id="algSupplier" placeholder="e.g. Made in-house"></div>
       </div>
+      <div class="qa" id="algKindRow" hidden><span>Section</span><div class="seg" id="algKind" role="group" aria-label="Section"><button type="button" data-k="drink">Drinks</button><button type="button" data-k="food">Food</button></div></div>
       <div class="label">Contains</div>
       <div class="alg" id="algChecks"></div>
       <div class="field"><label class="label" for="algNotes">Notes (may contain, swaps, cross-contact)</label><textarea id="algNotes" placeholder="e.g. Made in a kitchen that handles nuts. Oat milk swap removes milk."></textarea></div>
@@ -411,6 +412,8 @@
       <div class="toggles" id="siTabs"></div>
       <div class="label">Prove it checks used at this site</div>
       <div class="toggles" id="siProve"></div>
+      <div class="label">Allergens</div>
+      <div class="toggles"><label for="siAlgSec"><input type="checkbox" id="siAlgSec">Separate allergens into Drinks and Food</label></div>
     </section>
     <section class="panel" id="closurePanel">
       <div class="row spread"><h2>Closures &amp; holidays</h2><span class="pill">Saved straight away</span></div>
