@@ -84,6 +84,10 @@ const S={site:(()=>{try{const s=localStorage.getItem("sfbb.site");return SITES.s
   date:today(),week:monday(today()),editAlg:null,editStaff:null,names:{},rev:{}};
 S.role="";S.myName="";
 const ro=()=>!S.canWrite||!S.db;
+// Everyone can open the management sections (suppliers, contacts, HACCP & risk, the last inspection, training,
+// onboarding, the 4-weekly review); only managers and admins can change them, as the Worker enforces.
+const MANAGER_DATA=new Set(["eho","plans","suppliers","contacts","staff","onboarding","review"]);
+const mro=()=>ro()||S.role==="staff";
 
 /* ---------- sites & per-site paths ---------- */
 const path=(name,site)=>{site=site||S.site;return siteOf(site).legacy?name:`sites/${site}/${name}`};
@@ -286,7 +290,7 @@ const FORMS={
   maintenance:{panel:"#mFormPanel",add:"Report a job",reset:()=>editMaint(null)}};
 const formOpen={};
 function setForm(tab,open){
-  const f=FORMS[tab],p=$(f.panel);formOpen[tab]=!!open;p.hidden=ro()||!open;
+  const f=FORMS[tab],p=$(f.panel);formOpen[tab]=!!open;p.hidden=ro()||(MANAGER_DATA.has(tab)&&mro())||!open;
   if(!p._x){p._x=el("button",{class:"closex",type:"button","aria-label":"Close",onclick:()=>{f.reset();setForm(tab,false)}},"Cancel");p.prepend(p._x)}
   if(open&&!p.hidden){p.scrollIntoView({behavior:"smooth",block:"start"});const i=p.querySelector("input[type=text],input:not([type])");if(i)i.focus({preventScroll:true})}
   renderAddBtn();
@@ -299,7 +303,7 @@ const ADD_ACTIONS={
 function renderAddBtn(){
   const b=$("#addBtn");if(!b)return;
   const f=FORMS[S.tab],a=ADD_ACTIONS[S.tab]&&ADD_ACTIONS[S.tab]();
-  b.hidden=ro()||(f?!!formOpen[S.tab]:!a);if(b.hidden)return;
+  b.hidden=ro()||(MANAGER_DATA.has(S.tab)&&mro())||(f?!!formOpen[S.tab]:!a);if(b.hidden)return;
   b.replaceChildren(svgi(ICON.plus),el("span",{text:f?f.add:a[0]}));
   b.onclick=f?()=>{f.reset();setForm(S.tab,true)}:a[1].length===1?a[1][0][2]:()=>openMenu(b,a[1]);
 }
@@ -1028,8 +1032,8 @@ function renderSuppliers(){
     lead:el("span",{class:"avatar sm",text:initials(s.name)}),title:s.name,sub:s.supplies||s.contact||"",
     right:[callBtn(s.phone,"Call "+s.name)],
     details:[xfacts([["Contact",s.contact],["Phone",s.phone?telLink(s.phone):""],["Email",s.email?el("a",{href:"mailto:"+s.email,text:s.email}):""],["Address",s.address],["Hygiene rating",s.rating],["Notes",s.notes]]),
-      ro()?null:el("div",{class:"row"},el("button",{class:"btn ghost sm",type:"button",onclick:()=>editSupplier(s)},"Edit supplier"))]}));
-  $("#sFormPanel").hidden=ro()||!formOpen.suppliers;
+      mro()?null:el("div",{class:"row"},el("button",{class:"btn ghost sm",type:"button",onclick:()=>editSupplier(s)},"Edit supplier"))]}));
+  $("#sFormPanel").hidden=mro()||!formOpen.suppliers;
 }
 
 /* ---------- HACCP plans & risk assessments ---------- */
@@ -1073,7 +1077,7 @@ function reviewState(d){
 
 /* extraction */
 async function newPlan(k){
-  if(ro())return;
+  if(mro())return;
   const now=Date.now();
   const steps=["Purchasing & delivery","Chilled storage","Dry storage","Preparation","Cooking & reheating","Hot holding","Chilled display","Service","Cleaning"];
   const d={type:k,title:k==="haccp"?"HACCP plan":"Risk assessment",notes:"",source:"",createdBy:S.me,createdAt:now,updatedBy:S.me,updatedAt:now,history:[{by:S.me,at:now,what:"Created from template"}]};
@@ -1085,7 +1089,7 @@ async function newPlan(k){
 function renderPlansList(){
   const box=$("#plList");box.replaceChildren();const ids=[];
   const list=[...S.plans].sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0));
-  if(!list.length)box.append(el("div",{class:"empty",text:`No HACCP plans or risk assessments yet.${ro()?"":" Tap Add to start one from a template."}`}));
+  if(!list.length)box.append(el("div",{class:"empty",text:`No HACCP plans or risk assessments yet.${mro()?"":" Tap Add to start one from a template."}`}));
   for(const d of list){
     const rows=d[rowsKey(d.type)]||[];ids.push(d.updatedBy);
     const summary=d.type==="haccp"
@@ -1111,12 +1115,12 @@ function updateSaveBar(){
   const P=S.plan;if(!P)return;
   const st=$("#plSaveState"),btn=$("#plSaveBtn"),back=$("#plBack");
   if(st){st.textContent=P.dirty?"Unsaved changes":`Saved ${when(P.doc.updatedAt)}`;st.className="pill "+(P.dirty?"warn":"ok")}
-  if(btn)btn.disabled=!P.dirty||ro();
+  if(btn)btn.disabled=!P.dirty||mro();
   if(back&&back.dataset.armed!=="1")back.textContent="← All documents";
   const rb=$("#plRemote");if(rb)rb.hidden=!P.remote;
 }
 function renderEditor(){
-  const P=S.plan,d=P.doc,k=d.type,R=ro(),box=$("#planEditView");
+  const P=S.plan,d=P.doc,k=d.type,R=mro(),box=$("#planEditView");
   const rk=rowsKey(k);d[rk]=d[rk]||[];
   const back=el("button",{class:"btn ghost sm",id:"plBack"},"← All documents");
   back.addEventListener("click",()=>{
@@ -1211,7 +1215,7 @@ function renderEditor(){
   resolveNames([...hist.map(h=>h.by)]);
 }
 async function savePlan(){
-  const P=S.plan;if(!P||!P.dirty||ro())return;
+  const P=S.plan;if(!P||!P.dirty||mro())return;
   const d=P.doc,now=Date.now();
   d.updatedBy=S.me;d.updatedAt=now;
   d.history=[{by:S.me,at:now,what:"Edited"},...(d.history||[])].slice(0,20);
@@ -1250,7 +1254,7 @@ function deadlineState(i){
   return{cls:"",text:"Due "+short(i.deadline)};
 }
 async function tickIssue(inspId,issueId,patch){
-  if(ro())return;
+  if(mro())return;
   const cur=S.inspections.find(x=>x.id===inspId);if(!cur)return;
   const issues=(cur.issues||[]).map(i=>i.id===issueId?{...i,...patch}:i);
   await save(()=>D("inspections",inspId).update({issues,updatedBy:S.me,updatedAt:Date.now()}));
@@ -1280,7 +1284,7 @@ function inspHero(d,big){
   return sec;
 }
 function issueList(d){
-  const box=el("div",{});const R=ro();const ids=[];
+  const box=el("div",{});const R=mro();const ids=[];
   const order={must:0,should:1,advice:2};
   const list=[...(d.issues||[])].sort((a,b)=>(a.done-b.done)||(order[a.priority]-order[b.priority])||(a.deadline||"9").localeCompare(b.deadline||"9"));
   if(!list.length)box.append(el("div",{class:"empty",text:"No issues recorded for this inspection."}));
@@ -1308,7 +1312,7 @@ function issueList(d){
   return box;
 }
 function renderInspList(){
-  const R=ro();const list=inspSorted();const latest=list[0];
+  const R=mro();const list=inspSorted();const latest=list[0];
   // header pill
   const hd=$("#ehoHead");hd.replaceChildren();
   if(latest&&latest.inspectionDate){
@@ -1353,7 +1357,7 @@ function ehoSaveBar(){
   const P=S.insp;if(!P)return;
   const st=$("#ehoSaveState"),btn=$("#ehoSaveBtn"),back=$("#ehoBack");
   if(st){st.textContent=P.dirty?"Unsaved changes":`Saved ${when(P.doc.updatedAt)}`;st.className="pill "+(P.dirty?"warn":"ok")}
-  if(btn)btn.disabled=!P.dirty||ro();
+  if(btn)btn.disabled=!P.dirty||mro();
   if(back&&back.dataset.armed!=="1")back.textContent="← Back";
   const rb=$("#ehoRemote");if(rb)rb.hidden=!P.remote;
 }
@@ -1410,7 +1414,7 @@ function renderInspEditor(){
   ehoSaveBar();
 }
 async function saveInsp(){
-  const P=S.insp;if(!P||!P.dirty||ro())return;
+  const P=S.insp;if(!P||!P.dirty||mro())return;
   const d=P.doc,now=Date.now();
   d.issues=d.issues.filter(i=>(i.issue||"").trim()||(i.action||"").trim());
   d.updatedBy=S.me;d.updatedAt=now;
@@ -1429,7 +1433,7 @@ function onInspSnapshot(){
   }
 }
 async function manualInsp(){
-  if(ro())return;const now=Date.now();
+  if(mro())return;const now=Date.now();
   const d={inspectionDate:"",inspector:"",authority:"",visitType:"Routine inspection",rating:null,scores:{hygiene:"",structure:"",management:""},revisitDate:"",summary:"",goodPoints:[],
     issues:[],notes:"",source:"",createdBy:S.me,createdAt:now,updatedBy:S.me,updatedAt:now,history:[{by:S.me,at:now,what:"Entered by hand"}]};
   try{const ref=await C("inspections").add(d);openInsp(ref.id,{...d,id:ref.id})}catch(e){fail(e)}
@@ -1460,7 +1464,7 @@ function renderBody(text){
   return frag;
 }
 async function newOnb(template){
-  if(ro())return;
+  if(mro())return;
   const now=Date.now();
   const d={category:template?"Induction checklist":"Other",title:template?"New starter induction":"Untitled document",audience:template?"All new staff":"",owner:"",date:today(),reviewDate:"",
     summary:template?"What every new member of staff needs to be shown, told and signed off on before and during their first weeks.":"",
@@ -1477,7 +1481,7 @@ async function newOnb(template){
 function renderOnbList(){
   const box=$("#obList");box.replaceChildren();const ids=[];
   const list=[...S.onboarding].sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0));
-  if(!list.length)box.append(el("div",{class:"empty",text:`No onboarding documents yet.${ro()?"":" Tap Add to start an induction checklist or a blank document."}`}));
+  if(!list.length)box.append(el("div",{class:"empty",text:`No onboarding documents yet.${mro()?"":" Tap Add to start an induction checklist or a blank document."}`}));
   for(const d of list){
     ids.push(d.updatedBy);const rs=reviewState(d);
     box.append(el("button",{class:"lrow",type:"button",onclick:()=>openOnb(d.id,null,"view")},el("span",{class:"tile indigo"},svgi(ICON.onboarding)),
@@ -1488,7 +1492,7 @@ function renderOnbList(){
 }
 function openOnb(id,data,mode){
   const p=data||S.onboarding.find(x=>x.id===id);if(!p)return;
-  S.onb={id,doc:clone(p),baseAt:p.updatedAt,dirty:false,remote:false,mode:ro()?"view":(mode||"view")};
+  S.onb={id,doc:clone(p),baseAt:p.updatedAt,dirty:false,remote:false,mode:mro()?"view":(mode||"view")};
   $("#obListView").hidden=true;$("#obEditView").hidden=false;renderOnbEditor();window.scrollTo({top:0});renderAddBtn();
 }
 function closeOnb(){S.onb=null;$("#obEditView").hidden=true;$("#obEditView").replaceChildren();$("#obListView").hidden=false;renderOnbList()}
@@ -1497,12 +1501,12 @@ function obSaveBar(){
   const P=S.onb;if(!P)return;
   const st=$("#obSaveState"),btn=$("#obSaveBtn"),back=$("#obBack");
   if(st){st.textContent=P.dirty?"Unsaved changes":`Saved ${when(P.doc.updatedAt)}`;st.className="pill "+(P.dirty?"warn":"ok")}
-  if(btn)btn.disabled=!P.dirty||ro();
+  if(btn)btn.disabled=!P.dirty||mro();
   if(back&&back.dataset.armed!=="1")back.textContent="← All documents";
   const rb=$("#obRemote");if(rb)rb.hidden=!P.remote;
 }
 function renderOnbEditor(){
-  const P=S.onb,d=P.doc,R=ro(),edit=P.mode==="edit"&&!R,box=$("#obEditView");
+  const P=S.onb,d=P.doc,R=mro(),edit=P.mode==="edit"&&!R,box=$("#obEditView");
   d.sections=d.sections||[];
   const back=el("button",{class:"btn ghost sm",id:"obBack"},"← All documents");
   back.addEventListener("click",()=>{
@@ -1581,7 +1585,7 @@ function renderOnbEditor(){
   resolveNames(hist.map(h=>h.by));
 }
 async function saveOnb(){
-  const P=S.onb;if(!P||!P.dirty||ro())return;
+  const P=S.onb;if(!P||!P.dirty||mro())return;
   const d=P.doc,now=Date.now();
   d.sections=(d.sections||[]).filter(s=>(s.heading||"").trim()||(s.body||"").trim());
   d.updatedBy=S.me;d.updatedAt=now;
@@ -1653,7 +1657,7 @@ function renderContacts(){
     title:c.name,sub:[c.person,c.type].filter(Boolean).join(" · "),
     right:[callBtn(c.outOfHours||c.phone,"Call "+c.name)],
     details:[xfacts([["Phone",c.phone?telLink(c.phone):""],["Out of hours",c.outOfHours?telLink(c.outOfHours):""],["Email",c.email?el("a",{href:"mailto:"+c.email,text:c.email}):""],["Reference",c.account],["Notes",c.notes]]),
-      ro()?null:el("div",{class:"row"},el("button",{class:"btn ghost sm",type:"button",onclick:()=>editContact(c)},"Edit contact"))]});
+      mro()?null:el("div",{class:"row"},el("button",{class:"btn ghost sm",type:"button",onclick:()=>editContact(c)},"Edit contact"))]});
   // Anyone with an out-of-hours number goes first: that's who you need in a hurry.
   const urgent=list.filter(c=>c.outOfHours);
   if(urgent.length)box.append(el("div",{class:"label bad",text:"Emergency and out of hours"}),el("div",{class:"list glass"},...urgent.map(row)));
@@ -1666,8 +1670,8 @@ function renderContacts(){
   const sug=$("#cSuggest");sug.replaceChildren();
   const missing=["Local council / environmental health","Pest control","Fridge & freezer engineer","Coffee machine technician","Gas engineer","Electrician","Plumber","Water supplier","Doctor / NHS 111","Key holder / manager"].filter(t=>!have.has(t));
   for(const t of missing)sug.append(el("button",{class:"btn ghost sm",type:"button",onclick:()=>editContact(null,t)},"+ "+t));
-  $("#cSuggestPanel").hidden=ro()||!missing.length;
-  $("#cFormPanel").hidden=ro()||!formOpen.contacts;
+  $("#cSuggestPanel").hidden=mro()||!missing.length;
+  $("#cFormPanel").hidden=mro()||!formOpen.contacts;
 }
 
 /* ---------- staff training ---------- */
@@ -1711,7 +1715,7 @@ function staffForm(){
       });
       if(ok)done.push(siteOf(site).name);
     }
-    $("#tSave").disabled=ro();
+    $("#tSave").disabled=mro();
     if(done.length){editStaff(null);$("#tMsg").textContent="";toast(`Saved ${name} to ${done.join(", ")}`+(done.length<sites.length?". Some sites couldn't be saved; try again.":""))}
   });
   $("#tCancel").addEventListener("click",()=>editStaff(null));
@@ -1748,7 +1752,7 @@ function renderStaffImport(){
   const panel=$("#tImport");if(!panel)return;
   const have=new Set(S.staff.map(x=>normT(x.name)));
   const missing=S.team.filter(p=>!have.has(normT(p.name)));
-  panel.hidden=ro()||!S.db||!missing.length||S.role==="staff";
+  panel.hidden=mro()||!S.db||!missing.length||S.role==="staff";
   if(panel.hidden)return;
   const box=$("#tImpList");box.replaceChildren();
   for(const p of missing){const id="ti_"+normT(p.name).replace(/[^a-z0-9]+/g,"_");
@@ -1783,11 +1787,11 @@ function renderStaff(){
   for(const n of document.querySelectorAll("#tTopics [data-topic]"))n.hidden=!TOPICS.some(([k])=>k===n.dataset.topic);
   const tb0=$("#tTopicToggles");tb0.replaceChildren();
   for(const[k,lbl]of ALL_TOPICS){
-    const id="tto_"+k,cb=el("input",{type:"checkbox",id,disabled:ro()});cb.checked=TOPICS.some(t=>t[0]===k);
+    const id="tto_"+k,cb=el("input",{type:"checkbox",id,disabled:mro()});cb.checked=TOPICS.some(t=>t[0]===k);
     cb.addEventListener("change",()=>setTopicOff(k,cb.checked));
     tb0.append(el("label",{for:id},cb,lbl));
   }
-  $("#tTopicsPanel").hidden=ro();
+  $("#tTopicsPanel").hidden=mro();
   const list=[...S.staff].sort((a,b)=>a.name.localeCompare(b.name));
   const todo=p=>TOPICS.filter(([k])=>!(p.topics&&p.topics[k]));
   const full=list.filter(p=>!todo(p).length).length,gaps=list.length-full;
@@ -1804,9 +1808,9 @@ function renderStaff(){
       right:[left.length?el("span",{class:"pill warn",text:`${done}/${TOPICS.length}`}):el("span",{class:"pill ok",text:"Trained"})],
       details:[el("ul",{class:"topics"},...TOPICS.map(([k,l])=>{const t=p.topics&&p.topics[k];
           return el("li",{class:t?"on":""},el("span",{class:"badge "+(t?"done":"")},t?svgi(ICON.check):""),el("span",{class:"t"},el("b",{text:l}),el("span",{class:"s",text:t?"Trained "+short(t.date):"Not yet"})),
-            t||ro()?null:el("button",{class:"btn ghost sm",type:"button",onclick:()=>trainedToday(p,k)},"Trained today"))})),
+            t||mro()?null:el("button",{class:"btn ghost sm",type:"button",onclick:()=>trainedToday(p,k)},"Trained today"))})),
         xfacts([["Started",p.start?short(p.start):""],["Sites",Array.isArray(p.sites)&&p.sites.length>1?p.sites.map(x=>siteOf(x).name).join(", "):""],["Notes",p.notes]]),
-        ro()?null:el("div",{class:"row"},el("button",{class:"btn ghost sm",type:"button",onclick:()=>editStaff(p)},"Edit record"))]}));
+        mro()?null:el("div",{class:"row"},el("button",{class:"btn ghost sm",type:"button",onclick:()=>editStaff(p)},"Edit record"))]}));
   }
   const mx=$("#tMatrix");mx.replaceChildren();
   if(list.length){
@@ -1817,7 +1821,7 @@ function renderStaff(){
     mx.append(el("div",{class:"scroll"},el("table",{class:"matrix"},el("thead",{},head),tb)));
   }
   mx.closest("section").hidden=!list.length;
-  $("#tFormPanel").hidden=ro()||!formOpen.staff;
+  $("#tFormPanel").hidden=mro()||!formOpen.staff;
 }
 
 /* ---------- allergens ---------- */
@@ -2255,12 +2259,14 @@ function renderReview(){
   for(const[k,q]of REVIEW_QS){
     const cur=S.rev[k]||{};
     const seg=el("div",{class:"seg",role:"group","aria-label":q});
-    for(const v of["Yes","No"])seg.append(el("button",{type:"button","aria-pressed":String(cur.a===v),disabled:ro(),onclick:()=>{S.rev[k]={...cur,a:v};renderReview()}},v));
-    const det=el("input",{type:"text",id:"rq_"+k,placeholder:"Details (what changed, what you did)",value:cur.d||"",disabled:ro()});
+    for(const v of["Yes","No"])seg.append(el("button",{type:"button","aria-pressed":String(cur.a===v),disabled:mro(),onclick:()=>{S.rev[k]={...cur,a:v};renderReview()}},v));
+    const det=el("input",{type:"text",id:"rq_"+k,placeholder:"Details (what changed, what you did)",value:cur.d||"",disabled:mro()});
     det.addEventListener("input",()=>{S.rev[k]={...(S.rev[k]||{}),d:det.value}});
     qs.append(el("div",{class:"qa"},el("div",{class:"row spread"},el("span",{text:q}),seg),cur.a==="Yes"||cur.d?det:null));
   }
-  $("#revSave").disabled=ro();$("#revNotes").disabled=ro();
+  $("#revSave").disabled=mro();$("#revNotes").disabled=mro();
+  // Staff read the summary and past reviews; the questions are for the manager who signs it.
+  const ro4=S.role==="staff";qs.hidden=ro4;$("#revNotes").closest(".field").hidden=ro4;$("#revSave").closest(".row").hidden=ro4;$("#revStaffNote").hidden=!ro4;
   const list=$("#revList");list.replaceChildren();
   if(!S.reviews.length)list.append(el("div",{class:"empty",text:"No reviews signed yet. Your first one is due "+nice(due)+"."}));
   for(const r of S.reviews){
@@ -2429,11 +2435,11 @@ const NAV=[
   {id:"eho",t:"Last EHO inspection report",grp:"manage",ic:"eho",tile:"green"},{id:"plans",t:"HACCP & risk",grp:"manage",ic:"plans",tile:"purple"},
   {id:"suppliers",t:"Suppliers",grp:"manage",ic:"suppliers",tile:"orange"},{id:"contacts",t:"Contacts",grp:"manage",ic:"contacts",tile:"green"},
   {id:"staff",t:"Staff training",grp:"manage",ic:"staff",tile:"teal"},{id:"onboarding",t:"Onboarding",grp:"manage",ic:"onboarding",tile:"indigo"},
-  {id:"review",t:"4-weekly review",grp:"manage",ic:"review",tile:"red"},{id:"setup",t:"Setup",grp:"manage",ic:"setup",tile:"grey"},
+  {id:"review",t:"4-weekly review",grp:"manage",ic:"review",tile:"red"},{id:"setup",t:"Setup",grp:"admin",ic:"setup",tile:"grey",sub:"Checks, fridges, opening days and sections"},
 ];
 const navOf=id=>NAV.find(n=>n.id===id);
 // Sections only managers and admins use. The Worker enforces the same rule on saves (src/access.ts).
-const MANAGER_TABS=new Set(["eho","plans","suppliers","contacts","staff","onboarding","review","setup"]);
+const MANAGER_TABS=new Set(["setup"]);
 const roleAllows=t=>S.role!=="staff"||!MANAGER_TABS.has(t);
 const canTab=t=>t==="records"||t==="more"||(tabOn(t)&&roleAllows(t));
 const initials=n=>String(n||"?").split(/\s+/).filter(Boolean).map(w=>w[0]).slice(0,2).join("").toUpperCase();
@@ -2507,7 +2513,7 @@ function renderNav(){
   const vis=NAV.filter(n=>canTab(n.id)&&(S.role||!MANAGER_TABS.has(n.id)));
   // sidebar
   const sn=$("#snav");sn.replaceChildren();
-  const groups=[["diary",""],["records","Records"],["manage","Management"]];
+  const groups=[["diary",""],["records","Records"],["manage","Management"],["admin","Admin"]];
   for(const[g,label]of groups){
     const items=vis.filter(n=>n.grp===g||(g==="diary"&&(n.id==="history"||n.id==="inspect")));
     if(g==="manage")items.splice(0,items.length,...vis.filter(n=>n.grp==="manage"&&n.id!=="history"&&n.id!=="inspect"));
@@ -2519,7 +2525,7 @@ function renderNav(){
   const fade=()=>sn.classList.toggle("more",sn.scrollHeight-sn.scrollTop-sn.clientHeight>4);
   sn.onscroll=fade;requestAnimationFrame(fade);
   // tab bar
-  const grpOf=t=>t==="records"||(navOf(t)||{}).grp==="records"?"records":t==="more"||(navOf(t)||{}).grp==="manage"?"more":t;
+  const grpOf=t=>t==="records"||(navOf(t)||{}).grp==="records"?"records":t==="more"||(navOf(t)||{}).grp==="manage"||(navOf(t)||{}).grp==="admin"?"more":t;
   const cur=grpOf(S.tab);
   const recCount=vis.filter(n=>n.grp==="records").reduce((k,n)=>k+(navBadge(n.id)?1:0),0);
   const tb=$("#tabbar");tb.replaceChildren();
@@ -2534,6 +2540,8 @@ function renderNav(){
   if(mg.length){const hist=mg.filter(n=>n.id==="history"||n.id==="inspect"),rest=mg.filter(n=>n.id!=="history"&&n.id!=="inspect");
     if(hist.length)mh.append(el("div",{class:"list glass"},...hist.map(n=>navRow(n,()=>show(n.id)))));
     if(rest.length)mh.append(el("div",{class:"label",text:"Management"}),el("div",{class:"list glass"},...rest.map(n=>navRow(n,()=>show(n.id)))));}
+  const ad=vis.filter(n=>n.grp==="admin");
+  if(ad.length)mh.append(el("div",{class:"label",text:"Admin"}),el("div",{class:"list glass"},...ad.map(n=>navRow(n,()=>show(n.id)))));
   mh.append(el("div",{class:"label",text:"Account"}),el("div",{class:"list glass"},...accountItems().map(([t,ic,tile,fn,danger])=>
     el("button",{class:"lrow"+(danger?" danger":""),type:"button",onclick:fn},el("span",{class:"tile "+tile},svgi(ICON[ic])),el("span",{class:"t"},el("b",{text:t}),danger&&S.myName?el("span",{class:"s",text:"Signed in as "+S.myName}):null)))));
 }
@@ -2873,7 +2881,7 @@ function renderHead(){
   const title=t==="records"?"Records":t==="more"?"More":t==="day"?(S.date===today()?"Today":S.date===addDays(today(),-1)?"Yesterday":"Diary"):t==="week"?(thisWk?"This week":"Week"):n?n.t:"";
   const sub=t==="day"?parse(S.date).toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long"}):t==="week"?`${nice(S.week)} – ${nice(addDays(S.week,6))}`:curSite().name;
   $("#pageTitle").textContent=title;$("#pageSub").textContent=sub;
-  const back=n&&n.grp==="records"?["records","Records"]:n&&n.grp==="manage"?["more","More"]:null;
+  const back=n&&n.grp==="records"?["records","Records"]:n&&(n.grp==="manage"||n.grp==="admin")?["more","More"]:null;
   const bb=$("#backBtn");bb.hidden=!back;
   if(back){bb.replaceChildren(svgi(ICON.chevL),el("span",{text:back[1]}));bb.onclick=()=>show(back[0])}
   document.title=(title?title+" · ":"")+"Kitchen Diary";
@@ -2963,6 +2971,7 @@ $("#algCancel").addEventListener("click",()=>editAlg(null));
 $("#algSearch").addEventListener("input",renderAllergens);
 armDelete($("#algDelete"),"Remove item",async()=>{if(await save(()=>D("allergens",S.editAlg).delete())){editAlg(null);toast("Item removed")}});
 $("#revSave").addEventListener("click",async()=>{
+  if(mro())return;
   if(REVIEW_QS.some(([k])=>!(S.rev[k]&&S.rev[k].a))){$("#revMsg").textContent="Answer every question before signing.";return}
   const date=today();
   if(await save(()=>D("reviews",date).set({date,answers:S.rev,notes:$("#revNotes").value.trim(),by:S.me,at:Date.now()}))){S.rev={};$("#revNotes").value="";$("#revMsg").textContent="Review signed and saved."}
