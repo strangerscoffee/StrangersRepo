@@ -503,7 +503,7 @@ table.rk-grid .rk-corner{font-size:10px;width:40px}
 /* Temperature log */
 .tlpills{display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end;max-width:62%}
 .tlpills .pill{white-space:nowrap}
-.tlunit{display:grid;grid-template-columns:minmax(0,1fr) 120px;gap:4px 12px;align-items:center;padding:8px 10px;border-radius:12px;background:var(--sunk)}
+.tlunit{display:grid;grid-template-columns:minmax(0,1fr) 150px;gap:4px 12px;align-items:center;padding:8px 10px;border-radius:12px;background:var(--sunk)}
 .tlunit.bad{background:var(--bad-bg)} .tlunit.warn{background:var(--warn-bg)}
 .tlunit .n{margin:0;font-size:15px}
 .tlunit .n .s{color:var(--muted);font-size:13px;font-weight:500}
@@ -538,3 +538,15 @@ table.rk-grid .rk-corner{font-size:10px;width:40px}
 .algsum-box .chips{display:flex;flex-wrap:wrap;gap:4px}
 .agn{display:inline-block;padding:3px 8px;border-radius:8px;font-size:12px;font-weight:600;border:1px solid var(--line);color:var(--fg)}
 #algMatrix h3{margin:12px 0 4px}
+
+/* Temperature boxes: a − key in front, since phone number pads have no minus. */
+.signin{display:inline-flex;align-items:center;gap:6px;min-width:0}
+.field .signin{display:flex;width:100%}
+.field .signin input{flex:1;min-width:0}
+.signin .minus{flex:none;width:40px;height:40px;border-radius:12px;border:1px solid var(--line);background:var(--surface,var(--bg));color:var(--fg);font-size:22px;font-weight:700;line-height:1;display:grid;place-items:center;cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+.signin .minus:active{background:var(--tint)}
+.signin .minus:focus-visible{outline:none;box-shadow:0 0 0 4px var(--tint);border-color:var(--accent)}
+.signin:has(input:disabled) .minus{opacity:.4;pointer-events:none}
+.tf .signin .minus{height:48px;width:44px}
+.tlunit .signin{width:100%}
+.tlunit .signin input{flex:1;min-width:0}

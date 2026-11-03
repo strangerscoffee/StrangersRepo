@@ -133,7 +133,7 @@ test("staff journey on the real page", async () => {
   await yRow2.locator(`#tl_${yIso}_u1`).fill("4.5");
   await yRow2.locator(".btn", { hasText: "Save changes" }).click();
   await page.locator("#toast", { hasText: "Say why the reading is being changed" }).waitFor();
-  await yRow2.locator("input[type=text]").fill("Misread the display");
+  await yRow2.locator("input[placeholder^=\"Reason\"]").fill("Misread the display");
   await yRow2.locator(".btn", { hasText: "Save changes" }).click();
   await assert.doesNotReject(waitFor(async () => (await api("get", { path: `sites/cafe/days/${yIso}` })).data.temps.u1.am.v === 4.5), "reading corrected");
   const yAm = (await api("get", { path: `sites/cafe/days/${yIso}` })).data.temps.u1.am;
@@ -477,6 +477,18 @@ test("staff journey on the real page", async () => {
   await page.fill("#dvItems", "Milk ×20, cream");
   await page.fill("#dv_chilled", "11");
   await page.locator("#dv_chilled_st", { hasText: "too warm, reject" }).waitFor();
+  // Phone number pads have no minus: the − key in front of the box adds it (and takes it off again).
+  await page.fill("#dv_frozen", "19");
+  await page.locator(".signin:has(#dv_frozen) .minus").click();
+  assert.equal(await page.inputValue("#dv_frozen"), "-19");
+  await page.locator("#dv_frozen_st", { hasText: "good" }).waitFor();
+  await page.locator(".signin:has(#dv_frozen) .minus").click();
+  assert.equal(await page.inputValue("#dv_frozen"), "19");
+  await page.fill("#dv_frozen", "");
+  await page.locator(".signin:has(#dv_frozen) .minus").click();
+  await page.keyboard.type("18.5");
+  assert.equal(await page.inputValue("#dv_frozen"), "-18.5", "− first, then the number");
+  await page.fill("#dv_frozen", "");
   await page.locator("#dvPack button", { hasText: "No" }).click();
   await page.locator("#dvOrder button", { hasText: "Yes" }).click();
   await page.locator("#dvResult", { hasText: "chilled food too warm" }).waitFor();
