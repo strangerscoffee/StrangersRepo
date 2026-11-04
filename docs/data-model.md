@@ -115,7 +115,7 @@ Training topics (`<topic>`): `hygiene`, `cross`, `cleaning`, `chilling`, `cookin
 
 ## The rota's tables
 
-The staff rota (`src/rota.ts`, at `ROTA_HOST`) keeps its data in its own D1 tables rather than as documents, because it needs per-row rules (staff change their own availability and nobody else's). `src/schema.ts` creates them. People are `users.id` (not `web:<name>`); names come from `users.name`. Days are `YYYY-MM-DD`, times `HH:MM` UK local time, weeks are identified by their Monday.
+The staff rota (`src/rota.ts`, at `ROTA_HOST`) keeps its data in its own D1 tables rather than as documents, because it needs per-row rules (only admins set which days and sites people work; staff ask for their own time off). `src/schema.ts` creates them. People are `users.id` (not `web:<name>`); names come from `users.name`. Days are `YYYY-MM-DD`, times `HH:MM` UK local time, weeks are identified by their Monday.
 
 | Table | Columns |
 |---|---|
@@ -145,8 +145,8 @@ Signed out gets 401 `unauthenticated`; writes count towards the per-IP write lim
 | `GET today?site=` | all | Today's (UK) shifts at a site when its week is published; for the diary's Today (with `actualStart`/`actualEnd` when amended). |
 | `GET suggest?shift=` | manager | Everyone who could take a shift, best fit first, with flags: clash, time off, overtime, short rest, availability, untrained. |
 | `GET hours?start=` (`&format=csv`) | manager | Paid hours per person and site against contract; CSV columns `name,role,contract_hours,rota_hours,difference,roastery,cafe,asg,factory`. |
-| `GET me`, `PUT me/availability` | all | My pattern, sites, contract, time off and requests; set my own pattern and sites. |
-| `PUT people/:userId` | manager | `{contractMin?, contractMax?, sites?, pattern?}` for anyone (min ≤ max; a field left out is kept). The older `{contractHours}` sets both. |
+| `GET me`, `PUT me/availability` | all / admin | My pattern, sites, contract, time off and requests (`user.admin` says whether I'm an admin); only admins set their own pattern and sites (`permission_denied` for anyone else). |
+| `PUT people/:userId` | manager (sites and pattern: admin) | `{contractMin?, contractMax?, sites?, pattern?}` for anyone; `sites` and `pattern` are admin-only (min ≤ max; a field left out is kept). The older `{contractHours}` sets both. |
 | `POST time-off`, `PATCH time-off/:id` | all / manager / owner | Ask for time off (managers can add it for anyone, approved); approve or decline (manager); cancel (owner). |
 | `GET requests`, `POST requests`, `PATCH requests/:id` | all | Pickups (`claim`) and covers (`cover`); `{action: accept\|decline\|cancel\|approve}`. Approving re-checks the taker and refuses a clash or time off with 409. |
 | `GET open` | all | Open shifts in published weeks I could take. |

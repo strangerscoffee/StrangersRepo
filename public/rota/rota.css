@@ -289,3 +289,5 @@ a.btn{text-decoration:none;display:inline-flex;align-items:center}
 .shc .otag{white-space:normal;max-width:100%;box-sizing:border-box;line-height:1.25}
 .gcell .shc .otag{font-size:10.5px;letter-spacing:0;padding:0;background:none}
 @media (max-width:600px){.htable th,.htable td{padding:12px 8px}.htable th:first-child{padding-left:14px}.htable td:last-child,.htable th:last-child{padding-right:14px}}
+.crow .t{flex:1 1 150px;min-width:0}
+@media (max-width:600px){.crow .crange{margin-left:46px}}
