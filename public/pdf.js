@@ -51,6 +51,13 @@ function wrap(s,w,size,bold){
   return lines;
 }
 
+/** The text, shortened with an ellipsis if needed so it's no wider than w. */
+function fit(s,w,size,bold){
+  s=String(s==null?"":s);if(width(s,size,bold)<=w)return s;
+  while(s.length>1&&width(s+"…",size,bold)>w)s=s.slice(0,-1);
+  return s.trimEnd()+"…";
+}
+
 class Doc{
   constructor({landscape=false,title="",author=""}={}){
     this.W=landscape?841.89:595.28;this.H=landscape?595.28:841.89;
@@ -139,12 +146,16 @@ class Flow{
     if(!first)this.doc.addPage();
     this.y=this.m;
     if(this.header)this.y=this.header(this.doc,this.m,first)||this.m;
+    // Where content starts on a continuation page, for rows that need a whole page.
+    if(!first||this.contTop==null)this.contTop=this.y;
   }
   need(h){if(this.y+h>this.bottom){this.startPage(false);return true}return false}
   gap(h=8){this.y+=h;return this}
+  // A heading that's wider than the page wraps; it stays on the same page as what follows it (keep).
   heading(t,{size=15,color="#111111",rule=true,keep=60}={}){
-    this.need(size+keep);this.y+=size;
-    this.doc.text(t,this.m,this.y,{size,bold:true,color});
+    const lines=wrap(t,this.width,size,true);
+    this.need(lines.length*size*1.2+keep);
+    lines.forEach((ln,i)=>{this.y+=i?size*1.2:size;this.doc.text(ln,this.m,this.y,{size,bold:true,color})});
     this.y+=6;if(rule){this.doc.line(this.m,this.y,this.m+this.width,this.y,{color:"#c9ced6",lw:0.6});this.y+=8}
     return this;
   }
@@ -152,14 +163,21 @@ class Flow{
     for(const ln of wrap(t,this.width-indent,size,bold)){this.need(size*lh);this.y+=size*lh;this.doc.text(ln,this.m+indent,this.y-size*0.25,{size,color,bold})}
     return this;
   }
-  // Label/value pairs in two columns.
+  // Label/value pairs in two columns. A long label wraps within its column; a value longer than the space left
+  // carries on onto the next page (the first lines stay with the label).
   facts(pairs,{size=9.5,labelW=130}={}){
+    const lh=size*1.35;
     for(const[k,v]of pairs.filter(p=>p[1]!=null&&p[1]!=="")){
-      const lines=wrap(String(v),this.width-labelW,size,false),h=lines.length*size*1.35+2;
-      this.need(h);
-      this.doc.text(k,this.m,this.y+size,{size,bold:true,color:"#555555"});
-      lines.forEach((ln,i)=>this.doc.text(ln,this.m+labelW,this.y+size+i*size*1.35,{size}));
-      this.y+=h;
+      const labels=wrap(String(k),labelW-10,size,true),lines=wrap(String(v),this.width-labelW,size,false);
+      const n=Math.max(labels.length,lines.length);
+      this.need(Math.min(n,Math.max(3,labels.length))*lh+2);
+      for(let i=0;i<n;i++){
+        if(i)this.need(lh);
+        if(labels[i])this.doc.text(labels[i],this.m,this.y+size,{size,bold:true,color:"#555555"});
+        if(lines[i])this.doc.text(lines[i],this.m+labelW,this.y+size,{size});
+        this.y+=lh;
+      }
+      this.y+=2;
     }
     return this;
   }
@@ -192,22 +210,37 @@ class Flow{
     this.need(hh+lh+2*pad);drawHead();
     rows.forEach((row,ri)=>{
       const cells=row.map(c=>c!=null&&typeof c==="object"?c:{t:c==null?"":String(c)});
-      const lines=cells.map((c,i)=>c.tick?[""]:wrap(c.t||"",ws[i]-2*pad,cols[i].size||size,!!c.bold||!!cols[i].bold));
-      const rh=Math.max(...lines.map(l=>l.length))*lh+2*pad;
-      if(this.need(rh))drawHead();
-      if(zebra&&ri%2===1)this.doc.rect(this.m,this.y,this.width,rh,{fill:zebra});
-      let x=this.m;
-      cells.forEach((c,i)=>{
-        if(c.fill)this.doc.rect(x,this.y,ws[i],rh,{fill:c.fill});
-        if(c.tick){const s=Math.min(ws[i]-4,10);this.doc.tick(x+(ws[i]-s)/2,this.y+(rh-s)/2,s,{color:c.color||"#111111"})}
-        else lines[i].forEach((ln,j)=>{
-          const al=cols[i].align,tx=al==="center"?x+ws[i]/2:al==="right"?x+ws[i]-pad:x+pad;
-          this.doc.text(ln,tx,this.y+pad+(cols[i].size||size)*0.95+j*lh,{size:cols[i].size||size,bold:!!c.bold||!!cols[i].bold,color:c.color||"#1a1a1a",align:al||"left"});
+      const bold=cells.map((c,i)=>!!c.bold||!!cols[i].bold);
+      // A word too long for its column first gets smaller type (down to 6pt), so it isn't broken in two.
+      const zs=cells.map((c,i)=>{let z=cols[i].size||size;if(c.tick)return z;
+        const longest=Math.max(0,...String(c.t||"").split(/\s+/).map(w=>width(w,1,bold[i])));
+        while(z>6&&longest*z>ws[i]-2*pad)z-=0.25;return z});
+      const lines=cells.map((c,i)=>c.tick?[""]:wrap(c.t||"",ws[i]-2*pad,zs[i],bold[i]));
+      const tall=Math.max(...lines.map(l=>l.length));
+      const rh=tall*lh+2*pad;
+      // A row that doesn't fit on a fresh page is drawn in parts, carrying on under the heading on the next page.
+      const room=this.bottom-this.contTop-hh;
+      if(rh<=room){if(this.need(rh))drawHead()}
+      let from=0;
+      while(from<tall){
+        let fit=Math.floor((this.bottom-this.y-2*pad)/lh);
+        if(fit<1){this.startPage(false);drawHead();fit=Math.floor((this.bottom-this.y-2*pad)/lh)}
+        const to=Math.min(tall,from+fit),ph=(to-from)*lh+2*pad;
+        if(zebra&&ri%2===1)this.doc.rect(this.m,this.y,this.width,ph,{fill:zebra});
+        let x=this.m;
+        cells.forEach((c,i)=>{
+          if(c.fill)this.doc.rect(x,this.y,ws[i],ph,{fill:c.fill});
+          if(c.tick){if(!from){const s=Math.min(ws[i]-4,10);this.doc.tick(x+(ws[i]-s)/2,this.y+(ph-s)/2,s,{color:c.color||"#111111"})}}
+          else lines[i].slice(from,to).forEach((ln,j)=>{
+            const al=cols[i].align,tx=al==="center"?x+ws[i]/2:al==="right"?x+ws[i]-pad:x+pad;
+            this.doc.text(ln,tx,this.y+pad+zs[i]*0.95+j*lh,{size:zs[i],bold:bold[i],color:c.color||"#1a1a1a",align:al||"left"});
+          });
+          x+=ws[i];
         });
-        x+=ws[i];
-      });
-      this.y+=rh;
-      this.doc.line(this.m,this.y,this.m+this.width,this.y,{color:lineColor,lw:0.4});
+        this.y+=ph;
+        this.doc.line(this.m,this.y,this.m+this.width,this.y,{color:lineColor,lw:0.4});
+        from=to;
+      }
     });
     return this;
   }
@@ -218,8 +251,10 @@ class Flow{
       this.doc.onPage(i);
       const y=this.doc.H-this.m+4;
       this.doc.line(this.m,y-10,this.doc.W-this.m,y-10,{color:"#d9dde3",lw:0.4});
-      if(this.footer)this.doc.text(this.footer,this.m,y,{size:7.5,color:"#666666"});
-      this.doc.text(`Page ${i+1} of ${n}`,this.doc.W-this.m,y,{size:7.5,color:"#666666",align:"right"});
+      const pg=`Page ${i+1} of ${n}`;
+      // The footer text is shortened (with …) so it never runs into the page number.
+      if(this.footer)this.doc.text(fit(this.footer,this.width-width(pg,7.5,false)-16,7.5,false),this.m,y,{size:7.5,color:"#666666"});
+      this.doc.text(pg,this.doc.W-this.m,y,{size:7.5,color:"#666666",align:"right"});
     }
     return this.doc.output();
   }
@@ -242,5 +277,5 @@ function download(bytes,name){
   return "downloaded";
 }
 
-window.DiaryPDF={create:o=>new Doc(o),Doc,Flow,wrap,width,save};
+window.DiaryPDF={create:o=>new Doc(o),Doc,Flow,wrap,width,fit,save};
 })();
