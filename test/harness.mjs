@@ -19,7 +19,7 @@ function freePort() {
   });
 }
 
-export async function startServer({ writeLimit, preSql, scheduled } = {}) {
+export async function startServer({ writeLimit, preSql, scheduled, vars = {} } = {}) {
   const state = mkdtempSync(join(tmpdir(), "kitchen-diary-test-"));
   // Optional SQL to run on the empty local database before the Worker starts (e.g. an older schema).
   if (preSql) {
@@ -31,6 +31,7 @@ export async function startServer({ writeLimit, preSql, scheduled } = {}) {
   const args = ["dev", "--local", "--port", String(port), "--ip", "127.0.0.1", "--persist-to", state,
     "--var", `SETUP_CODE:${SETUP_CODE}`, "--show-interactive-dev-session=false"];
   if (writeLimit) args.push("--var", `WRITE_LIMIT_PER_15_MIN:${writeLimit}`);
+  for (const [k, v] of Object.entries(vars)) args.push("--var", `${k}:${v}`);
   if (scheduled) args.push("--test-scheduled"); // GET /__scheduled runs the Worker's scheduled() handler
   const proc = spawn(WRANGLER, args, { cwd: ROOT, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, CI: "1" } });
   let log = "";

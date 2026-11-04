@@ -1,0 +1,234 @@
+/*
+ * The staff rota (public/rota/). Loaded after the diary's app.css, theme.css and ui.css, so it shares their
+ * tokens, glass materials, lists, sheets and buttons; this adds the planner grid, shift cards, the day
+ * timeline and the rota's own small pieces. Light and dark come from the theme's tokens.
+ */
+
+/* Site colours: each pairs with the site's name in text, never colour alone. */
+:root{
+  --site-blue:rgba(10,132,255,.14);--site-blue-ink:#0a5fc2;
+  --site-green:rgba(52,199,89,.17);--site-green-ink:#17733a;
+  --site-orange:rgba(255,159,10,.2);--site-orange-ink:#835000;
+  --site-purple:rgba(175,82,222,.15);--site-purple-ink:#7a2fa3;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --site-blue:rgba(10,132,255,.22);--site-blue-ink:#7cbcff;
+  --site-green:rgba(48,209,88,.2);--site-green-ink:#6fe08f;
+  --site-orange:rgba(255,159,10,.2);--site-orange-ink:#ffc35c;
+  --site-purple:rgba(191,90,242,.22);--site-purple-ink:#d9a4f5;
+}}
+
+.vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.grow{flex:1}
+.rtag{font-weight:750;font-size:19px;letter-spacing:-.02em}
+.rtag.big{justify-self:center;margin:-6px 0 6px;font-size:13px;font-weight:650;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+body.offline [data-w]{pointer-events:none;opacity:.45}
+@media (min-width:1024px){.wrap.rwrap{max-width:none;padding-right:28px}}
+body:not([data-page="week"]):not([data-page="mine"]) .wrap.rwrap{max-width:760px}
+@media (min-width:1024px){body:not([data-page="week"]):not([data-page="mine"]) .wrap.rwrap{max-width:860px}}
+
+.rseg{display:inline-flex;max-width:100%}
+.rseg button{min-height:36px}
+.rtool{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.btn.warnbtn{background:var(--warn);color:#fff}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .btn.warnbtn{color:#1d1300}}
+.okline{display:flex;align-items:center;gap:6px;color:var(--ok);margin:0}
+.okline svg.i{width:18px;height:18px}
+
+/* Problem chips above the planner */
+.pchips{display:flex;flex-wrap:wrap;gap:8px}
+.pchip{display:inline-flex;align-items:center;gap:8px;min-height:40px;padding:4px 6px 4px 14px;border-radius:99px;font-size:14.5px;font-weight:600;
+  background:var(--glass);border:1px solid var(--glass-edge);box-shadow:var(--glass-hi),var(--lift);max-width:100%;box-sizing:border-box}
+.pchip .tx{min-width:0}
+.pchip.info{padding-right:14px;color:var(--muted)}
+.pchip .pact{border:0;border-radius:99px;min-height:32px;padding:0 12px;background:var(--tint);color:var(--accent);font:inherit;font-weight:700;cursor:pointer}
+.pchips .extra{display:none}.pchips.all .extra{display:inline-flex}
+.morechip{cursor:pointer;color:var(--accent);padding-right:14px;font:inherit;font-weight:650}
+
+/* Shift cards */
+.shc{display:grid;gap:0;width:100%;box-sizing:border-box;text-align:left;padding:8px 10px;border-radius:12px;border:1px solid var(--line);
+  background:var(--surface);color:var(--fg);font:inherit;font-size:14px;line-height:1.25;cursor:pointer}
+button.shc:hover{border-color:var(--accent)}
+.shc .tm{font-variant-numeric:tabular-nums;font-size:14px}
+.shc .jb{font-size:11.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
+.shc.open{border:1.5px dashed var(--bad);background:var(--bad-bg)}
+.shc.open .nm,.shc.open .jb{color:var(--bad)}
+.shc.clash{border:2px solid var(--warn);background:var(--warn-bg)}
+.shc.clash .jb{color:var(--warn)}
+.shc.tone-blue{background:var(--site-blue);border-color:transparent}.shc.tone-blue .nm{color:var(--site-blue-ink)}
+.shc.tone-green{background:var(--site-green);border-color:transparent}.shc.tone-green .nm{color:var(--site-green-ink)}
+.shc.tone-orange{background:var(--site-orange);border-color:transparent}.shc.tone-orange .nm{color:var(--site-orange-ink)}
+.shc.tone-purple{background:var(--site-purple);border-color:transparent}.shc.tone-purple .nm{color:var(--site-purple-ink)}
+.shc.clash[class*="tone-"]{border:2px solid var(--warn)}
+.spill{display:inline-block;font-size:13px;font-weight:700;padding:3px 10px;border-radius:99px;flex:none;background:var(--sunk);color:var(--muted)}
+.spill.blue{background:var(--site-blue);color:var(--site-blue-ink)}.spill.green{background:var(--site-green);color:var(--site-green-ink)}
+.spill.orange{background:var(--site-orange);color:var(--site-orange-ink)}.spill.purple{background:var(--site-purple);color:var(--site-purple-ink)}
+
+/* The planner grid (iPad landscape and wider) */
+.rgrid{display:grid;grid-template-columns:150px repeat(7,minmax(0,1fr));border-radius:22px;overflow:hidden}
+.rgrid.pgrid{grid-template-columns:200px 110px repeat(7,minmax(0,1fr))}
+.rgrid>*{border-top:1px solid var(--line);border-left:1px solid var(--line);padding:8px;min-width:0;box-sizing:border-box}
+.rgrid>.gh{border-top:0;display:grid;gap:1px;align-content:end;font-size:13px;color:var(--muted);padding:12px 10px 10px}
+.rgrid>.gh b{font-size:15.5px;color:var(--fg)}
+.rgrid>.gh.now b{color:var(--accent)}
+.rgrid>.gh.corner,.rgrid>.gsite,.rgrid>.gperson{border-left:0}
+.gsite{display:grid;align-content:start;gap:2px;padding:12px 12px}
+.gsite b{font-size:17px}
+.gsite span{font-size:13.5px;color:var(--muted)}
+.gcell{display:grid;align-content:start;gap:6px;min-height:84px}
+.gcell.addable{cursor:copy}
+.gcell.closed{background:color-mix(in srgb,var(--sunk) 60%,transparent)}
+.gcell .cl{font-size:13.5px;color:var(--muted);font-weight:600}
+.gnone{grid-column:2/-1;display:flex;align-items:center;color:var(--muted);font-size:15px;padding:16px!important;background:color-mix(in srgb,var(--sunk) 50%,transparent)}
+.gadd{justify-self:start;width:32px;height:32px;border-radius:10px;border:1px dashed var(--line);background:none;color:var(--accent);display:grid;place-items:center;cursor:pointer;opacity:.55}
+.gadd svg.i{width:16px;height:16px}
+.gcell:hover .gadd,.gadd:focus-visible{opacity:1}
+.gperson{display:flex;align-items:center;gap:10px}
+.gperson .t{display:grid;min-width:0}.gperson .t b{font-size:15px}.gperson .t .s{font-size:12.5px;color:var(--muted)}
+.ghours{display:grid;gap:6px;align-content:center;font-size:14.5px}
+.ghours.over b{color:var(--bad)}
+.offcell{border:0;border-top:1px solid var(--line);border-left:1px solid var(--line);background:none;font:inherit;color:var(--muted);font-size:13.5px;text-align:left;cursor:copy;align-content:center}
+.offcell.hol{background:repeating-linear-gradient(135deg,var(--sunk) 0 6px,transparent 6px 12px);color:var(--fg);font-weight:600}
+.offcell.cant{background:var(--sunk);font-weight:600}
+.hbar{height:6px;border-radius:99px;background:var(--sunk);overflow:hidden}
+.hbar i{display:block;height:100%;border-radius:99px;background:var(--accent)}
+.hbar.over i{background:var(--bad)}
+.rlegend{display:flex;flex-wrap:wrap;gap:6px 16px;align-items:center;font-size:13.5px;color:var(--muted)}
+.rlegend .lg{display:inline-flex;align-items:center;gap:6px}
+.rlegend .sw{width:14px;height:14px;border-radius:4px;border:1px solid var(--line);background:var(--surface)}
+.rlegend .sw.open{border:1.5px dashed var(--bad);background:var(--bad-bg)}
+.rlegend .sw.clash{border:2px solid var(--warn);background:var(--warn-bg)}
+
+/* Phones: one day at a time */
+.sitecard{gap:10px!important;padding:16px!important}
+.scardh{display:flex;align-items:center;justify-content:space-between}
+.scardh b{font-size:18px}
+.shlist{display:grid;gap:8px}
+.shlist .shc{grid-template-columns:auto 1fr auto;align-items:center;gap:10px;padding:10px 12px;min-height:48px}
+.addshift{justify-self:start;display:inline-flex;align-items:center;gap:4px}
+.addshift svg.i{width:16px;height:16px}
+.prow{flex-wrap:wrap}
+.prow .t .hbar{margin-top:4px;max-width:180px}
+.prow .pshifts{display:grid;gap:6px;min-width:120px}
+.overtx{color:var(--bad)!important;font-weight:600}
+
+/* The shift sheet and other sheets */
+.rsheet{max-height:calc(100dvh - 24px);overflow:auto;display:grid;gap:12px;padding-bottom:16px}
+@media (min-width:1024px){.rsheet{width:560px;top:6vh}}
+.shead{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:8px;margin:0 6px}
+.shead h2{margin:0;text-align:center}
+.shead .linkbtn{justify-self:start;font-size:16px;min-height:40px}
+.shead>:last-child{justify-self:end}
+.sbody{display:grid;gap:14px;margin:0 6px}
+.sfields{display:grid;grid-template-columns:1fr 1fr;gap:10px 12px}
+.sfields .field{display:grid;gap:4px;margin:0}
+.sfields .wide{grid-column:1/-1}
+.sfields input,.sfields select{width:100%;box-sizing:border-box;min-height:44px;font-size:16px}
+.sfields.flash{animation:rflash .9s}
+@keyframes rflash{0%,100%{box-shadow:none}30%{box-shadow:0 0 0 4px var(--tint);border-radius:14px}}
+.who{display:grid;gap:8px}
+.who .list{max-height:42dvh;overflow:auto}
+.cand{border:0;background:none;cursor:pointer}
+.cand.dim{opacity:.55;cursor:default}
+.cand .radio{width:26px;height:26px;border-radius:50%;border:2px solid var(--line);flex:none;box-sizing:border-box}
+.cand[aria-checked="true"]{background:var(--tint)}
+.cand[aria-checked="true"] .radio{border:0;background:var(--accent) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E") center/16px no-repeat}
+.smsg{margin:0;color:var(--bad);font-weight:600}
+.smsg:empty{display:none}
+.sfoot{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:10px}
+.sfoot .btn{min-height:50px;font-size:16px}
+.stools{flex-wrap:wrap;gap:8px}
+
+/* Day view timeline */
+.timeline{gap:10px!important;overflow:hidden}
+.tl-axis{position:relative;height:18px;margin-left:84px;font-size:12px;color:var(--muted)}
+.tl-axis span{position:absolute;transform:translateX(-50%)}
+.tl-row{display:grid;grid-template-columns:76px 1fr;gap:8px;align-items:center;min-height:44px}
+.tl-name{font-weight:650;font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tl-track{position:relative;height:40px;background:repeating-linear-gradient(90deg,transparent 0 calc(100%/12 - 1px),var(--line) calc(100%/12 - 1px) calc(100%/12))}
+.tl-add{display:block;width:100%;border:1.5px dashed var(--line);border-radius:12px;background:none;cursor:copy}
+.tl-bar{position:absolute;top:2px;bottom:2px;display:flex;align-items:center;padding:0 8px;border-radius:10px;border:0;font:inherit;font-size:13px;font-weight:650;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;background:var(--ok-bg);color:var(--ok);box-sizing:border-box}
+.tl-bar.open{background:var(--bad-bg);color:var(--bad);border:1.5px dashed var(--bad)}
+.tl-bar.clash{background:var(--warn-bg);color:var(--warn);border:2px solid var(--warn)}
+.tl-bar.ghost{background:repeating-linear-gradient(135deg,var(--bad-bg) 0 6px,transparent 6px 12px);border:1.5px dashed var(--bad);color:var(--bad);cursor:default;opacity:.9}
+.tl-bars{position:relative;height:64px}
+.tl-h{position:absolute;bottom:0;background:color-mix(in srgb,var(--accent) 35%,transparent);border-right:2px solid var(--surface);box-sizing:border-box;display:flex;justify-content:center}
+.tl-h.low{background:color-mix(in srgb,var(--bad) 55%,transparent)}
+.tl-h i{font-style:normal;font-size:11px;font-weight:700;color:var(--fg);margin-top:2px}
+.alert.rp{flex-wrap:wrap}
+.alert.rp .t{flex:1 1 220px}
+.alert.rp .t span{font-size:14.5px}
+.alert.rp.error{background:color-mix(in srgb,var(--bad-bg) 85%,var(--glass))}
+.alert.rp.error .ic{color:var(--bad)}
+.alert.rp.info{background:var(--glass)}
+.alert.rp.info .ic{color:var(--muted)}
+
+/* My shifts */
+.nextshift{display:grid;gap:4px;padding:20px;border-radius:26px;background:var(--accent);color:var(--accent-ink);box-shadow:var(--float)}
+.nextshift .kick{font-size:13px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;opacity:.85}
+.nextshift .big{font-size:38px;font-weight:750;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.nextshift .with{opacity:.9}
+.nextshift .row{margin-top:10px;gap:8px;flex-wrap:wrap}
+.hbtn{border:0;border-radius:99px;min-height:44px;padding:0 18px;font:inherit;font-weight:700;background:rgba(255,255,255,.2);color:inherit;cursor:pointer;display:inline-flex;align-items:center}
+.hbtn.on{background:rgba(255,255,255,.12);cursor:default}
+.mrow{border:0;background:none;cursor:pointer}
+.dbadge{display:grid;justify-items:center;width:44px;flex:none;font-size:11.5px;font-weight:700;color:var(--muted);letter-spacing:.04em}
+.dbadge b{font-size:22px;color:var(--fg);letter-spacing:0}
+.totrow{display:flex;justify-content:space-between;padding:0 12px;font-size:15px;color:var(--muted)}
+.totrow b{color:var(--fg)}
+
+/* Open shifts and cover */
+.ocard{gap:10px!important}
+.ocard .big{font-size:18px}
+.ocard .row.two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.ocard .row.two .btn{min-height:48px}
+.ocard .note{margin:0}
+.ocard .t{display:grid}.ocard .t .s{font-size:13px;color:var(--muted)}
+.quote{margin:0;padding:12px 14px;border-radius:16px;background:var(--sunk);font-size:15px}
+.lrow .stat{display:flex;align-items:center;gap:6px;font-size:13.5px;font-weight:650}
+.lrow .stat.warn{color:var(--warn)}.lrow .stat.ok{color:var(--ok)}.lrow .stat.bad{color:var(--bad)}
+.wraprow{flex-wrap:wrap}
+.wraprow .acts{display:flex;gap:8px;margin-left:auto}
+@media (max-width:600px){.wraprow .acts{flex-basis:100%;justify-content:flex-end}}
+
+/* When I can work */
+.avwrap+.avwrap{border-top:1px solid var(--line)}
+.avrow{min-height:60px}
+.avrow .dn{width:44px;flex:none}
+.tchip{border:0;border-radius:12px;min-height:36px;padding:0 12px;font:inherit;font-weight:650;background:var(--tint);color:var(--accent);cursor:pointer}
+.tchip.any{background:none;color:var(--fg);font-weight:500;padding:0 4px}
+.rswitch{display:flex;flex:none;cursor:pointer}
+.rswitch input{appearance:none;-webkit-appearance:none;width:51px;height:31px;margin:0;border-radius:99px;background:var(--sunk);position:relative;cursor:pointer;box-shadow:inset 0 0 0 1px var(--line);transition:background .2s}
+.rswitch input::after{content:"";position:absolute;top:2px;left:2px;width:27px;height:27px;border-radius:50%;background:#fff;box-shadow:0 2px 4px rgba(0,0,0,.2);transition:left .2s}
+.rswitch input:checked{background:#30b158;box-shadow:none}
+.rswitch input:checked::after{left:22px}
+.rswitch input:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.avtimes{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;padding:0 14px 14px 70px}
+.avtimes label{display:inline-flex;align-items:center;gap:6px;font-size:14px;color:var(--muted)}
+.avtimes input{min-height:40px;font-size:16px}
+.fchips{display:flex;flex-wrap:wrap;gap:8px}
+.fchip[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);border-color:transparent}
+
+/* Hours and settings */
+.hstats{grid-template-columns:repeat(auto-fit,minmax(90px,1fr))}
+.tablepanel{padding:6px 0!important;overflow:auto}
+.htable{width:100%;border-collapse:collapse;font-size:15px}
+.htable th,.htable td{padding:12px 16px;border-bottom:1px solid var(--line);text-align:left;font-weight:500}
+.htable thead th{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:650}
+.htable tbody th,.htable tfoot th{font-weight:600;text-transform:none;letter-spacing:0;font-size:15px;color:var(--fg)}
+.htable .n{text-align:right;font-variant-numeric:tabular-nums}
+.htable td.over{color:var(--bad);font-weight:700}
+.htable tfoot th,.htable tfoot td{font-weight:750;border-bottom:0}
+.setrow{display:grid!important;gap:10px}
+.setf{display:grid;grid-template-columns:1fr 1fr 80px auto;gap:8px;align-items:end;min-width:0}
+@media (max-width:600px){.setf{grid-template-columns:1fr 1fr 70px}.setf .btn{grid-column:1/-1;justify-self:start}}
+.setf label{display:grid;gap:2px;font-size:12px;color:var(--muted);font-weight:600}
+.setf input{min-height:40px;font-size:16px;width:100%;min-width:0;box-sizing:border-box}
+.chours{display:inline-flex;align-items:center;gap:6px;font-size:14px;color:var(--muted)}
+.chours input{width:76px;min-height:40px;font-size:16px;text-align:right;box-sizing:border-box}
+
+@media (prefers-reduced-motion:reduce){.sfields.flash{animation:none}}
+
+/* Rows that are divs (not buttons) need border-box like the diary's button rows. */
+div.lrow{box-sizing:border-box}

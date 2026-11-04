@@ -341,6 +341,22 @@
     },
   };
 
-  const services = { db, user, assets };
+  /* ---------- rota (src/rota.ts): who's on shift today ---------- */
+
+  const rota = {
+    // Today's published shifts at a site: {site, day, published, shifts:[{name, me, open, start, end, job}], rotaUrl}.
+    // null when offline, so the page keeps what it showed.
+    async today(site) {
+      try { return await call("/api/rota/today?site=" + encodeURIComponent(site)); }
+      catch (e) { if (e && e.code === OFFLINE) return null; throw e; }
+    },
+    // Where the rota lives, for links: {rota, diary}.
+    async links() {
+      try { return await call("/api/rota/links"); }
+      catch (e) { return null; }
+    },
+  };
+
+  const services = { db, user, assets, rota };
   window.claude = { use: async (n) => services[n] ?? null };
 })();

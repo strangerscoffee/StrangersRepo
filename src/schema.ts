@@ -48,6 +48,65 @@ const SCHEMA = [
   "CREATE TABLE IF NOT EXISTS secrets (k TEXT PRIMARY KEY, v TEXT NOT NULL)",
   // Per-IP write counters for rate limiting.
   "CREATE TABLE IF NOT EXISTS rate_limits (ip TEXT NOT NULL, window INTEGER NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (ip, window))",
+  // The staff rota (src/rota.ts, docs/data-model.md). Its own tables, because it needs per-row rules.
+  `CREATE TABLE IF NOT EXISTS rota_shifts (
+    id          TEXT PRIMARY KEY,
+    site        TEXT NOT NULL,                -- roastery | cafe | asg | factory
+    day         TEXT NOT NULL,                -- YYYY-MM-DD
+    start       TEXT NOT NULL,                -- HH:MM, UK time
+    end         TEXT NOT NULL,                -- HH:MM, after start
+    break_mins  INTEGER NOT NULL DEFAULT 0,   -- unpaid
+    job         TEXT NOT NULL DEFAULT '',     -- 'opens' | 'closes' | ''
+    user_id     TEXT,                         -- users.id; NULL = open shift
+    note        TEXT NOT NULL DEFAULT '',
+    updated_at  INTEGER NOT NULL,
+    updated_by  TEXT NOT NULL                 -- users.id
+  )`,
+  "CREATE INDEX IF NOT EXISTS rota_shifts_day ON rota_shifts(day)",
+  "CREATE INDEX IF NOT EXISTS rota_shifts_user_day ON rota_shifts(user_id, day)",
+  `CREATE TABLE IF NOT EXISTS rota_weeks (
+    week          TEXT PRIMARY KEY,           -- the Monday, YYYY-MM-DD
+    published_at  INTEGER,                    -- NULL = draft
+    published_by  TEXT,
+    changed_at    INTEGER,                    -- last shift change in the week
+    changes       INTEGER NOT NULL DEFAULT 0  -- shift changes since it was last published
+  )`,
+  `CREATE TABLE IF NOT EXISTS rota_sites (
+    site        TEXT PRIMARY KEY,
+    opens_at    TEXT,                         -- HH:MM; NULL = not set
+    closes_at   TEXT,
+    min_people  INTEGER NOT NULL DEFAULT 1    -- wanted on shift for every open hour
+  )`,
+  `CREATE TABLE IF NOT EXISTS rota_people (
+    user_id         TEXT PRIMARY KEY,         -- users.id
+    contract_hours  REAL,                     -- per week; NULL = none
+    sites           TEXT NOT NULL DEFAULT '[]', -- JSON site ids they can get to; [] = any
+    pattern         TEXT NOT NULL DEFAULT '{}', -- JSON {"mon":{"from","to"}|"any"|"off", …}; missing day = any
+    updated_at      INTEGER NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS rota_time_off (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL,
+    from_day    TEXT NOT NULL,                -- inclusive
+    to_day      TEXT NOT NULL,                -- inclusive
+    reason      TEXT NOT NULL DEFAULT '',
+    status      TEXT NOT NULL,                -- requested | approved | declined | cancelled
+    decided_by  TEXT, decided_at INTEGER,
+    created_at  INTEGER NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS rota_requests (
+    id          TEXT PRIMARY KEY,
+    kind        TEXT NOT NULL,                -- claim (take an open shift) | cover (give my shift away)
+    shift_id    TEXT NOT NULL,
+    from_user   TEXT NOT NULL,                -- who asked
+    to_user     TEXT,                         -- cover: who's asked (NULL = anyone)
+    taker       TEXT,                         -- who will take the shift
+    message     TEXT NOT NULL DEFAULT '',
+    status      TEXT NOT NULL,                -- open | accepted | approved | declined | cancelled
+    decided_by  TEXT, decided_at INTEGER,
+    created_at  INTEGER NOT NULL
+  )`,
+  "CREATE INDEX IF NOT EXISTS rota_requests_shift ON rota_requests(shift_id, status)",
 ];
 
 // Upgrades older databases in place:

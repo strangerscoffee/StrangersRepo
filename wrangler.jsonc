@@ -24,15 +24,19 @@
 
   "vars": {
     // Write requests (saves, deletes, uploads) allowed per IP address per 15 minutes.
-    "WRITE_LIMIT_PER_15_MIN": "600"
+    "WRITE_LIMIT_PER_15_MIN": "600",
+    // The staff rota's own address (src/rota.ts). Same Worker, database and accounts as the diary.
+    "ROTA_HOST": "rota.staffstrangerscoffee.com"
   },
 
   // Custom domains. staffstrangerscoffee.com must be a zone in the same Cloudflare account; on deploy,
   // Cloudflare creates the DNS records and certificates for these hostnames.
-  // The site lives on the bare domain; the Worker redirects www to it (src/index.ts).
+  // The site lives on the bare domain; the Worker redirects www to it (src/index.ts). The rota is on its own
+  // subdomain (ROTA_HOST above). Keep the diary's route first: local dev uses the first route's hostname.
   "routes": [
     { "pattern": "staffstrangerscoffee.com", "custom_domain": true },
-    { "pattern": "www.staffstrangerscoffee.com", "custom_domain": true }
+    { "pattern": "www.staffstrangerscoffee.com", "custom_domain": true },
+    { "pattern": "rota.staffstrangerscoffee.com", "custom_domain": true }
   ],
 
   // Local dev rewrites requests to the route's hostname; keep them https so the Worker's

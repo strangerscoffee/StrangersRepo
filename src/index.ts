@@ -1,12 +1,14 @@
 // Strangers Coffee Kitchen Diary staff site.
-// Serves the diary page (public/index.html) and the API it uses through claude-shim.js.
-import { authorize, isPublicAsset, limitWrites, recordId, requireUser } from "./access";
+// Serves the diary page (public/index.html) and the API it uses through claude-shim.js, and, on its own
+// hostname (ROTA_HOST), the staff rota (public/rota/, src/rota.ts). One Worker, one database, one set of accounts.
+import { appForHost, appLinks, authorize, isPublicAsset, isRotaSharedFile, limitWrites, recordId, requireUser } from "./access";
 import { handleAdmin } from "./admin";
 import { handleAuth } from "./auth";
 import { handleBackups, makeBackup } from "./backup";
 import { deleteAsset, serveBlob, uploadAsset } from "./assets";
 import { WRITE_OPS, handleDb } from "./docs";
 import { ApiError, Env, errorResponse, json } from "./http";
+import { handleRota } from "./rota";
 import { ensureSchema } from "./schema";
 
 export default {
@@ -43,11 +45,23 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
+const noStore = (res: Response) => {
+  const out = new Response(res.body, res);
+  out.headers.set("cache-control", "private, no-store");
+  return out;
+};
+const redirect = (location: string) => new Response(null, { status: 302, headers: { location, "cache-control": "no-store" } });
+// The rota app's page. Served at /rota/ on any host (local dev and tests) and at / on the rota's own host.
+const rotaPage = (req: Request, env: Env, url: URL) => env.ASSETS.fetch(new Request(new URL("/rota/", url), req)).then(noStore);
+
 async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): Promise<Response> {
   const p = url.pathname;
   const isGet = req.method === "GET" || req.method === "HEAD";
+  const app = appForHost(url.hostname, env.ROTA_HOST);
   // The sign-in page and its files need no session (and no database).
   if (isGet && isPublicAsset(p)) return env.ASSETS.fetch(req);
+  // On its own host the rota lives at /, so /rota/ (the address used in local dev) goes there.
+  if (app === "rota" && isGet && (p === "/rota" || p === "/rota/" || p === "/rota/index.html")) return redirect("/" + url.search);
 
   await ensureSchema(env);
   const caller = await authorize(req, env);
@@ -62,6 +76,17 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
     return new Response(null, { status: 302, headers: { location: "/signin" + next, "cache-control": "no-store" } });
   }
   const user = caller.user;
+
+  if (p.startsWith("/api/rota/")) return handleRota(req, env, ctx, p.slice("/api/rota/".length), user, appLinks(url, env.ROTA_HOST));
+
+  // The rota's own host serves the rota and nothing of the diary's: diary pages go to the rota, diary APIs are refused.
+  if (app === "rota") {
+    if (p.startsWith("/api/") || p.startsWith("/_blob/")) throw new ApiError(404, "not_found", "Not available on the rota's address.");
+    if (!isGet) return new Response("Method not allowed", { status: 405 });
+    if (p === "/") return rotaPage(req, env, url);
+    if (isRotaSharedFile(p)) return env.ASSETS.fetch(req);
+    return redirect("/");
+  }
 
   if (p.startsWith("/api/admin/")) {
     if (user.role !== "admin") throw new ApiError(403, "permission_denied", "Only admins can do this.");
@@ -91,6 +116,7 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
 
   if (p.startsWith("/api/")) throw new ApiError(404, "not_found", "Unknown API route.");
   if (!isGet) return new Response("Method not allowed", { status: 405 });
+  if (p === "/rota" || p === "/rota/" || p === "/rota/index.html") return p === "/rota" ? redirect("/rota/") : rotaPage(req, env, url);
   if ((p === "/admin" || p === "/admin.html") && user.role !== "admin") {
     return new Response(null, { status: 302, headers: { location: "/", "cache-control": "no-store" } });
   }
