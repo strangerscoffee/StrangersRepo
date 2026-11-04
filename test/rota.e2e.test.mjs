@@ -59,7 +59,7 @@ for (const [label, viewport] of [["phone", { width: 393, height: 852 }], ["iPad"
     // The manager adds an open shift at the Roastery today...
     const m = await pageFor(viewport);
     await m.page.goto(srv.base + "/rota/");
-    await m.page.locator("#pageTitle", { hasText: "Rota" }).waitFor();
+    await m.page.locator("#pageTitle", { hasText: /^Week of / }).waitFor();
     if (viewport.width < 1024) {
       await m.page.locator(".sitecard", { hasText: "Roastery" }).locator(".addshift").click();
     } else {
@@ -73,8 +73,11 @@ for (const [label, viewport] of [["phone", { width: 393, height: 852 }], ["iPad"
     await m.page.locator("#sheet .btn", { hasText: "Add open shift" }).click();
     await m.page.locator("#toast", { hasText: "Shift added" }).waitFor();
 
-    // ...fills it from the suggestions (the problem chip's Fill)...
-    await m.page.locator(".pchip", { hasText: "open shift" }).locator(".pact", { hasText: "Fill" }).click();
+    // ...fills it from "Before you publish" (folded on phones)...
+    // A draft on the first run; "Published · 2 changes not sent" when the phone run already published it.
+    await m.page.locator("#pageTitle .wstatus", { hasText: /^(Draft|Published · \d+ changes? not sent)$/ }).waitFor();
+    if (!(await m.page.locator("details.probs").evaluate((d) => d.open))) await m.page.locator("details.probs summary").click();
+    await m.page.locator(".prob.bad", { hasText: "open shift" }).locator(".btn", { hasText: "Fill" }).click();
     await m.page.locator("#sheet h2", { hasText: "Open shift" }).waitFor();
     const alexRow = m.page.locator("#sheet .cand", { hasText: "Alex Brown" });
     await alexRow.waitFor();
@@ -87,8 +90,14 @@ for (const [label, viewport] of [["phone", { width: 393, height: 852 }], ["iPad"
     assert.equal(w.shifts[0].job, "opens");
 
     // ...and publishes.
-    await m.page.locator(".rtool .btn", { hasText: /^Publish/ }).click();
+    if (viewport.width >= 1024) assert.match(await m.page.locator(".cover").nth((new Date(today + "T12:00:00Z").getUTCDay() + 6) % 7).innerText(), /^1/, "the cover row counts Alex");
+    await m.page.locator(".rtool .pubbtn", { hasText: /^Publish (week|\d+ changes?)$/ }).click();
+    await m.page.locator("#sheet h2", { hasText: /^Publish (the week of|\d+ changes?)/ }).waitFor();
+    assert.match(await m.page.locator("#sheet .kvs").innerText(), /Shifts\s+1 · 22\.5 hours/);
+    await m.page.locator("#sheet .btn", { hasText: /^Publish( changes)?$/ }).click();
     await m.page.locator("#toast", { hasText: "Published" }).waitFor();
+    await m.page.locator("#pageTitle .wstatus", { hasText: /^Published$/ }).waitFor();
+    assert.equal(await m.page.locator(".rtool .pubbtn").innerText(), "Up to date");
     assert.equal((await call("GET", "/api/rota/week?start=" + week)).published, true);
 
     // Alex sees it as the next shift.
@@ -96,6 +105,8 @@ for (const [label, viewport] of [["phone", { width: 393, height: 852 }], ["iPad"
     await a.page.goto(srv.base + "/rota/");
     await a.page.locator(".nextshift", { hasText: "00:30–23:30" }).waitFor();
     assert.match(await a.page.locator(".nextshift .kick").innerText(), /today/i);
+    // ...and in their week strip, on today.
+    assert.match(await a.page.locator(".mweek .mday.today .blk.shift").innerText(), /00:30\s+23:30/);
     assert.equal(await a.page.locator("#tabbar .tab, #snav a").filter({ hasText: "Requests" }).count(), 0, "staff have no Requests tab");
 
     // The diary's Today shows who's on and who opens.
