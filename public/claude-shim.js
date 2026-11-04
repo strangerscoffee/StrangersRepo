@@ -396,12 +396,17 @@
   const user = {
     async me() {
       const { user: u, quickSwitch } = await mePromise;
-      return { id: u.recordId, name: u.name, avatarUrl: "", role: u.role, quickPin: !!u.quickPin, quickSwitch: !!quickSwitch };
+      return { id: u.recordId, name: u.name, avatarUrl: "", role: u.role, quickPin: !!u.quickPin, quickSwitch: !!quickSwitch, notifSeen: u.notifSeen || 0 };
     },
     async can(perm) { return perm === "data.write"; }, // every role records entries; section limits are separate
     async profiles(ids) {
       try { return await api("profiles", { ids }); }
       catch (e) { if (e && e.code === OFFLINE) return null; throw e; } // null: keep the names already shown
+    },
+    // Notifications seen up to `at` (ms), for this person on every device. Returns the stored time, or null offline.
+    async seenNotifications(at) {
+      try { return (await call("/api/auth/notifications/seen", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ at }) })).seen; }
+      catch (e) { if (e && e.code === OFFLINE) return null; throw e; }
     },
     // Everyone with an active account: [{id: "web:<name>", name, role}]. null when offline.
     async team() {

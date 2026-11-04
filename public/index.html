@@ -24,12 +24,14 @@
 <header class="appbar" id="appbar">
   <div class="abrand"><span class="brandmark" role="img" aria-label="Strangers Coffee"></span>
     <button class="sitebtn" type="button" data-sitebtn aria-haspopup="dialog"></button></div>
-  <button class="avatar" type="button" id="avatarBtn" aria-haspopup="menu" aria-label="Account"></button>
+  <div class="aright"><button class="bellbtn" type="button" id="bellBtn" aria-haspopup="dialog" aria-label="Notifications"></button>
+  <button class="avatar" type="button" id="avatarBtn" aria-haspopup="menu" aria-label="Account"></button></div>
 </header>
 <aside class="sidebar" id="sidebar">
   <span class="brandlogo sbrand" role="img" aria-label="Strangers Coffee Company"></span>
   <button class="sitebtn" type="button" data-sitebtn aria-haspopup="dialog"></button>
   <nav class="snav" id="snav" aria-label="Sections"></nav>
+  <button class="sbell" type="button" id="sideBell" aria-haspopup="dialog"></button>
   <button class="mebox" type="button" id="meBox" aria-haspopup="menu"></button>
 </aside>
 <nav class="tabbar" id="tabbar" aria-label="Sections"></nav>
@@ -46,6 +48,12 @@
   <h2 id="peopleSheetTitle">Who's recording?</h2>
   <div class="list" id="peopleList"></div>
   <p class="note" id="peopleNote"></p>
+</div>
+<div class="sheet" id="notifSheet" role="dialog" aria-modal="true" aria-labelledby="notifSheetTitle" hidden>
+  <div class="grab" aria-hidden="true"></div>
+  <h2 id="notifSheetTitle">Notifications</h2>
+  <div class="list" id="notifList"></div>
+  <p class="note" id="notifNote">Maintenance jobs at every site: assigned to you, new, done, and ones left open too long.</p>
 </div>
 <div class="menu" id="acctMenu" role="menu" aria-label="Account" hidden></div>
 <div class="conn" id="conn" role="status" hidden></div>

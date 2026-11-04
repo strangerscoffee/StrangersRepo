@@ -107,11 +107,13 @@ Anything else shows "Couldn't save. Check your connection and try again."
 ## `user`
 
 ```ts
-me(): Promise<{id, name, avatarUrl, role, quickPin, quickSwitch}>
+me(): Promise<{id, name, avatarUrl, role, quickPin, quickSwitch, notifSeen}>
+// notifSeen: the time (ms) up to which this person has seen their notifications, on any device
 // {id:"web:Sam Patel", name:"Sam Patel", avatarUrl:"", role:"staff"|"manager"|"admin",
 //  quickPin: has set a quick PIN, quickSwitch: this device can switch person with one}
 can(perm: "data.write"): Promise<boolean>                       // true for any signed-in person
 profiles(ids: string[]): Promise<Record<string, {name: string}>>
+seenNotifications(at: number): Promise<number | null>          // POST /api/auth/notifications/seen; never backwards or past now
 team(): Promise<Array<{id, name, role}> | null>                 // everyone with an active account; null offline
 ```
 `team` (GET `/api/auth/team`) lists names and roles only, never usernames. The page uses it to assign maintenance jobs and to add new accounts to Staff training.
