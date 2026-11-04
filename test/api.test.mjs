@@ -392,6 +392,19 @@ test("quick switching: a 4-digit PIN works only on a device signed in with a pas
   assert.equal((await (await auth("me", undefined, device)).json()).quickSwitch, false);
 });
 
+test("signing out ends that session on the server; the person's other sessions carry on", async () => {
+  assert.equal((await admin("POST", "users", { name: "Lou Leave", username: "lou.leave", role: "staff", password: "temp-pass-1" })).status, 200);
+  await firstSignIn("lou.leave", "temp-pass-1", "lou-own-pass");
+  const one = cookieOf(await postJson("/api/auth/login", { username: "lou.leave", password: "lou-own-pass" }));
+  const two = cookieOf(await postJson("/api/auth/login", { username: "lou.leave", password: "lou-own-pass" }));
+  const me = (c) => fetch(`${srv.base}/api/auth/me`, { headers: { cookie: c } }).then((r) => r.json());
+  assert.equal((await me(one)).user.name, "Lou Leave");
+  const out = await fetch(`${srv.base}/api/auth/logout`, { method: "POST", headers: { cookie: one } });
+  assert.equal(out.status, 200);
+  assert.equal((await me(one)).user, null, "a copy of the signed-out cookie no longer works");
+  assert.equal((await me(two)).user.name, "Lou Leave", "the other session (another device) is still signed in");
+});
+
 test("writes are rate limited per IP", async () => {
   let last;
   // Over twice the limit (80 a person), so it's crossed even if the 15-minute window rolls over part way.

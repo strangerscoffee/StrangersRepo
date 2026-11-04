@@ -37,7 +37,7 @@ const settings = (site, closedDays) => req("POST", "/api/db/set", {
   data: { closedDays, units: [], opening: [], closing: [], weekly: [], hide: {}, info: {} },
 });
 const addShift = async (s, cookie = MGR) => {
-  const r = await rota("POST", "shifts", { breakMins: 30, job: "", ...s }, cookie);
+  const r = await rota("POST", "shifts?with=problems", { breakMins: 30, job: "", ...s }, cookie);
   assert.equal(r.status, 200, r.text);
   return r.body;
 };
@@ -150,6 +150,12 @@ test("validation: bad site, date, times, closed day, unknown person", async () =
     assert.equal(r.body.code, "invalid_argument");
   }
   assert.match((await rota("POST", "shifts", bad[4], MGR)).body.message, /closed on Sundays/);
+  // A save doesn't work out the week's problems unless asked (?with=problems): the page redraws the week anyway.
+  const plain = await rota("POST", "shifts", { site: "cafe", day: MON, start: "09:00", end: "12:00" }, MGR);
+  assert.equal(plain.status, 200, plain.text);
+  assert.equal(plain.body.problems, undefined);
+  assert.equal(plain.body.week, WEEK);
+  await rota("DELETE", "shifts/" + plain.body.shift.id, undefined, MGR);
   // A day closed in the diary (Today → closed, or a planned closure) is closed on the rota too.
   await req("POST", "/api/db/set", { path: `sites/cafe/days/${TUE}`, data: { date: TUE, closed: { reason: "Boiler repair", by: "web:Will Owner", at: 1 } } });
   const r = await rota("POST", "shifts", { site: "cafe", day: TUE, start: "09:00", end: "12:00" }, MGR);
@@ -406,7 +412,7 @@ test("amending a shift on the day: start and finish as worked, with a reason; th
   assert.equal((await rota("PUT", `shifts/${later.id}/actual`, { start: "08:00", end: "11:00" }, MGR)).status, 400, "not before the day");
   await rota("DELETE", "shifts/" + later.id, undefined, MGR);
 
-  const r = await rota("PUT", `shifts/${s.id}/actual`, { start: "08:00", end: "11:00", breakMins: 0, note: "Went home sick" }, MGR);
+  const r = await rota("PUT", `shifts/${s.id}/actual?with=problems`, { start: "08:00", end: "11:00", breakMins: 0, note: "Went home sick" }, MGR);
   assert.equal(r.status, 200, r.text);
   assert.deepEqual([r.body.shift.start, r.body.shift.end, r.body.shift.actualStart, r.body.shift.actualEnd], ["08:00", "16:00", "08:00", "11:00"]);
   assert.deepEqual([r.body.shift.hours, r.body.shift.plannedHours, r.body.shift.adjustNote], [3, 7.5, "Went home sick"]);
