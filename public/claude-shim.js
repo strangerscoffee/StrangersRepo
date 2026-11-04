@@ -41,7 +41,8 @@
     if (res.status === 401) goSignIn();
     // A gateway error means the request didn't get through: treat it like no connection.
     if (res.status === 502 || res.status === 503 || res.status === 504) throw { code: OFFLINE, message: "The diary didn't respond. Try again." };
-    if (!res.ok) throw { code: (body && body.code) || OFFLINE, message: (body && body.message) || `HTTP ${res.status}` };
+    if (res.status === 401) throw { code: "unauthenticated", message: (body && body.message) || "Signed out." };
+    if (!res.ok) throw { code: (body && body.code) || OFFLINE, message: (body && body.message) || `HTTP ${res.status}`, retry: res.status >= 500 };
     return body;
   }
 
@@ -79,6 +80,14 @@
     announce();
   }
 
+  let dropped = 0; // changes refused for good since the page loaded (the page says so rather than "all saved")
+  let retryWait = 0, retryTimer = null;
+  function retryLater() {
+    retryWait = Math.min(retryWait ? retryWait * 2 : 5000, 120000);
+    clearTimeout(retryTimer);
+    retryTimer = setTimeout(() => flush(), retryWait);
+  }
+
   /** Sends queued changes in order. Stops at the first that can't get through (still offline). */
   function flush() {
     if (flushing) return flushing;
@@ -88,19 +97,30 @@
         try {
           if (w.op === "update") {
             try { await api("update", { path: w.path, patch: w.patch }); }
-            catch (e) { if (e && e.code === "not_found") await api("set", { path: w.path, data: w.patch }); else throw e; }
+            catch (e) {
+              // A day or week page that doesn't exist yet is created by merging; anything else that's gone was
+              // deleted meanwhile, and stays deleted (no nameless stub brought back).
+              if (e && e.code === "not_found" && /\/(days|weeks)\/[^/]+$/.test(w.path)) await api("set", { path: w.path, data: w.patch });
+              else throw e;
+            }
           } else if (w.op === "set") await api("set", { path: w.path, data: w.data });
           else await api("delete", { path: w.path });
         } catch (e) {
           if (e && e.code === OFFLINE) { setOffline(true); break; }
-          // Refused for good (permissions, invalid): drop it so the rest can go, and tell the page.
+          // Signed out, busy or a fault on the server: keep everything and try again later (after signing in,
+          // for a session that ended). Only a change that's refused for good is dropped.
+          if (e && (e.code === "unauthenticated" || e.code === "rate_limited" || e.code === "internal" || e.code === "quota_exceeded" || e.retry)) {
+            retryLater();
+            break;
+          }
+          dropped++;
           window.dispatchEvent(new CustomEvent("diary:dropped", { detail: { path: w.path, message: e && e.message } }));
         }
         queue.shift();
         saveQueue();
         announce();
       }
-      if (!queue.length) setOffline(false);
+      if (!queue.length) { setOffline(false); retryWait = 0; }
       flushing = null;
       refresh();
     })();

@@ -20,6 +20,8 @@ const SCHEMA = [
   "CREATE INDEX IF NOT EXISTS docs_collection ON docs(collection, deleted)",
   "CREATE INDEX IF NOT EXISTS docs_web_changes ON docs(source, updated_at)",
   "CREATE INDEX IF NOT EXISTS docs_collection_seq ON docs(collection, seq)",
+  // A range of days at one site (the rota's closed days), without reading every day ever recorded.
+  "CREATE INDEX IF NOT EXISTS docs_collection_doc ON docs(collection, doc_id)",
   // Small key/value table: 'seq' (bumped on every write) and 'lastApplyAt'.
   "CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v INTEGER NOT NULL)",
   "INSERT OR IGNORE INTO meta (k, v) VALUES ('seq', 0), ('lastApplyAt', 0)",
@@ -116,6 +118,9 @@ const SCHEMA = [
     created_at  INTEGER NOT NULL
   )`,
   "CREATE INDEX IF NOT EXISTS rota_requests_shift ON rota_requests(shift_id, status)",
+  "CREATE INDEX IF NOT EXISTS rota_requests_status ON rota_requests(status, decided_at)",
+  "CREATE INDEX IF NOT EXISTS rota_time_off_user ON rota_time_off(user_id, to_day)",
+  "CREATE INDEX IF NOT EXISTS rota_time_off_status ON rota_time_off(status, from_day)",
   // Account and admin events for the admin section's Activity and Security pages (src/audit.ts): who added or
   // changed an account, lockouts, failed sign-ins, backups made by hand. Never passwords or PINs.
   `CREATE TABLE IF NOT EXISTS audit_log (

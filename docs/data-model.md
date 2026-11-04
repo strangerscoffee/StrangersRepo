@@ -71,7 +71,7 @@ problems:{text,by,at}
 closed:{reason,by,at}        // closed outside the usual opening days (holiday, maintenance, unexpected): never counted as incomplete; null when reopened. Staff may set it only on today's page, with their own by and a reason; only managers and admins reopen a day or close an earlier one
 signed:{by,at,name}          // name = the signed-in person's name (older entries may lack it); only managers and admins set it back to null (undo)
 ```
-A `set` on a day page that already exists merges into it like an `update` (so a page another device created first keeps its checks). Staff can't delete day or week pages or reviews, and a `signed` block a staff member writes must be in their own name (unless it's the one already there).
+A `set` on a day page that already exists merges into it like an `update` (so a page another device created first keeps its checks). Staff can't delete day or week pages or reviews, and a `signed` block a staff member writes must be in their own name, both `by` and `name` (unless it's the one already there). Staff can't clear a whole section of a day or week (a top-level key set to `null`, other than `signed` and `closed`, which have their own rules), can't change a review someone else signed (`by`), and record training dates (`topics.<id>.by`) on their own staff record in their own name only.
 
 The page writes these with nested `update`s such as `{temps:{u1:{am:{v:3.2,by,at}}}}`, which must merge deeply (see `runtime-api.md`).
 

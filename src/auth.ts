@@ -176,19 +176,24 @@ function clearSession(req: Request, env: Env): [string, string][] {
 
 /** A device someone has signed in on with a username and password. Quick switching (a 4-digit PIN) only
  * works on such a device, so a PIN alone can't sign anyone in from elsewhere. */
-async function deviceCookie(req: Request, env: Env): Promise<[string, string][]> {
-  const payload = b64url(enc.encode(JSON.stringify({ d: newId(8), e: Date.now() + DEVICE_MS })));
+async function deviceCookie(req: Request, env: Env, user: { id: string; session_ver: number }): Promise<[string, string][]> {
+  // Tied to the person who signed in and their session version, so "sign out everywhere", a new password or
+  // switching them off also stops the device being trusted.
+  const payload = b64url(enc.encode(JSON.stringify({ d: newId(8), u: user.id, v: user.session_ver, e: Date.now() + DEVICE_MS })));
   const sig = b64url(new Uint8Array(await crypto.subtle.sign("HMAC", await sessionKey(env), enc.encode("device." + payload))));
   return cookieHeaders(req, env, DEVICE_COOKIE, `${payload}.${sig}`, DEVICE_MS / 1000);
 }
 
 export async function trustedDevice(req: Request, env: Env): Promise<boolean> {
-  return !!(await verifiedCookie(req, env, DEVICE_COOKIE, "device."));
+  const c = await verifiedCookie(req, env, DEVICE_COOKIE, "device.");
+  if (!c || typeof c.data.u !== "string") return false;
+  const u = await env.DB.prepare("SELECT session_ver FROM users WHERE id = ? AND active = 1").bind(c.data.u).first<{ session_ver: number }>();
+  return !!u && u.session_ver === c.data.v;
 }
 
 /** Response headers for a password sign-in: the session, and this device marked as trusted. */
 async function signedIn(req: Request, env: Env, user: { id: string; session_ver: number }): Promise<[string, string][]> {
-  return [...(await sessionCookie(req, env, user)), ...(await deviceCookie(req, env))];
+  return [...(await sessionCookie(req, env, user)), ...(await deviceCookie(req, env, user))];
 }
 
 /** Sessions and trusted devices from before cookies were shared are host-only: moves them to the shared domain,
@@ -231,6 +236,33 @@ async function ipFailures(env: Env, ip: string): Promise<number> {
   const window = Math.floor(Date.now() / WINDOW_MS) * WINDOW_MS;
   const row = await env.DB.prepare("SELECT n FROM rate_limits WHERE ip = ? AND window = ?").bind("login:" + ip, window).first<{ n: number }>();
   return row?.n ?? 0;
+}
+
+/**
+ * Take one attempt from this connection's allowance before checking anything, in one statement, so attempts
+ * sent at the same moment can't all see the old count. A right answer gives it back (`refundIpAttempt`).
+ */
+async function takeIpAttempt(env: Env, ip: string, message: string): Promise<void> {
+  const window = Math.floor(Date.now() / WINDOW_MS) * WINDOW_MS;
+  const r = await env.DB.prepare("INSERT INTO rate_limits (ip, window, n) VALUES (?, ?, 1) ON CONFLICT (ip, window) DO UPDATE SET n = n + 1 RETURNING n")
+    .bind("login:" + ip, window).first<{ n: number }>();
+  if ((r?.n ?? 0) > IP_FAILS) throw new ApiError(429, "rate_limited", message);
+}
+async function refundIpAttempt(env: Env, ip: string): Promise<void> {
+  const window = Math.floor(Date.now() / WINDOW_MS) * WINDOW_MS;
+  await env.DB.prepare("UPDATE rate_limits SET n = MAX(0, n - 1) WHERE ip = ? AND window = ?").bind("login:" + ip, window).run();
+}
+/**
+ * Take one of the account's tries, atomically: refused while it's locked or while five tries are already
+ * counted (including ones still being checked). Returns how many tries that makes.
+ */
+async function takeAccountAttempt(env: Env, row: UserRow, now: number, what: string): Promise<number> {
+  const r = await env.DB.prepare("UPDATE users SET failed = failed + 1 WHERE id = ? AND locked_until <= ? AND failed < ? RETURNING failed")
+    .bind(row.id, now, MAX_FAILS).first<{ failed: number }>();
+  if (r) return r.failed;
+  const cur = await env.DB.prepare("SELECT locked_until FROM users WHERE id = ?").bind(row.id).first<{ locked_until: number }>();
+  const mins = Math.max(1, Math.ceil(((cur?.locked_until || now + LOCK_MS) - now) / 60000));
+  throw new ApiError(423, "locked", `Too many wrong ${what}. Try again in ${mins} minute${mins === 1 ? "" : "s"}${what === "passwords" ? ", or ask an admin to reset your password" : ", or sign in with a password"}.`);
 }
 
 async function recordIpFailure(env: Env, ip: string): Promise<void> {
@@ -276,37 +308,30 @@ async function checkSetupCode(env: Env, ip: string, code: unknown): Promise<void
 
 /** Checks a username and password, counting failures per account and per IP. Returns the account. */
 async function verifyLogin(env: Env, ip: string, username: unknown, password: unknown): Promise<UserRow> {
-  if ((await ipFailures(env, ip)) >= IP_FAILS) {
-    throw new ApiError(429, "rate_limited", "Too many wrong attempts from this connection. Wait 15 minutes.");
-  }
+  await takeIpAttempt(env, ip, "Too many wrong attempts from this connection. Wait 15 minutes.");
   const u = typeof username === "string" ? username.trim().toLowerCase() : "";
   const pw = typeof password === "string" ? password : "";
   const row = u ? await env.DB.prepare("SELECT * FROM users WHERE username = ?").bind(u).first<UserRow>() : null;
   const wrong = new ApiError(401, "wrong_password", "That username and password don't match. Check both and try again.");
   if (!row || !row.active) {
     await hashPassword(pw || "x"); // same work as a real check, so timing doesn't reveal which usernames exist
-    await recordIpFailure(env, ip);
     // Never the username typed: it could be someone's password typed in the wrong box.
     await audit(env, "signin_failed", null, row ? `Sign-in to ${row.name}'s switched-off account` : "Sign-in with a username that doesn't exist");
     throw wrong;
   }
   const now = Date.now();
-  if (row.locked_until > now) {
-    const mins = Math.ceil((row.locked_until - now) / 60000);
-    throw new ApiError(423, "locked", `Too many wrong passwords. Try again in ${mins} minute${mins === 1 ? "" : "s"}, or ask an admin to reset your password.`);
-  }
+  const failed = await takeAccountAttempt(env, row, now, "passwords");
   if (!(await passwordMatches(pw, row))) {
-    const failed = row.failed + 1;
     const lock = failed >= MAX_FAILS;
-    await env.DB.prepare("UPDATE users SET failed = ?, locked_until = ? WHERE id = ?")
-      .bind(lock ? 0 : failed, lock ? now + LOCK_MS : row.locked_until, row.id).run();
-    await recordIpFailure(env, ip);
+    if (lock) await env.DB.prepare("UPDATE users SET failed = 0, locked_until = ? WHERE id = ?").bind(now + LOCK_MS, row.id).run();
     await audit(env, "signin_failed", null, `Wrong password for ${row.name}`);
     if (lock) await audit(env, "locked", null, `${row.name} was locked out after 5 wrong passwords`);
     if (lock) throw new ApiError(423, "locked", "Too many wrong passwords. Try again in 10 minutes, or ask an admin to reset your password.");
     const left = MAX_FAILS - failed;
     throw new ApiError(401, "wrong_password", `That username and password don't match. ${left} ${left === 1 ? "try" : "tries"} left before a 10-minute lock.`);
   }
+  await env.DB.prepare("UPDATE users SET failed = 0 WHERE id = ?").bind(row.id).run();
+  await refundIpAttempt(env, ip);
   return row;
 }
 
@@ -433,32 +458,30 @@ export async function handleAuth(req: Request, env: Env, route: string, current:
     if (!(await trustedDevice(req, env))) {
       throw new ApiError(403, "untrusted_device", "Quick switching only works on a device someone has signed in on with a password.");
     }
-    if ((await ipFailures(env, ip)) >= IP_FAILS) throw new ApiError(429, "rate_limited", "Too many wrong attempts from this connection. Wait 15 minutes.");
     const body = await readJson<any>(req, 1024);
+    await takeIpAttempt(env, ip, "Too many wrong attempts from this connection. Wait 15 minutes.");
     const row = typeof body.id === "string" ? await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(body.id).first<UserRow>() : null;
     if (!row || !row.active || row.role === "admin" || !row.quick_hash || row.must_change) {
       throw new ApiError(404, "not_found", "That person can't switch in with a PIN. Sign in with a password instead.");
     }
     const now = Date.now();
-    if (row.locked_until > now) {
-      const mins = Math.ceil((row.locked_until - now) / 60000);
-      throw new ApiError(423, "locked", `Too many wrong tries. Try again in ${mins} minute${mins === 1 ? "" : "s"}, or sign in with a password.`);
-    }
+    const failed = await takeAccountAttempt(env, row, now, "tries");
     const pin = typeof body.pin === "string" ? body.pin : "";
     if (!(await passwordMatches(pin, { pin_hash: row.quick_hash, pin_salt: row.quick_salt || "" }))) {
-      const failed = row.failed + 1, lock = failed >= MAX_FAILS;
+      const lock = failed >= MAX_FAILS;
       // Five wrong PINs in a row also switch the PIN off, so it can't be guessed slowly, 5 tries every 10 minutes,
       // on a shared device: the person signs in with their password and sets a new one.
-      await env.DB.prepare(`UPDATE users SET failed = ?, locked_until = ?${lock ? ", quick_hash = NULL, quick_salt = NULL" : ""} WHERE id = ?`)
-        .bind(lock ? 0 : failed, lock ? now + LOCK_MS : row.locked_until, row.id).run();
-      await recordIpFailure(env, ip);
+      if (lock) await env.DB.prepare("UPDATE users SET failed = 0, locked_until = ?, quick_hash = NULL, quick_salt = NULL WHERE id = ?").bind(now + LOCK_MS, row.id).run();
       await audit(env, "signin_failed", null, `Wrong quick PIN for ${row.name}`);
       if (lock) await audit(env, "locked", null, `${row.name} was locked out after 5 wrong quick PINs, and their PIN was switched off`);
       if (lock) throw new ApiError(423, "locked", "Too many wrong tries, so this quick PIN is switched off. Sign in with your password (after 10 minutes) and set a new one.");
       const left = MAX_FAILS - failed;
       throw new ApiError(401, "wrong_pin", `Wrong PIN. ${left} ${left === 1 ? "try" : "tries"} left.`);
     }
-    await env.DB.prepare(`UPDATE users SET failed = 0, locked_until = 0, last_login_at = ${SQL_NOW_MS} WHERE id = ?`).bind(row.id).run();
+    // Only if the PIN is still the one just checked (it may have been switched off by a lock meanwhile).
+    const ok = await env.DB.prepare(`UPDATE users SET failed = 0, locked_until = 0, last_login_at = ${SQL_NOW_MS} WHERE id = ? AND quick_hash = ?`).bind(row.id, row.quick_hash).run();
+    if (!ok.meta.changes) throw new ApiError(423, "locked", "This quick PIN was just switched off. Sign in with your password.");
+    await refundIpAttempt(env, ip);
     return json({ user: publicUser(row) }, 200, await sessionCookie(req, env, row));
   }
 

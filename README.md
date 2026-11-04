@@ -56,7 +56,7 @@ Everyone signs in with a **username and password**. Signed out, only the sign-in
 
 Records show the person's name (set by an admin), not their username. The first admin account is created on the sign-in page with the **setup code** (see `README-deploy.md`).
 
-**Shared iPads and phones.** Staff and managers can set a 4-digit **quick PIN** (account menu → Set a quick PIN). On a device where someone has signed in with a password, they then switch to themselves from the account menu (**Switch person**), or tap their name on the sign-in page, and enter the PIN. Five wrong PINs lock the account for 10 minutes and switch the PIN off, so it can't be guessed: the person signs in with their password and sets a new one. Admins always use their password.
+**Shared iPads and phones.** Staff and managers can set a 4-digit **quick PIN** (account menu → Set a quick PIN). On a device where someone has signed in with a password, they then switch to themselves from the account menu (**Switch person**), or tap their name on the sign-in page, and enter the PIN. Five wrong PINs lock the account for 10 minutes and switch the PIN off, so it can't be guessed (tries sent at the same moment count too): the person signs in with their password and sets a new one. A device stays trusted until the person who signed in on it gets a new password, is switched off or is signed out everywhere ("Sign everyone out" in the admin section ends every device's trust); someone then signs in with a password on it again. Admins always use their password.
 
 **Bad Wi-Fi.** If the connection drops, ticks and readings still work: they show straight away, an "Offline" label says how many are waiting, and they save by themselves when the connection returns.
 

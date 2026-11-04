@@ -293,6 +293,11 @@ export function computeProblems(ctx: Ctx): Problem[] {
         message: `Open shift at ${siteName(s.site)} on ${day(s.day)}, ${s.start}–${s.end}` });
       continue;
     }
+    if (!ctx.people.has(s.userId)) {
+      out.push({ kind: "inactive", severity: "error", day: s.day, site: s.site, userId: s.userId, shiftIds: [s.id],
+        message: `A shift at ${siteName(s.site)} on ${day(s.day)}, ${s.start}–${s.end}, is with an account that's switched off` });
+      continue;
+    }
     const off = onTimeOff(ctx.timeOff, s.userId, s.day);
     if (off) {
       out.push({ kind: "time_off", severity: "error", day: s.day, site: s.site, userId: s.userId, shiftIds: [s.id],
@@ -329,8 +334,10 @@ export function computeProblems(ctx: Ctx): Problem[] {
       const a = sorted[i], b = sorted[i + 1];
       if (a.day === b.day || addDays(a.day, 1) !== b.day) continue;
       if (b.day < ctx.days[0] || b.day > ctx.days[6]) continue; // counted in the week the second shift is in
-      const lastToday = sorted.filter((x) => x.day === a.day).reduce((m, x) => Math.max(m, mins(x.end)), 0);
-      const gap = 24 * 60 - lastToday + mins(b.start);
+      const lastToday = sorted.filter((x) => x.day === a.day).reduce((m, x) => Math.max(m, mins(effEnd(x))), 0);
+      // The clocks go forward (an hour less) on the last Sunday of March and back on the last Sunday of October.
+      const clockChange = dow(b.day) === 6 && addDays(b.day, 7).slice(5, 7) !== b.day.slice(5, 7) ? (b.day.slice(5, 7) === "03" ? -60 : b.day.slice(5, 7) === "10" ? 60 : 0) : 0;
+      const gap = 24 * 60 - lastToday + mins(effStart(b)) + clockChange;
       if (gap < REST_MINS) {
         const ends = sorted.find((x) => x.day === a.day && mins(x.end) === lastToday)!;
         out.push({ kind: "rest", severity: "warn", day: b.day, site: b.site, userId: uid, shiftIds: [ends.id, b.id],
@@ -377,8 +384,12 @@ export function computeProblems(ctx: Ctx): Problem[] {
         // Who's actually there: a shift cut short on the day stops counting when they left.
         const staffed = here.filter((s) => s.userId);
         const short: [number, number][] = [];
-        for (let t = mins(opensAt); t < mins(closesAt); t += 60) {
-          const e = Math.min(t + 60, mins(closesAt));
+        // Check between every change: opening, closing, and each start and finish in between, so a handover at
+        // 12:30 isn't a gap.
+        const o = mins(opensAt), c = mins(closesAt);
+        const cuts = [...new Set([o, c, ...staffed.flatMap((s) => [mins(effStart(s)), mins(effEnd(s))]).filter((t) => t > o && t < c)])].sort((a, b) => a - b);
+        for (let i = 0; i + 1 < cuts.length; i++) {
+          const t = cuts[i], e = cuts[i + 1];
           const n = staffed.filter((s) => mins(effStart(s)) <= t && mins(effEnd(s)) >= e).length;
           if (n < site.minPeople) {
             const last = short[short.length - 1];
@@ -534,10 +545,23 @@ interface ReqRow {
   id: string; kind: string; shift_id: string; from_user: string; to_user: string | null; taker: string | null; message: string;
   status: string; decided_by: string | null; decided_at: number | null; created_at: number;
 }
+/** Requests with their shifts; staff only see shifts from published weeks (a manager may have moved one). */
+async function visibleRequests(env: Env, rows: ReqRow[], mgr: boolean) {
+  const out = (await describeRequests(env, rows)).filter((r) => r.shift);
+  if (mgr || !out.length) return out;
+  const days = out.map((r) => r.shift!.day).sort();
+  const pub = await publishedWeeks(env, days[0], days[days.length - 1]);
+  return out.filter((r) => pub.has(mondayOf(r.shift!.day)));
+}
 async function describeRequests(env: Env, rows: ReqRow[]) {
   if (!rows.length) return [];
   const ids = [...new Set(rows.map((r) => r.shift_id))];
-  const shifts = await env.DB.prepare(`SELECT * FROM rota_shifts WHERE id IN (${ids.map(() => "?").join(",")})`).bind(...ids).all<ShiftRow>();
+  // D1 allows at most 100 bound values a query.
+  const shifts = { results: [] as ShiftRow[] };
+  for (let i = 0; i < ids.length; i += 90) {
+    const part = ids.slice(i, i + 90);
+    shifts.results.push(...(await env.DB.prepare(`SELECT * FROM rota_shifts WHERE id IN (${part.map(() => "?").join(",")})`).bind(...part).all<ShiftRow>()).results);
+  }
   const names = await env.DB.prepare("SELECT id, name FROM users").all<{ id: string; name: string }>();
   const nameOf = (id: string | null) => (id ? names.results.find((n) => n.id === id)?.name || "Someone" : null);
   return rows.map((r) => {
@@ -567,7 +591,13 @@ export async function handleRota(req: Request, env: Env, ctx: ExecutionContext, 
   const admin = user.role === "admin";
   const needAdmin = () => { if (!admin) throw denied("Only an admin can change which days and sites people can work."); };
   if (m !== "GET" && m !== "HEAD") await limitWrites(req, env, ctx);
-  const body = async () => (m === "GET" ? {} : await readJson<any>(req, 32 * 1024)) || {};
+  const body = async () => {
+    if (m === "GET") return {} as any;
+    const b = await readJson<any>(req, 32 * 1024);
+    if (b == null) return {} as any;
+    if (typeof b !== "object" || Array.isArray(b)) throw invalid("Send a JSON object.");
+    return b;
+  };
   const seg = route.split("/");
 
   // Where the rota and the diary live, for links between them.
@@ -647,7 +677,10 @@ export async function handleRota(req: Request, env: Env, ctx: ExecutionContext, 
     // A manager giving the shift to someone settles any pickups or covers still waiting on it.
     // Amended hours belong to the person who worked them.
     if (v.userId !== cur.userId && cur.adjusted) stmts.push(env.DB.prepare("UPDATE rota_shifts SET actual_start = NULL, actual_end = NULL, actual_break = NULL, adjust_note = '' WHERE id = ?").bind(cur.id));
-    if (v.userId !== cur.userId) stmts.push(env.DB.prepare("UPDATE rota_requests SET status = 'cancelled', decided_by = ?, decided_at = ? WHERE shift_id = ? AND status IN ('open', 'accepted')").bind(user.id, nowMs(), cur.id));
+    // So does changing when or where it is: a pickup or cover was agreed for the shift as it was.
+    if (v.userId !== cur.userId || v.site !== cur.site || v.day !== cur.day || v.start !== cur.start || v.end !== cur.end) {
+      stmts.push(env.DB.prepare("UPDATE rota_requests SET status = 'cancelled', decided_by = ?, decided_at = ? WHERE shift_id = ? AND status IN ('open', 'accepted')").bind(user.id, nowMs(), cur.id));
+    }
     await env.DB.batch(stmts);
     const out = await weekProblems(env, v.day);
     if (out.week !== mondayOf(cur.day)) (out as any).fromWeek = await weekProblems(env, cur.day);
@@ -660,17 +693,25 @@ export async function handleRota(req: Request, env: Env, ctx: ExecutionContext, 
     if (!isDay(b.from) || !isDay(b.to)) throw invalid("Choose real weeks.");
     const from = mondayOf(b.from), to = mondayOf(b.to);
     if (from === to) throw invalid("Choose a different week to copy into.");
-    const existing = await loadShifts(env, to, addDays(to, 6));
+    const today = londonToday();
+    if (to < mondayOf(today)) throw invalid("Weeks that have gone by can't be copied over.");
+    // Days that have already happened keep their shifts (and any amended hours); only today onwards is replaced.
+    const existing = (await loadShifts(env, to, addDays(to, 6))).filter((s) => s.day >= today);
     if (existing.length && b.replace !== true) throw conflict(`That week already has ${existing.length} shift${existing.length === 1 ? "" : "s"}. Replace them?`);
     const source = await loadShifts(env, from, addDays(from, 6));
     const [sites, closures, people] = await Promise.all([loadSites(env), loadClosures(env, to, addDays(to, 6)), loadPeople(env)]);
     const shift = (dowOf: string) => addDays(to, dow(dowOf));
     const skipped: { site: string; day: string; start: string; end: string; reason: string }[] = [];
     const stmts: D1PreparedStatement[] = [];
-    if (existing.length) stmts.push(env.DB.prepare("DELETE FROM rota_shifts WHERE day BETWEEN ? AND ?").bind(to, addDays(to, 6)));
+    if (existing.length) {
+      const lo = today > to ? today : to;
+      stmts.push(env.DB.prepare("UPDATE rota_requests SET status = 'cancelled', decided_by = ?, decided_at = ? WHERE status IN ('open', 'accepted') AND shift_id IN (SELECT id FROM rota_shifts WHERE day BETWEEN ? AND ?)").bind(user.id, nowMs(), lo, addDays(to, 6)));
+      stmts.push(env.DB.prepare("DELETE FROM rota_shifts WHERE day BETWEEN ? AND ?").bind(lo, addDays(to, 6)));
+    }
     let copied = 0;
     for (const s of source) {
       const day = shift(s.day);
+      if (day < today) continue; // already happened
       const st = openState({ sites, closures }, s.site, day);
       if (!st.open) { skipped.push({ site: s.site, day, start: s.start, end: s.end, reason: st.reason! }); continue; }
       const uid = s.userId && people.has(s.userId) ? s.userId : null; // someone switched off since: copied as open
@@ -697,8 +738,10 @@ export async function handleRota(req: Request, env: Env, ctx: ExecutionContext, 
   }
 
   if (route === "mine" && m === "GET") {
-    const from = q("from") || londonToday(), to = q("to") || addDays(from, 27);
-    if (!isDay(from) || !isDay(to) || to < from) throw invalid("Choose real dates.");
+    const from = q("from") || londonToday();
+    if (!isDay(from)) throw invalid("Choose real dates.");
+    const to = q("to") || addDays(from, 27);
+    if (!isDay(to) || to < from) throw invalid("Choose real dates.");
     if (dateOf(to).getTime() - dateOf(from).getTime() > 92 * 864e5) throw invalid("Ask for up to three months at a time.");
     // Whole weeks, so overtime counts from the Monday.
     const [weeks, wide, people] = await Promise.all([publishedWeeks(env, from, to), loadShifts(env, mondayOf(from), addDays(mondayOf(to), 6)), loadPeople(env)]);
@@ -784,7 +827,7 @@ export async function handleRota(req: Request, env: Env, ctx: ExecutionContext, 
     const week = mondayOf(start);
     const [people, shifts, row] = await Promise.all([loadPeople(env), loadShifts(env, week, addDays(week, 6)), weekRow(env, week)]);
     const ids = new Set([...people.keys(), ...shifts.map((s) => s.userId).filter((x): x is string => !!x)]);
-    const extra = await env.DB.prepare(`SELECT id, name, role FROM users WHERE id IN (${[...ids].map(() => "?").join(",") || "''"})`).bind(...ids).all<{ id: string; name: string; role: string }>();
+    const extra = await env.DB.prepare("SELECT id, name, role FROM users").all<{ id: string; name: string; role: string }>();
     const rows = [...ids].map((id) => {
       const p = people.get(id) || { ...(extra.results.find((u) => u.id === id) || { id, name: "Someone", role: "" }), contractMin: null, contractMax: null };
       const mine = shifts.filter((s) => s.userId === id);
@@ -824,7 +867,7 @@ export async function handleRota(req: Request, env: Env, ctx: ExecutionContext, 
       user: { id: user.id, name: user.name, role: user.role, manager: mgr, admin: user.role === "admin" }, links, today: londonToday(), approvers: appr,
       contractMin: p?.contract_min ?? null, contractMax: p?.contract_max ?? null, contractHours: p?.contract_max ?? null, sites: parseJson(p?.sites, []), pattern: parseJson(p?.pattern, {}),
       timeOff: offs.results.map((t) => ({ id: t.id, from: t.from_day, to: t.to_day, reason: t.reason, status: t.status, decidedAt: t.decided_at })),
-      requests: (await describeRequests(env, reqs.results)).filter((r) => r.shift),
+      requests: await visibleRequests(env, reqs.results, mgr),
     });
   }
 
@@ -871,6 +914,9 @@ export async function handleRota(req: Request, env: Env, ctx: ExecutionContext, 
     const forOther = b.userId != null && b.userId !== user.id;
     if (forOther) needMgr();
     const uid = forOther ? await activeUser(env, b.userId) : user.id;
+    const clash = await env.DB.prepare("SELECT from_day, to_day FROM rota_time_off WHERE user_id = ? AND status IN ('requested', 'approved') AND from_day <= ? AND to_day >= ? LIMIT 1")
+      .bind(uid, b.to, b.from).first<{ from_day: string; to_day: string }>();
+    if (clash) throw conflict(`${forOther ? "They" : "You"} already have time off asked for or booked from ${clash.from_day} to ${clash.to_day}.`);
     const approved = mgr && b.userId != null; // managers adding it for someone (or themselves, explicitly) approve it straight away
     const id = newId(10);
     await env.DB.prepare(
@@ -880,14 +926,18 @@ export async function handleRota(req: Request, env: Env, ctx: ExecutionContext, 
   }
 
   if (seg[0] === "time-off" && seg.length === 2 && m === "PATCH") {
-    const t = await env.DB.prepare("SELECT * FROM rota_time_off WHERE id = ?").bind(seg[1]).first<{ user_id: string; status: string }>();
+    const t = await env.DB.prepare("SELECT * FROM rota_time_off WHERE id = ?").bind(seg[1]).first<{ user_id: string; status: string; from_day: string }>();
     if (!t) throw notFound("That request has gone. Refresh and try again.");
     const b = await body();
     if (b.status === "cancelled") {
       if (t.user_id !== user.id && !mgr) throw denied("Only the person who asked can cancel it.");
       if (!["requested", "approved"].includes(t.status)) throw conflict("That request is already settled.");
+      // Time off that has started is a record of what happened; only a manager changes it.
+      if (!mgr && t.status === "approved" && t.from_day < londonToday()) throw denied("That time off has started. Ask a manager to change it.");
     } else if (b.status === "approved" || b.status === "declined") {
       needMgr();
+      if (t.status !== "requested") throw conflict("That request is already settled.");
+      if (t.user_id === user.id && !admin) throw denied("Another manager or an admin decides your own time off.");
     } else throw invalid("Choose approve, decline or cancel.");
     await env.DB.prepare("UPDATE rota_time_off SET status = ?, decided_by = ?, decided_at = ? WHERE id = ?").bind(b.status, user.id, nowMs(), seg[1]).run();
     return json({ id: seg[1], status: b.status });
@@ -896,14 +946,15 @@ export async function handleRota(req: Request, env: Env, ctx: ExecutionContext, 
   if (route === "requests" && m === "GET") {
     // Managers: everything waiting for a decision; everyone: what involves them.
     const pending = mgr
-      ? await env.DB.prepare("SELECT * FROM rota_requests WHERE status IN ('open', 'accepted') ORDER BY created_at").all<ReqRow>()
-      : await env.DB.prepare("SELECT * FROM rota_requests WHERE status IN ('open', 'accepted') AND (from_user = ? OR to_user = ? OR taker = ? OR (to_user IS NULL AND kind = 'cover')) ORDER BY created_at")
-        .bind(user.id, user.id, user.id).all<ReqRow>();
+      ? await env.DB.prepare("SELECT r.* FROM rota_requests r JOIN rota_shifts s ON s.id = r.shift_id WHERE r.status IN ('open', 'accepted') AND s.day >= ? ORDER BY r.created_at LIMIT 300").bind(londonToday()).all<ReqRow>()
+      : await env.DB.prepare(`SELECT r.* FROM rota_requests r JOIN rota_shifts s ON s.id = r.shift_id
+          WHERE r.status IN ('open', 'accepted') AND s.day >= ? AND (r.from_user = ? OR r.to_user = ? OR r.taker = ? OR (r.to_user IS NULL AND r.kind = 'cover')) ORDER BY r.created_at LIMIT 300`)
+        .bind(londonToday(), user.id, user.id, user.id).all<ReqRow>();
     const offs = mgr
       ? await env.DB.prepare("SELECT t.*, u.name FROM rota_time_off t JOIN users u ON u.id = t.user_id WHERE t.status = 'requested' ORDER BY t.from_day").all<any>()
       : { results: [] as any[] };
     return json({
-      requests: (await describeRequests(env, pending.results)).filter((r) => r.shift),
+      requests: await visibleRequests(env, pending.results, mgr),
       timeOff: offs.results.map((t) => ({ id: t.id, userId: t.user_id, name: t.name, from: t.from_day, to: t.to_day, reason: t.reason, status: t.status, createdAt: t.created_at })),
     });
   }
@@ -943,15 +994,20 @@ export async function handleRota(req: Request, env: Env, ctx: ExecutionContext, 
       const ctxW = await loadCtx(env, mondayOf(shift.day));
       const stop = blocking(effectsFor(ctxW, shift, user.id).problems);
       if (stop) throw conflict(stop.message);
-      await env.DB.prepare("INSERT INTO rota_requests (id, kind, shift_id, from_user, to_user, taker, message, status, created_at) VALUES (?, 'claim', ?, ?, NULL, ?, ?, 'open', ?)")
-        .bind(id, shift.id, user.id, user.id, message, nowMs()).run();
+      // Only if no one else asked in the meantime.
+      const ins = await env.DB.prepare(`INSERT INTO rota_requests (id, kind, shift_id, from_user, to_user, taker, message, status, created_at)
+          SELECT ?, 'claim', ?, ?, NULL, ?, ?, 'open', ? WHERE NOT EXISTS (SELECT 1 FROM rota_requests WHERE shift_id = ? AND status IN ('open', 'accepted'))`)
+        .bind(id, shift.id, user.id, user.id, message, nowMs(), shift.id).run();
+      if (!ins.meta.changes) throw conflict("Someone has already asked for this shift.");
     } else if (b.kind === "cover") {
       if (shift.userId !== user.id) throw denied("You can only ask for cover for your own shifts.");
       if (pending.results.some((p) => p.kind === "cover")) throw conflict("You've already asked for cover for this shift.");
       const to = b.toUserId == null || b.toUserId === "" ? null : await activeUser(env, b.toUserId);
       if (to === user.id) throw invalid("Choose someone else to cover it.");
-      await env.DB.prepare("INSERT INTO rota_requests (id, kind, shift_id, from_user, to_user, taker, message, status, created_at) VALUES (?, 'cover', ?, ?, ?, NULL, ?, 'open', ?)")
-        .bind(id, shift.id, user.id, to, message, nowMs()).run();
+      const ins = await env.DB.prepare(`INSERT INTO rota_requests (id, kind, shift_id, from_user, to_user, taker, message, status, created_at)
+          SELECT ?, 'cover', ?, ?, ?, NULL, ?, 'open', ? WHERE NOT EXISTS (SELECT 1 FROM rota_requests WHERE shift_id = ? AND kind = 'cover' AND status IN ('open', 'accepted'))`)
+        .bind(id, shift.id, user.id, to, message, nowMs(), shift.id).run();
+      if (!ins.meta.changes) throw conflict("You've already asked for cover for this shift.");
     } else throw invalid("Choose claim or cover.");
     const out = await env.DB.prepare("SELECT * FROM rota_requests WHERE id = ?").bind(id).all<ReqRow>();
     return json({ request: (await describeRequests(env, out.results))[0] });
@@ -962,6 +1018,11 @@ export async function handleRota(req: Request, env: Env, ctx: ExecutionContext, 
     if (!r) throw notFound("That request has gone. Refresh and try again.");
     const b = await body();
     const settled = () => { if (!["open", "accepted"].includes(r.status)) throw conflict("That request is already settled."); };
+    // A shift only changes hands while it's still ahead, in a published week.
+    const stillTakeable = async (shift: Shift) => {
+      if (shift.day < londonToday()) throw conflict("That shift has already happened.");
+      if (!(await weekRow(env, mondayOf(shift.day)))?.published_at) throw conflict("That week isn't published any more. Check the rota.");
+    };
     const set = (status: string, extra: { taker?: string | null; decided?: boolean } = {}) =>
       env.DB.prepare("UPDATE rota_requests SET status = ?, taker = ?, decided_by = ?, decided_at = ? WHERE id = ?")
         .bind(status, extra.taker !== undefined ? extra.taker : r.taker, extra.decided ? user.id : r.decided_by, extra.decided ? nowMs() : r.decided_at, r.id);
@@ -972,6 +1033,7 @@ export async function handleRota(req: Request, env: Env, ctx: ExecutionContext, 
         if (r.from_user === user.id) throw invalid("You can't cover your own shift.");
         if (r.to_user && r.to_user !== user.id) throw denied("That request was for someone else.");
         const shift = await getShift(env, r.shift_id);
+        await stillTakeable(shift);
         const stop = blocking(effectsFor(await loadCtx(env, mondayOf(shift.day)), shift, user.id).problems);
         if (stop) throw conflict(stop.message);
         await set("accepted", { taker: user.id }).run();
@@ -995,6 +1057,9 @@ export async function handleRota(req: Request, env: Env, ctx: ExecutionContext, 
         const shift = await getShift(env, r.shift_id);
         if (r.kind === "claim" && shift.userId) throw conflict("Someone already has that shift.");
         if (r.kind === "cover" && shift.userId !== r.from_user) throw conflict("That shift has changed since the request. Check the rota.");
+        await stillTakeable(shift);
+        const taker = await env.DB.prepare("SELECT id FROM users WHERE id = ? AND active = 1").bind(r.taker).first();
+        if (!taker) throw conflict(`${(await describeRequests(env, [r]))[0]?.takerName || "That person"}'s account is switched off, so they can't take it.`);
         const stop = blocking(effectsFor(await loadCtx(env, mondayOf(shift.day)), shift, r.taker).problems);
         if (stop) throw conflict(stop.message);
         await env.DB.batch([

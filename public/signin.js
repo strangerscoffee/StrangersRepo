@@ -8,11 +8,14 @@
   // Only paths on this site, or https links to its own subdomains (the rota sends people here to sign in and
   // back again), so the next= link can't send people anywhere else.
   const next = (() => {
+    // Resolve it the way the browser will (it reads "\" as "/" and drops tabs and newlines), then check where
+    // it actually lands.
     const n = new URLSearchParams(location.search).get("next") || "/";
-    if (n.startsWith("/") && !n.startsWith("//")) return n;
     try {
-      const u = new URL(n);
-      if (u.protocol === "https:" && !u.username && !u.password && u.hostname.endsWith("." + location.hostname)) return u.href;
+      const u = new URL(n, location.origin);
+      if (u.username || u.password) return "/";
+      if (u.origin === location.origin) return u.pathname + u.search + u.hash;
+      if (u.protocol === "https:" && u.hostname.endsWith("." + location.hostname)) return u.href;
     } catch (e) {}
     return "/";
   })();

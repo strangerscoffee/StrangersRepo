@@ -187,7 +187,9 @@
     }
   }
 
-  function setHead(title, sub, { back, actions } = {}) {
+  // Each page sets its own heading; one that finishes loading after someone has moved on leaves it alone.
+  function setHead(page, title, sub, { back, actions } = {}) {
+    if (page !== R.tab) return;
     $("#pageTitle").textContent = title;
     $("#pageSub").textContent = sub || "";
     const b = $("#backBtn");
@@ -215,6 +217,8 @@
     closeSheets();
     document.body.dataset.page = page;
     const seq = ++renderSeq;
+    // The last page's buttons in the heading would act on what it showed: clear them while this one loads.
+    $("#pageAction").replaceChildren(); $("#backBtn").hidden = true;
     const box = $("#page");
     try {
       const out = await PAGE_RENDER[page](args);
@@ -231,7 +235,15 @@
 
   const sitePill = (id, name) => el("span", { class: "spill " + (SITE_TONE[id] || ""), text: name || id });
   const avatar = (name, cls = "") => el("span", { class: "avatar sm " + cls, text: initials(name), "aria-hidden": "true" });
-  const btn = (label, onclick, cls = "btn", extra = {}) => el("button", { type: "button", class: cls, onclick, "data-w": "", ...extra }, label);
+  // A button whose action is still running is disabled, so a double tap can't do it twice.
+  const btn = (label, onclick, cls = "btn", extra = {}) => el("button", { type: "button", class: cls, "data-w": "", ...extra, onclick: onclick && (async (e) => {
+    const b = e.currentTarget;
+    if (b.dataset.busy) return;
+    const r = onclick(e);
+    if (!r || typeof r.then !== "function") return;
+    b.dataset.busy = "1"; b.disabled = true;
+    try { await r; } finally { delete b.dataset.busy; if (b.isConnected) b.disabled = false; }
+  }) }, label);
   const ghost = (label, onclick, extra) => btn(label, onclick, "btn ghost", extra);
   const label = (t) => el("div", { class: "label", text: t });
   const empty = (t) => el("div", { class: "empty", text: t });
@@ -407,7 +419,7 @@
       out.push({ sev: "error", text: open.length === 1 ? open[0].message : `${plural(open.length, "open shift")} to fill`,
         sub: open.length === 1 ? (s ? "Fill shows who could take it, best fit first" : "") : dayList(open.map((p) => p.day)), act: "Fill", go: () => focusProblem(d, open[0]) });
     }
-    for (const p of d.problems) if (["clash", "time_off", "closed"].includes(p.kind)) out.push({ sev: "error", text: p.message, act: "Fix", go: () => focusProblem(d, p) });
+    for (const p of d.problems) if (["clash", "time_off", "closed", "inactive"].includes(p.kind)) out.push({ sev: "error", text: p.message, act: "Fix", go: () => focusProblem(d, p) });
     const perSite = (kind) => {
       const by = {};
       for (const p of d.problems) if (p.kind === kind) (by[p.site] ||= []).push(p);
@@ -691,7 +703,7 @@
     const people = new Set(d.shifts.filter((s) => s.userId).map((s) => s.userId)).size;
     const settled = d.published && !d.changesSincePublish;
     const status = !d.published ? ["draft", "Draft"] : settled ? ["pub", "Published"] : ["chg", `Published · ${plural(d.changesSincePublish, "change")} not sent`];
-    setHead(weekLabel(d.week), `${hrs(total)} hours · ${plural(d.shifts.length, "shift")} · ${plural(people, "person", "people")}${d.publishedAt ? ` · published ${fmt(new Date(d.publishedAt).toISOString().slice(0, 10), { weekday: "short", day: "numeric", month: "short" })}` : ""}`, {
+    setHead("week", weekLabel(d.week), `${hrs(total)} hours · ${plural(d.shifts.length, "shift")} · ${plural(people, "person", "people")}${d.publishedAt ? ` · published ${fmt(new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London" }).format(new Date(d.publishedAt)), { weekday: "short", day: "numeric", month: "short" })}` : ""}`, {
       actions: weekNav(d.week, (w) => { R.week = w; render(); }),
     });
     $("#pageTitle").append(" ", el("span", { class: "wstatus " + status[0], text: status[1] }));
@@ -886,7 +898,7 @@
     const list = d.shifts.filter((x) => x.site === site && x.day === day).sort((a, b) => a.start.localeCompare(b.start));
     const people = new Set(list.filter((x) => x.userId).map((x) => x.userId)).size;
     const oh = hoursOn(s, i);
-    setHead(longD(day), `${s.name} · ${s.open[i] ? (oh.opensAt && oh.closesAt ? `open ${oh.opensAt}–${oh.closesAt}` : "open") : "closed"} · ${plural(people, "person", "people")}`, { back: ["Rota", "week"] });
+    setHead("day", longD(day), `${s.name} · ${s.open[i] ? (oh.opensAt && oh.closesAt ? `open ${oh.opensAt}–${oh.closesAt}` : "open") : "closed"} · ${plural(people, "person", "people")}`, { back: ["Rota", "week"] });
     const strip = dayStrip(d.days, i, (k) => go(`day/${site}/${d.days[k]}`));
     const sitePick = seg(d.sites.filter((x) => x.inUse).map((x) => [x.id, x.name]), site, (v) => go(`day/${v}/${day}`), "Site");
     if (!s.open[i]) return [sitePick, strip, el("section", { class: "panel" }, el("p", { class: "note", text: s.closedWhy[i] ? `${s.name} is closed: ${s.closedWhy[i]}.` : `${s.name} is closed on ${DAY_NAMES[dow(day)]}s.` }))];
@@ -1024,7 +1036,7 @@
     const toggle = seg([["mine", "Mine"], ["all", "Everyone"]], R.everyone ? "all" : "mine", (v) => { R.everyone = v === "all"; render(); }, "Whose shifts");
     if (R.everyone) {
       const d = await loadWeek(R.everyoneWeek || (R.everyoneWeek = monday(londonToday())), true);
-      setHead("My shifts", `${weekLabel(d.week)} · ${d.published ? "published" : mgr() ? "draft (staff can't see it yet)" : "not published yet"}`, {
+      setHead("mine", "My shifts", `${weekLabel(d.week)} · ${d.published ? "published" : mgr() ? "draft (staff can't see it yet)" : "not published yet"}`, {
         actions: [el("button", { type: "button", class: "iconbtn", "aria-label": "Previous week", onclick: () => { R.everyoneWeek = addDays(d.week, -7); render(); } }, svgi(ICON.chevL)),
           el("button", { type: "button", class: "iconbtn", "aria-label": "Next week", onclick: () => { R.everyoneWeek = addDays(d.week, 7); render(); } }, svgi(ICON.chevR))],
       });
@@ -1045,7 +1057,7 @@
     const [r, me, open] = await Promise.all([get(`/api/rota/mine?from=${from}&to=${to}`), get("/api/rota/me"), get("/api/rota/open").catch(() => ({ shifts: [] }))]);
     R.approvers = me.approvers;
     const ap = approverText(), apWord = ap === "A manager" ? "a manager" : ap;
-    setHead("My shifts", u.name, { actions: weekNav(wk, (w) => { R.mineWeek = w; render(); }, { min: lo, max: hi }) });
+    setHead("mine", "My shifts", u.name, { actions: weekNav(wk, (w) => { R.mineWeek = w; render(); }, { min: lo, max: hi }) });
     const coverOf = (s) => me.requests.find((q) => q.kind === "cover" && q.fromUser === u.id && q.shift?.id === s.id && ["open", "accepted"].includes(q.status));
     const upcoming = r.shifts.filter((s) => s.day > today || (s.day === today && s.end > now));
     const days = [0, 1, 2, 3, 4, 5, 6].map((i) => addDays(wk, i));
@@ -1198,7 +1210,8 @@
       s.adjusted ? el("p", { class: "note", text: `Amended from ${s.start}–${s.end}${s.adjustNote ? ": " + s.adjustNote : ""}` }) : null,
       s.note ? el("p", { text: s.note }) : null,
       el("div", { class: "sfoot" }, ghost("Add to calendar", () => { calendarFile(s); closeSheets(); }),
-        cov ? btn("Cover asked", null, "btn", { disabled: true }) : btn("Ask for cover", () => askCover(s)))), { left: cancelLink() });
+        // Cover only for a shift that hasn't started.
+        cov ? btn("Cover asked", null, "btn", { disabled: true }) : s.day > londonToday() || (s.day === londonToday() && s.start > londonNow()) ? btn("Ask for cover", () => askCover(s)) : null)), { left: cancelLink() });
   }
 
   async function askCover(s) {
@@ -1239,7 +1252,7 @@
     const today = londonToday();
     const [open, me, mine] = await Promise.all([get("/api/rota/open"), get("/api/rota/me"), get(`/api/rota/mine?from=${monday(today)}&to=${addDays(today, 41)}`)]);
     R.approvers = me.approvers;
-    setHead("Open shifts & cover", "Open shifts you can pick up, and cover requests", mgr() ? {} : {});
+    setHead("swaps", "Open shifts & cover", "Open shifts you can pick up, and cover requests", mgr() ? {} : {});
     const weekHours = (day) => r2(mine.shifts.filter((s) => monday(s.day) === monday(day)).reduce((a, s) => a + s.hours, 0));
     let hidden = []; try { hidden = JSON.parse(localStorage.getItem("rota.notForMe") || "[]"); } catch (e) {}
     const ap = approverText();
@@ -1309,7 +1322,7 @@
       if (!person) { go("settings"); return []; }
     }
     const canEdit = isAdmin();
-    setHead(other ? person.name : "When I can work", other ? "When they can work" : canEdit ? "Managers see this when they plan the rota" : "Set by an admin. Managers see this when they plan the rota",
+    setHead("avail", other ? person.name : "When I can work", other ? "When they can work" : canEdit ? "Managers see this when they plan the rota" : "Set by an admin. Managers see this when they plan the rota",
       other ? { back: ["Rota settings", "settings"] } : {});
     let pattern = JSON.parse(JSON.stringify((other ? person.pattern : me.pattern) || {}));
     let sites = [...((other ? person.sites : me.sites) || [])];
@@ -1372,7 +1385,8 @@
       const st = { approved: ["Approved", "ok"], requested: [`Waiting for ${ap === "A manager" ? "a manager" : ap}`, "warn"], declined: ["Declined", "bad"], cancelled: ["Cancelled", ""] }[o.status] || [o.status, ""];
       return el("div", { class: "lrow" }, el("span", { class: "t" }, el("b", { text: range }), el("span", { class: "s", text: [o.reason, plural(days, "day")].filter(Boolean).join(" · ") })),
         el("span", { class: "pill " + st[1], text: st[0] }),
-        ["requested", "approved"].includes(o.status) && o.to >= londonToday() ? ghost("Cancel", async () => { if (await act(() => api("PATCH", "/api/rota/time-off/" + o.id, { status: "cancelled" }), "Cancelled")) render(); }, { class: "btn ghost sm" }) : null);
+        // Time off that has started is a manager's to change.
+        ["requested", "approved"].includes(o.status) && o.to >= londonToday() && (mgr() || o.status === "requested" || o.from >= londonToday()) ? ghost("Cancel", async () => { if (await act(() => api("PATCH", "/api/rota/time-off/" + o.id, { status: "cancelled" }), "Cancelled")) render(); }, { class: "btn ghost sm" }) : null);
     }) : [el("div", { class: "empty", text: "No time off booked." })]));
   }
 
@@ -1400,13 +1414,15 @@
     const r = await get("/api/rota/requests");
     R.badge = r.timeOff.length + r.requests.filter((q) => (q.kind === "claim" && q.status === "open") || (q.kind === "cover" && q.status === "accepted")).length;
     renderNav();
-    setHead("Requests", R.badge ? `${plural(R.badge, "thing")} waiting for you` : "Nothing waiting for you");
+    setHead("requests", "Requests", R.badge ? `${plural(R.badge, "thing")} waiting for you` : "Nothing waiting for you");
     const decide = (url, body, ok) => async () => { if (await act(() => api("PATCH", url, body), ok)) { if (R.weekData) R.weekData._at = 0; render(); } };
     const out = [label("Time off")];
     out.push(r.timeOff.length ? el("div", { class: "list glass" }, ...r.timeOff.map((t) => el("div", { class: "lrow wraprow" }, avatar(t.name),
       el("span", { class: "t" }, el("b", { text: t.name }), el("span", { class: "s", text: `${t.from === t.to ? shortM(t.from) : shortM(t.from) + " – " + shortM(t.to)}${t.reason ? " · " + t.reason : ""}` })),
-      el("span", { class: "acts" }, ghost("Decline", decide("/api/rota/time-off/" + t.id, { status: "declined" }, "Declined"), { class: "btn ghost sm" }),
-        btn("Approve", decide("/api/rota/time-off/" + t.id, { status: "approved" }, "Approved"), "btn sm")))))
+      // Another manager or an admin decides a manager's own time off.
+      t.userId === R.me.user.id && !isAdmin() ? el("span", { class: "acts note", text: "Another manager or an admin decides this" })
+        : el("span", { class: "acts" }, ghost("Decline", decide("/api/rota/time-off/" + t.id, { status: "declined" }, "Declined"), { class: "btn ghost sm" }),
+          btn("Approve", decide("/api/rota/time-off/" + t.id, { status: "approved" }, "Approved"), "btn sm")))))
       : el("section", { class: "panel" }, el("p", { class: "note", text: "No time off waiting." })));
     out.push(label("Pickups and covers"));
     const rows = r.requests.map((q) => {
@@ -1428,7 +1444,7 @@
   /* ---------- more, hours and settings (managers) ---------- */
 
   function renderMore() {
-    setHead("More", "");
+    setHead("more", "More", "");
     const row = (t, sub, ic, tile, fn) => el("button", { class: "lrow", type: "button", onclick: fn }, el("span", { class: "tile " + tile }, svgi(ICON[ic])),
       el("span", { class: "t" }, el("b", { text: t }), sub ? el("span", { class: "s", text: sub }) : null), el("span", { class: "chev" }, svgi(ICON.chevR)));
     return [el("div", { class: "list glass" },
@@ -1447,7 +1463,7 @@
   async function renderHours() {
     const w = R.hoursWeek || (R.hoursWeek = R.week);
     const r = await get("/api/rota/hours?start=" + w);
-    setHead("Hours", `${weekLabel(r.week)} · all sites${r.published ? "" : " · draft"}`, {
+    setHead("hours", "Hours", `${weekLabel(r.week)} · all sites${r.published ? "" : " · draft"}`, {
       back: ["More", "more"],
       actions: [el("button", { type: "button", class: "iconbtn", "aria-label": "Previous week", onclick: () => { R.hoursWeek = addDays(r.week, -7); render(); } }, svgi(ICON.chevL)),
         el("button", { type: "button", class: "iconbtn", "aria-label": "Next week", onclick: () => { R.hoursWeek = addDays(r.week, 7); render(); } }, svgi(ICON.chevR))],
@@ -1467,7 +1483,7 @@
   }
 
   async function renderSettings() {
-    setHead("Rota settings", "Opening times, minimum cover and contracted hours", { back: ["More", "more"] });
+    setHead("settings", "Rota settings", "Opening times, minimum cover and contracted hours", { back: ["More", "more"] });
     const [sites, wk] = await Promise.all([get("/api/rota/sites"), loadWeek(R.week, true)]);
     const out = [label("Sites")];
     const dayAb = (n) => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][n];
@@ -1552,8 +1568,18 @@
     $("#snav").addEventListener("click", (e) => { const a = e.target.closest("a[href^='#']"); if (a) { e.preventDefault(); go(a.getAttribute("href").slice(1)); } });
     window.addEventListener("hashchange", render);
     wide.addEventListener("change", () => { if (R.tab === "week" || R.tab === "mine") render(); });
-    document.addEventListener("visibilitychange", () => { if (!document.hidden && $("#sheet").hidden) { refreshBadge(); render(); } });
-    window.addEventListener("online", () => render());
+    // Coming back to the tab (after a while) or back online refreshes the page, but never over something
+    // half typed or an open sheet or menu.
+    const busy = () => !$("#sheet").hidden || ($("#peopleSheet") && !$("#peopleSheet").hidden) || ($("#acctMenu") && !$("#acctMenu").hidden) ||
+      (document.activeElement && document.activeElement.closest?.("#page") && /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName)) || !!$("#page [data-dirty]");
+    let hiddenAt = 0;
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) { hiddenAt = Date.now(); return; }
+      if (Date.now() - hiddenAt > 30000 && !busy()) { refreshBadge(); render(); }
+    });
+    window.addEventListener("online", () => { if (!busy()) render(); });
+    // Typing into a page's form marks it, so a refresh doesn't throw it away.
+    $("#page").addEventListener("input", (e) => { if (e.target.matches("input,select,textarea")) e.target.setAttribute("data-dirty", ""); });
     render();
     refreshBadge();
   }

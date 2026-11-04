@@ -179,18 +179,22 @@ function proveResult(m,v,manual){
 
 /* ---------- writes ---------- */
 let chain=Promise.resolve();
-function patchDoc(col,id,patch,exists,base){
-  if(ro())return Promise.resolve();
-  const ref=D(col,id);
-  chain=chain.then(async()=>{
-    try{if(exists)await ref.update(patch);else await ref.set(Object.assign({},base||{},patch))}
-    catch(e){if(e&&e.code==="invalid_argument"&&!exists){try{await ref.update(patch)}catch(e2){fail(e2)}}else fail(e)}
+// Resolves true once saved (or queued offline), false when refused (already shown with fail()), so callers only
+// say "saved" when it was. The site is fixed when the change is made, so an Undo tapped after switching site still
+// goes to the site it came from.
+function patchDoc(col,id,patch,exists,base,site=S.site){
+  if(ro())return Promise.resolve(false);
+  const ref=D(col,id,site);
+  const p=chain.then(async()=>{
+    try{if(exists)await ref.update(patch);else await ref.set(Object.assign({},base||{},patch));return true}
+    catch(e){if(e&&e.code==="invalid_argument"&&!exists){try{await ref.update(patch);return true}catch(e2){fail(e2);return false}}fail(e);return false}
   });
-  return chain;
+  chain=p;
+  return p;
 }
 const patchDay=(date,p)=>patchDoc("days",date,p,!!S.days[date],{date});
 const patchWeek=(wk,p)=>patchDoc("weeks",wk,p,!!S.weeks[wk],{week:wk});
-async function save(fn){if(ro())return false;try{await fn();return true}catch(e){fail(e);return false}}
+async function save(fn){if(ro())return false;try{return (await fn())!==false}catch(e){fail(e);return false}}
 
 /* ---------- saving to several sites ----------
    Extra checks, cleaning, HACCP & risk, suppliers, contacts, onboarding and allergens can be saved to more than
@@ -247,7 +251,8 @@ async function multiSave(kind,sites,data,{editId=null,old=null,patch=false,match
 function fail(e){
   if(e&&e.code==="invalid_argument"){S.canWrite=false;$("#readonly").hidden=false;renderAll();return}
   if(e&&e.code==="quota_exceeded"){toast("The diary is full. Ask the owner to clear old entries.");return}
-  toast("Couldn't save. Check your connection and try again.");
+  // The diary's own reason when it refused (for example, only a manager can do that); otherwise the connection.
+  toast(e&&e.message&&e.code&&e.code!=="unavailable"?e.message:"Couldn't save. Check your connection and try again.");
 }
 const stamp=()=>({by:S.me,at:Date.now()});
 function armDelete(btn,label,fn){
@@ -476,6 +481,8 @@ function renderDayInner(){
     inp.addEventListener("change",()=>{
       const raw=inp.value.trim();const val=raw===""?null:Math.round(Number(raw)*10)/10;
       if(raw!==""&&!isFinite(val))return;
+      if(inp.dataset.sent===String(val))return; // the − button and leaving the box both send the same reading
+      inp.dataset.sent=String(val);
       patchDay(S.date,{temps:{[u.id]:{am:val==null?null:{v:val,...stamp()}}}});
     });
     units.append(row);
@@ -562,7 +569,7 @@ function renderWeek(){
     strip.append(el("button",{class:"wday "+cls,type:"button",disabled:date>t,"aria-label":`${nice(date)}: ${cls==="ok"?"signed off":cls==="part"?"partly done":cls==="bad"?"nothing recorded":cls==="closed"?"closed":""}`,onclick:()=>goDay(date)},
       el("span",{text:lbl.slice(0,1)}),el("b",{text:String(parse(date).getDate())}),el("span",{class:"d"})));
   }
-  const n=list.filter(c=>items[c.id]).length,all=list.length>0&&n===list.length;
+  const n=list.filter(c=>items[c.id]).length,all=n===list.length; // no end-of-week checks set up: the week can still be signed off
   checklist($("#wkList"),list,items,"wk",(cid,v)=>patchWeek(wk,{items:{[cid]:v},...stamp()}));roundChecks($("#wkList"));
   checkFoot($("#wkFoot"),list,items,w,()=>{const set={},back={};for(const c of list){set[c.id]=true;back[c.id]=!!items[c.id]}
     patchWeek(wk,{items:set,...stamp()});toast("All end-of-week checks done",["Undo",()=>patchWeek(wk,{items:back})])});
@@ -815,6 +822,10 @@ async function saveReading(date,u,raw,note){
   if(raw!==""&&!isFinite(v)){toast("Enter a number, like 3.5 or -19");return false}
   if(r&&r.v===v)return true;
   if(!r&&v==null)return true;
+  // The same value again a moment later (the − button and leaving the box both send it) is already on its way.
+  const key=date+":"+u.id,last=saveReading.last||{};
+  if(last.key===key&&last.v===v&&Date.now()-last.at<3000)return true;
+  saveReading.last={key,v,at:Date.now()};
   const amend=!!(r&&r.v!=null)&&(date!==today()||note);
   const am={v,...stamp(),note:note||""};
   if(r&&r.v!=null&&!r.was)am.was={v:r.v,by:r.by,at:r.at};
@@ -1045,7 +1056,7 @@ function renderMaint(){
     const hist=(m.log||[]).slice(0,5).map(e=>{ids.push(e.by);return el("li",{},el("span",{text:when(e.at)}),el("span",{class:"s",text:`${e.what} · ${nameOf(e.by)}${e.note?" · "+e.note:""}`}))});
     return xrow("m"+site+m.id,{
       title:m.title,
-      sub:[maintAll?siteOf(site).name:"",m.area,!isDone&&m.assignee?`→ ${m.assignee===S.me?"you":m.assigneeName||nameOf(m.assignee)}`:"",isDone?`done ${short(iso(new Date(m.doneAt)))}, ${nameOf(m.doneBy)}`:`reported ${short(iso(new Date(m.reportedAt||m.at||Date.now())))}, ${nameOf(m.reportedBy)}`].filter(Boolean).join(" · "),
+      sub:[maintAll?siteOf(site).name:"",m.area,!isDone&&m.assignee?`→ ${m.assignee===S.me?"you":m.assigneeName||nameOf(m.assignee)}`:"",isDone?(m.doneAt?`done ${short(iso(new Date(m.doneAt)))}, ${nameOf(m.doneBy)}`:"done"):`reported ${short(iso(new Date(m.reportedAt||m.at||Date.now())))}, ${nameOf(m.reportedBy)}`].filter(Boolean).join(" · "),
       right:[el("span",{class:"pill "+(isDone?"ok":pr[3]),text:isDone?"Done":pr[1]})],
       details:[m.details?el("p",{class:"how",text:m.details}):null,
         isDone&&m.fixNote?xfacts([["What was done",m.fixNote]]):null,
@@ -1098,7 +1109,7 @@ function editSupplier(s){
 }
 function renderSuppliers(){
   const box=$("#sList");box.replaceChildren();
-  const list=[...S.suppliers].sort((a,b)=>a.name.localeCompare(b.name));
+  const list=[...S.suppliers].sort((a,b)=>(a.name||"").localeCompare(b.name||""));
   if(!list.length)box.append(el("div",{class:"empty",text:"No suppliers yet. Add your milk, coffee, bakery and any other food or drink suppliers."}));
   for(const s of list)box.append(xrow("s"+s.id,{
     lead:el("span",{class:"avatar sm",text:initials(s.name)}),title:s.name,sub:s.supplies||s.contact||"",
@@ -1169,7 +1180,7 @@ function renderPlansList(){
       :`${rows.length} hazard${rows.length===1?"":"s"} · ${rows.filter(r=>riskOf(r).cls==="bad").length} high risk`;
     const rs=reviewState(d);
     box.append(el("button",{class:"lrow",type:"button",onclick:()=>openPlan(d.id)},el("span",{class:"tile "+(d.type==="haccp"?"purple":"orange")},svgi(ICON.plans)),
-      el("span",{class:"t"},el("b",{text:d.title||PL_NAME[d.type]}),el("span",{class:"s",text:`${PL_NAME[d.type]} · ${summary} · updated ${when(d.updatedAt)}, ${nameOf(d.updatedBy)}`})),
+      el("span",{class:"t"},el("b",{text:d.title||PL_NAME[d.type]||"HACCP plan"}),el("span",{class:"s",text:[PL_NAME[d.type]||"HACCP plan",summary,d.updatedAt?`updated ${when(d.updatedAt)}, ${nameOf(d.updatedBy)}`:""].filter(Boolean).join(" · ")})),
       el("span",{class:"pill "+rs.cls,text:rs.text}),el("span",{class:"chev"},svgi(ICON.chevR))));
   }
   renderAddBtn();resolveNames(ids);
@@ -1192,7 +1203,9 @@ function updateSaveBar(){
   const rb=$("#plRemote");if(rb)rb.hidden=!P.remote;
 }
 function renderEditor(){
-  const P=S.plan,d=P.doc,k=d.type,R=mro(),box=$("#planEditView");
+  const P=S.plan,d=P.doc,R=mro(),box=$("#planEditView");
+  if(!PL_META[d.type])d.type="haccp"; // an older document with no type opens as a HACCP plan
+  const k=d.type;
   const rk=rowsKey(k);d[rk]=d[rk]||[];
   const back=el("button",{class:"btn ghost sm",id:"plBack"},"← All documents");
   back.addEventListener("click",()=>{
@@ -1557,7 +1570,7 @@ function renderOnbList(){
   for(const d of list){
     ids.push(d.updatedBy);const rs=reviewState(d);
     box.append(el("button",{class:"lrow",type:"button",onclick:()=>openOnb(d.id,null,"view")},el("span",{class:"tile indigo"},svgi(ICON.onboarding)),
-      el("span",{class:"t"},el("b",{text:d.title||"Untitled document"}),el("span",{class:"s",text:[d.category,d.audience?"for "+d.audience:"",`updated ${when(d.updatedAt)}, ${nameOf(d.updatedBy)}`].filter(Boolean).join(" · ")})),
+      el("span",{class:"t"},el("b",{text:d.title||"Untitled document"}),el("span",{class:"s",text:[d.category,d.audience?"for "+d.audience:"",d.updatedAt?`updated ${when(d.updatedAt)}, ${nameOf(d.updatedBy)}`:""].filter(Boolean).join(" · ")})),
       d.reviewDate?el("span",{class:"pill "+rs.cls,text:rs.text}):null,el("span",{class:"chev"},svgi(ICON.chevR))));
   }
   renderAddBtn();resolveNames(ids);
@@ -1723,7 +1736,7 @@ function copyBtn(text){
 function renderContacts(){
   const box=$("#cList");box.replaceChildren();
   const order=t=>{const i=CON_TYPES.indexOf(t);return i<0?99:i};
-  const list=[...S.contacts].sort((a,b)=>order(a.type)-order(b.type)||a.name.localeCompare(b.name));
+  const list=[...S.contacts].sort((a,b)=>order(a.type)-order(b.type)||(a.name||"").localeCompare(b.name||""));
   if(!list.length)box.append(el("div",{class:"empty glass",text:"No contacts yet. Start with your council's food safety team, pest control and your fridge engineer."}));
   const row=c=>xrow("c"+c.id,{
     title:c.name,sub:[c.person,c.type].filter(Boolean).join(" · "),
@@ -1880,7 +1893,7 @@ function renderStaff(){
     tb0.append(el("label",{for:id},cb,lbl));
   }
   $("#tTopicsPanel").hidden=mro();
-  const list=[...S.staff].sort((a,b)=>a.name.localeCompare(b.name));
+  const list=[...S.staff].sort((a,b)=>(a.name||"").localeCompare(b.name||""));
   const todo=p=>TOPICS.filter(([k])=>!(p.topics&&p.topics[k]));
   const full=list.filter(p=>!todo(p).length).length,gaps=list.length-full;
   const stat=(n,l,c)=>el("div",{class:"stat glass"},el("b",{class:c||"",text:n}),el("span",{text:l}));
@@ -1922,7 +1935,7 @@ const ALG_SHORT={"Cereals with gluten":"Gluten","Sulphur dioxide":"Sulphites"};
 const algShort=a=>ALG_SHORT[a]||a.replace(/ \(.*\)$/,"");
 let algNewKind="drink";
 function renderAllergens(){
-  const items=[...S.allergens].sort((a,b)=>a.name.localeCompare(b.name)),R=ro(),secOn=algSectionsOn();
+  const items=[...S.allergens].sort((a,b)=>(a.name||"").localeCompare(b.name||"")),R=ro(),secOn=algSectionsOn();
   // "Free from" chips: tap allergens a customer must avoid, and the list shows only what's safe.
   const fb=$("#algFilter");fb.replaceChildren(el("span",{class:"s",text:"Free from"}));
   for(const a of ALLERGENS)fb.append(el("button",{type:"button",class:"fchip"+(algFilter.has(a)?" on":""),"aria-pressed":String(algFilter.has(a)),
@@ -2031,7 +2044,7 @@ const pdfCell=c=>{if(c==null||typeof c!=="object")return c;const st=PDF_CLS[c.cl
 function pdfTable(f,cols,rows,opts){f.table(cols.map(c=>({label:c.l,w:c.w,flex:c.flex,align:c.align,rotate:c.rotate,bold:c.bold})),rows.map(r=>r.map(pdfCell)),opts)}
 
 /* ---------- allergen matrix PDF ---------- */
-const allergenItems=()=>[...S.allergens].sort((a,b)=>a.name.localeCompare(b.name));
+const allergenItems=()=>[...S.allergens].sort((a,b)=>(a.name||"").localeCompare(b.name||""));
 // Drinks and Food: a site can keep its allergen items in two sections (on by default at the Cafe; Setup turns it on
 // or off per site). An item's kind is "food" or "drink"; items without one are drinks.
 const ALG_SECTIONS=[["drink","Drinks"],["food","Food"]];
@@ -2171,7 +2184,7 @@ function inspectSections(R){
   actions.sort((a,b)=>b.date.localeCompare(a.date));
 
   // Cleaning and extra checks
-  const taskRows=kind=>S[kind].slice().sort((a,b)=>a.name.localeCompare(b.name)).map(t=>{const ts=taskState(t),n=(t.log||[]).filter(e=>atIn(e.at)).length;
+  const taskRows=kind=>S[kind].slice().sort((a,b)=>(a.name||"").localeCompare(b.name||"")).map(t=>{const ts=taskState(t),n=(t.log||[]).filter(e=>atIn(e.at)).length;
     return[t.name,t.how||"",(t.freq||"").replace(/^./,c=>c.toUpperCase()),t.who||"",t.lastAt?lastWhen(t.lastAt,t.lastSet)+", "+fullName(t.lastBy):{t:"Never",cls:"bad"},String(n),{t:ts.overdue?ts.text:"Up to date",cls:ts.overdue?"bad":"ok"}]});
   const overdue=["cleaning","extras"].reduce((k,kind)=>k+S[kind].filter(t=>taskState(t).overdue).length,0);
   const topics=siteTopics(),trained=S.staff.filter(p=>topics.every(([k])=>p.topics&&p.topics[k])).length;
@@ -2226,7 +2239,7 @@ function inspectSections(R){
     empty:"No deliveries recorded in this period."});
   out.push({id:"training",title:"Staff training",intro:"The date each person was trained on each safe method.",
     cols:[{l:"Name",w:110,bold:true},{l:"Role",w:75},{l:"Started",w:65},...topics.map(([,l])=>({l,flex:1,align:"center"}))],
-    rows:S.staff.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(p=>[p.name,p.role||"",pdfDate(p.start),...topics.map(([k])=>{const t=p.topics&&p.topics[k];return t?{t:pdfDate(t.date),cls:"ok"}:{t:"Not yet",cls:"bad"}})]),
+    rows:S.staff.slice().sort((a,b)=>(a.name||"").localeCompare(b.name||"")).map(p=>[p.name,p.role||"",pdfDate(p.start),...topics.map(([k])=>{const t=p.topics&&p.topics[k];return t?{t:pdfDate(t.date),cls:"ok"}:{t:"Not yet",cls:"bad"}})]),
     empty:"No staff training records."});
   out.push({id:"maintenance",title:"Maintenance",intro:"Equipment problems and maintenance jobs: everything still open, and anything reported or finished in the period.",
     cols:[{l:"Reported",w:72},{l:"Job",flex:1.2,bold:true},{l:"Equipment or area",w:95},{l:"Urgency",w:70},{l:"Status",w:110},{l:"What was done",flex:1.2}],
@@ -2244,7 +2257,7 @@ function inspectSections(R){
   }else out.push({id:"allergens",title:"Allergen matrix",intro:"The 14 allergens UK law requires you to declare.",cols:ALG_COLS(),rows:algRows(allergenItems()),empty:"No menu items listed.",matrix:true,after:ALG_KEY});
   out.push({id:"suppliers",title:"Suppliers",
     cols:[{l:"Supplier",flex:1,bold:true},{l:"Supplies",flex:1.2},{l:"Contact",w:90},{l:"Phone",w:85},{l:"Hygiene rating",w:80},{l:"Notes",flex:1.2}],
-    rows:S.suppliers.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(x=>[x.name,x.supplies||"",x.contact||"",x.phone||"",x.rating||"",x.notes||""]),empty:"No suppliers listed."});
+    rows:S.suppliers.slice().sort((a,b)=>(a.name||"").localeCompare(b.name||"")).map(x=>[x.name,x.supplies||"",x.contact||"",x.phone||"",x.rating||"",x.notes||""]),empty:"No suppliers listed."});
   if(insp)out.push({id:"inspection",title:"Last EHO inspection",
     facts:[["Date",pdfDate(insp.inspectionDate)],["Inspector",[insp.inspector,insp.authority].filter(Boolean).join(", ")],["Visit",insp.visitType],["Rating",insp.rating!=null?String(insp.rating):""],
       ["Scores",insp.scores?[["Food handling",insp.scores.hygiene],["Cleanliness & structure",insp.scores.structure],["Management",insp.scores.management]].filter(x=>x[1]!==""&&x[1]!=null).map(x=>x.join(" ")).join(" · "):""],
@@ -2450,7 +2463,7 @@ function closureForm(){
     msg.textContent="Saving…";const fails=new Set();
     for(const site of sites)for(const date of dates){
       try{
-        if(site===S.site)await patchDay(date,{closed});
+        if(site===S.site){if(!(await patchDay(date,{closed})))throw new Error("refused")}
         else{const ref=D("days",date,site);try{await ref.update({closed})}catch(e){if(e&&e.code==="not_found")await ref.set({date,closed});else throw e}}
       }catch(e){fails.add(siteOf(site).name)}
     }
@@ -2686,6 +2699,19 @@ async function openPeopleSheet(){
   $("#peopleNote").replaceChildren("Not listed? ",el("a",{href:"#",onclick:e=>{e.preventDefault();signOut()}},"Sign in with your password"),".");
 }
 
+/* ---------- midnight: a kitchen iPad left open overnight moves on to the new day ---------- */
+S.lastToday=today();
+function rollDay(){
+  const t=today();if(t===S.lastToday)return;
+  const was=S.lastToday;S.lastToday=t;
+  // Only if it was showing today (or this week): someone looking back at an earlier day stays there.
+  if(S.date===was)S.date=t;
+  if(S.week===monday(was))S.week=monday(t);
+  if(S.db)renderAll();
+}
+setInterval(rollDay,60000);
+document.addEventListener("visibilitychange",()=>{if(!document.hidden)rollDay()});
+
 /* ---------- connection: changes made offline wait on this device (claude-shim.js) ---------- */
 window.addEventListener("diary:connection",e=>{
   const{offline,pending}=e.detail,c=$("#conn");
@@ -2693,9 +2719,10 @@ window.addEventListener("diary:connection",e=>{
   c.hidden=!offline&&!pending;
   c.textContent=offline?`Offline${pending?` · ${pending} change${pending===1?"":"s"} waiting`:""}`:`Saving ${pending} change${pending===1?"":"s"}…`;
   c.title=offline?"No connection. Changes are kept on this device and save when it's back.":"";
-  if(was&&c.hidden)toast("Back online. All changes saved.");
+  if(was&&c.hidden&&!S.droppedSince)toast("Back online. All changes saved.");
+  if(c.hidden)S.droppedSince=0;
 });
-window.addEventListener("diary:dropped",e=>toast("A change couldn't be saved: "+(e.detail.message||"refused by the diary")));
+window.addEventListener("diary:dropped",e=>{S.droppedSince=(S.droppedSince||0)+1;toast("A change couldn't be saved: "+(e.detail.message||"refused by the diary"))});
 async function signOut(){try{await fetch("/api/auth/logout",{method:"POST"})}catch(e){}location.replace("/signin")}
 function renderMe(){
   $("#avatarBtn").textContent=initials(S.myName);
@@ -2994,6 +3021,7 @@ function switchSite(id){
   if(id===S.site)return;
   if((S.plan&&S.plan.dirty)||(S.insp&&S.insp.dirty)||(S.onb&&S.onb.dirty)||setupDirty){toast("Save or discard your changes before switching site.");return}
   if(S.plan)closePlan();if(S.insp)closeInsp();if(S.onb)closeOnb();
+  $("#toast").hidden=true; // an Undo still showing belongs to the site being left
   S.site=id;try{localStorage.setItem("sfbb.site",id)}catch(e){}
   Object.assign(S,{days:{},weeks:{},allergens:[],allergenDocs:[],reviews:[],extras:[],cleaning:[],deliveries:[],maintenance:[],suppliers:[],contacts:[],plans:[],onboarding:[],inspections:[],staff:[],prove:[],rev:{}});
   S.settings=S.sum[id]&&S.sum[id].ready?S.sum[id].settings:normSettings(null);S.cfg=activeCfg(S.settings);
@@ -3055,10 +3083,10 @@ $("#dayDate").addEventListener("change",e=>{if(e.target.value){S.date=e.target.v
 $("#todayBtn").addEventListener("click",()=>{S.date=today();renderDay();renderHead()});
 $("#dayPrev").addEventListener("click",()=>{S.date=addDays(S.date,-1);renderDay();renderHead()});
 $("#dayNext").addEventListener("click",()=>{if(S.date<today()){S.date=addDays(S.date,1);renderDay();renderHead()}});
-$("#saveProb").addEventListener("click",async()=>{await patchDay(S.date,{problems:{text:$("#problems").value.trim(),...stamp()}});toast("Note saved")});
+$("#saveProb").addEventListener("click",async()=>{if(await patchDay(S.date,{problems:{text:$("#problems").value.trim(),...stamp()}}))toast("Note saved")});
 $("#wkPrev").addEventListener("click",()=>{S.week=addDays(S.week,-7);renderWeek();renderHead()});
 $("#wkNext").addEventListener("click",()=>{S.week=addDays(S.week,7);renderWeek();renderHead()});
-$("#wkSaveNote").addEventListener("click",async()=>{await patchWeek(S.week,{notes:{text:$("#wkNotes").value.trim(),...stamp()}});toast("Note saved")});
+$("#wkSaveNote").addEventListener("click",async()=>{if(await patchWeek(S.week,{notes:{text:$("#wkNotes").value.trim(),...stamp()}}))toast("Note saved")});
 $("#algSave").addEventListener("click",async()=>{
   const name=$("#algName").value.trim();if(!name){$("#algConfirm").textContent="Give the item a name first.";return}
   const contains=[...document.querySelectorAll("#algChecks input:checked")].map(c=>c.value);

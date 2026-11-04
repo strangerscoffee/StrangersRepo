@@ -124,7 +124,8 @@ test("roles: staff record entries but can't change manager sections or use admin
   }
   // Staff training: staff fill in and sign their own record only, and never remove one.
   assert.equal((await db("set", { path: "sites/asg/staff/own", data: { name: "alex  brown", topics: {} } }, STAFF)).status, 200, "own record");
-  assert.equal((await db("update", { path: "sites/asg/staff/own", patch: { signed: { by: "web:Alex Brown" } } }, STAFF)).status, 200, "sign own record");
+  assert.equal((await db("update", { path: "sites/asg/staff/own", patch: { signed: { by: "web:Alex Brown", name: "Alex Brown" } } }, STAFF)).status, 200, "sign own record");
+  assert.equal((await db("update", { path: "sites/asg/staff/own", patch: { signed: { by: "web:Alex Brown", name: "Sam Patel" } } }, STAFF)).status, 403, "a signature's name must be their own too");
   for (const [op, body] of [
     ["update", { path: "sites/asg/staff/own", patch: { name: "Sam Patel" } }],
     ["delete", { path: "sites/asg/staff/own" }],
@@ -382,7 +383,9 @@ test("quick switching: a 4-digit PIN works only on a device signed in with a pas
   assert.equal((await auth("switch", { id: joId, pin: "4826" }, device)).status, 200);
   await admin("PATCH", `users/${jo.id}`, { password: "generate" });
   assert.equal((await admin("GET", "users")).body.users.find((u) => u.username === "jo.quick").quickPin, false, "a password reset clears the PIN");
-  assert.equal((await auth("switch", { id: joId, pin: "4826" }, device)).status, 404);
+  // A password reset also stops the device being trusted (it was trusted on Jo's old password).
+  assert.equal((await auth("switch", { id: joId, pin: "4826" }, device)).status, 403);
+  assert.equal((await (await auth("me", undefined, device)).json()).quickSwitch, false);
 });
 
 test("writes are rate limited per IP", async () => {

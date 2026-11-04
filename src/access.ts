@@ -74,10 +74,22 @@ export function requireDelete(u: User, path: unknown): void {
 export function requireOwnSignature(u: User, collection: string, data: unknown, current: Record<string, unknown> | undefined, canon: (v: unknown) => string): void {
   if (u.role !== "staff" || !data || typeof data !== "object") return;
   const d = data as Record<string, any>;
-  const mine = (by: unknown, name: unknown) => by === recordId(u) && (name === undefined || name === u.name);
+  // A signature carries both the record id and the name, and both must be the person's own (a patch with only
+  // `by` would leave someone else's name on it).
+  const mine = (by: unknown, name: unknown) => by === recordId(u) && name === u.name;
   const bad = () => new ApiError(403, "permission_denied", "You can only sign in your own name.");
   if (d.signed != null && canon(d.signed) !== canon(current?.signed) && !(typeof d.signed === "object" && mine(d.signed.by, d.signed.name))) throw bad();
-  if (collection.split("/").pop() === "reviews" && d.by !== undefined && d.by !== current?.by && d.by !== recordId(u)) throw bad();
+  // Training dates on a staff record say who recorded them: staff record new ones in their own name only.
+  if (collection.split("/").pop() === "staff" && d.topics && typeof d.topics === "object") {
+    for (const [k, t] of Object.entries(d.topics as Record<string, any>)) {
+      if (t && typeof t === "object" && t.by !== undefined && t.by !== recordId(u) && canon(t) !== canon((current?.topics as any)?.[k])) throw bad();
+    }
+  }
+  if (collection.split("/").pop() === "reviews") {
+    if (d.by !== undefined && d.by !== current?.by && d.by !== recordId(u)) throw bad();
+    // A review someone else has signed is theirs: staff can't rewrite or empty it.
+    if (current?.by && current.by !== recordId(u)) throw new ApiError(403, "permission_denied", "This review was signed by someone else. Ask a manager to change it.");
+  }
 }
 
 /* Sign-offs and closed days on the diary's day and week pages, for staff:
@@ -92,6 +104,10 @@ export function requireStaffDayRules(u: User, collection: string, id: string, da
   const d = data as Record<string, any>;
   const denied = (m: string) => new ApiError(403, "permission_denied", m);
   if ("signed" in d && d.signed === null && current?.signed) throw denied("Only a manager or admin can undo a sign-off.");
+  // Clearing a whole section (the temperatures, the opening or closing checks…) is a manager's job.
+  for (const [k, v] of Object.entries(d)) {
+    if (v === null && k !== "signed" && k !== "closed" && current?.[k] != null) throw denied("Only a manager or admin can clear part of a day's record.");
+  }
   if (col !== "days" || !("closed" in d) || canon(d.closed) === canon(current?.closed)) return;
   if (d.closed === null) {
     if (current?.closed) throw denied("Only a manager or admin can reopen a closed day.");

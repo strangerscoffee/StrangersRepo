@@ -144,6 +144,9 @@ test("security: staff can't use manager or admin features, managers can't use ad
     ["POST", "time-off", { userId: other.id, from: "2026-12-01", to: "2026-12-02", reason: "x" }],
   ]) await denied(await send(method, "/api/rota/" + route, STAFF, body), `staff ${method} /api/rota/${route}`);
 
+  // Stored files (allergen PDFs from before the matrix was generated) are added and removed by managers.
+  await denied(await send("DELETE", "/api/assets/0123456789abcdef0123456789abcdef", STAFF), "staff DELETE /api/assets/<id>");
+
   // Every response says: only this site's scripts, and no framing.
   const csp = (await send("GET", "/", STAFF)).headers.get("content-security-policy");
   assert.match(csp, /script-src 'self'/);

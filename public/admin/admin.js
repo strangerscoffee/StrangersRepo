@@ -97,9 +97,17 @@
     const b = e.target.closest("[data-sheet]");
     if (!b) return;
     if (b.dataset.sheet === "close") { closeSheet(); return; }
-    if (sheetDone) sheetDone(b.dataset.sheet, b);
+    if (sheetDone) once(b, () => sheetDone(b.dataset.sheet, b));
   });
-  $("#sheet").addEventListener("submit", (e) => { e.preventDefault(); if (sheetDone) sheetDone("submit", e.target); });
+  $("#sheet").addEventListener("submit", (e) => { e.preventDefault(); if (sheetDone) once(e.target, () => sheetDone("submit", e.target)); });
+  // While a sheet's action is running, a second tap (or Enter) does nothing, so nothing is sent twice.
+  async function once(owner, fn) {
+    if (owner.dataset.busy) return;
+    owner.dataset.busy = "1";
+    const btns = [...(owner.matches("form") ? owner.querySelectorAll("button[type=submit]") : [owner])];
+    btns.forEach((x) => { x.disabled = true; });
+    try { await fn(); } finally { delete owner.dataset.busy; btns.forEach((x) => { if (x.isConnected) x.disabled = false; }); }
+  }
 
   /** Asks before doing something that can't be undone. Resolves true when confirmed. */
   function confirmSheet({ title, text, confirm, danger }) {
@@ -194,7 +202,10 @@
   };
 
   VIEWS.people = async () => {
-    const d = await api("GET", "/api/admin/people");
+    // Searching, filtering and opening a row reuse what's loaded; anything else (a save, a page visit) loads afresh.
+    const d = S.local && cache.peopleData ? cache.peopleData : await api("GET", "/api/admin/people");
+    S.local = false;
+    cache.peopleData = d;
     cache.people = d.people;
     const counts = { all: d.people.filter((p) => p.active).length, staff: 0, manager: 0, admin: 0, off: d.people.filter((p) => !p.active).length };
     d.people.forEach((p) => { if (p.active) counts[p.role]++; });
@@ -566,9 +577,9 @@
     const a = e.target.closest("[data-act]");
     if (a) { e.preventDefault(); act(a.dataset.act, a.dataset.id, a); return; }
     const pr = e.target.closest("[data-person]");
-    if (pr) { S.open = S.open === pr.dataset.person ? null : pr.dataset.person; reload(); return; }
+    if (pr) { S.open = S.open === pr.dataset.person ? null : pr.dataset.person; S.local = S.page === "people"; reload(); return; }
     const f = e.target.closest("[data-filter]");
-    if (f) { S.filter = f.dataset.filter; reload(); return; }
+    if (f) { S.filter = f.dataset.filter; S.local = S.page === "people"; reload(); return; }
     const fd = e.target.closest("[data-feed]");
     if (fd) { S.feed = fd.dataset.feed; reload(); return; }
   });
@@ -579,7 +590,7 @@
     const id = e.target.id;
     if (id === "q") S.q = e.target.value; else S.fq = e.target.value;
     clearTimeout(searchT);
-    searchT = setTimeout(async () => { await reload(); const box = $("#" + id); if (box) { box.focus(); box.setSelectionRange(box.value.length, box.value.length); } }, 200);
+    searchT = setTimeout(async () => { S.local = S.page === "people"; await reload(); const box = $("#" + id); if (box) { box.focus(); box.setSelectionRange(box.value.length, box.value.length); } }, 200);
   });
   $("#meBtn").addEventListener("click", accountMenu);
   $("#whoBtn").addEventListener("click", accountMenu);
