@@ -22,7 +22,7 @@ const DEFAULT_SETTINGS={
     {id:"c8",t:"Allergen information updated for tomorrow's items"}],
   weekly:[]
 };
-const FREQ={"after use":0,"daily":1,"weekly":7,"fortnightly":14,"monthly":30,"quarterly":91,"yearly":365};
+const FREQ={"after use":0,"daily":1,"weekly":7,"fortnightly":14,"monthly":30,"quarterly":91,"six-monthly":182,"yearly":365};
 const PROVE={
   cook:{label:"Cooking – core temperature",min:75,hint:"Pass at 75°C or hotter in the thickest part."},
   reheat:{label:"Reheating – core temperature",min:75,hint:"Pass at 75°C or hotter, steaming hot all the way through."},
