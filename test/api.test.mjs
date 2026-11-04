@@ -46,7 +46,7 @@ async function admin(method, route, body, cookie = ADMIN) {
   return { status: r.status, body: await r.json() };
 }
 
-test("signed out: only the sign-in page is reachable", async () => {
+test("signed out: only the sign-in page and the site's code are reachable, no pages or data", async () => {
   const home = await fetch(srv.base + "/", { redirect: "manual" });
   assert.equal(home.status, 302);
   assert.equal(home.headers.get("location"), "/signin");
@@ -54,7 +54,11 @@ test("signed out: only the sign-in page is reachable", async () => {
   assert.equal(adm.headers.get("location"), "/signin?next=%2Fadmin");
   assert.equal((await fetch(srv.base + "/signin")).status, 200);
   assert.equal((await fetch(srv.base + "/theme.css")).status, 200);
-  assert.equal((await fetch(srv.base + "/claude-shim.js", { redirect: "manual" })).status, 302);
+  // The diary's scripts and styles load (they hold no data), so a page Safari shows from memory after the
+  // session has ended still works and sends the person to sign in, instead of showing unstyled and stuck.
+  for (const f of ["/claude-shim.js", "/app.js", "/app.css", "/ui.css", "/pdf.js"]) assert.equal((await fetch(srv.base + f, { redirect: "manual" })).status, 200, f);
+  assert.equal((await fetch(srv.base + "/index.html", { redirect: "manual" })).status, 302, "the page itself still needs sign-in");
+  assert.equal((await fetch(srv.base + "/admin/admin.js", { redirect: "manual" })).status, 302, "the admin section's files don't");
   const r = await db("get", { path: "days/x" }, null);
   assert.equal(r.status, 401);
   assert.equal(r.body.code, "unauthenticated");

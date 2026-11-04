@@ -596,6 +596,11 @@
   $("#whoBtn").addEventListener("click", accountMenu);
   window.addEventListener("hashchange", () => { const h = location.hash.slice(1); if (h !== S.page && PAGES.includes(h)) show(h); });
 
+  // Safari can bring the page back from memory after the session has ended: check, and go to sign-in if so.
+  window.addEventListener("pageshow", (e) => {
+    if (e.persisted) fetch("/api/auth/me").then((r) => r.json()).then((me) => { if (!me.user) location.replace("/signin?next=" + encodeURIComponent(location.pathname)); }).catch(() => {});
+  });
+
   /* ---------- start ---------- */
   (async () => {
     try {

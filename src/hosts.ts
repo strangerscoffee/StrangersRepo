@@ -17,6 +17,17 @@ export function isRotaSharedFile(path: string): boolean {
     path === "/logo.svg" || path === "/mark.svg" || /^\/icon-\d+\.png$/.test(path) || path.startsWith("/rota/");
 }
 
+/**
+ * The diary's and the rota's scripts, styles and images (code, no data) load without a session, on their own
+ * address. Safari can show a page from memory after the session has ended (going back to a tab); its files then
+ * still load, and its script sends the person to sign in, instead of a page with no styles that does nothing.
+ * Pages and every API still need sign-in; the admin section's files stay admin-only.
+ */
+export function isPublicCode(app: string, path: string): boolean {
+  if (!/\.(js|css|svg|png|webmanifest)$/.test(path) || path.startsWith("/admin/")) return false;
+  return app === "rota" ? isRotaSharedFile(path) : app === "diary";
+}
+
 /** On the admin section's hostname, files it may serve: its own (/admin/…) and the shared theme and icons. */
 export function isAdminSharedFile(path: string): boolean {
   return path === "/theme.css" || path === "/robots.txt" || path === "/logo.svg" || path === "/mark.svg" ||
