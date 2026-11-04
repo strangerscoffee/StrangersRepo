@@ -232,3 +232,4 @@ button.shc:hover{border-color:var(--accent)}
 
 /* Rows that are divs (not buttons) need border-box like the diary's button rows. */
 div.lrow{box-sizing:border-box}
+a.btn{text-decoration:none;display:inline-flex;align-items:center}
