@@ -196,7 +196,7 @@
     b.hidden = !back;
     if (back) { b.replaceChildren(svgi(ICON.chevL), back[0]); b.onclick = () => go(back[1]); }
     $("#pageAction").replaceChildren(...(actions || []));
-    document.title = `${title} · Rota · Strangers Coffee`;
+    document.title = "Strangers Coffee - Rota"; // the same tab name on every page
   }
 
   async function refreshBadge() {
