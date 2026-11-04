@@ -468,6 +468,12 @@ function renderDayInner(){
     el("div",{class:"steprow"},...steps.map(([t,ok])=>el("button",{type:"button",class:"step"+(ok?" on":next&&next[0]===t?" now":""),"aria-label":`${t}: ${ok?"done":"to do"}. Go to it`,onclick:()=>goStep(t)},el("i"),el("span",{text:t})))));
   // anything overdue at this site (today only)
   const al=$("#dayAlerts");al.replaceChildren();
+  // New maintenance notifications for this person (two at most; the bell has the rest).
+  if(isToday&&S.db){const nn=unreadNotifs();
+    // Coloured by what it is: done (green), assigned to you (blue), new or overdue (amber, red when urgent).
+    for(const x of nn.slice(0,2))al.append(alertEl(x.title,x.text,["Open",()=>openMaintJob(x)],"notif "+x.cls,x.ic));
+    if(nn.length>2)al.append(el("button",{type:"button",class:"alertmore",onclick:openNotifs},svgi(ICON.bell),el("span",{text:`${nn.length-2} more notification${nn.length-2===1?"":"s"}`}),el("span",{class:"go",text:"Show"})));
+  }
   const a=isToday&&S.db?siteAttention(S.site):null;
   if(a&&a.unused){
     al.append(alertEl("Not in use yet",`Nothing is counted as missing at the ${curSite().name} until it starts.`,canTab("setup")?["Set up",()=>show("setup")]:null,""));
@@ -580,8 +586,8 @@ function goStep(t){
   const n=$(card);n.scrollIntoView({behavior:"smooth",block:"start"});
   const i=n.querySelector("input:not(:checked):not([disabled])");if(i&&key==="temps")i.focus({preventScroll:true});
 }
-function alertEl(title,sub,action,cls){
-  return el("div",{class:"alert "+(cls==null?"":cls)},el("span",{class:"ic"},svgi(ICON.warn)),el("span",{class:"t"},el("b",{text:title}),el("span",{class:"s",text:sub})),
+function alertEl(title,sub,action,cls,ic){
+  return el("div",{class:"alert "+(cls==null?"":cls)},el("span",{class:"ic"},svgi(ICON[ic||"warn"])),el("span",{class:"t"},el("b",{text:title}),el("span",{class:"s",text:sub})),
     action?el("button",{class:"btn sm",type:"button",onclick:action[1]},action[0]):null);
 }
 
@@ -1074,8 +1080,76 @@ async function setMaintDone(m,site,done,note){
   const v=done?{status:"done",doneBy:S.me,doneAt:Date.now(),fixNote:note||"",log}:{status:"open",doneBy:null,doneAt:null,log};
   if(await save(()=>D("maintenance",m.id,site).update(v)))toast(`${m.title}: ${done?"done":"reopened"}${site!==S.site?" at the "+siteOf(site).name:""}`);
 }
+/* ---------- notifications: maintenance jobs that need someone's attention ----------
+   Worked out here from every site's maintenance jobs (already loaded for Maintenance → All sites), for this person:
+   - a job assigned to them (until it's done);
+   - managers and admins: every new job (urgent ones marked);
+   - whoever reported a job, and managers: when it's done;
+   - managers, and whoever it's assigned to: a job still open after a day (urgent) or a week.
+   Shown by the bell (with a count), on Maintenance in the menu, and on Today. "Seen up to" is kept per person on
+   the server (user.seenNotifications), so reading them on one device clears them on the others. */
+const DAY_MS=864e5;
+const isMgr=()=>S.role==="manager"||S.role==="admin";
+function maintNotifs(){
+  const out=[],now=Date.now(),since=now-14*DAY_MS,me=S.me,mgr=isMgr();
+  if(!me)return out;
+  for(const x of SITES){
+    for(const m of (S.sum[x.id]&&S.sum[x.id].maintenance)||[]){
+      const open=m.status!=="done",rep=m.reportedAt||m.at||0,urgent=m.priority==="urgent";
+      const add=(kind,at,text,cls,ic)=>{if(at&&at>=since&&at<=now)out.push({key:`${kind}:${x.id}:${m.id}`,kind,at,site:x.id,id:m.id,title:m.title||"Maintenance job",text,cls,ic,ids:[m.reportedBy,m.doneBy]})};
+      if(open&&m.assignee===me){
+        const e=(m.log||[]).find(l=>/^Assigned to /.test(l.what||""));
+        if(!e||e.by!==me)add("assigned",e?e.at:rep,`Assigned to you${e?" by "+nameOf(e.by):""} · ${x.name}`,"acc","maintenance");
+      }
+      if(open&&mgr&&m.reportedBy!==me)add("new",rep,`${urgent?"Urgent · ":""}Reported by ${nameOf(m.reportedBy)} · ${x.name}`,urgent?"bad":"warn","warn");
+      if(!open&&m.doneBy!==me&&(m.reportedBy===me||mgr))add("done",m.doneAt,`Done by ${nameOf(m.doneBy)}${m.fixNote?": "+m.fixNote:""} · ${x.name}`,"ok","checkc");
+      if(open&&(mgr||m.assignee===me)){const late=urgent?DAY_MS:7*DAY_MS;if(rep&&now-rep>late)add("late",rep+late,`${urgent?"Urgent and still open after a day":"Still open after a week"} · ${x.name}`,"bad","warn")}
+    }
+  }
+  return out.sort((a,b)=>b.at-a.at);
+}
+const unreadNotifs=()=>maintNotifs().filter(n=>n.at>(S.notifSeen||0));
+function renderNotifs(){
+  const n=unreadNotifs().length,label=n?`Notifications, ${n} new`:"Notifications";
+  const badge=()=>n?el("span",{class:"n",text:n>99?"99+":String(n)}):null;
+  const bell=$("#bellBtn");if(bell){bell.replaceChildren(...kids(svgi(ICON.bell),badge()));bell.setAttribute("aria-label",label)}
+  const sb=$("#sideBell");if(sb){sb.replaceChildren(...kids(svgi(ICON.bell),el("span",{text:"Notifications"}),badge()));sb.setAttribute("aria-label",label)}
+  if(!$("#notifSheet").hidden)fillNotifs();
+}
+function fillNotifs(){
+  const list=maintNotifs(),seen=S.notifSeen0||0,box=$("#notifList");
+  resolveNames(list.flatMap(x=>x.ids));
+  box.replaceChildren(...(list.length?list.slice(0,40).map(x=>el("button",{class:"lrow",type:"button",onclick:()=>{closeSheets();openMaintJob(x)}},
+    el("span",{class:"nic "+x.cls},svgi(ICON[x.ic])),
+    el("span",{class:"nt"},el("b",{text:x.title}),el("span",{class:"s",text:x.text}),el("span",{class:"w",text:when(x.at)})),
+    x.at>seen?el("span",{class:"unread",role:"img","aria-label":"New"}):null)):[el("div",{class:"empty",text:"Nothing new. Maintenance jobs that need you show up here."})]));
+}
+function openNotifs(){
+  // Show what's new with its dot, then count it as seen (here and on this person's other devices).
+  S.notifSeen0=S.notifSeen||0;
+  fillNotifs();
+  $("#sheetVeil").hidden=false;$("#notifSheet").hidden=false;
+  const f=$("#notifList button");if(f)f.focus();
+  markNotifsSeen();
+}
+function markNotifsSeen(){
+  const list=maintNotifs();if(!list.length)return;
+  const at=Math.max(...list.map(x=>x.at));
+  if(at<=(S.notifSeen||0))return;
+  S.notifSeen=at;renderNotifs();renderNav();if(S.tab==="day")renderDay();
+  if(S.user&&S.user.seenNotifications)S.user.seenNotifications(at).catch(()=>{});
+}
+// Open the job a notification is about: its site's list (or All sites), with the job opened.
+function openMaintJob(x){
+  if(x.site!==S.site)maintAll=true;
+  xOpen["m"+x.site+x.id]=true;
+  show("maintenance");
+  requestAnimationFrame(()=>{const r=[...document.querySelectorAll("#mList .xrow.open")].pop();if(r)r.scrollIntoView({block:"center",behavior:"smooth"})});
+}
+
 function renderMaint(){
   const box=$("#mList");if(!box)return;box.replaceChildren();const ids=[],R=ro();
+  if(S.tab==="maintenance"&&!document.hidden)setTimeout(markNotifsSeen,0); // looking at Maintenance counts as seeing them
   for(const b of document.querySelectorAll("#mScope button"))b.setAttribute("aria-pressed",String((b.dataset.scope==="all")===maintAll));
   const items=maintAll?SITES.flatMap(x=>(x.id===S.site?S.maintenance:(S.sum[x.id]&&S.sum[x.id].maintenance)||[]).map(m=>({m,site:x.id})))
     :S.maintenance.map(m=>({m,site:S.site}));
@@ -2536,6 +2610,8 @@ function goDay(date){S.date=date;show("day");renderDay();renderHead()}
 /* ---------- app chrome: sites, sections, account ---------- */
 const svgi=(d)=>{const n=document.createElementNS("http://www.w3.org/2000/svg","svg");n.setAttribute("viewBox","0 0 24 24");n.setAttribute("class","i");n.setAttribute("aria-hidden","true");n.innerHTML=d;return n};
 const ICON={
+  bell:'<path d="M6 16V11a6 6 0 0112 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 004 0"/>',
+  checkc:'<circle cx="12" cy="12" r="8.5"/><path d="M8.5 12.3l2.4 2.4 4.6-4.9"/>',
   today:'<rect x="4" y="5" width="16" height="15" rx="3"/><path d="M4 10h16M9 3v4M15 3v4"/><path d="M9 14.5l2 2 4-4"/>',
   week:'<rect x="4" y="5" width="16" height="15" rx="3"/><path d="M4 10h16M9 3v4M15 3v4M8 14h.01M12 14h.01M16 14h.01M8 17h.01M12 17h.01"/>',
   history:'<path d="M4 12a8 8 0 108-8 8.5 8.5 0 00-6 2.5L4 8"/><path d="M4 4v4h4M12 8v4l3 2"/>',
@@ -2592,7 +2668,7 @@ function siteState(id){
 function navBadge(id){
   if(id==="cleaning"||id==="extras"){const n=S[id].filter(x=>taskState(x).overdue).length;return n?{cls:"bad",text:`${n} overdue`}:null}
   if(id==="review"&&S.db&&!S.reviewsLoading&&reviewPeriod().due<today())return{cls:"bad",text:"Overdue"};
-  if(id==="maintenance"){const n=S.maintenance.filter(m=>m.status!=="done"&&m.priority==="urgent").length;return n?{cls:"bad",text:`${n} urgent`}:null}
+  if(id==="maintenance"){const u=unreadNotifs().length;if(u)return{cls:"bad",text:`${u} new`};const n=S.maintenance.filter(m=>m.status!=="done"&&m.priority==="urgent").length;return n?{cls:"bad",text:`${n} urgent`}:null}
   return null;
 }
 function renderSites(){
@@ -2762,7 +2838,8 @@ function renderMe(){
     el("span",{class:"t"},el("b",{text:S.myName||"Signed in"}),el("span",{class:"s",text:{admin:"Admin",manager:"Manager",staff:"Staff"}[S.role]||""})),svgi(ICON.chevR));
 }
 /* sheets and the account menu */
-function closeSheets(){$("#sheetVeil").hidden=true;$("#siteSheet").hidden=true;$("#peopleSheet").hidden=true;$("#acctMenu").hidden=true}
+function closeSheets(){$("#sheetVeil").hidden=true;$("#siteSheet").hidden=true;$("#peopleSheet").hidden=true;$("#notifSheet").hidden=true;$("#acctMenu").hidden=true}
+$("#bellBtn").addEventListener("click",openNotifs);$("#sideBell").addEventListener("click",openNotifs);
 function openSiteSheet(){renderSites();$("#sheetVeil").hidden=false;$("#siteSheet").hidden=false;const on=$("#siteList .on")||$("#siteList button");if(on)on.focus()}
 function openAcctMenu(anchor){
   const m=$("#acctMenu");
@@ -3013,7 +3090,7 @@ $("#pubGo").addEventListener("click",async()=>{
   }catch(e){fail(e);pubNote="Publishing stopped part-way. Check each site's setup, then try again.";renderPublish()}
 });
 
-function renderAll(){refreshPickers();renderSites();renderNav();renderHead();renderAddBtn();renderDay();renderWeek();renderHistory();renderTasks("extras");renderTasks("cleaning");renderProve();renderTempLog();renderDeliveries();renderMaint();renderAllergenDocs();renderAllergens();renderPlansList();renderSuppliers();renderContacts();renderStaff();renderOnbList();renderInspList();renderReview();renderSetup();renderInspect()}
+function renderAll(){renderNotifs();refreshPickers();renderSites();renderNav();renderHead();renderAddBtn();renderDay();renderWeek();renderHistory();renderTasks("extras");renderTasks("cleaning");renderProve();renderTempLog();renderDeliveries();renderMaint();renderAllergenDocs();renderAllergens();renderPlansList();renderSuppliers();renderContacts();renderStaff();renderOnbList();renderInspList();renderReview();renderSetup();renderInspect()}
 
 /* ---------- tabs ---------- */
 const TABS=["day","week","history","inspect","extras","cleaning","prove","allergens","templog","deliveries","maintenance","eho","plans","suppliers","contacts","staff","onboarding","review","setup","records","more"];
@@ -3105,7 +3182,7 @@ function subscribeSummaries(){
     C("days",x.id).orderBy("date","desc").limit(60).onSnapshot(q=>{const m={};for(const d of q.docs)m[d.id]=d.data();sm.days=m;mark("days")},err);
     for(const k of["extras","cleaning"])C(k,x.id).onSnapshot(q=>{sm[k]=q.docs.map(d=>({id:d.id,...d.data()}));mark(k)},err);
     // Every site's maintenance jobs, for Maintenance → All sites.
-    C("maintenance",x.id).onSnapshot(q=>{sm.maintenance=q.docs.map(d=>({id:d.id,...d.data()}));if(S.tab==="maintenance"&&maintAll)renderMaint()},err);
+    C("maintenance",x.id).onSnapshot(q=>{sm.maintenance=q.docs.map(d=>({id:d.id,...d.data()}));if(S.tab==="maintenance"&&maintAll)renderMaint();renderNotifs();renderNav();if(S.tab==="day")renderDay()},err);
   }
   S.db.doc("config/shared").onSnapshot(s=>{S.shared=s.exists?s.data():null;if(!setupDirty){SE=setupDraft();buildSetup()}renderPublish()},err);
 }
@@ -3150,6 +3227,7 @@ applyTabs();renderAll();
   if(S.user){
     const me=await S.user.me();S.me=me.id;
     const w=await S.user.can("data.write");if(w===false){S.canWrite=false;$("#readonly").hidden=false}
+    S.notifSeen=me.notifSeen||0;
     S.myName=me.name||"";S.role=me.role||"staff";S.quickPin=!!me.quickPin;S.quickSwitch=!!me.quickSwitch;renderMe();
     if(!canTab(S.tab))show("day",{quiet:true});else renderNav();
     loadTeam();

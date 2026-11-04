@@ -339,9 +339,9 @@ export async function handleAuth(req: Request, env: Env, route: string, current:
   const ip = req.headers.get("cf-connecting-ip") || "local";
 
   if (route === "me" && req.method === "GET") {
-    const quick = current ? await env.DB.prepare("SELECT quick_hash IS NOT NULL AS has FROM users WHERE id = ?").bind(current.id).first<{ has: number }>() : null;
+    const quick = current ? await env.DB.prepare("SELECT quick_hash IS NOT NULL AS has, notif_seen FROM users WHERE id = ?").bind(current.id).first<{ has: number; notif_seen: number }>() : null;
     return json({
-      user: current ? { ...publicUser(current), quickPin: !!quick?.has } : null,
+      user: current ? { ...publicUser(current), quickPin: !!quick?.has, notifSeen: quick?.notif_seen ?? 0 } : null,
       setupNeeded: (await userCount(env)) === 0,
       quickSwitch: await trustedDevice(req, env), // this device can switch person with a quick PIN
     }, 200, await shareCookies(req, env));
@@ -438,6 +438,17 @@ export async function handleAuth(req: Request, env: Env, route: string, current:
 
   // Everyone with an active account: names and roles only (never usernames), so the page can assign maintenance
   // jobs to people and add new accounts to Staff training. Any signed-in person may read it.
+  // The diary's notifications: {at} marks everything up to then as seen, for this person on every device.
+  if (route === "notifications/seen" && req.method === "POST") {
+    if (!current) throw new ApiError(401, "unauthenticated", "Sign in to continue.");
+    const b = await readJson<any>(req, 1024);
+    const at = Number(b?.at);
+    if (!Number.isFinite(at) || at < 0) throw invalid("at is a time in milliseconds.");
+    // Never later than now (a device with its clock ahead can't hide what's still to come), never backwards.
+    await env.DB.prepare("UPDATE users SET notif_seen = MAX(notif_seen, ?) WHERE id = ?").bind(Math.min(Math.floor(at), Date.now()), current.id).run();
+    const r = await env.DB.prepare("SELECT notif_seen FROM users WHERE id = ?").bind(current.id).first<{ notif_seen: number }>();
+    return json({ seen: r?.notif_seen ?? 0 });
+  }
   if (route === "team" && req.method === "GET") {
     if (!current) throw new ApiError(401, "unauthenticated", "Sign in to continue.");
     const { results } = await env.DB.prepare("SELECT name, role FROM users WHERE active = 1 ORDER BY name_key").all<{ name: string; role: string }>();

@@ -83,7 +83,7 @@ test("setup works once, and needs the setup code", async () => {
   const again = await postJson("/api/auth/setup", { name: "Eve", username: "eve", password: "eve-pass-1", code: SETUP_CODE });
   assert.equal(again.status, 409);
   const me = await (await fetch(srv.base + "/api/auth/me", { headers: { cookie: ADMIN } })).json();
-  assert.deepEqual(me.user, { id: me.user.id, name: "Sam Patel", role: "admin", recordId: "web:Sam Patel", quickPin: false });
+  assert.deepEqual(me.user, { id: me.user.id, name: "Sam Patel", role: "admin", recordId: "web:Sam Patel", quickPin: false, notifSeen: 0 });
 });
 
 test("sign-in: username + password, wrong passwords, lockout and unlock", async () => {

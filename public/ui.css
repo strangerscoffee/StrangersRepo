@@ -564,3 +564,30 @@ table.rk-grid .rk-corner{font-size:10px;width:40px}
 .onshift .lrow{padding:8px 0;min-height:52px}
 a.lrow{text-decoration:none}
 .onshift a.linkbtn{text-decoration:none}
+
+/* ---------- notifications (the bell): maintenance jobs that need someone's attention ---------- */
+.aright{display:flex;align-items:center;gap:8px}
+.bellbtn{position:relative;width:44px;height:44px;border-radius:50%;display:grid;place-items:center;border:1px solid var(--glass-edge);background:var(--glass);color:var(--fg);cursor:pointer;padding:0}
+.bellbtn svg.i{width:22px;height:22px}
+.bellbtn .n,.sbell .n{position:absolute;top:-3px;right:-3px;min-width:20px;height:20px;padding:0 6px;box-sizing:border-box;border-radius:99px;display:grid;place-items:center;font-size:12px;font-weight:700;background:var(--bad);color:#fff;border:2px solid var(--bg)}
+.sbell{display:none}
+@media (min-width:1024px){
+  .sbell{position:relative;display:flex;align-items:center;gap:10px;width:100%;min-height:42px;padding:0 12px;margin:0 0 8px;border:0;border-radius:14px;background:none;font:inherit;font-weight:600;color:var(--fg);cursor:pointer;text-align:left}
+  .sbell:hover{background:var(--sunk)}
+  .sbell svg.i{width:20px;height:20px}
+  .sbell .n{position:static;margin-left:auto;border:0}
+}
+#notifList .lrow{align-items:flex-start}
+#notifList .nt{flex:1;display:grid;gap:2px;min-width:0}
+#notifList .nt b{font-size:15.5px;font-weight:600}
+#notifList .nt .s{font-size:13.5px;color:var(--muted)}
+#notifList .nt .w{font-size:12.5px;color:var(--muted)}
+#notifList .nic{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;flex:none}
+#notifList .nic svg.i{width:18px;height:18px}
+#notifList .nic.acc{background:var(--tint);color:var(--accent)}#notifList .nic.ok{background:var(--ok-bg);color:var(--ok)}
+#notifList .nic.warn{background:var(--warn-bg);color:var(--warn)}#notifList .nic.bad{background:var(--bad-bg);color:var(--bad)}
+#notifList .unread{width:9px;height:9px;border-radius:50%;background:var(--accent);flex:none;margin-top:6px}
+#notifSheet .list{max-height:60vh;overflow:auto}
+.alert.notif.ok{background:color-mix(in srgb,var(--ok-bg) 80%,var(--glass))}.alert.notif.ok .ic{color:var(--ok)}
+.alert.notif.acc{background:color-mix(in srgb,var(--tint) 80%,var(--glass))}.alert.notif.acc .ic{color:var(--accent)}
+.alert.notif.bad{background:color-mix(in srgb,var(--bad-bg) 80%,var(--glass))}.alert.notif.bad .ic{color:var(--bad)}

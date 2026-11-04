@@ -173,6 +173,8 @@ async function migrate(env: Env): Promise<void> {
     );
   }
   if (!has.has("quick_hash")) steps.push("ALTER TABLE users ADD COLUMN quick_hash TEXT", "ALTER TABLE users ADD COLUMN quick_salt TEXT");
+  // Notifications (the diary's bell): the time up to which this person has seen them, on any device.
+  if (!has.has("notif_seen")) steps.push("ALTER TABLE users ADD COLUMN notif_seen INTEGER NOT NULL DEFAULT 0");
   if (steps.length) await env.DB.batch(steps.map((s) => env.DB.prepare(s)));
 }
 
