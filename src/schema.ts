@@ -24,6 +24,8 @@ const SCHEMA = [
   "CREATE INDEX IF NOT EXISTS docs_collection_doc ON docs(collection, doc_id)",
   // Small key/value table: 'seq' (bumped on every write) and 'lastApplyAt'.
   "CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v INTEGER NOT NULL)",
+  // Sessions signed out on their own (POST /api/auth/logout), until they'd have expired anyway.
+  "CREATE TABLE IF NOT EXISTS revoked_sessions (sid TEXT PRIMARY KEY, exp INTEGER NOT NULL)",
   "INSERT OR IGNORE INTO meta (k, v) VALUES ('seq', 0), ('lastApplyAt', 0)",
   // Change counters for live pages on several devices (GET /api/changes): the rota's and the accounts'.
   "INSERT OR IGNORE INTO meta (k, v) VALUES ('rota', 0), ('accounts', 0)",

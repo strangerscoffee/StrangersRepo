@@ -70,7 +70,9 @@ test("staff journey on the real page", async () => {
   assert.equal(await page.locator("#scrim").isHidden(), true, "the password sheet closes");
   await page.locator("[data-person]", { hasText: "Alex Brown" }).waitFor();
 
-  COOKIE = (await ctx.cookies()).filter((c) => c.name === "sfbb_session").map((c) => `${c.name}=${c.value}`).join("");
+  // The test's own session for checking the database (signing out in the browser ends the browser's session).
+  const own = await fetch(srv.base + "/api/auth/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ username: "sam.patel", password: "admin-pass-1" }) });
+  COOKIE = (own.headers.getSetCookie().find((c) => /^sfbb_session=[\w-]/.test(c)) || "").split(";")[0];
   await api("set", { path: "settings/main", data: settings("10 Dove Street") });
   await api("set", { path: "sites/cafe/settings/main", data: settings("21 Pottergate") });
   await api("set", { path: "suppliers/s1", data: { name: "Northern Dairy", supplies: "Milk, cream" } });
@@ -567,6 +569,11 @@ test("staff journey on the real page", async () => {
   assert.match(await page.locator("#in-deliveries").innerText(), /Rejected/);
   assert.match(await page.locator("#in-maintenance").innerText(), /Grinder burrs/);
   assert.match(await page.locator("#in-summary").innerText(), /days fully recorded/);
+  // A record made while it's open (here, on another device) shows without leaving the page.
+  const now = Date.now(), todayIso = await page.evaluate(() => today());
+  await api("set", { path: "deliveries/live1", data: { date: todayIso, at: now, supplier: "Fenland Eggs", items: "Eggs x 30", chilled: 4, frozen: null, noTemp: false,
+    packaging: "ok", order: "ok", outcome: "rejected", note: "Two trays cracked", by: "web:Sam Patel" } });
+  await page.locator("#in-deliveries", { hasText: "Fenland Eggs" }).waitFor({ timeout: 15000 });
   await page.locator("#inJump .fchip", { hasText: "Temperature log" }).click();
   await page.locator("#inChips button", { hasText: "Choose dates" }).click();
   await page.fill("#inFrom", "2026-10-01"); await page.locator("#inFrom").dispatchEvent("change");

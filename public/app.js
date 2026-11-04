@@ -2217,7 +2217,10 @@ const IN_RANGES=[["1","Last month"],["2","Last 2 months"],["3","Last 3 months"],
 let IN={range:(()=>{try{return localStorage.getItem("sfbb.inRange")||"1"}catch(e){return"1"}})(),from:"",to:"",data:null,key:"",loading:null,err:""};
 function inPeriod(){
   if(IN.range==="custom"){const a=$("#inFrom").value,b=$("#inTo").value;if(!a||!b)return null;return a<=b?{from:a,to:b}:{from:b,to:a}}
-  const d=parse(today());d.setMonth(d.getMonth()-Number(IN.range));d.setDate(d.getDate()+1);
+  // N months back to the same day (or the month's last day: a month back from 31 March is 28 or 29 February, not
+  // 3 March), then the day after, so the period is exactly the last N months.
+  const t=parse(today()),y=t.getFullYear(),mo=t.getMonth()-Number(IN.range),last=new Date(y,mo+1,0).getDate();
+  const d=new Date(y,mo,Math.min(t.getDate(),last),12);d.setDate(d.getDate()+1);
   return{from:iso(d),to:today()};
 }
 function inspectForm(){
@@ -2229,8 +2232,11 @@ function inspectForm(){
 }
 async function loadInspect(site,p){
   const key=`${site}|${p.from}|${p.to}`;
-  if(IN.key===key&&(IN.data||IN.loading))return;
-  IN.key=key;IN.data=null;IN.err="";
+  // The same period is kept unless the site's records have changed since (IN.stale): then it's fetched again,
+  // still showing what's loaded until the new copy arrives.
+  if(IN.key===key&&(IN.loading||(IN.data&&!IN.stale)))return;
+  if(IN.key!==key)IN.data=null;
+  IN.key=key;IN.stale=false;IN.err="";
   const get=async(col,order,limit)=>(await C(col,site).orderBy(order,"desc").limit(limit).get()).docs.map(d=>({id:d.id,...d.data()}));
   const job=IN.loading=Promise.all([get("days","date",2000),get("weeks","week",500),get("reviews","date",500),get("proveit","at",2000),get("deliveries","at",2000)]).then(([days,weeks,reviews,prove,deliveries])=>{
     if(IN.loading!==job)return;
@@ -3153,24 +3159,26 @@ function subscribeSite(){
   const sub=(q,fn)=>S.subs.push(q.onSnapshot(x=>{if(mine())fn(x)},err));
   const hub=()=>{if(S.tab==="records"||S.tab==="more")renderNav()};
   const list=(col,key,after,q)=>sub(q||C(col,site),x=>{S[key]=x.docs.map(d=>({id:d.id,...d.data()}));after();hub()});
+  // A change to what inspection mode reports on (from this device or another) refreshes it if it's open.
+  const inspStale=()=>{IN.stale=true;if(S.tab==="inspect")renderInspect()};
   sub(D("settings","main",site),x=>{S.settings=normSettings(x.exists?x.data():null);S.cfg=activeCfg(S.settings);fillProve();applyTabs();renderAll()});
-  sub(C("days",site).orderBy("date","desc").limit(400),q=>{const m={};for(const d of q.docs)m[d.id]=d.data();S.days=m;renderDay();renderHistory();renderReview();renderTempLog();renderClosures()});
-  sub(C("weeks",site).orderBy("week","desc").limit(120),q=>{const m={};for(const d of q.docs)m[d.id]=d.data();S.weeks=m;renderWeek()});
+  sub(C("days",site).orderBy("date","desc").limit(400),q=>{const m={};for(const d of q.docs)m[d.id]=d.data();S.days=m;renderDay();renderHistory();renderReview();renderTempLog();renderClosures();inspStale()});
+  sub(C("weeks",site).orderBy("week","desc").limit(120),q=>{const m={};for(const d of q.docs)m[d.id]=d.data();S.weeks=m;renderWeek();inspStale()});
   list("allergens","allergens",renderAllergens);
   list("allergenDocs","allergenDocs",renderAllergenDocs);
   S.reviewsLoading=true;
-  list("reviews","reviews",()=>{S.reviewsLoading=false;renderReview();renderDay()},C("reviews",site).orderBy("date","desc").limit(50));
+  list("reviews","reviews",()=>{S.reviewsLoading=false;renderReview();renderDay();inspStale()},C("reviews",site).orderBy("date","desc").limit(50));
   list("extras","extras",()=>{renderTasks("extras");renderReview()});
   list("cleaning","cleaning",()=>{renderTasks("cleaning");renderReview()});
   list("suppliers","suppliers",()=>{renderSuppliers();renderDeliveries()});
-  list("deliveries","deliveries",renderDeliveries,C("deliveries",site).orderBy("at","desc").limit(400));
+  list("deliveries","deliveries",()=>{renderDeliveries();inspStale()},C("deliveries",site).orderBy("at","desc").limit(400));
   list("maintenance","maintenance",renderMaint);
   list("contacts","contacts",renderContacts);
   list("plans","plans",()=>{onPlansSnapshot();renderReview()});
   list("onboarding","onboarding",onOnbSnapshot);
   list("inspections","inspections",()=>{onInspSnapshot();renderReview()});
   list("staff","staff",()=>{renderStaff();renderReview()});
-  list("proveit","prove",()=>{renderProve();renderReview()},C("proveit",site).orderBy("at","desc").limit(500));
+  list("proveit","prove",()=>{renderProve();renderReview();inspStale()},C("proveit",site).orderBy("at","desc").limit(500));
 }
 function subscribeSummaries(){
   const err=()=>{};
