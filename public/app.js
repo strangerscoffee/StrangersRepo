@@ -3010,7 +3010,7 @@ function renderHead(){
   const back=n&&n.grp==="records"?["records","Records"]:n&&(n.grp==="manage"||n.grp==="admin")?["more","More"]:null;
   const bb=$("#backBtn");bb.hidden=!back;
   if(back){bb.replaceChildren(svgi(ICON.chevL),el("span",{text:back[1]}));bb.onclick=()=>show(back[0])}
-  document.title=(title?title+" · ":"")+"Kitchen Diary";
+  document.title="Strangers Coffee - Staff"; // the same tab name on every section
 }
 function applyTabs(){if(S.tab&&!canTab(S.tab))show("day",{quiet:true});else renderNav()}
 window.addEventListener("hashchange",()=>{const h=location.hash.slice(1);if(TABS.includes(h))show(h)});
