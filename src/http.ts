@@ -12,7 +12,7 @@ export interface Env {
 
 /** Error the page understands: rejected to it as {code, message}. */
 export class ApiError extends Error {
-  constructor(public status: number, public code: string, message: string) {
+  constructor(public status: number, public code: string, message: string, public extra?: Record<string, unknown>) {
     super(message);
   }
 }
@@ -28,7 +28,7 @@ export function json(body: unknown, status = 200, headers: HeadersInit = {}): Re
 }
 
 export function errorResponse(e: ApiError): Response {
-  return json({ code: e.code, message: e.message }, e.status);
+  return json({ ...(e.extra || {}), code: e.code, message: e.message }, e.status);
 }
 
 /** Reads a JSON request body, capped at `maxBytes`. */

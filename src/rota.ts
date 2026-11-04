@@ -75,6 +75,7 @@ export interface Shift {
   userId: string | null; note: string; hours: number; plannedHours: number;
   adjusted: boolean; actualStart: string | null; actualEnd: string | null; actualBreakMins: number | null; adjustNote: string;
   adjustedBy: string | null; adjustedAt: number | null; overtime?: number;
+  updatedAt?: number; // the shift's version: a change sent with ifUpdatedAt is refused if someone changed it since
 }
 type Pattern = Record<string, "any" | "off" | { from?: string; to?: string }>;
 /** `contractHours` is kept for older pages: it's the maximum. */
@@ -106,7 +107,7 @@ const toShift = (r: ShiftRow): Shift => {
     hours: 0, plannedHours: 0, adjusted,
     actualStart: adjusted ? r.actual_start : null, actualEnd: adjusted ? r.actual_end : null,
     actualBreakMins: adjusted ? r.actual_break ?? r.break_mins : null, adjustNote: adjusted ? r.adjust_note || "" : "",
-    adjustedBy: adjusted ? r.adjusted_by : null, adjustedAt: adjusted ? r.adjusted_at : null,
+    adjustedBy: adjusted ? r.adjusted_by : null, adjustedAt: adjusted ? r.adjusted_at : null, updatedAt: r.updated_at,
   };
   s.plannedHours = paidHours(s);
   s.hours = adjusted ? paidHours({ start: s.actualStart!, end: s.actualEnd!, breakMins: s.actualBreakMins! }) : s.plannedHours;
@@ -590,7 +591,7 @@ export async function handleRota(req: Request, env: Env, ctx: ExecutionContext, 
   // Which days and sites people can work: admins only, for everyone including themselves.
   const admin = user.role === "admin";
   const needAdmin = () => { if (!admin) throw denied("Only an admin can change which days and sites people can work."); };
-  if (m !== "GET" && m !== "HEAD") await limitWrites(req, env, ctx);
+  if (m !== "GET" && m !== "HEAD") await limitWrites(req, env, ctx, user.id);
   const body = async () => {
     if (m === "GET") return {} as any;
     const b = await readJson<any>(req, 32 * 1024);
@@ -662,6 +663,10 @@ export async function handleRota(req: Request, env: Env, ctx: ExecutionContext, 
       return json({ ok: true, ...(await weekProblems(env, cur.day)) });
     }
     const b = await body();
+    // Several managers can plan at once: a change made from an older copy of the shift is refused, not applied.
+    if (b.ifUpdatedAt != null && b.ifUpdatedAt !== cur.updatedAt) {
+      throw new ApiError(409, "conflict", "Someone else changed this shift just now. Check how it is now and try again.", { shift: cur });
+    }
     const has = (k: string) => Object.prototype.hasOwnProperty.call(b, k);
     const v = await checkShift(env, {
       site: has("site") ? b.site : cur.site, day: has("day") ? b.day : cur.day, start: has("start") ? b.start : cur.start,

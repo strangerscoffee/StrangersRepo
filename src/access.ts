@@ -142,17 +142,20 @@ export function requireOwnStaffRecord(u: User, op: "set" | "update" | "delete", 
 const WINDOW_MS = 15 * 60 * 1000;
 
 /** Counts a write against the caller's IP; throws rate_limited once over the limit for this 15-minute window. */
-export async function limitWrites(req: Request, env: Env, ctx: ExecutionContext): Promise<void> {
+export async function limitWrites(req: Request, env: Env, ctx: ExecutionContext, userId?: string): Promise<void> {
+  // Several devices in one shop share its Wi-Fi, so one address: the limit is per person, with a much higher
+  // ceiling for the address as a whole (a backstop against one connection flooding the site).
   const limit = Number(env.WRITE_LIMIT_PER_15_MIN) || 600;
   const ip = req.headers.get("cf-connecting-ip") || "local";
   const window = Math.floor(Date.now() / WINDOW_MS) * WINDOW_MS;
-  const row = await env.DB.prepare(
+  const take = (key: string) => env.DB.prepare(
     "INSERT INTO rate_limits (ip, window, n) VALUES (?, ?, 1) ON CONFLICT (ip, window) DO UPDATE SET n = n + 1 RETURNING n",
-  ).bind(ip, window).first<{ n: number }>();
+  ).bind(key, window).first<{ n: number }>();
+  const [mine, all] = await Promise.all([userId ? take("user:" + userId) : Promise.resolve(null), take(ip)]);
   if (Math.random() < 0.02) {
     ctx.waitUntil(env.DB.prepare("DELETE FROM rate_limits WHERE window < ?").bind(window - WINDOW_MS).run());
   }
-  if (row && row.n > limit) {
-    throw new ApiError(429, "rate_limited", "Too many changes from this connection. Wait a few minutes and try again.");
+  if ((mine && mine.n > limit) || (all && all.n > (userId ? limit * 5 : limit))) {
+    throw new ApiError(429, "rate_limited", "Too many changes in a short time. Wait a few minutes and try again.");
   }
 }

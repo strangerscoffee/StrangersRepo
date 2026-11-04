@@ -131,6 +131,9 @@ test("staff journey on the real page", async () => {
   await yRow.locator(".btn", { hasText: "Save changes" }).click();
   await assert.doesNotReject(waitFor(async () => (await api("get", { path: `sites/cafe/days/${yIso}` })).data?.temps?.u1?.am?.v === 4), "missed reading added");
   assert.equal((await api("get", { path: `sites/cafe/days/${yIso}` })).data.temps.u1.am.late, true, "marked as added later");
+  // Wait for the page to show it (as a person would) before changing it again: until then it doesn't know
+  // there's a reading to change.
+  await page.locator("#tlList .xrow").nth(1).locator(".pill", { hasText: "Fridge 1: 4°" }).waitFor();
   const yRow2 = page.locator("#tlList .xrow").nth(1);
   if (!(await yRow2.locator(`#tl_${yIso}_u1`).isVisible())) await yRow2.locator(".xmain").click();
   await yRow2.locator(`#tl_${yIso}_u1`).fill("4.5");

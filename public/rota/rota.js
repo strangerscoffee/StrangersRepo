@@ -132,7 +132,7 @@
     if (res.status >= 502 && res.status <= 504) { setOffline(true); throw Object.assign(new Error("The rota didn't respond. Try again."), { code: "unavailable" }); }
     setOffline(false);
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw Object.assign(new Error(data.message || "Something went wrong."), { code: data.code, status: res.status });
+    if (!res.ok) throw Object.assign(new Error(data.message || "Something went wrong."), data, { code: data.code, status: res.status });
     return data;
   }
   const get = (u) => api("GET", u);
@@ -795,8 +795,9 @@
       const body = { ...f.values(), ...extra };
       try {
         const before = isNew ? null : { site: s.site, day: s.day, start: s.start, end: s.end, breakMins: s.breakMins, job: s.job, note: s.note, userId: s.userId };
+        // Sent with the version this sheet opened, so a change someone else made meanwhile isn't overwritten.
         const r = isNew ? await api("POST", "/api/rota/shifts", { ...body, userId: extra.userId !== undefined ? extra.userId : s.userId })
-          : await api("PATCH", "/api/rota/shifts/" + s.id, body);
+          : await api("PATCH", "/api/rota/shifts/" + s.id, { ...body, ifUpdatedAt: s.updatedAt });
         closeSheets();
         if (R.weekData) R.weekData._at = 0;
         const undo = isNew ? ["Undo", async () => { await act(() => api("DELETE", "/api/rota/shifts/" + r.shift.id)); render(); }]
@@ -804,7 +805,12 @@
         toast(okText || (isNew ? "Shift added" : "Shift saved"), undo);
         render();
         return r;
-      } catch (e) { msg.textContent = e.message; return null; }
+      } catch (e) {
+        msg.textContent = e.message;
+        // Someone else changed it: show the shift as it is now (the sheet reopens with it).
+        if (e.code === "conflict" && e.shift) { if (R.weekData) R.weekData._at = 0; setTimeout(() => { closeSheets(); openShift(e.shift, R.weekData || d); toast(e.message); }, 50); }
+        return null;
+      }
     }
 
     async function drawWho() {
@@ -1583,6 +1589,22 @@
       if (Date.now() - hiddenAt > 30000 && !busy()) { refreshBadge(); render(); }
     });
     window.addEventListener("online", () => { if (!busy()) render(); });
+    // Several devices at once: every 10 seconds while the page is in view, ask whether the rota (or anyone's
+    // account) has changed elsewhere, and if so redraw, unless someone is in the middle of something here.
+    let known = null, pending = false;
+    const watch = async () => {
+      if (document.hidden) return;
+      try {
+        const c = await fetch("/api/changes").then((r) => (r.ok ? r.json() : null));
+        if (!c) return;
+        const now = `${c.rota}.${c.accounts}`;
+        if (known !== null && now !== known) pending = true;
+        known = now;
+        if (pending && !busy()) { pending = false; if (R.weekData) R.weekData._at = 0; refreshBadge(); render(); }
+      } catch (e) { /* offline: try again next time */ }
+    };
+    setInterval(watch, 10000);
+    watch();
     // Typing into a page's form marks it, so a refresh doesn't throw it away.
     $("#page").addEventListener("input", (e) => { if (e.target.matches("input,select,textarea")) e.target.setAttribute("data-dirty", ""); });
     render();
