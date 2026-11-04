@@ -72,7 +72,11 @@ test("page is served with the shim and noindex once signed in", async () => {
   assert.equal(r.status, 200);
   const html = await r.text();
   assert.match(html, /<meta name="robots" content="noindex,nofollow">/);
-  assert.match(html, /<script src="\/claude-shim.js"><\/script>\n<script src="\/pinpad.js"><\/script>\n<script src="\/pdf.js"><\/script>\n<script src="\/app.js"><\/script>/);
+  // In this order, each linked by its fingerprint (?v=, kept by the browser for a year: src/index.ts).
+  assert.match(html, /<script src="\/claude-shim.js\?v=\w+"><\/script>\n<script src="\/pinpad.js\?v=\w+"><\/script>\n<script src="\/pdf.js\?v=\w+"><\/script>\n<script src="\/app.js\?v=\w+"><\/script>/);
+  const v = html.match(/\/app.js\?v=(\w+)/)[1];
+  const js = await fetch(`${srv.base}/app.js?v=${v}`, { headers: { cookie: ADMIN } });
+  assert.equal(js.headers.get("cache-control"), "private, max-age=31536000, immutable");
   assert.equal(r.headers.get("x-robots-tag"), "noindex, nofollow");
   assert.equal(r.headers.get("cache-control"), "private, no-store");
   assert.match(await (await fetch(srv.base + "/robots.txt")).text(), /Disallow: \//);

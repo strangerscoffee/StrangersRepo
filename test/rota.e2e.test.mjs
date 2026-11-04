@@ -102,6 +102,9 @@ for (const [label, viewport] of [["phone", { width: 393, height: 852 }], ["iPad"
 
     // Alex sees it as the next shift.
     const a = await pageFor(viewport, ALEX_COOKIES);
+    // Midday on Alex's device, so today's 00:30–23:30 shift is still to come whenever the tests run (they once ran
+    // after 23:30 and found no next shift).
+    await a.page.clock.setFixedTime(new Date(today + "T12:00:00Z"));
     await a.page.goto(srv.base + "/rota/");
     await a.page.locator(".nextshift", { hasText: "00:30–23:30" }).waitFor();
     assert.match(await a.page.locator(".nextshift .kick").innerText(), /today/i);

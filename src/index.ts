@@ -24,8 +24,18 @@ export default {
       return Response.redirect(url.toString(), 301);
     }
     let res: Response;
+    // Reads are tried once more if the database drops out for a moment (D1 can, briefly, during its own maintenance
+    // or a network blip), instead of showing someone an error. Only reads: a write might have happened.
+    const readOnly = req.method === "GET" || req.method === "HEAD" || (req.method === "POST" && /^\/api\/db\/(get|query|poll|profiles)$/.test(url.pathname));
+    const spare = readOnly && req.method === "POST" ? req.clone() : null;
     try {
-      res = await route(req, env, ctx, url);
+      try {
+        res = await route(req, env, ctx, url);
+      } catch (e) {
+        if (!readOnly || e instanceof ApiError || !isTransient(e)) throw e;
+        await new Promise((r) => setTimeout(r, 150));
+        res = await route(spare || req, env, ctx, url);
+      }
     } catch (e) {
       if (e instanceof ApiError) res = errorResponse(e);
       else {
@@ -46,18 +56,54 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
+/** A database error that's worth one more try: the connection dropped or D1 was busy restarting. */
+function isTransient(e: unknown): boolean {
+  return /network connection lost|connection reset|storage caused object to be reset|object to be reset|D1_ERROR: (internal|overloaded)|timed? ?out|Durable Object reset|try again/i.test(String((e as Error)?.message || e));
+}
+
 /** Moves the change counters that GET /api/changes reports, after a write that other devices should see. */
 async function bumpChanges(env: Env, ...keys: string[]) {
   await env.DB.prepare(`UPDATE meta SET v = v + 1 WHERE k IN (${keys.map(() => "?").join(",")})`).bind(...keys).run();
 }
 
-/** A file from public/. Scripts and styles may be kept for a minute (so moving between pages doesn't ask again
- * for each one), then checked again; images for a day. */
+/*
+ * Fingerprinted files. Each page's scripts and stylesheets are linked as /app.js?v=<the file's own hash> (from its
+ * ETag), and a file asked for with ?v= is kept by the browser for a year: opening a page again costs no requests for
+ * them at all, and a changed file has a new address, so a deploy reaches everyone straight away. Hashes are looked up
+ * once per Worker instance (a deploy starts new ones).
+ */
+const fingerprints = new Map<string, string>();
+async function fingerprint(env: Env, url: URL, path: string): Promise<string | null> {
+  if (fingerprints.has(path)) return fingerprints.get(path)!;
+  const res = await env.ASSETS.fetch(new Request(new URL(path, url)));
+  const tag = res.ok ? (res.headers.get("etag") || "").replace(/[^A-Za-z0-9]/g, "").slice(0, 16) : "";
+  await res.body?.cancel();
+  if (!tag) return null;
+  fingerprints.set(path, tag);
+  return tag;
+}
+/** A page (HTML) with its own scripts and stylesheets linked by fingerprint. */
+function withFingerprints(res: Response, env: Env, url: URL): Response {
+  if (!res.ok || !(res.headers.get("content-type") || "").includes("text/html")) return res;
+  const pin = (attr: string) => ({
+    async element(e: Element) {
+      const v = e.getAttribute(attr);
+      if (!v || !/^\/[^/?#]*(\/[^/?#]+)*\.(js|css)$/.test(v)) return; // only this site's own files
+      const tag = await fingerprint(env, url, v);
+      if (tag) e.setAttribute(attr, `${v}?v=${tag}`);
+    },
+  });
+  return new HTMLRewriter().on("script[src]", pin("src")).on('link[rel="stylesheet"][href]', pin("href")).transform(res);
+}
+
+/** A file from public/. Fingerprinted ones (?v=) are kept for a year; otherwise scripts and styles for a minute, then
+ * checked again, and images for a day. */
 async function staticFile(req: Request, env: Env, p: string): Promise<Response> {
   const res = await env.ASSETS.fetch(req);
   if (!res.ok || !/\.(js|css|svg|png|webmanifest)$/.test(p)) return res;
   const out = new Response(res.body, res);
-  out.headers.set("cache-control", /\.(svg|png)$/.test(p) ? "private, max-age=86400" : "private, max-age=60, must-revalidate");
+  const pinned = new URL(req.url).searchParams.has("v");
+  out.headers.set("cache-control", pinned ? "private, max-age=31536000, immutable" : /\.(svg|png)$/.test(p) ? "private, max-age=86400" : "private, max-age=60, must-revalidate");
   return out;
 }
 
@@ -68,9 +114,9 @@ const noStore = (res: Response) => {
 };
 const redirect = (location: string) => new Response(null, { status: 302, headers: { location, "cache-control": "no-store" } });
 // The rota app's page. Served at /rota/ on any host (local dev and tests) and at / on the rota's own host.
-const rotaPage = (req: Request, env: Env, url: URL) => env.ASSETS.fetch(new Request(new URL("/rota/", url), req)).then(noStore);
+const rotaPage = (req: Request, env: Env, url: URL) => env.ASSETS.fetch(new Request(new URL("/rota/", url), req)).then(noStore).then((r) => withFingerprints(r, env, url));
 // The admin section's page. Served at / on its own host (ADMIN_HOST), and at /admin on the diary's when there's none.
-const adminPage = (req: Request, env: Env, url: URL) => env.ASSETS.fetch(new Request(new URL("/admin/", url), req)).then(noStore);
+const adminPage = (req: Request, env: Env, url: URL) => env.ASSETS.fetch(new Request(new URL("/admin/", url), req)).then(noStore).then((r) => withFingerprints(r, env, url));
 const ADMIN_PAGES = new Set(["/admin", "/admin/", "/admin.html", "/admin/index.html"]);
 
 async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): Promise<Response> {
@@ -96,7 +142,7 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
   }
   // The sign-in page and its files need no session (and no database); nor do the diary's and the rota's
   // scripts, styles and images (code, no data: see isPublicCode in src/hosts.ts).
-  if (isGet && isPublicAsset(p)) return env.ASSETS.fetch(req);
+  if (isGet && isPublicAsset(p)) return p === "/signin" || p === "/signin.html" ? withFingerprints(await env.ASSETS.fetch(req), env, url) : staticFile(req, env, p);
   if (isGet && isPublicCode(app, p)) return staticFile(req, env, p);
   // On its own host the rota lives at /, so /rota/ (the address used in local dev) goes there.
   if (app === "rota" && isGet && (p === "/rota" || p === "/rota/" || p === "/rota/index.html")) return redirect("/" + url.search);
@@ -199,12 +245,7 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
     return env.ADMIN_HOST ? redirect(links.admin) : adminPage(req, env, url);
   }
   // Pages behind sign-in must not be cached by shared devices' browsers or proxies.
-  if (p === "/" || p === "/index.html") {
-    const res = await env.ASSETS.fetch(req);
-    const out = new Response(res.body, res);
-    out.headers.set("cache-control", "private, no-store");
-    return out;
-  }
+  if (p === "/" || p === "/index.html") return withFingerprints(noStore(await env.ASSETS.fetch(req)), env, url);
   return staticFile(req, env, p);
 }
 

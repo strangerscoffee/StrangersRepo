@@ -293,14 +293,22 @@ function armDelete(btn,label,fn){
 
 /* ---------- names ---------- */
 async function resolveNames(ids){
-  ids=[...new Set(ids.filter(Boolean))];
+  // A web:<name> id is the name already; only older u_… ids need looking up, and each only once (this was asked
+  // on every redraw, so every poll of every open device sent a request).
+  let local=false;
+  for(const id of new Set(ids.filter(Boolean)))if(String(id).startsWith("web:")&&S.names[id]===undefined){S.names[id]=String(id).slice(4);local=true}
+  ids=[...new Set(ids.filter(id=>id&&S.names[id]===undefined&&!resolveNames.asked.has(id)))];
+  if(local&&!ids.length)return;
   if(!S.user||!ids.length)return;
-  let ps;try{ps=await S.user.profiles(ids)}catch(e){return}
+  for(const id of ids)resolveNames.asked.add(id);
+  let ps;try{ps=await S.user.profiles(ids)}catch(e){for(const id of ids)resolveNames.asked.delete(id);return}
+  if(!ps){for(const id of ids)resolveNames.asked.delete(id);return}
   if(!ps)return; // offline: keep the names already shown
   let changed=false;
   for(const id of ids){const n=(ps[id]&&ps[id].name)||"";if(S.names[id]!==n){S.names[id]=n;changed=true}}
   if(changed)renderAll();
 }
+resolveNames.asked=new Set();
 const nameOf=id=>id===S.me?"you":(S.names[id]||(String(id||"").startsWith("web:")?String(id).slice(4):"a team member"));
 
 /* ---------- checklist helper ---------- */
