@@ -74,8 +74,9 @@ test("hostnames: the rota on ROTA_HOST, the diary everywhere else", async () => 
   assert.deepEqual(appLinks(new URL("http://localhost:8787/"), undefined), { rota: "/rota/", diary: "/", admin: "/admin" });
   assert.deepEqual(appLinks(new URL("https://staffstrangerscoffee.com/"), R, A), { rota: `https://${R}/`, diary: "/", admin: `https://${A}/` });
   assert.deepEqual(appLinks(new URL(`https://${A}/`), R, A), { rota: `https://${R}/`, diary: "https://staffstrangerscoffee.com/", admin: "/" });
-  assert.ok(isRotaSharedFile("/theme.css") && isRotaSharedFile("/rota/rota.js") && isRotaSharedFile("/icon-192.png"));
-  assert.ok(!isRotaSharedFile("/app.js") && !isRotaSharedFile("/admin.html") && !isRotaSharedFile("/claude-shim.js"));
+  assert.ok(isRotaSharedFile("/theme.css") && isRotaSharedFile("/rota/rota.js") && isRotaSharedFile("/icon-192.png") && isRotaSharedFile("/shared/core.js"));
+  assert.ok(!isRotaSharedFile("/diary/core.js") && !isRotaSharedFile("/admin.html") && !isRotaSharedFile("/claude-shim.js"));
+  assert.ok(!isRotaSharedFile("/shared/../diary/core.js") && !isRotaSharedFile("/shared/x.css"), "only the shared scripts");
 });
 
 test("one Staff Login: the rota's sign-in page is the diary's, and comes back after", async () => {
@@ -110,7 +111,7 @@ test("the diary host: the diary as before, plus the rota app at /rota/ and its A
   assert.equal(page.status, 200);
   assert.match(page.text, /rota\.js/);
   assert.equal(page.headers.get("cache-control"), "private, no-store");
-  assert.match((await req("GET", "/")).text, /app\.js/, "the diary still serves its page");
+  assert.match((await req("GET", "/")).text, /diary\/start\.js/, "the diary still serves its page");
   assert.equal((await rota("GET", "week", undefined, null)).body.code, "unauthenticated");
 });
 
@@ -490,7 +491,8 @@ test("the rota host: / is the rota, diary pages go there, diary APIs are refused
     const get = (p, cookie) => fetch(host.base + p, { redirect: "manual", headers: cookie ? { cookie } : {} });
     assert.equal((await get("/")).headers.get("location"), "/signin", "signed out: sign in on the rota host");
     assert.equal((await get("/rota/rota.js")).status, 200, "the rota's code loads signed out (no data in it)");
-    assert.equal((await get("/app.js")).status, 302, "but not the diary's, on the rota's address");
+    assert.equal((await get("/shared/core.js")).status, 200, "and the helpers it shares with the diary");
+    assert.equal((await get("/diary/core.js")).status, 302, "but not the diary's, on the rota's address");
     assert.equal((await get("/signin")).status, 200);
     const r = await fetch(host.base + "/api/auth/setup", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Host Admin", username: "host", password: "admin-pass-1", code: SETUP_CODE }) });
     const c = cookieOf(r);
@@ -498,8 +500,9 @@ test("the rota host: / is the rota, diary pages go there, diary APIs are refused
     assert.equal(home.status, 200);
     assert.match(await home.text(), /rota\.js/, "/ serves the rota app");
     assert.equal((await get("/rota/", c)).headers.get("location"), "/");
-    for (const p of ["/admin", "/index.html", "/app.js", "/claude-shim.js"]) assert.equal((await get(p, c)).headers.get("location"), "/", p + " goes to the rota");
-    for (const p of ["/theme.css", "/ui.css", "/rota/rota.js", "/rota/rota.css", "/pinpad.js"]) assert.equal((await get(p, c)).status, 200, p);
+    for (const p of ["/admin", "/index.html", "/diary/core.js", "/diary/start.js", "/claude-shim.js"]) assert.equal((await get(p, c)).headers.get("location"), "/", p + " goes to the rota");
+    for (const p of ["/theme.css", "/ui.css", "/rota/rota.js", "/rota/rota.css", "/pinpad.js", "/shared/core.js"]) assert.equal((await get(p, c)).status, 200, p);
+    assert.match(await (await get("/", c)).text(), /<script src="\/shared\/core.js\?v=\w+"><\/script>\n<script src="\/pinpad.js\?v=\w+"><\/script>\n<script src="\/rota\/rota.js\?v=\w+"><\/script>/, "the shared helpers load before the rota's script");
     const db = await fetch(host.base + "/api/db/get", { method: "POST", headers: { "content-type": "application/json", cookie: c }, body: JSON.stringify({ path: "days/x" }) });
     assert.equal(db.status, 404, "the diary's data API isn't on the rota host");
     assert.equal((await get("/api/rota/links", c).then((x) => x.json())).rota, "/");

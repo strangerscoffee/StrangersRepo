@@ -7,20 +7,8 @@
 
   /* ---------- small helpers ---------- */
 
-  const $ = (s, root = document) => root.querySelector(s);
-  const el = (t, a = {}, ...kids) => {
-    const e = document.createElement(t);
-    for (const [k, v] of Object.entries(a)) {
-      if (k === "class") e.className = v;
-      else if (k === "text") e.textContent = v;
-      else if (k.startsWith("on") && typeof v === "function") e.addEventListener(k.slice(2), v);
-      else if (k === "value") e.value = v;
-      else if (v !== false && v != null) e.setAttribute(k, v === true ? "" : v);
-    }
-    for (const k of kids.flat()) if (k != null && k !== false) e.append(k);
-    return e;
-  };
-  const svgi = (d) => { const n = document.createElementNS("http://www.w3.org/2000/svg", "svg"); n.setAttribute("viewBox", "0 0 24 24"); n.setAttribute("class", "i"); n.setAttribute("aria-hidden", "true"); n.innerHTML = d; return n; };
+  // Shared with the diary and the admin section (public/shared/core.js): the page, dates in Europe/London, the session.
+  const { $, el, svgi, initials, makeToast, dOf, addDays, dow, monday, londonToday, londonNow, goSignIn, signOut } = SC;
   const ICON = {
     week: '<rect x="4" y="5" width="16" height="15" rx="3"/><path d="M4 10h16M9 3v4M15 3v4M8 14h.01M12 14h.01M16 14h.01M8 17h.01M12 17h.01"/>',
     mine: '<circle cx="12" cy="8" r="3.5"/><path d="M5 20c0-3.9 3.1-6.5 7-6.5s7 2.6 7 6.5"/>',
@@ -48,24 +36,16 @@
   const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
   const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
-  // Dates are YYYY-MM-DD; arithmetic in UTC so daylight saving never shifts a day.
-  const dOf = (s) => new Date(s + "T12:00:00Z");
-  const isoOf = (d) => d.toISOString().slice(0, 10);
-  const addDays = (s, n) => { const d = dOf(s); d.setUTCDate(d.getUTCDate() + n); return isoOf(d); };
-  const dow = (s) => (dOf(s).getUTCDay() + 6) % 7;
-  const monday = (s) => addDays(s, -dow(s));
+  // Dates are YYYY-MM-DD (SC.addDays, SC.monday: arithmetic in UTC so daylight saving never shifts a day).
   const fmt = (s, o) => dOf(s).toLocaleDateString("en-GB", { timeZone: "UTC", ...o });
   const short = (s) => fmt(s, { weekday: "short", day: "numeric" }); // "Mon 9"
   const shortM = (s) => fmt(s, { weekday: "short", day: "numeric", month: "short" }); // "Mon 9 Nov"
   const longD = (s) => fmt(s, { weekday: "long", day: "numeric", month: "short" }); // "Thursday 12 Nov"
   const weekLabel = (w) => "Week of " + fmt(w, { day: "numeric", month: "long" });
-  const londonToday = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
-  const londonNow = () => new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date());
   const mins = (t) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
   const hhmm = (m) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
   const r2 = (n) => Math.round(n * 100) / 100;
   const hrs = (n) => `${r2(n)}`;
-  const initials = (n) => String(n || "?").split(/\s+/).filter(Boolean).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
   const first = (n) => String(n || "").split(" ")[0];
   const jobWord = (j) => (j === "opens" ? "Opens" : j === "closes" ? "Closes" : "");
   // A shift as worked: amended on the day, otherwise as planned.
@@ -93,11 +73,7 @@
   };
   const wide = matchMedia("(min-width:1024px)");
 
-  function toast(m, action) {
-    const t = $("#toast"); t.hidden = true; void t.offsetWidth;
-    t.replaceChildren(el("span", { text: m }), action ? el("button", { type: "button", onclick: () => { t.hidden = true; action[1](); } }, action[0]) : "");
-    t.hidden = false; clearTimeout(toast._t); toast._t = setTimeout(() => (t.hidden = true), action ? 7000 : 2600);
-  }
+  const toast = makeToast(2600);
 
   /* ---------- talking to the Worker ---------- */
 
@@ -109,9 +85,6 @@
   const mgr = () => !!R.me?.user?.manager;
   const isAdmin = () => !!R.me?.user?.admin;
 
-  function goSignIn() {
-    location.replace("/signin?next=" + encodeURIComponent(location.pathname + location.search + location.hash));
-  }
   function setOffline(v) {
     if (R.offline === v) return;
     R.offline = v;
@@ -335,7 +308,6 @@
       ["Sign out", "out", signOut, true],
     ];
   }
-  async function signOut() { try { await fetch("/api/auth/logout", { method: "POST" }); } catch (e) {} location.replace("/signin"); }
   async function authPost(route, body) {
     let r;
     try { r = await fetch("/api/auth/" + route, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }); }
@@ -1556,9 +1528,7 @@
   /* ---------- start ---------- */
 
   // Safari can bring the page back from memory after the session has ended: check, and go to sign-in if so.
-  window.addEventListener("pageshow", (e) => {
-    if (e.persisted) fetch("/api/auth/me").then((r) => r.json()).then((me) => { if (!me.user) goSignIn(); }).catch(() => {});
-  });
+  SC.recheckOnPageshow(() => goSignIn());
 
   async function start() {
     try {
@@ -1591,20 +1561,7 @@
     window.addEventListener("online", () => { if (!busy()) render(); });
     // Several devices at once: every 10 seconds while the page is in view, ask whether the rota (or anyone's
     // account) has changed elsewhere, and if so redraw, unless someone is in the middle of something here.
-    let known = null, pending = false;
-    const watch = async () => {
-      if (document.hidden) return;
-      try {
-        const c = await fetch("/api/changes").then((r) => (r.ok ? r.json() : null));
-        if (!c) return;
-        const now = `${c.rota}.${c.accounts}`;
-        if (known !== null && now !== known) pending = true;
-        known = now;
-        if (pending && !busy()) { pending = false; if (R.weekData) R.weekData._at = 0; refreshBadge(); render(); }
-      } catch (e) { /* offline: try again next time */ }
-    };
-    setInterval(watch, 10000);
-    watch();
+    SC.watchChanges(10000, (c) => `${c.rota}.${c.accounts}`, () => !busy(), () => { if (R.weekData) R.weekData._at = 0; refreshBadge(); render(); }, true);
     // Typing into a page's form marks it, so a refresh doesn't throw it away.
     $("#page").addEventListener("input", (e) => { if (e.target.matches("input,select,textarea")) e.target.setAttribute("data-dirty", ""); });
     render();

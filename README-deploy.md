@@ -4,7 +4,8 @@ The site is one Cloudflare Worker serving the diary's pages and the API they tal
 
 | Path | What it is |
 |---|---|
-| `public/index.html`, `public/app.js` | The diary: markup and page logic. |
+| `public/index.html`, `public/diary/` | The diary: markup, and its page logic as classic scripts loaded in order by `index.html` (`core.js` first, `start.js` last; see CLAUDE.md). |
+| `public/shared/core.js` | Helpers all three apps share (`window.SC`): building elements, icons, toasts, Europe/London dates, going to sign-in, the session check when Safari brings a page back, watching for changes from other devices. |
 | `public/app.css`, `public/theme.css`, `public/ui.css` | Styles: base layout, the Liquid Glass theme (colours, materials, dark mode, accessibility settings), then the app layout (bars, sidebar, cards, lists). See `docs/design.md`. |
 | `public/claude-shim.js` | The page's data connection: `window.claude.use("db" \| "user" \| "assets")` backed by the API, with live updates by polling. The name dates from when the page ran inside Claude; see `docs/runtime-api.md`. |
 | `public/signin.html`, `public/signin.js` | Sign-in, choosing a new password, changing a password, first-admin setup and admin password recovery. |
@@ -99,4 +100,4 @@ Writes are limited to 600 per IP address per 15 minutes (`WRITE_LIMIT_PER_15_MIN
 - **Someone leaves.** In Admin → People, open them → **Switch off**. They can't sign in, and their records stay.
 - **The only admin forgot their password.** On the sign-in page, choose "Admin? Forgotten password" and use the setup code.
 
-Access is decided in one function, `authorize()` in `src/access.ts`. Sign-in and sessions are in `src/auth.ts`, the admin API in `src/admin.ts` (accounts) and `src/adminView.ts` (the admin section's overview, people, sites, activity, security and exports). Section permissions are `MANAGER_TABS` and `MANAGER_COLLECTIONS` in `src/access.ts`; the page mirrors `MANAGER_TABS` in `public/app.js` to hide those sections from staff, but the Worker is what enforces them.
+Access is decided in one function, `authorize()` in `src/access.ts`. Sign-in and sessions are in `src/auth.ts`, the admin API in `src/admin.ts` (accounts) and `src/adminView.ts` (the admin section's overview, people, sites, activity, security and exports). Section permissions are `MANAGER_TABS` and `MANAGER_COLLECTIONS` in `src/access.ts`; the page mirrors `MANAGER_TABS` in `public/diary/shell.js` to hide those sections from staff, but the Worker is what enforces them.
