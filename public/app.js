@@ -59,6 +59,8 @@ const LISTS=[["opening","Opening"],["closing","Closing"],["weekly","End-of-week"
 
 const $=s=>document.querySelector(s);
 const el=(t,a={},...kids)=>{const e=document.createElement(t);for(const[k,v]of Object.entries(a)){if(k==="class")e.className=v;else if(k==="text")e.textContent=v;else if(k.startsWith("on"))e.addEventListener(k.slice(2),v);else if(k==="value")e.value=v;else if(v!==false&&v!=null)e.setAttribute(k,v===true?"":v)}for(const k of kids)if(k!=null)e.append(k);return e};
+// Children for the native append/replaceChildren, which would write null as the text "null": leaves out null and false.
+const kids=(...a)=>a.filter(k=>k!=null&&k!==false);
 const pad=n=>String(n).padStart(2,"0");
 const iso=d=>`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
 const parse=s=>{const[y,m,d]=s.split("-").map(Number);return new Date(y,m-1,d)};
@@ -520,8 +522,8 @@ function renderDayInner(){
     ids.push(d.signed.by);
     const who=d.signed.name||nameOf(d.signed.by),on=d.signed.at&&iso(new Date(d.signed.at))!==S.date?" on "+short(iso(new Date(d.signed.at))):"";
     sc.className="scard glass signcard done";
-    sc.append(el("span",{class:"big"},svgi(ICON.check)),el("h2",{text:"Day signed off"}),el("span",{class:"s",text:`By ${who} at ${time(d.signed.at)}${on}`}),
-      R||S.role==="staff"?null:el("button",{class:"btn ghost sm",type:"button",onclick:()=>patchDay(S.date,{signed:null})},"Undo sign-off"));
+    sc.append(...kids(el("span",{class:"big"},svgi(ICON.check)),el("h2",{text:"Day signed off"}),el("span",{class:"s",text:`By ${who} at ${time(d.signed.at)}${on}`}),
+      R||S.role==="staff"?null:el("button",{class:"btn ghost sm",type:"button",onclick:()=>patchDay(S.date,{signed:null})},"Undo sign-off")));
   }else{
     sc.className="scard glass signcard";
     sc.append(el("div",{class:"sec"},badgeEl(missing.length?"":"acc",missing.length?"lock":"pen"),el("span",{class:"t"},el("b",{text:"Sign off"}),
@@ -574,8 +576,8 @@ function renderWeek(){
   const sign=()=>{patchWeek(wk,{signed:{...stamp(),name:S.myName}});toast(`Week signed off by ${S.myName||"you"}`)};
   if(w.signed){
     sc.className="scard glass signcard done";
-    sc.append(el("span",{class:"big"},svgi(ICON.check)),el("h2",{text:"Week signed off"}),el("span",{class:"s",text:`By ${w.signed.name||nameOf(w.signed.by)} on ${when(w.signed.at)}`}),
-      R||S.role==="staff"?null:el("button",{class:"btn ghost sm",type:"button",onclick:()=>patchWeek(wk,{signed:null})},"Undo sign-off"));
+    sc.append(...kids(el("span",{class:"big"},svgi(ICON.check)),el("h2",{text:"Week signed off"}),el("span",{class:"s",text:`By ${w.signed.name||nameOf(w.signed.by)} on ${when(w.signed.at)}`}),
+      R||S.role==="staff"?null:el("button",{class:"btn ghost sm",type:"button",onclick:()=>patchWeek(wk,{signed:null})},"Undo sign-off")));
   }else{
     sc.className="scard glass signcard";
     sc.append(el("div",{class:"sec"},badgeEl(all?"acc":"",all?"pen":"lock"),el("span",{class:"t"},el("b",{text:"Sign off the week"}),
@@ -1267,7 +1269,7 @@ function renderEditor(){
   armDelete(del,"Delete document",async()=>{if(await save(()=>D("plans",P.id).delete())){closePlan();toast("Document deleted")}});
   const hist=(d.history||[]).slice(0,10);
   const pick=sitePicker("pl_sites");pick.set(d.sites);pick.onChange=()=>{d.sites=pick.get();markDirty()};P.pick=pick;
-  box.replaceChildren(
+  box.replaceChildren(...kids(
     el("div",{class:"row spread"},back,el("div",{class:"row",style:"gap:8px"},el("span",{class:"pill",text:PL_NAME[k]}),(()=>{const rs=reviewState(d);return el("span",{class:"pill "+rs.cls,text:rs.text})})())),
     remote,
     el("section",{class:"panel"},title,d.source?el("div",{class:"by",text:"Converted from "+d.source}):null,meta),
@@ -1280,7 +1282,7 @@ function renderEditor(){
     el("section",{class:"panel"},el("h3",{text:"History"}),
       hist.length?el("div",{},...hist.map(h=>el("div",{class:"by",text:`${when(h.at)} · ${h.what} · ${nameOf(h.by)}`}))):el("div",{class:"by",text:"No history yet."})),
     R?el("div",{class:"note",text:"You can view this document but not edit it."})
-     :el("div",{class:"savebar"},el("span",{class:"pill",id:"plSaveState"}),el("div",{class:"row",style:"gap:8px"},del,el("button",{class:"btn",id:"plSaveBtn",onclick:savePlan},"Save changes"))));
+     :el("div",{class:"savebar"},el("span",{class:"pill",id:"plSaveState"}),el("div",{class:"row",style:"gap:8px"},del,el("button",{class:"btn",id:"plSaveBtn",onclick:savePlan},"Save changes")))));
   updateSaveBar();
   resolveNames([...hist.map(h=>h.by)]);
 }
@@ -1643,14 +1645,14 @@ function renderOnbEditor(){
   armDelete(del,"Delete document",async()=>{if(await save(()=>D("onboarding",P.id).delete())){closeOnb();toast("Document deleted")}});
   const hist=(d.history||[]).slice(0,10);
   const pick=sitePicker("ob_sites");pick.set(d.sites);pick.onChange=()=>{d.sites=pick.get();obDirty()};P.pick=pick;
-  box.replaceChildren(
+  box.replaceChildren(...kids(
     el("div",{class:"row spread"},back,el("div",{class:"row",style:"gap:8px"},el("span",{class:"pill",text:d.category||"Document"}),toggle)),
     remote,...main,
     R?null:el("section",{class:"panel"},pick.el),
     el("section",{class:"panel"},el("h3",{text:"History"}),
       hist.length?el("div",{},...hist.map(h=>el("div",{class:"by",text:`${when(h.at)} · ${h.what} · ${nameOf(h.by)}`}))):el("div",{class:"by",text:"No history yet."})),
     R?el("div",{class:"note",text:"You can read this document but not edit it."})
-     :el("div",{class:"savebar"},el("span",{class:"pill",id:"obSaveState"}),el("div",{class:"row",style:"gap:8px"},del,el("button",{class:"btn",id:"obSaveBtn",onclick:saveOnb},"Save changes"))));
+     :el("div",{class:"savebar"},el("span",{class:"pill",id:"obSaveState"}),el("div",{class:"row",style:"gap:8px"},del,el("button",{class:"btn",id:"obSaveBtn",onclick:saveOnb},"Save changes")))));
   obSaveBar();
   resolveNames(hist.map(h=>h.by));
 }
