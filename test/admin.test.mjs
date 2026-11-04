@@ -36,7 +36,7 @@ test("admin page: at /admin for admins (no admin address here), others go back t
   const page = await fetch(srv.base + "/admin", { headers: { cookie: ADMIN } });
   assert.equal(page.status, 200);
   const htmlText = await page.text();
-  assert.match(htmlText, /<script src="\/admin\/admin.js"><\/script>/);
+  assert.match(htmlText, /<script src="\/admin\/admin.js\?v=[0-9a-f]+"><\/script>/, "linked by fingerprint");
   assert.doesNotMatch(htmlText, /<script>/, "no inline scripts (the CSP allows only the site's own files)");
   assert.equal(page.headers.get("cache-control"), "private, no-store");
   for (const cookie of [STAFF, MANAGER]) for (const p of ["/admin", "/admin/", "/admin.html", "/admin/index.html"]) {

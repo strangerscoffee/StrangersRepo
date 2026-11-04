@@ -286,6 +286,17 @@
     inflight = true;
     const entries = [...subs];
     try {
+      // When every subscription is up to date, first ask the tiny "has anything changed?" (GET /api/changes, one
+      // number) rather than sending every query (a few KB, every few seconds, on every open device).
+      if (seq != null && !queue.length && entries.every(([, s]) => s.ver !== undefined)) {
+        const c = await call("/api/changes");
+        if (c && c.docs === seq) {
+          setOffline(false);
+          inflight = false;
+          if (again) { again = false; schedule(0); } else schedule(document.hidden ? HIDDEN_MS : VISIBLE_MS);
+          return;
+        }
+      }
       const r = await api("poll", { since: seq, queries: entries.map(([key, s]) => Object.assign({ key, ver: s.ver }, s.spec)) });
       seq = r.seq;
       if (!queue.length) setOffline(false);
