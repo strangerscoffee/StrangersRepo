@@ -141,7 +141,12 @@ function withSecurityHeaders(res: Response, local: boolean): Response {
   h.set("x-robots-tag", "noindex, nofollow");
   h.set("x-content-type-options", "nosniff");
   h.set("referrer-policy", "same-origin");
-  h.set("content-security-policy", "frame-ancestors 'none'");
+  // Only the site's own scripts run (no inline or third-party scripts), it only talks to itself, and it can't be framed.
+  // Defence in depth: even if text someone typed into a record were ever shown as HTML, it couldn't run as script.
+  h.set("content-security-policy", [
+    "default-src 'self'", "script-src 'self'", "style-src 'self' 'unsafe-inline'", "img-src 'self' data: blob:",
+    "connect-src 'self'", "object-src 'none'", "base-uri 'none'", "form-action 'self'", "frame-ancestors 'none'",
+  ].join("; "));
   if (!local) h.set("strict-transport-security", "max-age=31536000");
   return out;
 }

@@ -441,9 +441,12 @@ export async function handleAuth(req: Request, env: Env, route: string, current:
     const pin = typeof body.pin === "string" ? body.pin : "";
     if (!(await passwordMatches(pin, { pin_hash: row.quick_hash, pin_salt: row.quick_salt || "" }))) {
       const failed = row.failed + 1, lock = failed >= MAX_FAILS;
-      await env.DB.prepare("UPDATE users SET failed = ?, locked_until = ? WHERE id = ?").bind(lock ? 0 : failed, lock ? now + LOCK_MS : row.locked_until, row.id).run();
+      // Five wrong PINs in a row also switch the PIN off, so it can't be guessed slowly, 5 tries every 10 minutes,
+      // on a shared device: the person signs in with their password and sets a new one.
+      await env.DB.prepare(`UPDATE users SET failed = ?, locked_until = ?${lock ? ", quick_hash = NULL, quick_salt = NULL" : ""} WHERE id = ?`)
+        .bind(lock ? 0 : failed, lock ? now + LOCK_MS : row.locked_until, row.id).run();
       await recordIpFailure(env, ip);
-      if (lock) throw new ApiError(423, "locked", "Too many wrong tries. Try again in 10 minutes, or sign in with a password.");
+      if (lock) throw new ApiError(423, "locked", "Too many wrong tries, so this quick PIN is switched off. Sign in with your password (after 10 minutes) and set a new one.");
       const left = MAX_FAILS - failed;
       throw new ApiError(401, "wrong_pin", `Wrong PIN. ${left} ${left === 1 ? "try" : "tries"} left.`);
     }
