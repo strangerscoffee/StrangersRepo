@@ -26,7 +26,10 @@
     // Write requests (saves, deletes, uploads) allowed per IP address per 15 minutes.
     "WRITE_LIMIT_PER_15_MIN": "600",
     // The staff rota's own address (src/rota.ts). Same Worker, database and accounts as the diary.
-    "ROTA_HOST": "rota.staffstrangerscoffee.com"
+    "ROTA_HOST": "rota.staffstrangerscoffee.com",
+    // Sign-in is shared across this domain and its subdomains, so one sign-in covers the diary and the rota
+    // (src/auth.ts). `wrangler dev` rewrites the cookie's Domain to the local address, so local dev still works.
+    "COOKIE_DOMAIN": "staffstrangerscoffee.com"
   },
 
   // Custom domains. staffstrangerscoffee.com must be a zone in the same Cloudflare account; on deploy,

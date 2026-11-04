@@ -11,7 +11,8 @@ let chromium;
 try { ({ chromium } = require("playwright")); } catch { ({ chromium } = await import("playwright")); }
 
 let srv, browser, ADMIN, ALEX_COOKIES, ALEX_ID;
-const cookieOf = (res) => (res.headers.get("set-cookie") || "").split(";")[0];
+// The session a response sets (its first Set-Cookie may remove an older, host-only copy: src/auth.ts).
+const cookieOf = (res) => (res.headers.getSetCookie().find((c) => /^sfbb_session=[\w-]/.test(c)) || "").split(";")[0];
 async function call(method, path, body, cookie = ADMIN) {
   const r = await fetch(srv.base + path, { method, headers: { "content-type": "application/json", cookie }, body: body && JSON.stringify(body) });
   const j = await r.json().catch(() => ({}));

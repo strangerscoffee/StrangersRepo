@@ -13,7 +13,8 @@ before(async () => {
 });
 after(async () => { await srv?.stop(); });
 
-const cookieOf = (res) => (res.headers.get("set-cookie") || "").split(";")[0];
+// The session a response sets (its first Set-Cookie may remove an older, host-only copy: src/auth.ts).
+const cookieOf = (res) => (res.headers.getSetCookie().find((c) => /^sfbb_session=[\w-]/.test(c)) || "").split(";")[0];
 const postJson = (url, body) => fetch(`${srv.base}${url}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 
 async function setupAdmin(name, username, password) {
@@ -341,9 +342,9 @@ test("quick switching: a 4-digit PIN works only on a device signed in with a pas
   await firstSignIn("jo.quick", "temp-pass-1", "jo-own-pass");
   const r = await postJson("/api/auth/login", { username: "jo.quick", password: "jo-own-pass" });
   const cookies = r.headers.getSetCookie().map((c) => c.split(";")[0]);
-  const device = cookies.find((c) => c.startsWith("sfbb_device="));
+  const device = cookies.find((c) => /^sfbb_device=[\w-]/.test(c));
   assert.ok(device, "a password sign-in marks the device");
-  const session = cookies.find((c) => c.startsWith("sfbb_session="));
+  const session = cookies.find((c) => /^sfbb_session=[\w-]/.test(c));
   const auth = (route, body, cookie) => fetch(`${srv.base}/api/auth/${route}`, { method: body === undefined ? "GET" : "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
 
   assert.equal((await auth("pin", { pin: "12a4" }, session)).status, 400);
@@ -365,7 +366,7 @@ test("quick switching: a 4-digit PIN works only on a device signed in with a pas
   assert.match((await wrong.json()).message, /4 tries left/);
   const ok = await auth("switch", { id: joId, pin: "4826" }, device);
   assert.equal(ok.status, 200);
-  const switched = ok.headers.get("set-cookie").split(";")[0];
+  const switched = cookieOf(ok);
   assert.equal((await (await auth("me", undefined, switched)).json()).user.name, "Jo Quick");
 
   // Five wrong PINs lock the account; an admin password reset clears the PIN.

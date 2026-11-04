@@ -120,56 +120,108 @@ function sessionKey(env: Env): Promise<CryptoKey> {
   return keyPromise;
 }
 
-export async function sessionCookie(env: Env, user: { id: string; session_ver: number }): Promise<string> {
-  const payload = b64url(enc.encode(JSON.stringify({ u: user.id, v: user.session_ver, e: Date.now() + SESSION_MS })));
-  const sig = b64url(new Uint8Array(await crypto.subtle.sign("HMAC", await sessionKey(env), enc.encode(payload))));
-  return `${COOKIE}=${payload}.${sig}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${SESSION_MS / 1000}`;
+/* Cookies are shared across COOKIE_DOMAIN (wrangler.jsonc: staffstrangerscoffee.com), so one sign-in covers the
+ * diary and the rota (rota.staffstrangerscoffee.com). On any other host (local dev, previews) they stay host-only. */
+function cookieDomain(req: Request, env: Env): string {
+  const d = (env.COOKIE_DOMAIN || "").trim().toLowerCase().replace(/^\./, "");
+  const h = new URL(req.url).hostname.toLowerCase();
+  return d && (h === d || h.endsWith("." + d)) ? d : "";
 }
 
-const clearCookie = `${COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`;
+/** Set-Cookie headers for one cookie. With a shared domain, the older host-only copy (from before cookies were
+ * shared) is removed first, so it can't shadow the shared one; the order matters, as browsers apply them in turn. */
+function cookieHeaders(req: Request, env: Env, name: string, value: string, maxAgeSec: number): [string, string][] {
+  const attrs = (domain: string, age: number) => `; Path=/${domain ? "; Domain=" + domain : ""}; HttpOnly; Secure; SameSite=Lax; Max-Age=${age}`;
+  const domain = cookieDomain(req, env);
+  const out: [string, string][] = [];
+  if (domain) out.push(["set-cookie", `${name}=${attrs("", 0)}`]);
+  out.push(["set-cookie", `${name}=${value}${attrs(domain, maxAgeSec)}`]);
+  return out;
+}
+
+/** Every signed value a cookie of this name carries, newest first. A request can carry both a host-only copy from
+ * before cookies were shared and a shared one (say the diary and the rota were signed in as different people on a
+ * shared iPad); browsers list same-path cookies oldest first, so the shared one, set since, is last and wins. */
+function cookieValues(req: Request, name: string): { payload: string; sig: string }[] {
+  const re = new RegExp(`(?:^|;\\s*)${name}=([A-Za-z0-9_-]+)\\.([A-Za-z0-9_-]+)`, "g");
+  return [...(req.headers.get("cookie") || "").matchAll(re)].map((m) => ({ payload: m[1], sig: m[2] })).reverse();
+}
+
+/** A cookie's newest value with a good signature and expiry: its raw value, parsed payload and time left. */
+async function verifiedCookie(req: Request, env: Env, name: string, prefix: string): Promise<{ value: string; data: any; leftSec: number } | null> {
+  for (const { payload, sig } of cookieValues(req, name)) {
+    try {
+      if (!(await crypto.subtle.verify("HMAC", await sessionKey(env), unb64url(sig), enc.encode(prefix + payload)))) continue;
+      const data = JSON.parse(new TextDecoder().decode(unb64url(payload)));
+      if (typeof data.e !== "number" || data.e <= Date.now()) continue;
+      return { value: `${payload}.${sig}`, data, leftSec: Math.floor((data.e - Date.now()) / 1000) };
+    } catch {}
+  }
+  return null;
+}
+
+async function sessionCookie(req: Request, env: Env, user: { id: string; session_ver: number }): Promise<[string, string][]> {
+  const payload = b64url(enc.encode(JSON.stringify({ u: user.id, v: user.session_ver, e: Date.now() + SESSION_MS })));
+  const sig = b64url(new Uint8Array(await crypto.subtle.sign("HMAC", await sessionKey(env), enc.encode(payload))));
+  return cookieHeaders(req, env, COOKIE, `${payload}.${sig}`, SESSION_MS / 1000);
+}
+
+/** Signing out ends the session on the diary and the rota alike: the shared cookie and any host-only one. */
+function clearSession(req: Request, env: Env): [string, string][] {
+  const domain = cookieDomain(req, env);
+  const out = cookieHeaders(req, env, COOKIE, "", 0);
+  return domain ? out : out.slice(-1);
+}
 
 /** A device someone has signed in on with a username and password. Quick switching (a 4-digit PIN) only
  * works on such a device, so a PIN alone can't sign anyone in from elsewhere. */
-async function deviceCookie(env: Env): Promise<string> {
+async function deviceCookie(req: Request, env: Env): Promise<[string, string][]> {
   const payload = b64url(enc.encode(JSON.stringify({ d: newId(8), e: Date.now() + DEVICE_MS })));
   const sig = b64url(new Uint8Array(await crypto.subtle.sign("HMAC", await sessionKey(env), enc.encode("device." + payload))));
-  return `${DEVICE_COOKIE}=${payload}.${sig}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${DEVICE_MS / 1000}`;
+  return cookieHeaders(req, env, DEVICE_COOKIE, `${payload}.${sig}`, DEVICE_MS / 1000);
 }
 
 export async function trustedDevice(req: Request, env: Env): Promise<boolean> {
-  const m = (req.headers.get("cookie") || "").match(new RegExp(`(?:^|;\\s*)${DEVICE_COOKIE}=([A-Za-z0-9_-]+)\\.([A-Za-z0-9_-]+)`));
-  if (!m) return false;
-  try {
-    if (!(await crypto.subtle.verify("HMAC", await sessionKey(env), unb64url(m[2]), enc.encode("device." + m[1])))) return false;
-    const d = JSON.parse(new TextDecoder().decode(unb64url(m[1])));
-    return typeof d.e === "number" && d.e > Date.now();
-  } catch {
-    return false;
-  }
+  return !!(await verifiedCookie(req, env, DEVICE_COOKIE, "device."));
 }
 
 /** Response headers for a password sign-in: the session, and this device marked as trusted. */
-async function signedIn(env: Env, user: { id: string; session_ver: number }): Promise<[string, string][]> {
-  return [["set-cookie", await sessionCookie(env, user)], ["set-cookie", await deviceCookie(env)]];
+async function signedIn(req: Request, env: Env, user: { id: string; session_ver: number }): Promise<[string, string][]> {
+  return [...(await sessionCookie(req, env, user)), ...(await deviceCookie(req, env))];
+}
+
+/** Sessions and trusted devices from before cookies were shared are host-only: moves them to the shared domain,
+ * unchanged (same value and expiry), so someone signed in on the diary is signed in on the rota too. */
+async function shareCookies(req: Request, env: Env): Promise<[string, string][]> {
+  if (!cookieDomain(req, env)) return [];
+  const out: [string, string][] = [];
+  const session = await currentSession(req, env);
+  if (session) out.push(...cookieHeaders(req, env, COOKIE, session.value, session.leftSec));
+  const device = await verifiedCookie(req, env, DEVICE_COOKIE, "device.");
+  if (device) out.push(...cookieHeaders(req, env, DEVICE_COOKIE, device.value, device.leftSec));
+  return out;
 }
 
 /** The signed-in person, or null. Checks the signature, expiry, and that the account is still active and
  * hasn't been signed out everywhere since (session_ver). */
 export async function sessionUser(req: Request, env: Env): Promise<User | null> {
-  const m = (req.headers.get("cookie") || "").match(new RegExp(`(?:^|;\\s*)${COOKIE}=([A-Za-z0-9_-]+)\\.([A-Za-z0-9_-]+)`));
-  if (!m) return null;
-  try {
-    const ok = await crypto.subtle.verify("HMAC", await sessionKey(env), unb64url(m[2]), enc.encode(m[1]));
-    if (!ok) return null;
-    const s = JSON.parse(new TextDecoder().decode(unb64url(m[1])));
-    if (typeof s.e !== "number" || s.e < Date.now()) return null;
-    const row = await env.DB.prepare("SELECT id, name, role, active, session_ver FROM users WHERE id = ?")
-      .bind(s.u).first<{ id: string; name: string; role: Role; active: number; session_ver: number }>();
-    if (!row || !row.active || row.session_ver !== s.v) return null;
-    return { id: row.id, name: row.name, role: row.role };
-  } catch {
-    return null;
+  return (await currentSession(req, env))?.user ?? null;
+}
+
+/** The session cookie that signs this request in, with its raw value and time left. */
+async function currentSession(req: Request, env: Env): Promise<{ user: User; value: string; leftSec: number } | null> {
+  for (const { payload, sig } of cookieValues(req, COOKIE)) {
+    try {
+      if (!(await crypto.subtle.verify("HMAC", await sessionKey(env), unb64url(sig), enc.encode(payload)))) continue;
+      const s = JSON.parse(new TextDecoder().decode(unb64url(payload)));
+      if (typeof s.e !== "number" || s.e < Date.now()) continue;
+      const row = await env.DB.prepare("SELECT id, name, role, active, session_ver FROM users WHERE id = ?")
+        .bind(s.u).first<{ id: string; name: string; role: Role; active: number; session_ver: number }>();
+      if (!row || !row.active || row.session_ver !== s.v) continue;
+      return { user: { id: row.id, name: row.name, role: row.role }, value: `${payload}.${sig}`, leftSec: Math.floor((s.e - Date.now()) / 1000) };
+    } catch {}
   }
+  return null;
 }
 
 /* ---------- sign-in rate limits ---------- */
@@ -261,11 +313,11 @@ export async function handleAuth(req: Request, env: Env, route: string, current:
       user: current ? { ...publicUser(current), quickPin: !!quick?.has } : null,
       setupNeeded: (await userCount(env)) === 0,
       quickSwitch: await trustedDevice(req, env), // this device can switch person with a quick PIN
-    });
+    }, 200, await shareCookies(req, env));
   }
 
   if (route === "logout" && req.method === "POST") {
-    return json({ ok: true }, 200, { "set-cookie": clearCookie });
+    return json({ ok: true }, 200, clearSession(req, env));
   }
 
   // First admin. Guarded by the setup code, which only the host has.
@@ -283,7 +335,7 @@ export async function handleAuth(req: Request, env: Env, route: string, current:
        SELECT ?, ?, ?, ?, 'admin', ?, ?, ${SQL_NOW_MS}, 'setup', ${SQL_NOW_MS}, ${SQL_NOW_MS} WHERE NOT EXISTS (SELECT 1 FROM users)`,
     ).bind(id, name, nameKey(name), username, hash, salt).run();
     if (!res.meta.changes) throw new ApiError(409, "already_set_up", "An admin already exists. Sign in instead.");
-    return json({ user: publicUser({ id, name, role: "admin" }) }, 200, await signedIn(env, { id, session_ver: 1 }));
+    return json({ user: publicUser({ id, name, role: "admin" }) }, 200, await signedIn(req, env, { id, session_ver: 1 }));
   }
 
   // An admin who has forgotten their password sets a new one with the setup code.
@@ -300,7 +352,7 @@ export async function handleAuth(req: Request, env: Env, route: string, current:
       `UPDATE users SET pin_hash = ?, pin_salt = ?, must_change = 0, failed = 0, locked_until = 0, session_ver = session_ver + 1,
          updated_at = ${SQL_NOW_MS}, last_login_at = ${SQL_NOW_MS} WHERE id = ?`,
     ).bind(hash, salt, row.id).run();
-    return json({ user: publicUser(row) }, 200, await signedIn(env, { id: row.id, session_ver: row.session_ver + 1 }));
+    return json({ user: publicUser(row) }, 200, await signedIn(req, env, { id: row.id, session_ver: row.session_ver + 1 }));
   }
 
   // Sign in. A temporary password (set by an admin, or carried over from a PIN) signs nobody in: the
@@ -313,7 +365,7 @@ export async function handleAuth(req: Request, env: Env, route: string, current:
       return json({ mustChange: true, name: row.name });
     }
     await env.DB.prepare(`UPDATE users SET failed = 0, locked_until = 0, last_login_at = ${SQL_NOW_MS} WHERE id = ?`).bind(row.id).run();
-    return json({ user: publicUser(row) }, 200, await signedIn(env, row));
+    return json({ user: publicUser(row) }, 200, await signedIn(req, env, row));
   }
 
   // Change password (needs the current one). Ends the person's other sessions and signs them in here.
@@ -327,7 +379,7 @@ export async function handleAuth(req: Request, env: Env, route: string, current:
       `UPDATE users SET pin_hash = ?, pin_salt = ?, must_change = 0, failed = 0, locked_until = 0, session_ver = session_ver + 1,
          updated_at = ${SQL_NOW_MS}, last_login_at = ${SQL_NOW_MS} WHERE id = ?`,
     ).bind(hash, salt, row.id).run();
-    return json({ user: publicUser(row) }, 200, await signedIn(env, { id: row.id, session_ver: row.session_ver + 1 }));
+    return json({ user: publicUser(row) }, 200, await signedIn(req, env, { id: row.id, session_ver: row.session_ver + 1 }));
   }
 
   /* ---------- quick switching ----------
@@ -396,7 +448,7 @@ export async function handleAuth(req: Request, env: Env, route: string, current:
       throw new ApiError(401, "wrong_pin", `Wrong PIN. ${left} ${left === 1 ? "try" : "tries"} left.`);
     }
     await env.DB.prepare(`UPDATE users SET failed = 0, locked_until = 0, last_login_at = ${SQL_NOW_MS} WHERE id = ?`).bind(row.id).run();
-    return json({ user: publicUser(row) }, 200, { "set-cookie": await sessionCookie(env, row) });
+    return json({ user: publicUser(row) }, 200, await sessionCookie(req, env, row));
   }
 
   throw new ApiError(404, "not_found", "Unknown route.");

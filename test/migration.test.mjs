@@ -37,7 +37,7 @@ test("PIN accounts get a username from their name and choose a password at next 
 
   const change = await post("/api/auth/change", { username: "sam.patel", password: "1234", newPassword: "a-real-password" });
   assert.equal(change.status, 200);
-  const cookie = change.headers.get("set-cookie").split(";")[0];
+  const cookie = change.headers.getSetCookie().find((c) => /^sfbb_session=[\w-]/.test(c)).split(";")[0];
   const me = await (await fetch(srv.base + "/api/auth/me", { headers: { cookie } })).json();
   assert.equal(me.user.name, "Sam Patel");
   assert.equal(me.user.role, "admin");
@@ -49,7 +49,7 @@ test("PIN accounts get a username from their name and choose a password at next 
 
 test("rota tables from before day-by-day hours, amended shifts and contract ranges are upgraded in place", async () => {
   const login = await post("/api/auth/login", { username: "sam.patel", password: "a-real-password" });
-  const cookie = login.headers.get("set-cookie").split(";")[0];
+  const cookie = login.headers.getSetCookie().find((c) => /^sfbb_session=[\w-]/.test(c)).split(";")[0];
   const w = await (await fetch(srv.base + "/api/rota/week?start=2030-01-07", { headers: { cookie } })).json();
   const me = w.people.find((p) => p.name === "Sam Patel");
   assert.deepEqual([me.contractMin, me.contractMax, me.contractHours], [20, 20, 20], "the old contract becomes both ends");
