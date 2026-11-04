@@ -409,6 +409,19 @@ test("signing out ends that session on the server; the person's other sessions c
   assert.equal((await me(two)).user.name, "Lou Leave", "the other session (another device) is still signed in");
 });
 
+test("lists are sorted and limited by the database, in the order the page has always had", async () => {
+  // Mixed values: missing and null first, then numbers (and true/false as 1/0), then text; the id breaks ties.
+  const items = { a: { n: 3 }, b: { n: "x" }, c: {}, d: { n: null }, e: { n: 1 }, f: { n: true }, g: { n: 3 }, h: { n: "b" } };
+  for (const [id, data] of Object.entries(items)) await db("set", { path: `sites/factory/extras/${id}`, data: { name: id, ...data } });
+  const ids = async (dir, limit) => (await db("query", { path: "sites/factory/extras", orderBy: "n", dir, limit })).body.docs.map((d) => d.id).join("");
+  assert.equal(await ids("asc"), "cdefaghb");
+  assert.equal(await ids("desc"), "bhgafedc");
+  assert.equal(await ids("desc", 3), "bhg");
+  const p = await db("poll", { queries: [{ key: "k", kind: "col", path: "sites/factory/extras", orderBy: "n", dir: "asc", limit: 2 }] });
+  assert.deepEqual(p.body.results.k.docs.map((d) => d.id), ["c", "d"]);
+  assert.ok(p.body.results.k.docs.every((d) => typeof d.ver === "number"), "with each document's version");
+});
+
 test("writes are rate limited per IP", async () => {
   let last;
   // Over twice the limit (80 a person), so it's crossed even if the 15-minute window rolls over part way.

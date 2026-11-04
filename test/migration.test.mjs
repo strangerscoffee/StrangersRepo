@@ -57,3 +57,16 @@ test("rota tables from before day-by-day hours, amended shifts and contract rang
   const cafe = w.sites.find((s) => s.id === "cafe");
   assert.deepEqual([cafe.opensAt, cafe.minPeople, cafe.dayHours], ["07:00", 2, {}]);
 });
+
+test("migrations run once each, in order, and are recorded; the list indexes are used", async () => {
+  await post("/api/auth/login", { username: "nobody", password: "x" }); // any API call sets the schema up
+  const done = srv.sql("SELECT id, name FROM schema_migrations ORDER BY id");
+  assert.deepEqual(done.map((r) => r.id), [1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.ok(done.every((r) => r.name), "each has a name");
+  // The older rota columns were added by migrations 1-3 on this old database.
+  const shiftCols = srv.sql("SELECT name FROM pragma_table_info('rota_shifts')").map((r) => r.name);
+  assert.ok(shiftCols.includes("actual_start") && shiftCols.includes("adjusted_at"));
+  const plan = srv.sql("EXPLAIN QUERY PLAN SELECT doc_id, data, seq FROM docs WHERE collection = 'days' AND deleted = 0 ORDER BY json_extract(data, '$.date') DESC, doc_id DESC LIMIT 400");
+  assert.match(plan.map((r) => r.detail).join(" "), /USING INDEX docs_by_date/);
+});
+
