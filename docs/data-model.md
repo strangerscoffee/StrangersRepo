@@ -75,7 +75,7 @@ The page writes these with nested `update`s such as `{temps:{u1:{am:{v:3.2,by,at
 
 **`weeks/<Monday YYYY-MM-DD>`**: `week, items:{<checkId>:bool}, by, at, notes:{text,by,at}, signed:{by,at,name}`
 
-**`extras/<id>`**, **`cleaning/<id>`**: `name, how, freq ("after use"|"daily"|"weekly"|"fortnightly"|"monthly"|"quarterly"|"yearly"), who, createdAt, lastAt?, lastBy?, lastSet?, log:[{at,by,note,set?}] (newest first, max 30), importedAt?, importedFrom?`
+**`extras/<id>`**, **`cleaning/<id>`**: `name, how, freq ("after use"|"daily"|"weekly"|"fortnightly"|"monthly"|"quarterly"|"six-monthly"|"yearly"), who, createdAt, lastAt?, lastBy?, lastSet?, log:[{at,by,note,set?}] (newest first, max 30), importedAt?, importedFrom?`
 
 `lastSet: true` (and `set: true` on its log entry) means the last-done date was entered by hand ("Last done on" → Save date) rather than ticked off at the time: `lastAt` is then midday on that date (or the moment it was saved, if it was today) and the page shows it as a date only. `lastBy` is whoever entered it. Ticking the task done sets `lastSet: false`.
 

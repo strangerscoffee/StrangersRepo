@@ -282,6 +282,8 @@ test("staff journey on the real page", async () => {
   await openSection(page, "cleaning");
   await page.click("#addBtn");
   await page.fill("#cleaning_f_name", "Descale kettle");
+  assert.deepEqual(await page.locator("#cleaning_f_freq option").allTextContents(),
+    ["After use", "Daily", "Weekly", "Fortnightly", "Monthly", "Quarterly", "Six-monthly", "Yearly"]);
   await page.locator('label[for="cleaning_sites_all"]').click();
   await page.locator("#kFormPanel .btn", { hasText: /^Save$/ }).click();
   await page.locator("#kList .xrow", { hasText: "Descale kettle" }).waitFor();
