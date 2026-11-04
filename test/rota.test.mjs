@@ -12,7 +12,8 @@ const MON = day(0), TUE = day(1), WED = day(2), THU = day(3), FRI = day(4), SAT 
 let srv, ADMIN, MGR, ALEX, SAM;
 const ids = {};
 
-const cookieOf = (res) => (res.headers.get("set-cookie") || "").split(";")[0];
+// The session a response sets (its first Set-Cookie may remove an older, host-only copy: src/auth.ts).
+const cookieOf = (res) => (res.headers.getSetCookie().find((c) => /^sfbb_session=[\w-]/.test(c)) || "").split(";")[0];
 async function req(method, path, body, cookie = ADMIN) {
   const headers = {};
   if (body !== undefined) headers["content-type"] = "application/json";
@@ -456,5 +457,57 @@ test("the rota host: / is the rota, diary pages go there, diary APIs are refused
     assert.equal((await get("/api/rota/week", c)).status, 200);
     assert.equal((await get("/robots.txt")).status, 200);
     assert.equal((await get("/", c)).headers.get("x-robots-tag"), "noindex, nofollow");
+  } finally { await host.stop(); }
+});
+
+// One sign-in for the diary and the rota: with COOKIE_DOMAIN (wrangler.jsonc), sign-in cookies are
+// shared across the domain, and older host-only ones are moved over. Under `wrangler dev` the Worker sees the
+// diary's hostname, which is on that domain, and rewrites the Domain in Set-Cookie to the address the client used.
+test("shared sign-in: cookies are set on COOKIE_DOMAIN, old ones move over, sign out clears both", async () => {
+  const host = await startServer();
+  const D = "Domain=(?:staffstrangerscoffee\\.com|127\\.0\\.0\\.1)";
+  try {
+    const setCookies = (res) => res.headers.getSetCookie();
+    const post = (p, body, cookie) => fetch(host.base + p, { method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body) });
+    const r = await post("/api/auth/setup", { name: "Shared Admin", username: "shared", password: "admin-pass-1", code: SETUP_CODE });
+    assert.equal(r.status, 200);
+    const sc = setCookies(r);
+    // For each cookie: first the host-only copy is removed, then the shared one is set (the order matters).
+    for (const name of ["sfbb_session", "sfbb_device"]) {
+      const mine = sc.filter((c) => c.startsWith(name + "="));
+      assert.equal(mine.length, 2, name);
+      assert.match(mine[0], /^[a-z_]+=; Path=\/; HttpOnly; Secure; SameSite=Lax; Max-Age=0$/, name + ": host-only copy removed first");
+      assert.match(mine[1], new RegExp(`^[a-z_]+=[\\w-]+\\.[\\w-]+; Path=/; ${D}; HttpOnly; Secure; SameSite=Lax; Max-Age=\\d+$`), name + ": then shared");
+    }
+    const session = sc.find((c) => /^sfbb_session=[\w-]/.test(c)).split(";")[0];
+    const device = sc.find((c) => /^sfbb_device=[\w-]/.test(c)).split(";")[0];
+
+    // An older host-only session (as everyone has before this change) is moved to the shared domain unchanged.
+    const me = await fetch(host.base + "/api/auth/me", { headers: { cookie: `${session}; ${device}` } });
+    assert.equal((await me.json()).user.name, "Shared Admin");
+    const moved = setCookies(me);
+    assert.ok(moved.some((c) => new RegExp(`^${session}; Path=/; ${D};`).test(c)), "same session, now shared");
+    assert.ok(moved.some((c) => new RegExp(`^${device}; Path=/; ${D};`).test(c)), "same device, now shared");
+    const age = Number(/Max-Age=(\d+)/.exec(moved.find((c) => c.startsWith(session)))[1]);
+    assert.ok(age > 29 * 86400 && age <= 30 * 86400, "keeps its expiry");
+
+    // Signed out: nothing to move.
+    assert.deepEqual(setCookies(await fetch(host.base + "/api/auth/me")), []);
+    // A stale cookie sent alongside the live one doesn't get in the way.
+    const both = await fetch(host.base + "/api/auth/me", { headers: { cookie: `sfbb_session=eyJ1IjoieCJ9.bad; ${session}` } });
+    assert.equal((await both.json()).user.name, "Shared Admin");
+
+    // Two people (an old host-only cookie, then a shared one): the newer, listed last by browsers, wins and is kept.
+    const b = await post("/api/auth/login", { username: "shared", password: "admin-pass-1" });
+    const later = b.headers.getSetCookie().find((c) => /^sfbb_session=[\w-]/.test(c)).split(";")[0];
+    const two = await fetch(host.base + "/api/auth/me", { headers: { cookie: `${session}; ${later}` } });
+    assert.equal(two.status, 200);
+    assert.ok(two.headers.getSetCookie().some((c) => c.startsWith(later + ";")), "the newer session is the one kept");
+
+    // Signing out removes both copies, so it signs out of the diary and the rota.
+    const out = setCookies(await post("/api/auth/logout", {}, session)).filter((c) => c.startsWith("sfbb_session="));
+    assert.equal(out.length, 2);
+    assert.ok(out.every((c) => /^sfbb_session=;.*Max-Age=0$/.test(c)));
+    assert.ok(out.some((c) => c.includes("Domain=")) && out.some((c) => !c.includes("Domain=")));
   } finally { await host.stop(); }
 });
