@@ -2,7 +2,7 @@
 import { ApiError, Env, SQL_NOW_MS, invalid, readJson, json } from "./http";
 import { parseCollectionPath, parseWebDocPath, encodeDoc, deepMerge, canonical } from "./paths";
 import { User } from "./auth";
-import { isStaffRecordPath, recordId, requireDelete, requireOwnSignature, requireOwnStaffRecord, requireWrite } from "./access";
+import { isStaffRecordPath, recordId, requireDelete, requireOwnSignature, requireOwnStaffRecord, requireStaffDayRules, requireWrite } from "./access";
 
 const BUMP_SEQ = "UPDATE meta SET v = v + 1 WHERE k = 'seq'";
 const CUR_SEQ = "(SELECT v FROM meta WHERE k = 'seq')";
@@ -234,7 +234,11 @@ async function requireWriteDoc(env: Env, user: User, op: "set" | "update" | "del
   const cur = user.role === "staff" ? await getDoc(env, parseWebDocPath(path, "write").path) : null;
   if (cur && isStaffRecordPath(path)) requireOwnStaffRecord(user, op, cur.data?.name, cur.exists, data?.name);
   else requireWrite(user, path);
-  if (cur && op !== "delete") requireOwnSignature(user, parseWebDocPath(path, "write").collection, data, cur.data, canonical);
+  if (cur && op !== "delete") {
+    const p = parseWebDocPath(path, "write");
+    requireOwnSignature(user, p.collection, data, cur.data, canonical);
+    requireStaffDayRules(user, p.collection, p.id, data, cur.data, canonical);
+  }
 }
 
 // Day and week pages are only ever added to: a set on one that already exists merges (setOrMergeDoc).

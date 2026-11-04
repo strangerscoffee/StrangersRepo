@@ -509,7 +509,7 @@ function renderDayInner(){
     const who=d.signed.name||nameOf(d.signed.by),on=d.signed.at&&iso(new Date(d.signed.at))!==S.date?" on "+short(iso(new Date(d.signed.at))):"";
     sc.className="scard glass signcard done";
     sc.append(el("span",{class:"big"},svgi(ICON.check)),el("h2",{text:"Day signed off"}),el("span",{class:"s",text:`By ${who} at ${time(d.signed.at)}${on}`}),
-      R?null:el("button",{class:"btn ghost sm",type:"button",onclick:()=>patchDay(S.date,{signed:null})},"Undo sign-off"));
+      R||S.role==="staff"?null:el("button",{class:"btn ghost sm",type:"button",onclick:()=>patchDay(S.date,{signed:null})},"Undo sign-off"));
   }else{
     sc.className="scard glass signcard";
     sc.append(el("div",{class:"sec"},badgeEl(missing.length?"":"acc",missing.length?"lock":"pen"),el("span",{class:"t"},el("b",{text:"Sign off"}),
@@ -563,7 +563,7 @@ function renderWeek(){
   if(w.signed){
     sc.className="scard glass signcard done";
     sc.append(el("span",{class:"big"},svgi(ICON.check)),el("h2",{text:"Week signed off"}),el("span",{class:"s",text:`By ${w.signed.name||nameOf(w.signed.by)} on ${when(w.signed.at)}`}),
-      R?null:el("button",{class:"btn ghost sm",type:"button",onclick:()=>patchWeek(wk,{signed:null})},"Undo sign-off"));
+      R||S.role==="staff"?null:el("button",{class:"btn ghost sm",type:"button",onclick:()=>patchWeek(wk,{signed:null})},"Undo sign-off"));
   }else{
     sc.className="scard glass signcard";
     sc.append(el("div",{class:"sec"},badgeEl(all?"acc":"",all?"pen":"lock"),el("span",{class:"t"},el("b",{text:"Sign off the week"}),
@@ -2459,9 +2459,10 @@ function renderClosures(){
 }
 function renderCloseDay(d){
   const box=$("#closeDay");if(!box)return;box.replaceChildren();
-  const cl=closure(d),R=ro();box.hidden=R||S.date>today();if(box.hidden)return;
+  // Staff can mark only today closed; reopening a day, or closing an earlier one, is for managers and admins (the Worker checks too).
+  const cl=closure(d),R=ro(),staff=S.role==="staff";box.hidden=R||S.date>today()||(staff&&!cl&&S.date!==today());if(box.hidden)return;
   const date=S.date,label=date===today()?"today":nice(date);
-  if(cl){box.append(el("button",{class:"btn ghost sm",type:"button",onclick:async()=>{if(await save(()=>patchDay(date,{closed:null})))toast(`${nice(date)} reopened`)}},"Reopen this day"));return}
+  if(cl){box.append(staff?el("p",{class:"note",text:"Only a manager or admin can reopen a closed day."}):el("button",{class:"btn ghost sm",type:"button",onclick:async()=>{if(await save(()=>patchDay(date,{closed:null})))toast(`${nice(date)} reopened`)}},"Reopen this day"));return}
   const det=el("details",{class:"closeday"},el("summary",{},`Shop closed ${label}? Mark it closed`));
   const txt=el("input",{type:"text",id:"cdReason",placeholder:"Why it was closed, e.g. Boiler broken, engineer booked","aria-label":"Why it was closed"});
   const chips=el("div",{class:"chiprow wrap"},...CLOSE_REASONS.map(r=>el("button",{type:"button",class:"fchip",onclick:()=>{txt.value=r;txt.focus()}},r)));

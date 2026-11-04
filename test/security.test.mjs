@@ -94,6 +94,32 @@ test("security: staff can't use manager or admin features, managers can't use ad
   assert.equal((await db("set", { path: "reviews/2026-09-11", data: { date: "2026-09-11", answers: {}, by: "web:Alex Brown", at: 2 } }, STAFF)).status, 200);
   assert.equal((await db("update", { path: day, patch: { signed: { by: "web:Alex Brown", name: "Alex Brown", at: 4 } } }, MANAGER)).status, 200, "managers aren't limited");
 
+  // Undoing a sign-off: managers and admins only, on days and weeks.
+  assert.equal((await db("update", { path: day, patch: { signed: null } }, STAFF)).body.code, "permission_denied", "staff can't undo a day's sign-off");
+  await db("set", { path: "weeks/2026-09-07", data: { week: "2026-09-07", signed: { by: "web:Sam Patel", name: "Sam Patel", at: 1 } } });
+  assert.equal((await db("update", { path: "weeks/2026-09-07", patch: { signed: null } }, STAFF)).body.code, "permission_denied", "nor a week's");
+  assert.equal((await db("update", { path: day, patch: { signed: null } }, MANAGER)).status, 200, "managers can");
+  assert.equal((await db("update", { path: "weeks/2026-09-07", patch: { signed: null } })).status, 200, "admins can");
+
+  // Closed days: staff mark only today closed, in their own name, with a reason; reopening is for managers.
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const mine = { reason: "Power cut", by: "web:Alex Brown", at: Date.now() };
+  for (const [what, path, closed] of [
+    ["an earlier day", "sites/asg/days/2026-09-01", mine],
+    ["in someone else's name", `sites/asg/days/${today}`, { ...mine, by: "web:Max Manager" }],
+    ["without a reason", `sites/asg/days/${today}`, { ...mine, reason: " " }],
+  ]) {
+    const r = await db("set", { path, data: { date: path.split("/").pop(), closed } }, STAFF);
+    assert.equal(r.body.code, "permission_denied", "staff can't close " + what);
+  }
+  assert.equal((await db("set", { path: `sites/asg/days/${today}`, data: { date: today, closed: mine } }, STAFF)).status, 200, "staff close today");
+  assert.equal((await db("update", { path: `sites/asg/days/${today}`, patch: { closed: mine, problems: { text: "x" } } }, STAFF)).status, 200, "an unchanged closure can be sent back");
+  assert.equal((await db("update", { path: `sites/asg/days/${today}`, patch: { closed: null } }, STAFF)).body.code, "permission_denied", "staff can't reopen");
+  const overview = (await admin("GET", "overview")).body;
+  assert.ok(overview.attention.some((a) => a.title === "The ASG was marked closed today" && /By Alex Brown at \d\d:\d\d: Power cut/.test(a.detail)), "flagged for admins");
+  assert.equal((await db("update", { path: `sites/asg/days/${today}`, patch: { closed: null } }, MANAGER)).status, 200, "managers reopen");
+  assert.equal((await db("set", { path: "sites/asg/days/2026-09-02", data: { date: "2026-09-02", closed: { reason: "Holiday", by: "web:Max Manager", at: 1 } } }, MANAGER)).status, 200, "managers close earlier days");
+
   // Admin: the API, backups and the page, for staff and managers.
   const users = (await admin("GET", "users")).body.users;
   const someone = users.find((u) => u.username === "alex"), other = users.find((u) => u.username === "sam.patel");

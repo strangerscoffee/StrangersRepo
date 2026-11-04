@@ -99,6 +99,14 @@ export async function overview(env: Env, links: { rota: string; diary: string })
       action: { label: "Review", href: `${links.rota}#requests` },
     });
   }
+  // A site a member of staff marked closed today (managers plan closures ahead in Setup), so an admin sees it the same day.
+  const roleOf = new Map(users.map((u) => ["web:" + u.name, u.role]));
+  for (const s of SITES) {
+    const c = docs.get(`${s.prefix}days/${today}`)?.closed;
+    if (!c || roleOf.get(c.by) !== "staff") continue;
+    const who = typeof c.by === "string" ? c.by.slice(4) : "Someone";
+    attention.push({ tone: "warn", icon: "house", title: `The ${s.name} was marked closed today`, detail: `By ${who}${c.at ? ` at ${new Date(c.at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" })}` : ""}: ${String(c.reason || "no reason given").slice(0, 120)}`, action: { label: "Open diary", href: links.diary } });
+  }
   for (const s of diaryToday.filter((s) => !s.setUp)) {
     attention.push({ tone: "warn", icon: "house", title: `The ${s.name} isn't set up`, detail: "It needs a diary Setup before it's counted in the diary or can have shifts.", action: { label: "Set up", go: "sites" } });
   }
