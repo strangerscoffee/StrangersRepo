@@ -86,18 +86,22 @@ button.shc:hover{border-color:var(--accent)}
 .gperson{display:flex;align-items:center;gap:10px}
 .gperson .t{display:grid;min-width:0}.gperson .t b{font-size:15px}.gperson .t .s{font-size:12.5px;color:var(--muted)}
 .ghours{display:grid;gap:6px;align-content:center;font-size:14.5px}
-.ghours.over b{color:var(--bad)}
+.ghours.over b{color:var(--ot)}
+.ghours .shortx{font-size:12.5px;color:var(--muted);font-weight:600}
 .offcell{border:0;border-top:1px solid var(--line);border-left:1px solid var(--line);background:none;font:inherit;color:var(--muted);font-size:13.5px;text-align:left;cursor:copy;align-content:center}
 .offcell.hol{background:repeating-linear-gradient(135deg,var(--sunk) 0 6px,transparent 6px 12px);color:var(--fg);font-weight:600}
 .offcell.cant{background:var(--sunk);font-weight:600}
-.hbar{height:6px;border-radius:99px;background:var(--sunk);overflow:hidden}
+.hbar{position:relative;display:flex;height:6px;border-radius:99px;background:var(--sunk);overflow:hidden}
 .hbar i{display:block;height:100%;border-radius:99px;background:var(--accent)}
-.hbar.over i{background:var(--bad)}
+.hbar.over i{border-radius:99px 0 0 99px}
+.hbar i.ot{background:var(--ot);border-radius:0 99px 99px 0;margin-left:1px}
+.hbar .min{position:absolute;top:0;bottom:0;width:2px;background:var(--fg);opacity:.45}
 .rlegend{display:flex;flex-wrap:wrap;gap:6px 16px;align-items:center;font-size:13.5px;color:var(--muted)}
 .rlegend .lg{display:inline-flex;align-items:center;gap:6px}
 .rlegend .sw{width:14px;height:14px;border-radius:4px;border:1px solid var(--line);background:var(--surface)}
 .rlegend .sw.open{border:1.5px dashed var(--bad);background:var(--bad-bg)}
 .rlegend .sw.clash{border:2px solid var(--warn);background:var(--warn-bg)}
+.rlegend .sw.ot{border:2px solid var(--ot);background:var(--ot-bg)}
 
 /* Phones: one day at a time */
 .sitecard{gap:10px!important;padding:16px!important}
@@ -110,7 +114,7 @@ button.shc:hover{border-color:var(--accent)}
 .prow{flex-wrap:wrap}
 .prow .t .hbar{margin-top:4px;max-width:180px}
 .prow .pshifts{display:grid;gap:6px;min-width:120px}
-.overtx{color:var(--bad)!important;font-weight:600}
+.overtx{color:var(--ot)!important;font-weight:650}
 
 /* The shift sheet and other sheets */
 .rsheet{max-height:calc(100dvh - 24px);overflow:auto;display:grid;gap:12px;padding-bottom:16px}
@@ -151,6 +155,9 @@ button.shc:hover{border-color:var(--accent)}
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;background:var(--ok-bg);color:var(--ok);box-sizing:border-box}
 .tl-bar.open{background:var(--bad-bg);color:var(--bad);border:1.5px dashed var(--bad)}
 .tl-bar.clash{background:var(--warn-bg);color:var(--warn);border:2px solid var(--warn)}
+.tl-bar.ot{box-shadow:inset 0 0 0 2px var(--ot)}
+.tl-bar.amended{background:color-mix(in srgb,var(--ok-bg) 100%,var(--surface))}
+.tl-plan{position:absolute;top:2px;bottom:2px;border:1.5px dashed var(--muted);border-radius:10px;box-sizing:border-box;opacity:.7}
 .tl-bar.ghost{background:repeating-linear-gradient(135deg,var(--bad-bg) 0 6px,transparent 6px 12px);border:1.5px dashed var(--bad);color:var(--bad);cursor:default;opacity:.9}
 .tl-bars{position:relative;height:64px}
 .tl-h{position:absolute;bottom:0;background:color-mix(in srgb,var(--accent) 35%,transparent);border-right:2px solid var(--surface);box-sizing:border-box;display:flex;justify-content:center}
@@ -233,3 +240,52 @@ button.shc:hover{border-color:var(--accent)}
 /* Rows that are divs (not buttons) need border-box like the diary's button rows. */
 div.lrow{box-sizing:border-box}
 a.btn{text-decoration:none;display:inline-flex;align-items:center}
+
+/* Overtime: hours over someone's maximum contracted hours. Its own colour, always with the word. */
+:root{--ot:#a3126a;--ot-bg:rgba(230,40,140,.13)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--ot:#ff8cc8;--ot-bg:rgba(255,80,170,.18)}}
+:root[data-theme="dark"]{--ot:#ff8cc8;--ot-bg:rgba(255,80,170,.18)}
+.otag{justify-self:start;font-size:11.5px;font-weight:750;letter-spacing:.03em;padding:1px 7px;border-radius:99px;background:var(--ot-bg);color:var(--ot);white-space:nowrap}
+.shc.ot{border:2px solid var(--ot)}
+.shc.ot[class*="tone-"]{border:2px solid var(--ot)}
+.shc.amended .tm{text-decoration:underline dotted;text-underline-offset:3px}
+.shlist .shc .otag{grid-column:1/-1}
+.mrow .t .otag{margin-top:3px}
+.htable td.over{color:var(--ot)}
+.htable td.short{color:var(--muted);font-weight:600}
+
+/* Amending a shift on the day: start and finish sliders per person */
+.amrow{display:grid!important;gap:10px;align-items:stretch}
+.amhead{display:flex;align-items:center;gap:10px;min-width:0}
+.amhead .t{display:grid;flex:1;min-width:0}.amhead .t .s{font-size:13px;color:var(--muted)}
+.amsum{font-size:14px;font-weight:650;font-variant-numeric:tabular-nums;color:var(--muted);text-align:right}
+.amsum.up{color:var(--ot)}.amsum.down{color:var(--warn)}
+.amslide{display:grid;grid-template-columns:72px 1fr 52px;gap:10px;align-items:center;font-size:14px;color:var(--muted);font-weight:600}
+.amslide input[type=range]{width:100%;min-width:0;height:32px;accent-color:var(--accent);margin:0}
+.amslide output{font-variant-numeric:tabular-nums;font-weight:700;color:var(--fg);font-size:16px;text-align:right}
+.amfoot{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.amfoot>input[type=text]{flex:1 1 200px;min-height:40px;font-size:16px;min-width:0;box-sizing:border-box}
+.amquick{display:flex;flex-wrap:wrap;gap:6px;flex-basis:100%}
+.amquick .fchip{height:32px;font-size:13px}
+.amfoot .row{margin-left:auto;gap:8px}
+.amendbox .list{overflow:visible}
+
+/* Opening hours by day, and contracted hours as a range */
+.dayhours{grid-column:1/-1;border-top:1px solid var(--line);padding-top:8px}
+.dayhours summary{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:baseline;cursor:pointer;min-height:36px;align-content:center}
+.dayhours summary .s{font-size:13.5px;color:var(--muted)}
+.dhgrid{display:grid;gap:6px;margin:8px 0}
+.dhrow{display:grid;grid-template-columns:96px 1fr 1fr;gap:8px;align-items:center}
+.dhrow.closed{grid-template-columns:96px 1fr 1fr 1fr;opacity:.6}
+.dhrow .dn{font-weight:600;font-size:15px}
+.dhrow input{min-height:40px;font-size:16px;width:100%;min-width:0;box-sizing:border-box}
+.crow{flex-wrap:wrap}
+.crange{display:inline-flex;gap:10px;margin-left:auto}
+.crange .chours input{width:64px}
+.amhead{flex-wrap:wrap}
+.amhead .t{flex:1 1 160px}
+@media (max-width:600px){.amsum{flex-basis:100%;text-align:left;padding-left:42px}}
+.shc{min-width:0}
+.shc .otag{white-space:normal;max-width:100%;box-sizing:border-box;line-height:1.25}
+.gcell .shc .otag{font-size:10.5px;letter-spacing:0;padding:0;background:none}
+@media (max-width:600px){.htable th,.htable td{padding:12px 8px}.htable th:first-child{padding-left:14px}.htable td:last-child,.htable th:last-child{padding-right:14px}}

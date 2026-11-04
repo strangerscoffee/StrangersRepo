@@ -411,7 +411,7 @@ function renderOnShift(){
   box.replaceChildren(el("div",{class:"row spread"},el("h3",{id:"onShiftTitle",text:"On shift today"}),el("a",{class:"linkbtn",href:S.rotaUrl},"Rota")),
     el("div",{class:"list"},...[...r.shifts].sort((a,b)=>a.start.localeCompare(b.start)).map(x=>el("div",{class:"lrow"},
       el("span",{class:"avatar sm",text:x.open?"?":initials(x.name),"aria-hidden":"true"}),
-      el("span",{class:"t"},el("b",{text:x.open?"Open shift":x.me?"You":x.name}),el("span",{class:"s",text:[`${x.start}–${x.end}`,jobText[x.job]].filter(Boolean).join(" · ")})),
+      el("span",{class:"t"},el("b",{text:x.open?"Open shift":x.me?"You":x.name}),el("span",{class:"s",text:[x.actualEnd?`${x.actualStart}–${x.actualEnd} (was ${x.start}–${x.end})`:`${x.start}–${x.end}`,jobText[x.job]].filter(Boolean).join(" · ")})),
       x.job?el("span",{class:"pill "+(x.job==="opens"?"acc":""),text:x.job==="opens"?"Opens":"Closes"}):null))));
 }
 setInterval(()=>{if(!document.hidden)loadRota()},5*60*1000);

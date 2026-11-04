@@ -136,6 +136,7 @@ test("checks: every kind of problem", async () => {
   const d = (i) => { const x = new Date(W + "T12:00:00Z"); x.setUTCDate(x.getUTCDate() + i); return x.toISOString().slice(0, 10); };
   await rota("PUT", "sites/asg", { opensAt: "08:00", closesAt: "12:00", minPeople: 2 }, MGR);
   await rota("PUT", "people/" + ids.Sam, { contractHours: 10 }, MGR);
+  await rota("PUT", "people/" + ids.Priya, { contractMin: 16, contractMax: 30 }, MGR);
   await rota("POST", "time-off", { userId: ids.Priya, from: d(2), to: d(2), reason: "Holiday" }, MGR);
   await addShift({ site: "asg", day: d(0), start: "08:00", end: "12:00", job: "opens", userId: null }); // open shift
   await addShift({ site: "asg", day: d(1), start: "08:00", end: "16:00", job: "opens", userId: ids.Sam, breakMins: 0 }); // 8h, no break
@@ -144,10 +145,12 @@ test("checks: every kind of problem", async () => {
   await addShift({ site: "asg", day: d(3), start: "17:00", end: "22:00", userId: ids.Alex, job: "closes" });
   const last = await addShift({ site: "asg", day: d(4), start: "06:00", end: "10:00", userId: ids.Alex, job: "opens" }); // 8h rest
   const ks = kinds(last.problems);
-  for (const k of ["open_shift", "clash", "time_off", "no_closer", "short_cover", "over_contract", "rest", "break"]) assert.ok(ks.includes(k), "has " + k + ": " + ks.join(","));
+  for (const k of ["open_shift", "clash", "time_off", "no_closer", "short_cover", "overtime", "rest", "break", "under_contract"]) assert.ok(ks.includes(k), "has " + k + ": " + ks.join(","));
   const clash = last.problems.find((p) => p.kind === "clash");
   assert.match(clash.message, /Sam is at (ASG and Cafe|Cafe and ASG) on Tuesday/);
-  assert.equal(last.problems.find((p) => p.kind === "over_contract").userId, ids.Sam);
+  assert.equal(last.problems.find((p) => p.kind === "overtime").userId, ids.Sam);
+  assert.match(last.problems.find((p) => p.kind === "overtime").message, /Sam has 1.5h overtime \(11.5h, contract 10h\)/);
+  assert.match(last.problems.find((p) => p.kind === "under_contract" && p.userId === ids.Priya).message, /Priya has 3.5h, 12.5h short of their 16h minimum/);
   assert.ok(last.problems.some((p) => p.kind === "no_opener" || p.kind === "no_closer"));
   // Errors come first.
   const sev = last.problems.map((p) => p.severity);
@@ -261,7 +264,8 @@ test("suggestions: clashing and on-leave people can't be picked; best fit first;
   assert.equal(by.Alex.selectable, false, "Alex clashes");
   assert.ok(by.Alex.flags.some((f) => f.kind === "clash"));
   assert.equal(by.George.selectable, false, "George is on time off");
-  assert.ok(by.Sam.flags.some((f) => f.kind === "over_contract"));
+  assert.ok(by.Sam.flags.some((f) => f.kind === "overtime"));
+  assert.equal(by.Sam.overtimeIfGiven, 1.5);
   assert.ok(by.Sam.flags.some((f) => f.kind === "untrained"));
   assert.equal(r.body.candidates[0].name, "Priya Shah");
   assert.equal(r.body.candidates[0].best, true);
@@ -279,15 +283,121 @@ test("hours and the CSV", async () => {
   const r = await rota("GET", "hours?start=" + W, undefined, MGR);
   const alex = r.body.people.find((p) => p.name === "Alex Brown");
   assert.equal(alex.rotaHours, 11.5);
-  assert.equal(alex.difference, 1.5);
+  assert.equal(alex.overtime, 1.5);
+  assert.equal(alex.contractMin, 10);
+  assert.equal(alex.contractMax, 10);
   assert.deepEqual(alex.sites, { roastery: 0, cafe: 7.5, asg: 4, factory: 0 });
   assert.equal(r.body.siteTotals.asg, 4);
   assert.equal(r.body.openHours, 4);
   const csv = await rota("GET", `hours?start=${W}&format=csv`, undefined, MGR);
   assert.match(csv.headers.get("content-type"), /text\/csv/);
   const lines = csv.text.trim().split(/\r\n/);
-  assert.equal(lines[0], "name,role,contract_hours,rota_hours,difference,roastery,cafe,asg,factory");
-  assert.ok(lines.includes("Alex Brown,staff,10,11.5,1.5,0,7.5,4,0"), csv.text);
+  assert.equal(lines[0], "name,role,contract_min,contract_max,planned_hours,rota_hours,overtime,short_of_min,roastery,cafe,asg,factory");
+  assert.ok(lines.includes("Alex Brown,staff,10,10,11.5,11.5,1.5,0,0,7.5,4,0"), csv.text);
+});
+
+test("opening hours by day: Sundays and Saturdays can differ, and cover is checked against them", async () => {
+  const W = "2030-09-02"; // Monday
+  const d = (i) => { const x = new Date(W + "T12:00:00Z"); x.setUTCDate(x.getUTCDate() + i); return x.toISOString().slice(0, 10); };
+  const put = await rota("PUT", "sites/asg", { opensAt: "07:00", closesAt: "18:00", minPeople: 1, dayHours: { sat: { opensAt: "08:00", closesAt: "16:00" }, sun: { opensAt: "09:00", closesAt: "15:00" } } }, MGR);
+  assert.equal(put.status, 200, put.text);
+  assert.equal((await rota("PUT", "sites/asg", { opensAt: "07:00", closesAt: "18:00", dayHours: { sun: { opensAt: "15:00", closesAt: "09:00" } } }, MGR)).status, 400);
+  assert.equal((await rota("PUT", "sites/asg", { opensAt: "07:00", closesAt: "18:00", dayHours: { someday: { opensAt: "09:00", closesAt: "15:00" } } }, MGR)).status, 400);
+  assert.equal((await rota("PUT", "sites/asg", { opensAt: "07:00", closesAt: "18:00", minPeople: 1 }, ALEX)).status, 403);
+  // Saving without dayHours keeps them.
+  await rota("PUT", "sites/asg", { opensAt: "07:00", closesAt: "18:00", minPeople: 1 }, MGR);
+  const sites = (await rota("GET", "sites", undefined, MGR)).body.sites;
+  assert.deepEqual(sites.find((x) => x.id === "asg").dayHours, { sat: { opensAt: "08:00", closesAt: "16:00" }, sun: { opensAt: "09:00", closesAt: "15:00" } });
+  await addShift({ site: "asg", day: d(5), start: "09:00", end: "16:00", userId: ids.Sam, job: "opens" }); // Saturday, an hour late
+  const r = await addShift({ site: "asg", day: d(6), start: "09:00", end: "15:00", userId: ids.Sam, job: "opens" }); // Sunday, covered
+  const short = r.problems.filter((p) => p.kind === "short_cover" && p.site === "asg").map((p) => p.message);
+  assert.ok(short.includes("ASG has fewer than 1 person on Saturday 08:00–09:00"), short.join(" | "));
+  assert.ok(!short.some((m) => /Sunday/.test(m)), "Sunday is covered for its own hours: " + short.join(" | "));
+  const w = await rota("GET", "week?start=" + W, undefined, MGR);
+  const asg = w.body.sites.find((x) => x.id === "asg");
+  assert.deepEqual(asg.hours[0], { opensAt: "07:00", closesAt: "18:00" });
+  assert.deepEqual(asg.hours[5], { opensAt: "08:00", closesAt: "16:00" });
+  assert.deepEqual(asg.hours[6], { opensAt: "09:00", closesAt: "15:00" });
+  // Back to the same hours every day for the other tests.
+  await rota("PUT", "sites/asg", { opensAt: "08:00", closesAt: "12:00", minPeople: 2, dayHours: null }, MGR);
+  assert.deepEqual((await rota("GET", "sites", undefined, MGR)).body.sites.find((x) => x.id === "asg").dayHours, {});
+});
+
+test("contracted hours as a range: overtime over the maximum, marked shift by shift", async () => {
+  const W = "2030-10-07"; // Monday
+  const d = (i) => { const x = new Date(W + "T12:00:00Z"); x.setUTCDate(x.getUTCDate() + i); return x.toISOString().slice(0, 10); };
+  assert.equal((await rota("PUT", "people/" + ids.Priya, { contractMin: 30, contractMax: 20 }, MGR)).body.code, "invalid_argument");
+  let p = await rota("PUT", "people/" + ids.Priya, { contractMin: 8, contractMax: 12 }, MGR);
+  assert.deepEqual([p.body.contractMin, p.body.contractMax, p.body.contractHours], [8, 12, 12]);
+  p = await rota("PUT", "people/" + ids.Priya, { sites: [] }, MGR);
+  assert.deepEqual([p.body.contractMin, p.body.contractMax], [8, 12], "left out, the contract is kept");
+  await addShift({ site: "asg", day: d(0), start: "08:00", end: "16:00", userId: ids.Priya, job: "opens", breakMins: 30 }); // 7.5h
+  await addShift({ site: "asg", day: d(1), start: "08:00", end: "16:00", userId: ids.Priya, job: "opens", breakMins: 30 }); // 7.5h: 3h over 12
+  await addShift({ site: "asg", day: d(2), start: "08:00", end: "12:00", userId: ids.Priya, job: "opens", breakMins: 0 }); // 4h: all overtime
+  const w = await rota("GET", "week?start=" + W, undefined, MGR);
+  const mine = w.body.shifts.filter((s) => s.userId === ids.Priya).sort((a, b) => a.day.localeCompare(b.day));
+  assert.deepEqual(mine.map((s) => s.overtime), [0, 3, 4]);
+  const ot = w.body.problems.find((x) => x.kind === "overtime" && x.userId === ids.Priya);
+  assert.match(ot.message, /Priya has 7h overtime \(19h, contract 8–12h\)/);
+  const person = w.body.people.find((x) => x.id === ids.Priya);
+  assert.deepEqual([person.contractMin, person.contractMax], [8, 12]);
+  const h = (await rota("GET", "hours?start=" + W, undefined, MGR)).body.people.find((x) => x.userId === ids.Priya);
+  assert.deepEqual([h.rotaHours, h.overtime, h.shortOfMin], [19, 7, 0]);
+  // Priya sees her own overtime once the week is published, in the week and in My shifts.
+  await rota("POST", "week/publish", { week: W }, MGR);
+  const priya = await signInAgain("priya");
+  const m = (await rota("GET", `mine?from=${d(1)}&to=${d(6)}`, undefined, priya)).body;
+  assert.deepEqual(m.shifts.map((s) => s.overtime), [3, 4], "counted from the Monday, though the list starts Tuesday");
+  assert.deepEqual(m.weeks, [{ week: W, hours: 19, overtime: 7 }]);
+  assert.deepEqual([m.contractMin, m.contractMax], [8, 12]);
+  // Others see the shifts, not her overtime.
+  const sam = await signInAgain("sam");
+  assert.ok((await rota("GET", "week?start=" + W, undefined, sam)).body.shifts.every((s) => !s.overtime));
+  // The older single figure still sets both ends.
+  p = await rota("PUT", "people/" + ids.Priya, { contractHours: 30 }, MGR);
+  assert.deepEqual([p.body.contractMin, p.body.contractMax], [30, 30]);
+});
+
+test("amending a shift on the day: start and finish as worked, with a reason; the plan is kept", async () => {
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const tomorrow = (() => { const x = new Date(today + "T12:00:00Z"); x.setUTCDate(x.getUTCDate() + 1); return x.toISOString().slice(0, 10); })();
+  await rota("PUT", "sites/asg", { opensAt: "08:00", closesAt: "16:00", minPeople: 1, dayHours: null }, MGR);
+  await rota("PUT", "people/" + ids.Alex, { contractMin: 0, contractMax: 40 }, MGR);
+  for (const s of (await rota("GET", "week?start=" + today, undefined, MGR)).body.shifts.filter((s) => s.site === "asg" && s.day === today)) await rota("DELETE", "shifts/" + s.id, undefined, MGR);
+  const s = (await addShift({ site: "asg", day: today, start: "08:00", end: "16:00", userId: ids.Alex, job: "opens", breakMins: 30 })).shift;
+  assert.equal(s.hours, 7.5);
+  assert.equal(s.adjusted, false);
+
+  assert.equal((await rota("PUT", `shifts/${s.id}/actual`, { start: "08:00", end: "11:00" }, ALEX)).status, 403, "staff can't amend hours");
+  assert.equal((await rota("PUT", `shifts/${s.id}/actual`, { start: "11:00", end: "08:00" }, MGR)).status, 400);
+  const later = (await addShift({ site: "asg", day: tomorrow, start: "08:00", end: "16:00", userId: ids.Alex })).shift;
+  assert.equal((await rota("PUT", `shifts/${later.id}/actual`, { start: "08:00", end: "11:00" }, MGR)).status, 400, "not before the day");
+  await rota("DELETE", "shifts/" + later.id, undefined, MGR);
+
+  const r = await rota("PUT", `shifts/${s.id}/actual`, { start: "08:00", end: "11:00", breakMins: 0, note: "Went home sick" }, MGR);
+  assert.equal(r.status, 200, r.text);
+  assert.deepEqual([r.body.shift.start, r.body.shift.end, r.body.shift.actualStart, r.body.shift.actualEnd], ["08:00", "16:00", "08:00", "11:00"]);
+  assert.deepEqual([r.body.shift.hours, r.body.shift.plannedHours, r.body.shift.adjustNote], [3, 7.5, "Went home sick"]);
+  assert.ok(r.body.problems.some((p) => p.kind === "short_cover" && p.site === "asg" && p.day === today && /11:00–16:00/.test(p.message)), "cover counts who's actually there");
+  // The break defaults to the planned one, cut to fit.
+  const r2 = await rota("PUT", `shifts/${s.id}/actual`, { start: "08:00", end: "17:30" }, MGR);
+  assert.deepEqual([r2.body.shift.actualBreakMins, r2.body.shift.hours], [30, 9]);
+  const h = (await rota("GET", "hours?start=" + today, undefined, MGR)).body.people.find((x) => x.userId === ids.Alex);
+  assert.ok(h.amended >= 1);
+  assert.equal(r2 && h.rotaHours - h.plannedHours, 1.5);
+  // Others see the amended times but not the reason.
+  await rota("PUT", `shifts/${s.id}/actual`, { start: "08:00", end: "11:00", breakMins: 0, note: "Went home sick" }, MGR);
+  await rota("POST", "week/publish", { week: today }, MGR);
+  const sam = await signInAgain("sam");
+  const seen = (await rota("GET", "week?start=" + today, undefined, sam)).body.shifts.find((x) => x.id === s.id);
+  assert.deepEqual([seen.actualEnd, seen.adjustNote], ["11:00", ""]);
+  assert.equal((await rota("GET", "week?start=" + today, undefined, ALEX)).body.shifts.find((x) => x.id === s.id).adjustNote, "Went home sick");
+  const td = (await rota("GET", `today?site=asg&day=${today}`, undefined, sam)).body.shifts.find((x) => x.name === "Alex Brown");
+  assert.equal(td.actualEnd, "11:00");
+  // Back to the plan.
+  const back = await rota("PUT", `shifts/${s.id}/actual`, { clear: true }, MGR);
+  assert.deepEqual([back.body.shift.adjusted, back.body.shift.hours, back.body.shift.actualEnd], [false, 7.5, null]);
+  await rota("DELETE", "shifts/" + s.id, undefined, MGR);
 });
 
 test("availability: your own, not anyone else's; managers set contracts", async () => {
