@@ -80,6 +80,28 @@ export function requireOwnSignature(u: User, collection: string, data: unknown, 
   if (collection.split("/").pop() === "reviews" && d.by !== undefined && d.by !== current?.by && d.by !== recordId(u)) throw bad();
 }
 
+/* Sign-offs and closed days on the diary's day and week pages, for staff:
+   - only a manager or admin can undo a sign-off (set signed back to null);
+   - staff can mark only today closed, in their own name and with a reason, and only a manager or admin can reopen
+     a closed day or close an earlier one (a past day marked closed stops counting as missed). */
+const londonToday = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+export function requireStaffDayRules(u: User, collection: string, id: string, data: unknown, current: Record<string, any> | undefined, canon: (v: unknown) => string): void {
+  if (u.role !== "staff" || !data || typeof data !== "object") return;
+  const col = collection.split("/").pop();
+  if (col !== "days" && col !== "weeks") return;
+  const d = data as Record<string, any>;
+  const denied = (m: string) => new ApiError(403, "permission_denied", m);
+  if ("signed" in d && d.signed === null && current?.signed) throw denied("Only a manager or admin can undo a sign-off.");
+  if (col !== "days" || !("closed" in d) || canon(d.closed) === canon(current?.closed)) return;
+  if (d.closed === null) {
+    if (current?.closed) throw denied("Only a manager or admin can reopen a closed day.");
+    return;
+  }
+  const c = d.closed;
+  const ok = id === londonToday() && c && typeof c === "object" && c.by === recordId(u) && typeof c.reason === "string" && c.reason.trim();
+  if (!ok) throw denied("Staff can only mark today closed, in their own name and with a reason. Ask a manager for other days.");
+}
+
 export function requireWrite(u: User, path: unknown): void {
   if (typeof path === "string" && !canWrite(u, path)) {
     // Not invalid_argument: the page treats that as "read-only for everything".
