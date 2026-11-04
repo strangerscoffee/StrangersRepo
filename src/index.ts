@@ -1,7 +1,7 @@
 // Strangers Coffee Kitchen Diary staff site.
 // Serves the diary page (public/index.html) and the API it uses through claude-shim.js, and, on its own
 // hostname (ROTA_HOST), the staff rota (public/rota/, src/rota.ts). One Worker, one database, one set of accounts.
-import { appForHost, appLinks, authorize, isPublicAsset, isRotaSharedFile, limitWrites, recordId, requireUser } from "./access";
+import { appForHost, appLinks, authorize, isPublicAsset, isRotaSharedFile, limitWrites, recordId, requireUser, unifiedSignin } from "./access";
 import { handleAdmin } from "./admin";
 import { handleAuth } from "./auth";
 import { handleBackups, makeBackup } from "./backup";
@@ -58,6 +58,11 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
   const p = url.pathname;
   const isGet = req.method === "GET" || req.method === "HEAD";
   const app = appForHost(url.hostname, env.ROTA_HOST);
+  // One Staff Login for every address: the rota's sign-in page is the diary's (src/hosts.ts).
+  if (isGet && (p === "/signin" || p === "/signin.html")) {
+    const to = unifiedSignin(url, env.COOKIE_DOMAIN);
+    if (to) return redirect(to);
+  }
   // The sign-in page and its files need no session (and no database).
   if (isGet && isPublicAsset(p)) return env.ASSETS.fetch(req);
   // On its own host the rota lives at /, so /rota/ (the address used in local dev) goes there.

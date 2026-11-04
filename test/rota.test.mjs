@@ -73,6 +73,32 @@ test("hostnames: the rota on ROTA_HOST, the diary everywhere else", async () => 
   assert.ok(!isRotaSharedFile("/app.js") && !isRotaSharedFile("/admin.html") && !isRotaSharedFile("/claude-shim.js"));
 });
 
+test("one Staff Login: the rota's sign-in page is the diary's, and comes back after", async () => {
+  const { unifiedSignin } = await import("../src/hosts.ts");
+  const D = "staffstrangerscoffee.com";
+  const at = (u) => unifiedSignin(new URL(u), D);
+  assert.equal(at("https://rota.staffstrangerscoffee.com/signin"), "https://staffstrangerscoffee.com/signin?next=https%3A%2F%2Frota.staffstrangerscoffee.com%2F");
+  assert.equal(at("https://rota.staffstrangerscoffee.com/signin?next=%2F%3Fweek%3D2026-11-09"),
+    "https://staffstrangerscoffee.com/signin?next=https%3A%2F%2Frota.staffstrangerscoffee.com%2F%3Fweek%3D2026-11-09");
+  assert.equal(at("https://rota.staffstrangerscoffee.com/signin?next=%2F%2Fevil.example"), "https://staffstrangerscoffee.com/signin?next=https%3A%2F%2Frota.staffstrangerscoffee.com%2F", "next stays on the rota");
+  assert.equal(at("https://staffstrangerscoffee.com/signin"), null, "the diary shows the sign-in page itself");
+  assert.equal(at("https://evilstaffstrangerscoffee.com/signin"), null);
+  assert.equal(unifiedSignin(new URL("http://localhost:8787/signin"), D), null, "local dev");
+  assert.equal(unifiedSignin(new URL("https://rota.staffstrangerscoffee.com/signin"), ""), null, "no shared domain");
+
+  // End to end: under `wrangler dev` the Worker sees staffstrangerscoffee.com, a subdomain of "com".
+  const host = await startServer({ vars: { COOKIE_DOMAIN: "com" } });
+  try {
+    const r = await fetch(host.base + "/signin?next=%2Frota%2F", { redirect: "manual" });
+    assert.equal(r.status, 302);
+    assert.equal(r.headers.get("location"), "https://com/signin?next=https%3A%2F%2Fstaffstrangerscoffee.com%2Frota%2F");
+  } finally { await host.stop(); }
+  // And on the real config the diary's own sign-in page, now called Staff Login.
+  const page = await fetch(srv.base + "/signin");
+  assert.equal(page.status, 200);
+  assert.match(await page.text(), /<h1>Staff Login<\/h1>/);
+});
+
 test("the diary host: the diary as before, plus the rota app at /rota/ and its API", async () => {
   assert.equal((await req("GET", "/rota/", undefined, null)).headers.get("location"), "/signin?next=%2Frota%2F");
   const page = await req("GET", "/rota/");

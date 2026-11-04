@@ -20,3 +20,18 @@ export function appLinks(url: URL, rotaHost: string | undefined): { rota: string
   const diaryHost = rotaHost.includes(".") ? rotaHost.slice(rotaHost.indexOf(".") + 1) : url.hostname;
   return { rota: onRota ? "/" : `https://${rotaHost}/`, diary: onRota ? `https://${diaryHost}/` : "/" };
 }
+
+/** One sign-in page for every staff address. On another subdomain of the shared cookie domain (COOKIE_DOMAIN: the
+ * rota), /signin goes to the sign-in page on the domain itself, with next= as a full link back to where the person
+ * was. Sign-in cookies are shared across the domain (src/auth.ts), so signing in there signs them in here too.
+ * null: show the sign-in page on this address (the diary itself, local dev, or no shared domain). */
+export function unifiedSignin(url: URL, cookieDomain: string | undefined): string | null {
+  const d = (cookieDomain || "").trim().toLowerCase().replace(/^\./, "");
+  const h = url.hostname.toLowerCase();
+  if (!d || h === d || !h.endsWith("." + d)) return null;
+  const n = url.searchParams.get("next") || "/";
+  const back = n.startsWith("/") && !n.startsWith("//") ? n : "/";
+  const target = new URL(`https://${d}/signin`);
+  target.searchParams.set("next", `https://${h}${back}`);
+  return target.toString();
+}
