@@ -665,6 +665,19 @@ test("staff journey on the real page", async () => {
   assert.equal(saved.data.opening.items.o1, true);
   assert.equal(saved.data.opening.by, "web:Alex Brown");
 
+  // A busy server when the change is sent (429): it stays on the device and goes once the server answers,
+  // rather than being dropped while the page says everything saved.
+  await ctx.setOffline(true);
+  await page.locator("#openList label", { hasText: "Surfaces sanitised" }).click();
+  await page.locator("#conn", { hasText: "1 change waiting" }).waitFor();
+  let busy = 2;
+  await page.route(/\/api\/db\/(set|update)$/, (r) => (busy-- > 0 ? r.fulfill({ status: 429, contentType: "application/json", body: JSON.stringify({ code: "rate_limited", message: "Slow down" }) }) : r.continue()));
+  await ctx.setOffline(false);
+  // (Before the fix, the first 429 dropped the change for good and the page said "All changes saved".)
+  await page.locator("#conn").waitFor({ state: "hidden", timeout: 30000 });
+  await page.unroute(/\/api\/db\/(set|update)$/);
+  assert.equal((await api("get", { path: `days/${t1}` })).data.opening.items.o2, true, "saved once the server answered");
+
   // Quick switching: Alex sets a 4-digit PIN, signs out, then signs back in from the list with the PIN.
   await accountMenu(page, "Set a quick PIN");
   for (const pin of ["4826", "4826"]) {
