@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=390">
+<title>My shifts · Strangers rota design</title>
+<style>
+body{margin:0}
+.ph{width:390px;height:844px;box-sizing:border-box;position:relative;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,"Segoe UI",Roboto,sans-serif;color:#0b1220;background:radial-gradient(42% 38% at 8% 4%,rgba(0,122,255,.18),transparent 70%),radial-gradient(36% 32% at 96% 14%,rgba(48,209,178,.14),transparent 70%),radial-gradient(48% 40% at 78% 96%,rgba(255,159,10,.12),transparent 70%),#edf1f6;padding:14px 16px 120px;display:flex;flex-direction:column;gap:12px}
+.top{display:flex;justify-content:space-between;align-items:center}
+.av{width:44px;height:44px;border-radius:50%;display:grid;place-items:center;background:rgba(0,98,204,.10);color:#0062cc;font:inherit;font-weight:700;font-size:15px;border:0}
+h1{margin:0;font-size:34px;letter-spacing:-.03em;line-height:1.05}
+.sub{margin:2px 0 0;color:#545f70;font-size:15px}
+.seg{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:2px;padding:3px;border-radius:12px;background:rgba(118,128,148,.14)}
+.seg button{height:34px;border:0;border-radius:9px;background:none;font:inherit;font-weight:600;font-size:14px;color:#0b1220}
+.seg button.on{background:#fff;box-shadow:0 1px 3px rgba(16,24,40,.15)}
+.next{border-radius:24px;padding:16px;background:#0062cc;color:#fff;display:flex;flex-direction:column;gap:6px;box-shadow:0 14px 30px -10px rgba(0,98,204,.6)}
+.next .k{font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;opacity:.85}
+.next b{font-size:26px;letter-spacing:-.02em}
+.next span{font-size:15px}
+.next .row{display:flex;gap:8px;margin-top:6px}
+.nb{display:inline-flex;align-items:center;min-height:38px;padding:0 14px;border-radius:99px;border:0;background:rgba(255,255,255,.22);color:#fff;font:inherit;font-weight:650;font-size:14px}
+.card{background:rgba(255,255,255,.75);border:1px solid #fff;border-radius:22px;box-shadow:0 10px 30px -8px rgba(16,24,40,.12);overflow:hidden}
+.sh{display:flex;align-items:center;gap:12px;min-height:58px;padding:8px 14px}
+.sh+.sh{border-top:1px solid rgba(60,72,92,.12)}
+.dt{width:44px;flex:none;display:grid;justify-items:center;line-height:1.1}
+.dt span{font-size:11.5px;font-weight:700;color:#545f70;text-transform:uppercase}
+.dt b{font-size:19px}
+.t{flex:1;display:grid;gap:1px;min-width:0}
+.t b{font-size:15.5px;font-weight:600}
+.s{font-size:13px;color:#545f70}
+.tag{font-size:12px;font-weight:700;padding:3px 9px;border-radius:99px;white-space:nowrap}
+.C{background:rgba(52,199,89,.18);color:#145c2f}.A{background:rgba(255,159,10,.24);color:#6b3d00}
+.off .t b{color:#545f70;font-weight:500}
+.tot{display:flex;justify-content:space-between;align-items:center;padding:0 6px;font-size:14px;color:#545f70}
+.tabbar{position:absolute;left:14px;right:14px;bottom:18px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));padding:6px;border-radius:32px;background:rgba(255,255,255,.88);border:1px solid #fff;box-shadow:0 18px 40px -10px rgba(16,24,40,.22)}
+.tab{display:grid;justify-items:center;gap:2px;padding:7px 0;border-radius:26px;font-size:11.5px;font-weight:650;color:#545f70;text-decoration:none}
+.tab.on{background:rgba(0,98,204,.10);color:#0062cc}
+svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+
+body{background:#d9dee6}
+</style>
+</head>
+<body>
+<!-- Design reference for the Strangers Coffee rota (390×844). Example data only. -->
+<div id="design"></div>
+<template id="tpl">
+
+<div class="ph">
+  <div class="top"><span></span><button class="av" type="button" aria-label="Account">AB</button></div>
+  <div><h1>My shifts</h1><p class="sub">Alex Brown · published Sunday 18:40</p></div>
+  <div class="seg" role="tablist" aria-label="Whose shifts"><button class="on" type="button" role="tab" aria-selected="true">Mine</button><button type="button" role="tab" aria-selected="false">Everyone</button></div>
+
+  <div class="next">
+    <span class="k">Next shift · tomorrow</span>
+    <b>06:45–14:45</b>
+    <span>Cafe, 21 Pottergate · you open</span>
+    <span style="opacity:.85;font-size:13.5px">With Priya from 11:00</span>
+    <div class="row"><button class="nb" type="button">Add to calendar</button><button class="nb" type="button">Ask to swap</button></div>
+  </div>
+
+  <div class="card" aria-label="This week">
+    <div class="sh"><span class="dt"><span>Mon</span><b>9</b></span><span class="t"><b>06:45–14:45 · Opens</b><span class="s">With Priya</span></span><span class="tag C">Cafe</span></div>
+    <div class="sh"><span class="dt"><span>Tue</span><b>10</b></span><span class="t"><b>06:45–14:45 · Opens</b><span class="s">With Priya</span></span><span class="tag C">Cafe</span></div>
+    <div class="sh"><span class="dt"><span>Wed</span><b>11</b></span><span class="t"><b>07:00–15:00 · Opens</b><span class="s">With Ben</span></span><span class="tag A">ASG</span></div>
+    <div class="sh"><span class="dt"><span>Thu</span><b>12</b></span><span class="t"><b>06:45–14:45 · Opens</b><span class="s">With Sam</span></span><span class="tag C">Cafe</span></div>
+    <div class="sh"><span class="dt"><span>Fri</span><b>13</b></span><span class="t"><b>06:45–14:45 · Opens</b><span class="s">With Kai and Ben</span></span><span class="tag C">Cafe</span></div>
+    <div class="sh off"><span class="dt"><span>Sat</span><b>14</b></span><span class="t"><b>Off</b></span></div>
+  </div>
+  <div class="tot"><span>This week</span><b style="color:#0b1220">40 hours</b></div>
+
+  <nav class="tabbar" aria-label="Sections">
+    <a class="tab" href="#"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="3"/><path d="M4 10h16M9 3v4M15 3v4M9 14.5l2 2 4-4"/></svg>Today</a>
+    <a class="tab" href="#"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="3"/><path d="M4 10h16M9 3v4M15 3v4"/></svg>Week</a>
+    <a class="tab on" href="#" aria-current="page"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.5 2.7-6 6-6s6 2.5 6 6M16 11a3 3 0 100-6M21 20c0-3-1.8-5.2-4.5-5.8"/></svg>Rota</a>
+    <a class="tab" href="#"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2.5"/><path d="M9 8h6M9 12h6M9 16h4"/></svg>Records</a>
+  </nav>
+</div>
+</template>
+<script>class DCLogic { constructor() { this.props = {}; this.state = {}; } setState() {} }
+
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+
+
+function get(ctx, path) { return path.trim().split(".").reduce((o, k) => (o == null ? undefined : o[k]), ctx); }
+function interp(s, ctx) { return s.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_, p) => { const v = get(ctx, p); return v == null ? "" : String(v); }); }
+function render(node, ctx) {
+  if (node.nodeType === 3) { if (node.nodeValue.includes("{{")) node.nodeValue = interp(node.nodeValue, ctx); return; }
+  if (node.nodeType !== 1) return;
+  if (node.tagName === "SC-FOR") {
+    const list = get(ctx, node.getAttribute("list").replace(/[{}\s]/g, "")) || [];
+    const as = node.getAttribute("as");
+    const frag = document.createDocumentFragment();
+    list.forEach((item, i) => {
+      for (const ch of node.childNodes) {
+        const wrap = document.createElement("div");
+        wrap.appendChild(ch.cloneNode(true));
+        render(wrap.firstChild, Object.assign({}, ctx, { [as]: item, $index: i }));
+        while (wrap.firstChild) frag.appendChild(wrap.firstChild);
+      }
+    });
+    node.replaceWith(frag);
+    return;
+  }
+  for (const a of [...node.attributes]) if (a.value.includes("{{")) a.value = interp(a.value, ctx);
+  for (const ch of [...node.childNodes]) render(ch, ctx);
+}
+const vals = new Component().renderVals();
+const host = document.getElementById("design");
+host.appendChild(document.getElementById("tpl").content.cloneNode(true));
+for (const ch of [...host.childNodes]) render(ch, vals);
+</script>
+</body>
+</html>

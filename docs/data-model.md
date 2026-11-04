@@ -112,3 +112,44 @@ Training topics (`<topic>`): `hygiene`, `cross`, `cleaning`, `chilling`, `cookin
 **`config/shared`**: the last published shared setup: `opening, closing, weekly, from, to[], by, at`.
 
 **`config/people`**: `{ "u_…": "<name>" }`, names for the `u_…` ids on older records. Read-only.
+
+## The rota's tables
+
+The staff rota (`src/rota.ts`, at `ROTA_HOST`) keeps its data in its own D1 tables rather than as documents, because it needs per-row rules (staff change their own availability and nobody else's). `src/schema.ts` creates them. People are `users.id` (not `web:<name>`); names come from `users.name`. Days are `YYYY-MM-DD`, times `HH:MM` UK local time, weeks are identified by their Monday.
+
+| Table | Columns |
+|---|---|
+| `rota_shifts` | `id, site (roastery\|cafe\|asg\|factory), day, start, end (after start, same day), break_mins (unpaid, 0–180), job ('opens'\|'closes'\|''), user_id (NULL = open shift), note, updated_at, updated_by` |
+| `rota_weeks` | `week (Monday), published_at (NULL = draft), published_by, changed_at, changes (shift changes since it was last published)` |
+| `rota_sites` | `site, opens_at, closes_at (NULL = not set), min_people (default 1)` |
+| `rota_people` | `user_id, contract_hours (a week; NULL = none), sites (JSON site ids they can get to; [] = any), pattern (JSON {"mon":"any"\|"off"\|{"from","to"}, …}; a missing day = any), updated_at` |
+| `rota_time_off` | `id, user_id, from_day, to_day (inclusive), reason, status ('requested'\|'approved'\|'declined'\|'cancelled'), decided_by, decided_at, created_at` |
+| `rota_requests` | `id, kind ('claim' = take an open shift \| 'cover' = give my shift away), shift_id, from_user, to_user (cover: who's asked; NULL = anyone), taker, message, status ('open'\|'accepted'\|'approved'\|'declined'\|'cancelled'), decided_by, decided_at, created_at` |
+
+The rota also reads three things from the diary's documents: a site is in use only once it has `settings/main`, it's closed on the weekdays in `closedDays` and on any day whose `days/<date>` has `closed` (a closure), and "trained on opening and closing checks" means that site's `staff/<id>` for the person (matched by name) has a date for the topic `diary`.
+
+Backups (`src/backup.ts`) include every rota table under `rota`.
+
+### The rota API (`/api/rota/…`)
+
+Signed out gets 401 `unauthenticated`; writes count towards the per-IP write limit. "Managers" are the `manager` and `admin` roles (`isRotaManager` in `src/access.ts`). Errors are `{code, message}`: `invalid_argument` (400), `permission_denied` (403), `not_found` (404), `conflict` (409, a change the checks refuse).
+
+| Route | Who | What |
+|---|---|---|
+| `GET week?start=` | all | The week: `{week, days, published, changesSincePublish, sites:[{id,name,inUse,open[7],closedWhy[7],opensAt,closesAt,minPeople}], people, shifts, timeOff, problems}`. Staff get names only for `people`, no `timeOff` or `problems`, and no shifts until the week is published. |
+| `POST shifts`, `PATCH shifts/:id`, `DELETE shifts/:id` | manager | Create, change or delete a shift; each returns the week's new `problems`. Shifts on a closed day are refused. |
+| `POST week/copy` | manager | `{from, to, replace?}`: copies a week's shifts, skipping days a site is now closed; refuses (409) to overwrite unless `replace`. |
+| `POST week/publish` | manager | `{week}`: publishes or republishes. |
+| `GET mine?from=&to=` | all | My shifts in published weeks, each with who else is on at that site. |
+| `GET today?site=` | all | Today's (UK) shifts at a site when its week is published; for the diary's Today. |
+| `GET suggest?shift=` | manager | Everyone who could take a shift, best fit first, with flags: clash, time off, over contract, short rest, availability, untrained. |
+| `GET hours?start=` (`&format=csv`) | manager | Paid hours per person and site against contract; CSV columns `name,role,contract_hours,rota_hours,difference,roastery,cafe,asg,factory`. |
+| `GET me`, `PUT me/availability` | all | My pattern, sites, contract, time off and requests; set my own pattern and sites. |
+| `PUT people/:userId` | manager | `{contractHours, sites?, pattern?}` for anyone. |
+| `POST time-off`, `PATCH time-off/:id` | all / manager / owner | Ask for time off (managers can add it for anyone, approved); approve or decline (manager); cancel (owner). |
+| `GET requests`, `POST requests`, `PATCH requests/:id` | all | Pickups (`claim`) and covers (`cover`); `{action: accept\|decline\|cancel\|approve}`. Approving re-checks the taker and refuses a clash or time off with 409. |
+| `GET open` | all | Open shifts in published weeks I could take. |
+| `GET sites`, `PUT sites/:site` | all / manager | Opening and closing time and minimum people per site. |
+| `GET links` | all | `{rota, diary}`: where each app lives, as seen from this address. |
+
+The checks (`computeProblems` in `src/rota.ts`): `open_shift`, `clash`, `time_off` and `closed` are errors; `no_opener`, `no_closer`, `short_cover`, `over_contract` and `rest` (under 11 hours) are warnings; `break` (over 6 hours with under 20 minutes), `availability` and `seven_days` are notes. They're prompts for the manager: publishing is allowed with problems.

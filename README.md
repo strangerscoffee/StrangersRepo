@@ -24,6 +24,16 @@ Each site has its own diary. The site button at the top (or top of the sidebar) 
 
 On phones, Today, Week, Records and More are tabs at the bottom. On iPads in landscape and computers, every section is in a sidebar.
 
+## The rota
+
+The staff rota is at **https://rota.staffstrangerscoffee.com**: who works where, and when, across the four sites. It's part of the same site (same accounts, same database), so people sign in there with their usual username and password. The diary links to it (sidebar and More → **Rota**), and the rota links back (account menu → **Open the diary**).
+
+- **Managers and admins** plan each Monday-to-Sunday week by site or by person: add, change, move, copy and delete shifts, copy last week, and publish. Before publishing, the planner lists problems: open shifts, someone in two places at once, shifts on approved time off or on a day the site is closed, no one opening or closing, too few people on (against each site's minimum), over contract hours, less than 11 hours' rest, long shifts without a break, shifts outside when someone can work. An open shift shows who could take it, best fit first, with the reason for anyone who can't (a clash, time off, over hours, not trained on that site's opening and closing checks). The day view shows a site's day as a timeline with how many people are on each hour. **Requests** approves time off, pickups and covers; **Hours** shows rota hours against contracts per person and per site, with a CSV download; **Rota settings** has each site's opening and closing times, the minimum people on shift, and everyone's contract hours.
+- **Everyone** sees their next shift and the weeks ahead (with **Add to calendar**), the whole published week (**Everyone**), picks up open shifts, asks a named person or anyone to cover a shift, and sets **When I can work** (days and times, sites they can get to, time off). Picking up and covering need a manager's approval before the shift changes hands. Staff only see weeks a manager has published.
+- **Today** in the diary shows who's on shift at the site when the week is published, and the opening and closing cards say who opens and who closes ("You're opening", "Priya closes").
+
+Which days a site opens comes from the diary's Setup, and planned closures from Setup → Closures & holidays; a site with no Setup (the Factory, for now) can't have shifts. **First steps for managers:** in Rota settings, set each site's opening and closing times and minimum cover, and everyone's contract hours.
+
 ## Accounts
 
 Everyone signs in with a **username and password**. Signed out, only the sign-in page is visible. Three roles:

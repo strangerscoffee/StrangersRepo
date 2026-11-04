@@ -1,6 +1,6 @@
 # Strangers Coffee Kitchen Diary
 
-The staff food safety diary (Safer Food, Better Business) for Strangers Coffee's four Norwich sites, at **https://staffstrangerscoffee.com**. This website is the only copy of the diary: it once mirrored a Claude artifact in the owner's account and synced with it hourly, but that sync has been removed and the page is now this project's own.
+The staff food safety diary (Safer Food, Better Business) for Strangers Coffee's four Norwich sites, at **https://staffstrangerscoffee.com**, and the staff rota, from the same Worker, at **https://rota.staffstrangerscoffee.com** (`ROTA_HOST`). This website is the only copy of the diary: it once mirrored a Claude artifact in the owner's account and synced with it hourly, but that sync has been removed and the page is now this project's own.
 
 Read `README.md`, `README-deploy.md`, `docs/data-model.md`, `docs/runtime-api.md` and `docs/design.md` before changing anything. The person running you is the host. Ask them before anything that costs money, changes DNS, or needs a secret.
 
@@ -18,8 +18,9 @@ Read `README.md`, `README-deploy.md`, `docs/data-model.md`, `docs/runtime-api.md
 - One **Cloudflare Worker** (TypeScript, no framework) with static assets from `public/`, `run_worker_first` so every request passes access control. Deployed by Workers Builds on every push to `main`.
 - **D1** database `kitchen-diary`: one generic `docs` table holding every diary document by path (`docs/data-model.md`), plus accounts, sessions and rate limits. The Worker creates its own tables (`src/schema.ts`); D1 and KV have no ids in `wrangler.jsonc` because Cloudflare provisions them.
 - **KV** namespace (binding `FILES`) for allergen PDFs, served at `/_blob/<id>`.
-- The page (`public/index.html`, `public/app.js`) reaches its data only through `window.claude.use("db" | "user" | "assets")`, provided by `public/claude-shim.js` against the Worker's `/api` routes (`docs/runtime-api.md`). Keep that boundary: the page doesn't call `fetch` for data itself.
+- The page (`public/index.html`, `public/app.js`) reaches its data only through `window.claude.use("db" | "user" | "assets" | "rota")`, provided by `public/claude-shim.js` against the Worker's `/api` routes (`docs/runtime-api.md`). Keep that boundary: the page doesn't call `fetch` for data itself.
 - Styles: `public/app.css` (base), `public/theme.css` (Liquid Glass tokens and materials), `public/ui.css` (app layout). See `docs/design.md`.
+- **The rota** is a second app chosen by hostname (`appForHost` in `src/hosts.ts`): on `ROTA_HOST` the Worker serves `public/rota/` at `/`, the sign-in page, `/api/auth/*`, `/api/rota/*` and the shared styles, redirects diary pages to `/` and refuses the diary's data APIs; on any other host the diary is unchanged plus `/api/rota/*` and `/rota/` (for local dev). The rota's data is in its own `rota_*` tables (`docs/data-model.md`), its API in `src/rota.ts`. The rota app calls `/api/rota/*` with fetch, not through the shim; the diary reaches the rota only through `use("rota")` (Today's "On shift today" and who opens and closes).
 
 ## Access
 
@@ -27,6 +28,7 @@ Access control stays in one place: `authorize()` in `src/access.ts`, with sign-i
 - Signed out, only `/signin` and its files are reachable; everything else redirects there, and the API returns 401 `unauthenticated` (the shim then sends the person to sign in).
 - Username + password (8+ characters). Each account also has a display **name**, shown on records. Admins give out temporary passwords; people choose their own at first sign-in. Five wrong passwords lock an account for 10 minutes; each IP is limited to 30 failed attempts per 15 minutes.
 - Sessions are `HttpOnly; Secure; SameSite=Lax` cookies, HMAC-signed with a key the Worker generates and keeps in D1, valid 30 days. A new password, renaming, switching off or "sign out everywhere" ends all of that person's sessions.
+- On the rota, managers and admins plan, publish and approve (`isRotaManager` in `src/access.ts`); staff see published weeks, their own shifts, open shifts and requests, and change only their own availability and time off.
 - Roles: **staff**, **manager** (also changes EHO, HACCP & risk, suppliers, contacts, onboarding, everyone's staff training, and uses Setup; everyone fills in the 4-weekly review in Records, and staff fill in and sign their own Staff training record there) and **admin** (also `/admin`). The Worker refuses staff writes to manager data with `permission_denied` (never `invalid_argument`, which the page treats as read-only for everything). Staff can open the Management sections read-only (`mro()` in `public/app.js`); only Setup (the Admin group) is hidden from them. The one exception to manager-only collections is `staff/<id>`: a staff member may create or change the record in their own name (never rename or delete one), checked by `requireOwnStaffRecord()` in `src/access.ts`.
 - The first account is created on the sign-in page with the **setup code**: the `SETUP_CODE` secret (`SYNC_TOKEN`, its old name, still works). The same code lets an admin who forgot their password set a new one.
 - Records use `web:<name>` as the user id, so a person's history follows their name. Older records from the Claude version use `u_…` ids, named via the read-only `config/people` document.

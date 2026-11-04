@@ -1,6 +1,6 @@
 # Deploying and running the Kitchen Diary
 
-The site is one Cloudflare Worker serving the diary's pages and the API they talk to. It runs at **https://staffstrangerscoffee.com**, and **every push to `main` redeploys it automatically** (Cloudflare Workers Builds).
+The site is one Cloudflare Worker serving the diary's pages and the API they talk to. It runs at **https://staffstrangerscoffee.com**, and the staff rota, from the same Worker, at **https://rota.staffstrangerscoffee.com**. **Every push to `main` redeploys it automatically** (Cloudflare Workers Builds).
 
 | Path | What it is |
 |---|---|
@@ -11,11 +11,13 @@ The site is one Cloudflare Worker serving the diary's pages and the API they tal
 | `public/admin.html`, `public/admin.js` | The Admin page: people and roles. |
 | `public/icon-*.png`, `public/manifest.webmanifest` | Home Screen icon and app settings. |
 | `public/pdf.js` | Makes PDFs on the device (allergen matrix, EHO inspection records): Helvetica text, tables and the logo, no libraries. |
-| `public/pinpad.js` | The 4-digit PIN pad for quick switching, used by the diary and the sign-in page. |
-| `src/` | The Worker: `index.ts` (routing, security headers and the nightly job), `access.ts` (who can reach what: access control, roles and write rate limiting, in one place), `auth.ts` (sign-in, sessions and quick switching), `admin.ts` (admin API), `backup.ts` (nightly backups), `docs.ts` (the db API), `assets.ts` (PDFs), `paths.ts` (allowed document paths), `schema.ts` (database tables, created automatically). |
+| `public/pinpad.js` | The 4-digit PIN pad for quick switching, used by the diary, the rota and the sign-in page. |
+| `public/rota/` | The staff rota app: `index.html`, `rota.js` (talks to `/api/rota/*` with fetch, like `admin.js`) and `rota.css`, on top of the diary's styles. Served at `/` on the rota's address and at `/rota/` everywhere (for local development). |
+| `src/` | The Worker: `index.ts` (routing, security headers and the nightly job), `access.ts` (who can reach what: access control, roles and write rate limiting, in one place), `auth.ts` (sign-in, sessions and quick switching), `admin.ts` (admin API), `backup.ts` (nightly backups), `docs.ts` (the db API), `assets.ts` (PDFs), `paths.ts` (allowed document paths), `schema.ts` (database tables, created automatically), `rota.ts` (the rota API: shifts, publishing, checks, suggestions, requests, hours), `hosts.ts` (which app each hostname serves). |
 | `.github/workflows/test.yml`, `.github/annotate.mjs` | Runs every test on GitHub for each pull request and each merge to `main`; posts a failing test's message as an annotation. |
 | `.github/workflows/automerge.yml` | Squash-merges each pull request into `main` by itself once Tests passes. |
-| `test/` | `api.test.mjs` and `migration.test.mjs` (the API, against `wrangler dev`) and `e2e.test.mjs` (the site in a browser, phone-sized). |
+| `test/` | `api.test.mjs`, `migration.test.mjs` and `rota.test.mjs` (the API and the rota's hostname, against `wrangler dev`), `e2e.test.mjs` (the diary in a browser, phone-sized) and `rota.e2e.test.mjs` (the rota in a browser, phone and iPad). |
+| `docs/rota-designs/` | The rota's screen designs (PNG and HTML), for reference. |
 
 Data lives in a D1 database (`kitchen-diary`) and allergen PDFs in a KV namespace. Cloudflare creates both on the first deploy and the Worker creates its own tables, so there are no ids to copy and no migrations to run. The only secret is the **setup code**.
 
@@ -39,13 +41,19 @@ Edit the files in `public/` (or `src/` for the API), run the tests, and push to 
 
 **Auto-merge.** Every pull request into `main` is squash-merged by itself as soon as Tests passes (`.github/workflows/automerge.yml`), then Cloudflare deploys it, so there's nothing to press. If Tests fails, the pull request stays open with a red cross until it's fixed. To hold a change back, open it as a **draft** pull request (or "Convert to draft" on an open one): drafts aren't merged until they're marked "Ready for review". Auto-merge needs **Settings → General → Allow auto-merge** switched on (it is), and squash merging allowed.
 
+## The rota's address
+
+The rota is served by the same Worker on its own hostname, set in `wrangler.jsonc`: the var `ROTA_HOST` (`rota.staffstrangerscoffee.com`) and a third custom-domain route for it, after the diary's two. On deploy, Cloudflare creates the `rota` DNS record and its certificate in the `staffstrangerscoffee.com` zone (it has to be in the same Cloudflare account, as it is for the diary; if a `rota` record already exists, delete it first, as for the diary's own addresses). Nothing about the diary's address changes.
+
+On `ROTA_HOST`, `/` is the rota app; the sign-in page, `/api/auth/*`, `/api/rota/*` and the shared styles work as on the diary; diary pages redirect to `/` and the diary's data API (`/api/db/*`, `/api/assets*`, `/_blob/*`) returns 404. Sessions are per address, so people sign in on the rota separately (with the same username and password). Locally there's no second hostname: the rota is at `http://localhost:8787/rota/` (`wrangler dev` sends every request as the first route's hostname, `staffstrangerscoffee.com`, which is why the tests start a second server with `--var ROTA_HOST:staffstrangerscoffee.com` to test the rota's own address).
+
 ## Change the setup code
 
 In the Worker: **Settings → Variables and Secrets**, edit `SETUP_CODE`. It takes effect immediately and only affects creating the first admin and the "Admin? Forgotten password" recovery. Existing accounts and sessions are unaffected. (`SYNC_TOKEN`, the secret's name before the Claude sync was removed, is still accepted if `SETUP_CODE` isn't set.)
 
 ## Back up
 
-The website is the only copy of the diary. **It backs itself up every night** (03:17 UTC, the cron in `wrangler.jsonc`) into the KV namespace, keeping the last 30. On the Admin page, **Back up now** makes one straight away and **Download** saves any of them: a JSON file with every record (by path) and the list of accounts (no passwords). Keep a download somewhere safe now and then; those copies survive even if the Cloudflare account doesn't.
+The website is the only copy of the diary. **It backs itself up every night** (03:17 UTC, the cron in `wrangler.jsonc`) into the KV namespace, keeping the last 30. On the Admin page, **Back up now** makes one straight away and **Download** saves any of them: a JSON file with every record (by path), the list of accounts (no passwords or PINs) and the rota's tables (`rota`: shifts, weeks, site settings, contracts and availability, time off and requests). Keep a download somewhere safe now and then; those copies survive even if the Cloudflare account doesn't.
 
 To restore, the JSON's `docs` are documents to write back at their `path`s (ask Claude Code to do it with the db API or `wrangler d1 execute`). For a full copy of the database from a terminal:
 
@@ -63,7 +71,7 @@ Needs Node.js 20 or later.
 npm install
 cp .dev.vars.example .dev.vars     # a local-only setup code
 npm run dev                        # http://localhost:8787
-npm test                           # typecheck + API tests
+npm test                           # typecheck + API and rota tests (loads src/hosts.ts directly, so Node 22.6 or later)
 npm run test:e2e                   # browser test; needs Playwright: npm i -D playwright && npx playwright install chromium
 ```
 

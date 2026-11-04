@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=390">
+<title>Hours for payroll · Strangers rota design</title>
+<style>
+body{margin:0}
+.ph{width:390px;height:844px;box-sizing:border-box;position:relative;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,"Segoe UI",Roboto,sans-serif;color:#0b1220;background:radial-gradient(42% 38% at 8% 4%,rgba(0,122,255,.18),transparent 70%),radial-gradient(36% 32% at 96% 14%,rgba(48,209,178,.14),transparent 70%),#edf1f6;padding:14px 16px 24px;display:flex;flex-direction:column;gap:11px}
+.back{color:#0062cc;font-weight:600;font-size:16px;text-decoration:none}
+h1{margin:0;font-size:32px;letter-spacing:-.03em;line-height:1.05}
+.sub{margin:2px 0 0;color:#545f70;font-size:15px}
+.stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.stat{border-radius:16px;padding:9px 11px;background:rgba(255,255,255,.75);border:1px solid #fff;display:grid;gap:1px}
+.stat b{font-size:19px;font-variant-numeric:tabular-nums}
+.stat span{font-size:11.5px;color:#545f70;font-weight:600}
+.card{background:rgba(255,255,255,.75);border:1px solid #fff;border-radius:22px;box-shadow:0 10px 30px -8px rgba(16,24,40,.12);overflow:hidden}
+.r{display:grid;grid-template-columns:minmax(0,1fr) 56px 56px 58px;align-items:center;min-height:38px;padding:3px 14px;font-size:14px;font-variant-numeric:tabular-nums}
+.r+.r{border-top:1px solid rgba(60,72,92,.10)}
+.r.h{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#545f70;min-height:30px}
+.r span:not(:first-child){text-align:right}
+.nm{font-weight:600}
+.plus{color:#a3201a;font-weight:700}
+.minus{color:#545f70}
+.btns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.btn{display:inline-flex;align-items:center;justify-content:center;min-height:46px;padding:0 14px;border-radius:99px;border:0;font:inherit;font-weight:650;font-size:15px;background:rgba(0,98,204,.10);color:#0062cc}
+.btn.pri{background:#0062cc;color:#fff}
+.s{font-size:12.5px;color:#545f70;margin:0 4px}
+
+body{background:#d9dee6}
+</style>
+</head>
+<body>
+<!-- Design reference for the Strangers Coffee rota (390×844). Example data only. -->
+<div id="design"></div>
+<template id="tpl">
+
+<div class="ph">
+  <div><a class="back" href="#">‹ Rota</a><h1>Hours</h1><p class="sub">Week of 9 November · all sites</p></div>
+  <div class="stats"><div class="stat"><b>73.5</b><span>Roastery</span></div><div class="stat"><b>108.5</b><span>Cafe</span></div><div class="stat"><b>88</b><span>ASG</span></div></div>
+
+  <div class="card" role="table" aria-label="Hours by person">
+    <div class="r h" role="row"><span role="columnheader">Person</span><span role="columnheader">Rota</span><span role="columnheader">Contract</span><span role="columnheader">Diff</span></div>
+    <div class="r" role="row"><span class="nm" role="cell">Alex Brown</span><span role="cell">40</span><span role="cell">40</span><span role="cell">0</span></div>
+    <div class="r" role="row"><span class="nm" role="cell">Ben Hughes</span><span role="cell">27</span><span role="cell">24</span><span class="plus" role="cell">+3</span></div>
+    <div class="r" role="row"><span class="nm" role="cell">Ellie Ward</span><span role="cell">16</span><span role="cell">16</span><span role="cell">0</span></div>
+    <div class="r" role="row"><span class="nm" role="cell">George Farrow-Green</span><span role="cell">24</span><span role="cell">40</span><span class="minus" role="cell">−16</span></div>
+    <div class="r" role="row"><span class="nm" role="cell">Kai Morgan</span><span role="cell">23.5</span><span role="cell">30</span><span class="minus" role="cell">−6.5</span></div>
+    <div class="r" role="row"><span class="nm" role="cell">Lena Novak</span><span role="cell">12</span><span role="cell">20</span><span class="minus" role="cell">−8</span></div>
+    <div class="r" role="row"><span class="nm" role="cell">Mia Chen</span><span role="cell">24</span><span role="cell">30</span><span class="minus" role="cell">−6</span></div>
+    <div class="r" role="row"><span class="nm" role="cell">Priya Shah</span><span role="cell">30.5</span><span role="cell">32</span><span class="minus" role="cell">−1.5</span></div>
+    <div class="r" role="row"><span class="nm" role="cell">Sam Patel</span><span role="cell">39.5</span><span role="cell">40</span><span class="minus" role="cell">−0.5</span></div>
+    <div class="r" role="row"><span class="nm" role="cell">Tom Reid</span><span role="cell">33.5</span><span role="cell">40</span><span class="minus" role="cell">−6.5</span></div>
+    <div class="r" role="row" style="font-weight:700"><span role="cell">Total</span><span role="cell">270</span><span role="cell">312</span><span role="cell"></span></div>
+  </div>
+  <p class="s">Hours come from the published rota, updated by swaps and covers. Unpaid breaks aren't taken off yet.</p>
+  <div class="btns"><button class="btn" type="button">Download CSV</button><button class="btn pri" type="button">Approve week</button></div>
+</div>
+</template>
+<script>class DCLogic { constructor() { this.props = {}; this.state = {}; } setState() {} }
+
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+
+
+function get(ctx, path) { return path.trim().split(".").reduce((o, k) => (o == null ? undefined : o[k]), ctx); }
+function interp(s, ctx) { return s.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_, p) => { const v = get(ctx, p); return v == null ? "" : String(v); }); }
+function render(node, ctx) {
+  if (node.nodeType === 3) { if (node.nodeValue.includes("{{")) node.nodeValue = interp(node.nodeValue, ctx); return; }
+  if (node.nodeType !== 1) return;
+  if (node.tagName === "SC-FOR") {
+    const list = get(ctx, node.getAttribute("list").replace(/[{}\s]/g, "")) || [];
+    const as = node.getAttribute("as");
+    const frag = document.createDocumentFragment();
+    list.forEach((item, i) => {
+      for (const ch of node.childNodes) {
+        const wrap = document.createElement("div");
+        wrap.appendChild(ch.cloneNode(true));
+        render(wrap.firstChild, Object.assign({}, ctx, { [as]: item, $index: i }));
+        while (wrap.firstChild) frag.appendChild(wrap.firstChild);
+      }
+    });
+    node.replaceWith(frag);
+    return;
+  }
+  for (const a of [...node.attributes]) if (a.value.includes("{{")) a.value = interp(a.value, ctx);
+  for (const ch of [...node.childNodes]) render(ch, ctx);
+}
+const vals = new Component().renderVals();
+const host = document.getElementById("design");
+host.appendChild(document.getElementById("tpl").content.cloneNode(true));
+for (const ch of [...host.childNodes]) render(ch, vals);
+</script>
+</body>
+</html>

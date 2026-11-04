@@ -40,25 +40,8 @@ export const recordId = (u: User) => "web:" + u.name;
 // Plans the week, publishes it and approves pickups, covers and time off.
 export const isRotaManager = (u: User) => u.role === "manager" || u.role === "admin";
 
-/** Which app a hostname serves: the rota on ROTA_HOST, the diary everywhere else. */
-export function appForHost(hostname: string, rotaHost: string | undefined): "rota" | "diary" {
-  return rotaHost && hostname.toLowerCase() === rotaHost.toLowerCase() ? "rota" : "diary";
-}
-
-/** On the rota's hostname, files it may serve besides its own (/rota/…): the diary's shared styles and icons. */
-export function isRotaSharedFile(path: string): boolean {
-  return path === "/app.css" || path === "/ui.css" || path === "/theme.css" || path === "/pinpad.js" || path === "/robots.txt" ||
-    path === "/logo.svg" || path === "/mark.svg" || /^\/icon-\d+\.png$/.test(path) || path.startsWith("/rota/");
-}
-
-/** Links between the two apps, as seen from this request. Without a ROTA_HOST (local dev, tests) the rota is at /rota/. */
-export function appLinks(url: URL, rotaHost: string | undefined): { rota: string; diary: string } {
-  if (!rotaHost) return { rota: "/rota/", diary: "/" };
-  const onRota = appForHost(url.hostname, rotaHost) === "rota";
-  // The diary is the rota host without its first label (rota.staffstrangerscoffee.com -> staffstrangerscoffee.com).
-  const diaryHost = rotaHost.includes(".") ? rotaHost.slice(rotaHost.indexOf(".") + 1) : url.hostname;
-  return { rota: onRota ? "/" : `https://${rotaHost}/`, diary: onRota ? `https://${diaryHost}/` : "/" };
-}
+// Which app each hostname serves, and links between them: src/hosts.ts (no imports, so tests can load it directly).
+export { appForHost, appLinks, isRotaSharedFile } from "./hosts";
 
 /* ---------- roles ---------- */
 
