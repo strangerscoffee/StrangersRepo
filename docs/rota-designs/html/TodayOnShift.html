@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=390">
+<title>Today, who's on · Strangers rota design</title>
+<style>
+body{margin:0}
+.ph{width:390px;height:844px;box-sizing:border-box;position:relative;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,"Segoe UI",Roboto,sans-serif;color:#0b1220;background:radial-gradient(42% 38% at 8% 4%,rgba(0,122,255,.18),transparent 70%),radial-gradient(36% 32% at 96% 14%,rgba(48,209,178,.14),transparent 70%),radial-gradient(48% 40% at 78% 96%,rgba(255,159,10,.12),transparent 70%),#edf1f6;padding:14px 16px 120px;display:flex;flex-direction:column;gap:12px}
+.top{display:flex;justify-content:space-between;align-items:center}
+.site{display:inline-flex;align-items:center;gap:8px;height:44px;padding:0 14px;border-radius:99px;background:rgba(255,255,255,.75);border:1px solid rgba(255,255,255,.9);font:inherit;font-weight:700;font-size:17px;color:#0b1220}
+.avb{width:44px;height:44px;border-radius:50%;display:grid;place-items:center;background:rgba(0,98,204,.10);color:#0062cc;font:inherit;font-weight:700;font-size:15px;border:0}
+h1{margin:0;font-size:34px;letter-spacing:-.03em;line-height:1.05}
+.sub{margin:2px 0 0;color:#545f70;font-size:15px}
+.card{background:rgba(255,255,255,.75);border:1px solid #fff;border-radius:22px;box-shadow:0 10px 30px -8px rgba(16,24,40,.12);overflow:hidden}
+.ch{display:flex;align-items:center;justify-content:space-between;padding:12px 14px 4px}
+.ch b{font-size:16px}
+.link{color:#0062cc;font-weight:600;font-size:14px;text-decoration:none}
+.p{display:flex;align-items:center;gap:10px;min-height:52px;padding:6px 14px}
+.p+.p{border-top:1px solid rgba(60,72,92,.12)}
+.av{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;background:rgba(0,98,204,.10);color:#0062cc;font-weight:700;font-size:12.5px;flex:none}
+.t{flex:1;display:grid;gap:1px;min-width:0}
+.t b{font-size:15.5px;font-weight:600}
+.s{font-size:13px;color:#545f70}
+.role{font-size:12px;font-weight:700;padding:3px 9px;border-radius:99px;background:rgba(0,98,204,.10);color:#0062cc}
+.role.c{background:rgba(118,128,148,.14);color:#3d4756}
+.sec{display:flex;align-items:center;gap:12px;padding:12px 14px}
+.ring{width:30px;height:30px;border-radius:50%;flex:none;display:grid;place-items:center;font-size:12px;font-weight:700;color:#0062cc;border:3.5px solid rgba(0,98,204,.25);border-top-color:#0062cc;box-sizing:border-box}
+.new{display:inline-block;font-size:10.5px;font-weight:800;letter-spacing:.06em;color:#fff;background:#8944ab;padding:2px 7px;border-radius:6px}
+.tabbar{position:absolute;left:14px;right:14px;bottom:18px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));padding:6px;border-radius:32px;background:rgba(255,255,255,.88);border:1px solid #fff;box-shadow:0 18px 40px -10px rgba(16,24,40,.22)}
+.tab{display:grid;justify-items:center;gap:2px;padding:7px 0;border-radius:26px;font-size:11.5px;font-weight:650;color:#545f70;text-decoration:none}
+.tab.on{background:rgba(0,98,204,.10);color:#0062cc}
+svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+
+body{background:#d9dee6}
+</style>
+</head>
+<body>
+<!-- Design reference for the Strangers Coffee rota (390×844). Example data only. -->
+<div id="design"></div>
+<template id="tpl">
+
+<div class="ph">
+  <div class="top"><button class="site" type="button" aria-label="Site: Cafe. Change site"><span style="width:9px;height:9px;border-radius:50%;background:#d08a00"></span>Cafe</button><button class="avb" type="button" aria-label="Account">AB</button></div>
+  <div><h1>Today</h1><p class="sub">Monday 9 November</p></div>
+
+  <div class="card">
+    <div class="ch"><b>On shift today <span class="new">NEW</span></b><a class="link" href="#">Rota</a></div>
+    <div class="p"><span class="av">AB</span><span class="t"><b>You</b><span class="s">06:45–14:45 · opening checks</span></span><span class="role">Opens</span></div>
+    <div class="p"><span class="av">PS</span><span class="t"><b>Priya</b><span class="s">From 11:00 · closing checks and sign-off</span></span><span class="role c">Closes</span></div>
+  </div>
+
+  <div class="card"><div class="sec"><span class="ring">2</span><span class="t"><b>Opening checks</b><span class="s">You're opening · 2 of 5 ticked</span></span></div></div>
+  <div class="card"><div class="sec"><span class="ring" style="border-color:rgba(118,128,148,.25)">0</span><span class="t"><b>Closing checks</b><span class="s">Priya closes · after 18:30</span></span></div></div>
+  <div class="card"><div class="sec"><span class="ring" style="border-color:rgba(118,128,148,.25)"> </span><span class="t"><b>Sign off</b><span class="s">Priya signs off at the end of the day. Reminder at 19:00 if not.</span></span></div></div>
+
+  <nav class="tabbar" aria-label="Sections">
+    <a class="tab on" href="#" aria-current="page"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="3"/><path d="M4 10h16M9 3v4M15 3v4M9 14.5l2 2 4-4"/></svg>Today</a>
+    <a class="tab" href="#"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="3"/><path d="M4 10h16M9 3v4M15 3v4"/></svg>Week</a>
+    <a class="tab" href="#"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.5 2.7-6 6-6s6 2.5 6 6M16 11a3 3 0 100-6M21 20c0-3-1.8-5.2-4.5-5.8"/></svg>Rota</a>
+    <a class="tab" href="#"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2.5"/><path d="M9 8h6M9 12h6M9 16h4"/></svg>Records</a>
+  </nav>
+</div>
+</template>
+<script>class DCLogic { constructor() { this.props = {}; this.state = {}; } setState() {} }
+
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+
+
+function get(ctx, path) { return path.trim().split(".").reduce((o, k) => (o == null ? undefined : o[k]), ctx); }
+function interp(s, ctx) { return s.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_, p) => { const v = get(ctx, p); return v == null ? "" : String(v); }); }
+function render(node, ctx) {
+  if (node.nodeType === 3) { if (node.nodeValue.includes("{{")) node.nodeValue = interp(node.nodeValue, ctx); return; }
+  if (node.nodeType !== 1) return;
+  if (node.tagName === "SC-FOR") {
+    const list = get(ctx, node.getAttribute("list").replace(/[{}\s]/g, "")) || [];
+    const as = node.getAttribute("as");
+    const frag = document.createDocumentFragment();
+    list.forEach((item, i) => {
+      for (const ch of node.childNodes) {
+        const wrap = document.createElement("div");
+        wrap.appendChild(ch.cloneNode(true));
+        render(wrap.firstChild, Object.assign({}, ctx, { [as]: item, $index: i }));
+        while (wrap.firstChild) frag.appendChild(wrap.firstChild);
+      }
+    });
+    node.replaceWith(frag);
+    return;
+  }
+  for (const a of [...node.attributes]) if (a.value.includes("{{")) a.value = interp(a.value, ctx);
+  for (const ch of [...node.childNodes]) render(ch, ctx);
+}
+const vals = new Component().renderVals();
+const host = document.getElementById("design");
+host.appendChild(document.getElementById("tpl").content.cloneNode(true));
+for (const ch of [...host.childNodes]) render(ch, vals);
+</script>
+</body>
+</html>

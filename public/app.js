@@ -384,8 +384,42 @@ function renderDay(){
   updFab();
 }
 const stepsOf=(st,temps)=>[["Temps",temps?st.temps==="y":true],["Opening",st.open==="y"],["Closing",st.close==="y"],["Sign off",!!st.signed]];
+/* ---------- the rota (rota.staffstrangerscoffee.com): who's on shift today ----------
+ * When the site's week is published on the rota, Today lists today's shifts and says who opens and who closes.
+ * Nothing changes on Today when there's no published rota. Data from use("rota") in claude-shim.js. */
+S.rota=null;S.rotaUrl="/rota/";
+async function loadRota(){
+  const svc=await window.claude?.use?.("rota");if(!svc)return;
+  const site=S.site,r=await svc.today(site).catch(()=>null);
+  if(site!==S.site)return;
+  if(r){S.rota=r;if(r.rotaUrl)S.rotaUrl=r.rotaUrl}
+  renderOnShift();if(S.tab==="day")renderDay();
+}
+const rotaToday=()=>S.rota&&S.rota.site===S.site&&S.rota.day===today()&&S.date===today()&&S.rota.published?S.rota:null;
+// "You're opening", "Priya closes", "Alex and Priya open".
+function rotaWho(job){
+  const r=rotaToday();if(!r)return "";
+  const list=r.shifts.filter(x=>x.job===job&&!x.open);if(!list.length)return "";
+  if(list.some(x=>x.me)&&list.length===1)return job==="opens"?"You're opening":"You're closing";
+  const names=list.map(x=>x.me?"you":firstName(x.name));
+  return names.length===1?`${names[0]} ${job==="opens"?"opens":"closes"}`:`${names.slice(0,-1).join(", ")} and ${names[names.length-1]} ${job==="opens"?"open":"close"}`;
+}
+function renderOnShift(){
+  const box=$("#onShift"),r=rotaToday();
+  box.hidden=!r||!r.shifts.length;if(box.hidden)return;
+  const jobText={opens:"opening checks",closes:"closing checks and sign-off"};
+  box.replaceChildren(el("div",{class:"row spread"},el("h3",{id:"onShiftTitle",text:"On shift today"}),el("a",{class:"linkbtn",href:S.rotaUrl},"Rota")),
+    el("div",{class:"list"},...[...r.shifts].sort((a,b)=>a.start.localeCompare(b.start)).map(x=>el("div",{class:"lrow"},
+      el("span",{class:"avatar sm",text:x.open?"?":initials(x.name),"aria-hidden":"true"}),
+      el("span",{class:"t"},el("b",{text:x.open?"Open shift":x.me?"You":x.name}),el("span",{class:"s",text:[`${x.start}–${x.end}`,jobText[x.job]].filter(Boolean).join(" · ")})),
+      x.job?el("span",{class:"pill "+(x.job==="opens"?"acc":""),text:x.job==="opens"?"Opens":"Closes"}):null))));
+}
+setInterval(()=>{if(!document.hidden)loadRota()},5*60*1000);
+document.addEventListener("visibilitychange",()=>{if(!document.hidden)loadRota()});
+
 function renderDayInner(){
   const d=S.days[S.date]||{},s=S.cfg,st=dayStatus(d,s,S.date),R=ro(),isToday=S.date===today();
+  renderOnShift();
   $("#dayDate").value=S.date;$("#dayDate").max=today();$("#dayNext").disabled=S.date>=today();
   $("#todayBtn").hidden=isToday;
   const ids=[];
@@ -456,8 +490,9 @@ function renderDayInner(){
     const n=list.filter(c=>items[c.id]).length,all=list.length>0&&n===list.length;
     checkFoot($(foot),list,items,part,()=>{const set={},back={},date=S.date;for(const c of list){set[c.id]=true;back[c.id]=!!items[c.id]}
       patchDay(date,{[key]:{items:set,...stamp(),allDone:stamp()}});toast(`All ${key} checks done`,["Undo",()=>patchDay(date,{[key]:{items:back,allDone:null}})])});
+    const who=rotaWho(key==="opening"?"opens":"closes");
     secCard($(card),key,all,all?badgeEl("done"):ringEl(n,list.length),title,
-      all?`${n} of ${n}${part.allDone||part.at?` · ${nameOf((part.allDone||part).by)}, ${time((part.allDone||part).at)}`:""}`:n?`${n} of ${list.length} ticked`:key==="closing"?`After close · ${list.length} checks`:`${list.length} checks`);
+      (who?who+" · ":"")+(all?`${n} of ${n}${part.allDone||part.at?` · ${nameOf((part.allDone||part).by)}, ${time((part.allDone||part).at)}`:""}`:n?`${n} of ${list.length} ticked`:key==="closing"?`After close · ${list.length} checks`:`${list.length} checks`));
   }
   // problems
   const pb=$("#problems"),pt=(d.problems&&d.problems.text)||"";if(document.activeElement!==pb)pb.value=pt;
@@ -2566,6 +2601,8 @@ function renderNav(){
     for(const n of items){const b=navBadge(n.id);
       sn.append(el("a",{href:"#"+n.id,class:S.tab===n.id?"on":"","aria-current":S.tab===n.id?"page":null,onclick:e=>{e.preventDefault();show(n.id)}},svgi(ICON[n.ic]),el("span",{text:n.t}),b?el("span",{class:"n pill "+b.cls,text:b.text.split(" ")[0]}):null));}
   }
+  // The rota is its own app on its own address; it opens in the same tab.
+  sn.append(el("div",{class:"h",text:"Rota"}),el("a",{href:S.rotaUrl},svgi(ICON.staff),el("span",{text:"Rota"})));
   const fade=()=>sn.classList.toggle("more",sn.scrollHeight-sn.scrollTop-sn.clientHeight>4);
   sn.onscroll=fade;requestAnimationFrame(fade);
   // tab bar
@@ -2586,6 +2623,8 @@ function renderNav(){
     if(rest.length)mh.append(el("div",{class:"label",text:"Management"}),el("div",{class:"list glass"},...rest.map(n=>navRow(n,()=>show(n.id)))));}
   const ad=vis.filter(n=>n.grp==="admin");
   if(ad.length)mh.append(el("div",{class:"label",text:"Admin"}),el("div",{class:"list glass"},...ad.map(n=>navRow(n,()=>show(n.id)))));
+  mh.append(el("div",{class:"label",text:"Rota"}),el("div",{class:"list glass"},el("a",{class:"lrow",href:S.rotaUrl},el("span",{class:"tile teal"},svgi(ICON.staff)),
+    el("span",{class:"t"},el("b",{text:"Rota"}),el("span",{class:"s",text:"Your shifts, open shifts, cover and time off"})),el("span",{class:"chev"},svgi(ICON.chevR)))));
   mh.append(el("div",{class:"label",text:"Account"}),el("div",{class:"list glass"},...accountItems().map(([t,ic,tile,fn,danger])=>
     el("button",{class:"lrow"+(danger?" danger":""),type:"button",onclick:fn},el("span",{class:"tile "+tile},svgi(ICON[ic])),el("span",{class:"t"},el("b",{text:t}),danger&&S.myName?el("span",{class:"s",text:"Signed in as "+S.myName}):null)))));
 }
@@ -2950,6 +2989,7 @@ function switchSite(id){
   for(const x of["#pMsg","#algConfirm","#tMsg","#revMsg","#pubMsg","#inMsg"])$(x).textContent="";
   fillProve();applyTabs();renderAll();
   if(S.db)subscribeSite();
+  S.rota=null;loadRota();
   window.scrollTo({top:0});
 }
 function subscribeSite(){
@@ -3041,4 +3081,6 @@ applyTabs();renderAll();
   subscribeSummaries();
   subscribeSite();
   renderAll();
+  loadRota();
+  window.claude.use("rota").then(r=>r&&r.links()).then(l=>{if(l&&l.rota){S.rotaUrl=l.rota;renderNav()}});
 })();

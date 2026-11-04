@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1180">
+<title>Rota, week by person · Strangers rota design</title>
+<style>
+body{margin:0}
+.pad{width:1180px;height:820px;box-sizing:border-box;display:flex;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,"Segoe UI",Roboto,sans-serif;color:#0b1220;background:radial-gradient(42% 38% at 8% 4%,rgba(0,122,255,.18),transparent 70%),radial-gradient(36% 32% at 96% 14%,rgba(48,209,178,.14),transparent 70%),radial-gradient(48% 40% at 78% 96%,rgba(255,159,10,.12),transparent 70%),#edf1f6}
+.side{width:236px;flex:none;box-sizing:border-box;padding:16px 12px;display:flex;flex-direction:column;gap:2px;border-right:1px solid rgba(60,72,92,.15);background:rgba(255,255,255,.55)}
+.sitebtn{display:flex;align-items:center;gap:8px;height:44px;padding:0 14px;border-radius:99px;background:rgba(255,255,255,.8);border:1px solid #fff;font:inherit;font-weight:700;font-size:16px;margin-bottom:10px;color:#0b1220}
+.nav{display:flex;align-items:center;gap:12px;min-height:38px;padding:0 12px;border-radius:12px;font-weight:600;font-size:15px;color:#0b1220;text-decoration:none}
+.nav svg{color:#0062cc}
+.nav.on{background:#0062cc;color:#fff}.nav.on svg{color:#fff}
+.main{flex:1;min-width:0;padding:20px 24px;display:flex;flex-direction:column;gap:12px}
+.head{display:flex;align-items:flex-end;gap:10px 12px;flex-wrap:wrap}
+h1{margin:0;font-size:34px;letter-spacing:-.03em;line-height:1.05}
+.sub{margin:2px 0 0;color:#545f70;font-size:15px}
+.tools{display:flex;align-items:center;gap:8px;margin-left:auto}
+.seg{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:2px;padding:3px;border-radius:12px;background:rgba(118,128,148,.14);width:200px}
+.seg a{display:grid;place-items:center;height:34px;border-radius:9px;font-weight:600;font-size:14px;color:#0b1220;text-decoration:none}
+.seg a.on{background:#fff;box-shadow:0 1px 3px rgba(16,24,40,.15)}
+.btn{display:inline-flex;align-items:center;gap:6px;min-height:40px;padding:0 16px;border-radius:99px;border:0;font:inherit;font-weight:650;font-size:14.5px;background:rgba(0,98,204,.10);color:#0062cc;white-space:nowrap}
+.btn.pri{background:#0062cc;color:#fff}
+.grid{background:rgba(255,255,255,.66);border:1px solid #fff;border-radius:22px;box-shadow:0 10px 30px -8px rgba(16,24,40,.12);overflow:hidden}
+.row{display:grid;grid-template-columns:150px 92px repeat(7,minmax(0,1fr));border-top:1px solid rgba(60,72,92,.13);align-items:stretch}
+.row.hd{border-top:0;background:rgba(255,255,255,.5)}
+.who{display:flex;align-items:center;gap:8px;padding:6px 10px;min-width:0}
+.av{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;background:rgba(0,98,204,.10);color:#0062cc;font-weight:700;font-size:11.5px;flex:none}
+.who b{font-size:14px;display:block}
+.who span{font-size:11.5px;color:#545f70}
+.hrs{padding:6px 8px;display:flex;flex-direction:column;justify-content:center;gap:4px;border-left:1px solid rgba(60,72,92,.08)}
+.hrs b{font-size:13px;font-variant-numeric:tabular-nums}
+.bar{height:5px;border-radius:99px;background:rgba(118,128,148,.18);overflow:hidden}
+.bar i{display:block;height:100%;border-radius:99px;background:#0062cc}
+.hrs.over b{color:#a3201a}.hrs.over .bar i{background:#c0261b}
+.hrs.under b{color:#545f70}
+.cell{padding:4px;border-left:1px solid rgba(60,72,92,.08);display:flex;min-width:0}
+.dh{padding:8px;border-left:1px solid rgba(60,72,92,.08);font-size:13.5px;font-weight:700}
+.lab{padding:8px 10px;font-size:12px;color:#545f70;font-weight:650}
+.sh{flex:1;border-radius:9px;padding:4px 7px;display:flex;flex-direction:column;justify-content:center;min-width:0}
+.sh .tm{font-size:11.5px;font-weight:700;font-variant-numeric:tabular-nums}
+.sh .st{font-size:11.5px;font-weight:600}
+.sh.R{background:rgba(0,98,204,.12);color:#00468c}
+.sh.C{background:rgba(52,199,89,.18);color:#145c2f}
+.sh.A{background:rgba(255,159,10,.24);color:#6b3d00}
+.sh.clash{outline:2px solid #b36b00;outline-offset:-2px}
+.sh.off{background:none;color:#a3abb8;font-size:12px;align-items:flex-start}
+.sh.hol{background:repeating-linear-gradient(135deg,rgba(118,128,148,.14) 0 5px,transparent 5px 10px);color:#545f70;font-size:12px;font-weight:600}
+.sh.no{background:rgba(118,128,148,.1);color:#545f70;font-size:12px;font-weight:600}
+.legend{display:flex;gap:14px;font-size:12.5px;color:#545f70;align-items:center;flex-wrap:wrap}
+.lg{display:inline-block;width:12px;height:12px;border-radius:4px;margin-right:6px;vertical-align:-2px}
+svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;flex:none}
+
+body{background:#d9dee6}
+</style>
+</head>
+<body>
+<!-- Design reference for the Strangers Coffee rota (1180×820). Example data only. -->
+<div id="design"></div>
+<template id="tpl">
+
+<div class="pad">
+  <nav class="side" aria-label="Sections">
+    <button class="sitebtn" type="button" aria-label="Site: all sites. Change site"><span style="width:9px;height:9px;border-radius:50%;background:#0062cc"></span>All sites</button>
+    <a class="nav" href="#"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="3"/><path d="M4 10h16M9 3v4M15 3v4M9 14.5l2 2 4-4"/></svg>Today</a>
+    <a class="nav" href="#"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="3"/><path d="M4 10h16M9 3v4M15 3v4"/></svg>This week</a>
+    <a class="nav on" href="#" aria-current="page"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.5 2.7-6 6-6s6 2.5 6 6M16 11a3 3 0 100-6M21 20c0-3-1.8-5.2-4.5-5.8"/></svg>Rota</a>
+  </nav>
+
+  <div class="main">
+    <div class="head">
+      <div><h1>Rota</h1><p class="sub">Week of 9 November · each person's week and hours</p></div>
+      <div class="tools">
+        <div class="seg" role="tablist" aria-label="View"><a href="Main.dc.html" role="tab" aria-selected="false">By site</a><a class="on" href="#" role="tab" aria-selected="true">By person</a></div>
+        <button class="btn" type="button">Add person</button>
+        <button class="btn pri" type="button">Publish</button>
+      </div>
+    </div>
+
+    <div class="grid" role="table" aria-label="Rota by person">
+      <div class="row hd" role="row">
+        <div class="lab" role="columnheader">Person</div>
+        <div class="lab" role="columnheader" style="border-left:1px solid rgba(60,72,92,.08)">Hours</div>
+        <sc-for list="{{days}}" as="d" hint-placeholder-count="7"><div class="dh" role="columnheader">{{d}}</div></sc-for>
+      </div>
+      <sc-for list="{{people}}" as="p" hint-placeholder-count="10">
+        <div class="row" role="row">
+          <div class="who" role="rowheader"><span class="av">{{p.ini}}</span><span><b>{{p.name}}</b><span>{{p.role}}</span></span></div>
+          <div class="hrs {{p.hcls}}" role="cell"><b>{{p.hours}}</b><span class="bar"><i style="width: {{p.pct}}"></i></span></div>
+          <sc-for list="{{p.days}}" as="c" hint-placeholder-count="7">
+            <div class="cell" role="cell"><div class="sh {{c.cls}}"><span class="tm">{{c.time}}</span><span class="st">{{c.site}}</span></div></div>
+          </sc-for>
+        </div>
+      </sc-for>
+    </div>
+
+    <div class="legend"><span><span class="lg" style="background:rgba(0,98,204,.25)"></span>Roastery</span><span><span class="lg" style="background:rgba(52,199,89,.35)"></span>Cafe</span><span><span class="lg" style="background:rgba(255,159,10,.45)"></span>ASG</span><span><span class="lg" style="background:repeating-linear-gradient(135deg,rgba(118,128,148,.4) 0 3px,transparent 3px 6px)"></span>Holiday</span><span><span class="lg" style="outline:2px solid #b36b00;outline-offset:-2px"></span>Clash</span><span>Hours bar: scheduled against contract</span></div>
+  </div>
+</div>
+</template>
+<script>class DCLogic { constructor() { this.props = {}; this.state = {}; } setState() {} }
+
+class Component extends DCLogic {
+renderVals() {
+const DAYS = ["Mon 9", "Tue 10", "Wed 11", "Thu 12", "Fri 13", "Sat 14", "Sun 15"];
+const SITE = { R: "Roastery", C: "Cafe", A: "ASG" };
+const PEOPLE = [
+["George", "George Farrow-Green", "Manager", 40], ["Tom", "Tom Reid", "Roaster", 40], ["Mia", "Mia Chen", "Barista", 30],
+["Alex", "Alex Brown", "Barista", 40], ["Sam", "Sam Patel", "Barista", 40], ["Priya", "Priya Shah", "Barista", 32],
+["Kai", "Kai Morgan", "Barista", 30], ["Ben", "Ben Hughes", "Barista", 24], ["Lena", "Lena Novak", "Barista", 20], ["Ellie", "Ellie Ward", "Weekends", 16]
+];
+const AWAY = { "Lena|2": "hol", "Lena|3": "hol", "Ben|1": "no" };
+const SH = [
+["R",0,"07:00","15:00","George"],["R",0,"08:30","17:00","Tom"],["R",1,"07:00","15:00","George"],["R",1,"08:30","17:00","Tom"],
+["R",2,"07:00","15:00","Tom"],["R",2,"09:00","17:00","Mia"],["R",3,"07:00","15:00","George"],["R",3,"08:30","17:00","Tom"],["R",4,"07:00","15:00","Mia"],
+["C",0,"06:45","14:45","Alex"],["C",0,"11:00","18:30","Priya"],["C",1,"06:45","14:45","Alex"],["C",1,"11:00","18:30","Priya"],
+["C",2,"06:45","14:45","Kai"],["C",2,"11:00","18:30","Priya"],["C",3,"06:45","14:45","Alex"],["C",3,"11:00","18:30","Sam"],
+["C",4,"06:45","14:45","Alex"],["C",4,"11:00","18:30","Kai"],["C",4,"12:00","16:00","Ben"],["C",5,"07:30","15:30","Ellie"],["C",5,"09:00","13:00","Lena"],
+["C",6,"08:00","16:00","Ellie"],["C",6,"10:00","17:00","Ben"],
+["A",0,"07:00","15:00","Sam"],["A",0,"10:00","18:00","Ben"],["A",1,"07:00","15:00","Sam"],["A",1,"10:00","18:00","Lena"],
+["A",2,"07:00","15:00","Alex"],["A",2,"10:00","18:00","Ben"],["A",3,"07:00","15:00","Sam"],["A",3,"10:00","18:00","Mia"],
+["A",4,"07:00","15:00","Sam"],["A",5,"08:00","16:00","Priya"],["A",5,"10:00","18:00","Kai"]
+];
+const mins = (t) => { const p = t.split(":"); return Number(p[0]) * 60 + Number(p[1]); };
+const people = PEOPLE.map((pp) => {
+const key = pp[0];
+const mine = SH.filter((x) => x[4] === key);
+const hours = mine.reduce((t, x) => t + (mins(x[3]) - mins(x[2])) / 60, 0);
+const days = DAYS.map((label, d) => {
+const today = mine.filter((x) => x[1] === d);
+if (today.length > 1) return { cls: today[0][0] + " clash", time: today.map((x) => x[2]).join(" + "), site: "Clash: " + today.map((x) => SITE[x[0]]).join(" + ") };
+if (today.length) return { cls: today[0][0], time: today[0][2] + "–" + today[0][3], site: SITE[today[0][0]] };
+const away = AWAY[key + "|" + d];
+if (away === "hol") return { cls: "hol", time: "", site: "Holiday" };
+if (away === "no") return { cls: "no", time: "", site: "Can't work" };
+return { cls: "off", time: "", site: "Off" };
+});
+const ini = pp[1].split(" ").map((w) => w[0]).join("");
+return {
+name: pp[1], role: pp[2], ini: ini, days: days,
+hours: hours + " / " + pp[3] + "h",
+pct: Math.min(100, Math.round((hours / pp[3]) * 100)) + "%",
+hcls: hours > pp[3] ? "over" : hours < pp[3] * 0.75 ? "under" : ""
+};
+});
+return { days: DAYS, people: people };
+}
+}
+
+
+function get(ctx, path) { return path.trim().split(".").reduce((o, k) => (o == null ? undefined : o[k]), ctx); }
+function interp(s, ctx) { return s.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_, p) => { const v = get(ctx, p); return v == null ? "" : String(v); }); }
+function render(node, ctx) {
+  if (node.nodeType === 3) { if (node.nodeValue.includes("{{")) node.nodeValue = interp(node.nodeValue, ctx); return; }
+  if (node.nodeType !== 1) return;
+  if (node.tagName === "SC-FOR") {
+    const list = get(ctx, node.getAttribute("list").replace(/[{}\s]/g, "")) || [];
+    const as = node.getAttribute("as");
+    const frag = document.createDocumentFragment();
+    list.forEach((item, i) => {
+      for (const ch of node.childNodes) {
+        const wrap = document.createElement("div");
+        wrap.appendChild(ch.cloneNode(true));
+        render(wrap.firstChild, Object.assign({}, ctx, { [as]: item, $index: i }));
+        while (wrap.firstChild) frag.appendChild(wrap.firstChild);
+      }
+    });
+    node.replaceWith(frag);
+    return;
+  }
+  for (const a of [...node.attributes]) if (a.value.includes("{{")) a.value = interp(a.value, ctx);
+  for (const ch of [...node.childNodes]) render(ch, ctx);
+}
+const vals = new Component().renderVals();
+const host = document.getElementById("design");
+host.appendChild(document.getElementById("tpl").content.cloneNode(true));
+for (const ch of [...host.childNodes]) render(ch, vals);
+</script>
+</body>
+</html>

@@ -1,0 +1,1157 @@
+// The staff rota (rota.staffstrangerscoffee.com): who works where and when across the four sites.
+// Managers plan and publish each week; everyone sees their shifts, picks up open shifts, asks for cover and
+// says when they can work. Talks to /api/rota/* (src/rota.ts) and /api/auth/* with fetch, like admin.js.
+// Shares the diary's look: /app.css, /theme.css, /ui.css, plus rota.css.
+(() => {
+  "use strict";
+
+  /* ---------- small helpers ---------- */
+
+  const $ = (s, root = document) => root.querySelector(s);
+  const el = (t, a = {}, ...kids) => {
+    const e = document.createElement(t);
+    for (const [k, v] of Object.entries(a)) {
+      if (k === "class") e.className = v;
+      else if (k === "text") e.textContent = v;
+      else if (k.startsWith("on") && typeof v === "function") e.addEventListener(k.slice(2), v);
+      else if (k === "value") e.value = v;
+      else if (v !== false && v != null) e.setAttribute(k, v === true ? "" : v);
+    }
+    for (const k of kids.flat()) if (k != null && k !== false) e.append(k);
+    return e;
+  };
+  const svgi = (d) => { const n = document.createElementNS("http://www.w3.org/2000/svg", "svg"); n.setAttribute("viewBox", "0 0 24 24"); n.setAttribute("class", "i"); n.setAttribute("aria-hidden", "true"); n.innerHTML = d; return n; };
+  const ICON = {
+    week: '<rect x="4" y="5" width="16" height="15" rx="3"/><path d="M4 10h16M9 3v4M15 3v4M8 14h.01M12 14h.01M16 14h.01M8 17h.01M12 17h.01"/>',
+    mine: '<circle cx="12" cy="8" r="3.5"/><path d="M5 20c0-3.9 3.1-6.5 7-6.5s7 2.6 7 6.5"/>',
+    swap: '<path d="M7 7h11l-3-3M17 17H6l3 3"/>',
+    avail: '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>',
+    requests: '<path d="M5 5h14v10H9l-4 4z"/><path d="M9 9h6M9 12h4"/>',
+    more: '<circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/>',
+    hours: '<path d="M5 20V10M10 20V4M15 20v-7M20 20v-4"/>',
+    setup: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"/>',
+    diary: '<rect x="5" y="3" width="14" height="18" rx="2.5"/><path d="M9 8h6M9 12h6M9 16h4"/>',
+    staff: '<circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.5 2.7-6 6-6s6 2.5 6 6M16 11a3 3 0 100-6M21 20c0-3-1.8-5.2-4.5-5.8"/>',
+    key: '<circle cx="8" cy="15" r="4"/><path d="M11 12l8-8M16 7l3 3"/>',
+    shield: '<path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/><path d="M9 12l2 2 4-4"/>',
+    out: '<path d="M14 4h4a2 2 0 012 2v12a2 2 0 01-2 2h-4M10 16l-4-4 4-4M6 12h10"/>',
+    chevR: '<path d="M9 6l6 6-6 6"/>', chevL: '<path d="M15 6l-6 6 6 6"/>', plus: '<path d="M12 5v14M5 12h14"/>',
+    check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>', warn: '<path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17h.01"/>',
+    cal: '<rect x="4" y="5" width="16" height="15" rx="3"/><path d="M4 10h16M9 3v4M15 3v4M12 13v4M10 15h4"/>',
+  };
+  const ROLE = { admin: "Admin", manager: "Manager", staff: "Staff" };
+  const SITE_TONE = { roastery: "blue", cafe: "green", asg: "orange", factory: "purple" };
+  const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+  const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
+  // Dates are YYYY-MM-DD; arithmetic in UTC so daylight saving never shifts a day.
+  const dOf = (s) => new Date(s + "T12:00:00Z");
+  const isoOf = (d) => d.toISOString().slice(0, 10);
+  const addDays = (s, n) => { const d = dOf(s); d.setUTCDate(d.getUTCDate() + n); return isoOf(d); };
+  const dow = (s) => (dOf(s).getUTCDay() + 6) % 7;
+  const monday = (s) => addDays(s, -dow(s));
+  const fmt = (s, o) => dOf(s).toLocaleDateString("en-GB", { timeZone: "UTC", ...o });
+  const short = (s) => fmt(s, { weekday: "short", day: "numeric" }); // "Mon 9"
+  const shortM = (s) => fmt(s, { weekday: "short", day: "numeric", month: "short" }); // "Mon 9 Nov"
+  const longD = (s) => fmt(s, { weekday: "long", day: "numeric", month: "short" }); // "Thursday 12 Nov"
+  const weekLabel = (w) => "Week of " + fmt(w, { day: "numeric", month: "long" });
+  const londonToday = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const londonNow = () => new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date());
+  const mins = (t) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
+  const hhmm = (m) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+  const r2 = (n) => Math.round(n * 100) / 100;
+  const hrs = (n) => `${r2(n)}`;
+  const initials = (n) => String(n || "?").split(/\s+/).filter(Boolean).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
+  const first = (n) => String(n || "").split(" ")[0];
+  const jobWord = (j) => (j === "opens" ? "Opens" : j === "closes" ? "Closes" : "");
+  const plural = (n, a, b) => `${n} ${n === 1 ? a : b || a + "s"}`;
+  const when = (ms) => {
+    if (!ms) return "";
+    const m = Math.round((Date.now() - ms) / 60000);
+    if (m < 1) return "just now";
+    if (m < 60) return `${m} min ago`;
+    if (m < 24 * 60) return `${Math.round(m / 60)} h ago`;
+    return new Date(ms).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  };
+  const wide = matchMedia("(min-width:1024px)");
+
+  function toast(m, action) {
+    const t = $("#toast"); t.hidden = true; void t.offsetWidth;
+    t.replaceChildren(el("span", { text: m }), action ? el("button", { type: "button", onclick: () => { t.hidden = true; action[1](); } }, action[0]) : "");
+    t.hidden = false; clearTimeout(toast._t); toast._t = setTimeout(() => (t.hidden = true), action ? 7000 : 2600);
+  }
+
+  /* ---------- talking to the Worker ---------- */
+
+  const R = {
+    me: null, auth: null, links: { rota: "/rota/", diary: "/" }, approvers: [], tab: "", week: monday(londonToday()),
+    view: (() => { try { return localStorage.getItem("rota.view") || "site"; } catch (e) { return "site"; } })(),
+    pday: dow(londonToday()), weekData: null, everyone: false, offline: false, badge: 0,
+  };
+  const mgr = () => !!R.me?.user?.manager;
+
+  function goSignIn() {
+    location.replace("/signin?next=" + encodeURIComponent(location.pathname + location.search + location.hash));
+  }
+  function setOffline(v) {
+    if (R.offline === v) return;
+    R.offline = v;
+    document.body.classList.toggle("offline", v);
+    const c = $("#conn");
+    c.hidden = !v; c.textContent = "Offline · showing what was last loaded";
+    if (!v) toast("Back online.");
+  }
+  async function api(method, url, body) {
+    let res;
+    try {
+      res = await fetch(url, { method, headers: body ? { "content-type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined });
+    } catch (e) {
+      setOffline(true);
+      throw Object.assign(new Error("Couldn't reach the rota. Check your connection."), { code: "unavailable" });
+    }
+    if (res.status === 401) { goSignIn(); throw new Error("Signed out."); }
+    if (res.status >= 502 && res.status <= 504) { setOffline(true); throw Object.assign(new Error("The rota didn't respond. Try again."), { code: "unavailable" }); }
+    setOffline(false);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw Object.assign(new Error(data.message || "Something went wrong."), { code: data.code, status: res.status });
+    return data;
+  }
+  const get = (u) => api("GET", u);
+  async function act(fn, okMsg) {
+    try { const r = await fn(); if (okMsg) toast(typeof okMsg === "function" ? okMsg(r) : okMsg); return r; }
+    catch (e) { toast(e.message || "Something went wrong."); return null; }
+  }
+
+  /* ---------- navigation ---------- */
+
+  // Every page. mgr: managers and admins only. parent: where its back link goes.
+  const PAGES = {
+    week: { t: "Rota", nav: "Week", ic: "week", mgr: true },
+    day: { t: "Day", ic: "week", mgr: true, parent: "week" },
+    mine: { t: "My shifts", ic: "mine" },
+    swaps: { t: "Open shifts & cover", nav: "Open shifts & cover", ic: "swap" },
+    avail: { t: "When I can work", ic: "avail" },
+    requests: { t: "Requests", ic: "requests", mgr: true },
+    more: { t: "More", ic: "more", mgr: true },
+    hours: { t: "Hours", ic: "hours", mgr: true, parent: "more" },
+    settings: { t: "Rota settings", ic: "setup", mgr: true, parent: "more" },
+  };
+  const TABS = () => (mgr() ? ["week", "mine", "requests", "more"] : ["mine", "swaps", "avail"]);
+  const allowed = (p) => PAGES[p] && (!PAGES[p].mgr || mgr());
+  const tabOf = (p) => (TABS().includes(p) ? p : PAGES[p]?.parent && TABS().includes(PAGES[p].parent) ? PAGES[p].parent : mgr() ? "more" : p);
+
+  function parseHash() {
+    const [p, ...rest] = location.hash.replace(/^#/, "").split("/");
+    return { page: p, args: rest };
+  }
+  function go(hash) { if (location.hash === "#" + hash) render(); else location.hash = hash; }
+
+  function renderNav() {
+    const cur = R.tab;
+    const sn = $("#snav"); sn.replaceChildren();
+    const link = (id, label, ic, badge) => el("a", { href: "#" + id, class: cur === id || tabOf(cur) === id && !TABS().includes(cur) && PAGES[cur]?.parent === id ? "on" : "", "aria-current": cur === id ? "page" : null },
+      svgi(ICON[ic]), el("span", { text: label }), badge ? el("span", { class: "n pill bad", text: String(badge) }) : null);
+    if (mgr()) {
+      sn.append(link("week", "Week", "week"), link("mine", "My shifts", "mine"), link("requests", "Requests", "requests", R.badge),
+        link("swaps", "Open shifts & cover", "swap"), link("avail", "When I can work", "avail"),
+        el("div", { class: "h", text: "Manage" }), link("hours", "Hours", "hours"), link("settings", "Rota settings", "setup"));
+    } else {
+      sn.append(link("mine", "My shifts", "mine"), link("swaps", "Open shifts & cover", "swap"), link("avail", "When I can work", "avail"));
+    }
+    sn.append(el("div", { class: "h", text: "Kitchen Diary" }), el("a", { href: R.links.diary }, svgi(ICON.diary), el("span", { text: "Open the diary" })));
+    const tb = $("#tabbar"); tb.replaceChildren();
+    const label = { week: "Week", mine: "My shifts", swaps: "Open shifts", avail: "When I work", requests: "Requests", more: "More" };
+    for (const t of TABS()) {
+      const on = tabOf(cur) === t;
+      tb.append(el("button", { type: "button", class: "tab" + (on ? " on" : ""), "aria-current": on ? "page" : null, onclick: () => go(t) },
+        svgi(ICON[PAGES[t].ic]), el("span", { text: label[t] }), t === "requests" && R.badge ? el("span", { class: "n", text: String(R.badge) }) : null));
+    }
+  }
+
+  function setHead(title, sub, { back, actions } = {}) {
+    $("#pageTitle").textContent = title;
+    $("#pageSub").textContent = sub || "";
+    const b = $("#backBtn");
+    b.hidden = !back;
+    if (back) { b.replaceChildren(svgi(ICON.chevL), back[0]); b.onclick = () => go(back[1]); }
+    $("#pageAction").replaceChildren(...(actions || []));
+    document.title = `${title} · Rota · Strangers Coffee`;
+  }
+
+  async function refreshBadge() {
+    if (!mgr()) return;
+    try {
+      const r = await get("/api/rota/requests");
+      R.badge = r.timeOff.length + r.requests.filter((q) => (q.kind === "claim" && q.status === "open") || (q.kind === "cover" && q.status === "accepted")).length;
+      renderNav();
+    } catch (e) { /* offline: keep the last count */ }
+  }
+
+  let renderSeq = 0;
+  async function render() {
+    let { page, args } = parseHash();
+    if (!allowed(page)) page = mgr() ? "week" : "mine";
+    R.tab = page;
+    renderNav();
+    closeSheets();
+    document.body.dataset.page = page;
+    const seq = ++renderSeq;
+    const box = $("#page");
+    try {
+      const out = await PAGE_RENDER[page](args);
+      if (seq !== renderSeq) return;
+      box.replaceChildren(...[out].flat().filter(Boolean));
+    } catch (e) {
+      if (seq !== renderSeq) return;
+      box.replaceChildren(el("div", { class: "empty", text: e.message || "Couldn't load this page." }));
+    }
+  }
+  const rerender = () => render();
+
+  /* ---------- shared pieces ---------- */
+
+  const sitePill = (id, name) => el("span", { class: "spill " + (SITE_TONE[id] || ""), text: name || id });
+  const avatar = (name, cls = "") => el("span", { class: "avatar sm " + cls, text: initials(name), "aria-hidden": "true" });
+  const btn = (label, onclick, cls = "btn", extra = {}) => el("button", { type: "button", class: cls, onclick, "data-w": "", ...extra }, label);
+  const ghost = (label, onclick, extra) => btn(label, onclick, "btn ghost", extra);
+  const label = (t) => el("div", { class: "label", text: t });
+  const empty = (t) => el("div", { class: "empty", text: t });
+
+  /** A button that asks once more before acting (the diary's two-tap delete). */
+  function twoTap(text, confirmText, fn, cls = "btn ghost danger") {
+    const b = btn(text, async () => {
+      if (!b.dataset.armed) { b.dataset.armed = "1"; b.textContent = confirmText; setTimeout(() => { if (b.isConnected) { delete b.dataset.armed; b.textContent = text; } }, 4000); return; }
+      b.disabled = true; await fn(); b.disabled = false;
+    }, cls);
+    return b;
+  }
+
+  function seg(options, value, onchange, aria) {
+    const box = el("div", { class: "seg rseg", role: "group", "aria-label": aria || "" });
+    for (const [v, t] of options) box.append(el("button", { type: "button", "aria-pressed": String(v === value), onclick: () => onchange(v) }, t));
+    return box;
+  }
+
+  function dayStrip(days, idx, onpick, marks = []) {
+    const box = el("div", { class: "days glass", role: "group", "aria-label": "Day" });
+    days.forEach((d, i) => box.append(el("button", {
+      type: "button", class: "wday" + (i === idx ? " today" : "") + (marks[i] ? " " + marks[i] : ""), "aria-pressed": String(i === idx),
+      "aria-label": longD(d) + (marks[i] === "bad" ? ", has problems" : marks[i] === "part" ? ", has warnings" : ""), onclick: () => onpick(i),
+    }, fmt(d, { weekday: "narrow" }), el("b", { text: fmt(d, { day: "numeric" }) }), el("span", { class: "d" }))));
+    return box;
+  }
+
+  /** "Mon–Fri", "Every day", "Mon, Wed". */
+  function openDays(open) {
+    const n = open.filter(Boolean).length;
+    if (!n) return "Closed all week";
+    if (n === 7) return "Every day";
+    const idx = open.map((o, i) => (o ? i : -1)).filter((i) => i >= 0);
+    const ab = (i) => fmt(addDays("2026-11-09", i), { weekday: "short" });
+    if (idx[idx.length - 1] - idx[0] === idx.length - 1) return `${ab(idx[0])}–${ab(idx[idx.length - 1])}`;
+    return idx.map(ab).join(", ");
+  }
+
+  function downloadText(name, type, text) {
+    const a = el("a", { href: URL.createObjectURL(new Blob([text], { type })), download: name });
+    document.body.append(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  }
+
+  /** An .ics file for one shift, in UK time. */
+  function calendarFile(s) {
+    const t = (day, hm) => day.replace(/-/g, "") + "T" + hm.replace(":", "") + "00";
+    const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
+    const esc = (v) => String(v).replace(/[\\;,]/g, (c) => "\\" + c).replace(/\n/g, "\\n");
+    const lines = [
+      "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Strangers Coffee//Rota//EN", "CALSCALE:GREGORIAN",
+      "BEGIN:VTIMEZONE", "TZID:Europe/London",
+      "BEGIN:DAYLIGHT", "TZOFFSETFROM:+0000", "TZOFFSETTO:+0100", "TZNAME:BST", "DTSTART:19700329T010000", "RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU", "END:DAYLIGHT",
+      "BEGIN:STANDARD", "TZOFFSETFROM:+0100", "TZOFFSETTO:+0000", "TZNAME:GMT", "DTSTART:19701025T020000", "RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU", "END:STANDARD",
+      "END:VTIMEZONE",
+      "BEGIN:VEVENT", `UID:rota-${s.id}@strangerscoffee`, `DTSTAMP:${stamp}`,
+      `DTSTART;TZID=Europe/London:${t(s.day, s.start)}`, `DTEND;TZID=Europe/London:${t(s.day, s.end)}`,
+      `SUMMARY:${esc(`Strangers Coffee ${s.siteName}${s.job ? " · " + jobWord(s.job).toLowerCase() : ""}`)}`,
+      s.note ? `DESCRIPTION:${esc(s.note)}` : null, "END:VEVENT", "END:VCALENDAR",
+    ].filter(Boolean);
+    downloadText(`shift-${s.day}-${s.site}.ics`, "text/calendar", lines.join("\r\n") + "\r\n");
+  }
+
+  const approverText = () => (R.approvers.length === 1 ? first(R.approvers[0]) : "A manager");
+
+  /* ---------- sheets and the account menu ---------- */
+
+  function closeSheets() {
+    $("#sheetVeil").hidden = true; $("#sheet").hidden = true; $("#peopleSheet").hidden = true; $("#acctMenu").hidden = true;
+  }
+  function openSheet(title, body, { left, right } = {}) {
+    const s = $("#sheet");
+    s.replaceChildren(el("div", { class: "grab", "aria-hidden": "true" }),
+      el("div", { class: "shead" }, left || el("span"), el("h2", { id: "sheetTitle", text: title }), right || el("span")), body);
+    $("#sheetVeil").hidden = false; s.hidden = false;
+    const f = s.querySelector("input,select,button:not(.linkbtn)"); if (f && wide.matches) f.focus({ preventScroll: true });
+    return s;
+  }
+  const cancelLink = () => el("button", { type: "button", class: "linkbtn", onclick: closeSheets }, "Cancel");
+
+  function accountItems() {
+    const a = R.auth || {};
+    return [
+      ...(a.quickSwitch ? [["Switch person", "staff", openPeopleSheet]] : []),
+      ...(R.me?.user?.role !== "admin" ? [[a.user?.quickPin ? "Change quick PIN" : "Set a quick PIN", "key", setQuickPin]] : []),
+      ["Change password", "key", () => { location.href = "/signin#change"; }],
+      ["Open the diary", "diary", () => { location.href = R.links.diary; }],
+      ["Sign out", "out", signOut, true],
+    ];
+  }
+  async function signOut() { try { await fetch("/api/auth/logout", { method: "POST" }); } catch (e) {} location.replace("/signin"); }
+  async function authPost(route, body) {
+    let r;
+    try { r = await fetch("/api/auth/" + route, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }); }
+    catch (e) { return { ok: false, message: "Couldn't reach the rota. Check your connection." }; }
+    const j = await r.json().catch(() => ({}));
+    return r.ok ? { ok: true, ...j } : { ok: false, message: j.message || "Something went wrong." };
+  }
+  function setQuickPin() {
+    PinPad.open({ title: "Choose a quick PIN", sub: "4 digits, to switch to yourself on shared devices", onPin: async (firstPin) => {
+      setTimeout(() => PinPad.open({ title: "Enter it again", sub: "To check it", onPin: async (again) => {
+        if (again !== firstPin) return "Those didn't match. Start again by choosing a PIN.";
+        const r = await authPost("pin", { pin: firstPin }); if (!r.ok) return r.message;
+        if (R.auth?.user) R.auth.user.quickPin = true;
+        toast("Quick PIN set. Use Switch person on a shared device."); return null;
+      } }), 250);
+      return null;
+    } });
+  }
+  async function openPeopleSheet() {
+    const box = $("#peopleList"); box.replaceChildren(empty("Loading…"));
+    $("#sheetVeil").hidden = false; $("#peopleSheet").hidden = false;
+    let people = [];
+    try { people = (await (await fetch("/api/auth/people")).json()).people || []; } catch (e) {}
+    const me = R.me.user.name;
+    box.replaceChildren(...people.map((p) => el("button", { class: "lrow" + (p.name === me ? " on" : ""), type: "button", onclick: () => {
+      closeSheets(); if (p.name === me) return;
+      PinPad.open({ title: `Hi ${first(p.name)}`, sub: "Enter your quick PIN", onPin: async (pin) => {
+        const r = await authPost("switch", { id: p.id, pin }); if (!r.ok) return r.message;
+        location.reload(); return null;
+      } });
+    } }, avatar(p.name), el("span", { class: "t" }, el("b", { text: p.name }), p.name === me ? el("span", { class: "s", text: "Signed in now" }) : null))));
+    if (!people.length) box.replaceChildren(empty("No one has a quick PIN yet. Each person sets one from the account menu."));
+    $("#peopleNote").replaceChildren("Not listed? ", el("a", { href: "#", onclick: (e) => { e.preventDefault(); signOut(); } }, "Sign in with your password"), ".");
+  }
+  function openAcctMenu(anchor) {
+    const m = $("#acctMenu"), u = R.me.user;
+    m.replaceChildren(el("div", { class: "who" }, el("b", { text: u.name }), el("span", { class: "s", text: ROLE[u.role] || "" })),
+      ...accountItems().map(([t, ic, fn, danger]) => el("button", { class: "m" + (danger ? " danger" : ""), type: "button", role: "menuitem", onclick: () => { closeSheets(); fn(); } }, svgi(ICON[ic]), el("span", { text: t }))));
+    const r = anchor.getBoundingClientRect();
+    m.style.top = r.bottom + 8 + "px"; m.style.left = Math.max(12, Math.min(r.left, innerWidth - 272)) + "px";
+    if (anchor.id === "meBox") { m.style.top = ""; m.style.bottom = innerHeight - r.top + 8 + "px"; } else m.style.bottom = "";
+    $("#sheetVeil").hidden = false; m.hidden = false; m.querySelector("button").focus();
+  }
+
+  /* ---------- week planner (managers) ---------- */
+
+  async function loadWeek(week, force) {
+    if (!force && R.weekData && R.weekData.week === week && Date.now() - R.weekData._at < 15000) return R.weekData;
+    const d = await get("/api/rota/week?start=" + week);
+    d._at = Date.now();
+    if (mgr()) R.weekData = d;
+    return d;
+  }
+  const personOf = (d, id) => d.people.find((p) => p.id === id);
+  const nameOf = (d, id) => (id ? personOf(d, id)?.name || "Someone" : null);
+  const errorsIn = (d) => d.problems.filter((p) => p.severity === "error");
+  const clashIds = (d) => new Set(d.problems.filter((p) => p.kind === "clash" || p.kind === "time_off").flatMap((p) => p.shiftIds));
+
+  function publishLabel(d) {
+    const errs = errorsIn(d);
+    if (d.published && !d.changesSincePublish) return "Published";
+    if (errs.length) {
+      const by = {};
+      for (const e of errs) by[e.kind] = (by[e.kind] || 0) + 1;
+      const words = { open_shift: ["open shift", "open shifts"], clash: ["clash", "clashes"], time_off: ["shift on time off", "shifts on time off"], closed: ["shift on a closed day", "shifts on closed days"] };
+      const parts = Object.entries(by).map(([k, n]) => `${n} ${(words[k] || [k, k])[n === 1 ? 0 : 1]}`);
+      return `${d.published ? "Publish changes" : "Publish"} anyway? ${parts.join(", ")}`;
+    }
+    if (d.published) return d.changesSincePublish ? "Publish changes" : "Published";
+    return "Publish";
+  }
+
+  function problemChips(d, onFocus) {
+    const chips = [];
+    const open = d.problems.filter((p) => p.kind === "open_shift");
+    if (open.length) chips.push({ sev: "error", text: plural(open.length, "open shift"), act: "Fill", go: () => onFocus(open[0]) });
+    // Short cover is checked hour by hour, so it's one chip per site rather than one per gap.
+    const short = {};
+    for (const p of d.problems) if (p.kind === "short_cover") (short[p.site] ||= []).push(p);
+    for (const [site, ps] of Object.entries(short)) {
+      const days = [...new Set(ps.map((p) => p.day))];
+      const s = d.sites.find((x) => x.id === site);
+      chips.push({ sev: "warn", text: `${s.name} is short of cover on ${days.length === 1 ? DAY_NAMES[dow(days[0])] : plural(days.length, "day")}`, act: "See", go: () => go(`day/${site}/${days[0]}`), late: true });
+    }
+    for (const p of d.problems) {
+      if (p.kind === "open_shift" || p.kind === "short_cover") continue;
+      const act = { clash: "Fix", no_opener: "Fix", no_closer: "Fix", short_cover: "See", over_contract: "See", time_off: "Fix", closed: "Fix" }[p.kind] || "See";
+      chips.push({ sev: p.severity, text: p.message, act, go: () => onFocus(p) });
+    }
+    // Approved time off is useful context while planning.
+    for (const t of d.timeOff) {
+      const from = t.from < d.days[0] ? d.days[0] : t.from, to = t.to > d.days[6] ? d.days[6] : t.to;
+      chips.push({ sev: "info", text: `${first(nameOf(d, t.userId))} off ${from === to ? fmt(from, { weekday: "short" }) : fmt(from, { weekday: "short" }) + "–" + fmt(to, { weekday: "short" })}${t.reason ? " (" + t.reason + ")" : ""}` });
+    }
+    if (!chips.length) return el("p", { class: "note okline" }, svgi(ICON.check), " No problems found this week.");
+    const rank = { error: 0, warn: 1, info: 2 };
+    chips.sort((a, b) => rank[a.sev] - rank[b.sev] || (a.late ? 1 : 0) - (b.late ? 1 : 0));
+    const box = el("div", { class: "pchips", role: "list", "aria-label": "Problems this week" });
+    const LIMIT = wide.matches ? 6 : 3;
+    chips.forEach((c, i) => {
+      const sevWord = c.sev === "error" ? "Problem" : c.sev === "warn" ? "Check" : "Note";
+      box.append(el("div", { class: "pchip " + c.sev + (i >= LIMIT ? " extra" : ""), role: "listitem" },
+        el("span", { class: "sdot " + (c.sev === "error" ? "bad" : c.sev === "warn" ? "warn" : ""), "aria-hidden": "true" }),
+        el("span", { class: "vh", text: sevWord + ": " }), el("span", { class: "tx", text: c.text }),
+        c.go ? el("button", { type: "button", class: "pact", onclick: c.go }, c.act) : null));
+    });
+    if (chips.length > LIMIT) {
+      const more = el("button", { type: "button", class: "pchip morechip", onclick: () => { box.classList.add("all"); more.remove(); } }, `${chips.length - LIMIT} more`);
+      box.append(more);
+    }
+    return box;
+  }
+
+  function focusProblem(d, p) {
+    const s = p.shiftIds?.length ? d.shifts.find((x) => x.id === p.shiftIds[p.kind === "clash" ? 1 : 0]) || d.shifts.find((x) => x.id === p.shiftIds[0]) : null;
+    if (p.kind === "over_contract" && !wide.matches) { R.view = "person"; render(); return; }
+    if (p.kind === "over_contract") { R.view = "person"; render(); return; }
+    if ((p.kind === "clash" || p.kind === "no_opener" || p.kind === "no_closer" || p.kind === "short_cover") && p.site && p.day) { go(`day/${p.site}/${p.day}`); return; }
+    if (s) openShift(s, d);
+    else if (p.site && p.day) go(`day/${p.site}/${p.day}`);
+  }
+
+  function shiftCard(d, s, { clash, ro, showSite, showName = true } = {}) {
+    const nm = nameOf(d, s.userId);
+    const cls = "shc" + (!s.userId ? " open" : "") + (clash ? " clash" : "") + (showSite ? " tone-" + (SITE_TONE[s.site] || "") : "");
+    const site = d.sites.find((x) => x.id === s.site);
+    const tag = !s.userId ? [jobWord(s.job), "Fill"].filter(Boolean).join(" · ") : clash ? "Clash" : jobWord(s.job);
+    const aria = `${s.start} to ${s.end}, ${nm || "open shift"}${s.job ? ", " + s.job : ""}${clash ? ", clash" : ""}${showSite ? ", " + site.name : ""}`;
+    const kids = [el("b", { class: "tm", text: `${s.start}–${s.end}` }),
+      showName ? el("span", { class: "nm", text: nm ? first(nm) : "Open shift" }) : null,
+      showSite ? el("span", { class: "nm", text: site.name }) : null,
+      tag ? el("span", { class: "jb", text: tag }) : null];
+    return ro ? el("div", { class: cls, "aria-label": aria }, ...kids) : el("button", { type: "button", class: cls, "aria-label": aria, onclick: (e) => { e.stopPropagation(); openShift(s, d); } }, ...kids);
+  }
+
+  function peopleOnDay(d, day) { return new Set(d.shifts.filter((s) => s.day === day && s.userId).map((s) => s.userId)).size; }
+
+  function siteGrid(d, ro) {
+    const clashes = clashIds(d);
+    const g = el("div", { class: "rgrid glass", role: "table", "aria-label": "Shifts by site and day" });
+    g.append(el("div", { class: "gh corner", role: "columnheader", text: "Site" }),
+      ...d.days.map((day) => el("div", { class: "gh" + (day === londonToday() ? " now" : ""), role: "columnheader" }, el("b", { text: short(day) }), el("span", { text: plural(peopleOnDay(d, day), "person", "people") }))));
+    for (const site of d.sites) {
+      g.append(el("div", { class: "gsite", role: "rowheader" },
+        el("b", { text: site.name }), el("span", { text: site.inUse ? openDays(site.open.map((o, i) => o || !!site.closedWhy[i])) : "Not in use yet" })));
+      if (!site.inUse) { g.append(el("div", { class: "gnone" }, "No shifts. Set this site up in the diary (Setup) to plan it.")); continue; }
+      d.days.forEach((day, i) => {
+        if (!site.open[i]) {
+          const here = d.shifts.filter((s) => s.site === site.id && s.day === day);
+          g.append(el("div", { class: "gcell closed" }, el("span", { class: "cl", text: site.closedWhy[i] ? `Closed: ${site.closedWhy[i]}` : "Closed" }), ...here.map((s) => shiftCard(d, s, { clash: true, ro }))));
+          return;
+        }
+        const list = d.shifts.filter((s) => s.site === site.id && s.day === day).sort((a, b) => a.start.localeCompare(b.start));
+        const cell = el("div", { class: "gcell" + (ro ? "" : " addable"), onclick: ro ? null : (e) => { if (e.target === cell) newShift(d, site.id, day); } },
+          ...list.map((s) => shiftCard(d, s, { clash: clashes.has(s.id), ro })),
+          ro ? null : el("button", { type: "button", class: "gadd", "data-w": "", "aria-label": `Add a shift at ${site.name} on ${longD(day)}`, onclick: () => newShift(d, site.id, day) }, svgi(ICON.plus)));
+        g.append(cell);
+      });
+    }
+    return g;
+  }
+
+  function personRows(d) {
+    const people = d.people.filter((p) => p.contractHours != null || d.shifts.some((s) => s.userId === p.id) || true);
+    return people.map((p) => {
+      const mine = d.shifts.filter((s) => s.userId === p.id);
+      const h = r2(mine.reduce((a, s) => a + s.hours, 0));
+      return { p, mine, h, over: p.contractHours != null && h > p.contractHours };
+    });
+  }
+  const offWord = (d, p, day) => {
+    if (d.timeOff.some((t) => t.userId === p.id && t.from <= day && t.to >= day)) return ["Holiday", "hol"];
+    if (p.pattern?.[DAYS[dow(day)]] === "off") return ["Can't work", "cant"];
+    return ["Off", ""];
+  };
+  function hoursBar(h, c) {
+    const pct = c ? Math.min(100, (h / c) * 100) : 0;
+    return el("div", { class: "hbar" + (c && h > c ? " over" : ""), role: "img", "aria-label": c ? `${hrs(h)} of ${hrs(c)} contract hours${h > c ? ", over" : ""}` : `${hrs(h)} hours, no contract set` }, el("i", { style: `width:${pct}%` }));
+  }
+
+  function personGrid(d) {
+    const clashes = clashIds(d);
+    const g = el("div", { class: "rgrid pgrid glass", role: "table", "aria-label": "Shifts by person and day" });
+    g.append(el("div", { class: "gh corner", text: "Person" }), el("div", { class: "gh", text: "Hours" }), ...d.days.map((day) => el("div", { class: "gh" }, el("b", { text: short(day) }))));
+    for (const { p, mine, h, over } of personRows(d)) {
+      g.append(el("div", { class: "gperson" }, avatar(p.name), el("span", { class: "t" }, el("b", { text: p.name }), el("span", { class: "s", text: ROLE[p.role] || "" }))),
+        el("div", { class: "ghours" + (over ? " over" : "") }, el("b", { text: `${hrs(h)}${p.contractHours != null ? " / " + hrs(p.contractHours) + "h" : "h"}` }), over ? el("span", { class: "vh", text: " over contract" }) : null, hoursBar(h, p.contractHours)));
+      d.days.forEach((day) => {
+        const list = mine.filter((s) => s.day === day);
+        if (list.length) { g.append(el("div", { class: "gcell" }, ...list.map((s) => shiftCard(d, s, { clash: clashes.has(s.id), showSite: true, showName: false })))); return; }
+        const [w, c] = offWord(d, p, day);
+        g.append(el("button", { type: "button", class: "gcell offcell " + c, "data-w": "", "aria-label": `${p.name}, ${longD(day)}: ${w}. Add a shift`, onclick: () => newShift(d, p.sites?.[0] || firstOpenSite(d, day), day, p.id) }, w));
+      });
+    }
+    // Open shifts, so they're not lost in this view.
+    const open = d.shifts.filter((s) => !s.userId);
+    if (open.length) {
+      g.append(el("div", { class: "gperson" }, el("span", { class: "t" }, el("b", { text: "Open shifts" }), el("span", { class: "s", text: plural(open.length, "to fill", "to fill") }))), el("div", { class: "ghours" }));
+      d.days.forEach((day) => g.append(el("div", { class: "gcell" }, ...open.filter((s) => s.day === day).map((s) => shiftCard(d, s, { showSite: true, showName: false })))));
+    }
+    return g;
+  }
+  const firstOpenSite = (d, day) => (d.sites.find((s) => s.open[d.days.indexOf(day)]) || d.sites[0]).id;
+
+  // Phones: one day at a time.
+  function dayMarks(d) {
+    return d.days.map((day) => {
+      const ps = d.problems.filter((p) => p.day === day);
+      return ps.some((p) => p.severity === "error") ? "bad" : ps.some((p) => p.severity === "warn") ? "part" : d.shifts.some((s) => s.day === day) ? "ok" : "";
+    });
+  }
+  function phoneDay(d, ro, onPick = rerenderWeekBody) {
+    const day = d.days[R.pday], i = R.pday;
+    const clashes = clashIds(d);
+    const out = [dayStrip(d.days, R.pday, (k) => { R.pday = k; onPick(); }, ro ? [] : dayMarks(d))];
+    if (R.view === "person" && !ro) {
+      const rows = personRows(d).map(({ p, mine, h, over }) => {
+        const list = mine.filter((s) => s.day === day);
+        const [w] = offWord(d, p, day);
+        return el("div", { class: "lrow prow" }, avatar(p.name),
+          el("span", { class: "t" }, el("b", { text: p.name }), el("span", { class: "s" + (over ? " overtx" : "") , text: `${hrs(h)}${p.contractHours != null ? " of " + hrs(p.contractHours) : ""}h this week${over ? " · over contract" : ""}` }), hoursBar(h, p.contractHours)),
+          list.length ? el("span", { class: "pshifts" }, ...list.map((s) => shiftCard(d, s, { clash: clashes.has(s.id), showSite: true, showName: false })))
+            : el("button", { type: "button", class: "btn ghost sm", "data-w": "", onclick: () => newShift(d, p.sites?.[0] || firstOpenSite(d, day), day, p.id) }, w === "Off" ? "Add" : w));
+      });
+      out.push(el("div", { class: "list glass" }, ...rows));
+      return out;
+    }
+    for (const site of d.sites) {
+      const head = el("div", { class: "scardh" }, el("b", { text: site.name }),
+        !ro && site.inUse && site.open[i] ? el("button", { type: "button", class: "linkbtn", onclick: () => go(`day/${site.id}/${day}`) }, "Day view") : null);
+      if (!site.inUse) { out.push(el("section", { class: "panel sitecard" }, head, el("p", { class: "note", text: "Not in use yet. Set this site up in the diary (Setup) to plan it." }))); continue; }
+      if (!site.open[i]) {
+        out.push(el("section", { class: "panel sitecard" }, head, el("p", { class: "note", text: site.closedWhy[i] ? `Closed: ${site.closedWhy[i]}` : "Closed" }),
+          ...d.shifts.filter((s) => s.site === site.id && s.day === day).map((s) => shiftCard(d, s, { clash: true, ro }))));
+        continue;
+      }
+      const list = d.shifts.filter((s) => s.site === site.id && s.day === day).sort((a, b) => a.start.localeCompare(b.start));
+      out.push(el("section", { class: "panel sitecard" }, head,
+        list.length ? el("div", { class: "shlist" }, ...list.map((s) => shiftCard(d, s, { clash: clashes.has(s.id), ro }))) : el("p", { class: "note", text: "No shifts yet." }),
+        ro ? null : el("button", { type: "button", class: "btn ghost sm addshift", "data-w": "", onclick: () => newShift(d, site.id, day) }, svgi(ICON.plus), "Add shift")));
+    }
+    return out;
+  }
+
+  let weekBody = null;
+  function rerenderWeekBody() { if (weekBody && R.weekData) weekBody.replaceChildren(...weekBodyKids(R.weekData)); }
+  function weekBodyKids(d) {
+    if (!wide.matches) return phoneDay(d, false);
+    return [R.view === "person" ? personGrid(d) : siteGrid(d, false),
+      el("div", { class: "legend rlegend" }, el("span", { class: "lg" }, el("i", { class: "sw" }), "Shift"), el("span", { class: "lg" }, el("i", { class: "sw open" }), "Open shift"),
+        el("span", { class: "lg" }, el("i", { class: "sw clash" }), "Clash"), el("span", { text: "Tap a shift to change, move or copy it. Tap an empty space to add one." }))];
+  }
+
+  async function renderWeek() {
+    const d = await loadWeek(R.week, true);
+    const total = r2(d.shifts.reduce((a, s) => a + s.hours, 0));
+    const state = d.published ? (d.changesSincePublish ? `published · ${plural(d.changesSincePublish, "change")} since publishing` : "published") : "draft, not published";
+    setHead("Rota", `${weekLabel(d.week)} · ${state} · ${hrs(total)} hours`, {
+      actions: [el("button", { type: "button", class: "iconbtn", "aria-label": "Previous week", onclick: () => { R.week = addDays(R.week, -7); render(); } }, svgi(ICON.chevL)),
+        el("button", { type: "button", class: "iconbtn", "aria-label": "Next week", onclick: () => { R.week = addDays(R.week, 7); render(); } }, svgi(ICON.chevR))],
+    });
+    if (R.pday > 6) R.pday = 0;
+    const pub = btn(publishLabel(d), async () => {
+      const r = await act(() => api("POST", "/api/rota/week/publish", { week: d.week }), "Published. Staff can see this week now.");
+      if (r) render();
+    }, "btn" + (errorsIn(d).length && !(d.published && !d.changesSincePublish) ? " warnbtn" : ""), { disabled: d.published && !d.changesSincePublish });
+    const prevWeek = addDays(d.week, -7);
+    const copy = d.shifts.length
+      ? twoTap("Copy last week", `Replace ${plural(d.shifts.length, "shift")}?`, () => copyWeek(prevWeek, d.week, true), "btn ghost")
+      : ghost("Copy last week", () => copyWeek(prevWeek, d.week, false));
+    const toolbar = el("div", { class: "rtool" },
+      seg([["site", "By site"], ["person", "By person"]], R.view, (v) => { R.view = v; try { localStorage.setItem("rota.view", v); } catch (e) {} render(); }, "View"),
+      el("span", { class: "grow" }), copy, pub);
+    weekBody = el("div", { class: "stack" }, ...weekBodyKids(d));
+    return [toolbar, problemChips(d, (p) => focusProblem(d, p)), weekBody];
+  }
+
+  async function copyWeek(from, to, replace) {
+    const r = await act(() => api("POST", "/api/rota/week/copy", { from, to, replace }));
+    if (!r) return;
+    toast(`Copied ${plural(r.copied, "shift")}${r.skipped.length ? `. ${r.skipped.length} skipped: ${r.skipped[0].reason}` : ""}.`);
+    render();
+  }
+
+  /* ---------- the shift sheet ---------- */
+
+  function newShift(d, site, day, userId) {
+    const s = d.sites.find((x) => x.id === site) || {};
+    openShift({ id: null, site, day, start: s.opensAt || "08:00", end: s.closesAt || "16:00", breakMins: 30, job: "", userId: userId || null, note: "" }, d);
+  }
+
+  function shiftFields(d, s) {
+    const f = {};
+    f.site = el("select", { id: "f_site" }, ...d.sites.filter((x) => x.inUse).map((x) => el("option", { value: x.id }, x.name)));
+    f.site.value = s.site;
+    f.day = el("input", { type: "date", id: "f_day", value: s.day });
+    f.start = el("input", { type: "time", id: "f_start", value: s.start, step: 300 });
+    f.end = el("input", { type: "time", id: "f_end", value: s.end, step: 300 });
+    f.breakMins = el("input", { type: "number", id: "f_break", value: String(s.breakMins), min: 0, max: 180, step: 5, inputmode: "numeric" });
+    let job = s.job;
+    f.jobBox = el("div");
+    const drawJob = () => f.jobBox.replaceChildren(seg([["", "No job"], ["opens", "Opens"], ["closes", "Closes"]], job, (v) => { job = v; drawJob(); }, "Job"));
+    drawJob();
+    f.job = () => job;
+    f.note = el("input", { type: "text", id: "f_note", value: s.note, maxlength: 500, placeholder: "e.g. Training with Priya" });
+    const fld = (id, t, input) => el("div", { class: "field" }, el("label", { class: "label", for: id, text: t }), input);
+    f.box = el("div", { class: "sfields" },
+      fld("f_site", "Site", f.site), fld("f_day", "Day", f.day), fld("f_start", "Starts", f.start), fld("f_end", "Ends", f.end),
+      fld("f_break", "Unpaid break (minutes)", f.breakMins), el("div", { class: "field wide" }, el("span", { class: "label", text: "Job" }), f.jobBox),
+      el("div", { class: "field wide" }, el("label", { class: "label", for: "f_note", text: "Note" }), f.note));
+    f.values = () => ({ site: f.site.value, day: f.day.value, start: f.start.value, end: f.end.value, breakMins: Number(f.breakMins.value || 0), job: f.job(), note: f.note.value.trim() });
+    return f;
+  }
+
+  async function openShift(s, d) {
+    const isNew = !s.id;
+    const f = shiftFields(d, s);
+    const msg = el("p", { class: "smsg", role: "alert" });
+    const who = el("div", { class: "who" });
+    const foot = el("div", { class: "sfoot" });
+    let pick = null; // chosen person from the suggestions
+    let changing = !s.userId;
+
+    async function save(extra = {}, okText) {
+      msg.textContent = "";
+      const body = { ...f.values(), ...extra };
+      try {
+        const before = isNew ? null : { site: s.site, day: s.day, start: s.start, end: s.end, breakMins: s.breakMins, job: s.job, note: s.note, userId: s.userId };
+        const r = isNew ? await api("POST", "/api/rota/shifts", { ...body, userId: extra.userId !== undefined ? extra.userId : s.userId })
+          : await api("PATCH", "/api/rota/shifts/" + s.id, body);
+        closeSheets();
+        if (R.weekData) R.weekData._at = 0;
+        const undo = isNew ? ["Undo", async () => { await act(() => api("DELETE", "/api/rota/shifts/" + r.shift.id)); render(); }]
+          : ["Undo", async () => { await act(() => api("PATCH", "/api/rota/shifts/" + s.id, before)); render(); }];
+        toast(okText || (isNew ? "Shift added" : "Shift saved"), undo);
+        render();
+        return r;
+      } catch (e) { msg.textContent = e.message; return null; }
+    }
+
+    async function drawWho() {
+      who.replaceChildren();
+      if (!changing && s.userId) {
+        who.append(label("Who"), el("div", { class: "list glass" }, el("div", { class: "lrow" }, avatar(nameOf(d, s.userId)),
+          el("span", { class: "t" }, el("b", { text: nameOf(d, s.userId) })), ghost("Change person", () => { changing = true; drawWho(); drawFoot(); }, { class: "btn ghost sm" }))));
+        return;
+      }
+      if (isNew) {
+        const sel = el("select", { id: "f_person" }, el("option", { value: "" }, "Open shift (fill it later)"), ...d.people.map((p) => el("option", { value: p.id }, p.name)));
+        sel.value = s.userId || "";
+        sel.onchange = () => { pick = sel.value || null; drawFoot(); };
+        pick = s.userId || null;
+        who.append(el("div", { class: "field" }, el("label", { class: "label", for: "f_person", text: "Who" }), sel),
+          el("p", { class: "note", text: "Save it as an open shift to see who's free, best fit first." }));
+        return;
+      }
+      who.append(label("Who can do it"), el("div", { class: "list glass" }, empty("Checking who's free…")));
+      let r;
+      try { r = await get("/api/rota/suggest?shift=" + s.id); } catch (e) { who.lastChild.replaceChildren(empty(e.message)); return; }
+      const rows = r.candidates.map((c) => {
+        const flag = c.flags[0];
+        const pill = c.best ? el("span", { class: "pill ok", text: "Best fit" })
+          : flag ? el("span", { class: "pill " + (flag.severity === "error" || flag.kind === "untrained" ? "bad" : flag.severity === "warn" ? "warn" : ""), text: { clash: "Clash", time_off: "Time off", over_contract: "Over hours", rest: "Short rest", untrained: "Training", availability: "Availability", break: "Break", seven_days: "7 days", closed: "Closed" }[flag.kind] || "Check" }) : null;
+        const sub = flag ? flag.message : `Free · would be ${hrs(c.hoursIfGiven)}${c.contractHours != null ? " of " + hrs(c.contractHours) : ""}h`;
+        const row = el("button", { type: "button", class: "lrow cand" + (c.selectable ? "" : " dim"), disabled: !c.selectable, role: "radio", "aria-checked": "false",
+          onclick: () => { pick = c.userId; for (const x of who.querySelectorAll(".cand")) x.setAttribute("aria-checked", String(x === row)); drawFoot(c.name); } },
+          avatar(c.name), el("span", { class: "t" }, el("b", { text: c.name }), el("span", { class: "s", text: sub + (c.flags.length > 1 ? ` (+${c.flags.length - 1} more)` : "") })), pill, c.selectable ? el("span", { class: "radio", "aria-hidden": "true" }) : null);
+        if (c.best && !pick) { pick = c.userId; row.setAttribute("aria-checked", "true"); }
+        return row;
+      });
+      who.lastChild.replaceChildren(...(rows.length ? rows : [empty("No one else has an account yet.")]));
+      who.lastChild.setAttribute("role", "radiogroup");
+      who.append(el("p", { class: "note", text: "Checks hours, other shifts, time off, when people can work, and opening and closing training for this site." }));
+      const best = r.candidates.find((c) => c.userId === pick);
+      drawFoot(best?.name);
+    }
+
+    function drawFoot(pickName) {
+      foot.replaceChildren();
+      if (isNew) {
+        foot.append(btn(pick ? "Add shift" : "Add open shift", () => save({ userId: pick || null })));
+        return;
+      }
+      if (changing || !s.userId) {
+        const nm = pickName || (pick ? nameOf(d, pick) : null);
+        foot.append(ghost(s.userId ? "Make it open" : "Offer to everyone", () => save({ userId: null }, s.userId ? "Shift is open now" : "Left open. Staff who could take it see it once the week is published.")),
+          btn(nm ? `Give to ${first(nm)}` : "Choose someone", () => pick && save({ userId: pick }, `Given to ${first(nm)}`), "btn", { disabled: !pick }));
+      } else {
+        foot.append(btn("Save changes", () => save()));
+      }
+    }
+
+    const tools = isNew ? null : el("div", { class: "row stools" },
+      ghost("Move to…", () => { f.site.focus(); f.box.classList.add("flash"); setTimeout(() => f.box.classList.remove("flash"), 900); }, { class: "btn ghost sm" }),
+      ghost("Duplicate", async () => {
+        const r = await act(() => api("POST", "/api/rota/shifts", { ...f.values(), userId: null }), "Duplicated as an open shift. Change its day or person.");
+        if (r) { closeSheets(); if (R.weekData) R.weekData._at = 0; const nd = await loadWeek(mondayOfDay(r.shift.day), true); openShift(r.shift, nd); rerenderSoon(); }
+      }, { class: "btn ghost sm" }),
+      ghost("Day view", () => { closeSheets(); go(`day/${s.site}/${s.day}`); }, { class: "btn ghost sm" }),
+      twoTap("Delete", "Delete this shift?", async () => {
+        const r = await act(() => api("DELETE", "/api/rota/shifts/" + s.id));
+        if (!r) return;
+        closeSheets(); if (R.weekData) R.weekData._at = 0;
+        toast("Shift deleted", ["Undo", async () => { await act(() => api("POST", "/api/rota/shifts", { site: s.site, day: s.day, start: s.start, end: s.end, breakMins: s.breakMins, job: s.job, userId: s.userId, note: s.note })); render(); }]);
+        render();
+      }, "btn ghost sm danger"));
+
+    const title = isNew ? "New shift" : !s.userId ? "Open shift" : `${first(nameOf(d, s.userId))}'s shift`;
+    openSheet(title, el("div", { class: "sbody" }, f.box, who, msg, tools, foot), { left: cancelLink() });
+    drawFoot();
+    drawWho();
+  }
+  const mondayOfDay = (day) => monday(day);
+  const rerenderSoon = () => setTimeout(render, 50);
+
+  /* ---------- day view (managers) ---------- */
+
+  async function renderDay([site, day]) {
+    if (!site || !/^\d{4}-\d{2}-\d{2}$/.test(day || "")) { go("week"); return []; }
+    const d = await loadWeek(monday(day), true);
+    R.week = d.week;
+    const s = d.sites.find((x) => x.id === site);
+    if (!s) { go("week"); return []; }
+    const i = d.days.indexOf(day);
+    const list = d.shifts.filter((x) => x.site === site && x.day === day).sort((a, b) => a.start.localeCompare(b.start));
+    const people = new Set(list.filter((x) => x.userId).map((x) => x.userId)).size;
+    setHead(longD(day), `${s.name} · ${s.open[i] ? (s.opensAt && s.closesAt ? `open ${s.opensAt}–${s.closesAt}` : "open") : "closed"} · ${plural(people, "person", "people")}`, { back: ["Rota", "week"] });
+    const strip = dayStrip(d.days, i, (k) => go(`day/${site}/${d.days[k]}`));
+    const sitePick = seg(d.sites.filter((x) => x.inUse).map((x) => [x.id, x.name]), site, (v) => go(`day/${v}/${day}`), "Site");
+    if (!s.open[i]) return [sitePick, strip, el("section", { class: "panel" }, el("p", { class: "note", text: s.closedWhy[i] ? `${s.name} is closed: ${s.closedWhy[i]}.` : `${s.name} is closed on ${DAY_NAMES[dow(day)]}s.` }))];
+
+    // The timeline: from opening (or the earliest shift) to closing (or the latest).
+    const starts = list.map((x) => mins(x.start)), ends = list.map((x) => mins(x.end));
+    let a = Math.min(s.opensAt ? mins(s.opensAt) : 24 * 60, ...starts, 23 * 60), b = Math.max(s.closesAt ? mins(s.closesAt) : 0, ...ends, 60);
+    if (!list.length && !s.opensAt) { a = 7 * 60; b = 18 * 60; }
+    a = Math.floor(a / 60) * 60; b = Math.ceil(b / 60) * 60; if (b <= a) b = a + 60;
+    const pos = (m) => ((m - a) / (b - a)) * 100;
+    const clashes = clashIds(d);
+    const axis = el("div", { class: "tl-axis", "aria-hidden": "true" });
+    for (let h = a; h <= b; h += 60) if ((h / 60) % (b - a > 9 * 60 ? 3 : 1) === 0) axis.append(el("span", { style: `left:${pos(h)}%`, text: String(h / 60).padStart(2, "0") }));
+    const rows = list.map((x) => {
+      const nm = nameOf(d, x.userId);
+      const other = x.userId ? d.shifts.filter((o) => o.userId === x.userId && o.day === day && o.id !== x.id) : [];
+      return el("div", { class: "tl-row" }, el("span", { class: "tl-name", text: nm ? first(nm) : "Open" }),
+        el("div", { class: "tl-track" },
+          ...other.map((o) => el("span", { class: "tl-bar ghost", style: `left:${pos(Math.max(a, mins(o.start)))}%;width:${pos(Math.min(b, mins(o.end))) - pos(Math.max(a, mins(o.start)))}%` }, `At ${d.sites.find((z) => z.id === o.site).name} till ${o.end}`)),
+          el("button", { type: "button", class: "tl-bar" + (!x.userId ? " open" : "") + (clashes.has(x.id) ? " clash" : ""), style: `left:${pos(mins(x.start))}%;width:${pos(mins(x.end)) - pos(mins(x.start))}%`,
+            onclick: () => openShift(x, d), "aria-label": `${nm || "Open shift"} ${x.start} to ${x.end}${x.job ? ", " + x.job : ""}${clashes.has(x.id) ? ", clash" : ""}` },
+          `${x.start}–${x.end}${x.job ? " · " + jobWord(x.job) : ""}${clashes.has(x.id) ? " · Clash" : ""}`)));
+    });
+    rows.push(el("div", { class: "tl-row" }, el("span", { class: "tl-name", text: "Add" }),
+      el("button", { type: "button", class: "tl-track tl-add", "data-w": "", "aria-label": `Add a shift at ${s.name} on ${longD(day)}`, onclick: () => newShift(d, site, day) })));
+    // People on shift each hour, against the minimum.
+    const bars = el("div", { class: "tl-bars" });
+    const max = Math.max(1, s.minPeople, ...Array.from({ length: (b - a) / 60 }, (_, k) => list.filter((x) => x.userId && mins(x.start) <= a + k * 60 && mins(x.end) >= a + (k + 1) * 60).length));
+    for (let t = a; t < b; t += 60) {
+      const n = list.filter((x) => x.userId && mins(x.start) <= t && mins(x.end) >= t + 60).length;
+      const inHours = s.opensAt && s.closesAt && t >= mins(s.opensAt) && t < mins(s.closesAt);
+      const low = inHours && n < s.minPeople;
+      bars.append(el("span", { class: "tl-h" + (low ? " low" : ""), style: `left:${pos(t)}%;width:${pos(t + 60) - pos(t)}%;height:${Math.max(8, (n / max) * 100)}%`, title: `${hhmm(t)}: ${plural(n, "person", "people")}${low ? " (below " + s.minPeople + ")" : ""}` }, el("i", { text: String(n) })));
+    }
+    const tl = el("section", { class: "panel timeline" }, axis, ...rows,
+      el("div", { class: "tl-row" }, el("span", { class: "tl-name", text: "On shift" }), bars),
+      el("p", { class: "note", text: s.opensAt && s.closesAt ? `Each bar shows how many people are on that hour. Red bars are below the ${plural(s.minPeople, "person", "people")} ${s.name} needs from ${s.opensAt} to ${s.closesAt}.` : "Set opening hours and minimum cover in Rota settings to check cover." }));
+
+    // Problems for this day, with a one-tap fix where there's an obvious one.
+    const probs = d.problems.filter((p) => p.day === day && (!p.site || p.site === site || p.shiftIds.some((id) => list.some((x) => x.id === id))));
+    const alerts = [];
+    for (const p of probs) {
+      const fixes = [];
+      const sh = list.find((x) => p.shiftIds.includes(x.id));
+      if (p.kind === "open_shift" && sh) fixes.push(btn("Fill", () => openShift(sh, d)));
+      if (p.kind === "clash" && sh) {
+        const fixBtn = btn("Finding who's free…", null, "btn", { disabled: true });
+        fixes.push(fixBtn);
+        get("/api/rota/suggest?shift=" + sh.id).then((r) => {
+          const best = r.candidates.find((c) => c.best);
+          if (!best) { fixBtn.textContent = "Change person"; fixBtn.disabled = false; fixBtn.onclick = () => openShift(sh, d); return; }
+          fixBtn.textContent = `Give the ${sh.job === "closes" ? "close" : sh.job === "opens" ? "open" : "shift"} to ${first(best.name)}`; fixBtn.disabled = false;
+          fixBtn.onclick = async () => { const before = sh.userId; const ok = await act(() => api("PATCH", "/api/rota/shifts/" + sh.id, { userId: best.userId })); if (ok) { toast(`Given to ${first(best.name)}`, ["Undo", async () => { await act(() => api("PATCH", "/api/rota/shifts/" + sh.id, { userId: before })); render(); }]); render(); } };
+        }).catch(() => { fixBtn.textContent = "Change person"; fixBtn.disabled = false; fixBtn.onclick = () => openShift(sh, d); });
+      }
+      if ((p.kind === "no_opener" || p.kind === "no_closer") && list.length) {
+        const job = p.kind === "no_opener" ? "opens" : "closes";
+        const cand = [...list].filter((x) => x.userId && !x.job).sort((x, y) => (job === "opens" ? x.start.localeCompare(y.start) : y.end.localeCompare(x.end)))[0];
+        if (cand) fixes.push(btn(`${first(nameOf(d, cand.userId))} ${job === "opens" ? "opens" : "closes"}`, async () => { if (await act(() => api("PATCH", "/api/rota/shifts/" + cand.id, { job }), "Saved")) render(); }));
+      }
+      if (p.kind === "short_cover") {
+        const m = p.message.match(/(\d\d:\d\d)–(\d\d:\d\d)$/);
+        if (m) fixes.push(btn("Add a shift then", () => openShift({ id: null, site, day, start: m[1], end: m[2], breakMins: 0, job: "", userId: null, note: "" }, d)));
+      }
+      alerts.push(el("div", { class: "alert rp " + p.severity, role: "note" }, el("span", { class: "ic" }, svgi(ICON.warn)),
+        el("span", { class: "t" }, el("b", { text: p.severity === "error" ? "Problem" : p.severity === "warn" ? "Check" : "Note" }), el("span", { text: p.message })), ...fixes));
+    }
+    return [sitePick, strip, tl, ...alerts];
+  }
+
+  /* ---------- my shifts (everyone) ---------- */
+
+  async function renderMine() {
+    const u = R.me.user;
+    const toggle = seg([["mine", "Mine"], ["all", "Everyone"]], R.everyone ? "all" : "mine", (v) => { R.everyone = v === "all"; render(); }, "Whose shifts");
+    if (R.everyone) {
+      const d = await loadWeek(R.everyoneWeek || (R.everyoneWeek = monday(londonToday())), true);
+      setHead("My shifts", `${weekLabel(d.week)} · ${d.published ? "published" : mgr() ? "draft (staff can't see it yet)" : "not published yet"}`, {
+        actions: [el("button", { type: "button", class: "iconbtn", "aria-label": "Previous week", onclick: () => { R.everyoneWeek = addDays(d.week, -7); render(); } }, svgi(ICON.chevL)),
+          el("button", { type: "button", class: "iconbtn", "aria-label": "Next week", onclick: () => { R.everyoneWeek = addDays(d.week, 7); render(); } }, svgi(ICON.chevR))],
+      });
+      if (!d.shifts.length) return [toggle, empty(d.published ? "No shifts this week." : "This week's rota hasn't been published yet.")];
+      if (R.pday > 6) R.pday = 0;
+      const body = el("div", { class: "stack" });
+      const draw = () => body.replaceChildren(...(wide.matches ? [siteGrid(d, true)] : phoneDay(d, true, () => draw())));
+      draw();
+      return [toggle, body];
+    }
+    const today = londonToday(), now = londonNow();
+    const [r, me] = await Promise.all([get(`/api/rota/mine?from=${today}&to=${addDays(today, 27)}`), get("/api/rota/me")]);
+    R.approvers = me.approvers;
+    setHead("My shifts", u.name, {});
+    const coverOf = (s) => me.requests.find((q) => q.kind === "cover" && q.fromUser === u.id && q.shift?.id === s.id && ["open", "accepted"].includes(q.status));
+    const upcoming = r.shifts.filter((s) => s.day > today || (s.day === today && s.end > now));
+    if (!upcoming.length) return [toggle, el("section", { class: "panel" }, el("p", { text: r.published.length ? "No shifts for you in the next four weeks." : "No rota has been published yet. You'll see your shifts here when a manager publishes the week." }))];
+    const nx = upcoming[0];
+    const whenWord = nx.day === today ? "Today" : nx.day === addDays(today, 1) ? "Tomorrow" : longD(nx.day);
+    const others = nx.others.filter((o) => !o.open);
+    const hero = el("section", { class: "hero nextshift" },
+      el("div", { class: "kick", text: `Next shift · ${whenWord}` }), el("div", { class: "big", text: `${nx.start}–${nx.end}` }),
+      el("div", { text: `${nx.siteName}${nx.job ? ` · you ${nx.job === "opens" ? "open" : "close"}` : ""}${nx.breakMins ? ` · ${nx.breakMins} min break` : ""}` }),
+      others.length ? el("div", { class: "with", text: "With " + others.map((o) => first(o.name) + (o.start !== nx.start ? ` from ${o.start}` : "")).join(", ") }) : el("div", { class: "with", text: "On your own" }),
+      nx.note ? el("div", { class: "with", text: nx.note }) : null,
+      el("div", { class: "row" }, el("button", { type: "button", class: "hbtn", onclick: () => calendarFile(nx) }, "Add to calendar"),
+        coverOf(nx) ? el("span", { class: "hbtn on", text: "Cover asked" }) : el("button", { type: "button", class: "hbtn", "data-w": "", onclick: () => askCover(nx) }, "Ask for cover")));
+    const weeks = {};
+    for (const s of upcoming) (weeks[monday(s.day)] ||= []).push(s);
+    const out = [toggle, hero];
+    for (const [w, list] of Object.entries(weeks)) {
+      out.push(label(w === monday(today) ? "This week" : weekLabel(w)));
+      out.push(el("div", { class: "list glass" }, ...list.map((s) => {
+        const o = s.others.filter((x) => !x.open);
+        const cov = coverOf(s);
+        return el("button", { type: "button", class: "lrow mrow", onclick: () => shiftActions(s, cov) },
+          el("span", { class: "dbadge" }, el("span", { text: fmt(s.day, { weekday: "short" }).toUpperCase() }), el("b", { text: fmt(s.day, { day: "numeric" }) })),
+          el("span", { class: "t" }, el("b", { text: `${s.start}–${s.end}${s.job ? " · " + jobWord(s.job) : ""}` }),
+            el("span", { class: "s", text: (o.length ? "With " + o.map((x) => first(x.name)).join(", ") : "On your own") + (cov ? " · cover asked" : "") })),
+          sitePill(s.site, s.siteName));
+      })));
+      const total = r2(list.reduce((a, s) => a + s.hours, 0));
+      out.push(el("div", { class: "totrow" }, el("span", { text: w === monday(today) ? "This week (from today)" : weekLabel(w) }), el("b", { text: `${hrs(total)} hours` })));
+    }
+    return out;
+  }
+
+  function shiftActions(s, cov) {
+    openSheet(`${shortM(s.day)} · ${s.start}–${s.end}`, el("div", { class: "sbody" },
+      el("p", { class: "note", text: `${s.siteName}${s.job ? " · " + jobWord(s.job).toLowerCase() : ""} · ${hrs(s.hours)} paid hours${s.breakMins ? ` (${s.breakMins} min unpaid break)` : ""}` }),
+      s.note ? el("p", { text: s.note }) : null,
+      el("div", { class: "sfoot" }, ghost("Add to calendar", () => { calendarFile(s); closeSheets(); }),
+        cov ? btn("Cover asked", null, "btn", { disabled: true }) : btn("Ask for cover", () => askCover(s)))), { left: cancelLink() });
+  }
+
+  async function askCover(s) {
+    // Everyone on the rota (names and account ids) comes with the week.
+    let people = [];
+    try { people = (await get("/api/rota/week?start=" + monday(s.day))).people || []; } catch (e) {}
+    const u = R.me.user;
+    const sel = el("select", { id: "c_to" }, el("option", { value: "" }, "Anyone who can"), ...people.filter((p) => p.id !== u.id).map((p) => el("option", { value: p.id }, p.name)));
+    const note = el("input", { type: "text", id: "c_msg", maxlength: 300, placeholder: "e.g. Family wedding, could you take my shift?" });
+    const msg = el("p", { class: "smsg", role: "alert" });
+    openSheet("Ask for cover", el("div", { class: "sbody" },
+      el("p", { class: "note", text: `${shortM(s.day)} · ${s.start}–${s.end} at ${s.siteName}` }),
+      el("div", { class: "field" }, el("label", { class: "label", for: "c_to", text: "Ask" }), sel),
+      el("div", { class: "field" }, el("label", { class: "label", for: "c_msg", text: "Message (optional)" }), note), msg,
+      el("p", { class: "note", text: `${approverText()} approves it before it changes hands. It stays your shift until then.` }),
+      el("div", { class: "sfoot" }, btn("Send request", async () => {
+        try {
+          await api("POST", "/api/rota/requests", { kind: "cover", shiftId: s.id, toUserId: sel.value || null, message: note.value.trim() });
+          closeSheets(); toast("Asked. You'll see replies under Open shifts & cover."); render();
+        } catch (e) { msg.textContent = e.message; }
+      }))), { left: cancelLink() });
+  }
+
+  /* ---------- open shifts and cover (everyone) ---------- */
+
+  const statusText = (q, u) => {
+    const ap = approverText();
+    if (q.status === "approved") return ["Approved", "ok"];
+    if (q.status === "declined") return ["Declined", "bad"];
+    if (q.status === "cancelled") return ["Cancelled", ""];
+    if (q.kind === "claim") return [`Waiting for ${ap === "A manager" ? "a manager" : ap} to approve`, "warn"];
+    if (q.status === "accepted") return [`${q.takerId === u ? "You" : first(q.takerName)} offered · ${ap === "A manager" ? "a manager" : ap} to approve`, "warn"];
+    return [q.toUser ? `Waiting for ${first(q.toName)}` : "Offered to anyone", "warn"];
+  };
+
+  async function renderSwaps() {
+    const u = R.me.user;
+    const today = londonToday();
+    const [open, me, mine] = await Promise.all([get("/api/rota/open"), get("/api/rota/me"), get(`/api/rota/mine?from=${monday(today)}&to=${addDays(today, 41)}`)]);
+    R.approvers = me.approvers;
+    setHead("Open shifts & cover", "Open shifts you can pick up, and cover requests", mgr() ? {} : {});
+    const weekHours = (day) => r2(mine.shifts.filter((s) => monday(s.day) === monday(day)).reduce((a, s) => a + s.hours, 0));
+    let hidden = []; try { hidden = JSON.parse(localStorage.getItem("rota.notForMe") || "[]"); } catch (e) {}
+    const ap = approverText();
+    const out = [];
+
+    const shifts = open.shifts.filter((s) => !hidden.includes(s.id));
+    out.push(label("Open shifts you can do"));
+    if (!shifts.length) out.push(el("section", { class: "panel" }, el("p", { class: "note", text: "None right now. Open shifts from published weeks appear here." })));
+    for (const s of shifts) {
+      const after = r2(weekHours(s.day) + s.hours);
+      const myClaim = me.requests.find((q) => q.kind === "claim" && q.fromUser === u.id && q.shift?.id === s.id && q.status === "open");
+      out.push(el("section", { class: "panel ocard" },
+        el("div", { class: "row spread" }, el("b", { class: "big", text: `${short(s.day)} · ${s.start}–${s.end}` }), sitePill(s.site, s.siteName)),
+        el("p", { class: "note", text: [jobWord(s.job) && (s.job === "opens" ? "Opening" : "Closing"), `${hrs(s.hours)} hours`, `you'd be on ${hrs(after)}h that week`].filter(Boolean).join(" · ") }),
+        s.asked
+          ? el("div", { class: "row" }, el("span", { class: "pill warn", text: `Asked · waiting for ${ap === "A manager" ? "a manager" : ap}` }), myClaim ? ghost("Cancel", async () => { if (await act(() => api("PATCH", "/api/rota/requests/" + myClaim.id, { action: "cancel" }), "Cancelled")) render(); }, { class: "btn ghost sm" }) : null)
+          : s.takenBySomeone ? el("p", { class: "note", text: "Someone has already asked for this one." })
+          : el("div", { class: "row two" },
+            ghost("Not for me", () => { hidden.push(s.id); try { localStorage.setItem("rota.notForMe", JSON.stringify(hidden.slice(-200))); } catch (e) {} render(); }),
+            btn("I'll take it", async () => { if (await act(() => api("POST", "/api/rota/requests", { kind: "claim", shiftId: s.id }), `Asked. ${ap} approves it before it's yours.`)) render(); })),
+        el("p", { class: "note", text: `${ap} approves it before it's yours.` })));
+    }
+
+    const asked = me.requests.filter((q) => q.kind === "cover" && q.status === "open" && q.fromUser !== u.id && (!q.toUser || q.toUser === u.id) && q.shift && q.shift.day >= today);
+    out.push(label("Asked of you"));
+    if (!asked.length) out.push(el("section", { class: "panel" }, el("p", { class: "note", text: "No one has asked you to cover a shift." })));
+    for (const q of asked) {
+      const s = q.shift;
+      const clash = mine.shifts.some((m) => m.day === s.day && mins(m.start) < mins(s.end) && mins(s.start) < mins(m.end));
+      out.push(el("section", { class: "panel ocard" },
+        el("div", { class: "row" }, avatar(q.fromName), el("span", { class: "t" }, el("b", { text: `${first(q.fromName)} asks ${q.toUser ? "you" : "anyone"} to cover` }), el("span", { class: "s", text: "Sent " + when(q.createdAt) }))),
+        q.message ? el("blockquote", { class: "quote", text: `“${q.message}”` }) : null,
+        el("div", { class: "row spread" }, el("b", { text: `${short(s.day)} · ${s.start}–${s.end}${s.job ? " · " + jobWord(s.job) : ""}` }), sitePill(s.site, s.siteName)),
+        el("p", { class: "note", text: clash ? "You already have a shift then." : `You're free · you'd be on ${hrs(weekHours(s.day) + s.hours)}h that week` }),
+        el("div", { class: "row two" },
+          q.toUser === u.id ? ghost("Decline", async () => { if (await act(() => api("PATCH", "/api/rota/requests/" + q.id, { action: "decline" }), "Declined")) render(); }) : el("span"),
+          btn("Cover it", async () => { if (await act(() => api("PATCH", "/api/rota/requests/" + q.id, { action: "accept" }), `Thanks. ${ap} approves it before it's yours.`)) render(); }, "btn", { disabled: clash })),
+        el("p", { class: "note", text: `${ap} approves it before it's yours.` })));
+    }
+
+    const own = me.requests.filter((q) => (q.fromUser === u.id || (q.taker === u.id && q.kind === "cover")) && q.shift);
+    out.push(label("Your requests"));
+    if (!own.length) out.push(el("section", { class: "panel" }, el("p", { class: "note", text: "Nothing yet. Ask for cover from a shift under My shifts." })));
+    else out.push(el("div", { class: "list glass" }, ...own.map((q) => {
+      const s = q.shift;
+      const [txt, cls] = statusText({ ...q, takerId: q.taker }, u.id);
+      const what = q.kind === "claim" ? "You asked to pick this up" : q.fromUser === u.id ? (q.toUser ? `Asked ${first(q.toName)} to cover` : `Offered to anyone at ${s.siteName}`) : `You offered to cover ${first(q.fromName)}'s shift`;
+      return el("div", { class: "lrow" }, el("span", { class: "t" }, el("b", { text: `${short(s.day)} · ${s.start}–${s.end}` }), el("span", { class: "s", text: what }),
+        el("span", { class: "stat " + cls }, el("span", { class: "sdot " + (cls === "ok" ? "ok" : cls === "bad" ? "bad" : cls ? "warn" : ""), "aria-hidden": "true" }), txt)),
+        sitePill(s.site, s.siteName),
+        ["open", "accepted"].includes(q.status) && q.fromUser === u.id ? ghost("Cancel", async () => { if (await act(() => api("PATCH", "/api/rota/requests/" + q.id, { action: "cancel" }), "Cancelled")) render(); }, { class: "btn ghost sm" }) : null);
+    })));
+    return out;
+  }
+
+  /* ---------- when I can work (everyone) ---------- */
+
+  async function renderAvail() {
+    const me = await get("/api/rota/me");
+    R.approvers = me.approvers;
+    setHead("When I can work", "Managers see this when they plan the rota");
+    let pattern = JSON.parse(JSON.stringify(me.pattern || {}));
+    let sites = [...(me.sites || [])];
+    let t;
+    const saveSoon = () => { clearTimeout(t); t = setTimeout(async () => { await act(() => api("PUT", "/api/rota/me/availability", { pattern, sites }), "Saved"); }, 500); };
+
+    const rows = el("div", { class: "list glass" });
+    const drawRows = () => rows.replaceChildren(...DAYS.map((k, i) => {
+      const v = pattern[k] ?? "any";
+      const on = v !== "off";
+      const sw = el("input", { type: "checkbox", id: "av_" + k, "data-w": "", "aria-label": `${DAY_NAMES[i]}: can work` });
+      sw.checked = on;
+      sw.onchange = () => { pattern[k] = sw.checked ? "any" : "off"; drawRows(); saveSoon(); };
+      const desc = v === "off" ? "Can't work" : v === "any" ? "Any time" : v.from && v.to ? `${v.from}–${v.to}` : v.from ? `From ${v.from}` : `Until ${v.to}`;
+      const row = el("div", { class: "lrow avrow" }, el("b", { class: "dn", text: fmt(addDays("2026-11-09", i), { weekday: "short" }) }),
+        on ? el("button", { type: "button", class: "tchip" + (v === "any" ? " any" : ""), "data-w": "", "aria-expanded": "false", onclick: () => times.hidden = !times.hidden }, desc) : el("span", { class: "s", text: desc }),
+        el("span", { class: "grow" }), el("label", { class: "rswitch" }, sw));
+      const fromI = el("input", { type: "time", value: typeof v === "object" ? v.from || "" : "", "aria-label": `${DAY_NAMES[i]} from` });
+      const toI = el("input", { type: "time", value: typeof v === "object" ? v.to || "" : "", "aria-label": `${DAY_NAMES[i]} until` });
+      const apply = () => { const o = {}; if (fromI.value) o.from = fromI.value; if (toI.value) o.to = toI.value; if (o.from && o.to && o.to <= o.from) { toast("Until has to be after from."); return; } pattern[k] = Object.keys(o).length ? o : "any"; drawRows(); saveSoon(); };
+      const times = el("div", { class: "avtimes", hidden: true }, el("label", {}, "From ", fromI), el("label", {}, "Until ", toI),
+        ghost("Any time", () => { pattern[k] = "any"; drawRows(); saveSoon(); }, { class: "btn ghost sm" }), btn("Set", apply, "btn sm"));
+      return el("div", { class: "avwrap" }, row, times);
+    }));
+    drawRows();
+
+    const siteBox = el("div", { class: "fchips", role: "group", "aria-label": "Sites I can get to" });
+    const SITES = [["roastery", "Roastery"], ["cafe", "Cafe"], ["asg", "ASG"], ["factory", "Factory"]];
+    const drawSites = () => siteBox.replaceChildren(...SITES.map(([id, nm]) => el("button", { type: "button", class: "fchip", "data-w": "", "aria-pressed": String(sites.includes(id)),
+      onclick: () => { sites = sites.includes(id) ? sites.filter((x) => x !== id) : [...sites, id]; drawSites(); saveSoon(); } }, nm)));
+    drawSites();
+
+    const offs = el("div", { class: "list glass" }, ...(me.timeOff.length ? me.timeOff.map((o) => {
+      const days = Math.round((dOf(o.to) - dOf(o.from)) / 864e5) + 1;
+      const range = o.from === o.to ? fmt(o.from, { weekday: "short", day: "numeric", month: "long" }) : `${fmt(o.from, { day: "numeric", month: "short" })}–${fmt(o.to, { day: "numeric", month: "short" })}`;
+      const ap = approverText();
+      const st = { approved: ["Approved", "ok"], requested: [`Waiting for ${ap === "A manager" ? "a manager" : ap}`, "warn"], declined: ["Declined", "bad"], cancelled: ["Cancelled", ""] }[o.status] || [o.status, ""];
+      return el("div", { class: "lrow" }, el("span", { class: "t" }, el("b", { text: range }), el("span", { class: "s", text: [o.reason, plural(days, "day")].filter(Boolean).join(" · ") })),
+        el("span", { class: "pill " + st[1], text: st[0] }),
+        ["requested", "approved"].includes(o.status) && o.to >= londonToday() ? ghost("Cancel", async () => { if (await act(() => api("PATCH", "/api/rota/time-off/" + o.id, { status: "cancelled" }), "Cancelled")) render(); }, { class: "btn ghost sm" }) : null);
+    }) : [el("div", { class: "empty", text: "No time off booked." })]));
+
+    return [label("Each week"), rows, el("p", { class: "note", text: "Switch off days you can't work. Tap a day's time to give a from or until time." }),
+      label("Sites I can get to"), el("section", { class: "panel" }, siteBox, el("p", { class: "note", text: "None ticked means any site." })),
+      label("Time off"), offs, el("div", { class: "row" }, btn("Ask for time off", askTimeOff))];
+  }
+
+  function askTimeOff() {
+    const t = londonToday();
+    const from = el("input", { type: "date", id: "t_from", value: addDays(t, 14), min: t });
+    const to = el("input", { type: "date", id: "t_to", value: addDays(t, 14), min: t });
+    from.onchange = () => { if (to.value < from.value) to.value = from.value; };
+    const why = el("input", { type: "text", id: "t_why", maxlength: 200, placeholder: "e.g. Holiday" });
+    const msg = el("p", { class: "smsg", role: "alert" });
+    openSheet("Ask for time off", el("div", { class: "sbody" },
+      el("div", { class: "sfields" }, el("div", { class: "field" }, el("label", { class: "label", for: "t_from", text: "First day" }), from),
+        el("div", { class: "field" }, el("label", { class: "label", for: "t_to", text: "Last day" }), to),
+        el("div", { class: "field wide" }, el("label", { class: "label", for: "t_why", text: "Reason (optional)" }), why)), msg,
+      el("p", { class: "note", text: `${approverText()} approves it. You'll see the answer here.` }),
+      el("div", { class: "sfoot" }, btn("Send", async () => {
+        try { await api("POST", "/api/rota/time-off", { from: from.value, to: to.value, reason: why.value.trim() }); closeSheets(); toast("Asked. You'll see the answer under Time off."); render(); }
+        catch (e) { msg.textContent = e.message; }
+      }))), { left: cancelLink() });
+  }
+
+  /* ---------- requests (managers) ---------- */
+
+  async function renderRequests() {
+    const r = await get("/api/rota/requests");
+    R.badge = r.timeOff.length + r.requests.filter((q) => (q.kind === "claim" && q.status === "open") || (q.kind === "cover" && q.status === "accepted")).length;
+    renderNav();
+    setHead("Requests", R.badge ? `${plural(R.badge, "thing")} waiting for you` : "Nothing waiting for you");
+    const decide = (url, body, ok) => async () => { if (await act(() => api("PATCH", url, body), ok)) { if (R.weekData) R.weekData._at = 0; render(); } };
+    const out = [label("Time off")];
+    out.push(r.timeOff.length ? el("div", { class: "list glass" }, ...r.timeOff.map((t) => el("div", { class: "lrow wraprow" }, avatar(t.name),
+      el("span", { class: "t" }, el("b", { text: t.name }), el("span", { class: "s", text: `${t.from === t.to ? shortM(t.from) : shortM(t.from) + " – " + shortM(t.to)}${t.reason ? " · " + t.reason : ""}` })),
+      el("span", { class: "acts" }, ghost("Decline", decide("/api/rota/time-off/" + t.id, { status: "declined" }, "Declined"), { class: "btn ghost sm" }),
+        btn("Approve", decide("/api/rota/time-off/" + t.id, { status: "approved" }, "Approved"), "btn sm")))))
+      : el("section", { class: "panel" }, el("p", { class: "note", text: "No time off waiting." })));
+    out.push(label("Pickups and covers"));
+    const rows = r.requests.map((q) => {
+      const s = q.shift;
+      const line = `${shortM(s.day)} · ${s.start}–${s.end} · ${s.siteName}${s.job ? " · " + jobWord(s.job).toLowerCase() : ""}`;
+      let title, ready = false;
+      if (q.kind === "claim") { title = `${q.fromName} wants to pick up an open shift`; ready = true; }
+      else if (q.status === "accepted") { title = `${q.takerName} will cover ${q.fromName}'s shift`; ready = true; }
+      else title = `${q.fromName} asked ${q.toUser ? q.toName : "anyone"} to cover · no reply yet`;
+      return el("div", { class: "lrow wraprow" }, avatar(q.kind === "claim" ? q.fromName : q.takerName || q.fromName),
+        el("span", { class: "t" }, el("b", { text: title }), el("span", { class: "s", text: line }), q.message ? el("span", { class: "s", text: `“${q.message}”` }) : null),
+        el("span", { class: "acts" }, ghost("Decline", decide("/api/rota/requests/" + q.id, { action: "decline" }, "Declined"), { class: "btn ghost sm" }),
+          ready ? btn("Approve", decide("/api/rota/requests/" + q.id, { action: "approve" }, "Approved. The rota is updated."), "btn sm") : null));
+    });
+    out.push(rows.length ? el("div", { class: "list glass" }, ...rows) : el("section", { class: "panel" }, el("p", { class: "note", text: "No pickups or covers waiting." })));
+    return out;
+  }
+
+  /* ---------- more, hours and settings (managers) ---------- */
+
+  function renderMore() {
+    setHead("More", "");
+    const row = (t, sub, ic, tile, fn) => el("button", { class: "lrow", type: "button", onclick: fn }, el("span", { class: "tile " + tile }, svgi(ICON[ic])),
+      el("span", { class: "t" }, el("b", { text: t }), sub ? el("span", { class: "s", text: sub }) : null), el("span", { class: "chev" }, svgi(ICON.chevR)));
+    return [el("div", { class: "list glass" },
+        row("Hours", "Rota hours against contracts, CSV download", "hours", "blue", () => go("hours")),
+        row("Rota settings", "Opening times, minimum cover and contract hours", "setup", "grey", () => go("settings"))),
+      label("Your own shifts"),
+      el("div", { class: "list glass" }, row("Open shifts & cover", "Pick up shifts, ask for cover", "swap", "teal", () => go("swaps")),
+        row("When I can work", "Your weekly pattern and time off", "avail", "indigo", () => go("avail"))),
+      label("Kitchen Diary"),
+      el("div", { class: "list glass" }, row("Open the diary", "Today's checks and records", "diary", "green", () => { location.href = R.links.diary; })),
+      label("Account"),
+      el("div", { class: "list glass" }, ...accountItems().map(([t, ic, fn, danger]) => el("button", { class: "lrow" + (danger ? " danger" : ""), type: "button", onclick: fn },
+        el("span", { class: "tile " + (danger ? "red" : "grey") }, svgi(ICON[ic])), el("span", { class: "t" }, el("b", { text: t }), danger ? el("span", { class: "s", text: "Signed in as " + R.me.user.name }) : null))))];
+  }
+
+  async function renderHours() {
+    const w = R.hoursWeek || (R.hoursWeek = R.week);
+    const r = await get("/api/rota/hours?start=" + w);
+    setHead("Hours", `${weekLabel(r.week)} · all sites${r.published ? "" : " · draft"}`, {
+      back: ["More", "more"],
+      actions: [el("button", { type: "button", class: "iconbtn", "aria-label": "Previous week", onclick: () => { R.hoursWeek = addDays(r.week, -7); render(); } }, svgi(ICON.chevL)),
+        el("button", { type: "button", class: "iconbtn", "aria-label": "Next week", onclick: () => { R.hoursWeek = addDays(r.week, 7); render(); } }, svgi(ICON.chevR))],
+    });
+    const names = { roastery: "Roastery", cafe: "Cafe", asg: "ASG", factory: "Factory" };
+    const stats = el("div", { class: "stat3 hstats" }, ...Object.entries(r.siteTotals).filter(([id, h]) => h || id !== "factory").map(([id, h]) => el("div", { class: "stat glass" }, el("b", { text: hrs(h) }), el("span", { text: names[id] }))));
+    const contractTotal = r2(r.people.reduce((a, p) => a + (p.contractHours || 0), 0));
+    const table = el("table", { class: "htable" },
+      el("thead", {}, el("tr", {}, el("th", { scope: "col", text: "Person" }), el("th", { scope: "col", class: "n", text: "Rota" }), el("th", { scope: "col", class: "n", text: "Contract" }), el("th", { scope: "col", class: "n", text: "Diff" }))),
+      el("tbody", {}, ...r.people.map((p) => el("tr", {}, el("th", { scope: "row", text: p.name }), el("td", { class: "n", text: hrs(p.rotaHours) }),
+        el("td", { class: "n", text: p.contractHours == null ? "–" : hrs(p.contractHours) }),
+        el("td", { class: "n" + (p.difference > 0 ? " over" : ""), text: p.difference == null ? "–" : (p.difference > 0 ? "+" : p.difference < 0 ? "−" : "") + hrs(Math.abs(p.difference)), title: p.difference > 0 ? "Over contract" : "" })))),
+      el("tfoot", {}, el("tr", {}, el("th", { scope: "row", text: "Total" }), el("td", { class: "n", text: hrs(r.total) }), el("td", { class: "n", text: hrs(contractTotal) }), el("td"))));
+    return [stats, el("section", { class: "panel tablepanel" }, table),
+      el("p", { class: "note", text: `Paid hours on the rota (unpaid breaks taken off), including changes not yet published.${r.openHours ? ` ${hrs(r.openHours)} hours of open shifts aren't counted.` : ""}` }),
+      el("div", { class: "row" }, el("a", { class: "btn ghost", href: `/api/rota/hours?start=${r.week}&format=csv`, download: `rota-hours-${r.week}.csv` }, "Download CSV"))];
+  }
+
+  async function renderSettings() {
+    setHead("Rota settings", "Opening times, minimum cover and contract hours", { back: ["More", "more"] });
+    const [sites, wk] = await Promise.all([get("/api/rota/sites"), loadWeek(R.week, true)]);
+    const out = [label("Sites")];
+    const dayAb = (n) => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][n];
+    out.push(el("div", { class: "list glass" }, ...sites.sites.map((s) => {
+      const o = el("input", { type: "time", value: s.opensAt || "", "aria-label": `${s.name} opens at` });
+      const c = el("input", { type: "time", value: s.closesAt || "", "aria-label": `${s.name} closes at` });
+      const n = el("input", { type: "number", value: String(s.minPeople), min: 0, max: 20, inputmode: "numeric", "aria-label": `${s.name} minimum people on shift` });
+      const sv = btn("Save", async () => { if (await act(() => api("PUT", "/api/rota/sites/" + s.id, { opensAt: o.value || null, closesAt: c.value || null, minPeople: Number(n.value || 0) }), `${s.name} saved`)) { if (R.weekData) R.weekData._at = 0; } }, "btn sm");
+      const status = !s.inUse ? "Not in use yet: set it up in the diary first" : s.closedDays.length ? `Closed ${s.closedDays.map(dayAb).join(", ")} (from the diary's Setup)` : "Open every day (from the diary's Setup)";
+      return el("div", { class: "lrow setrow" }, el("span", { class: "t" }, el("b", { text: s.name }), el("span", { class: "s", text: status })),
+        el("span", { class: "setf" }, el("label", {}, el("span", { text: "Opens" }), o), el("label", {}, el("span", { text: "Closes" }), c), el("label", {}, el("span", { text: "Min people" }), n), sv));
+    })));
+    out.push(el("p", { class: "note", text: "Cover is checked hour by hour between opening and closing. Which days each site opens comes from the diary's Setup, and planned closures from Closures & holidays." }));
+    out.push(label("Contract hours"));
+    out.push(el("div", { class: "list glass" }, ...wk.people.map((p) => {
+      const inp = el("input", { type: "number", value: p.contractHours == null ? "" : String(p.contractHours), min: 0, max: 80, step: 0.5, inputmode: "decimal", placeholder: "None", "aria-label": `${p.name} contract hours a week` });
+      inp.onchange = async () => { if (await act(() => api("PUT", "/api/rota/people/" + p.id, { contractHours: inp.value === "" ? null : Number(inp.value) }), `${first(p.name)}: ${inp.value || "no"} contract hours`)) { if (R.weekData) R.weekData._at = 0; } };
+      return el("div", { class: "lrow" }, avatar(p.name), el("span", { class: "t" }, el("b", { text: p.name }), el("span", { class: "s", text: ROLE[p.role] || "" })), el("label", { class: "chours" }, inp, el("span", { text: "h a week" })));
+    })));
+    out.push(el("p", { class: "note", text: "Everyone with an active account can be on the rota. Add people and change roles on the diary's Admin page." }));
+    return out;
+  }
+
+  const PAGE_RENDER = { week: renderWeek, day: renderDay, mine: renderMine, swaps: renderSwaps, avail: renderAvail, requests: renderRequests, more: renderMore, hours: renderHours, settings: renderSettings };
+
+  /* ---------- start ---------- */
+
+  async function start() {
+    try {
+      const [auth, me] = await Promise.all([fetch("/api/auth/me").then((r) => r.json()), get("/api/rota/me")]);
+      if (!auth.user) { goSignIn(); return; }
+      R.auth = auth; R.me = me; R.links = me.links; R.approvers = me.approvers;
+    } catch (e) {
+      $("#page").replaceChildren(el("div", { class: "empty", text: e.message || "Couldn't load the rota." }));
+      return;
+    }
+    const u = R.me.user;
+    $("#avatarBtn").textContent = initials(u.name);
+    $("#meBox").replaceChildren(avatar(u.name), el("span", { class: "t" }, el("b", { text: u.name }), el("span", { class: "s", text: ROLE[u.role] || "" })), svgi(ICON.chevR));
+    $("#avatarBtn").addEventListener("click", (e) => openAcctMenu(e.currentTarget));
+    $("#meBox").addEventListener("click", (e) => openAcctMenu(e.currentTarget));
+    $("#sheetVeil").addEventListener("click", closeSheets);
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("#sheetVeil").hidden) closeSheets(); });
+    $("#snav").addEventListener("click", (e) => { const a = e.target.closest("a[href^='#']"); if (a) { e.preventDefault(); go(a.getAttribute("href").slice(1)); } });
+    window.addEventListener("hashchange", render);
+    wide.addEventListener("change", () => { if (R.tab === "week" || R.tab === "mine") render(); });
+    document.addEventListener("visibilitychange", () => { if (!document.hidden && $("#sheet").hidden) { refreshBadge(); render(); } });
+    window.addEventListener("online", () => render());
+    render();
+    refreshBadge();
+  }
+  start();
+})();

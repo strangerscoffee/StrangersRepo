@@ -5,6 +5,7 @@ export interface Env {
   SETUP_CODE?: string; // creates the first admin and resets an admin password
   SYNC_TOKEN?: string; // older name for SETUP_CODE, still accepted
   WRITE_LIMIT_PER_15_MIN?: string;
+  ROTA_HOST?: string; // the rota app's own hostname, e.g. rota.staffstrangerscoffee.com (wrangler.jsonc vars)
 }
 
 /** Error the page understands: rejected to it as {code, message}. */

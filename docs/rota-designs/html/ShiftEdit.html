@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=390">
+<title>Fill an open shift · Strangers rota design</title>
+<style>
+body{margin:0}
+.ph{width:390px;height:844px;box-sizing:border-box;position:relative;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,"Segoe UI",Roboto,sans-serif;color:#0b1220;background:#edf1f6}
+.under{padding:14px 16px;opacity:.5}
+.under h1{margin:30px 0 0;font-size:34px;letter-spacing:-.03em}
+.veil{position:absolute;inset:0;background:rgba(8,12,20,.32)}
+.sheet{position:absolute;left:8px;right:8px;bottom:8px;top:64px;border-radius:32px;background:rgba(255,255,255,.97);box-shadow:0 18px 40px -10px rgba(16,24,40,.35);padding:8px 16px 16px;display:flex;flex-direction:column;gap:12px;overflow:hidden}
+.grab{width:38px;height:5px;border-radius:99px;background:rgba(84,95,112,.4);align-self:center}
+.top{display:flex;align-items:center;justify-content:space-between}
+.top h2{margin:0;font-size:20px}
+.link{border:0;background:none;color:#0062cc;font:inherit;font-weight:600;font-size:16px;padding:6px 0}
+.facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.f{border-radius:14px;background:rgba(118,128,148,.12);padding:8px 12px;display:flex;flex-direction:column;gap:1px}
+.f span{font-size:11.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#545f70}
+.f b{font-size:15.5px}
+.lbl{font-size:12.5px;font-weight:650;letter-spacing:.05em;text-transform:uppercase;color:#545f70;margin:2px 4px -4px}
+.list{border-radius:18px;border:1px solid rgba(60,72,92,.14);overflow:hidden}
+.p{display:flex;align-items:center;gap:10px;min-height:58px;padding:7px 12px}
+.p+.p{border-top:1px solid rgba(60,72,92,.12)}
+.av{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;background:rgba(0,98,204,.10);color:#0062cc;font-weight:700;font-size:13px;flex:none}
+.t{flex:1;display:grid;gap:1px;min-width:0}
+.t b{font-size:15.5px;font-weight:600}
+.s{font-size:12.5px;color:#545f70}
+.pill{display:inline-flex;align-items:center;font-size:12px;font-weight:700;padding:3px 9px;border-radius:99px;white-space:nowrap}
+.ok{background:rgba(52,199,89,.17);color:#17733a}.warn{background:rgba(255,159,10,.22);color:#7a4500}.bad{background:rgba(255,59,48,.14);color:#a3201a}
+.p.dim .t b{color:#545f70}
+.pick{width:26px;height:26px;border-radius:50%;border:1.6px solid rgba(84,95,112,.5);flex:none;display:grid;place-items:center;background:none;padding:0}
+.pick.on{background:#0062cc;border-color:#0062cc;color:#fff}
+.btns{margin-top:auto;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.btn{display:inline-flex;align-items:center;justify-content:center;min-height:50px;padding:0 14px;border-radius:99px;border:0;font:inherit;font-weight:650;font-size:15.5px;background:rgba(0,98,204,.10);color:#0062cc}
+.btn.pri{background:#0062cc;color:#fff}
+svg.i{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}
+
+body{background:#d9dee6}
+</style>
+</head>
+<body>
+<!-- Design reference for the Strangers Coffee rota (390×844). Example data only. -->
+<div id="design"></div>
+<template id="tpl">
+
+<div class="ph">
+  <div class="under"><h1>Rota</h1></div>
+  <div class="veil" aria-hidden="true"></div>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="st">
+    <div class="grab" aria-hidden="true"></div>
+    <div class="top"><button class="link" type="button">Cancel</button><h2 id="st">Open shift</h2><button class="link" type="button">Edit</button></div>
+    <div class="facts">
+      <div class="f"><span>Site</span><b>Cafe</b></div>
+      <div class="f"><span>Day</span><b>Sat 14 Nov</b></div>
+      <div class="f"><span>Time</span><b>11:00–18:30</b></div>
+      <div class="f"><span>Job</span><b>Closes</b></div>
+    </div>
+
+    <div class="lbl">Who can do it</div>
+    <div class="list">
+      <div class="p"><span class="av">LN</span><span class="t"><b>Lena Novak</b><span class="s">Free · would be 19.5 of 20h</span></span><span class="pill ok">Best fit</span><button class="pick on" type="button" aria-label="Choose Lena" aria-pressed="true"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button></div>
+      <div class="p"><span class="av">BH</span><span class="t"><b>Ben Hughes</b><span class="s">Free · would be 34.5 of 24h</span></span><span class="pill warn">Over hours</span><button class="pick" type="button" aria-label="Choose Ben" aria-pressed="false"></button></div>
+      <div class="p"><span class="av">MC</span><span class="t"><b>Mia Chen</b><span class="s">Free · would be 31.5 of 30h</span></span><span class="pill warn">Over hours</span><button class="pick" type="button" aria-label="Choose Mia" aria-pressed="false"></button></div>
+      <div class="p dim"><span class="av">PS</span><span class="t"><b>Priya Shah</b><span class="s">Already at ASG 08:00–16:00</span></span><span class="pill bad">Clash</span></div>
+      <div class="p dim"><span class="av">TR</span><span class="t"><b>Tom Reid</b><span class="s">Not trained on Cafe closing checks</span></span><span class="pill bad">Training</span></div>
+    </div>
+    <p class="s" style="margin:0 4px">Checks hours, other shifts, holidays, when people can work, and their training for this site.</p>
+
+    <div class="btns"><button class="btn" type="button">Offer to everyone</button><button class="btn pri" type="button">Give to Lena</button></div>
+  </div>
+</div>
+</template>
+<script>class DCLogic { constructor() { this.props = {}; this.state = {}; } setState() {} }
+
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+
+
+function get(ctx, path) { return path.trim().split(".").reduce((o, k) => (o == null ? undefined : o[k]), ctx); }
+function interp(s, ctx) { return s.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_, p) => { const v = get(ctx, p); return v == null ? "" : String(v); }); }
+function render(node, ctx) {
+  if (node.nodeType === 3) { if (node.nodeValue.includes("{{")) node.nodeValue = interp(node.nodeValue, ctx); return; }
+  if (node.nodeType !== 1) return;
+  if (node.tagName === "SC-FOR") {
+    const list = get(ctx, node.getAttribute("list").replace(/[{}\s]/g, "")) || [];
+    const as = node.getAttribute("as");
+    const frag = document.createDocumentFragment();
+    list.forEach((item, i) => {
+      for (const ch of node.childNodes) {
+        const wrap = document.createElement("div");
+        wrap.appendChild(ch.cloneNode(true));
+        render(wrap.firstChild, Object.assign({}, ctx, { [as]: item, $index: i }));
+        while (wrap.firstChild) frag.appendChild(wrap.firstChild);
+      }
+    });
+    node.replaceWith(frag);
+    return;
+  }
+  for (const a of [...node.attributes]) if (a.value.includes("{{")) a.value = interp(a.value, ctx);
+  for (const ch of [...node.childNodes]) render(ch, ctx);
+}
+const vals = new Component().renderVals();
+const host = document.getElementById("design");
+host.appendChild(document.getElementById("tpl").content.cloneNode(true));
+for (const ch of [...host.childNodes]) render(ch, vals);
+</script>
+</body>
+</html>

@@ -575,7 +575,7 @@ test("staff journey on the real page", async () => {
   for (const t of ["Food safety records", "Daily diary", "Corrective actions", "Staff training", "Allergen matrix"])
     assert.ok(inPdf.includes(Buffer.from(t, "latin1").toString("hex")), "PDF has " + t);
   await page.locator("#tabbar .tab", { hasText: "More" }).click();
-  assert.deepEqual(await page.locator("#moreHub .lrow b").allTextContents(), ["Last 4 weeks", "EHO inspection mode", "Last EHO inspection report", "HACCP & risk", "Suppliers", "Contacts", "Onboarding", "Switch person", "Set a quick PIN", "Change password", "Sign out"]);
+  assert.deepEqual(await page.locator("#moreHub .lrow b").allTextContents(), ["Last 4 weeks", "EHO inspection mode", "Last EHO inspection report", "HACCP & risk", "Suppliers", "Contacts", "Onboarding", "Rota", "Switch person", "Set a quick PIN", "Change password", "Sign out"]);
   assert.equal(await page.locator("#moreHub .label", { hasText: "Admin" }).count(), 0, "staff don't see Setup");
   // Staff can open the management sections to read them, but there's nothing to change.
   await page.locator("#moreHub .lrow", { hasText: "Suppliers" }).click();

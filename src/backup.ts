@@ -24,7 +24,12 @@ export async function makeBackup(env: Env, by: string): Promise<BackupInfo> {
   const at = Date.now();
   const docs = await env.DB.prepare("SELECT path, data, updated_at, updated_by FROM docs WHERE deleted = 0 ORDER BY path")
     .all<{ path: string; data: string; updated_at: number; updated_by: string | null }>();
-  const users = await env.DB.prepare("SELECT name, username, role, active, created_at, last_login_at FROM users ORDER BY name_key").all();
+  const users = await env.DB.prepare("SELECT id, name, username, role, active, created_at, last_login_at FROM users ORDER BY name_key").all();
+  // The rota's tables (src/rota.ts). People are users.id, listed (without any password or PIN) under users.
+  const rota: Record<string, unknown[]> = {};
+  for (const t of ["rota_shifts", "rota_weeks", "rota_sites", "rota_people", "rota_time_off", "rota_requests"]) {
+    rota[t] = (await env.DB.prepare(`SELECT * FROM ${t}`).all()).results;
+  }
   const body = JSON.stringify({
     kind: "strangers-kitchen-diary-backup",
     version: 1,
@@ -32,6 +37,7 @@ export async function makeBackup(env: Env, by: string): Promise<BackupInfo> {
     by,
     docs: docs.results.map((d) => ({ path: d.path, data: JSON.parse(d.data), updatedAt: d.updated_at, updatedBy: d.updated_by })),
     users: users.results,
+    rota,
   });
   const gz = await gzip(body);
   const id = new Date(at).toISOString().replace(/\.\d+Z$/, "Z").replace(/:/g, "-");

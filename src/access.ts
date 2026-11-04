@@ -35,6 +35,14 @@ export function requireUser(caller: Caller): User {
 /** The id written into records ("by" fields): web:<name>, as before accounts existed. */
 export const recordId = (u: User) => "web:" + u.name;
 
+/* ---------- the rota (src/rota.ts) ---------- */
+
+// Plans the week, publishes it and approves pickups, covers and time off.
+export const isRotaManager = (u: User) => u.role === "manager" || u.role === "admin";
+
+// Which app each hostname serves, and links between them: src/hosts.ts (no imports, so tests can load it directly).
+export { appForHost, appLinks, isRotaSharedFile } from "./hosts";
+
 /* ---------- roles ---------- */
 
 // Sections and data only managers and admins may change. Staff can still read them (the "Needs attention"

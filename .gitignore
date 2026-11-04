@@ -5,3 +5,4 @@ dist/
 .dev.vars.*
 *.log
 !.dev.vars.example
+rota-handoff/

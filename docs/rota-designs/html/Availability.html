@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=390">
+<title>When I can work · Strangers rota design</title>
+<style>
+body{margin:0}
+.ph{width:390px;height:844px;box-sizing:border-box;position:relative;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,"Segoe UI",Roboto,sans-serif;color:#0b1220;background:radial-gradient(42% 38% at 8% 4%,rgba(0,122,255,.18),transparent 70%),radial-gradient(36% 32% at 96% 14%,rgba(48,209,178,.14),transparent 70%),radial-gradient(48% 40% at 78% 96%,rgba(255,159,10,.12),transparent 70%),#edf1f6;padding:14px 16px 120px;display:flex;flex-direction:column;gap:11px}
+.back{color:#0062cc;font-weight:600;font-size:16px;text-decoration:none}
+h1{margin:0;font-size:32px;letter-spacing:-.03em;line-height:1.05}
+.sub{margin:2px 0 0;color:#545f70;font-size:15px}
+.lbl{font-size:12.5px;font-weight:650;letter-spacing:.05em;text-transform:uppercase;color:#545f70;margin:4px 6px -4px}
+.card{background:rgba(255,255,255,.75);border:1px solid #fff;border-radius:22px;box-shadow:0 10px 30px -8px rgba(16,24,40,.12);overflow:hidden}
+.r{display:flex;align-items:center;gap:10px;min-height:46px;padding:4px 14px}
+.r+.r{border-top:1px solid rgba(60,72,92,.12)}
+.d{width:40px;font-weight:650;font-size:15px}
+.t{flex:1;font-size:14.5px;min-width:0}
+.t.no{color:#545f70}
+.when{border:0;background:rgba(0,98,204,.10);color:#0062cc;font:inherit;font-weight:600;font-size:14px;border-radius:10px;padding:6px 10px}
+.sw{width:51px;height:31px;border-radius:99px;background:#30b158;position:relative;flex:none;border:0}
+.sw::after{content:"";position:absolute;top:2px;left:22px;width:27px;height:27px;border-radius:50%;background:#fff;box-shadow:0 2px 4px rgba(0,0,0,.2)}
+.sw.off{background:rgba(118,128,148,.28)}
+.sw.off::after{left:2px}
+.chips{display:flex;gap:6px;flex-wrap:wrap;padding:10px 14px}
+.chip{height:36px;padding:0 14px;border-radius:99px;border:0;font:inherit;font-weight:600;font-size:14px;background:rgba(118,128,148,.12);color:#0b1220}
+.chip.on{background:#0062cc;color:#fff}
+.hol{display:flex;align-items:center;gap:10px;min-height:54px;padding:6px 14px}
+.hol+.hol{border-top:1px solid rgba(60,72,92,.12)}
+.s{font-size:12.5px;color:#545f70}
+.pill{font-size:12px;font-weight:700;padding:3px 9px;border-radius:99px;white-space:nowrap}
+.ok{background:rgba(52,199,89,.17);color:#17733a}.wait{background:rgba(255,159,10,.22);color:#7a4500}
+.btn{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:0 16px;border-radius:99px;border:0;font:inherit;font-weight:650;font-size:15px;background:#0062cc;color:#fff;align-self:flex-start}
+
+body{background:#d9dee6}
+</style>
+</head>
+<body>
+<!-- Design reference for the Strangers Coffee rota (390×844). Example data only. -->
+<div id="design"></div>
+<template id="tpl">
+
+<div class="ph">
+  <div><a class="back" href="#">‹ My shifts</a><h1>When I can work</h1><p class="sub">Managers see this when they plan the rota</p></div>
+
+  <div class="lbl">Each week</div>
+  <div class="card">
+    <div class="r"><span class="d">Mon</span><span class="t">Any time</span><button class="sw" type="button" role="switch" aria-checked="true" aria-label="Monday"></button></div>
+    <div class="r"><span class="d">Tue</span><span class="t">Any time</span><button class="sw" type="button" role="switch" aria-checked="true" aria-label="Tuesday"></button></div>
+    <div class="r"><span class="d">Wed</span><button class="when" type="button">Until 15:00</button><span class="t"></span><button class="sw" type="button" role="switch" aria-checked="true" aria-label="Wednesday"></button></div>
+    <div class="r"><span class="d">Thu</span><span class="t">Any time</span><button class="sw" type="button" role="switch" aria-checked="true" aria-label="Thursday"></button></div>
+    <div class="r"><span class="d">Fri</span><span class="t">Any time</span><button class="sw" type="button" role="switch" aria-checked="true" aria-label="Friday"></button></div>
+    <div class="r"><span class="d">Sat</span><button class="when" type="button">From 10:00</button><span class="t"></span><button class="sw" type="button" role="switch" aria-checked="true" aria-label="Saturday"></button></div>
+    <div class="r"><span class="d">Sun</span><button class="when" type="button">Until 16:00</button><span class="t"></span><button class="sw" type="button" role="switch" aria-checked="true" aria-label="Sunday"></button></div>
+  </div>
+
+  <div class="lbl">Sites I can get to</div>
+  <div class="card"><div class="chips"><button class="chip" type="button" aria-pressed="false">Roastery</button><button class="chip on" type="button" aria-pressed="true">Cafe</button><button class="chip on" type="button" aria-pressed="true">ASG</button><button class="chip" type="button" aria-pressed="false">Factory</button></div></div>
+
+  <div class="lbl">Time off</div>
+  <div class="card">
+    <div class="hol"><span style="flex:1"><b style="font-size:15px">23–27 December</b><br><span class="s">Holiday · 5 days</span></span><span class="pill ok">Approved</span></div>
+    <div class="hol"><span style="flex:1"><b style="font-size:15px">Sat 21 November</b><br><span class="s">Wedding</span></span><span class="pill wait">Waiting for George</span></div>
+  </div>
+  <button class="btn" type="button">Ask for time off</button>
+</div>
+</template>
+<script>class DCLogic { constructor() { this.props = {}; this.state = {}; } setState() {} }
+
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+
+
+function get(ctx, path) { return path.trim().split(".").reduce((o, k) => (o == null ? undefined : o[k]), ctx); }
+function interp(s, ctx) { return s.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_, p) => { const v = get(ctx, p); return v == null ? "" : String(v); }); }
+function render(node, ctx) {
+  if (node.nodeType === 3) { if (node.nodeValue.includes("{{")) node.nodeValue = interp(node.nodeValue, ctx); return; }
+  if (node.nodeType !== 1) return;
+  if (node.tagName === "SC-FOR") {
+    const list = get(ctx, node.getAttribute("list").replace(/[{}\s]/g, "")) || [];
+    const as = node.getAttribute("as");
+    const frag = document.createDocumentFragment();
+    list.forEach((item, i) => {
+      for (const ch of node.childNodes) {
+        const wrap = document.createElement("div");
+        wrap.appendChild(ch.cloneNode(true));
+        render(wrap.firstChild, Object.assign({}, ctx, { [as]: item, $index: i }));
+        while (wrap.firstChild) frag.appendChild(wrap.firstChild);
+      }
+    });
+    node.replaceWith(frag);
+    return;
+  }
+  for (const a of [...node.attributes]) if (a.value.includes("{{")) a.value = interp(a.value, ctx);
+  for (const ch of [...node.childNodes]) render(ch, ctx);
+}
+const vals = new Component().renderVals();
+const host = document.getElementById("design");
+host.appendChild(document.getElementById("tpl").content.cloneNode(true));
+for (const ch of [...host.childNodes]) render(ch, vals);
+</script>
+</body>
+</html>

@@ -25,6 +25,17 @@ How the Kitchen Diary looks and why, for anyone changing it. The style follows A
 - **Quick switching** uses a 4-digit PIN pad in a bottom sheet (`public/pinpad.js`), with large keys, dots for progress, a shake and message on a wrong PIN, and keyboard support.
 - **Status colours**: green done or in range, amber part done or due, red missed, overdue or out of range. Status is never colour alone: each also has text or an icon.
 
+## The rota
+
+The rota (`public/rota/`, at `rota.staffstrangerscoffee.com`) is its own app in the same look: it loads the diary's three stylesheets and adds `rota.css`. Same top bar, sidebar, account menu, sheets and toasts; its own tabs: **My shifts**, **Open shifts**, **When I work** for staff; **Week**, **My shifts**, **Requests** (with a count) and **More** for managers.
+- **Week planner**: on iPad landscape and wider, a grid (a row per site or per person, a column per day); on phones, one day at a time (the Week page's day strip) with a card per site. Problems sit above as chips; tapping one opens the shift or the day. Open shifts are dashed and red with "Fill"; clashes amber with "Clash"; closed days say "Closed" (with the closure's reason). By person shows hours against contract as a bar that turns red when over, and "Off", "Holiday" (striped) or "Can't work".
+- **Shift sheet** (bottom sheet): site, day, times, unpaid break, job, note; for an open shift, who can do it, best fit first, people who can't dimmed with the reason. Changes show a toast with **Undo**; Delete asks twice.
+- **Day view**: a site's day as bars from opening to closing, with a bar per hour showing how many are on (red under the minimum, and the number on each bar), and the day's problems with a one-tap fix where there's an obvious one.
+- Site colours (Roastery blue, Cafe green, ASG orange, Factory purple) always come with the site's name. Status is never colour alone.
+- Offline, the rota shows what was last loaded with the "Offline" label and editing switched off; it doesn't queue changes like the diary.
+
+The designs it was built from are in `docs/rota-designs/`.
+
 ## Motion
 
 Short and purposeful, and all of it is off with Reduce Motion:
