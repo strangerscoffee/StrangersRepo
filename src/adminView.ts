@@ -2,6 +2,7 @@
 // people with their account, rota and training details, sites, activity, security and exports. Admins only
 // (checked in index.ts before anything here runs). Reads the diary's documents and the rota's tables directly.
 import { audit } from "./audit";
+import { deviceOf, recentErrors } from "./errors";
 import { User, nameKey } from "./auth";
 import { listBackups } from "./backup";
 import { setDoc } from "./docs";
@@ -109,6 +110,11 @@ export async function overview(env: Env, links: { rota: string; diary: string })
   }
   for (const s of diaryToday.filter((s) => !s.setUp)) {
     attention.push({ tone: "warn", icon: "house", title: `The ${s.name} isn't set up`, detail: "It needs a diary Setup before it's counted in the diary or can have shifts.", action: { label: "Set up", go: "sites" } });
+  }
+  const errs = await env.DB.prepare("SELECT COUNT(*) AS n, COALESCE(SUM(count), 0) AS times FROM errors WHERE last_at > ?").bind(now - 864e5).first<{ n: number; times: number }>().catch(() => null);
+  if (errs && errs.n) {
+    attention.push({ tone: "warn", icon: "warn", title: `${errs.n} error${errs.n === 1 ? "" : "s"} on the site in the last day`,
+      detail: `Seen ${errs.times} time${errs.times === 1 ? "" : "s"} on staff devices or the server. See what and where.`, action: { label: "See errors", act: "errors" } });
   }
   for (const u of active.filter((u) => u.must_change && !u.last_login_at && now - u.created_at > 2 * 864e5)) {
     const days = Math.floor((now - u.created_at) / 864e5);
@@ -241,7 +247,7 @@ const COLLECTION_LABEL: Record<string, string> = {
 const who = (by: string | null, names: Map<string, string>) => !by ? "Someone" : by.startsWith("web:") ? by.slice(4) : names.get(by) || "Someone";
 
 export async function activity(env: Env, kind: string) {
-  const want = (k: string) => !kind || kind === "all" || kind === k;
+  const want = (k: string) => kind !== "errors" && (!kind || kind === "all" || kind === k);
   const [docs, people, weeks, offs, reqs, adjusted, log] = await Promise.all([
     want("diary") ? env.DB.prepare("SELECT path, collection, doc_id, data, deleted, updated_at, updated_by FROM docs WHERE source = 'web' AND updated_by IS NOT NULL ORDER BY updated_at DESC LIMIT 60").all<{ path: string; collection: string; doc_id: string; data: string | null; deleted: number; updated_at: number; updated_by: string }>() : null,
     docData(env, "config/people"),
@@ -269,6 +275,15 @@ export async function activity(env: Env, kind: string) {
   for (const r of reqs?.results || []) items.push({ kind: "rota", at: r.decided_at, text: `${r.by || "Someone"} ${r.status} ${r.taker ? `${r.taker} taking` : "a request for"} a shift on ${shortDate(r.day)}`, where: `Rota · ${siteOf(r.site)?.name || r.site}` });
   for (const s of adjusted?.results || []) items.push({ kind: "rota", at: s.adjusted_at, text: `${s.by || "Someone"} amended ${s.who ? `${s.who}'s` : "a"} shift on ${shortDate(s.day)}: ${s.actual_start}–${s.actual_end}${s.adjust_note ? `, ${s.adjust_note}` : ""}`, where: `Rota · ${siteOf(s.site)?.name || s.site}` });
   for (const l of log?.results || []) items.push({ kind: "account", at: l.at, text: l.text, where: l.kind === "backup" ? "Backups" : l.kind === "setup_copied" ? "Kitchen Diary" : "Accounts" });
+  // Errors: only on their own tab (they're for whoever looks after the site, not the day's activity).
+  if (kind === "errors") {
+    const APP: Record<string, string> = { diary: "Kitchen Diary", rota: "Rota", admin: "Admin", signin: "Staff Login", worker: "Server" };
+    for (const e of await recentErrors(env)) {
+      items.push({ kind: "error", at: e.last_at, text: e.message,
+        where: [APP[e.app] || e.app, e.page, e.count > 1 ? `${e.count} times since ${shortDate(new Date(e.first_at).toISOString().slice(0, 10))}` : "", e.who || (e.source === "page" ? "signed out" : ""), e.ua ? deviceOf(e.ua) : ""].filter(Boolean).join(" · "),
+        detail: e.detail } as any);
+    }
+  }
   items.sort((a, b) => b.at - a.at);
   return { items: items.slice(0, 120) };
 }

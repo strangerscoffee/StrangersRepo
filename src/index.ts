@@ -8,9 +8,10 @@ import { handleAuth } from "./auth";
 import { handleBackups, makeBackup } from "./backup";
 import { deleteAsset, serveBlob, uploadAsset } from "./assets";
 import { WRITE_OPS, handleDb } from "./docs";
-import { ApiError, Env, errorResponse, json } from "./http";
+import { ApiError, Env, errorResponse, json, readJson } from "./http";
 import { handleRota } from "./rota";
 import { ensureSchema } from "./schema";
+import { recordError } from "./errors";
 
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -40,6 +41,8 @@ export default {
       if (e instanceof ApiError) res = errorResponse(e);
       else {
         console.error(e);
+        ctx.waitUntil(recordError(env, { source: "server", app: "worker", page: `${req.method} ${url.pathname}`, message: String((e as Error)?.message || e),
+          detail: String((e as Error)?.stack || ""), ua: req.headers.get("user-agent") || "" }));
         const msg = String((e as Error)?.message || e);
         // D1 reports a full database as SQLITE_FULL; the page shows a specific message for quota_exceeded.
         res = /SQLITE_FULL|database or disk is full/i.test(msg)
@@ -149,6 +152,18 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
 
   await ensureSchema(env);
   const caller = await authorize(req, env);
+
+  // Errors from the site's own pages (public/errors.js), signed in or not (a page that fails to load is often one
+  // whose session has ended). Rate-limited like any write; the Origin check above keeps other sites out.
+  if (p === "/api/errors" && req.method === "POST") {
+    const who = caller.kind === "user" ? caller.user : null;
+    await limitWrites(req, env, ctx, who?.id);
+    const b = await readJson<any>(req, 8 * 1024).catch(() => null);
+    if (b && typeof b === "object") {
+      await recordError(env, { source: "page", app: b.app, page: b.page, message: b.message, detail: b.detail, ua: req.headers.get("user-agent") || "", who: who?.name ?? null });
+    }
+    return new Response(null, { status: 204 });
+  }
 
   if (p.startsWith("/api/auth/")) return handleAuth(req, env, p.slice("/api/auth/".length), caller.kind === "user" ? caller.user : null);
 

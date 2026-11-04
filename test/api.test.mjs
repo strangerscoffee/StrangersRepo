@@ -409,6 +409,23 @@ test("signing out ends that session on the server; the person's other sessions c
   assert.equal((await me(two)).user.name, "Lou Leave", "the other session (another device) is still signed in");
 });
 
+test("errors from pages are recorded once with a count, and shown to admins", async () => {
+  const send = (body, cookie) => fetch(`${srv.base}/api/errors`, { method: "POST", headers: { "content-type": "application/json", "user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Safari/604.1", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body) });
+  assert.equal((await send({ app: "diary", page: "/#day", message: "TypeError: x is undefined", detail: "at renderDay (app.js:1:1)" }, ADMIN)).status, 204);
+  assert.equal((await send({ app: "diary", page: "/#day", message: "TypeError: x is undefined" }, ADMIN)).status, 204);
+  assert.equal((await send({ app: "signin", page: "/signin", message: "Couldn't load /theme.css" })).status, 204, "signed out too");
+  assert.equal((await fetch(`${srv.base}/errors.js`)).status, 200, "the reporter loads signed out");
+  const items = (await admin("GET", "activity?kind=errors")).body.items;
+  const e = items.find((i) => i.text === "TypeError: x is undefined");
+  assert.ok(e, JSON.stringify(items));
+  assert.match(e.where, /Kitchen Diary · \/#day · 2 times since .* · iPhone · Safari/);
+  assert.match(e.detail, /renderDay/);
+  assert.ok(items.some((i) => i.text === "Couldn't load /theme.css" && /Staff Login · \/signin · signed out/.test(i.where)));
+  assert.ok(!(await admin("GET", "activity?kind=all")).body.items.some((i) => i.kind === "error"), "not mixed into the day's activity");
+  const o = (await admin("GET", "overview")).body;
+  assert.ok(o.attention.some((a) => /errors? on the site in the last day/.test(a.title)), "flagged on the Overview");
+});
+
 test("writes are rate limited per IP", async () => {
   let last;
   // Over twice the limit (80 a person), so it's crossed even if the 15-minute window rolls over part way.

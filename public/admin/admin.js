@@ -311,7 +311,7 @@
       <p class="hint">Diary Setup opens at the site that device last used: switch site at the top of the diary if needed.</p>`;
   };
 
-  const KIND = { diary: ["ok", "cal", "Diary"], rota: ["acc", "clock", "Rota"], account: ["warn", "user", "Accounts"] };
+  const KIND = { diary: ["ok", "cal", "Diary"], rota: ["acc", "clock", "Rota"], account: ["warn", "user", "Accounts"], error: ["bad", "warn", "Errors"] };
   VIEWS.activity = async () => {
     const d = await api("GET", "/api/admin/activity?kind=" + encodeURIComponent(S.feed));
     const q = S.fq.trim().toLowerCase();
@@ -325,13 +325,13 @@
     return html`
       ${head("Activity", "Who changed what in the diary, the Rota and accounts. Newest first.")}
       <div class="toolbar">
-        <div class="segwrap"><div class="seg" role="group" aria-label="Show">${[["all", "All"], ["diary", "Diary"], ["rota", "Rota"], ["account", "Accounts"]].map(([k, t]) => html`<button type="button" aria-pressed="${S.feed === k}" data-feed="${k}">${t}</button>`)}</div></div>
+        <div class="segwrap"><div class="seg" role="group" aria-label="Show">${[["all", "All"], ["diary", "Diary"], ["rota", "Rota"], ["account", "Accounts"], ["errors", "Errors"]].map(([k, t]) => html`<button type="button" aria-pressed="${S.feed === k}" data-feed="${k}">${t}</button>`)}</div></div>
         <label class="search">${svg("search")}<input id="fq" type="search" placeholder="Search a name or site" aria-label="Search activity" value="${S.fq}"></label>
       </div>
       ${groups.length ? groups.map(([label, list]) => html`<div class="day">${label}</div><div class="group glass">${list.map((i) => html`
-        <div class="item"><span class="ic ${KIND[i.kind][0]}">${svg(KIND[i.kind][1])}</span><span class="tx"><b class="plain">${i.text}</b><span>${i.where}</span></span><span class="end time">${hm(i.at)}</span></div>`)}</div>`)
-        : html`<div class="group glass"><div class="empty">${svg("pulse")}<span>Nothing yet.</span></div></div>`}
-      <p class="hint">Diary entries show each record's latest change. Account changes are kept for about a year.</p>`;
+        <div class="item"><span class="ic ${KIND[i.kind][0]}">${svg(KIND[i.kind][1])}</span><span class="tx"><b class="plain">${i.text}</b><span>${i.where}</span>${i.detail ? html`<details class="errdetail"><summary>Details</summary><pre>${i.detail}</pre></details>` : ""}</span><span class="end time">${hm(i.at)}</span></div>`)}</div>`)
+        : html`<div class="group glass"><div class="empty">${svg("pulse")}<span>${S.feed === "errors" ? "No errors in the last 30 days." : "Nothing yet."}</span></div></div>`}
+      <p class="hint">${S.feed === "errors" ? "Errors from staff devices (a page that crashed, or a file that didn't load) and from the server. The same error on the same page is counted, not repeated. Kept 30 days." : "Diary entries show each record's latest change. Account changes are kept for about a year."}</p>`;
   };
 
   VIEWS.security = async () => {
@@ -513,6 +513,7 @@
     const p = person(id);
     switch (name) {
       case "go": show(id); return;
+      case "errors": S.feed = "errors"; show("activity"); return;
       case "add": addPerson(); return;
       case "edit": if (p) editPerson(p); return;
       case "avail": if (p) editAvailability(p); return;

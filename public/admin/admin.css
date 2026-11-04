@@ -222,3 +222,8 @@ button.stat{cursor:pointer}
 .checks label{display:inline-flex;align-items:center;gap:6px;min-height:40px;padding:0 12px;border-radius:12px;border:1px solid var(--line);background:var(--surface);font-weight:600;cursor:pointer}
 .toast{position:fixed;z-index:60;left:50%;transform:translateX(-50%);bottom:calc(96px + env(safe-area-inset-bottom,0px));padding:10px 16px;border-radius:99px;background:var(--fg);color:var(--bg);font-weight:600;font-size:14.5px;box-shadow:var(--float);max-width:calc(100% - 32px);text-align:center}
 @media (prefers-reduced-motion:no-preference){main>*{animation:rise .2s ease both}@keyframes rise{from{transform:translateY(6px)}to{transform:none}}}
+
+/* Errors (Activity → Errors): the technical details, folded */
+.errdetail{margin-top:4px}
+.errdetail summary{cursor:pointer;font-size:13px;color:var(--accent);font-weight:600}
+.errdetail pre{margin:6px 0 0;padding:8px 10px;border-radius:10px;background:var(--sunk);font-size:12px;line-height:1.4;white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto}

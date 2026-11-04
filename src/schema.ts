@@ -135,6 +135,12 @@ const SCHEMA = [
     text    TEXT NOT NULL                     -- what happened, in words
   )`,
   "CREATE INDEX IF NOT EXISTS audit_log_at ON audit_log(at)",
+  // Errors from the site's pages and the Worker, one row per error and page with a count (src/errors.ts).
+  `CREATE TABLE IF NOT EXISTS errors (
+    key TEXT PRIMARY KEY, source TEXT NOT NULL, app TEXT NOT NULL, page TEXT NOT NULL, message TEXT NOT NULL,
+    detail TEXT NOT NULL DEFAULT '', ua TEXT NOT NULL DEFAULT '', who TEXT, first_at INTEGER NOT NULL, last_at INTEGER NOT NULL, count INTEGER NOT NULL
+  )`,
+  "CREATE INDEX IF NOT EXISTS errors_last ON errors(last_at)",
 ];
 
 // Upgrades older databases in place:
