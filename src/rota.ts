@@ -556,6 +556,9 @@ export async function handleRota(req: Request, env: Env, ctx: ExecutionContext, 
   const m = req.method;
   const mgr = isRotaManager(user);
   const needMgr = () => { if (!mgr) throw denied(); };
+  // Which days and sites people can work: admins only, for everyone including themselves.
+  const admin = user.role === "admin";
+  const needAdmin = () => { if (!admin) throw denied("Only an admin can change which days and sites people can work."); };
   if (m !== "GET" && m !== "HEAD") await limitWrites(req, env, ctx);
   const body = async () => (m === "GET" ? {} : await readJson<any>(req, 32 * 1024)) || {};
   const seg = route.split("/");
@@ -811,7 +814,7 @@ export async function handleRota(req: Request, env: Env, ctx: ExecutionContext, 
       approvers(env),
     ]);
     return json({
-      user: { id: user.id, name: user.name, role: user.role, manager: mgr }, links, today: londonToday(), approvers: appr,
+      user: { id: user.id, name: user.name, role: user.role, manager: mgr, admin: user.role === "admin" }, links, today: londonToday(), approvers: appr,
       contractMin: p?.contract_min ?? null, contractMax: p?.contract_max ?? null, contractHours: p?.contract_max ?? null, sites: parseJson(p?.sites, []), pattern: parseJson(p?.pattern, {}),
       timeOff: offs.results.map((t) => ({ id: t.id, from: t.from_day, to: t.to_day, reason: t.reason, status: t.status, decidedAt: t.decided_at })),
       requests: (await describeRequests(env, reqs.results)).filter((r) => r.shift),
@@ -819,6 +822,7 @@ export async function handleRota(req: Request, env: Env, ctx: ExecutionContext, 
   }
 
   if (route === "me/availability" && m === "PUT") {
+    needAdmin();
     const b = await body();
     const pattern = checkPattern(b.pattern), sites = checkSites(b.sites);
     await env.DB.prepare(
@@ -832,6 +836,7 @@ export async function handleRota(req: Request, env: Env, ctx: ExecutionContext, 
     needMgr();
     const uid = await activeUser(env, seg[1]);
     const b = await body();
+    if ("sites" in b || "pattern" in b) needAdmin();
     const cur = await env.DB.prepare("SELECT * FROM rota_people WHERE user_id = ?").bind(uid)
       .first<{ sites: string; pattern: string; contract_min: number | null; contract_max: number | null }>();
     // {contractMin, contractMax}; or the older single {contractHours}, which sets both. Leaving them out keeps them.

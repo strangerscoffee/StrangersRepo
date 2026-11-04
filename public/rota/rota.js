@@ -103,6 +103,7 @@
     pday: dow(londonToday()), weekData: null, everyone: false, offline: false, badge: 0,
   };
   const mgr = () => !!R.me?.user?.manager;
+  const isAdmin = () => !!R.me?.user?.admin;
 
   function goSignIn() {
     location.replace("/signin?next=" + encodeURIComponent(location.pathname + location.search + location.hash));
@@ -1060,14 +1061,38 @@
 
   /* ---------- when I can work (everyone) ---------- */
 
-  async function renderAvail() {
+  // Which days and sites someone can work. Only admins change it (their own, or anyone's from Rota settings:
+  // #avail/<userId>); everyone else sees theirs read-only, and still books their own time off here.
+  async function renderAvail([uid] = []) {
     const me = await get("/api/rota/me");
     R.approvers = me.approvers;
-    setHead("When I can work", "Managers see this when they plan the rota");
-    let pattern = JSON.parse(JSON.stringify(me.pattern || {}));
-    let sites = [...(me.sites || [])];
+    const other = uid && uid !== me.user.id && isAdmin();
+    let person = null;
+    if (other) {
+      person = (await loadWeek(R.week, true)).people.find((p) => p.id === uid);
+      if (!person) { go("settings"); return []; }
+    }
+    const canEdit = isAdmin();
+    setHead(other ? person.name : "When I can work", other ? "When they can work" : canEdit ? "Managers see this when they plan the rota" : "Set by an admin. Managers see this when they plan the rota",
+      other ? { back: ["Rota settings", "settings"] } : {});
+    let pattern = JSON.parse(JSON.stringify((other ? person.pattern : me.pattern) || {}));
+    let sites = [...((other ? person.sites : me.sites) || [])];
     let t;
-    const saveSoon = () => { clearTimeout(t); t = setTimeout(async () => { await act(() => api("PUT", "/api/rota/me/availability", { pattern, sites }), "Saved"); }, 500); };
+    const saveSoon = () => { clearTimeout(t); t = setTimeout(async () => {
+      const ok = await act(() => other ? api("PUT", "/api/rota/people/" + uid, { pattern, sites }) : api("PUT", "/api/rota/me/availability", { pattern, sites }), "Saved");
+      if (ok && R.weekData) R.weekData._at = 0;
+    }, 500); };
+    const dayText = (v) => v === "off" ? "Can't work" : v === "any" ? "Any time" : v.from && v.to ? `${v.from}–${v.to}` : v.from ? `From ${v.from}` : `Until ${v.to}`;
+    const SITES = [["roastery", "Roastery"], ["cafe", "Cafe"], ["asg", "ASG"], ["factory", "Factory"]];
+    if (!canEdit) {
+      const rowsRO = el("div", { class: "list glass" }, ...DAYS.map((k, i) => el("div", { class: "lrow avrow" },
+        el("b", { class: "dn", text: fmt(addDays("2026-11-09", i), { weekday: "short" }) }), el("span", { class: "s", text: dayText(pattern[k] ?? "any") }))));
+      const siteText = sites.length ? SITES.filter(([id]) => sites.includes(id)).map(([, n]) => n).join(", ") : "Any site";
+      return [label("Each week"), rowsRO,
+        label("Sites"), el("section", { class: "panel" }, el("p", { text: siteText })),
+        el("p", { class: "note", text: "Only an admin can change which days and sites you work. Ask them if something here is wrong." }),
+        label("Time off"), timeOffList(me), el("div", { class: "row" }, btn("Ask for time off", askTimeOff))];
+    }
 
     const rows = el("div", { class: "list glass" });
     const drawRows = () => rows.replaceChildren(...DAYS.map((k, i) => {
@@ -1076,7 +1101,7 @@
       const sw = el("input", { type: "checkbox", id: "av_" + k, "data-w": "", "aria-label": `${DAY_NAMES[i]}: can work` });
       sw.checked = on;
       sw.onchange = () => { pattern[k] = sw.checked ? "any" : "off"; drawRows(); saveSoon(); };
-      const desc = v === "off" ? "Can't work" : v === "any" ? "Any time" : v.from && v.to ? `${v.from}–${v.to}` : v.from ? `From ${v.from}` : `Until ${v.to}`;
+      const desc = dayText(v);
       const row = el("div", { class: "lrow avrow" }, el("b", { class: "dn", text: fmt(addDays("2026-11-09", i), { weekday: "short" }) }),
         on ? el("button", { type: "button", class: "tchip" + (v === "any" ? " any" : ""), "data-w": "", "aria-expanded": "false", onclick: () => times.hidden = !times.hidden }, desc) : el("span", { class: "s", text: desc }),
         el("span", { class: "grow" }), el("label", { class: "rswitch" }, sw));
@@ -1089,13 +1114,22 @@
     }));
     drawRows();
 
-    const siteBox = el("div", { class: "fchips", role: "group", "aria-label": "Sites I can get to" });
-    const SITES = [["roastery", "Roastery"], ["cafe", "Cafe"], ["asg", "ASG"], ["factory", "Factory"]];
+    const siteBox = el("div", { class: "fchips", role: "group", "aria-label": other ? "Sites they can work at" : "Sites I can get to" });
     const drawSites = () => siteBox.replaceChildren(...SITES.map(([id, nm]) => el("button", { type: "button", class: "fchip", "data-w": "", "aria-pressed": String(sites.includes(id)),
       onclick: () => { sites = sites.includes(id) ? sites.filter((x) => x !== id) : [...sites, id]; drawSites(); saveSoon(); } }, nm)));
     drawSites();
 
-    const offs = el("div", { class: "list glass" }, ...(me.timeOff.length ? me.timeOff.map((o) => {
+    if (other) {
+      return [label("Each week"), rows, el("p", { class: "note", text: "Switch off days they can't work. Tap a day's time to give a from or until time." }),
+        label("Sites they can work at"), el("section", { class: "panel" }, siteBox, el("p", { class: "note", text: "None ticked means any site." }))];
+    }
+    return [label("Each week"), rows, el("p", { class: "note", text: "Switch off days you can't work. Tap a day's time to give a from or until time." }),
+      label("Sites I can get to"), el("section", { class: "panel" }, siteBox, el("p", { class: "note", text: "None ticked means any site." })),
+      label("Time off"), timeOffList(me), el("div", { class: "row" }, btn("Ask for time off", askTimeOff))];
+  }
+
+  function timeOffList(me) {
+    return el("div", { class: "list glass" }, ...(me.timeOff.length ? me.timeOff.map((o) => {
       const days = Math.round((dOf(o.to) - dOf(o.from)) / 864e5) + 1;
       const range = o.from === o.to ? fmt(o.from, { weekday: "short", day: "numeric", month: "long" }) : `${fmt(o.from, { day: "numeric", month: "short" })}–${fmt(o.to, { day: "numeric", month: "short" })}`;
       const ap = approverText();
@@ -1104,10 +1138,6 @@
         el("span", { class: "pill " + st[1], text: st[0] }),
         ["requested", "approved"].includes(o.status) && o.to >= londonToday() ? ghost("Cancel", async () => { if (await act(() => api("PATCH", "/api/rota/time-off/" + o.id, { status: "cancelled" }), "Cancelled")) render(); }, { class: "btn ghost sm" }) : null);
     }) : [el("div", { class: "empty", text: "No time off booked." })]));
-
-    return [label("Each week"), rows, el("p", { class: "note", text: "Switch off days you can't work. Tap a day's time to give a from or until time." }),
-      label("Sites I can get to"), el("section", { class: "panel" }, siteBox, el("p", { class: "note", text: "None ticked means any site." })),
-      label("Time off"), offs, el("div", { class: "row" }, btn("Ask for time off", askTimeOff))];
   }
 
   function askTimeOff() {
@@ -1252,6 +1282,16 @@
       return el("div", { class: "lrow crow" }, avatar(p.name), el("span", { class: "t" }, el("b", { text: p.name }), el("span", { class: "s", text: ROLE[p.role] || "" })),
         el("span", { class: "crange" }, el("label", { class: "chours" }, el("span", { text: "Min" }), lo), el("label", { class: "chours" }, el("span", { text: "Max" }), hi)));
     })));
+    if (isAdmin()) {
+      out.push(label("When people can work"));
+      out.push(el("div", { class: "list glass" }, ...wk.people.map((p) => {
+        const off = DAYS.filter((k) => p.pattern?.[k] === "off").map((k) => k[0].toUpperCase() + k.slice(1, 3));
+        const where = p.sites?.length ? p.sites.map((x) => wk.sites.find((y) => y.id === x)?.name || x).join(", ") : "Any site";
+        return el("button", { type: "button", class: "lrow", onclick: () => go("avail/" + p.id) }, avatar(p.name),
+          el("span", { class: "t" }, el("b", { text: p.name }), el("span", { class: "s", text: `${off.length ? "Can't work " + off.join(", ") : "Any day"} · ${where}` })), svgi(ICON.chevR));
+      })));
+      out.push(el("p", { class: "note", text: "Only admins can change which days and sites people work. Staff and managers see theirs under When I can work." }));
+    }
     out.push(el("p", { class: "note", text: "Hours over someone's maximum show as overtime on the rota, in Hours and in their own shifts. Under the minimum shows as a note while planning." }));
     out.push(el("p", { class: "note", text: "Everyone with an active account can be on the rota. Add people and change roles on the diary's Admin page." }));
     return out;

@@ -356,7 +356,7 @@ test("contracted hours as a range: overtime over the maximum, marked shift by sh
   assert.equal((await rota("PUT", "people/" + ids.Priya, { contractMin: 30, contractMax: 20 }, MGR)).body.code, "invalid_argument");
   let p = await rota("PUT", "people/" + ids.Priya, { contractMin: 8, contractMax: 12 }, MGR);
   assert.deepEqual([p.body.contractMin, p.body.contractMax, p.body.contractHours], [8, 12, 12]);
-  p = await rota("PUT", "people/" + ids.Priya, { sites: [] }, MGR);
+  p = await rota("PUT", "people/" + ids.Priya, { sites: [] }, ADMIN);
   assert.deepEqual([p.body.contractMin, p.body.contractMax], [8, 12], "left out, the contract is kept");
   await addShift({ site: "asg", day: d(0), start: "08:00", end: "16:00", userId: ids.Priya, job: "opens", breakMins: 30 }); // 7.5h
   await addShift({ site: "asg", day: d(1), start: "08:00", end: "16:00", userId: ids.Priya, job: "opens", breakMins: 30 }); // 7.5h: 3h over 12
@@ -427,14 +427,25 @@ test("amending a shift on the day: start and finish as worked, with a reason; th
   await rota("DELETE", "shifts/" + s.id, undefined, MGR);
 });
 
-test("availability: your own, not anyone else's; managers set contracts", async () => {
-  const r = await rota("PUT", "me/availability", { pattern: { mon: "off", wed: { to: "15:00" } }, sites: ["cafe", "asg"] }, ALEX);
+test("availability: which days and sites people work is set by admins only; managers set contracts", async () => {
+  const pat = { pattern: { mon: "off", wed: { to: "15:00" } }, sites: ["cafe", "asg"] };
+  const staff = await rota("PUT", "me/availability", pat, ALEX);
+  assert.equal(staff.status, 403, "staff can't change their own days or sites");
+  assert.equal(staff.body.code, "permission_denied");
+  assert.equal((await rota("PUT", "me/availability", pat, MGR)).status, 403, "nor can managers");
+  assert.equal((await rota("PUT", "people/" + ids.Alex, pat, MGR)).status, 403, "managers can't set anyone's days or sites");
+  assert.equal((await rota("PUT", "people/" + ids.Alex, { sites: [] }, MGR)).status, 403);
+  assert.equal((await rota("PUT", "people/" + ids.Alex, { contractMin: 10, contractMax: 20 }, MGR)).status, 200, "managers still set contracts");
+  assert.equal((await rota("PUT", "people/" + ids.Sam, { contractHours: 20, pattern: {} }, ALEX)).status, 403);
+  const r = await rota("PUT", "people/" + ids.Alex, pat, ADMIN);
   assert.equal(r.status, 200, r.text);
+  assert.deepEqual([r.body.contractMin, r.body.contractMax], [10, 20], "the contract is kept");
   const me = await rota("GET", "me", undefined, ALEX);
   assert.deepEqual(me.body.pattern, { mon: "off", wed: { to: "15:00" } });
   assert.deepEqual(me.body.sites, ["cafe", "asg"]);
-  assert.equal((await rota("PUT", "people/" + ids.Sam, { contractHours: 20, pattern: {} }, ALEX)).status, 403);
-  assert.equal((await rota("PUT", "me/availability", { pattern: { mon: { from: "15:00", to: "09:00" } } }, ALEX)).body.code, "invalid_argument");
+  assert.equal(me.body.user.admin, false);
+  assert.equal((await rota("PUT", "me/availability", { pattern: { tue: "off" }, sites: [] }, ADMIN)).status, 200, "admins set their own");
+  assert.equal((await rota("PUT", "people/" + ids.Alex, { pattern: { mon: { from: "15:00", to: "09:00" } } }, ADMIN)).body.code, "invalid_argument");
   // Time off: asked for yourself, approved by a manager, cancelled by you.
   const t = await rota("POST", "time-off", { from: "2030-08-01", to: "2030-08-03", reason: "Holiday" }, ALEX);
   assert.equal(t.body.status, "requested");
