@@ -539,6 +539,10 @@ async function weekProblems(env: Env, day: string) {
   const week = mondayOf(day);
   return { week, problems: computeProblems(await loadCtx(env, week)) };
 }
+/** After a shift write: the week, and its problems only when asked (?with=problems). The rota page redraws the whole
+ * week afterwards, so working them out on every save would be wasted (five reads and the checks). */
+const afterWrite = (env: Env, day: string, withProblems: boolean) =>
+  withProblems ? weekProblems(env, day) : Promise.resolve({ week: mondayOf(day) } as { week: string; problems?: Problem[] });
 
 /* ---------- requests: names and details for the lists ---------- */
 
@@ -600,6 +604,7 @@ export async function handleRota(req: Request, env: Env, ctx: ExecutionContext, 
     return b;
   };
   const seg = route.split("/");
+  const withProblems = q("with") === "problems";
 
   // Where the rota and the diary live, for links between them.
   if (route === "links" && m === "GET") return json(links);
@@ -624,7 +629,7 @@ export async function handleRota(req: Request, env: Env, ctx: ExecutionContext, 
       ).bind(id, v.site, v.day, v.start, v.end, v.breakMins, v.job, v.userId, v.note, nowMs(), user.id),
       touchWeek(env, mondayOf(v.day)),
     ]);
-    return json({ shift: await getShift(env, id), ...(await weekProblems(env, v.day)) });
+    return json({ shift: await getShift(env, id), ...(await afterWrite(env, v.day, withProblems)) });
   }
 
   // Amending a shift on the day: when someone actually started and finished (going home sick, staying late).
@@ -648,7 +653,7 @@ export async function handleRota(req: Request, env: Env, ctx: ExecutionContext, 
       await env.DB.prepare("UPDATE rota_shifts SET actual_start = ?, actual_end = ?, actual_break = ?, adjust_note = ?, adjusted_by = ?, adjusted_at = ? WHERE id = ?")
         .bind(b.start, b.end, brk, note, user.id, nowMs(), cur.id).run();
     }
-    return json({ shift: await getShift(env, cur.id), ...(await weekProblems(env, cur.day)) });
+    return json({ shift: await getShift(env, cur.id), ...(await afterWrite(env, cur.day, withProblems)) });
   }
 
   if (seg[0] === "shifts" && seg.length === 2 && (m === "PATCH" || m === "DELETE")) {
@@ -660,7 +665,7 @@ export async function handleRota(req: Request, env: Env, ctx: ExecutionContext, 
         env.DB.prepare("UPDATE rota_requests SET status = 'cancelled', decided_by = ?, decided_at = ? WHERE shift_id = ? AND status IN ('open', 'accepted')").bind(user.id, nowMs(), cur.id),
         touchWeek(env, mondayOf(cur.day)),
       ]);
-      return json({ ok: true, ...(await weekProblems(env, cur.day)) });
+      return json({ ok: true, ...(await afterWrite(env, cur.day, withProblems)) });
     }
     const b = await body();
     // Several managers can plan at once: a change made from an older copy of the shift is refused, not applied.
@@ -687,8 +692,8 @@ export async function handleRota(req: Request, env: Env, ctx: ExecutionContext, 
       stmts.push(env.DB.prepare("UPDATE rota_requests SET status = 'cancelled', decided_by = ?, decided_at = ? WHERE shift_id = ? AND status IN ('open', 'accepted')").bind(user.id, nowMs(), cur.id));
     }
     await env.DB.batch(stmts);
-    const out = await weekProblems(env, v.day);
-    if (out.week !== mondayOf(cur.day)) (out as any).fromWeek = await weekProblems(env, cur.day);
+    const out = await afterWrite(env, v.day, withProblems);
+    if (withProblems && out.week !== mondayOf(cur.day)) (out as any).fromWeek = await weekProblems(env, cur.day);
     return json({ shift: await getShift(env, cur.id), ...out });
   }
 

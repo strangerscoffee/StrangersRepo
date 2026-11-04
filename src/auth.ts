@@ -162,7 +162,8 @@ async function verifiedCookie(req: Request, env: Env, name: string, prefix: stri
 }
 
 async function sessionCookie(req: Request, env: Env, user: { id: string; session_ver: number }): Promise<[string, string][]> {
-  const payload = b64url(enc.encode(JSON.stringify({ u: user.id, v: user.session_ver, e: Date.now() + SESSION_MS })));
+  // s: this session's own id, so signing out can end just this one (revoked_sessions) and not the person's others.
+  const payload = b64url(enc.encode(JSON.stringify({ u: user.id, v: user.session_ver, s: newId(8), e: Date.now() + SESSION_MS })));
   const sig = b64url(new Uint8Array(await crypto.subtle.sign("HMAC", await sessionKey(env), enc.encode(payload))));
   return cookieHeaders(req, env, COOKIE, `${payload}.${sig}`, SESSION_MS / 1000);
 }
@@ -215,16 +216,18 @@ export async function sessionUser(req: Request, env: Env): Promise<User | null> 
 }
 
 /** The session cookie that signs this request in, with its raw value and time left. */
-async function currentSession(req: Request, env: Env): Promise<{ user: User; value: string; leftSec: number } | null> {
+async function currentSession(req: Request, env: Env): Promise<{ user: User; value: string; leftSec: number; sid?: string | null; exp?: number } | null> {
   for (const { payload, sig } of cookieValues(req, COOKIE)) {
     try {
       if (!(await crypto.subtle.verify("HMAC", await sessionKey(env), unb64url(sig), enc.encode(payload)))) continue;
       const s = JSON.parse(new TextDecoder().decode(unb64url(payload)));
       if (typeof s.e !== "number" || s.e < Date.now()) continue;
-      const row = await env.DB.prepare("SELECT id, name, role, active, session_ver FROM users WHERE id = ?")
-        .bind(s.u).first<{ id: string; name: string; role: Role; active: number; session_ver: number }>();
-      if (!row || !row.active || row.session_ver !== s.v) continue;
-      return { user: { id: row.id, name: row.name, role: row.role }, value: `${payload}.${sig}`, leftSec: Math.floor((s.e - Date.now()) / 1000) };
+      // One read: the person, and whether this session was signed out (sessions from before ids had no s).
+      const row = await env.DB.prepare(
+        "SELECT id, name, role, active, session_ver, EXISTS (SELECT 1 FROM revoked_sessions WHERE sid = ?) AS revoked FROM users WHERE id = ?",
+      ).bind(typeof s.s === "string" ? s.s : "", s.u).first<{ id: string; name: string; role: Role; active: number; session_ver: number; revoked: number }>();
+      if (!row || !row.active || row.session_ver !== s.v || row.revoked) continue;
+      return { user: { id: row.id, name: row.name, role: row.role }, value: `${payload}.${sig}`, leftSec: Math.floor((s.e - Date.now()) / 1000), sid: typeof s.s === "string" ? s.s : null, exp: s.e };
     } catch {}
   }
   return null;
@@ -348,6 +351,15 @@ export async function handleAuth(req: Request, env: Env, route: string, current:
   }
 
   if (route === "logout" && req.method === "POST") {
+    // Ends this session on the server too, so a copy of the cookie (another tab, a shared device's backup) stops
+    // working: kept until it would have expired anyway. The person's other sessions carry on.
+    const cur = await currentSession(req, env);
+    if (cur?.sid) {
+      await env.DB.batch([
+        env.DB.prepare("INSERT OR IGNORE INTO revoked_sessions (sid, exp) VALUES (?, ?)").bind(cur.sid, cur.exp ?? Date.now() + SESSION_MS),
+        env.DB.prepare("DELETE FROM revoked_sessions WHERE exp < ?").bind(Date.now()),
+      ]);
+    }
     return json({ ok: true }, 200, clearSession(req, env));
   }
 
