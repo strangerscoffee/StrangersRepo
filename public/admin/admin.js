@@ -159,7 +159,7 @@
       const view = await VIEWS[S.page]();
       if (my !== seq) return;
       put(main, view);
-      document.title = `${(NAV.find((n) => n[0] === S.page) || ["", "More"])[1]} · Admin · Strangers Coffee`;
+      document.title = "Strangers Coffee - Admin"; // the same tab name on every page
     } catch (e) {
       if (my !== seq) return;
       put(main, html`${head("Couldn't load this page", "")}<div class="group glass"><div class="empty">${svg("warn")}<span>${e.message}</span></div></div>`);
