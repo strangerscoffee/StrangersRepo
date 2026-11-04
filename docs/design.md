@@ -11,7 +11,7 @@ How the Kitchen Diary looks and why, for anyone changing it. The style follows A
 
 ## Patterns
 
-- **Today** leads with a progress bar (Temps, Opening, Closing, Sign off) and anything overdue at the site, then one card per part of the day. A card is open while it has something to do and collapses to a one-line summary when done; tapping its header opens or closes it.
+- **Today** leads with a progress bar (Temps, Opening, Closing, Sign off) and anything overdue at the site (two reminders at most; any more fold under one "N more overdue" row, so the day's checks stay near the top), then one card per part of the day. On a phone in the morning, Closing checks start folded until the opening checks are done or it's 2pm. A card is open while it has something to do and collapses to a one-line summary when done; tapping its header opens or closes it.
 - **Sign-off** signs as the signed-in person, so nobody types a name. The big "Sign off as …" button appears once everything is done and floats above the tab bar until you reach it. With gaps, "Sign off anyway" needs a note under Problems first.
 - **Temperatures** turn green or red as they're typed, with a tick or warning. An out-of-range reading shows what to do and a button that starts the Problems note.
 - **List sections** (cleaning, extra checks, allergens, suppliers, contacts, staff training) list items as rows that open in place for details, history and Edit. Their add/edit form stays closed until someone taps **Add …** in the page heading or **Edit** on a row; it closes on save or Cancel.

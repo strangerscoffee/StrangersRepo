@@ -91,6 +91,8 @@ html{scroll-padding-top:calc(env(safe-area-inset-top,0px) + 72px);scroll-padding
   .snav a.on{background:var(--accent);color:var(--accent-ink)} .snav a.on svg.i{color:inherit}
   .snav a .n{margin-left:auto;min-width:24px;justify-content:center}
   .snav a.on .n{background:rgba(255,255,255,.25);color:inherit}
+  /* Shorter screens (an iPad in landscape): a smaller logo and tighter rows, so more of the sections fit. */
+  @media (max-height:900px){.sidebar .sbrand{width:86px;margin:0 0 2px}.snav a{min-height:34px;font-size:15px}.snav .h{padding-top:8px}}
   .mebox{display:flex;align-items:center;gap:10px;width:100%;padding:8px;border-radius:18px;border:0;background:var(--sunk);font:inherit;color:var(--fg);text-align:left;cursor:pointer}
   .mebox .t{flex:1;display:grid;min-width:0}
   .mebox .t b{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -216,6 +218,10 @@ html{scroll-padding-top:calc(env(safe-area-inset-top,0px) + 72px);scroll-padding
 .alert .ic{color:var(--warn);display:inline-flex}
 .alert .t{flex:1;display:grid;gap:1px;min-width:0}
 .alert .t b{font-size:15px}
+/* "3 more overdue": the reminders past the first two, folded (Today). */
+.alertmore{display:flex;align-items:center;gap:12px;width:100%;min-height:48px;padding:0 16px;border:1px dashed color-mix(in srgb,var(--warn) 45%,transparent);border-radius:20px;background:none;font:inherit;font-weight:600;color:var(--fg);cursor:pointer;text-align:left}
+.alertmore svg.i{color:var(--warn)}
+.alertmore .go{margin-left:auto;color:var(--accent)}
 
 .signcard.done{display:grid;justify-items:center;text-align:center;gap:8px;padding:22px 18px}
 .signcard .big{width:64px;height:64px;border-radius:50%;display:grid;place-items:center;background:var(--ok);color:#fff}
