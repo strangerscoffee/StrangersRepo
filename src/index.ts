@@ -1,8 +1,9 @@
 // Strangers Coffee Kitchen Diary staff site.
 // Serves the diary page (public/index.html) and the API it uses through claude-shim.js, and, on its own
 // hostname (ROTA_HOST), the staff rota (public/rota/, src/rota.ts). One Worker, one database, one set of accounts.
-import { appForHost, appLinks, authorize, isPublicAsset, isRotaSharedFile, limitWrites, recordId, requireUser, unifiedSignin } from "./access";
+import { appForHost, appLinks, authorize, isAdminSharedFile, isPublicAsset, isRotaSharedFile, limitWrites, recordId, requireUser, unifiedSignin } from "./access";
 import { handleAdmin } from "./admin";
+import { handleAdminView } from "./adminView";
 import { handleAuth } from "./auth";
 import { handleBackups, makeBackup } from "./backup";
 import { deleteAsset, serveBlob, uploadAsset } from "./assets";
@@ -53,11 +54,15 @@ const noStore = (res: Response) => {
 const redirect = (location: string) => new Response(null, { status: 302, headers: { location, "cache-control": "no-store" } });
 // The rota app's page. Served at /rota/ on any host (local dev and tests) and at / on the rota's own host.
 const rotaPage = (req: Request, env: Env, url: URL) => env.ASSETS.fetch(new Request(new URL("/rota/", url), req)).then(noStore);
+// The admin section's page. Served at / on its own host (ADMIN_HOST), and at /admin on the diary's when there's none.
+const adminPage = (req: Request, env: Env, url: URL) => env.ASSETS.fetch(new Request(new URL("/admin/", url), req)).then(noStore);
+const ADMIN_PAGES = new Set(["/admin", "/admin/", "/admin.html", "/admin/index.html"]);
 
 async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): Promise<Response> {
   const p = url.pathname;
   const isGet = req.method === "GET" || req.method === "HEAD";
-  const app = appForHost(url.hostname, env.ROTA_HOST);
+  const app = appForHost(url.hostname, env.ROTA_HOST, env.ADMIN_HOST);
+  const links = appLinks(url, env.ROTA_HOST, env.ADMIN_HOST);
   // One Staff Login for every address: the rota's sign-in page is the diary's (src/hosts.ts).
   if (isGet && (p === "/signin" || p === "/signin.html")) {
     const to = unifiedSignin(url, env.COOKIE_DOMAIN);
@@ -82,7 +87,7 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
   }
   const user = caller.user;
 
-  if (p.startsWith("/api/rota/")) return handleRota(req, env, ctx, p.slice("/api/rota/".length), user, appLinks(url, env.ROTA_HOST));
+  if (p.startsWith("/api/rota/")) return handleRota(req, env, ctx, p.slice("/api/rota/".length), user, links);
 
   // The rota's own host serves the rota and nothing of the diary's: diary pages go to the rota, diary APIs are refused.
   if (app === "rota") {
@@ -93,11 +98,27 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
     return redirect("/");
   }
 
+  // The admin section's own host: admins only. Its page, its files, the admin API and (above) the rota's API;
+  // nothing of the diary's. Everyone else goes back to the diary.
+  if (app === "admin") {
+    if (user.role !== "admin") {
+      if (p.startsWith("/api/")) throw new ApiError(403, "permission_denied", "Only admins can use the admin section.");
+      return redirect(links.diary);
+    }
+    if (!p.startsWith("/api/admin/")) {
+      if (p.startsWith("/api/") || p.startsWith("/_blob/")) throw new ApiError(404, "not_found", "Not available on the admin address.");
+      if (!isGet) return new Response("Method not allowed", { status: 405 });
+      if (p === "/") return adminPage(req, env, url);
+      if (isAdminSharedFile(p)) return env.ASSETS.fetch(req);
+      return redirect("/");
+    }
+  }
+
   if (p.startsWith("/api/admin/")) {
     if (user.role !== "admin") throw new ApiError(403, "permission_denied", "Only admins can do this.");
     const r = p.slice("/api/admin/".length);
     if (r === "backups" || r.startsWith("backups/")) return handleBackups(req, env, r.slice("backups/".length), user.name);
-    return handleAdmin(req, env, r, user);
+    return (await handleAdminView(req, env, r, user, links)) ?? handleAdmin(req, env, r, user);
   }
 
   const db = p.match(/^\/api\/db\/([a-z]+)$/);
@@ -122,8 +143,11 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
   if (p.startsWith("/api/")) throw new ApiError(404, "not_found", "Unknown API route.");
   if (!isGet) return new Response("Method not allowed", { status: 405 });
   if (p === "/rota" || p === "/rota/" || p === "/rota/index.html") return p === "/rota" ? redirect("/rota/") : rotaPage(req, env, url);
-  if ((p === "/admin" || p === "/admin.html") && user.role !== "admin") {
-    return new Response(null, { status: 302, headers: { location: "/", "cache-control": "no-store" } });
+  // The admin section: admins only. With its own address (ADMIN_HOST) /admin goes there; otherwise (local dev,
+  // tests) it's served here.
+  if (ADMIN_PAGES.has(p)) {
+    if (user.role !== "admin") return redirect("/");
+    return env.ADMIN_HOST ? redirect(links.admin) : adminPage(req, env, url);
   }
   // Pages behind sign-in must not be cached by shared devices' browsers or proxies.
   const res = await env.ASSETS.fetch(req);

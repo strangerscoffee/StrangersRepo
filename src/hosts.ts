@@ -1,9 +1,14 @@
-// The two apps on one Worker: the diary on its own address, the rota on ROTA_HOST (wrangler.jsonc).
-// Kept free of imports so test/rota.test.mjs can load it directly. Re-exported from access.ts.
+// The three apps on one Worker: the diary on its own address, the rota on ROTA_HOST and the admin section on
+// ADMIN_HOST (wrangler.jsonc). Kept free of imports so test/rota.test.mjs can load it directly. Re-exported from access.ts.
 
-/** Which app a hostname serves: the rota on ROTA_HOST, the diary everywhere else. */
-export function appForHost(hostname: string, rotaHost: string | undefined): "rota" | "diary" {
-  return rotaHost && hostname.toLowerCase() === rotaHost.toLowerCase() ? "rota" : "diary";
+export type App = "diary" | "rota" | "admin";
+
+/** Which app a hostname serves: the rota on ROTA_HOST, the admin section on ADMIN_HOST, the diary everywhere else. */
+export function appForHost(hostname: string, rotaHost: string | undefined, adminHost?: string): App {
+  const h = hostname.toLowerCase();
+  if (rotaHost && h === rotaHost.toLowerCase()) return "rota";
+  if (adminHost && h === adminHost.toLowerCase()) return "admin";
+  return "diary";
 }
 
 /** On the rota's hostname, files it may serve besides its own (/rota/…): the diary's shared styles and icons. */
@@ -12,13 +17,24 @@ export function isRotaSharedFile(path: string): boolean {
     path === "/logo.svg" || path === "/mark.svg" || /^\/icon-\d+\.png$/.test(path) || path.startsWith("/rota/");
 }
 
-/** Links between the two apps, as seen from this request. Without a ROTA_HOST (local dev, tests) the rota is at /rota/. */
-export function appLinks(url: URL, rotaHost: string | undefined): { rota: string; diary: string } {
-  if (!rotaHost) return { rota: "/rota/", diary: "/" };
-  const onRota = appForHost(url.hostname, rotaHost) === "rota";
-  // The diary is the rota host without its first label (rota.staffstrangerscoffee.com -> staffstrangerscoffee.com).
-  const diaryHost = rotaHost.includes(".") ? rotaHost.slice(rotaHost.indexOf(".") + 1) : url.hostname;
-  return { rota: onRota ? "/" : `https://${rotaHost}/`, diary: onRota ? `https://${diaryHost}/` : "/" };
+/** On the admin section's hostname, files it may serve: its own (/admin/…) and the shared theme and icons. */
+export function isAdminSharedFile(path: string): boolean {
+  return path === "/theme.css" || path === "/robots.txt" || path === "/logo.svg" || path === "/mark.svg" ||
+    /^\/icon-\d+\.png$/.test(path) || (path.startsWith("/admin/") && path !== "/admin/" && path !== "/admin/index.html");
+}
+
+/** Links between the apps, as seen from this request. Without a ROTA_HOST or ADMIN_HOST (local dev, tests) the rota
+ * is at /rota/ and the admin section at /admin on the diary's address. */
+export function appLinks(url: URL, rotaHost: string | undefined, adminHost?: string): { rota: string; diary: string; admin: string } {
+  const app = appForHost(url.hostname, rotaHost, adminHost);
+  // The diary is the rota's (or admin section's) host without its first label (rota.example.com -> example.com).
+  const other = rotaHost || adminHost || "";
+  const diaryHost = other.includes(".") ? other.slice(other.indexOf(".") + 1) : url.hostname;
+  return {
+    rota: app === "rota" ? "/" : rotaHost ? `https://${rotaHost}/` : "/rota/",
+    diary: app === "diary" ? "/" : `https://${diaryHost}/`,
+    admin: app === "admin" ? "/" : adminHost ? `https://${adminHost}/` : "/admin",
+  };
 }
 
 /** One sign-in page for every staff address. On another subdomain of the shared cookie domain (COOKIE_DOMAIN: the

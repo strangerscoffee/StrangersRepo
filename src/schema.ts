@@ -116,6 +116,16 @@ const SCHEMA = [
     created_at  INTEGER NOT NULL
   )`,
   "CREATE INDEX IF NOT EXISTS rota_requests_shift ON rota_requests(shift_id, status)",
+  // Account and admin events for the admin section's Activity and Security pages (src/audit.ts): who added or
+  // changed an account, lockouts, failed sign-ins, backups made by hand. Never passwords or PINs.
+  `CREATE TABLE IF NOT EXISTS audit_log (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    at      INTEGER NOT NULL,                 -- ms since epoch
+    kind    TEXT NOT NULL,                    -- e.g. user_added, role_changed, locked, signin_failed, backup
+    actor   TEXT,                             -- who did it (a name), NULL for the system
+    text    TEXT NOT NULL                     -- what happened, in words
+  )`,
+  "CREATE INDEX IF NOT EXISTS audit_log_at ON audit_log(at)",
 ];
 
 // Upgrades older databases in place:

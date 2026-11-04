@@ -1,5 +1,6 @@
 // Admin API (/api/admin/*): manage accounts. Admins only (enforced in index.ts).
 import { ROLES, Role, User, UserRow, checkPassword, checkUsername, cleanName, hashPassword, nameKey, newId, tempPassword, usernameFrom } from "./auth";
+import { audit } from "./audit";
 import { ApiError, Env, SQL_NOW_MS, invalid, json, readJson } from "./http";
 
 function listItem(r: UserRow) {
@@ -65,6 +66,7 @@ export async function handleAdmin(req: Request, env: Env, route: string, admin: 
       `INSERT INTO users (id, name, name_key, username, role, pin_hash, pin_salt, must_change, created_at, created_by, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, 1, ${SQL_NOW_MS}, ?, ${SQL_NOW_MS})`,
     ).bind(id, name, nameKey(name), username, role, hash, salt, admin.name).run();
+    await audit(env, "user_added", admin.name, `${admin.name} added ${name} as ${role === "staff" ? "staff" : `a${role === "admin" ? "n" : ""} ${role}`}`);
     return json({ user: listItem(await getRow(env, id)), ...(body.password ? {} : { password }) });
   }
 
@@ -122,6 +124,17 @@ export async function handleAdmin(req: Request, env: Env, route: string, admin: 
     if (!sets.length) throw invalid("Nothing to change.");
     sets.push(`updated_at = ${SQL_NOW_MS}`);
     await env.DB.prepare(`UPDATE users SET ${sets.join(", ")} WHERE id = ?`).bind(...args, row.id).run();
+    // What changed, in words, for the admin section's Activity page. Never the password itself.
+    const newName = body.name !== undefined ? cleanName(body.name)! : row.name;
+    const events: [string, string][] = [];
+    if (body.name !== undefined && newName !== row.name) events.push(["renamed", `${admin.name} renamed ${row.name} to ${newName}`]);
+    if (body.username !== undefined && checkUsername(body.username) !== row.username) events.push(["username_changed", `${admin.name} changed ${newName}'s username`]);
+    if (body.role !== undefined && body.role !== row.role) events.push(["role_changed", `${admin.name} made ${newName} ${body.role === "staff" ? "staff" : `a${body.role === "admin" ? "n" : ""} ${body.role}`}`]);
+    if (body.active !== undefined && !!body.active !== !!row.active) events.push(["active_changed", `${admin.name} switched ${newName}'s account ${body.active ? "back on" : "off"}`]);
+    if (body.password !== undefined) events.push(["password_reset", `${admin.name} gave ${newName} a temporary password`]);
+    if (body.unlock) events.push(["unlocked", `${admin.name} unlocked ${newName}`]);
+    if (body.signOut) events.push(["signed_out", `${admin.name} signed ${newName} out everywhere`]);
+    for (const [k, t] of events) await audit(env, k, admin.name, t);
     return json({ user: listItem(await getRow(env, row.id)), ...(body.password === "generate" ? { password: passwordOut } : {}) });
   }
 

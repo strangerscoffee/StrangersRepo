@@ -2,6 +2,7 @@
 // A scheduled run (wrangler.jsonc "triggers") makes one a day; admins can also make one from the Admin page
 // and download any of them. Each backup is every diary document plus the list of accounts (names, usernames
 // and roles; never password hashes), as gzipped JSON.
+import { audit } from "./audit";
 import { ApiError, Env, json } from "./http";
 
 const PREFIX = "backup:";
@@ -66,7 +67,11 @@ async function prune(env: Env): Promise<void> {
 /** Admin routes: GET backups, POST backups (make one now), GET backups/<id> (download as JSON). */
 export async function handleBackups(req: Request, env: Env, rest: string, by: string): Promise<Response> {
   if (!rest && req.method === "GET") return json({ backups: await listBackups(env), keep: KEEP });
-  if (!rest && req.method === "POST") return json({ backup: await makeBackup(env, by) });
+  if (!rest && req.method === "POST") {
+    const backup = await makeBackup(env, by);
+    await audit(env, "backup", by, `${by} made a backup`);
+    return json({ backup });
+  }
   if (/^[0-9TZ-]{20}$/.test(rest) && req.method === "GET") {
     const gz = await env.FILES.get(PREFIX + rest, "stream");
     if (!gz) throw new ApiError(404, "not_found", "No such backup.");

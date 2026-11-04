@@ -315,6 +315,7 @@
       ...(R.me?.user?.role !== "admin" ? [[a.user?.quickPin ? "Change quick PIN" : "Set a quick PIN", "key", setQuickPin]] : []),
       ["Change password", "key", () => { location.href = "/signin#change"; }],
       ["Open the diary", "diary", () => { location.href = R.links.diary; }],
+      ...(isAdmin() ? [["Admin", "setup", () => { location.href = R.links.admin || "/admin"; }]] : []),
       ["Sign out", "out", signOut, true],
     ];
   }
@@ -584,7 +585,9 @@
         el("span", { class: "lg" }, el("i", { class: "sw clash" }), "Clash"), el("span", { class: "lg" }, el("i", { class: "sw ot" }), "Overtime"), el("span", { text: "Tap a shift to change, move or copy it. Tap an empty space to add one." }))];
   }
 
-  async function renderWeek() {
+  async function renderWeek([day] = []) {
+    // #week/<date> (from the admin section) opens that week; the address then goes back to #week.
+    if (/^\d{4}-\d{2}-\d{2}$/.test(day || "")) { R.week = monday(day); try { history.replaceState(null, "", "#week"); } catch (e) { /* ignore */ } }
     const d = await loadWeek(R.week, true);
     const total = r2(d.shifts.reduce((a, s) => a + s.hours, 0));
     const state = d.published ? (d.changesSincePublish ? `published · ${plural(d.changesSincePublish, "change")} since publishing` : "published") : "draft, not published";
@@ -1283,14 +1286,10 @@
         el("span", { class: "crange" }, el("label", { class: "chours" }, el("span", { text: "Min" }), lo), el("label", { class: "chours" }, el("span", { text: "Max" }), hi)));
     })));
     if (isAdmin()) {
+      // Which days and sites people work is set in the admin section (Admin → People → Edit availability).
       out.push(label("When people can work"));
-      out.push(el("div", { class: "list glass" }, ...wk.people.map((p) => {
-        const off = DAYS.filter((k) => p.pattern?.[k] === "off").map((k) => k[0].toUpperCase() + k.slice(1, 3));
-        const where = p.sites?.length ? p.sites.map((x) => wk.sites.find((y) => y.id === x)?.name || x).join(", ") : "Any site";
-        return el("button", { type: "button", class: "lrow", onclick: () => go("avail/" + p.id) }, avatar(p.name),
-          el("span", { class: "t" }, el("b", { text: p.name }), el("span", { class: "s", text: `${off.length ? "Can't work " + off.join(", ") : "Any day"} · ${where}` })), svgi(ICON.chevR));
-      })));
-      out.push(el("p", { class: "note", text: "Only admins can change which days and sites people work. Staff and managers see theirs under When I can work." }));
+      out.push(el("div", { class: "list glass" }, el("a", { class: "lrow", href: (R.links.admin || "/admin") + "#people" }, svgi(ICON.avail),
+        el("span", { class: "t" }, el("b", { text: "Change in Admin" }), el("span", { class: "s", text: "Admin → People → open someone → Edit availability" })), svgi(ICON.chevR))));
     }
     out.push(el("p", { class: "note", text: "Hours over someone's maximum show as overtime on the rota, in Hours and in their own shifts. Under the minimum shows as a note while planning." }));
     out.push(el("p", { class: "note", text: "Everyone with an active account can be on the rota. Add people and change roles on the diary's Admin page." }));

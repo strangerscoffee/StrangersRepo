@@ -130,6 +130,10 @@ The staff rota (`src/rota.ts`, at `ROTA_HOST`) keeps its data in its own D1 tabl
 
 The rota also reads three things from the diary's documents: a site is in use only once it has `settings/main`, it's closed on the weekdays in `closedDays` and on any day whose `days/<date>` has `closed` (a closure), and "trained on opening and closing checks" means that site's `staff/<id>` for the person (matched by name) has a date for the topic `diary`.
 
+## The audit log
+
+`audit_log` (`src/schema.ts`, written by `src/audit.ts`): `id, at (ms), kind, actor (a name or NULL), text`. Kinds: `user_added`, `renamed`, `username_changed`, `role_changed`, `active_changed`, `password_reset`, `unlocked`, `signed_out`, `locked`, `signin_failed`, `backup`, `setup_copied`, `pins_reset`, `signed_out_all`. The text is in words for the admin section ("Sam Patel made Priya Shah a manager"); it never holds a password, PIN or a typed username. Rows older than about 400 days are removed.
+
 Backups (`src/backup.ts`) include every rota table under `rota`.
 
 ### The rota API (`/api/rota/…`)

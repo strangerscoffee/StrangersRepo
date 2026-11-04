@@ -41,7 +41,7 @@ export const recordId = (u: User) => "web:" + u.name;
 export const isRotaManager = (u: User) => u.role === "manager" || u.role === "admin";
 
 // Which app each hostname serves, and links between them: src/hosts.ts (no imports, so tests can load it directly).
-export { appForHost, appLinks, isRotaSharedFile, unifiedSignin } from "./hosts";
+export { appForHost, appLinks, isAdminSharedFile, isRotaSharedFile, unifiedSignin } from "./hosts";
 
 /* ---------- roles ---------- */
 

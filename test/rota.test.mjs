@@ -66,9 +66,14 @@ test("hostnames: the rota on ROTA_HOST, the diary everywhere else", async () => 
   assert.equal(appForHost("ROTA.staffstrangerscoffee.com", "rota.staffstrangerscoffee.com"), "rota");
   assert.equal(appForHost("staffstrangerscoffee.com", "rota.staffstrangerscoffee.com"), "diary");
   assert.equal(appForHost("localhost", undefined), "diary");
-  assert.deepEqual(appLinks(new URL("https://staffstrangerscoffee.com/"), "rota.staffstrangerscoffee.com"), { rota: "https://rota.staffstrangerscoffee.com/", diary: "/" });
-  assert.deepEqual(appLinks(new URL("https://rota.staffstrangerscoffee.com/"), "rota.staffstrangerscoffee.com"), { rota: "/", diary: "https://staffstrangerscoffee.com/" });
-  assert.deepEqual(appLinks(new URL("http://localhost:8787/"), undefined), { rota: "/rota/", diary: "/" });
+  const R = "rota.staffstrangerscoffee.com", A = "admin.staffstrangerscoffee.com";
+  assert.equal(appForHost(A, R, A), "admin");
+  assert.equal(appForHost("staffstrangerscoffee.com", R, A), "diary");
+  assert.deepEqual(appLinks(new URL("https://staffstrangerscoffee.com/"), R), { rota: "https://rota.staffstrangerscoffee.com/", diary: "/", admin: "/admin" });
+  assert.deepEqual(appLinks(new URL("https://rota.staffstrangerscoffee.com/"), R), { rota: "/", diary: "https://staffstrangerscoffee.com/", admin: "/admin" });
+  assert.deepEqual(appLinks(new URL("http://localhost:8787/"), undefined), { rota: "/rota/", diary: "/", admin: "/admin" });
+  assert.deepEqual(appLinks(new URL("https://staffstrangerscoffee.com/"), R, A), { rota: `https://${R}/`, diary: "/", admin: `https://${A}/` });
+  assert.deepEqual(appLinks(new URL(`https://${A}/`), R, A), { rota: `https://${R}/`, diary: "https://staffstrangerscoffee.com/", admin: "/" });
   assert.ok(isRotaSharedFile("/theme.css") && isRotaSharedFile("/rota/rota.js") && isRotaSharedFile("/icon-192.png"));
   assert.ok(!isRotaSharedFile("/app.js") && !isRotaSharedFile("/admin.html") && !isRotaSharedFile("/claude-shim.js"));
 });
