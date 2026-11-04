@@ -349,9 +349,10 @@ function ringEl(n,t){
   w.append(el("span",{text:String(n)}));return w;
 }
 const badgeEl=(state,ic)=>{const b=el("span",{class:"badge "+(state||""),"aria-hidden":"true"});b.append(svgi(ICON[ic||(state==="done"?"check":state==="bad"?"warn":"dot")]||""));return b};
-function secCard(card,key,done,mark,title,sub){
+function secCard(card,key,done,mark,title,sub,later){
   const k=key+":"+(key==="weekly"||key==="wknotes"?S.week:S.date);
-  const open=k in secOpen?secOpen[k]:!done;
+  // later: not needed yet (closing checks on a phone in the morning), so it starts folded; a tap opens it.
+  const open=k in secOpen?secOpen[k]:!done&&!later;
   // Pop the badge only when this card has just become done (not when moving between days or sites).
   const ctx=S.site+k;
   if(card._ctx===ctx&&done&&card._done===false&&mark.classList)mark.classList.add("pop");
@@ -437,12 +438,19 @@ function renderDayInner(){
   if(a&&a.unused){
     al.append(alertEl("Not in use yet",`Nothing is counted as missing at the ${curSite().name} until it starts.`,canTab("setup")?["Set up",()=>show("setup")]:null,""));
   }else if(a){
+    const alerts=[]; // gathered, then shown below
     if(a.prevDue){const ps=a.pst,gaps=[];if(ps.open!=="y")gaps.push("opening");if(ps.tN<ps.tTot)gaps.push("temps");if(ps.close!=="y")gaps.push("closing");
-      al.append(alertEl(`${nice(a.prev)} wasn't signed off`,gaps.length?"Still to do: "+gaps.join(", "):"Everything was ticked; it just needs signing",["Open",()=>goDay(a.prev)]))}
+      alerts.push(alertEl(`${nice(a.prev)} wasn't signed off`,gaps.length?"Still to do: "+gaps.join(", "):"Everything was ticked; it just needs signing",["Open",()=>goDay(a.prev)]))}
     if(tabOn("review")&&S.db&&!S.reviewsLoading){const{due}=reviewPeriod();
-      if(due<today())al.append(alertEl("4-weekly review overdue",`It was due ${nice(due)}. Look back over the last four weeks and answer the questions.`,R?null:["Do it now",()=>show("review")]))}
+      if(due<today())alerts.push(alertEl("4-weekly review overdue",`It was due ${nice(due)}. Look back over the last four weeks and answer the questions.`,R?null:["Do it now",()=>show("review")]))}
     for(const{kind,t,ts}of a.tasks)
-      al.append(alertEl(t.name,`${kind==="cleaning"?"Cleaning":"Extra check"} · ${(t.freq||"").replace(/^./,c=>c.toUpperCase())} · ${ts.text.toLowerCase()}`,R?null:["Done",()=>completeTask(kind,t,a.id,"")]));
+      alerts.push(alertEl(t.name,`${kind==="cleaning"?"Cleaning":"Extra check"} · ${(t.freq||"").replace(/^./,c=>c.toUpperCase())} · ${ts.text.toLowerCase()}`,R?null:["Done",()=>completeTask(kind,t,a.id,"")]));
+    // Two reminders at most, so today's checks stay near the top; the rest fold under one row.
+    const more=alerts.length-2;
+    if(more>1&&!S.alertsAll){
+      al.append(...alerts.slice(0,2),el("button",{type:"button",class:"alertmore",onclick:()=>{S.alertsAll=true;renderDay()}},
+        svgi(ICON.warn),el("span",{text:`${more} more overdue`}),el("span",{class:"go",text:"Show"})));
+    }else al.append(...alerts);
   }
   const cl=closure(d);
   const cn=$("#closedNote");cn.hidden=!cl&&!isClosed(S.date);
@@ -485,6 +493,7 @@ function renderDayInner(){
     bad.length?"Out of range: needs action":tDone?`All in range${last?` · ${time(last.at)}, ${nameOf(last.by)}`:""}`:st.tN?`${st.tN} of ${st.tTot} taken`:"Fridges 5°C or below · freezers −18°C or colder");
   const tch=$("#tempChips");tch.replaceChildren(...chips);tch.hidden=!tc.classList.contains("shut")||!chips.length;
   // opening and closing
+  let openDone=false;
   for(const[key,list,card,box,foot,title]of[["opening",checksOn(s.opening,S.date),"#openCard","#openList","#openFoot","Opening checks"],["closing",checksOn(s.closing,S.date),"#closeCard","#closeList","#closeFoot","Closing checks"]]){
     const part=d[key]||{};const items=part.items||{};
     checklist($(box),list,items,key,(cid,v)=>patchDay(S.date,{[key]:{items:{[cid]:v},...stamp(),...(v?{}:{allDone:null})}}));roundChecks($(box));
@@ -493,8 +502,11 @@ function renderDayInner(){
     checkFoot($(foot),list,items,part,()=>{const set={},back={},date=S.date;for(const c of list){set[c.id]=true;back[c.id]=!!items[c.id]}
       patchDay(date,{[key]:{items:set,...stamp(),allDone:stamp()}});toast(`All ${key} checks done`,["Undo",()=>patchDay(date,{[key]:{items:back,allDone:null}})])});
     const who=rotaWho(key==="opening"?"opens":"closes");
+    // On a phone, closing checks wait folded while the opening checks are still to do in the morning.
+    const later=key==="closing"&&!n&&S.date===today()&&new Date().getHours()<14&&!openDone&&matchMedia("(max-width:1023px)").matches;
+    if(key==="opening")openDone=all;
     secCard($(card),key,all,all?badgeEl("done"):ringEl(n,list.length),title,
-      (who?who+" · ":"")+(all?`${n} of ${n}${part.allDone||part.at?` · ${nameOf((part.allDone||part).by)}, ${time((part.allDone||part).at)}`:""}`:n?`${n} of ${list.length} ticked`:key==="closing"?`After close · ${list.length} checks`:`${list.length} checks`));
+      (who?who+" · ":"")+(all?`${n} of ${n}${part.allDone||part.at?` · ${nameOf((part.allDone||part).by)}, ${time((part.allDone||part).at)}`:""}`:n?`${n} of ${list.length} ticked`:key==="closing"?`After close · ${list.length} checks`:`${list.length} checks`),later);
   }
   // problems
   const pb=$("#problems"),pt=(d.problems&&d.problems.text)||"";if(document.activeElement!==pb)pb.value=pt;
@@ -2570,7 +2582,7 @@ function hubSub(id){
     case "allergens":return S.allergens.length?`${n(S.allergens.length,"menu item")} · allergen matrix PDF`:"No menu items yet";
     case "history":{let c=0,tr=0;for(let i=1;i<=28;i++){const d=addDays(t,-i),st=dayStatus(S.days[d],null,d);if(closure(S.days[d])||isClosed(d)&&!st.any)continue;tr++;if(st.complete)c++}return `${c} of ${tr} days complete`}
     case "eho":{const l=inspSorted()[0];if(!l)return "No inspection recorded";const o=(l.issues||[]).filter(i=>!i.done).length;return `Rating ${l.rating??"–"} · ${o?n(o,"issue")+" open":"no open issues"}`}
-    case "plans":{const due=S.plans.filter(d=>reviewState(d).overdue).length;return S.plans.length?`${n(S.plans.length,"document")}${due?` · ${due} due for review`:""}`:"None yet: start from a template"}
+    case "plans":{const due=S.plans.filter(d=>reviewState(d).overdue).length;return S.plans.length?`${n(S.plans.length,"document")}${due?` · ${due} due for review`:""}`:mro()?"None yet":"None yet: start from a template"}
     case "templog":{const d=S.days[t],us=S.settings.units;if(!us.length)return "No fridges or freezers set up";
       const rs=us.map(u=>{const r=d&&d.temps&&d.temps[u.id]&&d.temps[u.id].am;return r&&r.v!=null?`${u.name}: ${r.v}°`:null}).filter(Boolean);
       return rs.length?`Today: ${rs.join(" · ")}`:"No readings yet today"}
@@ -2580,7 +2592,7 @@ function hubSub(id){
     case "suppliers":return S.suppliers.length?n(S.suppliers.length,"supplier"):"None listed yet";
     case "contacts":{const e=S.contacts.filter(c=>c.outOfHours).length;return S.contacts.length?`${n(S.contacts.length,"contact")}${e?` · ${e} out of hours`:""}`:"None listed yet"}
     case "staff":{const g=S.staff.filter(p=>siteTopics().some(([k])=>!(p.topics&&p.topics[k]))).length;return S.staff.length?(g?`${g} of ${S.staff.length} with training to do`:"Everyone trained"):"No one listed yet"}
-    case "onboarding":return S.onboarding.length?n(S.onboarding.length,"document"):"None yet: start from a template";
+    case "onboarding":return S.onboarding.length?n(S.onboarding.length,"document"):mro()?"None yet":"None yet: start from a template";
     case "review":{const{due}=reviewPeriod(),left=Math.round((parse(due)-parse(t))/864e5);return left<0?`Overdue since ${nice(due)}`:left===0?"Due today":`Next due ${nice(due)}`}
     case "setup":return "Checks, fridges, opening days and sections";
   }
