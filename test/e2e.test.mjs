@@ -53,19 +53,22 @@ test("staff journey on the real page", async () => {
   await page.fill("#scode", SETUP_CODE);
   await page.click("#setup button[type=submit]");
 
-  // The admin page: add a member of staff, with a temporary password created for them.
-  await page.waitForURL(/\/admin$/);
-  await page.locator(".person", { hasText: "Sam Patel (you)" }).waitFor();
-  await page.click("#addOpen");
-  await page.fill("#aname", "Alex Brown");
-  assert.equal(await page.inputValue("#auser"), "alex.brown");
-  await page.click("#add button[type=submit]");
-  await page.locator("#newPw b").first().waitFor();
-  const [alexUser, alexTemp] = (await page.locator("#newPw b").allTextContents()).map((t) => t.trim());
+  // The admin section: add a member of staff, with a temporary password created for them.
+  await page.waitForURL(/\/admin(#\w+)?$/);
+  await page.locator(".pagehead h1", { hasText: "Overview" }).waitFor();
+  await page.goto(srv.base + "/admin#people");
+  await page.locator("[data-person]", { hasText: "Sam Patel (you)" }).waitFor();
+  await page.click("[data-act=add]");
+  await page.fill("#fName", "Alex Brown");
+  assert.equal(await page.inputValue("#fUser"), "alex.brown");
+  await page.click("#sheet button[type=submit]");
+  await page.locator("#pwText").waitFor();
+  const [alexUser, alexTemp] = (await page.locator("#sheet .secret b").allTextContents()).map((t) => t.trim());
   assert.equal(alexUser, "alex.brown");
   assert.match(alexTemp, /^[a-z2-9]{4}-[a-z2-9]{4}-[a-z2-9]{4}$/);
-  await page.locator(".person", { hasText: "Alex Brown" }).waitFor();
-  assert.equal(await page.locator("#addPanel").isHidden(), true, "add form closes after adding");
+  await page.click("#sheet button:has-text('Done')");
+  assert.equal(await page.locator("#scrim").isHidden(), true, "the password sheet closes");
+  await page.locator("[data-person]", { hasText: "Alex Brown" }).waitFor();
 
   COOKIE = (await ctx.cookies()).filter((c) => c.name === "sfbb_session").map((c) => `${c.name}=${c.value}`).join("");
   await api("set", { path: "settings/main", data: settings("10 Dove Street") });
@@ -74,7 +77,7 @@ test("staff journey on the real page", async () => {
   await api("set", { path: "sites/cafe/cleaning/job1", data: { name: "Clean coffee machine", how: "Backflush", freq: "daily", who: "Barista", createdAt: Date.now(), log: [] } });
   await api("set", { path: "days/2026-10-01", data: { date: "2026-10-01", opening: { items: { o1: true }, by: "web:Seeder", at: Date.now() } } });
 
-  await page.click("a.back");
+  await page.goto(srv.base + "/");
   await page.locator("#avatarBtn", { hasText: "SP" }).waitFor();
   assert.deepEqual(await accountMenu(page), ["Switch person", "Change password", "Admin", "Sign out"]);
 

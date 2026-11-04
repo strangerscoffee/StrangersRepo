@@ -516,6 +516,13 @@ async function weekView(env: Env, week: string, user: User) {
   };
 }
 
+/** For the admin section (src/adminView.ts): a week's shifts (with overtime), its problems, sites and people. */
+export async function rotaWeekSummary(env: Env, week: string) {
+  const [ctx, row] = await Promise.all([loadCtx(env, week), weekRow(env, week)]);
+  const shifts = markOvertime(ctx.shifts.filter((s) => s.day >= ctx.days[0] && s.day <= ctx.days[6]), ctx.people);
+  return { week, published: !!row?.published_at, shifts, problems: computeProblems(ctx), people: ctx.people, sites: [...ctx.sites.values()] };
+}
+
 async function weekProblems(env: Env, day: string) {
   const week = mondayOf(day);
   return { week, problems: computeProblems(await loadCtx(env, week)) };
@@ -550,7 +557,7 @@ async function approvers(env: Env): Promise<string[]> {
 
 /* ---------- the router ---------- */
 
-export async function handleRota(req: Request, env: Env, ctx: ExecutionContext, route: string, user: User, links: { rota: string; diary: string }): Promise<Response> {
+export async function handleRota(req: Request, env: Env, ctx: ExecutionContext, route: string, user: User, links: { rota: string; diary: string; admin?: string }): Promise<Response> {
   const url = new URL(req.url);
   const q = (k: string) => url.searchParams.get(k);
   const m = req.method;

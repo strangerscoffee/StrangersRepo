@@ -27,6 +27,9 @@
     "WRITE_LIMIT_PER_15_MIN": "600",
     // The staff rota's own address (src/rota.ts). Same Worker, database and accounts as the diary.
     "ROTA_HOST": "rota.staffstrangerscoffee.com",
+    // The admin section's own address (src/adminView.ts, public/admin/): admins only. Same Worker and accounts.
+    // Local dev and the tests turn it off (--var ADMIN_HOST:), so the section is at /admin there.
+    "ADMIN_HOST": "admin.staffstrangerscoffee.com",
     // Sign-in is shared across this domain and its subdomains, so one sign-in covers the diary and the rota
     // (src/auth.ts). `wrangler dev` rewrites the cookie's Domain to the local address, so local dev still works.
     "COOKIE_DOMAIN": "staffstrangerscoffee.com"
@@ -39,7 +42,8 @@
   "routes": [
     { "pattern": "staffstrangerscoffee.com", "custom_domain": true },
     { "pattern": "www.staffstrangerscoffee.com", "custom_domain": true },
-    { "pattern": "rota.staffstrangerscoffee.com", "custom_domain": true }
+    { "pattern": "rota.staffstrangerscoffee.com", "custom_domain": true },
+    { "pattern": "admin.staffstrangerscoffee.com", "custom_domain": true }
   ],
 
   // Local dev rewrites requests to the route's hostname; keep them https so the Worker's

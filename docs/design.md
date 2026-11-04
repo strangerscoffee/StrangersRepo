@@ -37,6 +37,13 @@ The rota (`public/rota/`, at `rota.staffstrangerscoffee.com`) is its own app in 
 
 The designs it was built from are in `docs/rota-designs/`.
 
+## The admin section
+
+The admin section (`public/admin/`, at `admin.staffstrangerscoffee.com`) uses the same theme (`theme.css`) and layout rules as the diary: a sidebar from 1024 px, otherwise a top bar with the account button, one column and a floating tab bar (**Overview**, **People**, **Sites**, **Activity**, **More**, with Security and Backups & exports under More). Its buttons are flat, without the theme's coloured glow.
+- **Overview** leads with "Needs attention": one row per problem, each with its own button. Then four tiles (2×2 on phones, 4 across from 700 px) and "Diary today" and "Rota this week" side by side, one row per site.
+- **People** opens a person in place: account actions in one row (Switch off apart, in red), then three cards of equal height, Account, Rota and Kitchen Diary, side by side from 900 px and stacked below.
+- Lists wrap their text rather than cut it off. Anything that can't be undone asks in a sheet first; a temporary password is shown once, in a sheet, with a copy button.
+
 ## Motion
 
 Short and purposeful, and all of it is off with Reduce Motion:

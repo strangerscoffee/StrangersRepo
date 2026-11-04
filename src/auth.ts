@@ -1,4 +1,5 @@
 // Accounts: sign in with username + password, signed session cookies, first-admin setup and recovery.
+import { audit } from "./audit";
 import { ApiError, Env, SQL_NOW_MS, invalid, json, readJson, safeEqual } from "./http";
 
 export type Role = "admin" | "manager" | "staff";
@@ -268,6 +269,7 @@ async function checkSetupCode(env: Env, ip: string, code: unknown): Promise<void
   if ((await ipFailures(env, ip)) >= IP_FAILS) throw new ApiError(429, "rate_limited", "Too many attempts. Wait 15 minutes.");
   if (typeof code !== "string" || !(await safeEqual(code.trim(), setupCode(env)))) {
     await recordIpFailure(env, ip);
+    await audit(env, "signin_failed", null, "Wrong setup code");
     throw new ApiError(403, "wrong_setup_code", "That setup code isn't right. It's the secret saved in Cloudflare.");
   }
 }
@@ -284,6 +286,8 @@ async function verifyLogin(env: Env, ip: string, username: unknown, password: un
   if (!row || !row.active) {
     await hashPassword(pw || "x"); // same work as a real check, so timing doesn't reveal which usernames exist
     await recordIpFailure(env, ip);
+    // Never the username typed: it could be someone's password typed in the wrong box.
+    await audit(env, "signin_failed", null, row ? `Sign-in to ${row.name}'s switched-off account` : "Sign-in with a username that doesn't exist");
     throw wrong;
   }
   const now = Date.now();
@@ -297,6 +301,8 @@ async function verifyLogin(env: Env, ip: string, username: unknown, password: un
     await env.DB.prepare("UPDATE users SET failed = ?, locked_until = ? WHERE id = ?")
       .bind(lock ? 0 : failed, lock ? now + LOCK_MS : row.locked_until, row.id).run();
     await recordIpFailure(env, ip);
+    await audit(env, "signin_failed", null, `Wrong password for ${row.name}`);
+    if (lock) await audit(env, "locked", null, `${row.name} was locked out after 5 wrong passwords`);
     if (lock) throw new ApiError(423, "locked", "Too many wrong passwords. Try again in 10 minutes, or ask an admin to reset your password.");
     const left = MAX_FAILS - failed;
     throw new ApiError(401, "wrong_password", `That username and password don't match. ${left} ${left === 1 ? "try" : "tries"} left before a 10-minute lock.`);
@@ -446,6 +452,8 @@ export async function handleAuth(req: Request, env: Env, route: string, current:
       await env.DB.prepare(`UPDATE users SET failed = ?, locked_until = ?${lock ? ", quick_hash = NULL, quick_salt = NULL" : ""} WHERE id = ?`)
         .bind(lock ? 0 : failed, lock ? now + LOCK_MS : row.locked_until, row.id).run();
       await recordIpFailure(env, ip);
+      await audit(env, "signin_failed", null, `Wrong quick PIN for ${row.name}`);
+      if (lock) await audit(env, "locked", null, `${row.name} was locked out after 5 wrong quick PINs, and their PIN was switched off`);
       if (lock) throw new ApiError(423, "locked", "Too many wrong tries, so this quick PIN is switched off. Sign in with your password (after 10 minutes) and set a new one.");
       const left = MAX_FAILS - failed;
       throw new ApiError(401, "wrong_pin", `Wrong PIN. ${left} ${left === 1 ? "try" : "tries"} left.`);

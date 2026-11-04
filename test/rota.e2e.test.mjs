@@ -132,16 +132,19 @@ for (const [label, viewport] of [["phone", { width: 393, height: 852 }], ["iPad"
     assert.equal(w.shifts.find((s) => s.id === open.id).userId, ALEX_ID);
     await call("DELETE", "/api/rota/shifts/" + open.id);
 
-    // Which days and sites people work: read-only for staff; an admin changes it from Rota settings.
+    // Which days and sites people work: read-only for staff; an admin changes it in the admin section.
     await a.page.goto(srv.base + "/rota/#avail");
     await a.page.locator(".note", { hasText: "Only an admin can change which days and sites you work" }).waitFor();
     assert.equal(await a.page.locator("#page input[type=checkbox], #page .fchip").count(), 0, "no switches for staff");
     await a.page.locator(".btn", { hasText: "Ask for time off" }).waitFor();
     await call("PUT", "/api/rota/people/" + ALEX_ID, { pattern: {}, sites: [] });
     await m.page.goto(srv.base + "/rota/#settings");
-    await m.page.locator(".lrow", { hasText: "Alex Brown" }).filter({ hasText: "Any day" }).click();
-    await m.page.locator("#pageTitle", { hasText: "Alex Brown" }).waitFor();
-    await m.page.locator("#av_mon").uncheck({ force: true });
+    await m.page.locator(".lrow", { hasText: "Change in Admin" }).click();
+    await m.page.waitForURL(/\/admin#people$/);
+    await m.page.locator("[data-person]", { hasText: "Alex Brown" }).click();
+    await m.page.locator("[data-act=avail]").click();
+    await m.page.locator('.arow[data-day="mon"] [data-mode="off"]').click();
+    await m.page.locator("#sheet button[type=submit]").click();
     await m.page.locator("#toast", { hasText: "Saved" }).waitFor();
     assert.equal((await call("GET", "/api/rota/week?start=" + week)).people.find((p) => p.id === ALEX_ID).pattern.mon, "off");
     await call("PUT", "/api/rota/people/" + ALEX_ID, { pattern: {}, sites: [] });

@@ -34,6 +34,19 @@ The staff rota is at **https://rota.staffstrangerscoffee.com**: who works where,
 
 Which days a site opens comes from the diary's Setup, and planned closures from Setup → Closures & holidays; a site with no Setup (the Factory, for now) can't have shifts. **First steps for managers:** in Rota settings, set each site's opening and closing times (and any days with other hours, such as Sundays) and minimum cover, and everyone's minimum and maximum contracted hours.
 
+## Admin
+
+Admins have their own section at **https://admin.staffstrangerscoffee.com** (account menu → **Admin** in the diary or the rota). It covers both the Kitchen Diary and the Rota, with the same sign-in; managers and staff who open it are sent back to the diary.
+
+- **Overview**: what needs attention (locked accounts, an unpublished rota, rota requests waiting, a site that isn't set up, someone who hasn't signed in yet), each with a button to deal with it; how far each site's diary has got today; this week's rota hours and overtime; the last backup.
+- **People**: add people, edit their name, username and role, give a temporary password, unlock, sign out everywhere, switch off. Opening someone shows their account, their rota (hours this week against their contract, sites, **when they can work**, time off) and their training. Which days and sites people work is changed here (**Edit availability**); contracted hours stay in Rota settings, where managers set them.
+- **Sites**: each site's diary Setup and rota hours side by side, with links to change them, and **Copy setup from another site** for a site that has none yet (the Factory).
+- **Activity**: who changed what in the diary, the rota and accounts.
+- **Security**: locked accounts, failed sign-ins, quick PINs, **Reset all quick PINs** and **Sign everyone out**.
+- **Backups & exports**: the nightly backups (download, or back up now), payroll hours and all shifts as CSV, the people list, and the EHO inspection pack.
+
+Day-to-day work stays where it is: managers still plan the rota and use Setup in the diary.
+
 ## Accounts
 
 Everyone signs in with a **username and password**. Signed out, only the sign-in page is visible. Three roles:
@@ -47,7 +60,7 @@ Records show the person's name (set by an admin), not their username. The first 
 
 **Bad Wi-Fi.** If the connection drops, ticks and readings still work: they show straight away, an "Offline" label says how many are waiting, and they save by themselves when the connection returns.
 
-**Backups.** A copy of the whole diary is made every night and the last 30 are kept. Admins can make one or download any of them from the Admin page.
+**Backups.** A copy of the whole diary is made every night and the last 30 are kept. Admins can make one or download any of them in Admin → Backups & exports.
 
 ## What it costs
 
