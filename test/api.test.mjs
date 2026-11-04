@@ -369,15 +369,17 @@ test("quick switching: a 4-digit PIN works only on a device signed in with a pas
   const switched = cookieOf(ok);
   assert.equal((await (await auth("me", undefined, switched)).json()).user.name, "Jo Quick");
 
-  // Five wrong PINs lock the account; an admin password reset clears the PIN.
+  // Five wrong PINs lock the account and switch the PIN off; an admin password reset clears the PIN too.
   for (let i = 0; i < 4; i++) await auth("switch", { id: joId, pin: "0000" }, device);
   assert.equal((await auth("switch", { id: joId, pin: "0000" }, device)).status, 423);
-  assert.equal((await auth("switch", { id: joId, pin: "4826" }, device)).status, 423, "locked even with the right PIN");
+  assert.equal((await auth("switch", { id: joId, pin: "4826" }, device)).status, 404, "not even with the right PIN");
   const people = (await admin("GET", "users")).body.users;
   const jo = people.find((u) => u.username === "jo.quick");
-  assert.equal(jo.quickPin, true);
+  assert.equal(jo.quickPin, false, "five wrong PINs switch the PIN off, so it can't be guessed slowly");
   await admin("PATCH", `users/${jo.id}`, { unlock: true });
-  assert.equal((await auth("switch", { id: joId, pin: "4826" }, device)).status, 200, "unlock works for PINs too");
+  assert.equal((await auth("switch", { id: joId, pin: "4826" }, device)).status, 404, "still off after unlocking");
+  assert.equal((await auth("pin", { pin: "4826" }, cookieOf(await postJson("/api/auth/login", { username: "jo.quick", password: "jo-own-pass" })))).status, 200, "set again after a password sign-in");
+  assert.equal((await auth("switch", { id: joId, pin: "4826" }, device)).status, 200);
   await admin("PATCH", `users/${jo.id}`, { password: "generate" });
   assert.equal((await admin("GET", "users")).body.users.find((u) => u.username === "jo.quick").quickPin, false, "a password reset clears the PIN");
   assert.equal((await auth("switch", { id: joId, pin: "4826" }, device)).status, 404);

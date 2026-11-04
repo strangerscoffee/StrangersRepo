@@ -60,6 +60,26 @@ export function canWrite(u: User, path: string): boolean {
   return !MANAGER_COLLECTIONS.has(parts[parts.length - 2]);
 }
 
+/* The diary's own records: day pages, end-of-week pages and the 4-weekly reviews. The page never deletes them, so only
+   managers and admins can (to tidy up a mistake); staff can't wipe a day's checks or a signed review. */
+const RECORD_COLLECTIONS = new Set(["days", "weeks", "reviews"]);
+export const isRecordPath = (path: unknown) => typeof path === "string" && RECORD_COLLECTIONS.has(path.split("/").slice(-2, -1)[0]);
+
+export function requireDelete(u: User, path: unknown): void {
+  if (u.role === "staff" && isRecordPath(path)) throw new ApiError(403, "permission_denied", "Only managers can remove diary records.");
+}
+
+/* Signatures. A staff member's sign-off is in their own name: a signed block they write (signed:{by,name} on a day,
+   a week or their training record, and by on a 4-weekly review) must be theirs, unless it's the one already there. */
+export function requireOwnSignature(u: User, collection: string, data: unknown, current: Record<string, unknown> | undefined, canon: (v: unknown) => string): void {
+  if (u.role !== "staff" || !data || typeof data !== "object") return;
+  const d = data as Record<string, any>;
+  const mine = (by: unknown, name: unknown) => by === recordId(u) && (name === undefined || name === u.name);
+  const bad = () => new ApiError(403, "permission_denied", "You can only sign in your own name.");
+  if (d.signed != null && canon(d.signed) !== canon(current?.signed) && !(typeof d.signed === "object" && mine(d.signed.by, d.signed.name))) throw bad();
+  if (collection.split("/").pop() === "reviews" && d.by !== undefined && d.by !== current?.by && d.by !== recordId(u)) throw bad();
+}
+
 export function requireWrite(u: User, path: unknown): void {
   if (typeof path === "string" && !canWrite(u, path)) {
     // Not invalid_argument: the page treats that as "read-only for everything".

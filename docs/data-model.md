@@ -71,6 +71,8 @@ problems:{text,by,at}
 closed:{reason,by,at}        // closed outside the usual opening days (holiday, maintenance, unexpected): never counted as incomplete; null when reopened
 signed:{by,at,name}          // name = the signed-in person's name (older entries may lack it)
 ```
+A `set` on a day page that already exists merges into it like an `update` (so a page another device created first keeps its checks). Staff can't delete day or week pages or reviews, and a `signed` block a staff member writes must be in their own name (unless it's the one already there).
+
 The page writes these with nested `update`s such as `{temps:{u1:{am:{v:3.2,by,at}}}}`, which must merge deeply (see `runtime-api.md`).
 
 **`weeks/<Monday YYYY-MM-DD>`**: `week, items:{<checkId>:bool}, by, at, notes:{text,by,at}, signed:{by,at,name}`

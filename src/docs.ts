@@ -1,8 +1,8 @@
 // The db API behind claude-shim.js (docs/runtime-api.md).
 import { ApiError, Env, SQL_NOW_MS, invalid, readJson, json } from "./http";
-import { parseCollectionPath, parseWebDocPath, encodeDoc, deepMerge } from "./paths";
+import { parseCollectionPath, parseWebDocPath, encodeDoc, deepMerge, canonical } from "./paths";
 import { User } from "./auth";
-import { isStaffRecordPath, recordId, requireOwnStaffRecord, requireWrite } from "./access";
+import { isStaffRecordPath, recordId, requireDelete, requireOwnSignature, requireOwnStaffRecord, requireWrite } from "./access";
 
 const BUMP_SEQ = "UPDATE meta SET v = v + 1 WHERE k = 'seq'";
 const CUR_SEQ = "(SELECT v FROM meta WHERE k = 'seq')";
@@ -31,6 +31,24 @@ export async function setDoc(env: Env, path: string, data: unknown, by: string) 
          deleted = 0, seq = excluded.seq, updated_by = excluded.updated_by`,
     ).bind(p.path, p.collection, p.id, text, by),
   ]);
+}
+
+/** set() for day and week pages: creates the page, or, when it already exists (another device made it first, or
+ * someone sends a whole page), merges into it like update(), so nobody's checks are overwritten. */
+export async function setOrMergeDoc(env: Env, path: string, data: unknown, by: string) {
+  const p = parseWebDocPath(path, "write");
+  const text = encodeDoc(data);
+  const [, res] = await env.DB.batch([
+    env.DB.prepare(BUMP_SEQ),
+    env.DB.prepare(
+      `INSERT INTO docs (path, collection, doc_id, data, updated_at, source, deleted, seq, updated_by)
+       VALUES (?, ?, ?, ?, ${SQL_NOW_MS}, 'web', 0, ${CUR_SEQ}, ?)
+       ON CONFLICT (path) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at, source = 'web',
+         deleted = 0, seq = excluded.seq, updated_by = excluded.updated_by
+       WHERE docs.deleted = 1 OR docs.data IS NULL`,
+    ).bind(p.path, p.collection, p.id, text, by),
+  ]);
+  if (!res.meta.changes) await updateDoc(env, p.path, data, by);
 }
 
 /** Deep-merges `patch` into an existing doc. Read-merge-write guarded by seq, retried on a concurrent change,
@@ -211,14 +229,16 @@ const MAX_BODY = 300 * 1024;
 
 /** Routes /api/db/<op> for a signed-in person. Writes are checked against their role. */
 /** Write check: the role rules in access.ts, plus staff writing their own Staff training record. */
-async function requireWriteDoc(env: Env, user: User, op: "set" | "update" | "delete", path: unknown, nextName: unknown) {
-  if (user.role === "staff" && isStaffRecordPath(path)) {
-    const cur = await getDoc(env, parseWebDocPath(path, "write").path);
-    requireOwnStaffRecord(user, op, cur.data?.name, cur.exists, nextName);
-    return;
-  }
-  requireWrite(user, path);
+async function requireWriteDoc(env: Env, user: User, op: "set" | "update" | "delete", path: unknown, data: any) {
+  if (op === "delete") requireDelete(user, path);
+  const cur = user.role === "staff" ? await getDoc(env, parseWebDocPath(path, "write").path) : null;
+  if (cur && isStaffRecordPath(path)) requireOwnStaffRecord(user, op, cur.data?.name, cur.exists, data?.name);
+  else requireWrite(user, path);
+  if (cur && op !== "delete") requireOwnSignature(user, parseWebDocPath(path, "write").collection, data, cur.data, canonical);
 }
+
+// Day and week pages are only ever added to: a set on one that already exists merges (setOrMergeDoc).
+const isPagePath = (path: unknown) => typeof path === "string" && ["days", "weeks"].includes(path.split("/").slice(-2, -1)[0]);
 
 export async function handleDb(req: Request, env: Env, op: string, user: User): Promise<Response> {
   if (req.method !== "POST") throw new ApiError(405, "invalid_argument", "Use POST.");
@@ -233,11 +253,11 @@ export async function handleDb(req: Request, env: Env, op: string, user: User): 
     case "profiles":
       return json(await profiles(env, body.ids));
     case "set":
-      await requireWriteDoc(env, user, "set", body.path, body.data?.name);
-      await setDoc(env, body.path, body.data, recordId(user));
+      await requireWriteDoc(env, user, "set", body.path, body.data);
+      await (isPagePath(body.path) ? setOrMergeDoc : setDoc)(env, body.path, body.data, recordId(user));
       return json({ ok: true });
     case "update":
-      await requireWriteDoc(env, user, "update", body.path, body.patch?.name);
+      await requireWriteDoc(env, user, "update", body.path, body.patch);
       await updateDoc(env, body.path, body.patch, recordId(user));
       return json({ ok: true });
     case "delete":
