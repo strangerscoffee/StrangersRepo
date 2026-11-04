@@ -1,7 +1,7 @@
 // Strangers Coffee Kitchen Diary staff site.
 // Serves the diary page (public/index.html) and the API it uses through claude-shim.js, and, on its own
 // hostname (ROTA_HOST), the staff rota (public/rota/, src/rota.ts). One Worker, one database, one set of accounts.
-import { appForHost, appLinks, authorize, isAdminSharedFile, isPublicAsset, isRotaSharedFile, limitWrites, recordId, requireUser, unifiedSignin } from "./access";
+import { appForHost, appLinks, authorize, isAdminSharedFile, isPublicAsset, isRotaManager, isRotaSharedFile, limitWrites, recordId, requireUser, unifiedSignin } from "./access";
 import { handleAdmin } from "./admin";
 import { handleAdminView } from "./adminView";
 import { handleAuth } from "./auth";
@@ -68,6 +68,17 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
     const to = unifiedSignin(url, env.COOKIE_DOMAIN);
     if (to) return redirect(to);
   }
+  // Writes only from the site's own pages: a browser always sends Origin on a cross-site POST, so a page
+  // elsewhere can't use someone's session (a second layer on top of SameSite cookies).
+  if (!isGet && p.startsWith("/api/")) {
+    const origin = req.headers.get("origin");
+    if (origin && origin !== "null") {
+      let host = "";
+      try { host = new URL(origin).hostname; } catch {}
+      const own = host === url.hostname || (!!env.COOKIE_DOMAIN && (host === env.COOKIE_DOMAIN || host.endsWith("." + env.COOKIE_DOMAIN)));
+      if (!own) throw new ApiError(403, "bad_origin", "That request came from another site.");
+    } else if (origin === "null") throw new ApiError(403, "bad_origin", "That request came from another site.");
+  }
   // The sign-in page and its files need no session (and no database).
   if (isGet && isPublicAsset(p)) return env.ASSETS.fetch(req);
   // On its own host the rota lives at /, so /rota/ (the address used in local dev) goes there.
@@ -127,12 +138,19 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
     return handleDb(req, env, db[1], user);
   }
 
+  // Stored files (allergen PDFs from before the matrix was generated): managers and admins only, so no one
+  // can delete another person's file or fill the store.
+  const needFileManager = () => {
+    if (!isRotaManager(requireUser(caller))) throw new ApiError(403, "permission_denied", "Only a manager or admin can add or remove stored files.");
+  };
   if (p === "/api/assets" && req.method === "POST") {
+    needFileManager();
     await limitWrites(req, env, ctx);
     return uploadAsset(req, env, recordId(requireUser(caller)));
   }
   const asset = p.match(/^\/api\/assets\/([^/]+)$/);
   if (asset && req.method === "DELETE") {
+    needFileManager();
     await limitWrites(req, env, ctx);
     return deleteAsset(env, asset[1]);
   }
@@ -149,11 +167,17 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
     if (user.role !== "admin") return redirect("/");
     return env.ADMIN_HOST ? redirect(links.admin) : adminPage(req, env, url);
   }
-  // Pages behind sign-in must not be cached by shared devices' browsers or proxies.
+  // Pages behind sign-in must not be cached by shared devices' browsers or proxies. Their scripts and styles
+  // may be kept for a minute (so moving between pages doesn't ask again for each file), then checked again.
   const res = await env.ASSETS.fetch(req);
-  if (p === "/" || p === "/index.html" || p.startsWith("/admin")) {
+  if (p === "/" || p === "/index.html") {
     const out = new Response(res.body, res);
     out.headers.set("cache-control", "private, no-store");
+    return out;
+  }
+  if (res.ok && /\.(js|css|svg|png|webmanifest)$/.test(p)) {
+    const out = new Response(res.body, res);
+    out.headers.set("cache-control", /\.(svg|png)$/.test(p) ? "private, max-age=86400" : "private, max-age=60, must-revalidate");
     return out;
   }
   return res;

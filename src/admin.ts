@@ -94,9 +94,11 @@ export async function handleAdmin(req: Request, env: Env, route: string, admin: 
       sets.push("username = ?");
       args.push(username);
     }
+    // `active` may arrive as 0, "" or null as well as false: read it as a yes or no once.
+    const active = body.active === undefined ? undefined : !!body.active;
     const losingAdmin =
       row.role === "admin" && row.active &&
-      ((body.role !== undefined && body.role !== "admin") || body.active === false);
+      ((body.role !== undefined && body.role !== "admin") || active === false);
     if (losingAdmin && (await activeAdmins(env)) <= 1) {
       throw new ApiError(409, "last_admin", "This is the only admin. Make someone else an admin first.");
     }
@@ -104,10 +106,10 @@ export async function handleAdmin(req: Request, env: Env, route: string, admin: 
       sets.push("role = ?");
       args.push(checkRole(body.role));
     }
-    if (body.active !== undefined) {
+    if (active !== undefined) {
       sets.push("active = ?");
-      args.push(body.active ? 1 : 0);
-      if (!body.active) bump = true;
+      args.push(active ? 1 : 0);
+      if (!active) bump = true;
     }
     if (body.password !== undefined) {
       // A temporary password: they choose their own at next sign-in.
@@ -124,13 +126,18 @@ export async function handleAdmin(req: Request, env: Env, route: string, admin: 
     if (!sets.length) throw invalid("Nothing to change.");
     sets.push(`updated_at = ${SQL_NOW_MS}`);
     await env.DB.prepare(`UPDATE users SET ${sets.join(", ")} WHERE id = ?`).bind(...args, row.id).run();
+    // Someone switched off can't pick up or cover shifts: their waiting rota requests end with the account.
+    if (active === false && row.active) {
+      await env.DB.prepare("UPDATE rota_requests SET status = 'cancelled', decided_by = ?, decided_at = ? WHERE status IN ('open', 'accepted') AND (from_user = ? OR taker = ? OR to_user = ?)")
+        .bind(admin.id, Date.now(), row.id, row.id, row.id).run();
+    }
     // What changed, in words, for the admin section's Activity page. Never the password itself.
     const newName = body.name !== undefined ? cleanName(body.name)! : row.name;
     const events: [string, string][] = [];
     if (body.name !== undefined && newName !== row.name) events.push(["renamed", `${admin.name} renamed ${row.name} to ${newName}`]);
     if (body.username !== undefined && checkUsername(body.username) !== row.username) events.push(["username_changed", `${admin.name} changed ${newName}'s username`]);
     if (body.role !== undefined && body.role !== row.role) events.push(["role_changed", `${admin.name} made ${newName} ${body.role === "staff" ? "staff" : `a${body.role === "admin" ? "n" : ""} ${body.role}`}`]);
-    if (body.active !== undefined && !!body.active !== !!row.active) events.push(["active_changed", `${admin.name} switched ${newName}'s account ${body.active ? "back on" : "off"}`]);
+    if (active !== undefined && active !== !!row.active) events.push(["active_changed", `${admin.name} switched ${newName}'s account ${active ? "back on" : "off"}`]);
     if (body.password !== undefined) events.push(["password_reset", `${admin.name} gave ${newName} a temporary password`]);
     if (body.unlock) events.push(["unlocked", `${admin.name} unlocked ${newName}`]);
     if (body.signOut) events.push(["signed_out", `${admin.name} signed ${newName} out everywhere`]);
