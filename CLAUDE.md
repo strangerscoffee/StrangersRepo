@@ -25,7 +25,7 @@ Read `README.md`, `README-deploy.md`, `docs/data-model.md`, `docs/runtime-api.md
 ## Access
 
 Access control stays in one place: `authorize()` in `src/access.ts`, with sign-in and sessions in `src/auth.ts` and the admin API in `src/admin.ts`.
-- Signed out, only `/signin` and its files are reachable; everything else redirects there, and the API returns 401 `unauthenticated` (the shim then sends the person to sign in).
+- One sign-in page, **Staff Login**, on the diary's address: on any other subdomain of `COOKIE_DOMAIN` (the rota), `/signin` redirects there with `next=` back (`unifiedSignin` in `src/hosts.ts`). Signed out, only `/signin` and its files are reachable; everything else redirects there, and the API returns 401 `unauthenticated` (the shim then sends the person to sign in).
 - Username + password (8+ characters). Each account also has a display **name**, shown on records. Admins give out temporary passwords; people choose their own at first sign-in. Five wrong passwords lock an account for 10 minutes; each IP is limited to 30 failed attempts per 15 minutes.
 - Sessions are `HttpOnly; Secure; SameSite=Lax` cookies on `Domain=COOKIE_DOMAIN` (`staffstrangerscoffee.com`, so one sign-in covers the diary and the rota; `/api/auth/me` moves older host-only cookies over), HMAC-signed with a key the Worker generates and keeps in D1, valid 30 days. A new password, renaming, switching off or "sign out everywhere" ends all of that person's sessions.
 - On the rota, managers and admins plan, publish and approve (`isRotaManager` in `src/access.ts`); staff see published weeks, their own shifts, open shifts and requests, and change only their own availability and time off.

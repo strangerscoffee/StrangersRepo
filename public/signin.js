@@ -5,10 +5,16 @@
   const $ = (s) => document.querySelector(s);
   const FORMS = ["signin", "newpw", "change", "setup", "recover"];
 
-  // Only same-site paths, so the next= link can't send people elsewhere.
+  // Only paths on this site, or https links to its own subdomains (the rota sends people here to sign in and
+  // back again), so the next= link can't send people anywhere else.
   const next = (() => {
     const n = new URLSearchParams(location.search).get("next") || "/";
-    return n.startsWith("/") && !n.startsWith("//") ? n : "/";
+    if (n.startsWith("/") && !n.startsWith("//")) return n;
+    try {
+      const u = new URL(n);
+      if (u.protocol === "https:" && !u.username && !u.password && u.hostname.endsWith("." + location.hostname)) return u.href;
+    } catch (e) {}
+    return "/";
   })();
 
   function show(id, focus) {
@@ -24,7 +30,7 @@
     try {
       res = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     } catch (e) {
-      throw new Error("Couldn't reach the diary. Check your connection.");
+      throw new Error("Couldn't reach the site. Check your connection.");
     }
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.message || "Something went wrong. Try again.");
@@ -178,6 +184,6 @@
     if (!setupNeeded) quickSignIn();
   }).catch(() => {
     show("signin");
-    $("#err").textContent = "Couldn't reach the diary. Check your connection and reload.";
+    $("#err").textContent = "Couldn't reach the site. Check your connection and reload.";
   });
 })();
