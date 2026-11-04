@@ -46,6 +46,11 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
+/** Moves the change counters that GET /api/changes reports, after a write that other devices should see. */
+async function bumpChanges(env: Env, ...keys: string[]) {
+  await env.DB.prepare(`UPDATE meta SET v = v + 1 WHERE k IN (${keys.map(() => "?").join(",")})`).bind(...keys).run();
+}
+
 const noStore = (res: Response) => {
   const out = new Response(res.body, res);
   out.headers.set("cache-control", "private, no-store");
@@ -98,7 +103,18 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
   }
   const user = caller.user;
 
-  if (p.startsWith("/api/rota/")) return handleRota(req, env, ctx, p.slice("/api/rota/".length), user, links);
+  // What has changed, for pages open on several devices: one small read, polled every few seconds.
+  if (p === "/api/changes" && isGet) {
+    const { results } = await env.DB.prepare("SELECT k, v FROM meta WHERE k IN ('seq', 'rota', 'accounts')").all<{ k: string; v: number }>();
+    const v = Object.fromEntries(results.map((r) => [r.k, r.v]));
+    return json({ docs: v.seq ?? 0, rota: v.rota ?? 0, accounts: v.accounts ?? 0 });
+  }
+
+  if (p.startsWith("/api/rota/")) {
+    const res = await handleRota(req, env, ctx, p.slice("/api/rota/".length), user, links);
+    if (!isGet && res.ok) await bumpChanges(env, "rota");
+    return res;
+  }
 
   // The rota's own host serves the rota and nothing of the diary's: diary pages go to the rota, diary APIs are refused.
   if (app === "rota") {
@@ -129,12 +145,15 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
     if (user.role !== "admin") throw new ApiError(403, "permission_denied", "Only admins can do this.");
     const r = p.slice("/api/admin/".length);
     if (r === "backups" || r.startsWith("backups/")) return handleBackups(req, env, r.slice("backups/".length), user.name);
-    return (await handleAdminView(req, env, r, user, links)) ?? handleAdmin(req, env, r, user);
+    const res = (await handleAdminView(req, env, r, user, links)) ?? (await handleAdmin(req, env, r, user));
+    // Accounts and sites show on the rota too (names, who's switched off, opening hours).
+    if (!isGet && res.ok) await bumpChanges(env, "accounts", "rota");
+    return res;
   }
 
   const db = p.match(/^\/api\/db\/([a-z]+)$/);
   if (db) {
-    if (WRITE_OPS.has(db[1])) await limitWrites(req, env, ctx);
+    if (WRITE_OPS.has(db[1])) await limitWrites(req, env, ctx, user.id);
     return handleDb(req, env, db[1], user);
   }
 
@@ -145,13 +164,13 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
   };
   if (p === "/api/assets" && req.method === "POST") {
     needFileManager();
-    await limitWrites(req, env, ctx);
+    await limitWrites(req, env, ctx, user.id);
     return uploadAsset(req, env, recordId(requireUser(caller)));
   }
   const asset = p.match(/^\/api\/assets\/([^/]+)$/);
   if (asset && req.method === "DELETE") {
     needFileManager();
-    await limitWrites(req, env, ctx);
+    await limitWrites(req, env, ctx, user.id);
     return deleteAsset(env, asset[1]);
   }
 

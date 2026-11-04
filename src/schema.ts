@@ -25,6 +25,8 @@ const SCHEMA = [
   // Small key/value table: 'seq' (bumped on every write) and 'lastApplyAt'.
   "CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v INTEGER NOT NULL)",
   "INSERT OR IGNORE INTO meta (k, v) VALUES ('seq', 0), ('lastApplyAt', 0)",
+  // Change counters for live pages on several devices (GET /api/changes): the rota's and the accounts'.
+  "INSERT OR IGNORE INTO meta (k, v) VALUES ('rota', 0), ('accounts', 0)",
   // Staff accounts (sign in with username + password). Records use 'web:<name>' as the user id.
   `CREATE TABLE IF NOT EXISTS users (
     id            TEXT PRIMARY KEY,             -- random

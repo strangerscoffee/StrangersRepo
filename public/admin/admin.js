@@ -596,6 +596,24 @@
   $("#whoBtn").addEventListener("click", accountMenu);
   window.addEventListener("hashchange", () => { const h = location.hash.slice(1); if (h !== S.page && PAGES.includes(h)) show(h); });
 
+  /* ---------- several admins (or devices) at once ----------
+     Every 15 seconds while the page is in view, ask whether accounts, the rota or the diary changed elsewhere and,
+     if so, redraw the page, unless a sheet is open or something is being typed. */
+  let known = null, pending = false;
+  async function watchChanges() {
+    if (document.hidden) return;
+    try {
+      const c = await fetch("/api/changes").then((r) => (r.ok ? r.json() : null));
+      if (!c) return;
+      const now = `${c.accounts}.${c.rota}.${S.page === "overview" || S.page === "activity" ? c.docs : ""}`;
+      if (known !== null && now !== known) pending = true;
+      known = now;
+      const typing = document.activeElement && /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName);
+      if (pending && $("#scrim").hidden && !typing) { pending = false; reload(); }
+    } catch (e) { /* offline: next time */ }
+  }
+  setInterval(watchChanges, 15000);
+
   /* ---------- start ---------- */
   (async () => {
     try {

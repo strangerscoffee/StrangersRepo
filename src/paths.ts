@@ -70,9 +70,53 @@ export function deepMerge(base: Record<string, unknown>, patch: Record<string, u
   const out: Record<string, unknown> = { ...base };
   for (const [k, v] of Object.entries(patch)) {
     const cur = out[k];
-    out[k] = isPlainObject(v) && isPlainObject(cur) ? deepMerge(cur, v) : v;
+    out[k] = isOp(v) ? applyOp(cur, v) : isPlainObject(v) && isPlainObject(cur) ? deepMerge(cur, v) : resolveOps(v);
   }
   return out;
+}
+
+/*
+ * List and number operations, applied on the server against the stored document inside the same versioned
+ * read-merge-write as any update, so two devices adding to the same log both keep their entry
+ * (docs/runtime-api.md, "Changes from several devices"):
+ *   {"$op": "prepend", "items": [...], "key"?: "at", "max"?: 300}  add items to the front, skipping any already
+ *                                                                  there (same `key` value, or identical);
+ *                                                                  "order": "desc" keeps the list newest `key` first
+ *   {"$op": "remove", "key": "at", "values": [...]}                 drop items whose `key` is one of `values`
+ *   {"$op": "max", "value": n}                                      keep the larger number
+ */
+const OPS = new Set(["prepend", "remove", "max"]);
+export function isOp(v: unknown): v is Record<string, any> {
+  return isPlainObject(v) && typeof v.$op === "string";
+}
+function checkOp(v: Record<string, any>) {
+  if (!OPS.has(v.$op)) throw invalid(`Unknown list operation ${String(v.$op).slice(0, 20)}.`);
+  if (v.$op === "prepend" && (!Array.isArray(v.items) || (v.max != null && !(Number.isInteger(v.max) && v.max > 0)))) throw invalid("prepend needs items.");
+  if (v.$op === "remove" && (typeof v.key !== "string" || !Array.isArray(v.values))) throw invalid("remove needs a key and values.");
+  if (v.$op === "max" && typeof v.value !== "number") throw invalid("max needs a number.");
+  if (v.key != null && typeof v.key !== "string") throw invalid("A list operation's key is a field name.");
+}
+function applyOp(cur: unknown, v: Record<string, any>): unknown {
+  checkOp(v);
+  // Only on what's already a list (or a number, for max), or nothing yet: never a way to replace a section.
+  if (cur != null && (v.$op === "max" ? typeof cur !== "number" : !Array.isArray(cur))) throw invalid(`${v.$op} only works on a ${v.$op === "max" ? "number" : "list"}.`);
+  if (v.$op === "max") return typeof cur === "number" && cur > v.value ? cur : v.value;
+  const list = Array.isArray(cur) ? cur : [];
+  const same = (a: any, b: any) => (v.key ? isPlainObject(a) && isPlainObject(b) && a[v.key] !== undefined && a[v.key] === b[v.key] : JSON.stringify(a) === JSON.stringify(b));
+  if (v.$op === "remove") return list.filter((x: any) => !(isPlainObject(x) && v.values.includes(x[v.key])));
+  const add = (v.items as unknown[]).filter((x) => !list.some((y) => same(x, y))).map(resolveOps);
+  const all = [...add, ...list];
+  if (v.order === "desc" && v.key) {
+    const at = (x: unknown): any => (isPlainObject(x) ? x[v.key] ?? 0 : 0);
+    all.sort((a, b) => (at(b) > at(a) ? 1 : at(b) < at(a) ? -1 : 0));
+  }
+  return all.slice(0, v.max ?? 500);
+}
+/** A value written where nothing was before: any operations inside it apply to nothing. */
+export function resolveOps(v: unknown): unknown {
+  if (isOp(v)) return applyOp(undefined, v);
+  if (isPlainObject(v)) return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, resolveOps(x)]));
+  return v;
 }
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {

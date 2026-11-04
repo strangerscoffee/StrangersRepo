@@ -390,7 +390,8 @@ test("quick switching: a 4-digit PIN works only on a device signed in with a pas
 
 test("writes are rate limited per IP", async () => {
   let last;
-  for (let i = 0; i < 90; i++) {
+  // Over twice the limit (80 a person), so it's crossed even if the 15-minute window rolls over part way.
+  for (let i = 0; i < 200; i++) {
     last = await db("set", { path: `sites/asg/extras/r${i}`, data: { name: "x" } });
     if (last.status === 429) break;
   }

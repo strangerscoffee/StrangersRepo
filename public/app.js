@@ -227,13 +227,39 @@ function sitePicker(id){
 // Save an item here and at the other ticked sites. editId: the item being edited at this site (null for new).
 // old: the item before editing (for its linkId and name). patch: task lists, where only the item's own fields are
 // written (update), so each site keeps its own done-dates and log. match:false never replaces by name (allergen PDFs).
+/* Several devices at once (docs/runtime-api.md): an editor records which version of the item it opened, and its
+   save is refused with "conflict" if someone else changed the item meanwhile, rather than silently replacing their
+   change. After a conflict the list shows their version; saving again (from the new version) replaces it. */
+const BASE={};
+function beginEdit(kind,id,site=S.site){
+  const it=id&&(S[kind]||[]).find(x=>x.id===id);
+  BASE[kind]=id?{path:D(kind,id,site).path,ver:D(kind,id,site).version(),orig:it?clone(it):null}:null;
+}
+const baseOpts=kind=>BASE[kind]&&BASE[kind].ver?{ifVersion:BASE[kind].ver}:undefined;
+// Saves an edited item. If someone else saved it meanwhile, what this person changed (compared with the copy
+// they opened) goes on top of the newer version by itself, unless they both changed the same thing: then the
+// save stops with a message, and saving again replaces it.
+const BOOKKEEPING=new Set(["id","by","at","updatedAt","updatedBy","createdAt","linkId","sites"]);
+async function saveEdited(kind,ref,v,op="set"){
+  try{return await(op==="set"?ref.set(v,baseOpts(kind)):ref.update(v,baseOpts(kind)))}
+  catch(e){
+    const b=BASE[kind];
+    if(!(e&&e.code==="conflict"&&e.current&&e.current.exists&&b&&b.orig&&b.path===ref.path))throw e;
+    const cur=e.current.data,orig=b.orig,norm=x=>x===""||x===undefined?null:x,same=(x,y)=>JSON.stringify(norm(x))===JSON.stringify(norm(y)); // an empty field and no field are the same
+    const mine=Object.fromEntries(Object.entries(v).filter(([k,x])=>BOOKKEEPING.has(k)||!same(x,orig[k])));
+    const both=Object.keys(mine).filter(k=>!BOOKKEEPING.has(k)&&!same(cur[k],orig[k])&&!same(cur[k],mine[k]));
+    b.ver=e.current.ver;b.orig=clone(cur);
+    if(both.length)throw e;
+    return op==="set"?ref.set({...cur,...mine},{ifVersion:e.current.ver}):ref.update(mine,{ifVersion:e.current.ver});
+  }
+}
 async function multiSave(kind,sites,data,{editId=null,old=null,patch=false,match=true}={}){
   if(ro())return null;
   const here=S.site,linkId=(old&&old.linkId)||data.linkId||newLinkId();
   sites=[...new Set([here,...(sites||[])])];
   const v={...data,linkId,sites},now=Date.now();
   const nm=MULTI_NAME[kind],names=new Set([v[nm],old&&old[nm]].filter(Boolean).map(normT));
-  const ok=await save(()=>editId?(patch?D(kind,editId,here).update(v):D(kind,editId,here).set(v)):C(kind,here).add(patch?{...v,createdAt:now}:v));
+  const ok=await save(()=>editId?(patch?D(kind,editId,here).update(v):saveEdited(kind,D(kind,editId,here),v)):C(kind,here).add(patch?{...v,createdAt:now}:v));
   if(!ok)return null;
   const done=[siteOf(here).name],fails=[];
   for(const site of sites.filter(x=>x!==here)){
@@ -249,6 +275,9 @@ async function multiSave(kind,sites,data,{editId=null,old=null,patch=false,match
     warn:fails.length?` Couldn't save to ${fails.join(", ")}; check the connection and save again.`:""};
 }
 function fail(e){
+  if(e&&e.code==="conflict"){
+    for(const k in BASE)if(BASE[k]&&BASE[k].path===e.path&&e.current)BASE[k].ver=e.current.ver;
+    toast(e.message||"Someone else changed this on another device just now. Check it and save again.");return}
   if(e&&e.code==="invalid_argument"){S.canWrite=false;$("#readonly").hidden=false;renderAll();return}
   if(e&&e.code==="quota_exceeded"){toast("The diary is full. Ask the owner to clear old entries.");return}
   // The diary's own reason when it refused (for example, only a manager can do that); otherwise the connection.
@@ -706,23 +735,26 @@ function renderTasks(kind){
   return over;
 }
 
+// Logs change one entry at a time on the server (list operations, docs/runtime-api.md), so two devices ticking
+// the same task, or a change sent later from offline, both keep their entries.
+const logAdd=(...items)=>({$op:"prepend",items,key:"at",order:"desc",max:30});
+const logDrop=(...ats)=>({$op:"remove",key:"at",values:ats});
 async function completeTask(kind,t,site,note){
   const entry={at:Date.now(),by:S.me,note:note||""};
-  const log=[entry,...(t.log||[])].slice(0,30);
-  const before={lastAt:t.lastAt||null,lastBy:t.lastBy||null,lastSet:!!t.lastSet,log:t.log||[]};
-  if(await save(()=>D(kind,t.id,site).update({lastAt:entry.at,lastBy:entry.by,lastSet:false,log})))
-    toast(`${t.name}: done${site!==S.site?" at "+siteOf(site).name:""}`,["Undo",()=>save(()=>D(kind,t.id,site).update(before))]);
+  const before={lastAt:t.lastAt||null,lastBy:t.lastBy||null,lastSet:!!t.lastSet};
+  if(await save(()=>D(kind,t.id,site).update({lastAt:{$op:"max",value:entry.at},lastBy:entry.by,lastSet:false,log:logAdd(entry)})))
+    toast(`${t.name}: done${site!==S.site?" at "+siteOf(site).name:""}`,["Undo",()=>save(()=>D(kind,t.id,site).update({...before,log:logDrop(entry.at)}))]);
 }
 
 // Delete one entry from a task's history (ticked by mistake, or the wrong date). If it was the latest, the
 // task's last-done date goes back to the entry before it, so the next due date is worked out from that.
 async function deleteTaskEntry(kind,t,site,i){
   const log=[...(t.log||[])],[gone]=log.splice(i,1);if(!gone)return;
-  const before={lastAt:t.lastAt||null,lastBy:t.lastBy||null,lastSet:!!t.lastSet,log:t.log||[]};
-  const patch={log};
+  const before={lastAt:t.lastAt||null,lastBy:t.lastBy||null,lastSet:!!t.lastSet};
+  const patch={log:logDrop(gone.at)};
   if(t.lastAt===gone.at||!log.length){const prev=log[0];patch.lastAt=prev?prev.at:null;patch.lastBy=prev?prev.by:null;patch.lastSet=!!(prev&&prev.set)}
   if(await save(()=>D(kind,t.id,site).update(patch)))
-    toast(`${t.name}: entry for ${lastWhen(gone.at,gone.set)} deleted`,["Undo",()=>save(()=>D(kind,t.id,site).update(before))]);
+    toast(`${t.name}: entry for ${lastWhen(gone.at,gone.set)} deleted`,["Undo",()=>save(()=>D(kind,t.id,site).update({...before,log:logAdd(gone)}))]);
 }
 // Set the date a task was last carried out by hand, e.g. when it was done but not ticked off at the time.
 // Stored at midday on that date (now, if it's today) and marked lastSet so it shows without a time.
@@ -734,10 +766,10 @@ async function setTaskDate(kind,t,site,value){
   if(!today&&d>new Date()){toast("That date is in the future");return}
   const at=today?Date.now():d.getTime();
   const entry={at,by:S.me,note:"Date entered by hand",set:true};
-  const log=[entry,...(t.log||[])].slice(0,30);
-  const before={lastAt:t.lastAt||null,lastBy:t.lastBy||null,lastSet:!!t.lastSet,log:t.log||[]};
-  if(await save(()=>D(kind,t.id,site).update({lastAt:at,lastBy:S.me,lastSet:true,log})))
-    toast(`${t.name}: last done ${lastWhen(at,true)}`,["Undo",()=>save(()=>D(kind,t.id,site).update(before))]);
+  const before={lastAt:t.lastAt||null,lastBy:t.lastBy||null,lastSet:!!t.lastSet};
+  // A date entered by hand is the task's last-done date, so it goes to the top of the history whatever its date.
+  if(await save(()=>D(kind,t.id,site).update({lastAt:at,lastBy:S.me,lastSet:true,log:{$op:"prepend",items:[entry],key:"at",max:30}})))
+    toast(`${t.name}: last done ${lastWhen(at,true)}`,["Undo",()=>save(()=>D(kind,t.id,site).update({...before,log:logDrop(entry.at)}))]);
 }
 
 /* ---------- prove it ---------- */
@@ -1016,7 +1048,7 @@ function renderMtWho(){
 }
 function setMtPri(k){for(const b of document.querySelectorAll("#mPri button")){const on=b.dataset.pri===k;b.classList.toggle("on",on);b.setAttribute("aria-checked",String(on))}$("#mPri").dataset.v=k}
 function editMaint(m){
-  editMt=m?m.id:null;
+  editMt=m?m.id:null;beginEdit("maintenance",editMt);
   $("#mFormTitle").textContent=m?"Edit "+m.title:"Report a maintenance job";
   $("#mTitle").value=m?m.title:"";$("#mArea").value=m?(m.area||""):"";$("#mDetails").value=m?(m.details||""):"";
   setMtPri(m?m.priority:"soon");$("#mDelete").hidden=!m;$("#mMsg").textContent="";
@@ -1028,17 +1060,17 @@ async function saveMaint(){
   const who=$("#mWho").dataset.v||"";
   const v={title,area:$("#mArea").value.trim(),details:$("#mDetails").value.trim(),priority:$("#mPri").dataset.v||"soon",
     assignee:who||null,assigneeName:who?($("#mWho").dataset.name||nameOf(who)):null,at:Date.now()};
-  const ok=editMt?await save(()=>D("maintenance",editMt).update(v)):await save(()=>C("maintenance").add({...v,status:"open",reportedBy:S.me,reportedAt:Date.now(),log:[]}));
+  const ok=editMt?await save(()=>saveEdited("maintenance",D("maintenance",editMt),v,"update")):await save(()=>C("maintenance").add({...v,status:"open",reportedBy:S.me,reportedAt:Date.now(),log:[]}));
   if(ok){toast(`${editMt?"Saved":"Reported"}: ${title}`);editMaint(null)}
 }
 // Change who a job is assigned to straight from the list.
 async function assignMaint(m,site,id){
   const p=S.team.find(x=>x.id===id),name=id?(p?p.name:nameOf(id)):null;
-  const log=[{at:Date.now(),by:S.me,what:id?`Assigned to ${name}`:"Unassigned",note:""},...(m.log||[])].slice(0,30);
+  const log=logAdd({at:Date.now(),by:S.me,what:id?`Assigned to ${name}`:"Unassigned",note:""});
   if(await save(()=>D("maintenance",m.id,site).update({assignee:id||null,assigneeName:name,log})))toast(id?`${m.title}: assigned to ${id===S.me?"you":name}`:`${m.title}: not assigned`);
 }
 async function setMaintDone(m,site,done,note){
-  const log=[{at:Date.now(),by:S.me,what:done?"Done":"Reopened",note:note||""},...(m.log||[])].slice(0,30);
+  const log=logAdd({at:Date.now(),by:S.me,what:done?"Done":"Reopened",note:note||""});
   const v=done?{status:"done",doneBy:S.me,doneAt:Date.now(),fixNote:note||"",log}:{status:"open",doneBy:null,doneAt:null,log};
   if(await save(()=>D("maintenance",m.id,site).update(v)))toast(`${m.title}: ${done?"done":"reopened"}${site!==S.site?" at the "+siteOf(site).name:""}`);
 }
@@ -1102,7 +1134,7 @@ function supForm(){
   box.append(f,pick.el,el("div",{class:"row"},saveBtn,cancel,del,msg));box._cancel=cancel;box._del=del;box._pick=pick;
 }
 function editSupplier(s){
-  editSup=s?s.id:null;$("#sFormTitle").textContent=s?"Edit "+s.name:"Add a supplier";
+  editSup=s?s.id:null;beginEdit("suppliers",editSup);$("#sFormTitle").textContent=s?"Edit "+s.name:"Add a supplier";
   for(const[k]of SUP_FIELDS)$("#s_"+k).value=s?(s[k]||""):"";
   $("#sForm")._cancel.hidden=true;$("#sForm")._del.hidden=!s;$("#sForm")._pick.set(s&&s.sites);
   setForm("suppliers",!!s);
@@ -1722,7 +1754,7 @@ function conForm(){
   box.append(f,pick.el,el("div",{class:"row"},saveBtn,cancel,del,msg));box._cancel=cancel;box._del=del;box._msg=msg;box._pick=pick;
 }
 function editContact(c,typeOnly){
-  editCon=c?c.id:null;$("#cFormTitle").textContent=c?"Edit "+c.name:"Add a contact";
+  editCon=c?c.id:null;beginEdit("contacts",editCon);$("#cFormTitle").textContent=c?"Edit "+c.name:"Add a contact";
   for(const[k]of CON_FIELDS)$("#c_"+k).value=c?(c[k]||(k==="type"?"Other":"")):(k==="type"?(typeOnly||CON_TYPES[0]):"");
   $("#cForm")._cancel.hidden=true;$("#cForm")._del.hidden=!c;$("#cForm")._pick.set(c&&c.sites);
   setForm("contacts",!!(c||typeOnly));
@@ -1803,7 +1835,7 @@ function staffForm(){
     const done=[];
     for(const site of sites){
       const ok=await save(async()=>{
-        if(site===here&&editId)return D("staff",editId,site).set(v);
+        if(site===here&&editId)return saveEdited("staff",D("staff",editId,site),v);
         const snap=await C("staff",site).get();
         const m=snap.docs.find(d=>{const x=d.data()||{};return x.personId===personId||normT(x.name)===key});
         return m?D("staff",m.id,site).set(v):C("staff",site).add(v);
@@ -1819,7 +1851,7 @@ function staffForm(){
 }
 function editStaff(p){
   const staff=S.role==="staff";
-  S.editStaff=p?p.id:null;$("#tFormTitle").textContent=staff?"My training record":p?"Edit "+p.name:"Add a staff member";
+  S.editStaff=p?p.id:null;beginEdit("staff",S.editStaff);$("#tFormTitle").textContent=staff?"My training record":p?"Edit "+p.name:"Add a staff member";
   $("#tName").value=p?p.name:staff?S.myName:"";$("#tName").readOnly=staff;$("#tRole").value=p?(p.role||""):"";$("#tStart").value=p?(p.start||""):"";$("#tNotes").value=p?(p.notes||""):"";
   for(const[k]of TOPICS)$("#tt_"+k).value=p&&p.topics&&p.topics[k]?p.topics[k].date:"";
   $("#tAllDate").value="";
@@ -1993,7 +2025,7 @@ function buildAlgChecks(){
   ALLERGENS.forEach((a,i)=>{const id="alg_"+i;c.append(el("label",{for:id},el("input",{type:"checkbox",id,value:a}),a))});
 }
 function editAlg(it){
-  S.editAlg=it?it.id:null;
+  S.editAlg=it?it.id:null;beginEdit("allergens",S.editAlg);
   $("#algFormTitle").textContent=it?"Edit "+it.name:"Add a menu item";
   $("#algName").value=it?it.name:"";$("#algSupplier").value=it?(it.source||""):"";$("#algNotes").value=it?(it.notes||""):"";
   const has=new Set(it?it.contains||[]:[]);

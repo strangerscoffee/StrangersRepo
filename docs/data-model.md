@@ -25,7 +25,7 @@ Reject any other path with `invalid_argument`.
 
 ## D1 table
 
-`src/schema.ts` creates it (with the `users`, `secrets`, `meta` and `rate_limits` tables for accounts, sessions, change tracking and rate limiting):
+`src/schema.ts` creates it (with the `users`, `secrets`, `meta` and `rate_limits` tables for accounts, sessions, change tracking and rate limiting). `meta` holds the change counters: `seq` (every diary write; also each document's version), `rota` and `accounts` (for `GET /api/changes`, docs/runtime-api.md). `rate_limits` keys are an IP address, `login:<ip>` or `user:<id>`:
 
 ```sql
 CREATE TABLE docs (

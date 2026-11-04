@@ -42,12 +42,42 @@
     // A gateway error means the request didn't get through: treat it like no connection.
     if (res.status === 502 || res.status === 503 || res.status === 504) throw { code: OFFLINE, message: "The diary didn't respond. Try again." };
     if (res.status === 401) throw { code: "unauthenticated", message: (body && body.message) || "Signed out." };
-    if (!res.ok) throw { code: (body && body.code) || OFFLINE, message: (body && body.message) || `HTTP ${res.status}`, retry: res.status >= 500 };
+    if (!res.ok) throw Object.assign({}, body || {}, { code: (body && body.code) || OFFLINE, message: (body && body.message) || `HTTP ${res.status}`, retry: res.status >= 500 });
     return body;
   }
 
   const api = (op, body) =>
     call("/api/db/" + op, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  /** A write; afterwards this device knows the document's new version. */
+  async function send(op, body) {
+    try {
+      const r = await api(op, body);
+      if (r && typeof r.ver === "number") seen(body.path, r.ver);
+      return r;
+    } catch (e) {
+      if (e && e.code === "conflict" && e.current) seen(body.path, e.current.ver);
+      throw e;
+    }
+  }
+
+  /* ---------- versions: what this device has seen of each document ----------
+   Every write gets a new version from the server (docs/runtime-api.md, "Changes from several devices"). A save
+   that replaces a document (or a list in it) says which version it was based on, so the server refuses it with
+   `conflict` if another device changed it meanwhile, instead of silently overwriting that change. */
+  const vers = new Map(); // path -> highest version seen
+  const seen = (path, v) => { if (typeof v === "number" && v > (vers.get(path) || 0)) vers.set(path, v); };
+  // Day and week pages are only ever merged into, never replaced: no version needed.
+  const isPage = (path) => /(^|\/)(days|weeks)\/[^/]+$/.test(path);
+  const hasArray = (v) => Array.isArray(v) || (isObjV(v) && !("$op" in v) && Object.values(v).some(hasArray));
+  function isObjV(v) { return v !== null && typeof v === "object" && !Array.isArray(v); }
+  /** The version a write is based on: the page's own (opts.ifVersion), else what this device last saw, for a
+   * replace, a delete, or an update that replaces a list. undefined: no check (a new document, or a merge). */
+  function baseFor(op, body, opts) {
+    if (opts && opts.ifVersion !== undefined) return opts.ifVersion === null ? undefined : opts.ifVersion;
+    if (isPage(body.path)) return undefined;
+    if (op === "update" && !hasArray(body.patch)) return undefined;
+    return vers.get(body.path);
+  }
 
   /* ---------- the offline queue ---------- */
 
@@ -94,17 +124,18 @@
     flushing = (async () => {
       while (queue.length) {
         const w = queue[0];
+        const ifVersion = w.after ? vers.get(w.path) : w.ifVersion;
         try {
           if (w.op === "update") {
-            try { await api("update", { path: w.path, patch: w.patch }); }
+            try { await send("update", { path: w.path, patch: w.patch, ifVersion }); }
             catch (e) {
               // A day or week page that doesn't exist yet is created by merging; anything else that's gone was
               // deleted meanwhile, and stays deleted (no nameless stub brought back).
-              if (e && e.code === "not_found" && /\/(days|weeks)\/[^/]+$/.test(w.path)) await api("set", { path: w.path, data: w.patch });
+              if (e && e.code === "not_found" && /\/(days|weeks)\/[^/]+$/.test(w.path)) await send("set", { path: w.path, data: w.patch });
               else throw e;
             }
-          } else if (w.op === "set") await api("set", { path: w.path, data: w.data });
-          else await api("delete", { path: w.path });
+          } else if (w.op === "set") await send("set", { path: w.path, data: w.data, ifVersion });
+          else await send("delete", { path: w.path, ifVersion });
         } catch (e) {
           if (e && e.code === OFFLINE) { setOffline(true); break; }
           // Signed out, busy or a fault on the server: keep everything and try again later (after signing in,
@@ -114,7 +145,8 @@
             break;
           }
           dropped++;
-          window.dispatchEvent(new CustomEvent("diary:dropped", { detail: { path: w.path, message: e && e.message } }));
+          const msg = e && e.code === "conflict" ? "It was changed on another device while this one was offline, so this device's change wasn't saved. Check it and do it again." : e && e.message;
+          window.dispatchEvent(new CustomEvent("diary:dropped", { detail: { path: w.path, message: msg, conflict: e && e.code === "conflict" } }));
         }
         queue.shift();
         saveQueue();
@@ -130,10 +162,12 @@
   window.addEventListener("online", () => flush());
 
   /** A write: straight to the server, or into the queue when there's no connection (or a queue already). */
-  async function write(op, body) {
+  async function write(op, body, opts) {
+    const ifVersion = baseFor(op, body, opts);
+    if (ifVersion !== undefined) body = Object.assign({}, body, { ifVersion });
     if (!queue.length) {
       try {
-        await api(op, body);
+        await send(op, body);
         setOffline(false);
         refresh();
         return;
@@ -141,7 +175,10 @@
         if (!(e && e.code === OFFLINE)) { refresh(); throw e; }
       }
     }
-    queue.push(op === "update" ? { op, path: body.path, patch: body.patch } : op === "set" ? { op, path: body.path, data: body.data } : { op, path: body.path });
+    // A later change to a document already waiting is based on that earlier one, whatever its version turns out to be.
+    const after = queue.some((w) => w.path === body.path);
+    const v = after ? { after: true } : ifVersion !== undefined ? { ifVersion } : {};
+    queue.push(Object.assign(op === "update" ? { op, path: body.path, patch: body.patch } : op === "set" ? { op, path: body.path, data: body.data } : { op, path: body.path }, v));
     saveQueue();
     setOffline(true);
     announce();
@@ -155,8 +192,18 @@
   // The server's update semantics: nested plain objects merge; everything else (null included) replaces.
   function merge(base, patch) {
     const out = isObj(base) ? Object.assign({}, base) : {};
-    for (const [k, v] of Object.entries(patch)) out[k] = isObj(v) && isObj(out[k]) ? merge(out[k], v) : isObj(v) ? merge({}, v) : v;
+    for (const [k, v] of Object.entries(patch)) out[k] = isObj(v) && "$op" in v ? applyOp(out[k], v) : isObj(v) && isObj(out[k]) ? merge(out[k], v) : isObj(v) ? merge({}, v) : v;
     return out;
+  }
+  // The server's list operations (src/paths.ts), so a change waiting offline shows as it will be saved.
+  function applyOp(cur, v) {
+    if (v.$op === "max") return typeof cur === "number" && cur > v.value ? cur : v.value;
+    const list = Array.isArray(cur) ? cur : [];
+    if (v.$op === "remove") return list.filter((x) => !(isObj(x) && (v.values || []).includes(x[v.key])));
+    const same = (a, b) => (v.key ? isObj(a) && isObj(b) && a[v.key] !== undefined && a[v.key] === b[v.key] : JSON.stringify(a) === JSON.stringify(b));
+    const all = [...(v.items || []).filter((x) => !list.some((y) => same(x, y))), ...list];
+    if (v.order === "desc" && v.key) all.sort((a, b) => ((isObj(b) ? b[v.key] : 0) > (isObj(a) ? a[v.key] : 0) ? 1 : (isObj(b) ? b[v.key] : 0) < (isObj(a) ? a[v.key] : 0) ? -1 : 0));
+    return all.slice(0, v.max || 500);
   }
   const parentOf = (path) => path.slice(0, path.lastIndexOf("/"));
   const idOf = (path) => path.slice(path.lastIndexOf("/") + 1);
@@ -167,7 +214,7 @@
       let exists = res.exists, data = res.data;
       for (const w of queue) {
         if (w.path !== spec.path) continue;
-        if (w.op === "set") { exists = true; data = w.data; }
+        if (w.op === "set") { exists = true; data = merge({}, w.data); }
         else if (w.op === "update") { exists = true; data = merge(data, w.patch); }
         else { exists = false; data = undefined; }
       }
@@ -178,7 +225,7 @@
       if (parentOf(w.path) !== spec.path) continue;
       const id = idOf(w.path), i = docs.findIndex((d) => d.id === id);
       if (w.op === "delete") { if (i >= 0) docs.splice(i, 1); continue; }
-      const data = w.op === "set" ? w.data : merge(i >= 0 ? docs[i].data : {}, w.patch);
+      const data = w.op === "set" ? merge({}, w.data) : merge(i >= 0 ? docs[i].data : {}, w.patch);
       if (i >= 0) docs[i] = { id, data }; else docs.push({ id, data });
     }
     if (spec.orderBy) {
@@ -241,6 +288,8 @@
         if (!s) continue;
         s.ver = res.ver;
         s.raw = res;
+        if (s.spec.kind === "doc") seen(s.spec.path, res.docVer != null ? res.docVer : res.ver);
+        else for (const d of res.docs || []) seen(s.spec.path + "/" + d.id, d.ver);
         deliver(s);
       }
       if (queue.length) flush();
@@ -258,8 +307,8 @@
   /* ---------- db ---------- */
 
   const copy = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
-  const docSnap = (id, exists, data) => ({ id, exists, data: () => (exists ? copy(data) : undefined) });
-  const querySnap = (docs) => ({ docs: docs.map((d) => ({ id: d.id, data: () => copy(d.data) })) });
+  const docSnap = (id, exists, data, ver) => ({ id, exists, ver: ver || 0, data: () => (exists ? copy(data) : undefined) });
+  const querySnap = (docs, base) => ({ docs: docs.map((d) => ({ id: d.id, ver: (base && vers.get(base + "/" + d.id)) || d.ver || 0, data: () => copy(d.data) })) });
 
   function segments(path) {
     if (typeof path !== "string") throw new TypeError("Path must be a string");
@@ -284,16 +333,20 @@
       path,
       async get() {
         let r;
-        try { r = await api("get", { path }); }
+        try { r = await api("get", { path }); seen(path, r && r.ver); }
         catch (e) { if (e && e.code === OFFLINE && queue.some((w) => w.path === path)) r = { exists: false }; else throw e; }
         r = overlay(spec, r);
-        return docSnap(id, r.exists, r.data);
+        return docSnap(id, r.exists, r.data, vers.get(path));
       },
-      set: (data) => write("set", { path, data }),
-      update: (patch) => write("update", { path, patch }),
-      delete: () => write("delete", { path }),
+      // opts.ifVersion: the version the change is based on (from snap.ver or version()), to refuse it with
+      // `conflict` if the document has changed since; null: no check. Left out: what this device last saw.
+      set: (data, opts) => write("set", { path, data }, opts),
+      update: (patch, opts) => write("update", { path, patch }, opts),
+      delete: (opts) => write("delete", { path }, opts),
+      /** The latest version of this document this device has seen (0 if none). */
+      version: () => vers.get(path) || 0,
       onSnapshot(next, error) {
-        return subscribe(spec, (r) => next(docSnap(id, r.exists, r.data)), error);
+        return subscribe(spec, (r) => next(docSnap(id, r.exists, r.data, vers.get(path))), error);
       },
     };
   }
@@ -304,11 +357,13 @@
       orderBy: (field, dir) => query(path, Object.assign({}, opts, { orderBy: field, dir: dir === "desc" ? "desc" : "asc" })),
       limit: (n) => query(path, Object.assign({}, opts, { limit: n })),
       async get() {
-        const r = overlay(spec(), await api("query", spec()));
-        return querySnap(r.docs);
+        const raw = await api("query", spec());
+        for (const d of raw.docs || []) seen(path + "/" + d.id, d.ver);
+        const r = overlay(spec(), raw);
+        return querySnap(r.docs, path);
       },
       onSnapshot(next, error) {
-        return subscribe(spec(), (r) => next(querySnap(r.docs)), error);
+        return subscribe(spec(), (r) => next(querySnap(r.docs, path)), error);
       },
     };
   }
