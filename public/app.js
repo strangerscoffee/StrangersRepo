@@ -1989,8 +1989,9 @@ function pdfHeader(title,lines){
   return(doc,m)=>{
     if(LOGO_D)doc.svg(LOGO_D,m,m,0.31);
     const x=m+(LOGO_D?78:0);
-    doc.text(title,x,m+17,{size:17,bold:true});
-    (lines||[]).slice(0,3).forEach((l,i)=>doc.text(l,x,m+31+i*11,{size:8.5,color:"#555555"}));
+    const fitW=doc.W-m-x,P=window.DiaryPDF;
+    doc.text(P.fit(title,fitW,17,true),x,m+17,{size:17,bold:true});
+    (lines||[]).slice(0,3).forEach((l,i)=>doc.text(P.fit(l,fitW,8.5,false),x,m+31+i*11,{size:8.5,color:"#555555"}));
     const y=m+Math.max(42,31+(lines||[]).length*11);
     doc.line(m,y,doc.W-m,y,{color:"#2b2f36",lw:0.8});
     return y+12;
