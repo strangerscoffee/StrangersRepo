@@ -1,7 +1,7 @@
 // Strangers Coffee Kitchen Diary staff site.
 // Serves the diary page (public/index.html) and the API it uses through claude-shim.js, and, on its own
 // hostname (ROTA_HOST), the staff rota (public/rota/, src/rota.ts). One Worker, one database, one set of accounts.
-import { appForHost, appLinks, authorize, isAdminSharedFile, isPublicAsset, isRotaManager, isRotaSharedFile, limitWrites, recordId, requireUser, unifiedSignin } from "./access";
+import { appForHost, appLinks, authorize, isAdminSharedFile, isPublicAsset, isPublicCode, isRotaManager, isRotaSharedFile, limitWrites, recordId, requireUser, unifiedSignin } from "./access";
 import { handleAdmin } from "./admin";
 import { handleAdminView } from "./adminView";
 import { handleAuth } from "./auth";
@@ -46,6 +46,16 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
+/** A file from public/. Scripts and styles may be kept for a minute (so moving between pages doesn't ask again
+ * for each one), then checked again; images for a day. */
+async function staticFile(req: Request, env: Env, p: string): Promise<Response> {
+  const res = await env.ASSETS.fetch(req);
+  if (!res.ok || !/\.(js|css|svg|png|webmanifest)$/.test(p)) return res;
+  const out = new Response(res.body, res);
+  out.headers.set("cache-control", /\.(svg|png)$/.test(p) ? "private, max-age=86400" : "private, max-age=60, must-revalidate");
+  return out;
+}
+
 const noStore = (res: Response) => {
   const out = new Response(res.body, res);
   out.headers.set("cache-control", "private, no-store");
@@ -79,8 +89,10 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
       if (!own) throw new ApiError(403, "bad_origin", "That request came from another site.");
     } else if (origin === "null") throw new ApiError(403, "bad_origin", "That request came from another site.");
   }
-  // The sign-in page and its files need no session (and no database).
+  // The sign-in page and its files need no session (and no database); nor do the diary's and the rota's
+  // scripts, styles and images (code, no data: see isPublicCode in src/hosts.ts).
   if (isGet && isPublicAsset(p)) return env.ASSETS.fetch(req);
+  if (isGet && isPublicCode(app, p)) return staticFile(req, env, p);
   // On its own host the rota lives at /, so /rota/ (the address used in local dev) goes there.
   if (app === "rota" && isGet && (p === "/rota" || p === "/rota/" || p === "/rota/index.html")) return redirect("/" + url.search);
 
@@ -167,20 +179,14 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
     if (user.role !== "admin") return redirect("/");
     return env.ADMIN_HOST ? redirect(links.admin) : adminPage(req, env, url);
   }
-  // Pages behind sign-in must not be cached by shared devices' browsers or proxies. Their scripts and styles
-  // may be kept for a minute (so moving between pages doesn't ask again for each file), then checked again.
-  const res = await env.ASSETS.fetch(req);
+  // Pages behind sign-in must not be cached by shared devices' browsers or proxies.
   if (p === "/" || p === "/index.html") {
+    const res = await env.ASSETS.fetch(req);
     const out = new Response(res.body, res);
     out.headers.set("cache-control", "private, no-store");
     return out;
   }
-  if (res.ok && /\.(js|css|svg|png|webmanifest)$/.test(p)) {
-    const out = new Response(res.body, res);
-    out.headers.set("cache-control", /\.(svg|png)$/.test(p) ? "private, max-age=86400" : "private, max-age=60, must-revalidate");
-    return out;
-  }
-  return res;
+  return staticFile(req, env, p);
 }
 
 function withSecurityHeaders(res: Response, local: boolean): Response {
