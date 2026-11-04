@@ -17,6 +17,7 @@ The site is one Cloudflare Worker serving the diary's pages and the API they tal
 | `.github/workflows/test.yml`, `.github/annotate.mjs` | Runs every test on GitHub for each pull request and each merge to `main`; posts a failing test's message as an annotation. |
 | `.github/workflows/automerge.yml` | Squash-merges each pull request into `main` by itself once Tests passes. |
 | `test/` | `api.test.mjs`, `migration.test.mjs` and `rota.test.mjs` (the API and the rota's hostname, against `wrangler dev`), `e2e.test.mjs` (the diary in a browser, phone-sized) `rota.e2e.test.mjs` (the rota in a browser, phone and iPad) and `readonly.e2e.test.mjs` (what staff see read-only: no stray "null", no Undo sign-off). |
+| `test/` | `api.test.mjs`, `migration.test.mjs` and `rota.test.mjs` (the API and the rota's hostname, against `wrangler dev`), `e2e.test.mjs` (the diary in a browser, phone-sized), `rota.e2e.test.mjs` (the rota in a browser, phone and iPad) and `pdf.e2e.test.mjs` (the EHO records and allergen matrix PDFs with very long content: no text off the page or over other text). |
 | `docs/rota-designs/` | The rota's screen designs (PNG and HTML), for reference. |
 
 Data lives in a D1 database (`kitchen-diary`) and allergen PDFs in a KV namespace. Cloudflare creates both on the first deploy and the Worker creates its own tables, so there are no ids to copy and no migrations to run. The only secret is the **setup code**.
