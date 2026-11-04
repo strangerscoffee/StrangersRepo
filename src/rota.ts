@@ -64,16 +64,34 @@ function text(v: unknown, label: string, max = MAX_TEXT): string {
 interface ShiftRow {
   id: string; site: string; day: string; start: string; end: string; break_mins: number; job: string;
   user_id: string | null; note: string; updated_at: number; updated_by: string;
+  actual_start: string | null; actual_end: string | null; actual_break: number | null; adjust_note: string | null;
+  adjusted_by: string | null; adjusted_at: number | null;
 }
+/** A shift as planned (start, end, breakMins) and, once amended on the day, as worked (actual*). `hours` are the
+ *  paid hours that count (as worked when amended); `plannedHours` as planned; `overtime` the part of `hours` over
+ *  the person's maximum contracted hours that week (set by the week and My shifts views). */
 export interface Shift {
   id: string; site: string; day: string; start: string; end: string; breakMins: number; job: string;
-  userId: string | null; note: string; hours: number;
+  userId: string | null; note: string; hours: number; plannedHours: number;
+  adjusted: boolean; actualStart: string | null; actualEnd: string | null; actualBreakMins: number | null; adjustNote: string;
+  adjustedBy: string | null; adjustedAt: number | null; overtime?: number;
 }
 type Pattern = Record<string, "any" | "off" | { from?: string; to?: string }>;
-export interface Person { id: string; name: string; role: string; contractHours: number | null; sites: string[]; pattern: Pattern }
+/** `contractHours` is kept for older pages: it's the maximum. */
+export interface Person {
+  id: string; name: string; role: string; contractMin: number | null; contractMax: number | null; contractHours: number | null;
+  sites: string[]; pattern: Pattern;
+}
+type Hours = { opensAt: string | null; closesAt: string | null };
 interface SiteInfo {
   id: string; name: string; inUse: boolean; closedDays: number[]; trainingOff: string[];
   opensAt: string | null; closesAt: string | null; minPeople: number;
+  /** Days of the week with other opening hours than the usual ones, by mon…sun. */
+  dayHours: Record<string, { opensAt: string; closesAt: string }>;
+}
+/** A site's opening hours on a day: that weekday's own hours if it has them, otherwise the usual ones. */
+function hoursOn(site: SiteInfo, day: string): Hours {
+  return site.dayHours[DAY_KEYS[dow(day)]] || { opensAt: site.opensAt, closesAt: site.closesAt };
 }
 interface TimeOff { id: string; userId: string; from: string; to: string; reason: string; status: string }
 export interface Problem {
@@ -82,10 +100,36 @@ export interface Problem {
 
 const paidHours = (s: { start: string; end: string; breakMins: number }) => round2(Math.max(0, mins(s.end) - mins(s.start) - s.breakMins) / 60);
 const toShift = (r: ShiftRow): Shift => {
-  const s = { id: r.id, site: r.site, day: r.day, start: r.start, end: r.end, breakMins: r.break_mins, job: r.job, userId: r.user_id, note: r.note, hours: 0 };
-  s.hours = paidHours(s);
+  const adjusted = r.actual_start != null && r.actual_end != null;
+  const s: Shift = {
+    id: r.id, site: r.site, day: r.day, start: r.start, end: r.end, breakMins: r.break_mins, job: r.job, userId: r.user_id, note: r.note,
+    hours: 0, plannedHours: 0, adjusted,
+    actualStart: adjusted ? r.actual_start : null, actualEnd: adjusted ? r.actual_end : null,
+    actualBreakMins: adjusted ? r.actual_break ?? r.break_mins : null, adjustNote: adjusted ? r.adjust_note || "" : "",
+    adjustedBy: adjusted ? r.adjusted_by : null, adjustedAt: adjusted ? r.adjusted_at : null,
+  };
+  s.plannedHours = paidHours(s);
+  s.hours = adjusted ? paidHours({ start: s.actualStart!, end: s.actualEnd!, breakMins: s.actualBreakMins! }) : s.plannedHours;
   return s;
 };
+/** When someone is actually there: as amended on the day, otherwise as planned. */
+const effStart = (s: Shift) => s.actualStart ?? s.start;
+const effEnd = (s: Shift) => s.actualEnd ?? s.end;
+
+/** Marks the hours over each person's maximum as overtime, shift by shift in time order, a week at a time. */
+function markOvertime(shifts: Shift[], people: Map<string, Person>): Shift[] {
+  const total = new Map<string, number>();
+  for (const s of [...shifts].sort((a, b) => (a.day + effStart(a)).localeCompare(b.day + effStart(b)))) {
+    s.overtime = 0;
+    const max = s.userId ? people.get(s.userId)?.contractMax : null;
+    if (!s.userId || max == null) continue;
+    const key = s.userId + "|" + mondayOf(s.day);
+    const before = total.get(key) || 0, after = round2(before + s.hours);
+    total.set(key, after);
+    s.overtime = round2(Math.max(0, Math.min(s.hours, after - max)));
+  }
+  return shifts;
+}
 
 /* ---------- loading what the checks need ---------- */
 
@@ -93,8 +137,8 @@ async function loadSites(env: Env): Promise<Map<string, SiteInfo>> {
   const paths = ROTA_SITES.map((s) => s.prefix + "settings/main");
   const docs = await env.DB.prepare(`SELECT path, data FROM docs WHERE deleted = 0 AND path IN (${paths.map(() => "?").join(",")})`)
     .bind(...paths).all<{ path: string; data: string }>();
-  const rows = await env.DB.prepare("SELECT site, opens_at, closes_at, min_people FROM rota_sites")
-    .all<{ site: string; opens_at: string | null; closes_at: string | null; min_people: number }>();
+  const rows = await env.DB.prepare("SELECT site, opens_at, closes_at, min_people, day_hours FROM rota_sites")
+    .all<{ site: string; opens_at: string | null; closes_at: string | null; min_people: number; day_hours: string | null }>();
   const out = new Map<string, SiteInfo>();
   for (const s of ROTA_SITES) {
     const doc = docs.results.find((d) => d.path === s.prefix + "settings/main");
@@ -106,6 +150,7 @@ async function loadSites(env: Env): Promise<Map<string, SiteInfo>> {
       closedDays: Array.isArray(data?.closedDays) ? data.closedDays.filter((n: unknown) => Number.isInteger(n)) : [],
       trainingOff: Array.isArray(data?.trainingOff) ? data.trainingOff : [],
       opensAt: r?.opens_at ?? null, closesAt: r?.closes_at ?? null, minPeople: r?.min_people ?? 1,
+      dayHours: cleanDayHours(parseJson(r?.day_hours, {})),
     });
   }
   return out;
@@ -131,15 +176,28 @@ async function loadClosures(env: Env, from: string, to: string): Promise<Map<str
 function parseJson<T>(s: string | null | undefined, fallback: T): T {
   try { const v = s ? JSON.parse(s) : fallback; return v ?? fallback; } catch { return fallback; }
 }
+/** Stored day hours, keeping only well-formed days. */
+function cleanDayHours(v: unknown): Record<string, { opensAt: string; closesAt: string }> {
+  const out: Record<string, { opensAt: string; closesAt: string }> = {};
+  if (!v || typeof v !== "object" || Array.isArray(v)) return out;
+  for (const k of DAY_KEYS) {
+    const d = (v as any)[k];
+    if (d && isTime(d.opensAt) && isTime(d.closesAt) && mins(d.closesAt) > mins(d.opensAt)) out[k] = { opensAt: d.opensAt, closesAt: d.closesAt };
+  }
+  return out;
+}
 
 async function loadPeople(env: Env): Promise<Map<string, Person>> {
   const r = await env.DB.prepare(
-    `SELECT u.id, u.name, u.role, p.contract_hours, p.sites, p.pattern FROM users u
+    `SELECT u.id, u.name, u.role, p.contract_min, p.contract_max, p.sites, p.pattern FROM users u
      LEFT JOIN rota_people p ON p.user_id = u.id WHERE u.active = 1 ORDER BY u.name_key`,
-  ).all<{ id: string; name: string; role: string; contract_hours: number | null; sites: string | null; pattern: string | null }>();
+  ).all<{ id: string; name: string; role: string; contract_min: number | null; contract_max: number | null; sites: string | null; pattern: string | null }>();
   const out = new Map<string, Person>();
   for (const u of r.results) {
-    out.set(u.id, { id: u.id, name: u.name, role: u.role, contractHours: u.contract_hours, sites: parseJson(u.sites, []), pattern: parseJson(u.pattern, {}) });
+    out.set(u.id, {
+      id: u.id, name: u.name, role: u.role, contractMin: u.contract_min ?? null, contractMax: u.contract_max ?? null, contractHours: u.contract_max ?? null,
+      sites: parseJson(u.sites, []), pattern: parseJson(u.pattern, {}),
+    });
   }
   return out;
 }
@@ -279,16 +337,27 @@ export function computeProblems(ctx: Ctx): Problem[] {
           message: `${nm(uid)} has ${fmtH(gap / 60)} between shifts (${shortDay(a.day)} ${hhmm(lastToday)} to ${shortDay(b.day)} ${b.start})` });
       }
     }
-    // Hours against contract, and all seven days.
+    // Hours against contract (overtime over the maximum), and all seven days.
     const p = ctx.people.get(uid);
     const hours = round2(mine.reduce((h, s) => h + s.hours, 0));
-    if (p?.contractHours != null && hours > p.contractHours + 0.001) {
-      out.push({ kind: "over_contract", severity: "warn", userId: uid, shiftIds: mine.map((s) => s.id),
-        message: `${nm(uid)} is ${fmtH(hours - p.contractHours)} over contract (${fmtH(hours)} of ${fmtH(p.contractHours)})` });
+    if (p?.contractMax != null && hours > p.contractMax + 0.001) {
+      out.push({ kind: "overtime", severity: "warn", userId: uid, shiftIds: mine.map((s) => s.id),
+        message: `${nm(uid)} has ${fmtH(hours - p.contractMax)} overtime (${fmtH(hours)}, contract ${contractText(p)})` });
     }
     if (new Set(mine.map((s) => s.day)).size === 7) {
       out.push({ kind: "seven_days", severity: "info", userId: uid, shiftIds: mine.map((s) => s.id),
         message: `${nm(uid)} works all seven days this week` });
+    }
+  }
+
+  // Short of contracted hours: anyone with a minimum, including people with no shifts this week.
+  for (const p of ctx.people.values()) {
+    if (p.contractMin == null || p.contractMin <= 0) continue;
+    const mine = inWeek.filter((s) => s.userId === p.id);
+    const hours = round2(mine.reduce((h, s) => h + s.hours, 0));
+    if (hours < p.contractMin - 0.001) {
+      out.push({ kind: "under_contract", severity: "info", userId: p.id, shiftIds: mine.map((s) => s.id),
+        message: `${nm(p.id)} has ${fmtH(hours)}, ${fmtH(p.contractMin - hours)} short of their ${fmtH(p.contractMin)} minimum` });
     }
   }
 
@@ -303,12 +372,14 @@ export function computeProblems(ctx: Ctx): Problem[] {
         if (!here.some((s) => s.job === "closes")) out.push({ kind: "no_closer", severity: "warn", day: d, site: site.id, shiftIds: here.map((s) => s.id),
           message: `No one closes ${site.name} on ${day(d)}` });
       }
-      if (site.opensAt && site.closesAt && mins(site.closesAt) > mins(site.opensAt) && site.minPeople > 0) {
+      const { opensAt, closesAt } = hoursOn(site, d);
+      if (opensAt && closesAt && mins(closesAt) > mins(opensAt) && site.minPeople > 0) {
+        // Who's actually there: a shift cut short on the day stops counting when they left.
         const staffed = here.filter((s) => s.userId);
         const short: [number, number][] = [];
-        for (let t = mins(site.opensAt); t < mins(site.closesAt); t += 60) {
-          const e = Math.min(t + 60, mins(site.closesAt));
-          const n = staffed.filter((s) => mins(s.start) <= t && mins(s.end) >= e).length;
+        for (let t = mins(opensAt); t < mins(closesAt); t += 60) {
+          const e = Math.min(t + 60, mins(closesAt));
+          const n = staffed.filter((s) => mins(effStart(s)) <= t && mins(effEnd(s)) >= e).length;
           if (n < site.minPeople) {
             const last = short[short.length - 1];
             if (last && last[1] === t) last[1] = e; else short.push([t, e]);
@@ -331,7 +402,8 @@ function effectsFor(ctx: Ctx, shift: Shift, uid: string): { problems: Problem[];
   const shifts = ctx.shifts.map((s) => (s.id === shift.id ? moved : s));
   if (!shifts.some((s) => s.id === shift.id)) shifts.push(moved);
   const all = computeProblems({ ...ctx, shifts });
-  const problems = all.filter((p) => p.userId === uid && (p.kind === "over_contract" || p.shiftIds.includes(shift.id)));
+  // Being short of their minimum isn't a reason not to give someone a shift.
+  const problems = all.filter((p) => p.userId === uid && p.kind !== "under_contract" && (p.kind === "overtime" || p.shiftIds.includes(shift.id)));
   const hours = round2(shifts.filter((s) => s.userId === uid && s.day >= ctx.days[0] && s.day <= ctx.days[6]).reduce((h, s) => h + s.hours, 0));
   return { problems, hours };
 }
@@ -390,6 +462,14 @@ function checkContract(v: unknown): number | null {
   if (!isFinite(n) || n < 0 || n > 80) throw invalid("Contract hours are 0 to 80 a week.");
   return round2(n);
 }
+/** "16–24h", "20h", "up to 24h", "at least 16h". */
+function contractText(p: { contractMin: number | null; contractMax: number | null }): string {
+  const { contractMin: a, contractMax: b } = p;
+  if (a != null && b != null) return a === b ? fmtH(b) : `${round2(a)}–${fmtH(b)}`;
+  if (b != null) return `up to ${fmtH(b)}`;
+  if (a != null) return `at least ${fmtH(a)}`;
+  return "none";
+}
 
 /* ---------- writes ---------- */
 
@@ -414,7 +494,7 @@ async function weekView(env: Env, week: string, user: User) {
   const [ctx, row] = await Promise.all([loadCtx(env, week), weekRow(env, week)]);
   const published = !!row?.published_at;
   const visible = mgr || published;
-  const inWeek = ctx.shifts.filter((s) => s.day >= ctx.days[0] && s.day <= ctx.days[6]);
+  const inWeek = markOvertime(ctx.shifts.filter((s) => s.day >= ctx.days[0] && s.day <= ctx.days[6]), ctx.people);
   return {
     week,
     days: ctx.days,
@@ -422,13 +502,15 @@ async function weekView(env: Env, week: string, user: User) {
     publishedAt: row?.published_at ?? null,
     changesSincePublish: published ? row?.changes ?? 0 : 0,
     sites: [...ctx.sites.values()].map((s) => ({
-      id: s.id, name: s.name, inUse: s.inUse, opensAt: s.opensAt, closesAt: s.closesAt, minPeople: s.minPeople,
+      id: s.id, name: s.name, inUse: s.inUse, opensAt: s.opensAt, closesAt: s.closesAt, minPeople: s.minPeople, dayHours: s.dayHours,
+      hours: ctx.days.map((d) => hoursOn(s, d)),
       open: ctx.days.map((d) => openState(ctx, s.id, d).open),
       closedWhy: ctx.days.map((d) => { const st = openState(ctx, s.id, d); return st.open ? null : ctx.closures.get(s.id)?.[d] || null; }),
     })),
     // Staff see names only: contracts and availability are for managers.
     people: [...ctx.people.values()].map((p) => (mgr ? p : { id: p.id, name: p.name, role: p.role })),
-    shifts: visible ? inWeek : [],
+    // Staff see who's on, not other people's overtime or why their hours changed.
+    shifts: !visible ? [] : mgr ? inWeek : inWeek.map((s) => (s.userId === user.id ? s : { ...s, overtime: 0, adjustNote: "" })),
     timeOff: mgr ? ctx.timeOff : [],
     problems: mgr ? computeProblems(ctx) : [],
   };
@@ -504,6 +586,30 @@ export async function handleRota(req: Request, env: Env, ctx: ExecutionContext, 
     return json({ shift: await getShift(env, id), ...(await weekProblems(env, v.day)) });
   }
 
+  // Amending a shift on the day: when someone actually started and finished (going home sick, staying late).
+  // {start, end, breakMins?, note?}, or {clear: true} to put it back as planned. The plan itself is kept.
+  if (seg[0] === "shifts" && seg[2] === "actual" && seg.length === 3 && m === "PUT") {
+    needMgr();
+    const cur = await getShift(env, seg[1]);
+    if (!cur.userId) throw invalid("Give the shift to someone before amending their hours.");
+    if (cur.day > londonToday()) throw invalid("Shifts can be amended from the day they're on.");
+    const b = await body();
+    if (b.clear === true) {
+      await env.DB.prepare("UPDATE rota_shifts SET actual_start = NULL, actual_end = NULL, actual_break = NULL, adjust_note = '', adjusted_by = ?, adjusted_at = ? WHERE id = ?")
+        .bind(user.id, nowMs(), cur.id).run();
+    } else {
+      if (!isTime(b.start) || !isTime(b.end)) throw invalid("Times are HH:MM, for example 07:30.");
+      if (mins(b.end) < mins(b.start)) throw invalid("They can't finish before they start.");
+      const brk = b.breakMins == null ? Math.min(cur.breakMins, mins(b.end) - mins(b.start)) : Number(b.breakMins);
+      if (!Number.isInteger(brk) || brk < 0 || brk > 180) throw invalid("The unpaid break is 0 to 180 minutes.");
+      if (brk > mins(b.end) - mins(b.start)) throw invalid("The break can't be longer than the time they were there.");
+      const note = text(b.note, "The reason", 200);
+      await env.DB.prepare("UPDATE rota_shifts SET actual_start = ?, actual_end = ?, actual_break = ?, adjust_note = ?, adjusted_by = ?, adjusted_at = ? WHERE id = ?")
+        .bind(b.start, b.end, brk, note, user.id, nowMs(), cur.id).run();
+    }
+    return json({ shift: await getShift(env, cur.id), ...(await weekProblems(env, cur.day)) });
+  }
+
   if (seg[0] === "shifts" && seg.length === 2 && (m === "PATCH" || m === "DELETE")) {
     needMgr();
     const cur = await getShift(env, seg[1]);
@@ -529,6 +635,8 @@ export async function handleRota(req: Request, env: Env, ctx: ExecutionContext, 
     ];
     if (mondayOf(v.day) !== mondayOf(cur.day)) stmts.push(touchWeek(env, mondayOf(v.day)));
     // A manager giving the shift to someone settles any pickups or covers still waiting on it.
+    // Amended hours belong to the person who worked them.
+    if (v.userId !== cur.userId && cur.adjusted) stmts.push(env.DB.prepare("UPDATE rota_shifts SET actual_start = NULL, actual_end = NULL, actual_break = NULL, adjust_note = '' WHERE id = ?").bind(cur.id));
     if (v.userId !== cur.userId) stmts.push(env.DB.prepare("UPDATE rota_requests SET status = 'cancelled', decided_by = ?, decided_at = ? WHERE shift_id = ? AND status IN ('open', 'accepted')").bind(user.id, nowMs(), cur.id));
     await env.DB.batch(stmts);
     const out = await weekProblems(env, v.day);
@@ -582,16 +690,26 @@ export async function handleRota(req: Request, env: Env, ctx: ExecutionContext, 
     const from = q("from") || londonToday(), to = q("to") || addDays(from, 27);
     if (!isDay(from) || !isDay(to) || to < from) throw invalid("Choose real dates.");
     if (dateOf(to).getTime() - dateOf(from).getTime() > 92 * 864e5) throw invalid("Ask for up to three months at a time.");
-    const [weeks, all, people] = await Promise.all([publishedWeeks(env, from, to), loadShifts(env, from, to), loadPeople(env)]);
+    // Whole weeks, so overtime counts from the Monday.
+    const [weeks, wide, people] = await Promise.all([publishedWeeks(env, from, to), loadShifts(env, mondayOf(from), addDays(mondayOf(to), 6)), loadPeople(env)]);
+    markOvertime(wide.filter((s) => s.userId === user.id && weeks.has(mondayOf(s.day))), people);
+    const all = wide.filter((s) => s.day >= from && s.day <= to);
     const live = all.filter((s) => weeks.has(mondayOf(s.day)));
+    const me = people.get(user.id);
+    const weekTotals = [...new Set(live.filter((s) => s.userId === user.id).map((s) => mondayOf(s.day)))].sort().map((w) => {
+      const mine = wide.filter((s) => s.userId === user.id && mondayOf(s.day) === w);
+      const hours = round2(mine.reduce((h, s) => h + s.hours, 0));
+      return { week: w, hours, overtime: round2(mine.reduce((h, s) => h + (s.overtime || 0), 0)) };
+    });
     const nameOf = (id: string | null) => (id ? people.get(id)?.name || "Someone" : null);
     return json({
       from, to, today: londonToday(),
       published: [...weeks].sort(),
+      contractMin: me?.contractMin ?? null, contractMax: me?.contractMax ?? null, weeks: weekTotals,
       shifts: live.filter((s) => s.userId === user.id).map((s) => ({
         ...s, siteName: siteName(s.site),
         others: live.filter((o) => o.site === s.site && o.day === s.day && o.id !== s.id)
-          .map((o) => ({ name: nameOf(o.userId) || "Open shift", start: o.start, end: o.end, job: o.job, open: !o.userId })),
+          .map((o) => ({ name: nameOf(o.userId) || "Open shift", start: o.start, end: o.end, job: o.job, open: !o.userId, actualStart: o.actualStart, actualEnd: o.actualEnd })),
       })),
     });
   }
@@ -607,7 +725,7 @@ export async function handleRota(req: Request, env: Env, ctx: ExecutionContext, 
       site, day, published: true, rotaUrl: links.rota,
       shifts: shifts.filter((s) => s.site === site).map((s) => ({
         name: s.userId ? people.get(s.userId)?.name || "Someone" : null, me: s.userId === user.id, open: !s.userId,
-        start: s.start, end: s.end, job: s.job,
+        start: s.start, end: s.end, job: s.job, actualStart: s.actualStart, actualEnd: s.actualEnd,
       })),
     });
   }
@@ -635,8 +753,11 @@ export async function handleRota(req: Request, env: Env, ctx: ExecutionContext, 
       }
       const error = flags.find((f) => f.severity === "error");
       const tier = error ? 2 : flags.length ? 1 : 0;
-      const ratio = p.contractHours ? hours / p.contractHours : hours / 40;
-      return { userId: p.id, name: p.name, role: p.role, hoursIfGiven: hours, contractHours: p.contractHours, flags, selectable: !error, tier, ratio };
+      // Fairest first: whoever is furthest below their minimum (or maximum) gets offered it first.
+      const ratio = p.contractMin ? hours / p.contractMin : p.contractMax ? hours / p.contractMax : hours / 40;
+      const overtime = p.contractMax != null ? round2(Math.max(0, hours - p.contractMax)) : 0;
+      return { userId: p.id, name: p.name, role: p.role, hoursIfGiven: hours, contractMin: p.contractMin, contractMax: p.contractMax,
+        contractHours: p.contractMax, overtimeIfGiven: overtime, flags, selectable: !error, tier, ratio };
     });
     list.sort((a, b) => a.tier - b.tier || a.ratio - b.ratio || a.name.localeCompare(b.name));
     const best = list.find((c) => c.selectable)?.userId;
@@ -655,29 +776,34 @@ export async function handleRota(req: Request, env: Env, ctx: ExecutionContext, 
     const ids = new Set([...people.keys(), ...shifts.map((s) => s.userId).filter((x): x is string => !!x)]);
     const extra = await env.DB.prepare(`SELECT id, name, role FROM users WHERE id IN (${[...ids].map(() => "?").join(",") || "''"})`).bind(...ids).all<{ id: string; name: string; role: string }>();
     const rows = [...ids].map((id) => {
-      const p = people.get(id) || { ...(extra.results.find((u) => u.id === id) || { id, name: "Someone", role: "" }), contractHours: null };
+      const p = people.get(id) || { ...(extra.results.find((u) => u.id === id) || { id, name: "Someone", role: "" }), contractMin: null, contractMax: null };
       const mine = shifts.filter((s) => s.userId === id);
       const bySite = Object.fromEntries(ROTA_SITES.map((s) => [s.id, round2(mine.filter((x) => x.site === s.id).reduce((h, x) => h + x.hours, 0))]));
       const rota = round2(mine.reduce((h, s) => h + s.hours, 0));
-      return { userId: id, name: p.name, role: p.role, contractHours: p.contractHours, rotaHours: rota,
-        difference: p.contractHours == null ? null : round2(rota - p.contractHours), sites: bySite, shifts: mine.length };
+      const planned = round2(mine.reduce((h, s) => h + s.plannedHours, 0));
+      return { userId: id, name: p.name, role: p.role, contractMin: p.contractMin, contractMax: p.contractMax, contractHours: p.contractMax,
+        plannedHours: planned, rotaHours: rota, amended: mine.filter((s) => s.adjusted).length,
+        overtime: p.contractMax == null ? 0 : round2(Math.max(0, rota - p.contractMax)),
+        shortOfMin: p.contractMin == null ? 0 : round2(Math.max(0, p.contractMin - rota)),
+        sites: bySite, shifts: mine.length };
     }).sort((a, b) => a.name.localeCompare(b.name));
     const siteTotals = Object.fromEntries(ROTA_SITES.map((s) => [s.id, round2(shifts.filter((x) => x.site === s.id && x.userId).reduce((h, x) => h + x.hours, 0))]));
     const openHours = round2(shifts.filter((s) => !s.userId).reduce((h, s) => h + s.hours, 0));
     if (q("format") === "csv") {
       const cell = (v: unknown) => { const t = v == null ? "" : String(v); return /[",\n\r]/.test(t) || /^[=+\-@]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
-      const lines = [["name", "role", "contract_hours", "rota_hours", "difference", ...ROTA_SITES.map((s) => s.id)].join(",")];
-      for (const r of rows) lines.push([r.name, r.role, r.contractHours, r.rotaHours, r.difference, ...ROTA_SITES.map((s) => r.sites[s.id])].map(cell).join(","));
+      const lines = [["name", "role", "contract_min", "contract_max", "planned_hours", "rota_hours", "overtime", "short_of_min", ...ROTA_SITES.map((s) => s.id)].join(",")];
+      for (const r of rows) lines.push([r.name, r.role, r.contractMin, r.contractMax, r.plannedHours, r.rotaHours, r.overtime, r.shortOfMin, ...ROTA_SITES.map((s) => r.sites[s.id])].map(cell).join(","));
       return new Response(lines.join("\r\n") + "\r\n", {
         headers: { "content-type": "text/csv; charset=utf-8", "cache-control": "no-store", "content-disposition": `attachment; filename="rota-hours-${week}.csv"` },
       });
     }
-    return json({ week, published: !!row?.published_at, people: rows, siteTotals, openHours, total: round2(rows.reduce((h, r) => h + r.rotaHours, 0)) });
+    return json({ week, published: !!row?.published_at, people: rows, siteTotals, openHours, total: round2(rows.reduce((h, r) => h + r.rotaHours, 0)),
+      overtime: round2(rows.reduce((h, r) => h + r.overtime, 0)) });
   }
 
   if (route === "me" && m === "GET") {
     const [p, offs, reqs, appr] = await Promise.all([
-      env.DB.prepare("SELECT * FROM rota_people WHERE user_id = ?").bind(user.id).first<{ contract_hours: number | null; sites: string; pattern: string }>(),
+      env.DB.prepare("SELECT * FROM rota_people WHERE user_id = ?").bind(user.id).first<{ contract_min: number | null; contract_max: number | null; sites: string; pattern: string }>(),
       env.DB.prepare("SELECT id, user_id, from_day, to_day, reason, status, decided_at FROM rota_time_off WHERE user_id = ? AND to_day >= ? ORDER BY from_day")
         .bind(user.id, addDays(londonToday(), -30)).all<any>(),
       env.DB.prepare("SELECT * FROM rota_requests WHERE (from_user = ? OR to_user = ? OR taker = ? OR (to_user IS NULL AND kind = 'cover' AND status = 'open')) AND created_at > ? ORDER BY created_at DESC LIMIT 100")
@@ -686,7 +812,7 @@ export async function handleRota(req: Request, env: Env, ctx: ExecutionContext, 
     ]);
     return json({
       user: { id: user.id, name: user.name, role: user.role, manager: mgr }, links, today: londonToday(), approvers: appr,
-      contractHours: p?.contract_hours ?? null, sites: parseJson(p?.sites, []), pattern: parseJson(p?.pattern, {}),
+      contractMin: p?.contract_min ?? null, contractMax: p?.contract_max ?? null, contractHours: p?.contract_max ?? null, sites: parseJson(p?.sites, []), pattern: parseJson(p?.pattern, {}),
       timeOff: offs.results.map((t) => ({ id: t.id, from: t.from_day, to: t.to_day, reason: t.reason, status: t.status, decidedAt: t.decided_at })),
       requests: (await describeRequests(env, reqs.results)).filter((r) => r.shift),
     });
@@ -706,15 +832,22 @@ export async function handleRota(req: Request, env: Env, ctx: ExecutionContext, 
     needMgr();
     const uid = await activeUser(env, seg[1]);
     const b = await body();
-    const cur = await env.DB.prepare("SELECT * FROM rota_people WHERE user_id = ?").bind(uid).first<{ sites: string; pattern: string }>();
-    const contract = checkContract(b.contractHours);
+    const cur = await env.DB.prepare("SELECT * FROM rota_people WHERE user_id = ?").bind(uid)
+      .first<{ sites: string; pattern: string; contract_min: number | null; contract_max: number | null }>();
+    // {contractMin, contractMax}; or the older single {contractHours}, which sets both. Leaving them out keeps them.
+    let min = cur?.contract_min ?? null, max = cur?.contract_max ?? null;
+    if ("contractHours" in b && !("contractMin" in b) && !("contractMax" in b)) min = max = checkContract(b.contractHours);
+    if ("contractMin" in b) min = checkContract(b.contractMin);
+    if ("contractMax" in b) max = checkContract(b.contractMax);
+    if (min != null && max != null && min > max) throw invalid("The minimum contracted hours can't be more than the maximum.");
     const sites = "sites" in b ? checkSites(b.sites) : parseJson(cur?.sites, []);
     const pattern = "pattern" in b ? checkPattern(b.pattern) : parseJson(cur?.pattern, {});
     await env.DB.prepare(
-      `INSERT INTO rota_people (user_id, contract_hours, sites, pattern, updated_at) VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT (user_id) DO UPDATE SET contract_hours = excluded.contract_hours, sites = excluded.sites, pattern = excluded.pattern, updated_at = excluded.updated_at`,
-    ).bind(uid, contract, JSON.stringify(sites), JSON.stringify(pattern), nowMs()).run();
-    return json({ userId: uid, contractHours: contract, sites, pattern });
+      `INSERT INTO rota_people (user_id, contract_hours, contract_min, contract_max, sites, pattern, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (user_id) DO UPDATE SET contract_hours = excluded.contract_hours, contract_min = excluded.contract_min, contract_max = excluded.contract_max,
+         sites = excluded.sites, pattern = excluded.pattern, updated_at = excluded.updated_at`,
+    ).bind(uid, max, min, max, JSON.stringify(sites), JSON.stringify(pattern), nowMs()).run();
+    return json({ userId: uid, contractMin: min, contractMax: max, contractHours: max, sites, pattern });
   }
 
   if (route === "time-off" && m === "POST") {
@@ -869,7 +1002,7 @@ export async function handleRota(req: Request, env: Env, ctx: ExecutionContext, 
 
   if (route === "sites" && m === "GET") {
     const sites = await loadSites(env);
-    return json({ sites: [...sites.values()].map((s) => ({ id: s.id, name: s.name, inUse: s.inUse, closedDays: s.closedDays, opensAt: s.opensAt, closesAt: s.closesAt, minPeople: s.minPeople })) });
+    return json({ sites: [...sites.values()].map((s) => ({ id: s.id, name: s.name, inUse: s.inUse, closedDays: s.closedDays, opensAt: s.opensAt, closesAt: s.closesAt, minPeople: s.minPeople, dayHours: s.dayHours })) });
   }
 
   if (seg[0] === "sites" && seg.length === 2 && m === "PUT") {
@@ -881,11 +1014,28 @@ export async function handleRota(req: Request, env: Env, ctx: ExecutionContext, 
     if (opensAt && closesAt && mins(closesAt) <= mins(opensAt)) throw invalid("Closing time has to be after opening time.");
     const minPeople = b.minPeople == null ? 1 : Number(b.minPeople);
     if (!Number.isInteger(minPeople) || minPeople < 0 || minPeople > 20) throw invalid("Minimum people is 0 to 20.");
+    // Days with other hours, {sat: {opensAt, closesAt}, …}; a day left out (or null) uses the usual hours. Left out
+    // altogether, the saved days are kept.
+    let dayHours: Record<string, { opensAt: string; closesAt: string }>;
+    if (b.dayHours === undefined) {
+      dayHours = (await loadSites(env)).get(seg[1])!.dayHours;
+    } else {
+      if (b.dayHours !== null && (typeof b.dayHours !== "object" || Array.isArray(b.dayHours))) throw invalid("Day hours aren't valid.");
+      dayHours = {};
+      for (const [k, d] of Object.entries((b.dayHours || {}) as Record<string, any>)) {
+        if (!(DAY_KEYS as readonly string[]).includes(k)) throw invalid("Day hours use mon to sun.");
+        if (d == null) continue;
+        const o = t(d.opensAt, `Opening time on ${k}`), c = t(d.closesAt, `Closing time on ${k}`);
+        if (!o || !c) throw invalid("Give an opening and a closing time for each day with its own hours.");
+        if (mins(c) <= mins(o)) throw invalid("Closing time has to be after opening time.");
+        dayHours[k] = { opensAt: o, closesAt: c };
+      }
+    }
     await env.DB.prepare(
-      `INSERT INTO rota_sites (site, opens_at, closes_at, min_people) VALUES (?, ?, ?, ?)
-       ON CONFLICT (site) DO UPDATE SET opens_at = excluded.opens_at, closes_at = excluded.closes_at, min_people = excluded.min_people`,
-    ).bind(seg[1], opensAt, closesAt, minPeople).run();
-    return json({ id: seg[1], opensAt, closesAt, minPeople });
+      `INSERT INTO rota_sites (site, opens_at, closes_at, min_people, day_hours) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT (site) DO UPDATE SET opens_at = excluded.opens_at, closes_at = excluded.closes_at, min_people = excluded.min_people, day_hours = excluded.day_hours`,
+    ).bind(seg[1], opensAt, closesAt, minPeople, JSON.stringify(dayHours)).run();
+    return json({ id: seg[1], opensAt, closesAt, minPeople, dayHours });
   }
 
   throw new ApiError(404, "not_found", "Unknown rota route.");

@@ -78,7 +78,7 @@ team(): Promise<Array<{id, name, role}> | null>                 // everyone with
 ## `rota`
 
 ```ts
-today(site: string): Promise<{site, day, published, shifts: Array<{name, me, open, start, end, job}>, rotaUrl} | null>
+today(site: string): Promise<{site, day, published, shifts: Array<{name, me, open, start, end, job, actualStart, actualEnd}>, rotaUrl} | null>
 links(): Promise<{rota: string, diary: string} | null>
 ```
 Today's published shifts at a site (GET `/api/rota/today`), for the "On shift today" card and the opening and closing cards' "who opens / who closes". `null` when offline: the page keeps what it showed. `published: false` (the week isn't published yet) leaves Today as it is. `links()` gives the rota's address for the diary's **Rota** link. The rota itself is a separate app (`public/rota/`) that calls `/api/rota/*` directly; see `docs/data-model.md` → "The rota API".

@@ -64,6 +64,20 @@
   const initials = (n) => String(n || "?").split(/\s+/).filter(Boolean).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
   const first = (n) => String(n || "").split(" ")[0];
   const jobWord = (j) => (j === "opens" ? "Opens" : j === "closes" ? "Closes" : "");
+  // A shift as worked: amended on the day, otherwise as planned.
+  const effS = (s) => s.actualStart || s.start;
+  const effE = (s) => s.actualEnd || s.end;
+  const span = (s) => `${effS(s)}–${effE(s)}`;
+  // Contracted hours as a range: "16–24", "20", "up to 24", "at least 16" (hours a week).
+  const contractLabel = (p) => {
+    const a = p.contractMin, b = p.contractMax;
+    if (a != null && b != null) return a === b ? hrs(b) : `${hrs(a)}–${hrs(b)}`;
+    if (b != null) return `up to ${hrs(b)}`;
+    if (a != null) return `at least ${hrs(a)}`;
+    return "";
+  };
+  // A site's hours on day i of the week (its own hours for that weekday, if it has them).
+  const hoursOn = (site, i) => site.hours?.[i] || { opensAt: site.opensAt, closesAt: site.closesAt };
   const plural = (n, a, b) => `${n} ${n === 1 ? a : b || a + "s"}`;
   const when = (ms) => {
     if (!ms) return "";
@@ -390,7 +404,7 @@
     }
     for (const p of d.problems) {
       if (p.kind === "open_shift" || p.kind === "short_cover") continue;
-      const act = { clash: "Fix", no_opener: "Fix", no_closer: "Fix", short_cover: "See", over_contract: "See", time_off: "Fix", closed: "Fix" }[p.kind] || "See";
+      const act = { clash: "Fix", no_opener: "Fix", no_closer: "Fix", short_cover: "See", overtime: "See", under_contract: "See", time_off: "Fix", closed: "Fix" }[p.kind] || "See";
       chips.push({ sev: p.severity, text: p.message, act, go: () => onFocus(p) });
     }
     // Approved time off is useful context while planning.
@@ -419,8 +433,7 @@
 
   function focusProblem(d, p) {
     const s = p.shiftIds?.length ? d.shifts.find((x) => x.id === p.shiftIds[p.kind === "clash" ? 1 : 0]) || d.shifts.find((x) => x.id === p.shiftIds[0]) : null;
-    if (p.kind === "over_contract" && !wide.matches) { R.view = "person"; render(); return; }
-    if (p.kind === "over_contract") { R.view = "person"; render(); return; }
+    if (p.kind === "overtime" || p.kind === "under_contract") { R.view = "person"; render(); return; }
     if ((p.kind === "clash" || p.kind === "no_opener" || p.kind === "no_closer" || p.kind === "short_cover") && p.site && p.day) { go(`day/${p.site}/${p.day}`); return; }
     if (s) openShift(s, d);
     else if (p.site && p.day) go(`day/${p.site}/${p.day}`);
@@ -428,14 +441,16 @@
 
   function shiftCard(d, s, { clash, ro, showSite, showName = true } = {}) {
     const nm = nameOf(d, s.userId);
-    const cls = "shc" + (!s.userId ? " open" : "") + (clash ? " clash" : "") + (showSite ? " tone-" + (SITE_TONE[s.site] || "") : "");
+    const cls = "shc" + (!s.userId ? " open" : "") + (clash ? " clash" : "") + (s.overtime > 0 ? " ot" : "") + (s.adjusted ? " amended" : "") + (showSite ? " tone-" + (SITE_TONE[s.site] || "") : "");
     const site = d.sites.find((x) => x.id === s.site);
-    const tag = !s.userId ? [jobWord(s.job), "Fill"].filter(Boolean).join(" · ") : clash ? "Clash" : jobWord(s.job);
-    const aria = `${s.start} to ${s.end}, ${nm || "open shift"}${s.job ? ", " + s.job : ""}${clash ? ", clash" : ""}${showSite ? ", " + site.name : ""}`;
-    const kids = [el("b", { class: "tm", text: `${s.start}–${s.end}` }),
+    const ot = s.overtime > 0;
+    const tag = !s.userId ? [jobWord(s.job), "Fill"].filter(Boolean).join(" · ") : clash ? "Clash" : [jobWord(s.job), s.adjusted ? "Amended" : ""].filter(Boolean).join(" · ");
+    const aria = `${effS(s)} to ${effE(s)}${s.adjusted ? ` (amended, planned ${s.start} to ${s.end})` : ""}, ${nm || "open shift"}${s.job ? ", " + s.job : ""}${clash ? ", clash" : ""}${ot ? `, ${hrs(s.overtime)} hours overtime` : ""}${showSite ? ", " + site.name : ""}`;
+    const kids = [el("b", { class: "tm", text: span(s) }),
       showName ? el("span", { class: "nm", text: nm ? first(nm) : "Open shift" }) : null,
       showSite ? el("span", { class: "nm", text: site.name }) : null,
-      tag ? el("span", { class: "jb", text: tag }) : null];
+      tag ? el("span", { class: "jb", text: tag }) : null,
+      ot ? el("span", { class: "otag", text: `Overtime ${hrs(s.overtime)}h` }) : null];
     return ro ? el("div", { class: cls, "aria-label": aria }, ...kids) : el("button", { type: "button", class: cls, "aria-label": aria, onclick: (e) => { e.stopPropagation(); openShift(s, d); } }, ...kids);
   }
 
@@ -456,7 +471,7 @@
           g.append(el("div", { class: "gcell closed" }, el("span", { class: "cl", text: site.closedWhy[i] ? `Closed: ${site.closedWhy[i]}` : "Closed" }), ...here.map((s) => shiftCard(d, s, { clash: true, ro }))));
           return;
         }
-        const list = d.shifts.filter((s) => s.site === site.id && s.day === day).sort((a, b) => a.start.localeCompare(b.start));
+        const list = d.shifts.filter((s) => s.site === site.id && s.day === day).sort((a, b) => effS(a).localeCompare(effS(b)));
         const cell = el("div", { class: "gcell" + (ro ? "" : " addable"), onclick: ro ? null : (e) => { if (e.target === cell) newShift(d, site.id, day); } },
           ...list.map((s) => shiftCard(d, s, { clash: clashes.has(s.id), ro })),
           ro ? null : el("button", { type: "button", class: "gadd", "data-w": "", "aria-label": `Add a shift at ${site.name} on ${longD(day)}`, onclick: () => newShift(d, site.id, day) }, svgi(ICON.plus)));
@@ -467,11 +482,12 @@
   }
 
   function personRows(d) {
-    const people = d.people.filter((p) => p.contractHours != null || d.shifts.some((s) => s.userId === p.id) || true);
-    return people.map((p) => {
+    return d.people.map((p) => {
       const mine = d.shifts.filter((s) => s.userId === p.id);
       const h = r2(mine.reduce((a, s) => a + s.hours, 0));
-      return { p, mine, h, over: p.contractHours != null && h > p.contractHours };
+      const ot = p.contractMax != null ? r2(Math.max(0, h - p.contractMax)) : 0;
+      const short = p.contractMin != null ? r2(Math.max(0, p.contractMin - h)) : 0;
+      return { p, mine, h, ot, short, over: ot > 0 };
     });
   }
   const offWord = (d, p, day) => {
@@ -479,18 +495,28 @@
     if (p.pattern?.[DAYS[dow(day)]] === "off") return ["Can't work", "cant"];
     return ["Off", ""];
   };
-  function hoursBar(h, c) {
-    const pct = c ? Math.min(100, (h / c) * 100) : 0;
-    return el("div", { class: "hbar" + (c && h > c ? " over" : ""), role: "img", "aria-label": c ? `${hrs(h)} of ${hrs(c)} contract hours${h > c ? ", over" : ""}` : `${hrs(h)} hours, no contract set` }, el("i", { style: `width:${pct}%` }));
+  // Hours against the contract: the bar runs to the maximum (or past it, in the overtime colour), with the
+  // minimum marked.
+  function hoursBar(h, p) {
+    const min = p.contractMin, max = p.contractMax ?? p.contractMin;
+    if (!max) return el("div", { class: "hbar", role: "img", "aria-label": `${hrs(h)} hours, no contract set` });
+    const scale = Math.max(max, h);
+    const inPct = (Math.min(h, max) / scale) * 100, otPct = (Math.max(0, h - max) / scale) * 100;
+    const label = `${hrs(h)} hours, contract ${contractLabel(p)}${h > max ? `, ${hrs(r2(h - max))} overtime` : min != null && h < min ? `, ${hrs(r2(min - h))} short of the minimum` : ""}`;
+    return el("div", { class: "hbar" + (h > max ? " over" : ""), role: "img", "aria-label": label },
+      el("i", { style: `width:${inPct}%` }), otPct ? el("i", { class: "ot", style: `width:${otPct}%` }) : null,
+      min != null && min < max ? el("span", { class: "min", style: `left:${(min / scale) * 100}%` }) : null);
   }
+  const hoursText = (h, p, ot, short) => `${hrs(h)}${contractLabel(p) ? " of " + contractLabel(p) : ""}h`;
 
   function personGrid(d) {
     const clashes = clashIds(d);
     const g = el("div", { class: "rgrid pgrid glass", role: "table", "aria-label": "Shifts by person and day" });
     g.append(el("div", { class: "gh corner", text: "Person" }), el("div", { class: "gh", text: "Hours" }), ...d.days.map((day) => el("div", { class: "gh" }, el("b", { text: short(day) }))));
-    for (const { p, mine, h, over } of personRows(d)) {
+    for (const { p, mine, h, ot, short } of personRows(d)) {
       g.append(el("div", { class: "gperson" }, avatar(p.name), el("span", { class: "t" }, el("b", { text: p.name }), el("span", { class: "s", text: ROLE[p.role] || "" }))),
-        el("div", { class: "ghours" + (over ? " over" : "") }, el("b", { text: `${hrs(h)}${p.contractHours != null ? " / " + hrs(p.contractHours) + "h" : "h"}` }), over ? el("span", { class: "vh", text: " over contract" }) : null, hoursBar(h, p.contractHours)));
+        el("div", { class: "ghours" + (ot ? " over" : "") }, el("b", { text: `${hrs(h)}${contractLabel(p) ? " / " + contractLabel(p) : ""}h` }),
+          ot ? el("span", { class: "otag", text: `${hrs(ot)}h overtime` }) : short ? el("span", { class: "shortx", text: `${hrs(short)}h short` }) : null, hoursBar(h, p)));
       d.days.forEach((day) => {
         const list = mine.filter((s) => s.day === day);
         if (list.length) { g.append(el("div", { class: "gcell" }, ...list.map((s) => shiftCard(d, s, { clash: clashes.has(s.id), showSite: true, showName: false })))); return; }
@@ -520,11 +546,11 @@
     const clashes = clashIds(d);
     const out = [dayStrip(d.days, R.pday, (k) => { R.pday = k; onPick(); }, ro ? [] : dayMarks(d))];
     if (R.view === "person" && !ro) {
-      const rows = personRows(d).map(({ p, mine, h, over }) => {
+      const rows = personRows(d).map(({ p, mine, h, ot, short }) => {
         const list = mine.filter((s) => s.day === day);
         const [w] = offWord(d, p, day);
         return el("div", { class: "lrow prow" }, avatar(p.name),
-          el("span", { class: "t" }, el("b", { text: p.name }), el("span", { class: "s" + (over ? " overtx" : "") , text: `${hrs(h)}${p.contractHours != null ? " of " + hrs(p.contractHours) : ""}h this week${over ? " · over contract" : ""}` }), hoursBar(h, p.contractHours)),
+          el("span", { class: "t" }, el("b", { text: p.name }), el("span", { class: "s" + (ot ? " overtx" : ""), text: `${hoursText(h, p)} this week${ot ? ` · ${hrs(ot)}h overtime` : short ? ` · ${hrs(short)}h short` : ""}` }), hoursBar(h, p)),
           list.length ? el("span", { class: "pshifts" }, ...list.map((s) => shiftCard(d, s, { clash: clashes.has(s.id), showSite: true, showName: false })))
             : el("button", { type: "button", class: "btn ghost sm", "data-w": "", onclick: () => newShift(d, p.sites?.[0] || firstOpenSite(d, day), day, p.id) }, w === "Off" ? "Add" : w));
       });
@@ -540,7 +566,7 @@
           ...d.shifts.filter((s) => s.site === site.id && s.day === day).map((s) => shiftCard(d, s, { clash: true, ro }))));
         continue;
       }
-      const list = d.shifts.filter((s) => s.site === site.id && s.day === day).sort((a, b) => a.start.localeCompare(b.start));
+      const list = d.shifts.filter((s) => s.site === site.id && s.day === day).sort((a, b) => effS(a).localeCompare(effS(b)));
       out.push(el("section", { class: "panel sitecard" }, head,
         list.length ? el("div", { class: "shlist" }, ...list.map((s) => shiftCard(d, s, { clash: clashes.has(s.id), ro }))) : el("p", { class: "note", text: "No shifts yet." }),
         ro ? null : el("button", { type: "button", class: "btn ghost sm addshift", "data-w": "", onclick: () => newShift(d, site.id, day) }, svgi(ICON.plus), "Add shift")));
@@ -554,7 +580,7 @@
     if (!wide.matches) return phoneDay(d, false);
     return [R.view === "person" ? personGrid(d) : siteGrid(d, false),
       el("div", { class: "legend rlegend" }, el("span", { class: "lg" }, el("i", { class: "sw" }), "Shift"), el("span", { class: "lg" }, el("i", { class: "sw open" }), "Open shift"),
-        el("span", { class: "lg" }, el("i", { class: "sw clash" }), "Clash"), el("span", { text: "Tap a shift to change, move or copy it. Tap an empty space to add one." }))];
+        el("span", { class: "lg" }, el("i", { class: "sw clash" }), "Clash"), el("span", { class: "lg" }, el("i", { class: "sw ot" }), "Overtime"), el("span", { text: "Tap a shift to change, move or copy it. Tap an empty space to add one." }))];
   }
 
   async function renderWeek() {
@@ -592,7 +618,8 @@
 
   function newShift(d, site, day, userId) {
     const s = d.sites.find((x) => x.id === site) || {};
-    openShift({ id: null, site, day, start: s.opensAt || "08:00", end: s.closesAt || "16:00", breakMins: 30, job: "", userId: userId || null, note: "" }, d);
+    const h = s.id ? hoursOn(s, d.days.indexOf(day)) : {};
+    openShift({ id: null, site, day, start: h.opensAt || "08:00", end: h.closesAt || "16:00", breakMins: 30, job: "", userId: userId || null, note: "" }, d);
   }
 
   function shiftFields(d, s) {
@@ -666,8 +693,8 @@
       const rows = r.candidates.map((c) => {
         const flag = c.flags[0];
         const pill = c.best ? el("span", { class: "pill ok", text: "Best fit" })
-          : flag ? el("span", { class: "pill " + (flag.severity === "error" || flag.kind === "untrained" ? "bad" : flag.severity === "warn" ? "warn" : ""), text: { clash: "Clash", time_off: "Time off", over_contract: "Over hours", rest: "Short rest", untrained: "Training", availability: "Availability", break: "Break", seven_days: "7 days", closed: "Closed" }[flag.kind] || "Check" }) : null;
-        const sub = flag ? flag.message : `Free · would be ${hrs(c.hoursIfGiven)}${c.contractHours != null ? " of " + hrs(c.contractHours) : ""}h`;
+          : flag ? el("span", { class: "pill " + (flag.severity === "error" || flag.kind === "untrained" ? "bad" : flag.severity === "warn" ? "warn" : ""), text: { clash: "Clash", time_off: "Time off", overtime: "Overtime", rest: "Short rest", untrained: "Training", availability: "Availability", break: "Break", seven_days: "7 days", closed: "Closed" }[flag.kind] || "Check" }) : null;
+        const sub = flag ? flag.message : `Free · would be ${hoursText(c.hoursIfGiven, c)}`;
         const row = el("button", { type: "button", class: "lrow cand" + (c.selectable ? "" : " dim"), disabled: !c.selectable, role: "radio", "aria-checked": "false",
           onclick: () => { pick = c.userId; for (const x of who.querySelectorAll(".cand")) x.setAttribute("aria-checked", String(x === row)); drawFoot(c.name); } },
           avatar(c.name), el("span", { class: "t" }, el("b", { text: c.name }), el("span", { class: "s", text: sub + (c.flags.length > 1 ? ` (+${c.flags.length - 1} more)` : "") })), pill, c.selectable ? el("span", { class: "radio", "aria-hidden": "true" }) : null);
@@ -711,8 +738,12 @@
         render();
       }, "btn ghost sm danger"));
 
+    // On the day (or after): amend when they actually started and finished.
+    const onDay = !isNew && s.userId && s.day <= londonToday()
+      ? el("div", { class: "stack amendbox" }, label("On the day"), el("div", { class: "list glass" }, amendRow(d, s, { onSaved: () => { closeSheets(); render(); } })))
+      : null;
     const title = isNew ? "New shift" : !s.userId ? "Open shift" : `${first(nameOf(d, s.userId))}'s shift`;
-    openSheet(title, el("div", { class: "sbody" }, f.box, who, msg, tools, foot), { left: cancelLink() });
+    openSheet(title, el("div", { class: "sbody" }, onDay, f.box, who, msg, tools, foot), { left: cancelLink() });
     drawFoot();
     drawWho();
   }
@@ -730,15 +761,16 @@
     const i = d.days.indexOf(day);
     const list = d.shifts.filter((x) => x.site === site && x.day === day).sort((a, b) => a.start.localeCompare(b.start));
     const people = new Set(list.filter((x) => x.userId).map((x) => x.userId)).size;
-    setHead(longD(day), `${s.name} · ${s.open[i] ? (s.opensAt && s.closesAt ? `open ${s.opensAt}–${s.closesAt}` : "open") : "closed"} · ${plural(people, "person", "people")}`, { back: ["Rota", "week"] });
+    const oh = hoursOn(s, i);
+    setHead(longD(day), `${s.name} · ${s.open[i] ? (oh.opensAt && oh.closesAt ? `open ${oh.opensAt}–${oh.closesAt}` : "open") : "closed"} · ${plural(people, "person", "people")}`, { back: ["Rota", "week"] });
     const strip = dayStrip(d.days, i, (k) => go(`day/${site}/${d.days[k]}`));
     const sitePick = seg(d.sites.filter((x) => x.inUse).map((x) => [x.id, x.name]), site, (v) => go(`day/${v}/${day}`), "Site");
     if (!s.open[i]) return [sitePick, strip, el("section", { class: "panel" }, el("p", { class: "note", text: s.closedWhy[i] ? `${s.name} is closed: ${s.closedWhy[i]}.` : `${s.name} is closed on ${DAY_NAMES[dow(day)]}s.` }))];
 
     // The timeline: from opening (or the earliest shift) to closing (or the latest).
-    const starts = list.map((x) => mins(x.start)), ends = list.map((x) => mins(x.end));
-    let a = Math.min(s.opensAt ? mins(s.opensAt) : 24 * 60, ...starts, 23 * 60), b = Math.max(s.closesAt ? mins(s.closesAt) : 0, ...ends, 60);
-    if (!list.length && !s.opensAt) { a = 7 * 60; b = 18 * 60; }
+    const starts = list.flatMap((x) => [mins(x.start), mins(effS(x))]), ends = list.flatMap((x) => [mins(x.end), mins(effE(x))]);
+    let a = Math.min(oh.opensAt ? mins(oh.opensAt) : 24 * 60, ...starts, 23 * 60), b = Math.max(oh.closesAt ? mins(oh.closesAt) : 0, ...ends, 60);
+    if (!list.length && !oh.opensAt) { a = 7 * 60; b = 18 * 60; }
     a = Math.floor(a / 60) * 60; b = Math.ceil(b / 60) * 60; if (b <= a) b = a + 60;
     const pos = (m) => ((m - a) / (b - a)) * 100;
     const clashes = clashIds(d);
@@ -747,27 +779,39 @@
     const rows = list.map((x) => {
       const nm = nameOf(d, x.userId);
       const other = x.userId ? d.shifts.filter((o) => o.userId === x.userId && o.day === day && o.id !== x.id) : [];
+      const xs = mins(effS(x)), xe = Math.max(mins(effE(x)), xs + 1);
       return el("div", { class: "tl-row" }, el("span", { class: "tl-name", text: nm ? first(nm) : "Open" }),
         el("div", { class: "tl-track" },
           ...other.map((o) => el("span", { class: "tl-bar ghost", style: `left:${pos(Math.max(a, mins(o.start)))}%;width:${pos(Math.min(b, mins(o.end))) - pos(Math.max(a, mins(o.start)))}%` }, `At ${d.sites.find((z) => z.id === o.site).name} till ${o.end}`)),
-          el("button", { type: "button", class: "tl-bar" + (!x.userId ? " open" : "") + (clashes.has(x.id) ? " clash" : ""), style: `left:${pos(mins(x.start))}%;width:${pos(mins(x.end)) - pos(mins(x.start))}%`,
-            onclick: () => openShift(x, d), "aria-label": `${nm || "Open shift"} ${x.start} to ${x.end}${x.job ? ", " + x.job : ""}${clashes.has(x.id) ? ", clash" : ""}` },
-          `${x.start}–${x.end}${x.job ? " · " + jobWord(x.job) : ""}${clashes.has(x.id) ? " · Clash" : ""}`)));
+          // Amended: the plan stays as an outline behind what was worked.
+          x.adjusted ? el("span", { class: "tl-plan", "aria-hidden": "true", style: `left:${pos(mins(x.start))}%;width:${pos(mins(x.end)) - pos(mins(x.start))}%` }) : null,
+          el("button", { type: "button", class: "tl-bar" + (!x.userId ? " open" : "") + (clashes.has(x.id) ? " clash" : "") + (x.overtime > 0 ? " ot" : "") + (x.adjusted ? " amended" : ""),
+            style: `left:${pos(xs)}%;width:${pos(xe) - pos(xs)}%`,
+            onclick: () => openShift(x, d), "aria-label": `${nm || "Open shift"} ${span(x)}${x.adjusted ? `, amended from ${x.start} to ${x.end}` : ""}${x.job ? ", " + x.job : ""}${clashes.has(x.id) ? ", clash" : ""}${x.overtime > 0 ? ", overtime" : ""}` },
+          `${span(x)}${x.job ? " · " + jobWord(x.job) : ""}${x.adjusted ? " · Amended" : ""}${x.overtime > 0 ? " · Overtime" : ""}${clashes.has(x.id) ? " · Clash" : ""}`)));
     });
     rows.push(el("div", { class: "tl-row" }, el("span", { class: "tl-name", text: "Add" }),
       el("button", { type: "button", class: "tl-track tl-add", "data-w": "", "aria-label": `Add a shift at ${s.name} on ${longD(day)}`, onclick: () => newShift(d, site, day) })));
     // People on shift each hour, against the minimum.
     const bars = el("div", { class: "tl-bars" });
-    const max = Math.max(1, s.minPeople, ...Array.from({ length: (b - a) / 60 }, (_, k) => list.filter((x) => x.userId && mins(x.start) <= a + k * 60 && mins(x.end) >= a + (k + 1) * 60).length));
+    const onAt = (t) => list.filter((x) => x.userId && mins(effS(x)) <= t && mins(effE(x)) >= t + 60).length;
+    const max = Math.max(1, s.minPeople, ...Array.from({ length: (b - a) / 60 }, (_, k) => onAt(a + k * 60)));
     for (let t = a; t < b; t += 60) {
-      const n = list.filter((x) => x.userId && mins(x.start) <= t && mins(x.end) >= t + 60).length;
-      const inHours = s.opensAt && s.closesAt && t >= mins(s.opensAt) && t < mins(s.closesAt);
+      const n = onAt(t);
+      const inHours = oh.opensAt && oh.closesAt && t >= mins(oh.opensAt) && t < mins(oh.closesAt);
       const low = inHours && n < s.minPeople;
       bars.append(el("span", { class: "tl-h" + (low ? " low" : ""), style: `left:${pos(t)}%;width:${pos(t + 60) - pos(t)}%;height:${Math.max(8, (n / max) * 100)}%`, title: `${hhmm(t)}: ${plural(n, "person", "people")}${low ? " (below " + s.minPeople + ")" : ""}` }, el("i", { text: String(n) })));
     }
     const tl = el("section", { class: "panel timeline" }, axis, ...rows,
       el("div", { class: "tl-row" }, el("span", { class: "tl-name", text: "On shift" }), bars),
-      el("p", { class: "note", text: s.opensAt && s.closesAt ? `Each bar shows how many people are on that hour. Red bars are below the ${plural(s.minPeople, "person", "people")} ${s.name} needs from ${s.opensAt} to ${s.closesAt}.` : "Set opening hours and minimum cover in Rota settings to check cover." }));
+      el("p", { class: "note", text: oh.opensAt && oh.closesAt ? `Each bar shows how many people are on that hour. Red bars are below the ${plural(s.minPeople, "person", "people")} ${s.name} needs from ${oh.opensAt} to ${oh.closesAt} on ${DAY_NAMES[dow(day)]}s.` : "Set opening hours and minimum cover in Rota settings to check cover." }));
+
+    // On the day: a slider per person to amend when they started and finished (sent home sick, stayed late).
+    const staffed = list.filter((x) => x.userId);
+    const amend = day <= londonToday() && staffed.length
+      ? el("section", { class: "stack amendbox" }, label("Amend hours on the day"), el("div", { class: "list glass" }, ...staffed.map((x) => amendRow(d, x, { onSaved: () => render() }))),
+        el("p", { class: "note", text: "Slide when someone actually started or finished, for example if they went home sick or stayed late. The planned shift is kept; hours, overtime and cover use the amended times." }))
+      : null;
 
     // Problems for this day, with a one-tap fix where there's an obvious one.
     const probs = d.problems.filter((p) => p.day === day && (!p.site || p.site === site || p.shiftIds.some((id) => list.some((x) => x.id === id))));
@@ -798,7 +842,55 @@
       alerts.push(el("div", { class: "alert rp " + p.severity, role: "note" }, el("span", { class: "ic" }, svgi(ICON.warn)),
         el("span", { class: "t" }, el("b", { text: p.severity === "error" ? "Problem" : p.severity === "warn" ? "Check" : "Note" }), el("span", { text: p.message })), ...fixes));
     }
-    return [sitePick, strip, tl, ...alerts];
+    return [sitePick, strip, tl, amend, ...alerts];
+  }
+
+  // One person's shift with start and finish sliders, in 5-minute steps: the start can move later (came in
+  // late) and the finish earlier (went home) or later (stayed on), up to 4 hours past the plan.
+  function amendRow(d, x, { onSaved } = {}) {
+    const nm = nameOf(d, x.userId) || "Someone";
+    const ps = mins(x.start), pe = mins(x.end);
+    let st = mins(effS(x)), en = mins(effE(x)), brk = x.adjusted ? x.actualBreakMins : x.breakMins;
+    const id = "am_" + x.id;
+    const startR = el("input", { type: "range", id: id + "_s", min: Math.max(0, ps - 180), max: pe, step: 5, value: st, "aria-label": `${first(nm)} started at` });
+    const endR = el("input", { type: "range", id: id + "_e", min: ps, max: Math.min(23 * 60 + 55, pe + 240), step: 5, value: en, "aria-label": `${first(nm)} finished at` });
+    const sOut = el("output", { for: startR.id }), eOut = el("output", { for: endR.id });
+    const brkIn = el("input", { type: "number", min: 0, max: 180, step: 5, value: String(brk), inputmode: "numeric", "aria-label": `${first(nm)}'s unpaid break in minutes` });
+    const why = el("input", { type: "text", maxlength: 200, value: x.adjustNote || "", placeholder: "Reason, e.g. went home sick", "aria-label": `Why ${first(nm)}'s hours changed` });
+    const sum = el("span", { class: "amsum", "aria-live": "polite" });
+    const save = btn("Save", null, "btn sm");
+    const reset = x.adjusted ? ghost("As planned", async () => {
+      if (await act(() => api("PUT", `/api/rota/shifts/${x.id}/actual`, { clear: true }), `${first(nm)}'s shift is back to ${x.start}–${x.end}`)) { if (R.weekData) R.weekData._at = 0; onSaved?.(); }
+    }, { class: "btn ghost sm" }) : null;
+    const quick = el("span", { class: "amquick" }, ...["Went home sick", "Left early", "Came in late", "Stayed late"].map((t) =>
+      el("button", { type: "button", class: "fchip", onclick: () => { why.value = t; draw(); } }, t)));
+    const changed = () => st !== mins(effS(x)) || en !== mins(effE(x)) || Number(brkIn.value || 0) !== brk || why.value.trim() !== (x.adjustNote || "");
+    function draw() {
+      st = Number(startR.value); en = Number(endR.value);
+      if (en < st) { en = st; endR.value = String(en); }
+      sOut.textContent = hhmm(st); eOut.textContent = hhmm(en);
+      const paid = r2(Math.max(0, en - st - Number(brkIn.value || 0)) / 60);
+      const diff = r2(paid - x.plannedHours);
+      sum.textContent = `${hrs(paid)}h paid` + (diff ? ` (${diff > 0 ? "+" : "−"}${hrs(Math.abs(diff))}h on the plan)` : "") + (en === st ? " · didn't work" : "");
+      sum.className = "amsum" + (diff > 0 ? " up" : diff < 0 ? " down" : "");
+      save.disabled = !changed() || (st === ps && en === pe && !x.adjusted);
+    }
+    startR.oninput = draw; endR.oninput = draw; brkIn.oninput = draw; why.oninput = draw;
+    save.onclick = async () => {
+      if (st === ps && en === pe && Number(brkIn.value || 0) === x.breakMins && !why.value.trim()) {
+        if (await act(() => api("PUT", `/api/rota/shifts/${x.id}/actual`, { clear: true }), "Back to the plan")) { if (R.weekData) R.weekData._at = 0; onSaved?.(); }
+        return;
+      }
+      if (await act(() => api("PUT", `/api/rota/shifts/${x.id}/actual`, { start: hhmm(st), end: hhmm(en), breakMins: Number(brkIn.value || 0), note: why.value.trim() }),
+        `${first(nm)}: ${hhmm(st)}–${hhmm(en)} saved`)) { if (R.weekData) R.weekData._at = 0; onSaved?.(); }
+    };
+    draw();
+    return el("div", { class: "lrow amrow" },
+      el("div", { class: "amhead" }, avatar(nm), el("span", { class: "t" }, el("b", { text: nm }),
+        el("span", { class: "s", text: `Planned ${x.start}–${x.end}${x.adjusted ? ` · amended${x.adjustNote ? ": " + x.adjustNote : ""}` : ""}` })), sum),
+      el("label", { class: "amslide", for: startR.id }, el("span", { text: "Started" }), startR, sOut),
+      el("label", { class: "amslide", for: endR.id }, el("span", { text: "Finished" }), endR, eOut),
+      el("div", { class: "amfoot" }, el("label", { class: "chours" }, el("span", { text: "Break" }), brkIn, el("span", { text: "min" })), why, quick, el("span", { class: "row" }, reset, save)));
   }
 
   /* ---------- my shifts (everyone) ---------- */
@@ -830,7 +922,9 @@
     const whenWord = nx.day === today ? "Today" : nx.day === addDays(today, 1) ? "Tomorrow" : longD(nx.day);
     const others = nx.others.filter((o) => !o.open);
     const hero = el("section", { class: "hero nextshift" },
-      el("div", { class: "kick", text: `Next shift · ${whenWord}` }), el("div", { class: "big", text: `${nx.start}–${nx.end}` }),
+      el("div", { class: "kick", text: `Next shift · ${whenWord}` }), el("div", { class: "big", text: span(nx) }),
+      nx.adjusted ? el("div", { class: "with", text: `Amended from ${nx.start}–${nx.end}${nx.adjustNote ? ": " + nx.adjustNote : ""}` }) : null,
+      nx.overtime > 0 ? el("div", { class: "with", text: `Includes ${hrs(nx.overtime)}h overtime` }) : null,
       el("div", { text: `${nx.siteName}${nx.job ? ` · you ${nx.job === "opens" ? "open" : "close"}` : ""}${nx.breakMins ? ` · ${nx.breakMins} min break` : ""}` }),
       others.length ? el("div", { class: "with", text: "With " + others.map((o) => first(o.name) + (o.start !== nx.start ? ` from ${o.start}` : "")).join(", ") }) : el("div", { class: "with", text: "On your own" }),
       nx.note ? el("div", { class: "with", text: nx.note }) : null,
@@ -846,19 +940,25 @@
         const cov = coverOf(s);
         return el("button", { type: "button", class: "lrow mrow", onclick: () => shiftActions(s, cov) },
           el("span", { class: "dbadge" }, el("span", { text: fmt(s.day, { weekday: "short" }).toUpperCase() }), el("b", { text: fmt(s.day, { day: "numeric" }) })),
-          el("span", { class: "t" }, el("b", { text: `${s.start}–${s.end}${s.job ? " · " + jobWord(s.job) : ""}` }),
-            el("span", { class: "s", text: (o.length ? "With " + o.map((x) => first(x.name)).join(", ") : "On your own") + (cov ? " · cover asked" : "") })),
+          el("span", { class: "t" }, el("b", { text: `${span(s)}${s.job ? " · " + jobWord(s.job) : ""}` }),
+            el("span", { class: "s", text: (s.adjusted ? `Amended from ${s.start}–${s.end} · ` : "") + (o.length ? "With " + o.map((x) => first(x.name)).join(", ") : "On your own") + (cov ? " · cover asked" : "") }),
+            s.overtime > 0 ? el("span", { class: "otag", text: `${hrs(s.overtime)}h overtime` }) : null),
           sitePill(s.site, s.siteName));
       })));
-      const total = r2(list.reduce((a, s) => a + s.hours, 0));
-      out.push(el("div", { class: "totrow" }, el("span", { text: w === monday(today) ? "This week (from today)" : weekLabel(w) }), el("b", { text: `${hrs(total)} hours` })));
+      // The whole week's hours (including any already worked), against the contract.
+      const wk = (r.weeks || []).find((x) => x.week === w);
+      const total = wk ? wk.hours : r2(list.reduce((a, s) => a + s.hours, 0));
+      const range = contractLabel(r);
+      out.push(el("div", { class: "totrow" }, el("span", { text: (w === monday(today) ? "This week" : weekLabel(w)) + (range ? ` · contract ${range}h` : "") }),
+        el("b", { class: wk?.overtime ? "overtx" : "", text: `${hrs(total)} hours${wk?.overtime ? ` · ${hrs(wk.overtime)}h overtime` : ""}` })));
     }
     return out;
   }
 
   function shiftActions(s, cov) {
     openSheet(`${shortM(s.day)} · ${s.start}–${s.end}`, el("div", { class: "sbody" },
-      el("p", { class: "note", text: `${s.siteName}${s.job ? " · " + jobWord(s.job).toLowerCase() : ""} · ${hrs(s.hours)} paid hours${s.breakMins ? ` (${s.breakMins} min unpaid break)` : ""}` }),
+      el("p", { class: "note", text: `${s.siteName}${s.job ? " · " + jobWord(s.job).toLowerCase() : ""} · ${hrs(s.hours)} paid hours${s.breakMins ? ` (${s.adjusted ? s.actualBreakMins : s.breakMins} min unpaid break)` : ""}${s.overtime > 0 ? ` · ${hrs(s.overtime)}h overtime` : ""}` }),
+      s.adjusted ? el("p", { class: "note", text: `Amended from ${s.start}–${s.end}${s.adjustNote ? ": " + s.adjustNote : ""}` }) : null,
       s.note ? el("p", { text: s.note }) : null,
       el("div", { class: "sfoot" }, ghost("Add to calendar", () => { calendarFile(s); closeSheets(); }),
         cov ? btn("Cover asked", null, "btn", { disabled: true }) : btn("Ask for cover", () => askCover(s)))), { left: cancelLink() });
@@ -1088,20 +1188,20 @@
     });
     const names = { roastery: "Roastery", cafe: "Cafe", asg: "ASG", factory: "Factory" };
     const stats = el("div", { class: "stat3 hstats" }, ...Object.entries(r.siteTotals).filter(([id, h]) => h || id !== "factory").map(([id, h]) => el("div", { class: "stat glass" }, el("b", { text: hrs(h) }), el("span", { text: names[id] }))));
-    const contractTotal = r2(r.people.reduce((a, p) => a + (p.contractHours || 0), 0));
     const table = el("table", { class: "htable" },
-      el("thead", {}, el("tr", {}, el("th", { scope: "col", text: "Person" }), el("th", { scope: "col", class: "n", text: "Rota" }), el("th", { scope: "col", class: "n", text: "Contract" }), el("th", { scope: "col", class: "n", text: "Diff" }))),
-      el("tbody", {}, ...r.people.map((p) => el("tr", {}, el("th", { scope: "row", text: p.name }), el("td", { class: "n", text: hrs(p.rotaHours) }),
-        el("td", { class: "n", text: p.contractHours == null ? "–" : hrs(p.contractHours) }),
-        el("td", { class: "n" + (p.difference > 0 ? " over" : ""), text: p.difference == null ? "–" : (p.difference > 0 ? "+" : p.difference < 0 ? "−" : "") + hrs(Math.abs(p.difference)), title: p.difference > 0 ? "Over contract" : "" })))),
-      el("tfoot", {}, el("tr", {}, el("th", { scope: "row", text: "Total" }), el("td", { class: "n", text: hrs(r.total) }), el("td", { class: "n", text: hrs(contractTotal) }), el("td"))));
+      el("thead", {}, el("tr", {}, el("th", { scope: "col", text: "Person" }), el("th", { scope: "col", class: "n", text: "Hours" }), el("th", { scope: "col", class: "n", text: "Contract" }), el("th", { scope: "col", class: "n", text: "Overtime" }))),
+      el("tbody", {}, ...r.people.map((p) => el("tr", {}, el("th", { scope: "row", text: p.name }),
+        el("td", { class: "n", text: hrs(p.rotaHours) + (p.amended ? "*" : ""), title: p.amended ? `Planned ${hrs(p.plannedHours)}h; ${plural(p.amended, "shift")} amended on the day` : "" }),
+        el("td", { class: "n", text: contractLabel(p) || "–" }),
+        el("td", { class: "n" + (p.overtime ? " over" : p.shortOfMin ? " short" : ""), text: p.overtime ? `+${hrs(p.overtime)}` : p.shortOfMin ? `−${hrs(p.shortOfMin)}` : "–", title: p.overtime ? "Overtime" : p.shortOfMin ? "Short of their minimum" : "" })))),
+      el("tfoot", {}, el("tr", {}, el("th", { scope: "row", text: "Total" }), el("td", { class: "n", text: hrs(r.total) }), el("td"), el("td", { class: "n" + (r.overtime ? " over" : ""), text: r.overtime ? `+${hrs(r.overtime)}` : "–" }))));
     return [stats, el("section", { class: "panel tablepanel" }, table),
-      el("p", { class: "note", text: `Paid hours on the rota (unpaid breaks taken off), including changes not yet published.${r.openHours ? ` ${hrs(r.openHours)} hours of open shifts aren't counted.` : ""}` }),
+      el("p", { class: "note", text: `Paid hours on the rota (unpaid breaks taken off), including changes not yet published. Overtime (+) is anything over someone's maximum contracted hours; − is hours short of their minimum.${r.people.some((p) => p.amended) ? " * Includes shifts amended on the day." : ""}${r.openHours ? ` ${hrs(r.openHours)} hours of open shifts aren't counted.` : ""}` }),
       el("div", { class: "row" }, el("a", { class: "btn ghost", href: `/api/rota/hours?start=${r.week}&format=csv`, download: `rota-hours-${r.week}.csv` }, "Download CSV"))];
   }
 
   async function renderSettings() {
-    setHead("Rota settings", "Opening times, minimum cover and contract hours", { back: ["More", "more"] });
+    setHead("Rota settings", "Opening times, minimum cover and contracted hours", { back: ["More", "more"] });
     const [sites, wk] = await Promise.all([get("/api/rota/sites"), loadWeek(R.week, true)]);
     const out = [label("Sites")];
     const dayAb = (n) => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][n];
@@ -1109,18 +1209,50 @@
       const o = el("input", { type: "time", value: s.opensAt || "", "aria-label": `${s.name} opens at` });
       const c = el("input", { type: "time", value: s.closesAt || "", "aria-label": `${s.name} closes at` });
       const n = el("input", { type: "number", value: String(s.minPeople), min: 0, max: 20, inputmode: "numeric", "aria-label": `${s.name} minimum people on shift` });
-      const sv = btn("Save", async () => { if (await act(() => api("PUT", "/api/rota/sites/" + s.id, { opensAt: o.value || null, closesAt: c.value || null, minPeople: Number(n.value || 0) }), `${s.name} saved`)) { if (R.weekData) R.weekData._at = 0; } }, "btn sm");
+      // Days with other hours (Sundays everywhere, Saturdays at ASG…): leave a day empty for the usual hours.
+      const dayIns = DAYS.map((k, i) => {
+        const h = s.dayHours?.[k] || {};
+        const di = el("input", { type: "time", value: h.opensAt || "", "aria-label": `${s.name} opens on ${DAY_NAMES[i]}s` });
+        const dc = el("input", { type: "time", value: h.closesAt || "", "aria-label": `${s.name} closes on ${DAY_NAMES[i]}s` });
+        const closed = s.closedDays.includes((i + 1) % 7);
+        return { k, i, di, dc, closed };
+      });
+      const daySummary = () => DAYS.map((k, i) => s.dayHours?.[k] ? `${DAY_NAMES[i].slice(0, 3)} ${s.dayHours[k].opensAt}–${s.dayHours[k].closesAt}` : null).filter(Boolean).join(", ");
+      const sumLine = el("span", { class: "s" });
+      const drawSum = () => { sumLine.textContent = daySummary() || "Same hours every day"; };
+      drawSum();
+      const dayGrid = el("details", { class: "dayhours" }, el("summary", {}, el("b", { text: "Hours by day" }), sumLine),
+        el("div", { class: "dhgrid" }, ...dayIns.map(({ i, di, dc, closed }) => el("div", { class: "dhrow" + (closed ? " closed" : "") },
+          el("span", { class: "dn", text: DAY_NAMES[i] }), closed ? el("span", { class: "s", text: "Closed" }) : null, di, dc))),
+        el("p", { class: "note", text: "Leave a day empty to use the usual hours above." }));
+      const sv = btn("Save", async () => {
+        const dayHours = {};
+        for (const { k, di, dc } of dayIns) if (di.value || dc.value) dayHours[k] = { opensAt: di.value || null, closesAt: dc.value || null };
+        const r = await act(() => api("PUT", "/api/rota/sites/" + s.id, { opensAt: o.value || null, closesAt: c.value || null, minPeople: Number(n.value || 0), dayHours }), `${s.name} saved`);
+        if (r) { s.dayHours = r.dayHours; drawSum(); if (R.weekData) R.weekData._at = 0; }
+      }, "btn sm");
       const status = !s.inUse ? "Not in use yet: set it up in the diary first" : s.closedDays.length ? `Closed ${s.closedDays.map(dayAb).join(", ")} (from the diary's Setup)` : "Open every day (from the diary's Setup)";
       return el("div", { class: "lrow setrow" }, el("span", { class: "t" }, el("b", { text: s.name }), el("span", { class: "s", text: status })),
-        el("span", { class: "setf" }, el("label", {}, el("span", { text: "Opens" }), o), el("label", {}, el("span", { text: "Closes" }), c), el("label", {}, el("span", { text: "Min people" }), n), sv));
+        el("span", { class: "setf" }, el("label", {}, el("span", { text: "Usually opens" }), o), el("label", {}, el("span", { text: "Closes" }), c), el("label", {}, el("span", { text: "Min people" }), n), sv),
+        dayGrid);
     })));
-    out.push(el("p", { class: "note", text: "Cover is checked hour by hour between opening and closing. Which days each site opens comes from the diary's Setup, and planned closures from Closures & holidays." }));
-    out.push(label("Contract hours"));
+    out.push(el("p", { class: "note", text: "Cover is checked hour by hour between opening and closing, using each day's own hours where it has them. Which days each site opens comes from the diary's Setup, and planned closures from Closures & holidays." }));
+    out.push(label("Contracted hours a week"));
     out.push(el("div", { class: "list glass" }, ...wk.people.map((p) => {
-      const inp = el("input", { type: "number", value: p.contractHours == null ? "" : String(p.contractHours), min: 0, max: 80, step: 0.5, inputmode: "decimal", placeholder: "None", "aria-label": `${p.name} contract hours a week` });
-      inp.onchange = async () => { if (await act(() => api("PUT", "/api/rota/people/" + p.id, { contractHours: inp.value === "" ? null : Number(inp.value) }), `${first(p.name)}: ${inp.value || "no"} contract hours`)) { if (R.weekData) R.weekData._at = 0; } };
-      return el("div", { class: "lrow" }, avatar(p.name), el("span", { class: "t" }, el("b", { text: p.name }), el("span", { class: "s", text: ROLE[p.role] || "" })), el("label", { class: "chours" }, inp, el("span", { text: "h a week" })));
+      const opts = { type: "number", min: 0, max: 80, step: 0.5, inputmode: "decimal", placeholder: "–" };
+      const lo = el("input", { ...opts, value: p.contractMin == null ? "" : String(p.contractMin), "aria-label": `${p.name} minimum contracted hours a week` });
+      const hi = el("input", { ...opts, value: p.contractMax == null ? "" : String(p.contractMax), "aria-label": `${p.name} maximum contracted hours a week` });
+      const save = async () => {
+        const body = { contractMin: lo.value === "" ? null : Number(lo.value), contractMax: hi.value === "" ? null : Number(hi.value) };
+        const r = await act(() => api("PUT", "/api/rota/people/" + p.id, body), `${first(p.name)}: ${contractLabel(body) || "no"} contracted hours`);
+        if (r) { p.contractMin = r.contractMin; p.contractMax = r.contractMax; if (R.weekData) R.weekData._at = 0; }
+        else { lo.value = p.contractMin == null ? "" : String(p.contractMin); hi.value = p.contractMax == null ? "" : String(p.contractMax); }
+      };
+      lo.onchange = save; hi.onchange = save;
+      return el("div", { class: "lrow crow" }, avatar(p.name), el("span", { class: "t" }, el("b", { text: p.name }), el("span", { class: "s", text: ROLE[p.role] || "" })),
+        el("span", { class: "crange" }, el("label", { class: "chours" }, el("span", { text: "Min" }), lo), el("label", { class: "chours" }, el("span", { text: "Max" }), hi)));
     })));
+    out.push(el("p", { class: "note", text: "Hours over someone's maximum show as overtime on the rota, in Hours and in their own shifts. Under the minimum shows as a note while planning." }));
     out.push(el("p", { class: "note", text: "Everyone with an active account can be on the rota. Add people and change roles on the diary's Admin page." }));
     return out;
   }

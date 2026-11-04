@@ -60,7 +60,13 @@ const SCHEMA = [
     user_id     TEXT,                         -- users.id; NULL = open shift
     note        TEXT NOT NULL DEFAULT '',
     updated_at  INTEGER NOT NULL,
-    updated_by  TEXT NOT NULL                 -- users.id
+    updated_by  TEXT NOT NULL,                -- users.id
+    actual_start TEXT,                        -- amended on the day (HH:MM); NULL = as planned
+    actual_end   TEXT,
+    actual_break INTEGER,                     -- unpaid minutes actually taken; NULL = as planned
+    adjust_note  TEXT NOT NULL DEFAULT '',    -- why, for example "went home sick"
+    adjusted_by  TEXT,
+    adjusted_at  INTEGER
   )`,
   "CREATE INDEX IF NOT EXISTS rota_shifts_day ON rota_shifts(day)",
   "CREATE INDEX IF NOT EXISTS rota_shifts_user_day ON rota_shifts(user_id, day)",
@@ -75,11 +81,14 @@ const SCHEMA = [
     site        TEXT PRIMARY KEY,
     opens_at    TEXT,                         -- HH:MM; NULL = not set
     closes_at   TEXT,
-    min_people  INTEGER NOT NULL DEFAULT 1    -- wanted on shift for every open hour
+    min_people  INTEGER NOT NULL DEFAULT 1,   -- wanted on shift for every open hour
+    day_hours   TEXT NOT NULL DEFAULT '{}'    -- JSON {"sat"|"sun"|…: {"opensAt","closesAt"}}: days with other hours
   )`,
   `CREATE TABLE IF NOT EXISTS rota_people (
     user_id         TEXT PRIMARY KEY,         -- users.id
-    contract_hours  REAL,                     -- per week; NULL = none
+    contract_hours  REAL,                     -- per week; NULL = none (kept equal to contract_max)
+    contract_min    REAL,                     -- contracted hours a week, at least; NULL = none
+    contract_max    REAL,                     -- and at most; more is overtime; NULL = none
     sites           TEXT NOT NULL DEFAULT '[]', -- JSON site ids they can get to; [] = any
     pattern         TEXT NOT NULL DEFAULT '{}', -- JSON {"mon":{"from","to"}|"any"|"off", …}; missing day = any
     updated_at      INTEGER NOT NULL
@@ -112,8 +121,28 @@ const SCHEMA = [
 // Upgrades older databases in place:
 // - before usernames and passwords (when people signed in with name + PIN): each account gets a username
 //   made from its name, and must choose a password at next sign-in (their old PIN works for that sign-in);
-// - before quick switching: adds the quick-PIN columns.
+// - before quick switching: adds the quick-PIN columns;
+// - before day-by-day opening hours, amended shifts and contract ranges: adds those rota columns
+//   (contract_min and contract_max start as the old single contract_hours).
+async function migrateRota(env: Env): Promise<void> {
+  const cols = await env.DB.prepare(
+    "SELECT 'shifts' AS t, name FROM pragma_table_info('rota_shifts') UNION ALL SELECT 'sites', name FROM pragma_table_info('rota_sites') UNION ALL SELECT 'people', name FROM pragma_table_info('rota_people')",
+  ).all<{ t: string; name: string }>();
+  const has = (t: string, c: string) => cols.results.some((x) => x.t === t && x.name === c);
+  const steps: string[] = [];
+  for (const [c, type] of [["actual_start", "TEXT"], ["actual_end", "TEXT"], ["actual_break", "INTEGER"], ["adjust_note", "TEXT NOT NULL DEFAULT ''"], ["adjusted_by", "TEXT"], ["adjusted_at", "INTEGER"]]) {
+    if (!has("shifts", c)) steps.push(`ALTER TABLE rota_shifts ADD COLUMN ${c} ${type}`);
+  }
+  if (!has("sites", "day_hours")) steps.push("ALTER TABLE rota_sites ADD COLUMN day_hours TEXT NOT NULL DEFAULT '{}'");
+  if (!has("people", "contract_min")) {
+    steps.push("ALTER TABLE rota_people ADD COLUMN contract_min REAL", "ALTER TABLE rota_people ADD COLUMN contract_max REAL",
+      "UPDATE rota_people SET contract_min = contract_hours, contract_max = contract_hours WHERE contract_hours IS NOT NULL");
+  }
+  if (steps.length) await env.DB.batch(steps.map((s) => env.DB.prepare(s)));
+}
+
 async function migrate(env: Env): Promise<void> {
+  await migrateRota(env);
   const cols = await env.DB.prepare("SELECT name FROM pragma_table_info('users')").all<{ name: string }>();
   const has = new Set(cols.results.map((c) => c.name));
   const steps: string[] = [];

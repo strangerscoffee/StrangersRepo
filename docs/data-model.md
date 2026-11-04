@@ -119,10 +119,10 @@ The staff rota (`src/rota.ts`, at `ROTA_HOST`) keeps its data in its own D1 tabl
 
 | Table | Columns |
 |---|---|
-| `rota_shifts` | `id, site (roastery\|cafe\|asg\|factory), day, start, end (after start, same day), break_mins (unpaid, 0–180), job ('opens'\|'closes'\|''), user_id (NULL = open shift), note, updated_at, updated_by` |
+| `rota_shifts` | `id, site (roastery\|cafe\|asg\|factory), day, start, end (after start, same day), break_mins (unpaid, 0–180), job ('opens'\|'closes'\|''), user_id (NULL = open shift), note, updated_at, updated_by, actual_start, actual_end, actual_break (as worked when amended on the day; NULL = as planned), adjust_note (why), adjusted_by, adjusted_at` |
 | `rota_weeks` | `week (Monday), published_at (NULL = draft), published_by, changed_at, changes (shift changes since it was last published)` |
-| `rota_sites` | `site, opens_at, closes_at (NULL = not set), min_people (default 1)` |
-| `rota_people` | `user_id, contract_hours (a week; NULL = none), sites (JSON site ids they can get to; [] = any), pattern (JSON {"mon":"any"\|"off"\|{"from","to"}, …}; a missing day = any), updated_at` |
+| `rota_sites` | `site, opens_at, closes_at (the usual hours; NULL = not set), min_people (default 1), day_hours (JSON {"sat"\|"sun"\|…: {"opensAt","closesAt"}}: weekdays with their own hours)` |
+| `rota_people` | `user_id, contract_min, contract_max (contracted hours a week, a range; NULL = none; hours over the max are overtime), contract_hours (kept equal to contract_max for older pages), sites (JSON site ids they can get to; [] = any), pattern (JSON {"mon":"any"\|"off"\|{"from","to"}, …}; a missing day = any), updated_at` |
 | `rota_time_off` | `id, user_id, from_day, to_day (inclusive), reason, status ('requested'\|'approved'\|'declined'\|'cancelled'), decided_by, decided_at, created_at` |
 | `rota_requests` | `id, kind ('claim' = take an open shift \| 'cover' = give my shift away), shift_id, from_user, to_user (cover: who's asked; NULL = anyone), taker, message, status ('open'\|'accepted'\|'approved'\|'declined'\|'cancelled'), decided_by, decided_at, created_at` |
 
@@ -137,19 +137,20 @@ Signed out gets 401 `unauthenticated`; writes count towards the per-IP write lim
 | Route | Who | What |
 |---|---|---|
 | `GET week?start=` | all | The week: `{week, days, published, changesSincePublish, sites:[{id,name,inUse,open[7],closedWhy[7],opensAt,closesAt,minPeople}], people, shifts, timeOff, problems}`. Staff get names only for `people`, no `timeOff` or `problems`, and no shifts until the week is published. |
-| `POST shifts`, `PATCH shifts/:id`, `DELETE shifts/:id` | manager | Create, change or delete a shift; each returns the week's new `problems`. Shifts on a closed day are refused. |
+| `POST shifts`, `PATCH shifts/:id`, `DELETE shifts/:id` | manager | Create, change or delete a shift; each returns the week's new `problems`. Shifts on a closed day are refused. Shift objects carry `start`/`end`/`breakMins` as planned, `actualStart`/`actualEnd`/`actualBreakMins`/`adjustNote` once amended (`adjusted`), `hours` (as worked), `plannedHours`, and in the week and My shifts views `overtime` (the part of `hours` over the person's max that week, marked in time order). Staff don't see other people's `overtime` or `adjustNote`. |
+| `PUT shifts/:id/actual` | manager | Amend a shift on the day (from its day on): `{start, end, breakMins?, note?}` as worked, or `{clear: true}` to go back to the plan. The plan is kept; hours, overtime and cover use the amended times. Giving the shift to someone else clears it. |
 | `POST week/copy` | manager | `{from, to, replace?}`: copies a week's shifts, skipping days a site is now closed; refuses (409) to overwrite unless `replace`. |
 | `POST week/publish` | manager | `{week}`: publishes or republishes. |
-| `GET mine?from=&to=` | all | My shifts in published weeks, each with who else is on at that site. |
-| `GET today?site=` | all | Today's (UK) shifts at a site when its week is published; for the diary's Today. |
-| `GET suggest?shift=` | manager | Everyone who could take a shift, best fit first, with flags: clash, time off, over contract, short rest, availability, untrained. |
+| `GET mine?from=&to=` | all | My shifts in published weeks, each with who else is on at that site, plus `contractMin`, `contractMax` and `weeks: [{week, hours, overtime}]` (whole weeks). |
+| `GET today?site=` | all | Today's (UK) shifts at a site when its week is published; for the diary's Today (with `actualStart`/`actualEnd` when amended). |
+| `GET suggest?shift=` | manager | Everyone who could take a shift, best fit first, with flags: clash, time off, overtime, short rest, availability, untrained. |
 | `GET hours?start=` (`&format=csv`) | manager | Paid hours per person and site against contract; CSV columns `name,role,contract_hours,rota_hours,difference,roastery,cafe,asg,factory`. |
 | `GET me`, `PUT me/availability` | all | My pattern, sites, contract, time off and requests; set my own pattern and sites. |
-| `PUT people/:userId` | manager | `{contractHours, sites?, pattern?}` for anyone. |
+| `PUT people/:userId` | manager | `{contractMin?, contractMax?, sites?, pattern?}` for anyone (min ≤ max; a field left out is kept). The older `{contractHours}` sets both. |
 | `POST time-off`, `PATCH time-off/:id` | all / manager / owner | Ask for time off (managers can add it for anyone, approved); approve or decline (manager); cancel (owner). |
 | `GET requests`, `POST requests`, `PATCH requests/:id` | all | Pickups (`claim`) and covers (`cover`); `{action: accept\|decline\|cancel\|approve}`. Approving re-checks the taker and refuses a clash or time off with 409. |
 | `GET open` | all | Open shifts in published weeks I could take. |
-| `GET sites`, `PUT sites/:site` | all / manager | Opening and closing time and minimum people per site. |
+| `GET sites`, `PUT sites/:site` | all / manager | Usual opening and closing time, minimum people and `dayHours` (weekdays with their own hours, for example Sundays) per site. `PUT` without `dayHours` keeps them; `dayHours: null` clears them. The week view gives each site `hours[7]`, that week's hours day by day. |
 | `GET links` | all | `{rota, diary}`: where each app lives, as seen from this address. |
 
-The checks (`computeProblems` in `src/rota.ts`): `open_shift`, `clash`, `time_off` and `closed` are errors; `no_opener`, `no_closer`, `short_cover`, `over_contract` and `rest` (under 11 hours) are warnings; `break` (over 6 hours with under 20 minutes), `availability` and `seven_days` are notes. They're prompts for the manager: publishing is allowed with problems.
+The checks (`computeProblems` in `src/rota.ts`): `open_shift`, `clash`, `time_off` and `closed` are errors; `no_opener`, `no_closer`, `short_cover` (against each day's own hours, counting who's actually there), `overtime` (over the max contracted hours) and `rest` (under 11 hours) are warnings; `break` (over 6 hours with under 20 minutes), `availability`, `seven_days` and `under_contract` (under the min contracted hours) are notes. They're prompts for the manager: publishing is allowed with problems.

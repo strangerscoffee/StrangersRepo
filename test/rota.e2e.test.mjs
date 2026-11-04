@@ -103,6 +103,21 @@ for (const [label, viewport] of [["phone", { width: 393, height: 852 }], ["iPad"
     assert.match(await a.page.locator("#onShift").innerText(), /You[\s\S]*Opens/);
     await a.page.locator("#openCard .sec", { hasText: "You're opening" }).waitFor();
 
+    // On the day, the manager amends Alex's finish with the slider (went home sick); the diary shows it.
+    await m.page.goto(srv.base + `/rota/#day/roastery/${today}`);
+    const row = m.page.locator(".amrow", { hasText: "Alex Brown" });
+    await row.waitFor();
+    await row.locator('input[type=range]').nth(1).evaluate((r) => { r.value = "720"; r.dispatchEvent(new Event("input", { bubbles: true })); });
+    assert.equal(await row.locator("output").nth(1).innerText(), "12:00");
+    await row.locator(".fchip", { hasText: "Went home sick" }).click();
+    await row.locator(".btn", { hasText: "Save" }).click();
+    await m.page.locator("#toast", { hasText: "Alex: 00:30–12:00 saved" }).waitFor();
+    w = await call("GET", "/api/rota/week?start=" + week);
+    assert.deepEqual([w.shifts[0].actualEnd, w.shifts[0].adjustNote, w.shifts[0].end], ["12:00", "Went home sick", "23:30"]);
+    await m.page.locator(".tl-bar.amended", { hasText: "00:30–12:00" }).waitFor();
+    await a.page.reload();
+    await a.page.locator("#onShift", { hasText: "00:30–12:00 (was 00:30–23:30)" }).waitFor();
+
     // A pickup: an open shift at the Cafe tomorrow, claimed by Alex, approved by the manager.
     const open = (await call("POST", "/api/rota/shifts", { site: "cafe", day: addDays(today, 1), start: "08:00", end: "12:00", breakMins: 0 })).shift;
     await call("POST", "/api/rota/week/publish", { week: addDays(today, 1) });
