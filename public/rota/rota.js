@@ -38,6 +38,10 @@
     chevR: '<path d="M9 6l6 6-6 6"/>', chevL: '<path d="M15 6l-6 6 6 6"/>', plus: '<path d="M12 5v14M5 12h14"/>',
     check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>', warn: '<path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17h.01"/>',
     cal: '<rect x="4" y="5" width="16" height="15" rx="3"/><path d="M4 10h16M9 3v4M15 3v4M12 13v4M10 15h4"/>',
+    send: '<path d="M4 12l16-8-6 16-2.5-6.5z"/><path d="M11.5 13.5L20 4"/>',
+    copy: '<rect x="8" y="8" width="12" height="12" rx="2.5"/><path d="M16 8V6a2 2 0 00-2-2H6a2 2 0 00-2 2v8a2 2 0 002 2h2"/>',
+    plane: '<path d="M3 13l18-7-7 18-2-8z"/>',
+    hand: '<path d="M8 13V6a1.5 1.5 0 013 0v5M11 11V4.5a1.5 1.5 0 013 0V11M14 11V6a1.5 1.5 0 013 0v7a6 6 0 01-6 6h-1a6 6 0 01-5-3l-2-3a1.5 1.5 0 012.5-1.6L8 13"/>',
   };
   const ROLE = { admin: "Admin", manager: "Manager", staff: "Staff" };
   const SITE_TONE = { roastery: "blue", cafe: "green", asg: "orange", factory: "purple" };
@@ -378,59 +382,81 @@
   const errorsIn = (d) => d.problems.filter((p) => p.severity === "error");
   const clashIds = (d) => new Set(d.problems.filter((p) => p.kind === "clash" || p.kind === "time_off").flatMap((p) => p.shiftIds));
 
-  function publishLabel(d) {
-    const errs = errorsIn(d);
-    if (d.published && !d.changesSincePublish) return "Published";
-    if (errs.length) {
-      const by = {};
-      for (const e of errs) by[e.kind] = (by[e.kind] || 0) + 1;
-      const words = { open_shift: ["open shift", "open shifts"], clash: ["clash", "clashes"], time_off: ["shift on time off", "shifts on time off"], closed: ["shift on a closed day", "shifts on closed days"] };
-      const parts = Object.entries(by).map(([k, n]) => `${n} ${(words[k] || [k, k])[n === 1 ? 0 : 1]}`);
-      return `${d.published ? "Publish changes" : "Publish"} anyway? ${parts.join(", ")}`;
+  // "Mon, Tue and Thu".
+  // Runs of three or more days read as a range: "Mon–Sat", "Mon, Wed–Fri and Sun".
+  const dayList = (days) => {
+    const ds = [...new Set(days)].sort(), parts = [];
+    for (let i = 0; i < ds.length;) {
+      let j = i;
+      while (j + 1 < ds.length && ds[j + 1] === addDays(ds[j], 1)) j++;
+      const w = (x) => fmt(x, { weekday: "short" });
+      if (j - i >= 2) parts.push(`${w(ds[i])}–${w(ds[j])}`); else for (let k = i; k <= j; k++) parts.push(w(ds[k]));
+      i = j + 1;
     }
-    if (d.published) return d.changesSincePublish ? "Publish changes" : "Published";
-    return "Publish";
+    return parts.length > 1 ? parts.slice(0, -1).join(", ") + " and " + parts[parts.length - 1] : parts[0] || "";
+  };
+  const joinAnd = (xs) => (xs.length > 1 ? xs.slice(0, -1).join(", ") + " and " + xs[xs.length - 1] : xs[0] || "");
+
+  // The week's problems, grouped so repeats read as one line: open shifts together, each site's missing openers,
+  // closers and short cover across its days, and everyone's overtime and short hours. Each group has its fix.
+  function problemGroups(d) {
+    const out = [];
+    const open = d.problems.filter((p) => p.kind === "open_shift");
+    if (open.length) {
+      const s = d.shifts.find((x) => x.id === open[0].shiftIds?.[0]);
+      out.push({ sev: "error", text: open.length === 1 ? open[0].message : `${plural(open.length, "open shift")} to fill`,
+        sub: open.length === 1 ? (s ? "Fill shows who could take it, best fit first" : "") : dayList(open.map((p) => p.day)), act: "Fill", go: () => focusProblem(d, open[0]) });
+    }
+    for (const p of d.problems) if (["clash", "time_off", "closed"].includes(p.kind)) out.push({ sev: "error", text: p.message, act: "Fix", go: () => focusProblem(d, p) });
+    const perSite = (kind) => {
+      const by = {};
+      for (const p of d.problems) if (p.kind === kind) (by[p.site] ||= []).push(p);
+      return Object.entries(by).map(([site, ps]) => ({ site: d.sites.find((x) => x.id === site), ps }));
+    };
+    for (const { site, ps } of perSite("short_cover")) {
+      out.push({ sev: "warn", text: `${site.name} drops below ${plural(site.minPeople, "person", "people")} at times on ${dayList(ps.map((p) => p.day))}`, sub: ps[0].message + (ps.length > 1 ? `, and ${plural(ps.length - 1, "more gap")}` : ""),
+        act: "See", go: () => go(`day/${site.id}/${ps[0].day}`) });
+    }
+    for (const [kind, verb] of [["no_opener", "opens"], ["no_closer", "closes"]]) {
+      for (const { site, ps } of perSite(kind)) out.push({ sev: "warn", text: `No one ${verb} ${site.name} on ${dayList(ps.map((p) => p.day))}`, act: "Fix", go: () => go(`day/${site.id}/${ps[0].day}`) });
+    }
+    const rows = personRows(d);
+    const over = rows.filter((r) => r.ot > 0).sort((a, b) => b.ot - a.ot);
+    if (over.length) out.push({ sev: "warn", text: `Overtime: ${over.map((r) => `${first(r.p.name)} +${hrs(r.ot)}h`).join(", ")}`, sub: over.length === 1 ? `Over their ${hrs(over[0].p.contractMax)}h maximum` : "Over their contracted maximum",
+      act: "See", go: () => focusPerson(over[0].p.id) });
+    for (const p of d.problems) if (p.kind === "rest") out.push({ sev: "warn", text: p.message, act: "See", go: () => focusProblem(d, p) });
+    const shortH = rows.filter((r) => r.short > 0 && d.problems.some((p) => p.kind === "under_contract" && p.userId === r.p.id));
+    if (shortH.length) out.push({ sev: "info", text: `${joinAnd(shortH.map((r) => `${first(r.p.name)} ${hrs(r.short)}h`))} short of their minimum hours`, act: "See", go: () => focusPerson(shortH[0].p.id) });
+    for (const p of d.problems) if (["break", "availability", "seven_days"].includes(p.kind)) out.push({ sev: "info", text: p.message, act: "See", go: () => focusProblem(d, p) });
+    return out;
   }
 
-  function problemChips(d, onFocus) {
-    const chips = [];
-    const open = d.problems.filter((p) => p.kind === "open_shift");
-    if (open.length) chips.push({ sev: "error", text: plural(open.length, "open shift"), act: "Fill", go: () => onFocus(open[0]) });
-    // Short cover is checked hour by hour, so it's one chip per site rather than one per gap.
-    const short = {};
-    for (const p of d.problems) if (p.kind === "short_cover") (short[p.site] ||= []).push(p);
-    for (const [site, ps] of Object.entries(short)) {
-      const days = [...new Set(ps.map((p) => p.day))];
-      const s = d.sites.find((x) => x.id === site);
-      chips.push({ sev: "warn", text: `${s.name} is short of cover on ${days.length === 1 ? DAY_NAMES[dow(days[0])] : plural(days.length, "day")}`, act: "See", go: () => go(`day/${site}/${days[0]}`), late: true });
-    }
-    for (const p of d.problems) {
-      if (p.kind === "open_shift" || p.kind === "short_cover") continue;
-      const act = { clash: "Fix", no_opener: "Fix", no_closer: "Fix", short_cover: "See", overtime: "See", under_contract: "See", time_off: "Fix", closed: "Fix" }[p.kind] || "See";
-      chips.push({ sev: p.severity, text: p.message, act, go: () => onFocus(p) });
-    }
-    // Approved time off is useful context while planning.
-    for (const t of d.timeOff) {
-      const from = t.from < d.days[0] ? d.days[0] : t.from, to = t.to > d.days[6] ? d.days[6] : t.to;
-      chips.push({ sev: "info", text: `${first(nameOf(d, t.userId))} off ${from === to ? fmt(from, { weekday: "short" }) : fmt(from, { weekday: "short" }) + "–" + fmt(to, { weekday: "short" })}${t.reason ? " (" + t.reason + ")" : ""}` });
-    }
-    if (!chips.length) return el("p", { class: "note okline" }, svgi(ICON.check), " No problems found this week.");
-    const rank = { error: 0, warn: 1, info: 2 };
-    chips.sort((a, b) => rank[a.sev] - rank[b.sev] || (a.late ? 1 : 0) - (b.late ? 1 : 0));
-    const box = el("div", { class: "pchips", role: "list", "aria-label": "Problems this week" });
-    const LIMIT = wide.matches ? 6 : 3;
-    chips.forEach((c, i) => {
-      const sevWord = c.sev === "error" ? "Problem" : c.sev === "warn" ? "Check" : "Note";
-      box.append(el("div", { class: "pchip " + c.sev + (i >= LIMIT ? " extra" : ""), role: "listitem" },
-        el("span", { class: "sdot " + (c.sev === "error" ? "bad" : c.sev === "warn" ? "warn" : ""), "aria-hidden": "true" }),
-        el("span", { class: "vh", text: sevWord + ": " }), el("span", { class: "tx", text: c.text }),
-        c.go ? el("button", { type: "button", class: "pact", onclick: c.go }, c.act) : null));
-    });
-    if (chips.length > LIMIT) {
-      const more = el("button", { type: "button", class: "pchip morechip", onclick: () => { box.classList.add("all"); more.remove(); } }, `${chips.length - LIMIT} more`);
-      box.append(more);
-    }
-    return box;
+  function problemPanel(d) {
+    const groups = problemGroups(d);
+    if (!groups.length) return el("p", { class: "note okline" }, svgi(ICON.check), " No problems found this week.");
+    const n = (s) => groups.filter((g) => g.sev === s).length;
+    const settled = d.published && !d.changesSincePublish;
+    const det = el("details", { class: "glass probs", open: R.probsOpen ?? (!settled && wide.matches) },
+      el("summary", {}, el("span", { class: "pt", text: settled ? "This week's checks" : "Before you publish" }),
+        el("span", { class: "counts" }, n("error") ? el("span", { class: "cnt bad", text: `${n("error")} must fix` }) : null,
+          n("warn") ? el("span", { class: "cnt warn", text: `${n("warn")} to check` }) : null,
+          n("info") ? el("span", { class: "cnt info", text: plural(n("info"), "note") }) : null),
+        el("span", { class: "chev" }, svgi(ICON.chevR))),
+      el("div", { class: "pgroups", role: "list" }, ...groups.map((g) => el("div", { class: "prob " + (g.sev === "error" ? "bad" : g.sev === "warn" ? "warn" : "info"), role: "listitem" },
+        el("span", { class: "vh", text: (g.sev === "error" ? "Must fix" : g.sev === "warn" ? "Check" : "Note") + ": " }),
+        el("span", { class: "tx" }, g.text, g.sub ? el("span", { text: g.sub }) : null),
+        g.go ? btn(g.act, g.go, g.sev === "error" ? "btn sm" : "btn sm soft") : null))));
+    det.addEventListener("toggle", () => { R.probsOpen = det.open; });
+    return det;
+  }
+
+  // Highlight one person's shifts in the planner (tap again, or tap the same person, to clear).
+  function focusPerson(id) {
+    R.focusPerson = R.focusPerson === id ? null : id;
+    if (R.view !== "site") { R.view = "site"; try { localStorage.setItem("rota.view", "site"); } catch (e) {} render(); return; }
+    rerenderWeekBody();
+    const p = R.focusPerson && R.weekData && personOf(R.weekData, R.focusPerson);
+    if (p) toast(`${first(p.name)}'s shifts highlighted`);
   }
 
   function focusProblem(d, p) {
@@ -441,46 +467,79 @@
     else if (p.site && p.day) go(`day/${p.site}/${p.day}`);
   }
 
-  function shiftCard(d, s, { clash, ro, showSite, showName = true } = {}) {
+  function shiftCard(d, s, { clash, ro, showSite, showName = true, compact } = {}) {
     const nm = nameOf(d, s.userId);
     const cls = "shc" + (!s.userId ? " open" : "") + (clash ? " clash" : "") + (s.overtime > 0 ? " ot" : "") + (s.adjusted ? " amended" : "") + (showSite ? " tone-" + (SITE_TONE[s.site] || "") : "");
     const site = d.sites.find((x) => x.id === s.site);
     const ot = s.overtime > 0;
     const tag = !s.userId ? [jobWord(s.job), "Fill"].filter(Boolean).join(" · ") : clash ? "Clash" : [jobWord(s.job), s.adjusted ? "Amended" : ""].filter(Boolean).join(" · ");
     const aria = `${effS(s)} to ${effE(s)}${s.adjusted ? ` (amended, planned ${s.start} to ${s.end})` : ""}, ${nm || "open shift"}${s.job ? ", " + s.job : ""}${clash ? ", clash" : ""}${ot ? `, ${hrs(s.overtime)} hours overtime` : ""}${showSite ? ", " + site.name : ""}`;
+    const dim = R.focusPerson && s.userId !== R.focusPerson ? " dim" : "";
+    if (compact) {
+      // The planner grid: the time on one line, then the name with one small tag (Fill, Clash, Overtime, Opens…).
+      const small = !s.userId ? "Fill" : clash ? "Clash" : ot ? "Overtime" : s.adjusted ? "Amended" : jobWord(s.job);
+      const k = [el("b", { class: "tm", text: span(s) }), el("span", { class: "w" }, el("span", { class: "nm", text: showSite && !showName ? site.name : nm ? first(nm) : "Open" }), small ? el("small", { class: ot && s.userId && !clash ? "o" : "", text: small }) : null)];
+      return ro ? el("div", { class: cls + " cmp" + dim, "aria-label": aria }, ...k) : el("button", { type: "button", class: cls + " cmp" + dim, "aria-label": aria, onclick: (e) => { e.stopPropagation(); openShift(s, d); } }, ...k);
+    }
     const kids = [el("b", { class: "tm", text: span(s) }),
       showName ? el("span", { class: "nm", text: nm ? first(nm) : "Open shift" }) : null,
       showSite ? el("span", { class: "nm", text: site.name }) : null,
       tag ? el("span", { class: "jb", text: tag }) : null,
       ot ? el("span", { class: "otag", text: `Overtime ${hrs(s.overtime)}h` }) : null];
-    return ro ? el("div", { class: cls, "aria-label": aria }, ...kids) : el("button", { type: "button", class: cls, "aria-label": aria, onclick: (e) => { e.stopPropagation(); openShift(s, d); } }, ...kids);
+    return ro ? el("div", { class: cls + dim, "aria-label": aria }, ...kids) : el("button", { type: "button", class: cls + dim, "aria-label": aria, onclick: (e) => { e.stopPropagation(); openShift(s, d); } }, ...kids);
   }
 
   function peopleOnDay(d, day) { return new Set(d.shifts.filter((s) => s.day === day && s.userId).map((s) => s.userId)).size; }
 
+  // People on a site that day (each counted once) against the site's minimum.
+  function coverOf(d, site, day) {
+    const n = new Set(d.shifts.filter((s) => s.site === site.id && s.day === day && s.userId).map((s) => s.userId)).size;
+    return { n, min: site.minPeople || 0, short: site.minPeople > 0 && n < site.minPeople };
+  }
+  function coverBar(d, site, day, add) {
+    const c = coverOf(d, site, day);
+    return el("div", { class: "cover" + (c.short ? " short" : "") },
+      el("span", { class: "num", title: c.min ? `${c.n} on, minimum ${c.min}` : `${c.n} on`, "aria-label": c.min ? `${plural(c.n, "person", "people")} on, minimum ${c.min}` : plural(c.n, "person", "people") + " on", text: c.min ? `${c.n}/${c.min}` : `${c.n} on` }),
+      el("span", { class: "cb", "aria-hidden": "true" }, el("i", { style: `width:${c.min ? Math.min(100, (c.n / c.min) * 100) : c.n ? 100 : 0}%` })),
+      add || null);
+  }
+  const siteHours = (site) => (site.opensAt && site.closesAt ? `${site.opensAt}–${site.closesAt}` : "");
+
   function siteGrid(d, ro) {
     const clashes = clashIds(d);
-    const g = el("div", { class: "rgrid glass", role: "table", "aria-label": "Shifts by site and day" });
+    const today = londonToday();
+    const td = (day) => (day === today ? " td" : "");
+    const used = d.sites.filter((s) => s.inUse), unused = d.sites.filter((s) => !s.inUse);
+    const g = el("div", { class: "rgrid sgrid", role: "table", "aria-label": "Shifts by site and day" });
     g.append(el("div", { class: "gh corner", role: "columnheader", text: "Site" }),
-      ...d.days.map((day) => el("div", { class: "gh" + (day === londonToday() ? " now" : ""), role: "columnheader" }, el("b", { text: short(day) }), el("span", { text: plural(peopleOnDay(d, day), "person", "people") }))));
-    for (const site of d.sites) {
+      ...d.days.map((day) => el("div", { class: "gh" + (day === today ? " now td" : ""), role: "columnheader" }, el("b", { text: short(day) }), el("span", { text: day === today ? "Today" : "\u00a0" }))));
+    for (const site of used) {
       g.append(el("div", { class: "gsite", role: "rowheader" },
-        el("b", { text: site.name }), el("span", { text: site.inUse ? openDays(site.open.map((o, i) => o || !!site.closedWhy[i])) : "Not in use yet" })));
-      if (!site.inUse) { g.append(el("div", { class: "gnone" }, "No shifts. Set this site up in the diary (Setup) to plan it.")); continue; }
+        el("b", {}, el("i", { class: "sq tone-" + (SITE_TONE[site.id] || ""), "aria-hidden": "true" }), site.name),
+        siteHours(site) ? el("span", { text: siteHours(site) }) : null,
+        el("span", { text: openDays(site.open.map((o, i) => o || !!site.closedWhy[i])) }),
+        site.minPeople ? el("span", { text: `Min ${site.minPeople} on shift` }) : null));
       d.days.forEach((day, i) => {
         if (!site.open[i]) {
           const here = d.shifts.filter((s) => s.site === site.id && s.day === day);
-          g.append(el("div", { class: "gcell closed" }, el("span", { class: "cl", text: site.closedWhy[i] ? `Closed: ${site.closedWhy[i]}` : "Closed" }), ...here.map((s) => shiftCard(d, s, { clash: true, ro }))));
+          g.append(el("div", { class: "gcell closed" + td(day) }, el("span", { class: "cl", text: site.closedWhy[i] ? `Closed: ${site.closedWhy[i]}` : "Closed" }), ...here.map((s) => shiftCard(d, s, { clash: true, ro, compact: true }))));
           return;
         }
         const list = d.shifts.filter((s) => s.site === site.id && s.day === day).sort((a, b) => effS(a).localeCompare(effS(b)));
-        const cell = el("div", { class: "gcell" + (ro ? "" : " addable"), onclick: ro ? null : (e) => { if (e.target === cell) newShift(d, site.id, day); } },
-          ...list.map((s) => shiftCard(d, s, { clash: clashes.has(s.id), ro })),
-          ro ? null : el("button", { type: "button", class: "gadd", "data-w": "", "aria-label": `Add a shift at ${site.name} on ${longD(day)}`, onclick: () => newShift(d, site.id, day) }, svgi(ICON.plus)));
+        const add = ro ? null : el("button", { type: "button", class: "gadd", "data-w": "", "aria-label": `Add a shift at ${site.name} on ${longD(day)}`, onclick: () => newShift(d, site.id, day) }, svgi(ICON.plus));
+        const cell = el("div", { class: "gcell" + td(day) + (ro ? "" : " addable"), onclick: ro ? null : (e) => { if (e.target === cell) newShift(d, site.id, day); } },
+          ro ? null : coverBar(d, site, day, add),
+          ...list.map((s) => shiftCard(d, s, { clash: clashes.has(s.id), ro, compact: true })));
         g.append(cell);
       });
     }
-    return g;
+    g.append(el("div", { class: "gsite gtot", role: "rowheader" }, el("span", { text: "People on" })),
+      ...d.days.map((day) => el("div", { class: "gtot" + td(day), text: plural(peopleOnDay(d, day), "person", "people") })));
+    if (unused.length && !ro) {
+      g.append(el("div", { class: "gfoot" }, el("span", { text: `${joinAnd(unused.map((s) => s.name))} ${unused.length === 1 ? "isn't" : "aren't"} set up in the diary yet, so ${unused.length === 1 ? "it can't" : "they can't"} have shifts.` }),
+        el("a", { class: "btn sm soft", href: R.links.diary }, "Set up in the diary")));
+    }
+    return el("div", { class: "glass gridcard" }, el("div", { class: "gridwrap" }, g));
   }
 
   function personRows(d) {
@@ -513,7 +572,7 @@
 
   function personGrid(d) {
     const clashes = clashIds(d);
-    const g = el("div", { class: "rgrid pgrid glass", role: "table", "aria-label": "Shifts by person and day" });
+    const g = el("div", { class: "rgrid pgrid", role: "table", "aria-label": "Shifts by person and day" });
     g.append(el("div", { class: "gh corner", text: "Person" }), el("div", { class: "gh", text: "Hours" }), ...d.days.map((day) => el("div", { class: "gh" }, el("b", { text: short(day) }))));
     for (const { p, mine, h, ot, short } of personRows(d)) {
       g.append(el("div", { class: "gperson" }, avatar(p.name), el("span", { class: "t" }, el("b", { text: p.name }), el("span", { class: "s", text: ROLE[p.role] || "" }))),
@@ -521,7 +580,7 @@
           ot ? el("span", { class: "otag", text: `${hrs(ot)}h overtime` }) : short ? el("span", { class: "shortx", text: `${hrs(short)}h short` }) : null, hoursBar(h, p)));
       d.days.forEach((day) => {
         const list = mine.filter((s) => s.day === day);
-        if (list.length) { g.append(el("div", { class: "gcell" }, ...list.map((s) => shiftCard(d, s, { clash: clashes.has(s.id), showSite: true, showName: false })))); return; }
+        if (list.length) { g.append(el("div", { class: "gcell" }, ...list.map((s) => shiftCard(d, s, { clash: clashes.has(s.id), showSite: true, showName: false, compact: true })))); return; }
         const [w, c] = offWord(d, p, day);
         g.append(el("button", { type: "button", class: "gcell offcell " + c, "data-w": "", "aria-label": `${p.name}, ${longD(day)}: ${w}. Add a shift`, onclick: () => newShift(d, p.sites?.[0] || firstOpenSite(d, day), day, p.id) }, w));
       });
@@ -530,9 +589,9 @@
     const open = d.shifts.filter((s) => !s.userId);
     if (open.length) {
       g.append(el("div", { class: "gperson" }, el("span", { class: "t" }, el("b", { text: "Open shifts" }), el("span", { class: "s", text: plural(open.length, "to fill", "to fill") }))), el("div", { class: "ghours" }));
-      d.days.forEach((day) => g.append(el("div", { class: "gcell" }, ...open.filter((s) => s.day === day).map((s) => shiftCard(d, s, { showSite: true, showName: false })))));
+      d.days.forEach((day) => g.append(el("div", { class: "gcell" }, ...open.filter((s) => s.day === day).map((s) => shiftCard(d, s, { showSite: true, showName: false, compact: true })))));
     }
-    return g;
+    return el("div", { class: "glass gridcard" }, el("div", { class: "gridwrap" }, g));
   }
   const firstOpenSite = (d, day) => (d.sites.find((s) => s.open[d.days.indexOf(day)]) || d.sites[0]).id;
 
@@ -561,8 +620,8 @@
     }
     for (const site of d.sites) {
       const head = el("div", { class: "scardh" }, el("b", { text: site.name }),
-        !ro && site.inUse && site.open[i] ? el("button", { type: "button", class: "linkbtn", onclick: () => go(`day/${site.id}/${day}`) }, "Day view") : null);
-      if (!site.inUse) { out.push(el("section", { class: "panel sitecard" }, head, el("p", { class: "note", text: "Not in use yet. Set this site up in the diary (Setup) to plan it." }))); continue; }
+        !ro && site.inUse && site.open[i] ? el("span", { class: "scardr" }, coverBar(d, site, day), el("button", { type: "button", class: "linkbtn", onclick: () => go(`day/${site.id}/${day}`) }, "Day view")) : null);
+      if (!site.inUse) continue;
       if (!site.open[i]) {
         out.push(el("section", { class: "panel sitecard" }, head, el("p", { class: "note", text: site.closedWhy[i] ? `Closed: ${site.closedWhy[i]}` : "Closed" }),
           ...d.shifts.filter((s) => s.site === site.id && s.day === day).map((s) => shiftCard(d, s, { clash: true, ro }))));
@@ -573,42 +632,103 @@
         list.length ? el("div", { class: "shlist" }, ...list.map((s) => shiftCard(d, s, { clash: clashes.has(s.id), ro }))) : el("p", { class: "note", text: "No shifts yet." }),
         ro ? null : el("button", { type: "button", class: "btn ghost sm addshift", "data-w": "", onclick: () => newShift(d, site.id, day) }, svgi(ICON.plus), "Add shift")));
     }
+    const unused = d.sites.filter((x) => !x.inUse);
+    if (unused.length && !ro) out.push(el("p", { class: "note", text: `${joinAnd(unused.map((x) => x.name))} ${unused.length === 1 ? "isn't" : "aren't"} set up in the diary yet, so ${unused.length === 1 ? "it can't" : "they can't"} have shifts.` }));
+    if (!ro && R.view !== "person") out.push(peoplePanel(d));
     return out;
+  }
+
+  // Everyone's hours this week against their contract, with what to know (holiday, days they can't work,
+  // one site only). Tapping someone highlights their shifts.
+  function peoplePanel(d) {
+    const rows = personRows(d).sort((a, b) => b.ot - a.ot || b.h - a.h);
+    const box = el("section", { class: "glass people", "aria-label": "People this week" },
+      el("h2", {}, "People this week", el("span", { text: "hours / contract" })));
+    const list = el("div", { class: "plist" });
+    for (const { p, h, ot, short: sh } of rows) {
+      const hol = d.days.filter((day) => d.timeOff.some((t) => t.userId === p.id && t.from <= day && t.to >= day));
+      const cant = d.days.filter((day) => p.pattern?.[DAYS[dow(day)]] === "off" && !hol.includes(day));
+      const meta = [contractLabel(p) ? contractLabel(p) + "h" : "No contract set",
+        hol.length ? `Holiday ${dayList(hol)}` : "", cant.length ? `Can't work ${dayList(cant)}` : "",
+        p.sites?.length === 1 ? `${d.sites.find((x) => x.id === p.sites[0])?.name || p.sites[0]} only` : ""].filter(Boolean);
+      const flag = ot ? el("b", { class: "o", text: `Overtime ${hrs(ot)}h` }) : sh && contractLabel(p) ? el("b", { class: "s", text: `${hrs(sh)}h short` }) : null;
+      list.append(el("button", { type: "button", class: "pr", "aria-pressed": String(R.focusPerson === p.id), onclick: () => focusPerson(p.id) },
+        avatar(p.name), el("span", { class: "top" }, el("span", { class: "n", text: p.name }), el("span", { class: "h" + (ot ? " o" : sh ? " s" : ""), text: `${hrs(h)}h` })),
+        hoursBar(h, p), el("span", { class: "meta" }, flag, flag ? " · " : null, meta.join(" · "))));
+    }
+    box.append(list, el("p", { class: "pfoot", text: R.focusPerson ? "Tap them again to show everyone." : "Tap someone to highlight their shifts. The tick on each bar is their minimum." }));
+    return box;
   }
 
   let weekBody = null;
   function rerenderWeekBody() { if (weekBody && R.weekData) weekBody.replaceChildren(...weekBodyKids(R.weekData)); }
   function weekBodyKids(d) {
     if (!wide.matches) return phoneDay(d, false);
-    return [R.view === "person" ? personGrid(d) : siteGrid(d, false),
-      el("div", { class: "legend rlegend" }, el("span", { class: "lg" }, el("i", { class: "sw" }), "Shift"), el("span", { class: "lg" }, el("i", { class: "sw open" }), "Open shift"),
-        el("span", { class: "lg" }, el("i", { class: "sw clash" }), "Clash"), el("span", { class: "lg" }, el("i", { class: "sw ot" }), "Overtime"), el("span", { text: "Tap a shift to change, move or copy it. Tap an empty space to add one." }))];
+    const legend = el("div", { class: "legend rlegend" }, el("span", { class: "lg" }, el("i", { class: "sw" }), "Shift"), el("span", { class: "lg" }, el("i", { class: "sw open" }), "Open shift"),
+      el("span", { class: "lg" }, el("i", { class: "sw clash" }), "Clash"), el("span", { class: "lg" }, el("i", { class: "sw ot" }), "Overtime"), el("span", { text: "Tap a shift to change, move or copy it. The + adds one." }));
+    if (R.view === "person") return [personGrid(d), legend];
+    return [el("div", { class: "split" }, el("div", { class: "stack" }, siteGrid(d, false), legend), peoplePanel(d))];
+  }
+
+  const weekRange = (w) => {
+    const e = addDays(w, 6), sm = fmt(w, { month: "short" }) === fmt(e, { month: "short" });
+    return sm ? `${fmt(w, { day: "numeric" })}–${fmt(e, { day: "numeric", month: "short" })}` : `${fmt(w, { day: "numeric", month: "short" })}–${fmt(e, { day: "numeric", month: "short" })}`;
+  };
+  function weekNav(cur, set, { min, max } = {}) {
+    const thisWeek = monday(londonToday());
+    return [el("button", { type: "button", class: "iconbtn", "aria-label": "Previous week", disabled: min && cur <= min, onclick: () => set(addDays(cur, -7)) }, svgi(ICON.chevL)),
+      cur === thisWeek ? el("span", { class: "wk", text: weekRange(cur) }) : el("button", { type: "button", class: "btn ghost sm wk", onclick: () => set(thisWeek), "aria-label": `Showing ${weekRange(cur)}. Back to this week` }, "This week"),
+      el("button", { type: "button", class: "iconbtn", "aria-label": "Next week", disabled: max && cur >= max, onclick: () => set(addDays(cur, 7)) }, svgi(ICON.chevR))];
   }
 
   async function renderWeek([day] = []) {
     // #week/<date> (from the admin section) opens that week; the address then goes back to #week.
     if (/^\d{4}-\d{2}-\d{2}$/.test(day || "")) { R.week = monday(day); try { history.replaceState(null, "", "#week"); } catch (e) { /* ignore */ } }
     const d = await loadWeek(R.week, true);
+    if (R.focusWeek !== d.week) { R.focusPerson = null; R.probsOpen = undefined; R.focusWeek = d.week; }
+    if (R.focusPerson && !personOf(d, R.focusPerson)) R.focusPerson = null;
     const total = r2(d.shifts.reduce((a, s) => a + s.hours, 0));
-    const state = d.published ? (d.changesSincePublish ? `published · ${plural(d.changesSincePublish, "change")} since publishing` : "published") : "draft, not published";
-    setHead("Rota", `${weekLabel(d.week)} · ${state} · ${hrs(total)} hours`, {
-      actions: [el("button", { type: "button", class: "iconbtn", "aria-label": "Previous week", onclick: () => { R.week = addDays(R.week, -7); render(); } }, svgi(ICON.chevL)),
-        el("button", { type: "button", class: "iconbtn", "aria-label": "Next week", onclick: () => { R.week = addDays(R.week, 7); render(); } }, svgi(ICON.chevR))],
+    const people = new Set(d.shifts.filter((s) => s.userId).map((s) => s.userId)).size;
+    const settled = d.published && !d.changesSincePublish;
+    const status = !d.published ? ["draft", "Draft"] : settled ? ["pub", "Published"] : ["chg", `Published · ${plural(d.changesSincePublish, "change")} not sent`];
+    setHead(weekLabel(d.week), `${hrs(total)} hours · ${plural(d.shifts.length, "shift")} · ${plural(people, "person", "people")}${d.publishedAt ? ` · published ${fmt(new Date(d.publishedAt).toISOString().slice(0, 10), { weekday: "short", day: "numeric", month: "short" })}` : ""}`, {
+      actions: weekNav(d.week, (w) => { R.week = w; render(); }),
     });
+    $("#pageTitle").append(" ", el("span", { class: "wstatus " + status[0], text: status[1] }));
     if (R.pday > 6) R.pday = 0;
-    const pub = btn(publishLabel(d), async () => {
-      const r = await act(() => api("POST", "/api/rota/week/publish", { week: d.week }), "Published. Staff can see this week now.");
-      if (r) render();
-    }, "btn" + (errorsIn(d).length && !(d.published && !d.changesSincePublish) ? " warnbtn" : ""), { disabled: d.published && !d.changesSincePublish });
+    const pub = settled ? btn("Up to date", null, "btn ghost pubbtn", { disabled: true, title: "Nothing to send: everyone has the latest" })
+      : el("button", { type: "button", class: "btn pubbtn", "data-w": "", onclick: () => publishSheet(d) }, svgi(ICON.send), d.published ? `Publish ${plural(d.changesSincePublish, "change")}` : "Publish week");
     const prevWeek = addDays(d.week, -7);
     const copy = d.shifts.length
-      ? twoTap("Copy last week", `Replace ${plural(d.shifts.length, "shift")}?`, () => copyWeek(prevWeek, d.week, true), "btn ghost")
-      : ghost("Copy last week", () => copyWeek(prevWeek, d.week, false));
+      ? twoTap("Copy last week", `Replace ${plural(d.shifts.length, "shift")}?`, () => copyWeek(prevWeek, d.week, true), "btn soft")
+      : btn("Copy last week", () => copyWeek(prevWeek, d.week, false), "btn soft");
     const toolbar = el("div", { class: "rtool" },
       seg([["site", "By site"], ["person", "By person"]], R.view, (v) => { R.view = v; try { localStorage.setItem("rota.view", v); } catch (e) {} render(); }, "View"),
       el("span", { class: "grow" }), copy, pub);
     weekBody = el("div", { class: "stack" }, ...weekBodyKids(d));
-    return [toolbar, problemChips(d, (p) => focusProblem(d, p)), weekBody];
+    return [toolbar, problemPanel(d), weekBody];
+  }
+
+  // What goes out before it goes: the shifts and hours, who'll see it, and anything still to check.
+  function publishSheet(d) {
+    const groups = problemGroups(d);
+    const errs = groups.filter((g) => g.sev === "error").length, warns = groups.filter((g) => g.sev === "warn").length;
+    const total = r2(d.shifts.reduce((a, s) => a + s.hours, 0));
+    const people = new Set(d.shifts.filter((s) => s.userId).map((s) => s.userId)).size;
+    const kv = (k, v, cls) => el("div", { class: "kv" }, el("span", { text: k }), el("span", { class: cls || "", text: v }));
+    const still = [errs ? plural(errs, "problem") : "", warns ? plural(warns, "warning") : ""].filter(Boolean).join(" · ");
+    const changes = d.published ? plural(d.changesSincePublish, "change") : "";
+    const msg = el("p", { class: "smsg", role: "alert" });
+    openSheet(d.published ? `Publish ${changes}?` : `Publish the ${weekLabel(d.week).replace(/^W/, "w")}?`, el("div", { class: "sbody" },
+      d.published ? el("p", { class: "note", text: "Everyone on the rota sees the updated week straight away." }) : null,
+      el("div", { class: "kvs" }, kv("Shifts", `${d.shifts.length} · ${hrs(total)} hours`), kv("People who'll see it", String(people)),
+        kv("Still to check", still || "Nothing", errs ? "bad" : warns ? "warn" : "ok")),
+      errs ? el("p", { class: "note", text: "You can publish with problems; open shifts go to Open shifts for staff to pick up." }) : null, msg,
+      el("div", { class: "sfoot" }, ghost("Not yet", closeSheets), btn(d.published ? "Publish changes" : "Publish", async (e) => {
+        const b = e.currentTarget; b.disabled = true;
+        try { await api("POST", "/api/rota/week/publish", { week: d.week }); closeSheets(); toast("Published. Staff can see this week now."); render(); }
+        catch (err) { msg.textContent = err.message; b.disabled = false; }
+      }))), { left: cancelLink() });
   }
 
   async function copyWeek(from, to, replace) {
@@ -916,47 +1036,160 @@
       return [toggle, body];
     }
     const today = londonToday(), now = londonNow();
-    const [r, me] = await Promise.all([get(`/api/rota/mine?from=${today}&to=${addDays(today, 27)}`), get("/api/rota/me")]);
+    // Four weeks back to eight ahead, so one request (up to three months) covers it.
+    const lo = addDays(monday(today), -28), hi = addDays(monday(today), 56);
+    if (!R.mineWeek || R.mineWeek < lo || R.mineWeek > hi) R.mineWeek = monday(today);
+    const wk = R.mineWeek;
+    // One request covers the chosen week and the next four weeks from today.
+    const from = wk < today ? wk : today, to = addDays(wk, 6) > addDays(today, 27) ? addDays(wk, 6) : addDays(today, 27);
+    const [r, me, open] = await Promise.all([get(`/api/rota/mine?from=${from}&to=${to}`), get("/api/rota/me"), get("/api/rota/open").catch(() => ({ shifts: [] }))]);
     R.approvers = me.approvers;
-    setHead("My shifts", u.name, {});
+    const ap = approverText(), apWord = ap === "A manager" ? "a manager" : ap;
+    setHead("My shifts", u.name, { actions: weekNav(wk, (w) => { R.mineWeek = w; render(); }, { min: lo, max: hi }) });
     const coverOf = (s) => me.requests.find((q) => q.kind === "cover" && q.fromUser === u.id && q.shift?.id === s.id && ["open", "accepted"].includes(q.status));
     const upcoming = r.shifts.filter((s) => s.day > today || (s.day === today && s.end > now));
-    if (!upcoming.length) return [toggle, el("section", { class: "panel" }, el("p", { text: r.published.length ? "No shifts for you in the next four weeks." : "No rota has been published yet. You'll see your shifts here when a manager publishes the week." }))];
-    const nx = upcoming[0];
-    const whenWord = nx.day === today ? "Today" : nx.day === addDays(today, 1) ? "Tomorrow" : longD(nx.day);
-    const others = nx.others.filter((o) => !o.open);
-    const hero = el("section", { class: "hero nextshift" },
-      el("div", { class: "kick", text: `Next shift · ${whenWord}` }), el("div", { class: "big", text: span(nx) }),
-      nx.adjusted ? el("div", { class: "with", text: `Amended from ${nx.start}–${nx.end}${nx.adjustNote ? ": " + nx.adjustNote : ""}` }) : null,
-      nx.overtime > 0 ? el("div", { class: "with", text: `Includes ${hrs(nx.overtime)}h overtime` }) : null,
-      el("div", { text: `${nx.siteName}${nx.job ? ` · you ${nx.job === "opens" ? "open" : "close"}` : ""}${nx.breakMins ? ` · ${nx.breakMins} min break` : ""}` }),
-      others.length ? el("div", { class: "with", text: "With " + others.map((o) => first(o.name) + (o.start !== nx.start ? ` from ${o.start}` : "")).join(", ") }) : el("div", { class: "with", text: "On your own" }),
-      nx.note ? el("div", { class: "with", text: nx.note }) : null,
-      el("div", { class: "row" }, el("button", { type: "button", class: "hbtn", onclick: () => calendarFile(nx) }, "Add to calendar"),
-        coverOf(nx) ? el("span", { class: "hbtn on", text: "Cover asked" }) : el("button", { type: "button", class: "hbtn", "data-w": "", onclick: () => askCover(nx) }, "Ask for cover")));
-    const weeks = {};
-    for (const s of upcoming) (weeks[monday(s.day)] ||= []).push(s);
-    const out = [toggle, hero];
-    for (const [w, list] of Object.entries(weeks)) {
-      out.push(label(w === monday(today) ? "This week" : weekLabel(w)));
-      out.push(el("div", { class: "list glass" }, ...list.map((s) => {
-        const o = s.others.filter((x) => !x.open);
-        const cov = coverOf(s);
-        return el("button", { type: "button", class: "lrow mrow", onclick: () => shiftActions(s, cov) },
-          el("span", { class: "dbadge" }, el("span", { text: fmt(s.day, { weekday: "short" }).toUpperCase() }), el("b", { text: fmt(s.day, { day: "numeric" }) })),
-          el("span", { class: "t" }, el("b", { text: `${span(s)}${s.job ? " · " + jobWord(s.job) : ""}` }),
-            el("span", { class: "s", text: (s.adjusted ? `Amended from ${s.start}–${s.end} · ` : "") + (o.length ? "With " + o.map((x) => first(x.name)).join(", ") : "On your own") + (cov ? " · cover asked" : "") }),
-            s.overtime > 0 ? el("span", { class: "otag", text: `${hrs(s.overtime)}h overtime` }) : null),
-          sitePill(s.site, s.siteName));
-      })));
-      // The whole week's hours (including any already worked), against the contract.
-      const wk = (r.weeks || []).find((x) => x.week === w);
-      const total = wk ? wk.hours : r2(list.reduce((a, s) => a + s.hours, 0));
-      const range = contractLabel(r);
-      out.push(el("div", { class: "totrow" }, el("span", { text: (w === monday(today) ? "This week" : weekLabel(w)) + (range ? ` · contract ${range}h` : "") }),
-        el("b", { class: wk?.overtime ? "overtx" : "", text: `${hrs(total)} hours${wk?.overtime ? ` · ${hrs(wk.overtime)}h overtime` : ""}` })));
+    const days = [0, 1, 2, 3, 4, 5, 6].map((i) => addDays(wk, i));
+    const weekOut = r.published.includes(wk);
+    const inWeek = r.shifts.filter((s) => s.day >= wk && s.day <= days[6]);
+    const holidayOn = (day) => me.timeOff.find((t) => t.status === "approved" && t.from <= day && t.to >= day);
+    const pat = (day) => me.pattern?.[DAYS[dow(day)]];
+
+    // The left column: next shift (or what to do while nothing's out), the week strip, what's coming up.
+    const left = [];
+    if (upcoming.length) {
+      const nx = upcoming[0];
+      const whenWord = nx.day === today ? "Today" : nx.day === addDays(today, 1) ? "Tomorrow" : longD(nx.day);
+      const others = nx.others.filter((o) => !o.open);
+      left.push(el("section", { class: "hero nextshift" },
+        el("div", { class: "kick", text: `Next shift · ${whenWord}` }), el("div", { class: "big", text: span(nx) }),
+        nx.adjusted ? el("div", { class: "with", text: `Amended from ${nx.start}–${nx.end}${nx.adjustNote ? ": " + nx.adjustNote : ""}` }) : null,
+        nx.overtime > 0 ? el("div", { class: "with", text: `Includes ${hrs(nx.overtime)}h overtime` }) : null,
+        el("div", { text: `${nx.siteName}${nx.job ? ` · you ${nx.job === "opens" ? "open" : "close"}` : ""}${nx.breakMins ? ` · ${nx.breakMins} min break` : ""}` }),
+        others.length ? el("div", { class: "with", text: "With " + others.map((o) => first(o.name) + (o.start !== nx.start ? ` from ${o.start}` : "")).join(", ") }) : el("div", { class: "with", text: "On your own" }),
+        nx.note ? el("div", { class: "with", text: nx.note }) : null,
+        el("div", { class: "row" }, el("button", { type: "button", class: "hbtn", onclick: () => calendarFile(nx) }, svgi(ICON.cal), "Add to calendar"),
+          coverOf(nx) ? el("span", { class: "hbtn on", text: "Cover asked" }) : el("button", { type: "button", class: "hbtn", "data-w": "", onclick: () => askCover(nx) }, "Ask for cover"))));
+    } else {
+      const anyAhead = r.published.some((w) => w >= monday(today));
+      const last = [...r.shifts].filter((s) => s.day < today).pop();
+      const patText = availText(me.pattern);
+      left.push(el("section", { class: "panel mempty" },
+        el("h2", { text: anyAhead ? "No shifts for you yet" : "The rota isn't out yet" }),
+        el("p", { class: "note", text: (anyAhead ? "You're not on the published weeks ahead. New shifts appear here as soon as a manager adds you." : "Your shifts appear here as soon as a manager publishes the week.") + (last ? ` Your last shift was ${shortM(last.day)} at ${last.siteName}.` : "") }),
+        el("div", { class: "msteps" },
+          step("avail", "acc", "Check when you can work", patText ? `Managers plan around it. ${patText}.` : "Managers plan around it.", "Check", () => go("avail")),
+          step("plane", "ok", "Need time off?", "Ask now so it's in before they plan.", "Ask", askTimeOff))));
     }
-    return out;
+    left.push(el("div", { class: "label mlabel" }, el("span", { text: wk === monday(today) ? "Your week" : `Week of ${fmt(wk, { day: "numeric", month: "long" })}` }),
+      el("span", { text: weekOut ? plural(inWeek.length, "shift") : "not published yet" })));
+    left.push(el("div", { class: "glass mweek", role: "list", "aria-label": "Your week" }, ...days.map((day) => {
+      const here = inWeek.filter((s) => s.day === day);
+      const hol = holidayOn(day);
+      let blks;
+      if (!weekOut) blks = [el("div", { class: "blk draft", text: "Not out yet" })];
+      else if (here.length) blks = here.map((s) => {
+        const tone = SITE_TONE[s.site] || "";
+        return el("button", { type: "button", class: `blk shift tone-${tone}` + (s.overtime > 0 ? " ot" : "") + (day < today ? " past" : ""), onclick: () => shiftActions(s, coverOf(s)),
+          "aria-label": `${longD(day)}: ${span(s)} at ${s.siteName}${s.job ? ", " + jobWord(s.job).toLowerCase() : ""}${s.overtime > 0 ? `, ${hrs(s.overtime)}h overtime` : ""}` },
+          el("b", { class: "tm" }, effS(s), el("br"), effE(s)), el("span", { class: "site", "data-s": s.siteName.slice(0, 1), text: s.siteName }), el("span", { class: "jobw", text: jobWord(s.job) || " " }));
+      });
+      else if (hol) blks = [el("div", { class: "blk hol", text: "Holiday" })];
+      else if (pat(day) === "off") blks = [el("div", { class: "blk off cant", text: "Can't work" })];
+      else blks = [el("div", { class: "blk off", text: "Off" })];
+      return el("div", { class: "mday" + (day === today ? " today" : ""), role: "listitem" },
+        el("div", { class: "dh" }, fmt(day, { weekday: "short" }), el("b", { text: fmt(day, { day: "numeric" }) })), ...blks);
+    }), weekOut && inWeek.length ? el("div", { class: "mlegend" }, ...[...new Map(inWeek.map((s) => [s.site, s.siteName]))].map(([id, n]) => el("span", {}, el("i", { class: "tone-" + (SITE_TONE[id] || "") }), `${n[0]} ${n}`)),
+      inWeek.some((s) => s.overtime > 0) ? el("span", {}, el("i", { class: "otsw" }), "Overtime") : null) : null));
+    const later = upcoming.filter((s) => s.day > days[6]).slice(0, 8);
+    if (later.length) {
+      left.push(label("Coming up"));
+      left.push(el("div", { class: "list glass" }, ...later.map((s) => mineRow(s, coverOf(s)))));
+    }
+    if (inWeek.some((s) => s.overtime > 0)) left.push(el("p", { class: "note mnote", text: "Overtime shows in pink: it's hours over your contract's maximum." }));
+
+    // The right column: hours, what needs the person, their requests, when they can work.
+    const right = [];
+    const wkTot = (r.weeks || []).find((x) => x.week === wk);
+    const h = wkTot ? wkTot.hours : r2(inWeek.reduce((a, s) => a + s.hours, 0));
+    const ot = wkTot?.overtime || 0;
+    const range = contractLabel(r);
+    right.push(label(wk === monday(today) ? "This week" : "That week"));
+    right.push(el("section", { class: "panel mhours" },
+      el("div", { class: "big" }, el("b", { text: `${hrs(h)}h` }), el("span", { text: !weekOut ? `nothing published yet${range ? ` · contract ${range}h` : ""}` : range ? `of ${range}h contract${ot ? ` · ${hrs(ot)}h overtime` : r.contractMin != null && h < r.contractMin ? ` · ${hrs(r2(r.contractMin - h))}h under your minimum` : ""}` : "no contract hours set" })),
+      range ? hoursBar(h, r) : null,
+      range ? el("div", { class: "scale" }, el("span", { text: "0" }), r.contractMin != null && r.contractMin !== r.contractMax ? el("span", { text: `${hrs(r.contractMin)}h min` }) : null, el("span", { text: `${hrs(r.contractMax ?? r.contractMin)}h max` })) : null));
+
+    const asked = me.requests.filter((q) => q.kind === "cover" && q.status === "open" && q.fromUser !== u.id && (!q.toUser || q.toUser === u.id) && q.shift && q.shift.day >= today);
+    const takeable = (open.shifts || []).filter((s) => !s.asked && !s.takenBySomeone).slice(0, 3);
+    const needs = [
+      ...asked.slice(0, 3).map((q) => el("div", { class: "lrow nrow" }, el("span", { class: "ic warn" }, svgi(ICON.hand)),
+        el("span", { class: "t" }, el("b", { text: `${first(q.fromName)} asked ${q.toUser ? "you" : "anyone"} to cover` }), el("span", { class: "s", text: `${shortM(q.shift.day)} · ${q.shift.start}–${q.shift.end} · ${q.shift.siteName}` })),
+        btn("Cover it", async () => { if (await act(() => api("PATCH", "/api/rota/requests/" + q.id, { action: "accept" }), `Thanks. ${ap} approves it before it's yours.`)) render(); }, "btn sm"))),
+      ...takeable.map((s) => el("div", { class: "lrow nrow" }, el("span", { class: "ic acc" }, svgi(ICON.swap)),
+        el("span", { class: "t" }, el("b", { text: "Open shift you could take" }), el("span", { class: "s", text: `${shortM(s.day)} · ${s.start}–${s.end} · ${s.siteName}` })),
+        btn("Take it", async () => { if (await act(() => api("POST", "/api/rota/requests", { kind: "claim", shiftId: s.id }), `Asked. ${ap} approves it before it's yours.`)) render(); }, "btn sm soft"))),
+    ];
+    right.push(el("div", { class: "label mlabel" }, el("span", { text: "Needs you" }), needs.length ? el("a", { href: "#swaps", class: "lk", text: "See all" }) : null));
+    right.push(needs.length ? el("div", { class: "list glass" }, ...needs) : el("section", { class: "panel" }, el("p", { class: "note", text: "Nothing needs you right now." })));
+
+    const recent = Date.now() - 14 * 864e5;
+    const reqs = [
+      ...me.timeOff.filter((o) => o.to >= today && ["requested", "approved", "declined"].includes(o.status) && (o.status !== "declined" || (o.decidedAt || 0) > recent)).map((o) => {
+        const st = { approved: ["Approved", "ok"], requested: ["Waiting", "warn"], declined: ["Declined", "bad"] }[o.status];
+        const rng = o.from === o.to ? shortM(o.from) : `${fmt(o.from, { day: "numeric", month: "short" })}–${fmt(o.to, { day: "numeric", month: "short" })}`;
+        return el("div", { class: "lrow nrow" }, el("span", { class: "ic " + (st[1] === "ok" ? "ok" : st[1] === "bad" ? "bad" : "warn") }, svgi(ICON.plane)),
+          el("span", { class: "t" }, el("b", { text: `Time off: ${rng}` }), el("span", { class: "s", text: o.status === "requested" ? `Waiting for ${apWord}` : o.reason || (o.status === "approved" ? "Booked" : "Not approved") })),
+          el("span", { class: "pill " + st[1], text: st[0] }));
+      }),
+      ...me.requests.filter((q) => q.fromUser === u.id && q.shift && q.shift.day >= today && (["open", "accepted"].includes(q.status) || (q.decidedAt || q.createdAt || 0) > recent && q.status !== "cancelled")).map((q) => {
+        const [txt, cls] = statusText({ ...q, takerId: q.taker }, u.id);
+        return el("div", { class: "lrow nrow" }, el("span", { class: "ic " + (cls === "ok" ? "ok" : cls === "bad" ? "bad" : "warn") }, svgi(ICON.swap)),
+          el("span", { class: "t" }, el("b", { text: `${q.kind === "claim" ? "Pick up" : "Cover for"} ${shortM(q.shift.day)}` }), el("span", { class: "s", text: txt })),
+          el("span", { class: "pill " + (cls || ""), text: q.status === "approved" ? "Approved" : q.status === "declined" ? "Declined" : "Waiting" }));
+      }),
+    ];
+    if (reqs.length) {
+      right.push(el("div", { class: "label mlabel" }, el("span", { text: "Your requests" }), el("a", { href: "#swaps", class: "lk", text: "All" })));
+      right.push(el("div", { class: "list glass" }, ...reqs.slice(0, 5)));
+    }
+
+    right.push(el("div", { class: "label mlabel" }, el("span", { text: "When you can work" }), el("a", { href: "#avail", class: "lk", text: "Details" })));
+    const chip = (k, i) => {
+      const v = me.pattern?.[k];
+      const dn = DAY_NAMES[i].slice(0, 2);
+      if (v === "off") return el("span", { class: "off", "aria-label": `${DAY_NAMES[i]}: can't work` }, dn);
+      const t = v && typeof v === "object" ? `${v.from ? v.from.replace(/:00$/, "") : ""}–${v.to ? v.to.replace(/:00$/, "") : ""}` : "";
+      return el("span", { "aria-label": `${DAY_NAMES[i]}: ${t ? (v.from ? "from " + v.from : "") + (v.to ? " until " + v.to : "") : "any time"}` }, dn, t ? el("small", { text: t }) : null);
+    };
+    const sitesText = (me.sites || []).length ? joinAnd(me.sites.map(siteName)) : "Any site";
+    right.push(el("section", { class: "panel mavail" }, el("div", { class: "avail" }, ...DAYS.map(chip)), el("p", { class: "note", text: `${sitesText} · set by an admin` })));
+
+    return [toggle, el("div", { class: "mgrid" }, el("div", { class: "mcol" }, ...left), el("div", { class: "mcol" }, ...right))];
+  }
+
+  const SITE_NAMES = { roastery: "Roastery", cafe: "Cafe", asg: "ASG", factory: "Factory" };
+  const siteName = (id) => SITE_NAMES[id] || id;
+  // "Mon from 07:00, Sun off".
+  function availText(pattern) {
+    const parts = [];
+    DAYS.forEach((k, i) => {
+      const v = pattern?.[k], dn = DAY_NAMES[i].slice(0, 3);
+      if (v === "off") parts.push(`${dn} off`);
+      else if (v && typeof v === "object") parts.push(`${dn} ${v.from || ""}–${v.to || ""}`);
+    });
+    return parts.join(", ");
+  }
+  function step(ic, tone, title, text, action, fn) {
+    return el("div", { class: "mstep" }, el("span", { class: "ic " + tone }, svgi(ICON[ic])), el("span", { class: "t" }, el("b", { text: title }), el("span", { class: "s", text })), btn(action, fn, "btn sm soft"));
+  }
+  function mineRow(s, cov) {
+    const o = s.others.filter((x) => !x.open);
+    return el("button", { type: "button", class: "lrow mrow", onclick: () => shiftActions(s, cov) },
+      el("span", { class: "dbadge" }, el("span", { text: fmt(s.day, { weekday: "short" }).toUpperCase() }), el("b", { text: fmt(s.day, { day: "numeric" }) })),
+      el("span", { class: "t" }, el("b", { text: `${span(s)}${s.job ? " · " + jobWord(s.job) : ""}` }),
+        el("span", { class: "s", text: (s.adjusted ? `Amended from ${s.start}–${s.end} · ` : "") + (o.length ? "With " + o.map((x) => first(x.name)).join(", ") : "On your own") + (cov ? " · cover asked" : "") }),
+        s.overtime > 0 ? el("span", { class: "otag", text: `${hrs(s.overtime)}h overtime` }) : null),
+      sitePill(s.site, s.siteName));
   }
 
   function shiftActions(s, cov) {
