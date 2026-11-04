@@ -483,7 +483,8 @@ test("the rota host: / is the rota, diary pages go there, diary APIs are refused
   try {
     const get = (p, cookie) => fetch(host.base + p, { redirect: "manual", headers: cookie ? { cookie } : {} });
     assert.equal((await get("/")).headers.get("location"), "/signin", "signed out: sign in on the rota host");
-    assert.equal((await get("/rota/rota.js")).headers.get("location"), "/signin?next=%2Frota%2Frota.js");
+    assert.equal((await get("/rota/rota.js")).status, 200, "the rota's code loads signed out (no data in it)");
+    assert.equal((await get("/app.js")).status, 302, "but not the diary's, on the rota's address");
     assert.equal((await get("/signin")).status, 200);
     const r = await fetch(host.base + "/api/auth/setup", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Host Admin", username: "host", password: "admin-pass-1", code: SETUP_CODE }) });
     const c = cookieOf(r);

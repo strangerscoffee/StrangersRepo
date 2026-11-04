@@ -19,6 +19,12 @@
     .then((r) => r.json())
     .then((me) => (me.user ? me : (goSignIn(), new Promise(() => {}))));
 
+  // Safari can bring a page back from memory (going back to a tab) after the session has ended: check, and go to
+  // sign-in rather than show a page that can't load anything.
+  window.addEventListener("pageshow", (e) => {
+    if (e.persisted) fetch("/api/auth/me").then((r) => r.json()).then((me) => { if (!me.user) goSignIn(); }).catch(() => {});
+  });
+
   // Sign-off asks for a typed name; start it from the signed-in person's. The page fills the box from
   // localStorage on its first render, before we know who's signed in, so clear the last person's name
   // straight away (devices are shared) and set this person's once known.

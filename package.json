@@ -8,7 +8,7 @@
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
     "test": "npm run typecheck && node --experimental-strip-types --no-warnings=ExperimentalWarning --test --test-concurrency=1 test/api.test.mjs test/admin.test.mjs test/security.test.mjs test/migration.test.mjs test/rota.test.mjs test/audit.test.mjs test/devices.test.mjs",
-    "test:e2e": "node --test --test-concurrency=1 test/e2e.test.mjs test/rota.e2e.test.mjs test/pdf.e2e.test.mjs test/readonly.e2e.test.mjs test/today.e2e.test.mjs test/devices.e2e.test.mjs"
+    "test:e2e": "node --test --test-concurrency=1 test/e2e.test.mjs test/rota.e2e.test.mjs test/pdf.e2e.test.mjs test/readonly.e2e.test.mjs test/today.e2e.test.mjs test/stale.e2e.test.mjs test/devices.e2e.test.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261027.1",

@@ -1555,6 +1555,11 @@
 
   /* ---------- start ---------- */
 
+  // Safari can bring the page back from memory after the session has ended: check, and go to sign-in if so.
+  window.addEventListener("pageshow", (e) => {
+    if (e.persisted) fetch("/api/auth/me").then((r) => r.json()).then((me) => { if (!me.user) goSignIn(); }).catch(() => {});
+  });
+
   async function start() {
     try {
       const [auth, me] = await Promise.all([fetch("/api/auth/me").then((r) => r.json()), get("/api/rota/me")]);
