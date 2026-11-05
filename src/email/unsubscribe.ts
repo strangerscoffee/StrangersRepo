@@ -6,7 +6,7 @@ import { Env } from "../http";
 import { EMAIL_KINDS, isEmailKind, prefsOf, readUnsubscribe } from "./send";
 import { esc } from "./templates";
 
-const LABEL: Record<string, string> = { published: "your shifts when a week is published", changed: "changes to your shifts", requests: "cover, pick-up and time off decisions", open: "open shifts you could take" };
+const LABEL: Record<string, string> = { published: "your shifts when a week is published", changed: "changes to your shifts", requests: "cover, pick-up and time off decisions", open: "open shifts you could take", weekly: "the managers' Monday summary" };
 
 function page(title: string, body: string, status = 200): Response {
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">
