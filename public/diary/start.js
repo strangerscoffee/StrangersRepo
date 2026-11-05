@@ -13,6 +13,7 @@ function show(tab,opts){
   renderHead();renderNav();renderAddBtn();
   if(tab==="inspect")renderInspect();
   if(tab==="templog")renderTempLog();
+  if(tab==="deliveries"||tab==="prove")needHistory(); // the full lists
   if(tab==="maintenance"||tab==="staff")loadTeam();
   if(changed&&!(opts&&opts.keepScroll))window.scrollTo({top:0});
   try{localStorage.setItem("sfbb.tab",tab)}catch(e){}
@@ -53,19 +54,43 @@ function switchSite(id){
   S.rota=null;loadRota();
   window.scrollTo({top:0});
 }
-function subscribeSite(){
-  for(const u of S.subs)try{u()}catch(e){}
-  S.subs=[];
+// The four lists that grow every day (days, weeks, deliveries, Prove it) load only their latest records when the
+// diary opens: enough for Today, This week, Last 4 weeks, the review, closures and the menu's summaries. The rest
+// loads the first time a screen needs it (needHistory: an older date or week, a longer temperature log, the full
+// Deliveries or Prove it list, an overdue review), and stays loaded for that site.
+const HIST={days:[90,400],weeks:[12,120],deliveries:[60,400],proveit:[80,500]};
+const RECENT_DAYS=55; // what the short lists are sure to cover, days back from today
+function needHistory(from){
+  if(S.hist||!S.db||!S.site)return;
+  if(from&&from>=addDays(today(),-RECENT_DAYS))return;
+  S.hist=true;subscribeHistory();
+}
+const inspStale=()=>{IN.stale=true;if(S.tab==="inspect")renderInspect()}; // what inspection mode reports on changed
+function siteSubs(){
   const site=S.site,mine=()=>site===S.site;
   const err=e=>{if(e&&e.code==="revoked"){S.canWrite=false;renderAll()}};
-  const sub=(q,fn)=>S.subs.push(q.onSnapshot(x=>{if(mine())fn(x)},err));
+  const sub=(arr,q,fn)=>arr.push(q.onSnapshot(x=>{if(mine())fn(x)},err));
   const hub=()=>{if(S.tab==="records"||S.tab==="more")renderNav()};
-  const list=(col,key,after,q)=>sub(q||C(col,site),x=>{S[key]=x.docs.map(d=>({id:d.id,...d.data()}));after();hub()});
-  // A change to what inspection mode reports on (from this device or another) refreshes it if it's open.
-  const inspStale=()=>{IN.stale=true;if(S.tab==="inspect")renderInspect()};
+  const list=(arr,col,key,after,q)=>sub(arr,q||C(col,site),x=>{S[key]=x.docs.map(d=>({id:d.id,...d.data()}));after();hub()});
+  return{site,sub,list};
+}
+function subscribeHistory(){
+  // The new lists open before the old ones close, so they start from what's already here (claude-shim.js), and a
+  // change made offline meanwhile still shows.
+  const old=S.histSubs||[];
+  const subs=S.histSubs=[],{site,sub,list}=siteSubs(),n=k=>HIST[k][S.hist?1:0];
+  sub(subs,C("days",site).orderBy("date","desc").limit(n("days")),q=>{const m={};for(const d of q.docs)m[d.id]=d.data();S.days=m;renderDay();renderHistory();renderReview();renderTempLog();renderClosures();inspStale()});
+  sub(subs,C("weeks",site).orderBy("week","desc").limit(n("weeks")),q=>{const m={};for(const d of q.docs)m[d.id]=d.data();S.weeks=m;renderWeek();inspStale()});
+  list(subs,"deliveries","deliveries",()=>{renderDeliveries();inspStale()},C("deliveries",site).orderBy("at","desc").limit(n("deliveries")));
+  list(subs,"proveit","prove",()=>{renderProve();renderReview();inspStale()},C("proveit",site).orderBy("at","desc").limit(n("proveit")));
+  for(const u of old)try{u()}catch(e){}
+}
+function subscribeSite(){
+  for(const u of S.subs)try{u()}catch(e){}
+  S.subs=[];S.hist=false;
+  const{site,sub:sub0,list:list0}=siteSubs(),sub=(q,fn)=>sub0(S.subs,q,fn),list=(...a)=>list0(S.subs,...a);
   sub(D("settings","main",site),x=>{S.settings=normSettings(x.exists?x.data():null);S.cfg=activeCfg(S.settings);fillProve();applyTabs();renderAll()});
-  sub(C("days",site).orderBy("date","desc").limit(400),q=>{const m={};for(const d of q.docs)m[d.id]=d.data();S.days=m;renderDay();renderHistory();renderReview();renderTempLog();renderClosures();inspStale()});
-  sub(C("weeks",site).orderBy("week","desc").limit(120),q=>{const m={};for(const d of q.docs)m[d.id]=d.data();S.weeks=m;renderWeek();inspStale()});
+  subscribeHistory();
   list("allergens","allergens",renderAllergens);
   list("allergenDocs","allergenDocs",renderAllergenDocs);
   S.reviewsLoading=true;
@@ -73,14 +98,12 @@ function subscribeSite(){
   list("extras","extras",()=>{renderTasks("extras");renderReview()});
   list("cleaning","cleaning",()=>{renderTasks("cleaning");renderReview()});
   list("suppliers","suppliers",()=>{renderSuppliers();renderDeliveries()});
-  list("deliveries","deliveries",()=>{renderDeliveries();inspStale()},C("deliveries",site).orderBy("at","desc").limit(400));
   list("maintenance","maintenance",renderMaint);
   list("contacts","contacts",renderContacts);
   list("plans","plans",()=>{onPlansSnapshot();renderReview()});
   list("onboarding","onboarding",onOnbSnapshot);
   list("inspections","inspections",()=>{onInspSnapshot();renderReview()});
   list("staff","staff",()=>{renderStaff();renderReview()});
-  list("proveit","prove",()=>{renderProve();renderReview();inspStale()},C("proveit",site).orderBy("at","desc").limit(500));
 }
 function subscribeSummaries(){
   const err=()=>{};

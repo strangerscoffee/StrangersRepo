@@ -857,6 +857,7 @@ function reviewPeriod(){
 }
 function renderReview(){
   const{start,due}=reviewPeriod();const t=today();
+  if(S.tab==="review")needHistory(start); // the counts below go back to the last review
   const p=$("#revDue");const left=Math.round((parse(due)-parse(t))/864e5);
   p.textContent=left<0?`Overdue since ${nice(due)}`:left===0?"Due today":`Next due ${nice(due)} (${left} days)`;
   p.className="pill "+(left<0?"bad":left<=3?"warn":"ok");

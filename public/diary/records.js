@@ -216,6 +216,7 @@ function renderTempLog(){
   box.replaceChildren();
   if(!units.length){box.append(el("div",{class:"empty glass",text:`No fridges or freezers are set up at the ${curSite().name}.${canTab("setup")?" Add them in Setup.":""}`}));$("#tlStats").replaceChildren();return}
   const from=addDays(t,-(Number(TL.range)-1)),start=hardStart()||"";
+  needHistory(from);
   let readings=0,out=0,missing=0;
   const list=el("div",{class:"list glass"});
   for(let date=t;date>=from;date=addDays(date,-1)){
