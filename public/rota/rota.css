@@ -270,7 +270,12 @@ a.btn{text-decoration:none;display:inline-flex;align-items:center}
 .dhrow input{min-height:40px;font-size:16px;width:100%;min-width:0;box-sizing:border-box}
 .crow{flex-wrap:wrap}
 .crange{display:inline-flex;gap:10px;margin-left:auto}
-.crange .chours input{width:64px}
+/* Contracted hours: wide enough to read at a glance, without the number spinners over the figure. */
+.crange{gap:14px}
+.crange .chours{font-size:15px;font-weight:600}
+.crange .chours input{width:92px;min-height:48px;font-size:20px;font-weight:700;text-align:center;padding:0 8px;
+  font-variant-numeric:tabular-nums;color:var(--fg);-moz-appearance:textfield;appearance:textfield}
+.crange .chours input::-webkit-outer-spin-button,.crange .chours input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
 .amhead{flex-wrap:wrap}
 .amhead .t{flex:1 1 160px}
 @media (max-width:600px){.amsum{flex-basis:100%;text-align:left;padding-left:42px}}
