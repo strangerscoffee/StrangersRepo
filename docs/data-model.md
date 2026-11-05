@@ -21,7 +21,7 @@ Under each site prefix:
 
 Plus two single documents: `config/shared` (the shared setup, below) and `config/people` (read-only: names for people who recorded in the earlier Claude version of the diary, see below).
 
-Reject any other path with `invalid_argument`.
+Reject any other path with `invalid_argument`. The types of the fields below are checked on every write (`src/validate.ts`, 400 `invalid_data`); keep it in step when a field is added or changes type.
 
 ## D1 table
 
