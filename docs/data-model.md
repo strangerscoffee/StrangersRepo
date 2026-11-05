@@ -134,6 +134,8 @@ The rota also reads two things from the diary's documents: a site is in use only
 
 `audit_log` (`src/schema.ts`, written by `src/audit.ts`): `id, at (ms), kind, actor (a name or NULL), text`. Kinds: `user_added`, `renamed`, `username_changed`, `role_changed`, `active_changed`, `password_reset`, `unlocked`, `signed_out`, `locked`, `signin_failed`, `backup`, `setup_copied`, `pins_reset`, `signed_out_all`, and for rota emails `email_sent`, `email_failed`, `email_unsubscribed`, `email_changed` (an admin set or removed someone's address), `email_weekly`, and `clock_off` (a device whose own clock was over 5 minutes out: who, which device and by how much; at most once a day per person; flagged on the Overview). The text is in words for the admin section ("Sam Patel made Priya Shah a manager"); it never holds a password, PIN or a typed username. Rows older than about 400 days are removed.
 
+`admin_dismissed` (`src/schema.ts`, migration 10; `POST /api/admin/overview/dismiss {key}` in `src/adminView.ts`): `key, at (ms), by (a name)`, the Overview notices an admin has dismissed, for every admin. Keys: `errors` and `email_failed` (hidden until there's one newer than `at`), `clock:<audit_log id>` and `closed:<site>:<date>` (gone for good). Things still to do (an unpublished rota, a locked account, requests waiting) can't be dismissed. Rows older than 30 days are removed.
+
 Backups (`src/backup.ts`) include every rota table under `rota`.
 
 ### The rota API (`/api/rota/…`)

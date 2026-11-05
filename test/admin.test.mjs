@@ -61,6 +61,22 @@ test("overview: what needs attention, today's diary and this week's rota", async
   assert.equal(body.stats.people.active, 3);
 });
 
+test("overview: notices that happened (errors, failed emails, clocks) can be dismissed, and come back when there's a new one", async () => {
+  const report = (message) => call("POST", "/api/errors", { app: "diary", page: "/#day", message });
+  const errorsNotice = async () => (await call("GET", "/api/admin/overview")).body.attention.find((a) => /errors? on the site/.test(a.title));
+  await report("TypeError: one");
+  const n = await errorsNotice();
+  assert.equal(n?.dismiss, "errors", "it can be dismissed");
+  assert.ok(!(await call("GET", "/api/admin/overview")).body.attention.find((a) => /rota isn't published/.test(a.title))?.dismiss, "things still to do can't");
+  assert.equal((await call("POST", "/api/admin/overview/dismiss", { key: "errors" })).status, 200);
+  assert.equal(await errorsNotice(), undefined, "gone once dismissed");
+  await new Promise((r) => setTimeout(r, 5));
+  await report("TypeError: two");
+  assert.match((await errorsNotice())?.title || "", /^1 error on the site/, "back for a new error, counting only what's new");
+  for (const key of ["", "users", "clock:abc", "errors; DROP TABLE users"]) assert.equal((await call("POST", "/api/admin/overview/dismiss", { key })).status, 400, key);
+  assert.equal((await call("POST", "/api/admin/overview/dismiss", { key: "errors" }, MANAGER)).status, 403, "admins only");
+});
+
 test("people: account, rota and training together; availability is admin-only", async () => {
   await call("POST", "/api/db/set", { path: "sites/cafe/staff/t1", data: { name: "alex brown", topics: { hygiene: { date: "2026-01-01" }, diary: { date: "2026-01-01" } }, signed: { by: "web:Alex Brown", at: 5 } } });
   await call("POST", "/api/db/set", { path: "staff/t2", data: { name: "Alex Brown", topics: { allergens: { date: "2026-01-01" } } } });

@@ -78,6 +78,9 @@ export async function overview(env: Env, links: { rota: string; diary: string })
   const active = users.filter((u) => u.active);
   const diaryToday = SITES.map((s) => ({ id: s.id, name: s.name, ...dayProgress(docs.get(`${s.prefix}settings/main`) ?? null, docs.get(`${s.prefix}days/${today}`) ?? null, today) }));
 
+  // Notices an admin has dismissed (DISMISSIBLE): gone for every admin until something new happens.
+  const dismissed = new Map(((await env.DB.prepare("SELECT key, at FROM admin_dismissed").all<{ key: string; at: number }>().catch(() => null))?.results || []).map((r) => [r.key, r.at]));
+  const since = (key: string) => Math.max(now - 864e5, dismissed.get(key) ?? 0);
   const attention: any[] = [];
   for (const u of active.filter((u) => u.locked_until > now)) {
     const until = new Date(u.locked_until).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" });
@@ -105,25 +108,25 @@ export async function overview(env: Env, links: { rota: string; diary: string })
   const roleOf = new Map(users.map((u) => ["web:" + u.name, u.role]));
   for (const s of SITES) {
     const c = docs.get(`${s.prefix}days/${today}`)?.closed;
-    if (!c || roleOf.get(c.by) !== "staff") continue;
+    if (!c || roleOf.get(c.by) !== "staff" || dismissed.has(`closed:${s.id}:${today}`)) continue;
     const who = typeof c.by === "string" ? c.by.slice(4) : "Someone";
-    attention.push({ tone: "warn", icon: "house", title: `The ${s.name} was marked closed today`, detail: `By ${who}${c.at ? ` at ${new Date(c.at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" })}` : ""}: ${String(c.reason || "no reason given").slice(0, 120)}`, action: { label: "Open diary", href: links.diary } });
+    attention.push({ tone: "warn", icon: "house", title: `The ${s.name} was marked closed today`, detail: `By ${who}${c.at ? ` at ${new Date(c.at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" })}` : ""}: ${String(c.reason || "no reason given").slice(0, 120)}`, action: { label: "Open diary", href: links.diary }, dismiss: `closed:${s.id}:${today}` });
   }
   for (const s of diaryToday.filter((s) => !s.setUp)) {
     attention.push({ tone: "warn", icon: "house", title: `The ${s.name} isn't set up`, detail: "It needs a diary Setup before it's counted in the diary or can have shifts.", action: { label: "Set up", go: "sites" } });
   }
-  const errs = await env.DB.prepare("SELECT COUNT(*) AS n, COALESCE(SUM(count), 0) AS times FROM errors WHERE last_at > ?").bind(now - 864e5).first<{ n: number; times: number }>().catch(() => null);
+  const errs = await env.DB.prepare("SELECT COUNT(*) AS n, COALESCE(SUM(count), 0) AS times FROM errors WHERE last_at > ?").bind(since("errors")).first<{ n: number; times: number }>().catch(() => null);
   if (errs && errs.n) {
     attention.push({ tone: "warn", icon: "warn", title: `${errs.n} error${errs.n === 1 ? "" : "s"} on the site in the last day`,
-      detail: `Seen ${errs.times} time${errs.times === 1 ? "" : "s"} on staff devices or the server. See what and where.`, action: { label: "See errors", act: "errors" } });
+      detail: `Seen ${errs.times} time${errs.times === 1 ? "" : "s"} on staff devices or the server. See what and where.`, action: { label: "See errors", act: "errors" }, dismiss: "errors" });
   }
   // Devices whose own clock is well out (src/index.ts flagClock): the site corrects for it; the device should be fixed.
-  const clocks = await env.DB.prepare("SELECT text FROM audit_log WHERE kind = 'clock_off' AND at > ? ORDER BY at DESC LIMIT 5").bind(now - 864e5).all<{ text: string }>().catch(() => null);
-  for (const c of clocks?.results || []) attention.push({ tone: "warn", icon: "clock", title: c.text.split(". ")[0], detail: "The site uses the right UK time anyway. On the device: Settings → General → Date & Time → Set Automatically.", action: { label: "See activity", go: "activity" } });
-  const mailFails = await env.DB.prepare("SELECT COUNT(*) AS n, MAX(text) AS t FROM audit_log WHERE kind = 'email_failed' AND at > ?").bind(now - 864e5).first<{ n: number; t: string }>().catch(() => null);
+  const clocks = await env.DB.prepare("SELECT id, text FROM audit_log WHERE kind = 'clock_off' AND at > ? ORDER BY at DESC LIMIT 5").bind(now - 864e5).all<{ id: number; text: string }>().catch(() => null);
+  for (const c of (clocks?.results || []).filter((c) => !dismissed.has(`clock:${c.id}`))) attention.push({ dismiss: `clock:${c.id}`, tone: "warn", icon: "clock", title: c.text.split(". ")[0], detail: "The site uses the right UK time anyway. On the device: Settings → General → Date & Time → Set Automatically.", action: { label: "See activity", go: "activity" } });
+  const mailFails = await env.DB.prepare("SELECT COUNT(*) AS n, MAX(text) AS t FROM audit_log WHERE kind = 'email_failed' AND at > ?").bind(since("email_failed")).first<{ n: number; t: string }>().catch(() => null);
   if (mailFails && mailFails.n) {
     attention.push({ tone: "warn", icon: "warn", title: `${mailFails.n} rota email${mailFails.n === 1 ? "" : "s"} didn't send in the last day`,
-      detail: String(mailFails.t || "").slice(0, 160), action: { label: "See activity", go: "activity" } });
+      detail: String(mailFails.t || "").slice(0, 160), action: { label: "See activity", go: "activity" }, dismiss: "email_failed" });
   }
   for (const u of active.filter((u) => u.must_change && !u.last_login_at && now - u.created_at > 2 * 864e5)) {
     const days = Math.floor((now - u.created_at) / 864e5);
@@ -378,12 +381,27 @@ async function exportShifts(env: Env, url: URL) {
   ]);
 }
 
+/** The notices on the Overview that can be dismissed: things that happened, not things still to do. Errors and
+ *  failed emails come back when there's a new one; a device's clock or a site closed today don't come back. */
+const DISMISSIBLE = /^(errors|email_failed|clock:\d{1,12}|closed:[a-z]{1,20}:\d{4}-\d{2}-\d{2})$/;
+async function dismiss(env: Env, user: User, body: any) {
+  const key = body?.key;
+  if (typeof key !== "string" || !DISMISSIBLE.test(key)) throw invalid("That notice can't be dismissed.");
+  const now = Date.now();
+  await env.DB.batch([
+    env.DB.prepare("INSERT OR REPLACE INTO admin_dismissed (key, at, by) VALUES (?, ?, ?)").bind(key, now, user.name),
+    env.DB.prepare("DELETE FROM admin_dismissed WHERE at < ?").bind(now - 30 * 864e5),
+  ]);
+  return { ok: true };
+}
+
 /* ---------- routes: /api/admin/<these> ---------- */
 
 /** The admin section's routes. Returns null for routes it doesn't handle (accounts and backups are elsewhere). */
 export async function handleAdminView(req: Request, env: Env, route: string, user: User, links: { rota: string; diary: string }): Promise<Response | null> {
   const m = req.method;
   if (route === "overview" && m === "GET") return json(await overview(env, links));
+  if (route === "overview/dismiss" && m === "POST") return json(await dismiss(env, user, await readJson<any>(req, 1024)));
   if (route === "people" && m === "GET") return json(await people(env));
   if (route === "sites" && m === "GET") return json(await sites(env));
   const copy = route.match(/^sites\/([a-z]+)\/copy-setup$/);

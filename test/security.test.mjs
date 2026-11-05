@@ -130,7 +130,7 @@ test("security: staff can't use manager or admin features, managers can't use ad
     for (const [method, route, body] of [
       ["GET", "users"], ["POST", "users", { name: "Eve Sneaky", role: "admin", password: "eve-pass-123" }],
       ["PATCH", `users/${someone.id}`, { role: "admin" }], ["PATCH", `users/${someone.id}`, { email: "eve@example.com" }], ["POST", "email/test"], ["POST", "email/weekly-test"], ["PATCH", `users/${someone.id}`, { emailPrefs: { weekly: false } }], ["GET", "status"], ["GET", "backups"], ["POST", "backups"],
-      ["GET", "overview"], ["GET", "people"], ["GET", "sites"], ["POST", "sites/factory/copy-setup", { from: "roastery" }], ["GET", "activity"],
+      ["GET", "overview"], ["POST", "overview/dismiss", { key: "errors" }], ["GET", "people"], ["GET", "sites"], ["POST", "sites/factory/copy-setup", { from: "roastery" }], ["GET", "activity"],
       ["GET", "security"], ["POST", "security/reset-pins"], ["POST", "security/sign-out-all"], ["GET", "export/people.csv"], ["GET", "export/shifts.csv"],
     ]) await denied(await send(method, "/api/admin/" + route, cookie, body), `${who} ${method} /api/admin/${route}`);
     for (const page of ["/admin", "/admin/", "/admin.html", "/admin/index.html"]) assert.equal((await send("GET", page, cookie)).headers.get("location"), "/", `${who} ${page}`);
