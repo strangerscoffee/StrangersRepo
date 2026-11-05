@@ -13,6 +13,7 @@ export interface Env {
   RESEND_API_URL?: string; // for tests only: where to send instead of Resend
   EMAIL_FROM?: string; // default "Strangers Rota <rota@staffstrangerscoffee.com>"
   EMAIL_DAILY_LIMIT?: string; // default 100 (Resend's free plan)
+  WEEKLY_ANY_TIME?: string; // tests only: "1" sends the Monday summary whenever its cron runs
 }
 
 /** Error the page understands: rejected to it as {code, message}. */

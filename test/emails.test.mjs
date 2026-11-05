@@ -43,7 +43,7 @@ before(async () => {
     });
   });
   await new Promise((r) => mock.listen(0, "127.0.0.1", r));
-  srv = await startServer({ writeLimit: 2000, vars: { RESEND_API_KEY: "re_test_key", RESEND_API_URL: `http://127.0.0.1:${mock.address().port}/emails` } });
+  srv = await startServer({ writeLimit: 2000, scheduled: true, vars: { RESEND_API_KEY: "re_test_key", RESEND_API_URL: `http://127.0.0.1:${mock.address().port}/emails`, WEEKLY_ANY_TIME: "1" } });
   const r = await fetch(srv.base + "/api/auth/setup", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Will Owner", username: "will", password: "admin-pass-1", code: SETUP_CODE }) });
   ADMIN = cookieOf(r);
   MGR = await person("Giles Armstrong", "giles", "manager", "giles@example.com");
@@ -64,7 +64,8 @@ test("admins set email addresses; nobody else can, and bad ones are refused", as
   // Each person sees their own address read-only, and chooses which emails they get.
   const me = (await req("GET", "/api/rota/me", undefined, ALEX)).body.email;
   assert.equal(me.address, "alex@example.com");
-  assert.deepEqual(me.prefs, { published: true, changed: true, requests: true, open: false });
+  assert.deepEqual(me.prefs, { published: true, changed: true, requests: true, open: false, weekly: true });
+  assert.equal(me.weeklySites, undefined, "the Monday summary is for managers");
   assert.equal(me.ready, true);
   assert.equal((await req("PUT", "/api/rota/me/emails", { prefs: { nonsense: true } }, ALEX)).status, 400);
 });
@@ -146,7 +147,7 @@ test("the unsubscribe link asks first, then turns that email off; without signin
   const t = new URL(link).searchParams.get("t");
   const one = await fetch(link, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "List-Unsubscribe=One-Click" });
   assert.equal(one.status, 200);
-  assert.deepEqual((await req("GET", "/api/rota/me", undefined, ALEX)).body.email.prefs, { published: true, changed: false, requests: true, open: false });
+  assert.deepEqual((await req("GET", "/api/rota/me", undefined, ALEX)).body.email.prefs, { published: true, changed: false, requests: true, open: false, weekly: true });
   // No more change emails for Alex.
   await req("PATCH", `/api/rota/shifts/${ids.a1}`, { start: "08:45" }, MGR);
   assert.equal((await req("POST", "/api/rota/week/publish", { week: WEEK, email: true }, MGR)).body.emailed, 0);
@@ -187,4 +188,69 @@ test("an admin can send themselves a test; it needs their own address", async ()
   const o = (await req("GET", "/api/admin/overview")).body.emails;
   assert.equal(o.ready, true);
   assert.ok(o.sentToday >= 6);
+});
+
+test("the managers' Monday summary: each manager's own sites, what needs them, last week's diary; once a week", async () => {
+  const WEEK_AGO = addDays(monday(london()), -7);
+  // The Roastery last week: Monday's fridge too warm with nothing written; Wednesday not signed off; the rest fine.
+  const set = (path, data) => req("POST", "/api/db/set", { path, data });
+  await set("settings/main", { closedDays: [], units: [{ id: "f1", name: "Fridge 2", kind: "fridge" }], opening: [], closing: [], weekly: [], hide: {}, info: {}, startDate: "2020-01-01", startSet: true });
+  for (let i = 0; i < 7; i++) {
+    if (i === 2) continue;
+    const date = addDays(WEEK_AGO, i);
+    await set(`days/${date}`, { date, signed: { by: "web:Giles Armstrong", at: 1, name: "Giles Armstrong" }, temps: { f1: { am: { v: i === 0 ? 9 : 3, by: "web:Giles Armstrong", at: 1 } } } });
+  }
+  await set("cleaning/c1", { name: "Descale the coffee machine", freq: "weekly", createdAt: 1, lastAt: Date.now() - 20 * 864e5, log: [] });
+  await set("maintenance/m1", { title: "Dishwasher leaking", status: "open", priority: "urgent", reportedAt: Date.now() - 3 * 864e5 });
+  await set("sites/cafe/settings/main", { closedDays: [], units: [], opening: [], closing: [], weekly: [], hide: {}, info: {} });
+  await set("sites/cafe/maintenance/m2", { title: "Cafe door sticking", status: "open", priority: "urgent", reportedAt: Date.now() });
+
+  // Only managers and admins have it; each chooses their sites.
+  assert.equal((await req("PUT", "/api/rota/me/emails", { prefs: { weekly: true } }, ALEX)).status, 403);
+  assert.equal((await req("PUT", "/api/rota/me/emails", { weeklySites: [] }, MGR)).status, 400, "at least one site");
+  assert.equal((await req("PUT", "/api/rota/me/emails", { weeklySites: ["roastery"] }, MGR)).status, 200);
+  assert.deepEqual((await req("GET", "/api/rota/me", undefined, MGR)).body.email.weeklySites, ["roastery"]);
+  // Admins switch it on or off for anyone who isn't staff.
+  assert.equal((await req("PATCH", `/api/admin/users/${ids.alex}`, { emailPrefs: { weekly: true } })).status, 400);
+  assert.equal((await req("PATCH", `/api/admin/users/${ids.giles}`, { emailPrefs: { weekly: false } })).status, 200);
+  assert.equal((await req("GET", "/api/admin/people")).body.people.find((p) => p.id === ids.giles).emailPrefs.weekly, false);
+  assert.equal((await req("PATCH", `/api/admin/users/${ids.giles}`, { emailPrefs: { weekly: true } })).status, 200);
+  const g = (await req("GET", "/api/admin/people")).body.people.find((p) => p.id === ids.giles);
+  assert.deepEqual([g.emailPrefs.weekly, g.weeklySites], [true, ["roastery"]], "the sites Giles chose are kept");
+
+  // Monday's run: Giles (Roastery) and Will (an admin with an address: all sites).
+  take();
+  const cron = () => fetch(srv.base + "/__scheduled?cron=" + encodeURIComponent("30 6,7 * * 1"));
+  await cron();
+  await waitFor(2, 15000);
+  const mails = take();
+  const giles = mails.find((m) => m.to[0] === "giles@example.com"), will = mails.find((m) => m.to[0] === "will@example.com");
+  assert.ok(giles && will, JSON.stringify(mails.map((m) => [m.to, m.subject])));
+  assert.match(giles.subject, /^\d+ things? needs? you · week of/);
+  assert.match(giles.html, /URGENT/);
+  assert.match(giles.html, /Fridge 2 read 9°C on Monday/);
+  assert.match(giles.html, /no corrective action written/);
+  assert.match(giles.html, /Dishwasher leaking/);
+  assert.match(giles.html, /wasn(&#39;|')t signed off/);
+  assert.match(giles.html, /Descale the coffee machine/);
+  assert.match(giles.html, /Next week(&#39;|')s rota<\/td><td[^>]*>Published · \d+ hours/, "next week was published by an earlier test");
+  assert.match(giles.html, /6\/7/, "days signed off");
+  assert.doesNotMatch(giles.html, /Cafe door sticking/, "only Giles's sites");
+  assert.match(will.html, /Cafe door sticking/, "an admin with all four sites");
+  assert.match(giles.headers["List-Unsubscribe"], /unsubscribe\?t=/);
+  assert.match(giles.text, /Fridge 2 read 9°C/);
+  // A second run the same week sends nothing more.
+  await cron();
+  await new Promise((r) => setTimeout(r, 1500));
+  assert.equal(sent.length, 0);
+  // Turning it off by its unsubscribe link stops just this email.
+  const t = new URL(giles.headers["List-Unsubscribe"].slice(1, -1)).searchParams.get("t");
+  await fetch(srv.base + "/email/unsubscribe?t=" + t, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "List-Unsubscribe=One-Click" });
+  const prefs = (await req("GET", "/api/rota/me", undefined, MGR)).body.email.prefs;
+  assert.deepEqual([prefs.weekly, prefs.published], [false, true]);
+  // An admin can send themselves this week's summary any time.
+  const r = await req("POST", "/api/admin/email/weekly-test", {});
+  assert.equal(r.status, 200, r.text);
+  await waitFor(1);
+  assert.match(take()[0].subject, /week of/);
 });

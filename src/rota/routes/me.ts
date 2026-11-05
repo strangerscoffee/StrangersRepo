@@ -5,9 +5,9 @@ import { visibleRequests } from "../requests";
 import { markOvertime } from "../shift";
 import { ReqRow, RotaRequest, SITE_IDS } from "../types";
 import { checkPattern, checkSites } from "../validate";
-import { addDays, dateOf, isDay, londonToday, mondayOf, nowMs, parseJson, round2, siteName } from "../util";
+import { addDays, dateOf, denied, isDay, londonToday, mondayOf, nowMs, parseJson, round2, siteName } from "../util";
 
-import { emailReady, isEmailKind, prefsOf } from "../../email/send";
+import { emailReady, prefsOf, savePrefs, weeklySitesOf } from "../../email/send";
 
 export async function meRoutes(r: RotaRequest): Promise<Response | null> {
   const { env, user, route, m, q, mgr, needAdmin, body, links } = r;
@@ -74,19 +74,16 @@ export async function meRoutes(r: RotaRequest): Promise<Response | null> {
       timeOff: offs.results.map((t) => ({ id: t.id, from: t.from_day, to: t.to_day, reason: t.reason, status: t.status, decidedAt: t.decided_at })),
       requests: await visibleRequests(env, reqs.results, mgr),
       // Rota emails: their address (set by an admin) and which emails they get, which they choose themselves.
-      email: { address: mail?.email || null, prefs: prefsOf(mail?.email_prefs), ready: emailReady(env) },
+      email: { address: mail?.email || null, prefs: prefsOf(mail?.email_prefs), ready: emailReady(env), ...(mgr ? { weeklySites: weeklySitesOf(mail?.email_prefs) } : {}) },
     });
   }
 
+  // {prefs?: {published?, changed?, requests?, open?, weekly?}, weeklySites?: [siteIds]}. The Monday summary is for
+  // managers and admins only.
   if (route === "me/emails" && m === "PUT") {
     const b = await body();
-    const prefs = prefsOf((await env.DB.prepare("SELECT email_prefs FROM users WHERE id = ?").bind(user.id).first<{ email_prefs: string }>())?.email_prefs);
-    for (const [k, v] of Object.entries(b.prefs || {})) {
-      if (!isEmailKind(k) || typeof v !== "boolean") throw invalid("Choose which emails to get.");
-      prefs[k] = v;
-    }
-    await env.DB.prepare("UPDATE users SET email_prefs = ? WHERE id = ?").bind(JSON.stringify(prefs), user.id).run();
-    return json({ prefs });
+    if (!mgr && (b.weeklySites !== undefined || (b.prefs && Object.hasOwn(b.prefs, "weekly")))) throw denied("The Monday summary is for managers.");
+    return json(await savePrefs(env, user.id, { prefs: b.prefs ?? {}, weeklySites: b.weeklySites }));
   }
 
   if (route === "me/availability" && m === "PUT") {

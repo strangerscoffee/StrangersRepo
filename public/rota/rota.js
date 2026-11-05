@@ -1390,6 +1390,28 @@
       };
       return el("div", { class: "lrow emrow" }, el("span", { class: "t" }, el("b", { text: t }), el("span", { class: "s", text: s })), el("label", { class: "rswitch" }, sw));
     });
+    // Managers and admins: the Monday summary, and the sites it covers.
+    if (m.weeklySites) {
+      let sites = [...m.weeklySites];
+      const SITE_NAMES = [["roastery", "Roastery"], ["cafe", "Cafe"], ["asg", "ASG"], ["factory", "Factory"]];
+      const chips = el("div", { class: "fchips emsites", role: "group", "aria-label": "Sites the Monday summary covers" });
+      const drawChips = () => chips.replaceChildren(...SITE_NAMES.map(([id, nm]) => el("button", { type: "button", class: "fchip", "data-w": "", "aria-pressed": String(sites.includes(id)), disabled: !m.address || !prefs.weekly,
+        onclick: async () => {
+          const next = sites.includes(id) ? sites.filter((x) => x !== id) : [...sites, id];
+          if (!next.length) { toast("Choose at least one site, or switch the summary off."); return; }
+          if (await act(() => api("PUT", "/api/rota/me/emails", { weeklySites: next }), "Saved")) { sites = next; drawChips(); }
+        } }, nm)));
+      const sw = el("input", { type: "checkbox", id: "em_weekly", "data-w": "", "aria-label": "Monday summary" });
+      sw.checked = !!prefs.weekly; sw.disabled = !m.address;
+      sw.onchange = async () => {
+        const want = sw.checked;
+        if (!(await act(() => api("PUT", "/api/rota/me/emails", { prefs: { weekly: want } }), want ? "Monday summary on" : "Monday summary off"))) { sw.checked = !want; return; }
+        prefs.weekly = want; drawChips();
+      };
+      drawChips();
+      rows.push(el("div", { class: "lrow emrow" }, el("span", { class: "t" }, el("b", { text: "Monday summary" }), el("span", { class: "s", text: "What needs you at your sites, every Monday at 07:30" })), el("label", { class: "rswitch" }, sw)),
+        el("div", { class: "lrow emrow" }, el("span", { class: "t" }, el("span", { class: "s", text: "Sites it covers" }), chips)));
+    }
     return [label("Emails"), el("div", { class: "list glass" },
       el("div", { class: "lrow emrow" }, el("span", { class: "t" }, el("b", { text: m.address || "No email address yet" }),
         el("span", { class: "s", text: m.address ? "Only an admin can change it." : "Ask an admin to add your email address to get rota emails." }))), ...rows),

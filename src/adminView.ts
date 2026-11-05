@@ -3,7 +3,7 @@
 // (checked in index.ts before anything here runs). Reads the diary's documents and the rota's tables directly.
 import { audit } from "./audit";
 import { deviceOf, errorCode, recentErrors, whereOf } from "./errors";
-import { emailReady, prefsOf } from "./email/send";
+import { emailReady, prefsOf, weeklySitesOf } from "./email/send";
 import { User, nameKey } from "./auth";
 import { listBackups } from "./backup";
 import { setDoc } from "./docs";
@@ -186,7 +186,7 @@ export async function people(env: Env) {
         id: u.id, name: u.name, username: u.username, role: u.role, active: !!u.active, mustChange: !!u.must_change,
         locked: u.locked_until > now, lockedUntil: u.locked_until > now ? u.locked_until : null,
         lastLoginAt: u.last_login_at, createdAt: u.created_at, createdBy: u.created_by, quickPin: !!u.quick_hash,
-        email: u.email || null, emailPrefs: prefsOf(u.email_prefs),
+        email: u.email || null, emailPrefs: prefsOf(u.email_prefs), weeklySites: weeklySitesOf(u.email_prefs),
         rota: {
           contractMin: r?.contract_min ?? null, contractMax: r?.contract_max ?? null, sites: parse(r?.sites, []), pattern: parse(r?.pattern, {}),
           weekHours: Math.round(mine.reduce((h, s) => h + s.hours, 0) * 10) / 10, weekOvertime: Math.round(mine.reduce((h, s) => h + (s.overtime || 0), 0) * 10) / 10,

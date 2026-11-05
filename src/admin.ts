@@ -1,8 +1,9 @@
 // Admin API (/api/admin/*): manage accounts. Admins only (enforced in index.ts).
 import { ROLES, Role, User, UserRow, checkPassword, checkUsername, cleanName, hashPassword, nameKey, newId, tempPassword, usernameFrom } from "./auth";
 import { audit } from "./audit";
-import { cleanEmail, emailReady, linksFor, send } from "./email/send";
+import { cleanEmail, emailReady, linksFor, savePrefs, send } from "./email/send";
 import { testEmail } from "./email/templates";
+import { sendSummary } from "./email/weekly";
 import { appLinks } from "./hosts";
 import { ApiError, Env, SQL_NOW_MS, invalid, json, readJson } from "./http";
 
@@ -138,7 +139,15 @@ export async function handleAdmin(req: Request, env: Env, route: string, admin: 
     if (body.unlock) sets.push("failed = 0", "locked_until = 0");
     if (body.signOut) bump = true;
     if (bump) sets.push("session_ver = session_ver + 1");
-    if (!sets.length) throw invalid("Nothing to change.");
+    // The Monday summary: on or off, and its sites (managers and admins only).
+    let summaryChanged = false;
+    if (body.emailPrefs !== undefined || body.weeklySites !== undefined) {
+      const role = body.role ?? row.role;
+      if (role === "staff") throw invalid("The Monday summary is for managers and admins.");
+      await savePrefs(env, row.id, { prefs: body.emailPrefs ?? {}, weeklySites: body.weeklySites });
+      summaryChanged = true;
+    }
+    if (!sets.length && !summaryChanged) throw invalid("Nothing to change.");
     sets.push(`updated_at = ${SQL_NOW_MS}`);
     await env.DB.prepare(`UPDATE users SET ${sets.join(", ")} WHERE id = ?`).bind(...args, row.id).run();
     // Someone switched off can't pick up or cover shifts: their waiting rota requests end with the account.
@@ -156,6 +165,7 @@ export async function handleAdmin(req: Request, env: Env, route: string, admin: 
     if (body.password !== undefined) events.push(["password_reset", `${admin.name} gave ${newName} a temporary password`]);
     if (body.unlock) events.push(["unlocked", `${admin.name} unlocked ${newName}`]);
     if (body.signOut) events.push(["signed_out", `${admin.name} signed ${newName} out everywhere`]);
+    if (summaryChanged) events.push(["email_changed", `${admin.name} changed ${newName}'s Monday summary`]);
     if (emailChanged) events.push(["email_changed", `${admin.name} ${cleanEmail(body.email) ? "set" : "removed"} ${newName}'s email address`]);
     for (const [k, t] of events) await audit(env, k, admin.name, t);
     return json({ user: listItem(await getRow(env, row.id)), ...(body.password === "generate" ? { password: passwordOut } : {}) });
@@ -171,6 +181,17 @@ export async function handleAdmin(req: Request, env: Env, route: string, admin: 
     const l = await linksFor(env, base, me.id, "test");
     const r = await send(env, { to: { ...me, email: me.email }, kind: "test", mail: testEmail({ name: me.name, links: l }), links: l, about: "a test email" });
     if (r !== "sent") throw new ApiError(502, "email_failed", r === "limit" ? "Today's email limit has been reached." : "Resend didn't accept it. See Activity → Accounts for why.");
+    return json({ ok: true, to: me.email });
+  }
+
+  // POST /api/admin/email/weekly-test: this week's Monday summary, now, to the admin's own address (their sites).
+  if (route === "email/weekly-test" && req.method === "POST") {
+    if (!emailReady(env)) throw new ApiError(409, "email_off", "Rota emails aren't set up yet: add the RESEND_API_KEY secret in Cloudflare first.");
+    const me = await env.DB.prepare("SELECT id, name, email, email_prefs, active, role FROM users WHERE id = ?").bind(admin.id).first<{ id: string; name: string; email: string | null; email_prefs: string; active: number; role: string }>();
+    if (!me?.email) throw new ApiError(409, "no_email", "Add your own email address first (People → you → Edit).");
+    const url = new URL(req.url), links = appLinks(url, env.ROTA_HOST, env.ADMIN_HOST);
+    const r = await sendSummary(env, { rota: new URL(links.rota, url.origin).href, diary: new URL(links.diary, url.origin).href }, me);
+    if (r !== "sent") throw new ApiError(502, "email_failed", r === "limit" ? "Today's email limit has been reached." : "Resend didn't accept it. See Activity for why.");
     return json({ ok: true, to: me.email });
   }
 

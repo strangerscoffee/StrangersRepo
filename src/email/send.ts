@@ -4,11 +4,13 @@
 // Cloudflare), nothing is sent and the rota works as before.
 import { audit } from "../audit";
 import { readToken, signToken } from "../auth";
-import { Env } from "../http";
+import { Env, invalid } from "../http";
 import { Built, Links } from "./templates";
 
 /** The emails people can turn on or off, and how each starts (docs/data-model.md, users.email_prefs). */
-export const EMAIL_KINDS = { published: true, changed: true, requests: true, open: false } as const;
+export const EMAIL_KINDS = { published: true, changed: true, requests: true, open: false, weekly: true } as const;
+/** The sites a manager's Monday summary covers (email_prefs.weeklySites); none chosen means all four. */
+export const SUMMARY_SITES = ["roastery", "cafe", "asg", "factory"] as const;
 export type EmailKind = keyof typeof EMAIL_KINDS;
 export type Prefs = Record<EmailKind, boolean>;
 
@@ -20,6 +22,37 @@ export function prefsOf(raw: unknown): Prefs {
   return out;
 }
 export const isEmailKind = (k: unknown): k is EmailKind => typeof k === "string" && Object.hasOwn(EMAIL_KINDS, k);
+
+export function weeklySitesOf(raw: unknown): string[] {
+  let p: any = {};
+  try { p = typeof raw === "string" ? JSON.parse(raw) : raw || {}; } catch {}
+  const s = Array.isArray(p.weeklySites) ? p.weeklySites.filter((x: unknown) => (SUMMARY_SITES as readonly unknown[]).includes(x)) : [];
+  return s.length ? SUMMARY_SITES.filter((x) => s.includes(x)) : [...SUMMARY_SITES];
+}
+
+/** Changes someone's email choices: any of the switches, and the Monday summary's sites. Throws invalid_argument. */
+export async function savePrefs(env: Env, userId: string, change: { prefs?: unknown; weeklySites?: unknown }) {
+  const row = await env.DB.prepare("SELECT email_prefs FROM users WHERE id = ?").bind(userId).first<{ email_prefs: string }>();
+  let raw: any = {};
+  try { raw = JSON.parse(row?.email_prefs || "{}") || {}; } catch {}
+  const prefs = prefsOf(raw);
+  if (change.prefs !== undefined) {
+    if (!change.prefs || typeof change.prefs !== "object" || Array.isArray(change.prefs)) throw invalid("Choose which emails to get.");
+    for (const [k, v] of Object.entries(change.prefs)) {
+      if (!isEmailKind(k) || typeof v !== "boolean") throw invalid("Choose which emails to get.");
+      prefs[k] = v;
+    }
+  }
+  let sites: string[] | undefined;
+  if (change.weeklySites !== undefined) {
+    if (!Array.isArray(change.weeklySites) || change.weeklySites.some((x) => !(SUMMARY_SITES as readonly unknown[]).includes(x))) throw invalid("Choose the sites for the Monday summary.");
+    sites = SUMMARY_SITES.filter((x) => (change.weeklySites as unknown[]).includes(x));
+    if (!sites.length) throw invalid("Choose at least one site, or switch the Monday summary off.");
+  }
+  const next = { ...prefs, weeklySites: sites ?? weeklySitesOf(raw) };
+  await env.DB.prepare("UPDATE users SET email_prefs = ? WHERE id = ?").bind(JSON.stringify(next), userId).run();
+  return { prefs, weeklySites: next.weeklySites };
+}
 
 export const emailReady = (env: Env) => !!env.RESEND_API_KEY;
 const FROM = (env: Env) => env.EMAIL_FROM || "Strangers Rota <rota@staffstrangerscoffee.com>";

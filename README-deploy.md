@@ -67,7 +67,7 @@ The rota emails people their shifts when a week is published, when their shifts 
 3. In the Worker: **Settings → Variables and Secrets → Add**, type **Secret**, name `RESEND_API_KEY`, the key as its value.
 4. In the admin section, add your own email address (People → you → Edit), then Overview → Rota emails → **Send me a test email**. Add everyone else's addresses the same way.
 
-Emails come from `Strangers Rota <rota@staffstrangerscoffee.com>` (the `EMAIL_FROM` variable changes it); replies go to the manager who made the change. At most 100 are sent a day (`EMAIL_DAILY_LIMIT`), Resend's free allowance. To stop all emails, delete the secret.
+Managers and admins with an address also get a summary every Monday at 07:30 (each chooses the sites, or an admin does in People; Overview → **Send me this week's summary** previews it). Emails come from `Strangers Rota <rota@staffstrangerscoffee.com>` (the `EMAIL_FROM` variable changes it); replies go to the manager who made the change. At most 100 are sent a day (`EMAIL_DAILY_LIMIT`), Resend's free allowance. To stop all emails, delete the secret.
 
 ## Change the setup code
 

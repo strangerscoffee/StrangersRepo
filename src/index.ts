@@ -14,6 +14,7 @@ import { ensureSchema } from "./schema";
 import { codeFor, recordError } from "./errors";
 import { handleUnsubscribe } from "./email/unsubscribe";
 import { notifyLive, openLive } from "./live";
+import { sendWeeklySummaries } from "./email/weekly";
 export { LiveHub } from "./live";
 
 export default {
@@ -62,8 +63,14 @@ export default {
     return withSecurityHeaders(res, local);
   },
 
-  // The daily backup (cron in wrangler.jsonc).
-  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+  // The daily backup, and the managers' Monday summary (crons in wrangler.jsonc).
+  async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    if (event.cron === "30 6,7 * * 1") {
+      const domain = env.COOKIE_DOMAIN || "staffstrangerscoffee.com";
+      const base = { diary: `https://${domain}/`, rota: env.ROTA_HOST ? `https://${env.ROTA_HOST}/` : `https://${domain}/rota/` };
+      ctx.waitUntil(ensureSchema(env).then(() => sendWeeklySummaries(env, base, { anyTime: env.WEEKLY_ANY_TIME === "1" })));
+      return;
+    }
     ctx.waitUntil(ensureSchema(env).then(() => makeBackup(env, "daily")));
   },
 } satisfies ExportedHandler<Env>;

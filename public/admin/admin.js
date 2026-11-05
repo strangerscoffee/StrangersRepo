@@ -202,7 +202,7 @@
         ${d.emails ? html`<section class="panel glass" aria-labelledby="rem"><h2 id="rem">Rota emails ${d.emails.ready ? html`<span class="pill ok">On</span>` : html`<span class="pill warn">Not set up</span>`}</h2>
           <p class="emline">${d.emails.ready ? `${plural(d.emails.sentToday, "email", "emails")} sent in the last day.` : "Add the RESEND_API_KEY secret in Cloudflare to start sending. Until then nothing is sent."}</p>
           <p class="emline">${d.emails.withAddress} of ${d.emails.active} ${d.emails.active === 1 ? "person has" : "people have"} an email address. Add them in People → Edit.</p>
-          ${d.emails.ready ? html`<div class="row"><button class="btn sm soft" type="button" data-act="testemail">Send me a test email</button></div>` : ""}
+          ${d.emails.ready ? html`<div class="row"><button class="btn sm soft" type="button" data-act="testemail">Send me a test email</button><button class="btn sm soft" type="button" data-act="weeklytest">Send me this week's summary</button></div>` : ""}
         </section>` : ""}
       </div>`;
   };
@@ -264,6 +264,7 @@
             <div class="chead"><h3><span class="ic acc">${svg("user")}</span>Account</h3></div>
             ${kv("Username", p.username)}${kv("Email", p.email || "None: no rota emails")}${kv("Role", rolePill(p.role))}${kv("Last sign-in", p.lastLoginAt ? cap(when(p.lastLoginAt)) : "Never")}
             ${kv("Quick PIN", p.role === "admin" ? "Admins use their password" : p.quickPin ? "Set" : "Not set")}
+            ${p.role !== "staff" ? html`<div class="kv"><span>Monday summary</span><span class="kvact">${summaryText(p)} <button class="btn sm soft" type="button" data-act="summary" data-id="${p.id}">Change</button></span></div>` : ""}
             ${kv("Added", `${dmy(p.createdAt)}${p.createdBy ? ` by ${p.createdBy}` : ""}`)}
           </section>
           <section class="card" aria-label="Rota">
@@ -465,6 +466,33 @@
     });
   }
 
+  // The managers' Monday summary (src/email/weekly.ts): on or off, and which sites, for each manager and admin.
+  function summaryText(p) {
+    if (!p.email) return "No email address";
+    if (!p.emailPrefs || !p.emailPrefs.weekly) return "Off";
+    const all = !p.weeklySites || p.weeklySites.length === SITES.length;
+    return all ? "On · all sites" : "On · " + SITES.filter(([id]) => p.weeklySites.includes(id)).map(([, n]) => n).join(", ");
+  }
+  function editSummary(p) {
+    const on = !!(p.emailPrefs && p.emailPrefs.weekly), sites = p.weeklySites || SITES.map(([id]) => id);
+    openSheet(html`<form novalidate><h2 id="sheetTitle">${p.name}'s Monday summary</h2>
+      <p>Every Monday at 07:30: what needs them at their sites, and last week's diary.${p.email ? "" : " They need an email address first."}</p>
+      <label class="checkrow"><input type="checkbox" id="fWeekly" ${on ? raw("checked") : ""}> Send ${p.name.split(" ")[0]} the Monday summary</label>
+      <div class="field"><span class="fl">Sites it covers</span><div class="checks">${SITES.map(([id, n]) => html`<label><input type="checkbox" name="wsite" value="${id}" ${sites.includes(id) ? raw("checked") : ""}>${n}</label>`)}</div></div>
+      <p class="err" id="fErr" role="alert"></p>
+      <div class="row"><button class="btn soft" type="button" data-sheet="close">Cancel</button><button class="btn" type="submit">Save</button></div></form>`,
+    async (act) => {
+      if (act !== "submit") return;
+      const chosen = [...document.querySelectorAll("input[name=wsite]:checked")].map((i) => i.value);
+      const weekly = $("#fWeekly").checked;
+      if (weekly && !chosen.length) { $("#fErr").textContent = "Choose at least one site, or switch it off."; return; }
+      try {
+        await api("PATCH", `/api/admin/users/${p.id}`, { emailPrefs: { weekly }, ...(chosen.length ? { weeklySites: chosen } : {}) });
+        closeSheet(); toast("Saved"); reload();
+      } catch (e) { $("#fErr").textContent = e.message; }
+    });
+  }
+
   function editAvailability(p) {
     const pat = p.rota.pattern || {};
     const mode = (v) => (v === "off" ? "off" : v && typeof v === "object" ? "times" : "any");
@@ -524,6 +552,11 @@
     switch (name) {
       case "go": show(id); return;
       case "errors": S.feed = "errors"; show("activity"); return;
+      case "summary": if (p) editSummary(p); return;
+      case "weeklytest":
+        try { const r = await api("POST", "/api/admin/email/weekly-test", {}); toast("This week's summary sent to " + r.to); }
+        catch (e) { toast(e.message); }
+        return;
       case "testemail":
         try { const r = await api("POST", "/api/admin/email/test", {}); toast("Test email sent to " + r.to); }
         catch (e) { toast(e.message); }
