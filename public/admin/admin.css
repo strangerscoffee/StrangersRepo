@@ -84,6 +84,9 @@ button.item:hover,a.item:hover{background:var(--sunk)}
 .item .tx b.plain{font-weight:500}
 .item .tx span{font-size:13.5px;color:var(--muted);overflow-wrap:anywhere}
 .item .end{display:flex;align-items:center;gap:8px;flex:none}
+.btn.dismiss{width:36px;padding:0;justify-content:center;color:var(--muted)}
+.btn.dismiss svg.i{width:16px;height:16px}
+@media (max-width:600px){.item .end:has(.dismiss){flex-direction:column;align-items:flex-end;gap:6px}.btn.dismiss{order:-1;min-height:30px;width:30px}}
 .item .chev{color:var(--muted);transition:transform .2s;display:grid}
 .item[aria-expanded="true"] .chev{transform:rotate(90deg)}
 .item.off .tx b{color:var(--muted)}

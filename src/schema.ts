@@ -211,6 +211,9 @@ const MIGRATIONS: Migration[] = [
       ...(weeks.has("emailed") ? [] : ["ALTER TABLE rota_weeks ADD COLUMN emailed TEXT"]),
     ]);
   } },
+  { id: 10, name: "admin overview: notices an admin has dismissed", async run(env) {
+    await env.DB.prepare("CREATE TABLE IF NOT EXISTS admin_dismissed (key TEXT PRIMARY KEY, at INTEGER NOT NULL, by TEXT)").run();
+  } },
 ];
 
 async function migrate(env: Env): Promise<void> {

@@ -35,6 +35,7 @@
     key: '<circle cx="8" cy="15" r="4"/><path d="M11 12l8-8M16 7l2 2"/>',
     out: '<path d="M10 5H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h4M15 8l4 4-4 4M19 12H9"/>',
     pen: '<path d="M4 20h4L19 9l-4-4L4 16z"/>',
+    x: '<path d="M6 6l12 12M18 6L6 18"/>',
     copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>',
   };
   const svg = (k) => raw(`<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${P[k]}</svg>`);
@@ -179,7 +180,8 @@
     const attention = d.attention.length ? d.attention.map((a) => html`
       <div class="item"><span class="ic ${a.tone}">${svg(a.icon)}</span><span class="tx"><b>${a.title}</b><span>${a.detail}</span></span>
         <span class="end">${a.action.href ? html`<a class="btn sm soft" href="${a.action.href}">${a.action.label}</a>`
-          : html`<button class="btn sm soft" type="button" data-act="${a.action.act || "go"}" data-id="${a.action.id || a.action.go || ""}">${a.action.label}</button>`}</span></div>`)
+          : html`<button class="btn sm soft" type="button" data-act="${a.action.act || "go"}" data-id="${a.action.id || a.action.go || ""}">${a.action.label}</button>`}
+          ${a.dismiss ? html`<button class="btn sm soft dismiss" type="button" data-act="dismiss" data-id="${a.dismiss}" aria-label="Dismiss" title="Dismiss">${svg("x")}</button>` : ""}</span></div>`)
       : html`<div class="empty">${raw(`<span class="ic ok">${svg("ok")[RAW]}</span>`)}<span>Nothing needs attention.</span></div>`;
     return html`
       ${head("Overview", `The Kitchen Diary and the Rota at a glance. ${new Date().toLocaleDateString("en-GB", { ...LON, weekday: "long", day: "numeric", month: "long" })}.`)}
@@ -552,6 +554,10 @@
     switch (name) {
       case "go": show(id); return;
       case "errors": S.feed = "errors"; show("activity"); return;
+      case "dismiss":
+        try { await api("POST", "/api/admin/overview/dismiss", { key: id }); reload(); }
+        catch (e) { toast(e.message); }
+        return;
       case "summary": if (p) editSummary(p); return;
       case "weeklytest":
         try { const r = await api("POST", "/api/admin/email/weekly-test", {}); toast("This week's summary sent to " + r.to); }
