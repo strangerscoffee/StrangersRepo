@@ -79,24 +79,37 @@
     try { fetch("/api/errors", { method: "POST", headers: { "content-type": "application/json" }, body, keepalive: true }).catch(() => {}); } catch (e) { /* nothing more to do */ }
     return code;
   }
+  // Only the site's own code and files: anything from another address (a browser extension, or a script something
+  // between here and the phone added, like Cloudflare's analytics beacon, which the site's security rules block on
+  // purpose) says nothing about the site and isn't reported.
+  const ours = (u) => { try { return new URL(u, location.href).origin === location.origin; } catch (e) { return false; } };
   addEventListener("error", (e) => {
     const t = e.target;
     if (t && t !== window && (t.src || t.href)) {
+      const u = String(t.src || t.href);
+      if (!ours(u)) return;
       // A picture that didn't load is reported but doesn't interrupt anyone; a script or stylesheet breaks the page.
-      report("Couldn't load " + String(t.src || t.href).replace(location.origin, "").split("?")[0], "", { quiet: t.tagName === "IMG" });
+      report("Couldn't load " + u.replace(location.origin, "").split("?")[0], "", { quiet: t.tagName === "IMG" });
       return;
     }
     const msg = e.message || "Script error";
-    // Chrome's harmless layout warning; and "Script error." with no file is a script from another site (often a
-    // browser extension), which says nothing about ours: reported, but not put in front of anyone.
+    // Chrome's harmless layout warning; "Script error." with no file is another site's script (browsers hide what it
+    // was); and an error in a file from elsewhere isn't the site's.
     if (/ResizeObserver loop/.test(msg)) return;
-    report(msg, (e.error && e.error.stack) || (e.filename ? `${e.filename}:${e.lineno}:${e.colno}` : ""), { quiet: /^Script error\.?$/.test(msg) && !e.filename });
+    if (/^Script error\.?$/.test(msg) && !e.filename) return;
+    if (e.filename && !ours(e.filename)) return;
+    report(msg, (e.error && e.error.stack) || (e.filename ? `${e.filename}:${e.lineno}:${e.colno}` : ""));
   }, true);
+  // How each browser says a request didn't reach the server (Safari, Chrome, Firefox).
+  const NETWORK = /^(Load failed|Failed to fetch|NetworkError when attempting to fetch resource\.?|The network connection was lost\.?)$/;
   addEventListener("unhandledrejection", (e) => {
     const r = e.reason;
     // Not reaching the server and being signed out are handled by the pages themselves.
     if (r && (r.code === "unavailable" || r.code === "unauthenticated" || r.name === "AbortError")) return;
-    report("Unhandled: " + ((r && r.message) || String(r)), r && r.stack);
+    const msg = (r && r.message) || String(r);
+    // A request that didn't get through (the signal dropped) and that nothing caught: worth fixing, so it's
+    // reported, but it isn't put in front of anyone; the page carries on and tries again.
+    report("Unhandled: " + msg, r && r.stack, { quiet: r && r.name === "TypeError" && NETWORK.test(msg) });
   });
   window.SCReportError = report;
 })();
