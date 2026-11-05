@@ -154,42 +154,32 @@ function checkQuery(q: QuerySpec): QuerySpec {
   return { path, orderBy: q.orderBy ?? undefined, dir: q.dir === "desc" ? "desc" : "asc", limit: q.limit ?? undefined };
 }
 
-// Ordering matches SQLite's: missing/null first, then numbers, then strings.
-function rank(v: unknown): [number, number | string] {
-  if (v == null) return [0, 0];
-  if (typeof v === "boolean") return [1, v ? 1 : 0];
-  if (typeof v === "number") return [1, v];
-  if (typeof v === "string") return [2, v];
-  return [3, JSON.stringify(v)];
-}
-
-function compare(a: unknown, b: unknown): number {
-  const [ra, va] = rank(a), [rb, vb] = rank(b);
-  if (ra !== rb) return ra - rb;
-  return va < vb ? -1 : va > vb ? 1 : 0;
-}
-
 type Doc = { id: string; data: Record<string, unknown>; ver?: number };
 
-/** Applies orderBy/limit to a collection's live docs. */
-function runQuery(docs: Doc[], q: QuerySpec): Doc[] {
-  let out = docs;
-  if (q.orderBy) {
-    const f = q.orderBy, sign = q.dir === "desc" ? -1 : 1;
-    out = [...docs].sort((a, b) => sign * (compare(a.data[f], b.data[f]) || compare(a.id, b.id)));
+/*
+ * A collection query, sorted and limited by the database rather than here: the page asks for, say, the latest 400 days
+ * of a site, and a collection of a few years' days shouldn't be read in full for that. The order is
+ * SQLite's own (missing/null first, then numbers, then text; as the page has always had it), with the id breaking ties.
+ * The fields pages sort by (date, week, at) have indexes (migration 8), so this reads only the rows it returns.
+ */
+function queryStatement(env: Env, collection: string, q: QuerySpec): D1PreparedStatement {
+  const limit = Math.min(q.limit ?? MAX_LIMIT, MAX_LIMIT);
+  if (!q.orderBy) {
+    return env.DB.prepare("SELECT doc_id, data, seq FROM docs WHERE collection = ? AND deleted = 0 LIMIT ?").bind(collection, limit);
   }
-  return out.slice(0, Math.min(q.limit ?? MAX_LIMIT, MAX_LIMIT));
+  const dir = q.dir === "desc" ? "DESC" : "ASC";
+  // orderBy has been checked against FIELD_RE (letters, digits, _), so it is safe in the SQL; written out like this
+  // (not bound) so the query matches the expression indexes.
+  return env.DB.prepare(
+    `SELECT doc_id, data, seq FROM docs WHERE collection = ? AND deleted = 0
+     ORDER BY json_extract(data, '$.${q.orderBy}') ${dir}, doc_id ${dir} LIMIT ?`,
+  ).bind(collection, limit);
 }
-
-async function liveDocs(env: Env, collection: string): Promise<Doc[]> {
-  const { results } = await env.DB.prepare("SELECT doc_id, data, seq FROM docs WHERE collection = ? AND deleted = 0")
-    .bind(collection).all<{ doc_id: string; data: string; seq: number }>();
-  return results.map((r) => ({ id: r.doc_id, data: JSON.parse(r.data), ver: r.seq }));
-}
+const toDocs = (rows: { doc_id: string; data: string; seq: number }[]): Doc[] => rows.map((r) => ({ id: r.doc_id, data: JSON.parse(r.data), ver: r.seq }));
 
 export async function queryCollection(env: Env, q: QuerySpec) {
   const spec = checkQuery(q);
-  return { docs: runQuery(await liveDocs(env, spec.path), spec) };
+  return { docs: toDocs((await queryStatement(env, spec.path, spec).all<{ doc_id: string; data: string; seq: number }>()).results) };
 }
 
 interface PollQuery extends QuerySpec {
@@ -234,29 +224,17 @@ export async function poll(env: Env, body: { since?: number; queries?: PollQuery
   const changed = queries.map((q, i) => ({ q, v: vers.get(i) ?? 0 })).filter(({ q, v }) => q.ver !== v);
   if (!changed.length) return { seq, results };
 
-  const cols = [...new Set(changed.filter(({ q }) => q.kind === "col").map(({ q }) => q.path))];
+  // Every changed query in one round trip: each collection query sorted and limited by the database, and the
+  // changed single documents together.
+  const colQs = changed.filter(({ q }) => q.kind === "col");
   const paths = [...new Set(changed.filter(({ q }) => q.kind === "doc").map(({ q }) => q.path))];
-  const { results: rows } = await env.DB.prepare(
-    `SELECT path, collection, doc_id, data, seq FROM docs WHERE deleted = 0
-     AND (collection IN (SELECT value FROM json_each(?)) OR path IN (SELECT value FROM json_each(?)))`,
-  ).bind(JSON.stringify(cols), JSON.stringify(paths)).all<{ path: string; collection: string; doc_id: string; data: string; seq: number }>();
-
-  const byCol = new Map<string, Doc[]>();
+  const stmts = colQs.map(({ q }) => queryStatement(env, q.path, q.spec!));
+  if (paths.length) stmts.push(env.DB.prepare("SELECT path, data FROM docs WHERE deleted = 0 AND path IN (SELECT value FROM json_each(?))").bind(JSON.stringify(paths)));
+  const out = await env.DB.batch(stmts);
   const byPath = new Map<string, Record<string, unknown>>();
-  for (const r of rows) {
-    const data = JSON.parse(r.data);
-    if (paths.includes(r.path)) byPath.set(r.path, data);
-    if (cols.includes(r.collection)) {
-      if (!byCol.has(r.collection)) byCol.set(r.collection, []);
-      byCol.get(r.collection)!.push({ id: r.doc_id, data, ver: r.seq });
-    }
-  }
-  for (const { q, v } of changed) {
-    results[q.key] =
-      q.kind === "doc"
-        ? { ver: v, exists: byPath.has(q.path), data: byPath.get(q.path), docVer: v }
-        : { ver: v, docs: runQuery(byCol.get(q.path) ?? [], q.spec!) };
-  }
+  if (paths.length) for (const r of out[out.length - 1].results as { path: string; data: string }[]) byPath.set(r.path, JSON.parse(r.data));
+  colQs.forEach(({ q, v }, i) => { results[q.key] = { ver: v, docs: toDocs(out[i].results as { doc_id: string; data: string; seq: number }[]) }; });
+  for (const { q, v } of changed) if (q.kind === "doc") results[q.key] = { ver: v, exists: byPath.has(q.path), data: byPath.get(q.path), docVer: v };
   return { seq, results };
 }
 

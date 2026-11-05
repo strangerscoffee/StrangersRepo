@@ -52,6 +52,13 @@ export async function startServer({ writeLimit, preSql, scheduled, vars = {} } =
   return {
     base,
     log: () => log,
+    /** Runs SQL on this server's local database and returns the rows (for checking schema and query plans). */
+    sql(command) {
+      const out = execFileSync(WRANGLER, ["d1", "execute", "kitchen-diary", "--local", "--persist-to", state, "--json", "--command", command], {
+        cwd: ROOT, stdio: "pipe", env: { ...process.env, CI: "1" },
+      }).toString();
+      return JSON.parse(out)[0].results;
+    },
     async stop() {
       proc.kill("SIGINT");
       await new Promise((r) => (proc.exitCode != null ? r() : proc.once("exit", r)));
