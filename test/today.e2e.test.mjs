@@ -3,7 +3,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { startServer, SETUP_CODE } from "./harness.mjs";
+import { startServer, SETUP_CODE, serverTimeIs } from "./harness.mjs";
 
 const require = createRequire(import.meta.url);
 let chromium;
@@ -29,6 +29,7 @@ test("Today: reminders fold after two; closing checks wait folded on a phone in 
   await phone.addCookies([{ name: "sfbb_session", value: C.split("=")[1], url: srv.base }]);
   const p = await phone.newPage();
   await p.clock.setFixedTime(nine);
+  await serverTimeIs(p, nine.getTime());
   await p.goto(srv.base + "/#day");
   await p.locator("#openList label").first().waitFor();
   await p.locator(".alertmore", { hasText: "3 more overdue" }).waitFor();
@@ -45,6 +46,7 @@ test("Today: reminders fold after two; closing checks wait folded on a phone in 
   await ipad.addCookies([{ name: "sfbb_session", value: C.split("=")[1], url: srv.base }]);
   const q = await ipad.newPage();
   await q.clock.setFixedTime(nine);
+  await serverTimeIs(q, nine.getTime());
   await set(`days/${nine.toLocaleDateString("en-CA")}`, { date: nine.toLocaleDateString("en-CA") });
   await q.goto(srv.base + "/#day");
   await q.locator("#closeList label").first().waitFor();

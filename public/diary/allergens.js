@@ -17,7 +17,7 @@ function renderAllergens(){
     return xrow("a"+it.id,{
       title:it.name,sub:[it.source,it.notes].filter(Boolean).join(" · "),
       right:[el("span",{class:"agl"},...(has.length?has.map(a=>el("span",{class:"ag",text:algShort(a)})):[el("span",{class:"pill ok",text:"None of the 14"})]))],
-      details:[xfacts([["Contains",has.join(", ")||"None of the 14 allergens"],["Notes",it.notes],["Source",it.source],["Checked",it.at?new Date(it.at).toLocaleDateString("en-GB")+(it.by?", "+nameOf(it.by):""):""],["Copied from",it.importedFrom?siteOf(it.importedFrom).name:""]]),
+      details:[xfacts([["Contains",has.join(", ")||"None of the 14 allergens"],["Notes",it.notes],["Source",it.source],["Checked",it.at?new Date(it.at).toLocaleDateString("en-GB",{timeZone:UK})+(it.by?", "+nameOf(it.by):""):""],["Copied from",it.importedFrom?siteOf(it.importedFrom).name:""]]),
         R?null:el("div",{class:"row"},el("button",{class:"btn ghost sm",type:"button",onclick:()=>editAlg(it)},"Edit item"))]})};
   const matrix=list=>{
     const head=el("tr",{},el("th",{text:"Item"}),...ALLERGENS.map(a=>el("th",{class:"al",text:algShort(a)})));
@@ -85,7 +85,7 @@ function renderAllergenDocs(){
   const items=S.allergens,last=items.length?Math.max(...items.map(i=>i.at||0)):0;
   box.append(el("div",{class:"pdfcard glass"},el("span",{class:"tile red"},svgi(ICON.doc)),
     el("span",{class:"t"},el("b",{text:"Allergen matrix (PDF)"}),
-      el("span",{class:"s",text:items.length?`${items.length} menu item${items.length===1?"":"s"} × the 14 UK allergens${last?" · last changed "+new Date(last).toLocaleDateString("en-GB",{day:"numeric",month:"short"}):""}`:`Add the ${curSite().name}'s menu items below, then make the matrix.`})),
+      el("span",{class:"s",text:items.length?`${items.length} menu item${items.length===1?"":"s"} × the 14 UK allergens${last?" · last changed "+new Date(last).toLocaleDateString("en-GB",{timeZone:UK,day:"numeric",month:"short"}):""}`:`Add the ${curSite().name}'s menu items below, then make the matrix.`})),
     el("button",{class:"btn sm",type:"button",id:"amMake",disabled:!items.length||!S.db,onclick:allergenPdf},"Generate PDF")));
   const list=[...S.allergenDocs].sort((a,b)=>(b.at||0)-(a.at||0));
   if(list.length)box.append(el("div",{class:"label",text:"Uploaded earlier"}));

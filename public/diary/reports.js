@@ -4,7 +4,7 @@
 let LOGO_D=null;
 fetch("/logo.svg").then(r=>r.ok?r.text():"").then(t=>{const m=/ d="([^"]+)"/.exec(t||"");LOGO_D=m?m[1]:null}).catch(()=>{});
 const fullName=id=>id&&id===S.me?(S.myName||"you"):nameOf(id);
-const longNow=()=>new Date().toLocaleString("en-GB",{day:"numeric",month:"long",year:"numeric",hour:"2-digit",minute:"2-digit"});
+const longNow=()=>new Date().toLocaleString("en-GB",{day:"numeric",month:"long",year:"numeric",hour:"2-digit",minute:"2-digit",timeZone:UK});
 const pdfDate=s=>s?parse(s).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"}):"";
 // Running header: the Strangers logo, a title and up to three lines underneath. Returns where the page body starts.
 function pdfHeader(title,lines){
@@ -85,7 +85,7 @@ function allergenPdf(){
   const last=Math.max(...items.map(i=>i.at||0));
   const doc=P.create({landscape:true,title:`Allergen matrix - Strangers Coffee ${site.name}`,author:S.myName});
   const f=new P.Flow(doc,{footer:`Strangers Coffee ${site.name} · allergen matrix · made ${longNow()}`,
-    header:pdfHeader("Allergen matrix",[`Strangers Coffee ${site.name} · ${addr}`,`The 14 allergens UK law requires you to declare · ${items.length} menu item${items.length===1?"":"s"}${last?" · last changed "+new Date(last).toLocaleDateString("en-GB",{day:"numeric",month:"long",year:"numeric"}):""}`])});
+    header:pdfHeader("Allergen matrix",[`Strangers Coffee ${site.name} · ${addr}`,`The 14 allergens UK law requires you to declare · ${items.length} menu item${items.length===1?"":"s"}${last?" · last changed "+new Date(last).toLocaleDateString("en-GB",{timeZone:UK,day:"numeric",month:"long",year:"numeric"}):""}`])});
   const secs=algSectionsOn()?ALG_SECTIONS.map(([k,t])=>[k,t,items.filter(it=>algKind(it)===k)]).filter(x=>x[2].length):[[null,"",items]];
   secs.forEach(([k,title,list],i)=>{
     if(i)f.startPage(false);
@@ -142,7 +142,7 @@ async function loadInspect(site,p){
 // A cell is text or {t, cls:"ok"|"warn"|"bad"|"muted", b:bold, tick}.
 function inspectSections(R){
   const s=S.settings,cfg=S.cfg,site=curSite(),out=[];
-  const inR=d=>d&&d>=R.from&&d<=R.to,atIn=ts=>ts&&inR(iso(new Date(ts)));
+  const inR=d=>d&&d>=R.from&&d<=R.to,atIn=ts=>ts&&inR(dayOf(ts));
   const dates=[];for(let d=R.to;d>=R.from;d=addDays(d,-1))dates.push(d);
   const keys=Object.keys(R.days).sort(),start=s.startDate||keys[0]||R.to;
   const units=[...s.units];
@@ -179,9 +179,9 @@ function inspectSections(R){
   for(const r of R.deliveries){const p=[r.chilled!=null&&r.chilled>8?`chilled ${r.chilled}°C`:"",r.frozen!=null&&r.frozen>-15?`frozen ${r.frozen}°C`:"",r.packaging==="no"?"packaging damaged":"",r.order==="no"?"not what was ordered":""].filter(Boolean);
     if(r.outcome==="rejected"||p.length)actions.push({date:r.date,area:"Delivery",what:`${r.supplier}: ${p.join(", ")||"rejected"}`,did:`${r.outcome==="rejected"?"Rejected":"Accepted"}${r.note?": "+r.note:""}`,by:fullName(r.by)})}
   const maintAll=S.maintenance;
-  for(const m of maintAll)if(m.status==="done"&&atIn(m.doneAt))actions.push({date:iso(new Date(m.doneAt)),area:"Maintenance",what:m.title+(m.area?` (${m.area})`:""),did:m.fixNote||"Done",by:fullName(m.doneBy)});
+  for(const m of maintAll)if(m.status==="done"&&atIn(m.doneAt))actions.push({date:dayOf(m.doneAt),area:"Maintenance",what:m.title+(m.area?` (${m.area})`:""),did:m.fixNote||"Done",by:fullName(m.doneBy)});
   const insp=inspSorted()[0];
-  if(insp)for(const i of(insp.issues||[]))if(i.done&&atIn(i.doneAt))actions.push({date:iso(new Date(i.doneAt)),area:"EHO issue",what:i.issue,did:i.fixNote||"Fixed",by:fullName(i.doneBy)});
+  if(insp)for(const i of(insp.issues||[]))if(i.done&&atIn(i.doneAt))actions.push({date:dayOf(i.doneAt),area:"EHO issue",what:i.issue,did:i.fixNote||"Fixed",by:fullName(i.doneBy)});
   actions.sort((a,b)=>b.date.localeCompare(a.date));
 
   // Cleaning and extra checks
@@ -245,7 +245,7 @@ function inspectSections(R){
   out.push({id:"maintenance",title:"Maintenance",intro:"Equipment problems and maintenance jobs: everything still open, and anything reported or finished in the period.",
     cols:[{l:"Reported",w:72},{l:"Job",flex:1.2,bold:true},{l:"Equipment or area",w:95},{l:"Urgency",w:70},{l:"Status",w:110},{l:"What was done",flex:1.2}],
     rows:maintAll.filter(m=>m.status!=="done"||atIn(m.reportedAt)||atIn(m.doneAt)).sort((a,b)=>(b.reportedAt||0)-(a.reportedAt||0)).map(m=>{const pr=mtPri(m.priority);
-      return[m.reportedAt?pdfDate(iso(new Date(m.reportedAt))):"",m.title,m.area||"",{t:pr[1],cls:pr[3]},m.status==="done"?{t:`Done ${m.doneAt?pdfDate(iso(new Date(m.doneAt))):""}`,cls:"ok"}:{t:"Open"+(m.assignee?` · ${m.assigneeName||fullName(m.assignee)}`:""),cls:pr[0]==="urgent"?"bad":"warn"},m.fixNote||m.details||""]}),
+      return[m.reportedAt?pdfDate(dayOf(m.reportedAt)):"",m.title,m.area||"",{t:pr[1],cls:pr[3]},m.status==="done"?{t:`Done ${m.doneAt?pdfDate(dayOf(m.doneAt)):""}`,cls:"ok"}:{t:"Open"+(m.assignee?` · ${m.assigneeName||fullName(m.assignee)}`:""),cls:pr[0]==="urgent"?"bad":"warn"},m.fixNote||m.details||""]}),
     empty:"No maintenance jobs."});
   out.push({id:"reviews",title:"4-weekly reviews",
     cols:[{l:"Date",w:80},{l:"Signed by",w:100},{l:"Changes reported",flex:1.4},{l:"Actions taken",flex:1.4}],
@@ -264,7 +264,7 @@ function inspectSections(R){
       ["Scores",insp.scores?[["Food handling",insp.scores.hygiene],["Cleanliness & structure",insp.scores.structure],["Management",insp.scores.management]].filter(x=>x[1]!==""&&x[1]!=null).map(x=>x.join(" ")).join(" · "):""],
       ["Revisit",pdfDate(insp.revisitDate)],["Summary",insp.summary]],
     cols:[{l:"Issue",flex:1.4},{l:"Area",w:80},{l:"Action required",flex:1.4},{l:"Deadline",w:72},{l:"Status",w:120}],
-    rows:(insp.issues||[]).map(i=>[i.issue,i.area||"",i.action||"",pdfDate(i.deadline),i.done?{t:`Done${i.doneAt?" "+pdfDate(iso(new Date(i.doneAt))):""}${i.fixNote?": "+i.fixNote:""}`,cls:"ok"}:{t:"Open",cls:"bad"}]),empty:"No issues recorded."});
+    rows:(insp.issues||[]).map(i=>[i.issue,i.area||"",i.action||"",pdfDate(i.deadline),i.done?{t:`Done${i.doneAt?" "+pdfDate(dayOf(i.doneAt)):""}${i.fixNote?": "+i.fixNote:""}`,cls:"ok"}:{t:"Open",cls:"bad"}]),empty:"No issues recorded."});
   for(const d of S.plans.slice().sort((a,b)=>(a.type||"").localeCompare(b.type||"")||(a.title||"").localeCompare(b.title||""))){
     const k=d.type,cols=PL_COLS[k];if(!cols)continue;
     out.push({id:"plan-"+d.id,title:d.title||PL_NAME[k],plan:true,intro:PL_NAME[k],riskKey:k==="risk",

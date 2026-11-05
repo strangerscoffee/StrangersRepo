@@ -58,7 +58,7 @@ function renderTasks(kind){
         if(!R){del=el("button",{class:"btn ghost sm danger",type:"button","aria-label":`Delete the entry for ${lastWhen(e.at,e.set)}`},"Delete");armDelete(del,"Delete",()=>deleteTaskEntry(kind,t,S.site,i))}
         return el("li",{},el("span",{text:lastWhen(e.at,e.set)}),el("span",{class:"s",text:nameOf(e.by)+(e.note?" · "+e.note:"")}),del)});
       const dateId=`${kind}_last_${t.id}`;
-      const dateIn=el("input",{type:"date",id:dateId,max:iso(new Date()),value:t.lastAt?iso(new Date(t.lastAt)):""});
+      const dateIn=el("input",{type:"date",id:dateId,max:today(),value:t.lastAt?dayOf(t.lastAt):""});
       for(const e of(t.log||[]).slice(0,10))ids.push(e.by);
       list.append(xrow(kind+t.id,{
         title:t.name,
@@ -105,10 +105,10 @@ async function deleteTaskEntry(kind,t,site,i){
 async function setTaskDate(kind,t,site,value){
   const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(value||"");
   if(!m){toast("Choose a date first");return}
-  const d=new Date(+m[1],+m[2]-1,+m[3],12);
-  const today=iso(new Date())===value;
-  if(!today&&d>new Date()){toast("That date is in the future");return}
-  const at=today?Date.now():d.getTime();
+  const d=new Date(Date.UTC(+m[1],+m[2]-1,+m[3],12)); // midday (UK time is UTC or an hour ahead: the same day)
+  const isToday=today()===value;
+  if(!isToday&&d>new Date()){toast("That date is in the future");return}
+  const at=isToday?Date.now():d.getTime();
   const entry={at,by:S.me,note:"Date entered by hand",set:true};
   const before={lastAt:t.lastAt||null,lastBy:t.lastBy||null,lastSet:!!t.lastSet};
   // A date entered by hand is the task's last-done date, so it goes to the top of the history whatever its date.

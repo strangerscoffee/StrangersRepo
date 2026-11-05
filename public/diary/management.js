@@ -834,7 +834,7 @@ function renderStaff(){
           return el("li",{class:t?"on":""},el("span",{class:"badge "+(t?"done":"")},t?svgi(ICON.check):""),el("span",{class:"t"},el("b",{text:l}),el("span",{class:"s",text:t?"Trained "+short(t.date):"Not yet"})),
             t||!canEditStaff(p)?null:el("button",{class:"btn ghost sm",type:"button",onclick:()=>trainedToday(p,k)},"Trained today"))})),
         xfacts([["Started",p.start?short(p.start):""],["Sites",Array.isArray(p.sites)&&p.sites.length?p.sites.map(x=>siteOf(x).name).join(", "):""],
-          ["Signed",p.signed&&p.signed.topics===signKey(p.topics)?`${p.signed.name||nameOf(p.signed.by)}, ${short(iso(new Date(p.signed.at)))}`:(Object.keys(p.topics||{}).length?"Not signed yet":"")],["Notes",p.notes]]),
+          ["Signed",p.signed&&p.signed.topics===signKey(p.topics)?`${p.signed.name||nameOf(p.signed.by)}, ${short(dayOf(p.signed.at))}`:(Object.keys(p.topics||{}).length?"Not signed yet":"")],["Notes",p.notes]]),
         canEditStaff(p)?el("div",{class:"row"},el("button",{class:"btn ghost sm",type:"button",onclick:()=>editStaff(p)},isMine(p)&&S.role==="staff"?"Fill in and sign":"Edit record")):null]}));
   }
   const mx=$("#tMatrix");mx.replaceChildren();

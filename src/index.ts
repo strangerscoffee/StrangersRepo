@@ -11,7 +11,8 @@ import { WRITE_OPS, handleDb } from "./docs";
 import { ApiError, Env, errorResponse, json, readJson } from "./http";
 import { handleRota } from "./rota";
 import { ensureSchema } from "./schema";
-import { codeFor, recordError } from "./errors";
+import { codeFor, deviceOf, recordError } from "./errors";
+import { audit } from "./audit";
 import { handleUnsubscribe } from "./email/unsubscribe";
 import { notifyLive, openLive } from "./live";
 import { sendWeeklySummaries } from "./email/weekly";
@@ -74,6 +75,18 @@ export default {
     ctx.waitUntil(ensureSchema(env).then(() => makeBackup(env, "daily")));
   },
 } satisfies ExportedHandler<Env>;
+
+/** How far out a device's clock must be before the admin section mentions it. */
+const CLOCK_FLAG_MS = 5 * 60 * 1000;
+async function flagClock(env: Env, user: { name: string }, diffMs: number, ua: string) {
+  try {
+    const recent = await env.DB.prepare("SELECT 1 FROM audit_log WHERE kind = 'clock_off' AND actor = ? AND at > ? LIMIT 1").bind(user.name, Date.now() - 864e5).first();
+    if (recent) return;
+    const mins = Math.round(Math.abs(diffMs) / 60000), h = Math.floor(mins / 60), m = mins % 60;
+    const by = h ? `${h} h${m ? ` ${m} min` : ""}` : `${m} min`;
+    await audit(env, "clock_off", user.name, `${user.name}'s ${(deviceOf(ua).split(" · ")[0] || "device").replace(/^Unknown device$/, "device")} clock is ${by} ${diffMs > 0 ? "fast" : "slow"}. The site uses the right time anyway; set the device to set its time automatically.`);
+  } catch { /* only a note */ }
+}
 
 /** The writes that move a change counter (diary saves, the rota, accounts and sites, stored files). */
 const LIVE_WRITES = /^\/api\/(db\/(set|update|delete)$|rota\/|admin\/|assets)/;
@@ -199,6 +212,10 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
     return new Response(null, { status: 302, headers: { location: "/signin" + next, "cache-control": "no-store" } });
   }
   const user = caller.user;
+  // A device whose own clock is well out (public/shared/core.js sends it): the page corrects for it, but someone
+  // should fix the device's settings, so the admin section says so (once a day per person).
+  const deviceTime = Number(req.headers.get("x-device-time"));
+  if (Number.isFinite(deviceTime) && deviceTime > 0 && Math.abs(deviceTime - Date.now()) > CLOCK_FLAG_MS) ctx.waitUntil(flagClock(env, user, deviceTime - Date.now(), req.headers.get("user-agent") || ""));
 
   // Live updates (src/live.ts): a WebSocket that's told the moment anything changes, on every app's address. Only
   // from the site's own pages (a browser always sends Origin when opening one).
@@ -303,6 +320,8 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
 function withSecurityHeaders(res: Response, local: boolean): Response {
   const out = new Response(res.body, res);
   const h = out.headers;
+  // The server's time on every response: pages run on it, not the device's clock (public/shared/core.js).
+  h.set("x-now", String(Date.now()));
   h.set("x-robots-tag", "noindex, nofollow");
   h.set("x-content-type-options", "nosniff");
   h.set("referrer-policy", "same-origin");

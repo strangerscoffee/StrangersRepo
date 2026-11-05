@@ -148,6 +148,20 @@ interface QuerySpec {
 const FIELD_RE = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
 const MAX_LIMIT = 2000;
 
+/** Times a record says something happened (ms). One more than a few minutes ahead of the server's clock can only be
+ *  a device whose clock is wrong (pages use the server's time: public/shared/core.js), so it's set to now. List
+ *  operations ($op) are left as they are: their times are what later operations find entries by. */
+const TIME_KEYS = new Set(["at", "lastAt", "createdAt", "updatedAt", "doneAt", "reportedAt", "importedAt"]);
+const FUTURE_SLACK_MS = 5 * 60 * 1000;
+function clampFuture(v: unknown, now: number, depth = 0): void {
+  if (!v || typeof v !== "object" || depth > 12) return;
+  if (!Array.isArray(v) && typeof (v as Record<string, unknown>).$op === "string") return;
+  for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+    if (TIME_KEYS.has(k) && typeof x === "number" && x > now + FUTURE_SLACK_MS) (v as Record<string, unknown>)[k] = now;
+    else if (x && typeof x === "object") clampFuture(x, now, depth + 1);
+  }
+}
+
 /** Above this many changes since a device's copy, it gets the whole list again (cheaper than merging). */
 const MAX_DELTA = 100;
 
@@ -320,6 +334,7 @@ export async function handleDb(req: Request, env: Env, op: string, user: User): 
     case "delete": {
       const o: WriteOpts = { ifVersion: checkVersion(body.ifVersion) };
       const data = op === "set" ? body.data : op === "update" ? body.patch : undefined;
+      if (data) clampFuture(data, Date.now());
       // A staff member's write is checked against the document as it is; if it changes before the write lands,
       // it's checked again against the new one (so a sign-off made meanwhile can't be undone by a stale check).
       for (let attempt = 0; ; attempt++) {

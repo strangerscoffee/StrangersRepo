@@ -61,21 +61,26 @@ const OPT_TABS=[["week","End of week"],["extras","Extra checks"],["cleaning","Cl
 const WEEKDAYS=[[1,"Monday"],[2,"Tuesday"],[3,"Wednesday"],[4,"Thursday"],[5,"Friday"],[6,"Saturday"],[0,"Sunday"]];
 const LISTS=[["opening","Opening"],["closing","Closing"],["weekly","End-of-week"]];
 
-// Page helpers shared with the rota and the admin section (public/shared/core.js). The diary keeps its own dates
-// below: they are the device's own days (local time), not Europe/London like the rota's.
+// Page helpers shared with the rota and the admin section (public/shared/core.js). Dates are YYYY-MM-DD strings;
+// "today", a saved time's day, and times of day are UK time on the server's clock (public/shared/core.js, "the
+// time"), whatever the device's clock or time zone says. The arithmetic between dates below is time-zone free.
 const {$,el,kids,svgi,initials,signOut}=SC;
 const pad=n=>String(n).padStart(2,"0");
 const iso=d=>`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
 const parse=s=>{const[y,m,d]=s.split("-").map(Number);return new Date(y,m-1,d)};
 const addDays=(s,n)=>{const d=parse(s);d.setDate(d.getDate()+n);return iso(d)};
-const today=()=>iso(new Date());
+const today=()=>SC.londonToday();
+// The UK date and time of day of a saved time (ms).
+const UK="Europe/London";
+const dayOf=ts=>new Intl.DateTimeFormat("en-CA",{timeZone:UK,year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date(ts));
+const ukHour=()=>Number(new Intl.DateTimeFormat("en-GB",{timeZone:UK,hour:"2-digit",hourCycle:"h23"}).format(new Date()));
 const monday=s=>addDays(s,-((parse(s).getDay()+6)%7));
 const nice=s=>s?parse(s).toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"}):"";
 const short=s=>s?parse(s).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"2-digit"}):"";
-const time=ts=>ts?new Date(ts).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"}):"";
-const when=ts=>ts?new Date(ts).toLocaleDateString("en-GB",{day:"numeric",month:"short"})+" "+time(ts):"";
+const time=ts=>ts?new Date(ts).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit",timeZone:UK}):"";
+const when=ts=>ts?new Date(ts).toLocaleDateString("en-GB",{day:"numeric",month:"short",timeZone:UK})+" "+time(ts):"";
 // A task's "last done" date entered by hand has no real time of day, so it shows as a date only.
-const lastWhen=(ts,set)=>!ts?"":set?new Date(ts).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:new Date(ts).getFullYear()===new Date().getFullYear()?undefined:"numeric"}):when(ts);
+const lastWhen=(ts,set)=>!ts?"":set?new Date(ts).toLocaleDateString("en-GB",{day:"numeric",month:"short",timeZone:UK,year:dayOf(ts).slice(0,4)===today().slice(0,4)?undefined:"numeric"}):when(ts);
 // A short message above the tab bar. With an action (e.g. ["Undo", fn]) it stays longer and shows a button.
 const toast=SC.makeToast(2400);
 
@@ -160,9 +165,8 @@ function taskState(t){
   const base=t.lastAt||t.importedAt;
   if(!base)return days>0?{cls:"bad",text:"Never done",overdue:true}:{cls:"warn",text:"Not done yet",overdue:false};
   if(!days)return t.lastAt?{cls:"ok",text:"Last done "+lastWhen(t.lastAt,t.lastSet),overdue:false}:{cls:"warn",text:"Not done yet",overdue:false};
-  const due=new Date(base);due.setHours(0,0,0,0);due.setDate(due.getDate()+days);
-  const now=new Date();now.setHours(0,0,0,0);
-  const left=Math.round((due-now)/864e5),pre=t.lastAt?"":"Not done yet · ";
+  const dueDay=addDays(dayOf(base),days),due=parse(dueDay);
+  const left=Math.round((due-parse(today()))/864e5),pre=t.lastAt?"":"Not done yet · ";
   if(left<0)return{cls:"bad",text:`${pre}Overdue by ${-left} day${left===-1?"":"s"}`,overdue:true};
   if(left===0)return{cls:"warn",text:pre+"Due today",overdue:false};
   return{cls:t.lastAt?"ok":"warn",text:`${pre}Due ${due.toLocaleDateString("en-GB",{day:"numeric",month:"short"})}`,overdue:false};

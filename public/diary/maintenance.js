@@ -143,7 +143,7 @@ function renderMaint(){
     const hist=(m.log||[]).slice(0,5).map(e=>{ids.push(e.by);return el("li",{},el("span",{text:when(e.at)}),el("span",{class:"s",text:`${e.what} · ${nameOf(e.by)}${e.note?" · "+e.note:""}`}))});
     return xrow("m"+site+m.id,{
       title:m.title,
-      sub:[maintAll?siteOf(site).name:"",m.area,!isDone&&m.assignee?`→ ${m.assignee===S.me?"you":m.assigneeName||nameOf(m.assignee)}`:"",isDone?(m.doneAt?`done ${short(iso(new Date(m.doneAt)))}, ${nameOf(m.doneBy)}`:"done"):`reported ${short(iso(new Date(m.reportedAt||m.at||Date.now())))}, ${nameOf(m.reportedBy)}`].filter(Boolean).join(" · "),
+      sub:[maintAll?siteOf(site).name:"",m.area,!isDone&&m.assignee?`→ ${m.assignee===S.me?"you":m.assigneeName||nameOf(m.assignee)}`:"",isDone?(m.doneAt?`done ${short(dayOf(m.doneAt))}, ${nameOf(m.doneBy)}`:"done"):`reported ${short(dayOf(m.reportedAt||m.at||Date.now()))}, ${nameOf(m.reportedBy)}`].filter(Boolean).join(" · "),
       right:[el("span",{class:"pill "+(isDone?"ok":pr[3]),text:isDone?"Done":pr[1]})],
       details:[m.details?el("p",{class:"how",text:m.details}):null,
         isDone&&m.fixNote?xfacts([["What was done",m.fixNote]]):null,

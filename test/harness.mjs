@@ -66,3 +66,16 @@ export async function startServer({ writeLimit, preSql, scheduled, vars = {} } =
     },
   };
 }
+
+/** Pages run on the server's clock (public/shared/core.js): for a test that needs "now" to be a set time, every
+ *  response to this page or context says the server's time is `ms` (pin the device's clock too, with page.clock). */
+export async function serverTimeIs(target, ms) {
+  // Only the site's API answers (where pages read the server's time): routing the page itself would make Chromium
+  // treat it as coming from elsewhere and refuse its live connection to this local server.
+  await target.route("**/api/**", async (route) => {
+    try {
+      const res = await route.fetch();
+      await route.fulfill({ response: res, headers: { ...res.headers(), "x-now": String(ms) } });
+    } catch { /* the page closed while this was on its way */ }
+  });
+}

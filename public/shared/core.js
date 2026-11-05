@@ -1,10 +1,50 @@
 // Helpers shared by the three apps: the diary (public/diary/), the rota (public/rota/) and the admin section
-// (public/admin/). A classic script loaded before each app's own scripts; it defines one global, window.SC, and
-// nothing else. Only what is the same in every app that uses it lives here: an app with different needs keeps its
+// (public/admin/). A classic script loaded before each app's own scripts; it defines window.SC, and makes the
+// page's clock the server's (see "the time" below). Only what is the same in every app that uses it lives here: an app with different needs keeps its
 // own (the diary's dates are the device's local days, the admin section builds HTML only through its escaping
 // html`` template).
 (() => {
   "use strict";
+
+  /* ---------- the time: the server's, in UK time ----------
+   * Every page runs on the server's clock, not the device's: a shop iPad left on manual time, the wrong time zone
+   * or a clock reset by a flat battery would otherwise put readings on the wrong day or at the wrong time. Every
+   * response from the site says the server's time (the x-now header, src/index.ts); each page works out how far
+   * its device is off and from then on Date.now() and new Date() (with no arguments) give the server's time,
+   * everywhere on the page. The last difference is remembered, so it holds offline too. Dates and times are then
+   * shown in UK time (Europe/London), whatever time zone the device is set to. */
+  const RealDate = Date;
+  let offset = 0, bestRtt = Infinity, learnedAt = 0;
+  try { const c = JSON.parse(localStorage.getItem("sc.clock") || "null"); if (c && Number.isFinite(c.offset)) offset = c.offset; } catch (e) {}
+  class ServerDate extends RealDate {
+    constructor(...a) { if (a.length) super(...a); else super(RealDate.now() + offset); }
+    static now() { return RealDate.now() + offset; }
+  }
+  window.Date = ServerDate;
+  const realFetch = window.fetch.bind(window);
+  window.fetch = async (input, init) => {
+    const url = typeof input === "string" ? input : (input && input.url) || "";
+    const own = url.startsWith("/") || url.startsWith(location.origin);
+    // The device's own clock goes with requests to the site, so the server can flag a device that's far out.
+    if (own) { init = Object.assign({}, init); const h = new Headers(init.headers || (typeof input !== "string" && input.headers) || {}); h.set("x-device-time", String(RealDate.now())); init.headers = h; }
+    const t0 = RealDate.now();
+    const res = await realFetch(input, init);
+    const t1 = RealDate.now(), server = own ? Number(res.headers.get("x-now")) : NaN;
+    if (Number.isFinite(server) && server > 0) {
+      // The quickest round trips give the best reading; take a new one at least every 10 minutes regardless.
+      const rtt = t1 - t0;
+      if (rtt <= bestRtt * 1.5 || t1 - learnedAt > 600000) {
+        const was = offset;
+        offset = server - (t0 + t1) / 2; bestRtt = Math.min(bestRtt, rtt); learnedAt = t1;
+        try { localStorage.setItem("sc.clock", JSON.stringify({ offset })); } catch (e) {}
+        // A change of more than a minute (the first reading on a device that's out): pages re-check the date.
+        if (Math.abs(offset - was) > 60000) dispatchEvent(new Event("sc-clock"));
+      }
+    }
+    return res;
+  };
+  /** How far this device's own clock is from the server's, in ms (positive: the device is slow). */
+  const clockOffset = () => offset;
 
   /* ---------- the page ---------- */
 
@@ -148,6 +188,6 @@
   window.SC = Object.freeze({
     $, el, kids, svgi, initials, makeToast,
     dOf, isoOf, addDays, dow, monday, londonToday, londonNow,
-    goSignIn, signOut, recheckOnPageshow, watchChanges, live,
+    goSignIn, signOut, recheckOnPageshow, watchChanges, live, clockOffset,
   });
 })();
