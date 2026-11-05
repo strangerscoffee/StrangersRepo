@@ -103,6 +103,7 @@ Reject with an object `{code, message}`. Codes the page understands:
 - `revoked`: session ended. Not used on the website: when a session ends the API returns 401 `unauthenticated` and the shim sends the person to the sign-in page.
 - `permission_denied`: the signed-in role can't change this (staff saving manager data). The page shows its generic "Couldn't save" message.
 - `not_found`: `update` on a missing document.
+- `internal` (500): something unexpected failed on the server. It carries `ref`, the error's code (`E-` and six characters), and the message names it, so a screenshot of the message is enough to find the error in Admin → Activity → Errors.
 Anything else shows "Couldn't save. Check your connection and try again."
 
 ## `user`

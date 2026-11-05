@@ -2,7 +2,7 @@
 // people with their account, rota and training details, sites, activity, security and exports. Admins only
 // (checked in index.ts before anything here runs). Reads the diary's documents and the rota's tables directly.
 import { audit } from "./audit";
-import { deviceOf, recentErrors } from "./errors";
+import { deviceOf, errorCode, recentErrors, whereOf } from "./errors";
 import { User, nameKey } from "./auth";
 import { listBackups } from "./backup";
 import { setDoc } from "./docs";
@@ -278,10 +278,23 @@ export async function activity(env: Env, kind: string) {
   // Errors: only on their own tab (they're for whoever looks after the site, not the day's activity).
   if (kind === "errors") {
     const APP: Record<string, string> = { diary: "Kitchen Diary", rota: "Rota", admin: "Admin", signin: "Staff Login", worker: "Server" };
+    const uk = (ms: number) => new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", weekday: "short", day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(ms));
     for (const e of await recentErrors(env)) {
-      items.push({ kind: "error", at: e.last_at, text: e.message,
-        where: [APP[e.app] || e.app, e.page, e.count > 1 ? `${e.count} times since ${shortDate(new Date(e.first_at).toISOString().slice(0, 10))}` : "", e.who || (e.source === "page" ? "signed out" : ""), e.ua ? deviceOf(e.ua) : ""].filter(Boolean).join(" · "),
-        detail: e.detail } as any);
+      const code = errorCode(e.key), at = whereOf(e.detail), device = e.ua ? deviceOf(e.ua) : "";
+      // Everything needed to find and fix it, laid out to be read from a screenshot or pasted as text.
+      const report = [
+        `Strangers Coffee error ${code}`,
+        `What:   ${e.message}`,
+        at ? `Where:  ${at}` : "",
+        `App:    ${APP[e.app] || e.app}, ${e.source === "server" ? "request" : "page"} ${e.page}`,
+        `When:   last ${uk(e.last_at)} (UK time)${e.count > 1 ? `; first ${uk(e.first_at)}; ${e.count} times` : ""}`,
+        `Who:    ${[e.who || (e.source === "page" ? "signed out" : "the server"), device].filter(Boolean).join(" · ")}`,
+        e.ua ? `Device: ${e.ua}` : "",
+        e.detail ? `Stack:\n${e.detail.split("\n").map((l) => "  " + l.trim()).join("\n")}` : "",
+      ].filter(Boolean).join("\n");
+      items.push({ kind: "error", at: e.last_at, text: e.message, code, at_line: at,
+        where: [code, APP[e.app] || e.app, e.page, e.count > 1 ? `${e.count} times since ${shortDate(new Date(e.first_at).toISOString().slice(0, 10))}` : "", e.who || (e.source === "page" ? "signed out" : ""), device].filter(Boolean).join(" · "),
+        detail: e.detail, report } as any);
     }
   }
   items.sort((a, b) => b.at - a.at);

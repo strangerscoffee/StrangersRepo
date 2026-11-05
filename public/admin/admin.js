@@ -316,6 +316,7 @@
   VIEWS.activity = async () => {
     const d = await api("GET", "/api/admin/activity?kind=" + encodeURIComponent(S.feed));
     const q = S.fq.trim().toLowerCase();
+    S.reports = Object.fromEntries(d.items.filter((i) => i.code).map((i) => [i.code, i.report]));
     const items = d.items.filter((i) => !q || i.text.toLowerCase().includes(q) || i.where.toLowerCase().includes(q));
     const groups = [];
     for (const i of items) {
@@ -330,9 +331,9 @@
         <label class="search">${svg("search")}<input id="fq" type="search" placeholder="Search a name or site" aria-label="Search activity" value="${S.fq}"></label>
       </div>
       ${groups.length ? groups.map(([label, list]) => html`<div class="day">${label}</div><div class="group glass">${list.map((i) => html`
-        <div class="item"><span class="ic ${KIND[i.kind][0]}">${svg(KIND[i.kind][1])}</span><span class="tx"><b class="plain">${i.text}</b><span>${i.where}</span>${i.detail ? html`<details class="errdetail"><summary>Details</summary><pre>${i.detail}</pre></details>` : ""}</span><span class="end time">${hm(i.at)}</span></div>`)}</div>`)
+        <div class="item${i.report ? " haserr" : ""}"><span class="ic ${KIND[i.kind][0]}">${svg(KIND[i.kind][1])}</span><span class="tx"><b class="plain">${i.text}</b><span>${i.where}</span>${i.at_line ? html`<span class="errat">${i.at_line}</span>` : ""}</span><span class="end time">${hm(i.at)}</span>${i.report ? html`<details class="errdetail"><summary>Report</summary><pre>${i.report}</pre><div class="errfoot"><button class="btn sm soft" type="button" data-act="copyerr" data-id="${i.code}">Copy report</button><span>Screenshot this, or copy it, to get it fixed.</span></div></details>` : ""}</div>`)}</div>`)
         : html`<div class="group glass"><div class="empty">${svg("pulse")}<span>${S.feed === "errors" ? "No errors in the last 30 days." : "Nothing yet."}</span></div></div>`}
-      <p class="hint">${S.feed === "errors" ? "Errors from staff devices (a page that crashed, or a file that didn't load) and from the server. The same error on the same page is counted, not repeated. Kept 30 days." : "Diary entries show each record's latest change. Account changes are kept for about a year."}</p>`;
+      <p class="hint">${S.feed === "errors" ? "Errors from staff devices (a page that crashed, or a file that didn't load) and from the server. The same error on the same page is counted, not repeated, and keeps the same code (E-…), which is also what staff see on the screen when it happens: search for it here. Open Report and screenshot or copy it to get it fixed. Kept 30 days." : "Diary entries show each record's latest change. Account changes are kept for about a year."}</p>`;
   };
 
   VIEWS.security = async () => {
@@ -515,6 +516,12 @@
     switch (name) {
       case "go": show(id); return;
       case "errors": S.feed = "errors"; show("activity"); return;
+      case "copyerr": {
+        const text = (S.reports || {})[id] || "";
+        try { await navigator.clipboard.writeText(text); toast("Copied the report for " + id); }
+        catch (e) { toast("Couldn't copy here: take a screenshot of the report instead."); }
+        return;
+      }
       case "add": addPerson(); return;
       case "edit": if (p) editPerson(p); return;
       case "avail": if (p) editAvailability(p); return;
