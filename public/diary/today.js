@@ -185,19 +185,22 @@ function prevTradingDay(s,days){
 }
 function siteAttention(id){
   const sm=S.sum[id];if(!sm||!sm.ready)return null;
-  const s=sm.settings,cfg=activeCfg(s),t=today();
-  const st=dayStatus(sm.days[t],cfg,t),closedToday=!!closure(sm.days[t])||isClosed(t,s)&&!st.any;
-  const prev=prevTradingDay(s,sm.days),pd=prev?sm.days[prev]:null,pst=prev?dayStatus(pd,cfg,prev):null;
+  // This site's own lists are already here in full (and include this device's own changes): use them. Other sites
+  // come from the summary (src/summary.ts): their recent days and their checks and cleaning without logs.
+  const live=id===S.site&&!!S.settings;
+  const s=live?S.settings:sm.settings,days=live?S.days:sm.days,cfg=activeCfg(s),t=today();
+  const st=dayStatus(days[t],cfg,t),closedToday=!!closure(days[t])||isClosed(t,s)&&!st.any;
+  const prev=prevTradingDay(s,days),pd=prev?days[prev]:null,pst=prev?dayStatus(pd,cfg,prev):null;
   const tasks=[];
   for(const kind of["cleaning","extras"]){
     if(!tabOn(kind,s))continue;
-    for(const x of sm[kind]){const ts=taskState(x);if(ts.overdue)tasks.push({kind,t:x,ts})}
+    for(const x of live?S[kind]:sm[kind]){const ts=taskState(x);if(ts.overdue)tasks.push({kind,t:x,ts})}
   }
   tasks.sort((a,b)=>(a.t.lastAt||0)-(b.t.lastAt||0));
   let openDue=!closedToday&&st.oT>0&&st.open!=="y";
-  const dayKeys=Object.keys(sm.days).sort();
-  const start=s.startDate||dayKeys[0]||null;
-  const unused=s.fresh&&!dayKeys.length;
+  const first=[sm.firstDay,...Object.keys(days)].filter(Boolean).sort()[0]||null;
+  const start=s.startDate||first;
+  const unused=s.fresh&&!first;
   const prevDue=!unused&&!!prev&&!!start&&prev>=start&&!(pd&&pd.signed);
   if(unused)openDue=false;
   return{id,s,cfg,t,st,closedToday,prev,pd,pst,tasks,openDue,prevDue,unused,start,count:(openDue?1:0)+(prevDue?1:0)+tasks.length};

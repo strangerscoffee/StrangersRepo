@@ -179,7 +179,7 @@ function rollDay(){
   // Only if it was showing today (or this week): someone looking back at an earlier day stays there.
   if(S.date===was)S.date=t;
   if(S.week===monday(was))S.week=monday(t);
-  if(S.db)renderAll();
+  if(S.db){subscribeSummaries();renderAll()}
 }
 setInterval(rollDay,60000);
 document.addEventListener("visibilitychange",()=>{if(!document.hidden)rollDay()});

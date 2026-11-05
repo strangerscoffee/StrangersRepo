@@ -211,7 +211,7 @@
   const idOf = (path) => path.slice(path.lastIndexOf("/") + 1);
 
   function overlay(spec, res) {
-    if (!queue.length || !res) return res;
+    if (!queue.length || !res || spec.kind === "summary") return res;
     if (spec.kind === "doc") {
       let exists = res.exists, data = res.data;
       for (const w of queue) {
@@ -434,7 +434,12 @@
     });
   }
 
-  const db = { doc: docRef, collection: collectionRef };
+  // Every site at a glance (src/summary.ts): settings, the days from..to, the first day, extra checks and cleaning
+  // (without logs), and maintenance jobs open or done in the last 14 days. Live like a query.
+  const summaryRef = (from, to) => ({
+    onSnapshot(next, error) { return subscribe({ kind: "summary", from, to }, (r) => next(copy(r.summary)), error); },
+  });
+  const db = { doc: docRef, collection: collectionRef, summary: summaryRef };
 
   /* ---------- user ---------- */
 

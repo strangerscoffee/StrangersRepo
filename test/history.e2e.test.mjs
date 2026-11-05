@@ -41,7 +41,7 @@ test("the diary opens with recent history, loads the rest when needed, and gets 
     if (!res.url().endsWith("/api/db/poll")) return;
     try { polls.push({ req: JSON.parse(res.request().postData() || "{}"), res: await res.json() }); } catch {}
   });
-  // The largest list of days a poll asked for (the menu's summaries ask for 60 of each site's).
+  // The largest list of days a poll asked for.
   const daysQuery = (p) => p.req.queries.filter((q) => q.path === "days" && q.orderBy === "date").sort((a, b) => b.limit - a.limit)[0];
 
   await page.goto(srv.base + "/");
@@ -49,6 +49,11 @@ test("the diary opens with recent history, loads the rest when needed, and gets 
   const firstDays = polls.map(daysQuery).find(Boolean);
   assert.ok(firstDays.limit <= 90, `opens with the latest days only (limit ${firstDays.limit})`);
   assert.equal(await page.locator("#tlList .pill", { hasText: "7.5°" }).count(), 0);
+  // Every site at a glance is one summary, not each site's own lists; and this site's days are asked for once.
+  const qs = polls[0].req.queries;
+  assert.equal(qs.filter((q) => q.kind === "summary").length, 1, "one summary");
+  assert.deepEqual(qs.filter((q) => /^sites\//.test(q.path || "")).map((q) => q.path), [], "no other site's lists");
+  assert.equal(qs.filter((q) => q.path === "days").length, 1, "this site's days once");
 
   // A change from another device arrives as just that change.
   await page.waitForTimeout(6000);
