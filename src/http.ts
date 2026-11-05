@@ -1,5 +1,6 @@
 export interface Env {
   DB: D1Database;
+  LIVE?: DurableObjectNamespace; // live updates (src/live.ts)
   FILES: KVNamespace;
   ASSETS: Fetcher;
   SETUP_CODE?: string; // creates the first admin and resets an admin password

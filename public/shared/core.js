@@ -76,26 +76,78 @@
   // Every `ms` while the page is in view, asks GET /api/changes whether something changed elsewhere (keyOf picks
   // the counters this page cares about) and, once it may (canRedraw: nothing open or half typed), calls redraw.
   // now: also check straight away.
+  /* Live updates (GET /api/live, src/live.ts): one WebSocket per page that the server uses to say the moment
+   * anything changes, with the change counters ({docs, rota, accounts}, as GET /api/changes). While it's open, pages
+   * stop asking every few seconds and only check now and then; when it drops (no signal, the phone locked, a
+   * deploy), they ask as before until it's back. Listeners get the counters, or {open: true|false}. */
+  const liveFns = new Set();
+  let ws = null, wsOpen = false, retries = 0, retryT = null, lastPong = 0;
+  const tell = (m) => { for (const f of liveFns) try { f(m); } catch (e) { console.error(e); } };
+  function liveConnect() {
+    if (ws || document.hidden || !("WebSocket" in window)) return;
+    clearTimeout(retryT);
+    try { ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/api/live"); } catch (e) { ws = null; return; }
+    const me = ws;
+    me.onopen = () => { wsOpen = true; retries = 0; lastPong = Date.now(); tell({ open: true }); };
+    me.onmessage = (e) => {
+      if (e.data === "pong") { lastPong = Date.now(); return; }
+      let c = null;
+      try { c = JSON.parse(e.data); } catch (_) {}
+      if (c && typeof c.docs === "number") tell(c);
+    };
+    me.onclose = () => {
+      if (ws !== me) return;
+      const was = wsOpen;
+      ws = null; wsOpen = false;
+      if (was) tell({ open: false });
+      if (!document.hidden) retryT = setTimeout(liveConnect, Math.min(30000, 1000 * 2 ** retries++));
+    };
+    me.onerror = () => {};
+  }
+  // A keep-alive every 25 s (answered by the server without waking it); no answer for a while means the line is dead.
+  setInterval(() => {
+    if (!ws || !wsOpen) return;
+    if (Date.now() - lastPong > 70000) { ws.close(); return; }
+    try { ws.send("ping"); } catch (e) {}
+  }, 25000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) liveConnect(); });
+  addEventListener("online", () => { retries = 0; liveConnect(); });
+  /** Listens for live changes; returns whether the line is open right now. */
+  function live(fn) {
+    if (fn) liveFns.add(fn);
+    liveConnect();
+    return { open: () => wsOpen };
+  }
+
+  // While the live line is open, checks only this often anyway (in case a message was missed).
+  const LIVE_CHECK_MS = 60000;
   function watchChanges(ms, keyOf, canRedraw, redraw, now) {
-    let known = null, pending = false;
+    let known = null, pending = false, last = 0;
+    const seen = (c) => {
+      const key = keyOf(c);
+      if (known !== null && key !== known) pending = true;
+      known = key;
+      if (pending && canRedraw()) { pending = false; redraw(); }
+    };
     const check = async () => {
       if (document.hidden) return;
+      last = Date.now();
       try {
         const c = await fetch("/api/changes").then((r) => (r.ok ? r.json() : null));
-        if (!c) return;
-        const key = keyOf(c);
-        if (known !== null && key !== known) pending = true;
-        known = key;
-        if (pending && canRedraw()) { pending = false; redraw(); }
+        if (c) seen(c);
       } catch (e) { /* offline: try again next time */ }
     };
-    setInterval(check, ms);
+    const line = live((m) => {
+      if (m.open === true) check(); // anything missed while it was down
+      else if (typeof m.docs === "number" && !document.hidden) seen(m);
+    });
+    setInterval(() => { if (!line.open() || Date.now() - last >= LIVE_CHECK_MS) check(); }, ms);
     if (now) check();
   }
 
   window.SC = Object.freeze({
     $, el, kids, svgi, initials, makeToast,
     dOf, isoOf, addDays, dow, monday, londonToday, londonNow,
-    goSignIn, signOut, recheckOnPageshow, watchChanges,
+    goSignIn, signOut, recheckOnPageshow, watchChanges, live,
   });
 })();

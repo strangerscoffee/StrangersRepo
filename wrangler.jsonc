@@ -22,6 +22,11 @@
   // Allergen PDFs and the daily backups (KV values can be up to 25 MB; uploads are capped at 20 MB).
   "kv_namespaces": [{ "binding": "FILES" }],
 
+  // Live updates (src/live.ts): one Durable Object that open pages keep a WebSocket to. SQLite-backed, as the Workers
+  // Free plan requires; it stores nothing.
+  "durable_objects": { "bindings": [{ "name": "LIVE", "class_name": "LiveHub" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["LiveHub"] }],
+
   "vars": {
     // Write requests (saves, deletes, uploads) allowed per IP address per 15 minutes.
     "WRITE_LIMIT_PER_15_MIN": "600",

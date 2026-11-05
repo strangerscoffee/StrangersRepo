@@ -13,6 +13,8 @@ import { handleRota } from "./rota";
 import { ensureSchema } from "./schema";
 import { codeFor, recordError } from "./errors";
 import { handleUnsubscribe } from "./email/unsubscribe";
+import { notifyLive, openLive } from "./live";
+export { LiveHub } from "./live";
 
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -53,6 +55,10 @@ export default {
           : json({ code: "internal", ref, message: `Something went wrong on the server (error ${ref}). Try again; if it keeps happening, send a screenshot of this to whoever looks after the site.` }, 500);
       }
     }
+    // A write other devices should hear about: tell every open page (src/live.ts), after answering this one.
+    if (res.ok && req.method !== "GET" && req.method !== "HEAD" && LIVE_WRITES.test(url.pathname)) ctx.waitUntil(notifyLive(env));
+    // An opened live connection (101) goes back as it is: its WebSocket can't be copied into a new response.
+    if (res.status === 101) return res;
     return withSecurityHeaders(res, local);
   },
 
@@ -61,6 +67,9 @@ export default {
     ctx.waitUntil(ensureSchema(env).then(() => makeBackup(env, "daily")));
   },
 } satisfies ExportedHandler<Env>;
+
+/** The writes that move a change counter (diary saves, the rota, accounts and sites, stored files). */
+const LIVE_WRITES = /^\/api\/(db\/(set|update|delete)$|rota\/|admin\/|assets)/;
 
 /** A database error that's worth one more try: the connection dropped or D1 was busy restarting. */
 function isTransient(e: unknown): boolean {
@@ -183,6 +192,18 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
     return new Response(null, { status: 302, headers: { location: "/signin" + next, "cache-control": "no-store" } });
   }
   const user = caller.user;
+
+  // Live updates (src/live.ts): a WebSocket that's told the moment anything changes, on every app's address. Only
+  // from the site's own pages (a browser always sends Origin when opening one).
+  if (p === "/api/live" && isGet) {
+    if (req.headers.get("upgrade")?.toLowerCase() !== "websocket") throw new ApiError(426, "upgrade_required", "This address is for a live connection.");
+    let host = "";
+    try { host = new URL(req.headers.get("origin") || "").hostname; } catch {}
+    const own = host === url.hostname || (!!env.COOKIE_DOMAIN && (host === env.COOKIE_DOMAIN || host.endsWith("." + env.COOKIE_DOMAIN)));
+    if (!own) throw new ApiError(403, "bad_origin", "That request came from another site.");
+    if (!env.LIVE) throw new ApiError(404, "not_found", "Live updates aren't set up.");
+    return openLive(req, env);
+  }
 
   // What has changed, for pages open on several devices: one small read, polled every few seconds.
   if (p === "/api/changes" && isGet) {
