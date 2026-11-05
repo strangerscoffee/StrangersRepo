@@ -184,13 +184,13 @@ test("checks: every kind of problem", async () => {
   await addShift({ site: "asg", day: d(3), start: "17:00", end: "22:00", userId: ids.Alex, job: "closes" });
   const last = await addShift({ site: "asg", day: d(4), start: "06:00", end: "10:00", userId: ids.Alex, job: "opens" }); // 8h rest
   const ks = kinds(last.problems);
-  for (const k of ["open_shift", "clash", "time_off", "no_closer", "short_cover", "overtime", "rest", "break", "under_contract"]) assert.ok(ks.includes(k), "has " + k + ": " + ks.join(","));
+  for (const k of ["open_shift", "clash", "time_off", "short_cover", "overtime", "rest", "break", "under_contract"]) assert.ok(ks.includes(k), "has " + k + ": " + ks.join(","));
   const clash = last.problems.find((p) => p.kind === "clash");
   assert.match(clash.message, /Sam is at (ASG and Cafe|Cafe and ASG) on Tuesday/);
   assert.equal(last.problems.find((p) => p.kind === "overtime").userId, ids.Sam);
   assert.match(last.problems.find((p) => p.kind === "overtime").message, /Sam has 1.5h overtime \(11.5h, contract 10h\)/);
   assert.match(last.problems.find((p) => p.kind === "under_contract" && p.userId === ids.Priya).message, /Priya has 3.5h, 12.5h short of their 16h minimum/);
-  assert.ok(last.problems.some((p) => p.kind === "no_opener" || p.kind === "no_closer"));
+  assert.ok(!last.problems.some((p) => p.kind === "no_opener" || p.kind === "no_closer"), "no checks for who opens or closes");
   // Errors come first.
   const sev = last.problems.map((p) => p.severity);
   assert.deepEqual(sev, [...sev].sort((a, b) => ["error", "warn", "info"].indexOf(a) - ["error", "warn", "info"].indexOf(b)));
@@ -287,15 +287,13 @@ async function signInAgain(username) {
   return cookieOf(r);
 }
 
-test("suggestions: clashing and on-leave people can't be picked; best fit first; over contract and untrained flagged", async () => {
+test("suggestions: clashing and on-leave people can't be picked; best fit first; overtime flagged; no training check", async () => {
   const W = "2030-06-03";
   await rota("PUT", "people/" + ids.Alex, { contractHours: 40 }, MGR);
   await rota("PUT", "people/" + ids.Sam, { contractHours: 4 }, MGR);
   await rota("PUT", "people/" + ids.Priya, { contractHours: 30 }, MGR);
   await addShift({ site: "asg", day: W, start: "08:00", end: "12:00", userId: ids.Alex });
   await rota("POST", "time-off", { userId: ids.George, from: W, to: W, reason: "Holiday" }, MGR);
-  // Priya is trained on the Cafe's opening and closing checks; no one else is.
-  await req("POST", "/api/db/set", { path: "sites/cafe/staff/p1", data: { name: "Priya Shah", topics: { diary: { date: "2029-01-01", by: "x" } } } });
   const s = (await addShift({ site: "cafe", day: W, start: "09:00", end: "15:00", job: "closes" })).shift;
   const r = await rota("GET", "suggest?shift=" + s.id, undefined, MGR);
   assert.equal(r.status, 200, r.text);
@@ -305,9 +303,9 @@ test("suggestions: clashing and on-leave people can't be picked; best fit first;
   assert.equal(by.George.selectable, false, "George is on time off");
   assert.ok(by.Sam.flags.some((f) => f.kind === "overtime"));
   assert.equal(by.Sam.overtimeIfGiven, 1.5);
-  assert.ok(by.Sam.flags.some((f) => f.kind === "untrained"));
-  assert.equal(r.body.candidates[0].name, "Priya Shah");
+  assert.ok(r.body.candidates.every((c) => c.flags.every((f) => f.kind !== "untrained")), "everyone is trained on opening and closing");
   assert.equal(r.body.candidates[0].best, true);
+  assert.equal(r.body.candidates[0].selectable, true);
   assert.equal(r.body.candidates.filter((c) => c.best).length, 1);
   const lastSelectable = r.body.candidates.map((c) => c.selectable).lastIndexOf(true);
   assert.ok(r.body.candidates.slice(lastSelectable + 1).every((c) => !c.selectable), "people who can't take it come last");

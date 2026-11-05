@@ -128,7 +128,7 @@ The staff rota (`src/rota.ts`, at `ROTA_HOST`) keeps its data in its own D1 tabl
 | `rota_time_off` | `id, user_id, from_day, to_day (inclusive), reason, status ('requested'\|'approved'\|'declined'\|'cancelled'), decided_by, decided_at, created_at` |
 | `rota_requests` | `id, kind ('claim' = take an open shift \| 'cover' = give my shift away), shift_id, from_user, to_user (cover: who's asked; NULL = anyone), taker, message, status ('open'\|'accepted'\|'approved'\|'declined'\|'cancelled'), decided_by, decided_at, created_at` |
 
-The rota also reads three things from the diary's documents: a site is in use only once it has `settings/main`, it's closed on the weekdays in `closedDays` and on any day whose `days/<date>` has `closed` (a closure), and "trained on opening and closing checks" means that site's `staff/<id>` for the person (matched by name) has a date for the topic `diary`.
+The rota also reads two things from the diary's documents: a site is in use only once it has `settings/main`, and it's closed on the weekdays in `closedDays` and on any day whose `days/<date>` has `closed` (a closure). It doesn't check who is trained on the opening and closing checks: everyone is, and whoever is on shift does them.
 
 ## The audit log
 
@@ -150,7 +150,7 @@ Signed out gets 401 `unauthenticated`; writes count towards the per-IP write lim
 | `GET week/emails?week=` | manager | What publishing would email: `{ready, first, people, noAddress:[names], open}`, for the publish sheet. |
 | `GET mine?from=&to=` | all | My shifts in published weeks, each with who else is on at that site, plus `contractMin`, `contractMax` and `weeks: [{week, hours, overtime}]` (whole weeks). |
 | `GET today?site=` | all | Today's (UK) shifts at a site when its week is published; for the diary's Today (with `actualStart`/`actualEnd` when amended). |
-| `GET suggest?shift=` | manager | Everyone who could take a shift, best fit first, with flags: clash, time off, overtime, short rest, availability, untrained. |
+| `GET suggest?shift=` | manager | Everyone who could take a shift, best fit first, with flags: clash, time off, overtime, short rest, availability. |
 | `GET hours?start=` (`&format=csv`) | manager | Paid hours per person and site against contract; CSV columns `name,role,contract_hours,rota_hours,difference,roastery,cafe,asg,factory`. |
 | `PUT me/emails` | all | `{prefs:{published?, changed?, requests?, open?}}`: which rota emails I get. My address is set by an admin; `GET me` returns `email: {address, prefs, ready}`. |
 | `GET me`, `PUT me/availability` | all / admin | My pattern, sites, contract, time off and requests (`user.admin` says whether I'm an admin); only admins set their own pattern and sites (`permission_denied` for anyone else). |
@@ -161,7 +161,7 @@ Signed out gets 401 `unauthenticated`; writes count towards the per-IP write lim
 | `GET sites`, `PUT sites/:site` | all / manager | Usual opening and closing time, minimum people and `dayHours` (weekdays with their own hours, for example Sundays) per site. `PUT` without `dayHours` keeps them; `dayHours: null` clears them. The week view gives each site `hours[7]`, that week's hours day by day. |
 | `GET links` | all | `{rota, diary}`: where each app lives, as seen from this address. |
 
-The checks (`computeProblems` in `src/rota/problems.ts`): `open_shift`, `clash`, `time_off` and `closed` are errors; `no_opener`, `no_closer`, `short_cover` (against each day's own hours, counting who's actually there), `overtime` (over the max contracted hours) and `rest` (under 11 hours) are warnings; `break` (over 6 hours with under 20 minutes), `availability`, `seven_days` and `under_contract` (under the min contracted hours) are notes. They're prompts for the manager: publishing is allowed with problems.
+The checks (`computeProblems` in `src/rota/problems.ts`): `open_shift`, `clash`, `time_off` and `closed` are errors; `short_cover` (against each day's own hours, counting who's actually there), `overtime` (over the max contracted hours) and `rest` (under 11 hours) are warnings; `break` (over 6 hours with under 20 minutes), `availability`, `seven_days` and `under_contract` (under the min contracted hours) are notes. They're prompts for the manager: publishing is allowed with problems. There's no check for who opens or closes a site: a shift's job (`opens`/`closes`) is optional, and only labels the shift and the diary's "who opens / who closes".
 
 
 ## Rota emails
