@@ -11,7 +11,7 @@ import { WRITE_OPS, handleDb } from "./docs";
 import { ApiError, Env, errorResponse, json, readJson } from "./http";
 import { handleRota } from "./rota";
 import { ensureSchema } from "./schema";
-import { recordError } from "./errors";
+import { codeFor, recordError } from "./errors";
 
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -41,13 +41,15 @@ export default {
       if (e instanceof ApiError) res = errorResponse(e);
       else {
         console.error(e);
-        ctx.waitUntil(recordError(env, { source: "server", app: "worker", page: `${req.method} ${url.pathname}`, message: String((e as Error)?.message || e),
-          detail: String((e as Error)?.stack || ""), ua: req.headers.get("user-agent") || "" }));
+        const report = { source: "server" as const, app: "worker", page: `${req.method} ${url.pathname}`, message: String((e as Error)?.message || e),
+          detail: String((e as Error)?.stack || ""), ua: req.headers.get("user-agent") || "" };
+        ctx.waitUntil(recordError(env, report));
+        const ref = codeFor(report);
         const msg = String((e as Error)?.message || e);
         // D1 reports a full database as SQLITE_FULL; the page shows a specific message for quota_exceeded.
         res = /SQLITE_FULL|database or disk is full/i.test(msg)
           ? json({ code: "quota_exceeded", message: "The database is full." }, 507)
-          : json({ code: "internal", message: "Something went wrong." }, 500);
+          : json({ code: "internal", ref, message: `Something went wrong on the server (error ${ref}). Try again; if it keeps happening, send a screenshot of this to whoever looks after the site.` }, 500);
       }
     }
     return withSecurityHeaders(res, local);
@@ -159,10 +161,9 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
     const who = caller.kind === "user" ? caller.user : null;
     await limitWrites(req, env, ctx, who?.id);
     const b = await readJson<any>(req, 8 * 1024).catch(() => null);
-    if (b && typeof b === "object") {
-      await recordError(env, { source: "page", app: b.app, page: b.page, message: b.message, detail: b.detail, ua: req.headers.get("user-agent") || "", who: who?.name ?? null });
-    }
-    return new Response(null, { status: 204 });
+    if (!b || typeof b !== "object") return new Response(null, { status: 204 });
+    const code = await recordError(env, { source: "page", app: b.app, page: b.page, message: b.message, detail: b.detail, ua: req.headers.get("user-agent") || "", who: who?.name ?? null });
+    return json({ code });
   }
 
   if (p.startsWith("/api/auth/")) return handleAuth(req, env, p.slice("/api/auth/".length), caller.kind === "user" ? caller.user : null);

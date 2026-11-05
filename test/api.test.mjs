@@ -412,15 +412,25 @@ test("signing out ends that session on the server; the person's other sessions c
 
 test("errors from pages are recorded once with a count, and shown to admins", async () => {
   const send = (body, cookie) => fetch(`${srv.base}/api/errors`, { method: "POST", headers: { "content-type": "application/json", "user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Safari/604.1", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body) });
-  assert.equal((await send({ app: "diary", page: "/#day", message: "TypeError: x is undefined", detail: "at renderDay (app.js:1:1)" }, ADMIN)).status, 204);
-  assert.equal((await send({ app: "diary", page: "/#day", message: "TypeError: x is undefined" }, ADMIN)).status, 204);
-  assert.equal((await send({ app: "signin", page: "/signin", message: "Couldn't load /theme.css" })).status, 204, "signed out too");
+  const first = await send({ app: "diary", page: "/#day", message: "TypeError: x is undefined", detail: "TypeError: x is undefined\n    at renderDay (https://staffstrangerscoffee.com/diary/today.js?v=W-abc123def456:120:7)\n    at renderAll (https://staffstrangerscoffee.com/diary/setup.js?v=W-1:5:3)" }, ADMIN);
+  assert.equal(first.status, 200);
+  const { code } = await first.json();
+  assert.match(code, /^E-[0-9A-HJKMNP-TV-Z]{6}$/, "each error has a short code");
+  const again = await send({ app: "diary", page: "/#week", message: "TypeError: x is undefined" }, ADMIN);
+  assert.equal((await again.json()).code, code, "the same error on the same page keeps its code");
+  assert.equal((await send({ app: "signin", page: "/signin", message: "Couldn't load /theme.css" })).status, 200, "signed out too");
   assert.equal((await fetch(`${srv.base}/errors.js`)).status, 200, "the reporter loads signed out");
   const items = (await admin("GET", "activity?kind=errors")).body.items;
   const e = items.find((i) => i.text === "TypeError: x is undefined");
   assert.ok(e, JSON.stringify(items));
-  assert.match(e.where, /Kitchen Diary · \/#day · 2 times since .* · iPhone · Safari/);
+  assert.match(e.where, new RegExp(`^${code} · Kitchen Diary · /#week · 2 times since .* · iPhone · Safari`));
   assert.match(e.detail, /renderDay/);
+  // Where in the code, and a report with everything needed to fix it, to screenshot or copy.
+  assert.equal(e.at_line, "/diary/today.js:120:7 in renderDay (file vabc123de)");
+  assert.match(e.report, new RegExp(`^Strangers Coffee error ${code}\nWhat:   TypeError: x is undefined\nWhere:  /diary/today.js:120:7 in renderDay`));
+  assert.match(e.report, /When: {3}last .* \(UK time\); first .*; 2 times/);
+  assert.match(e.report, /Who: {4}Sam Patel · iPhone · Safari/);
+  assert.match(e.report, /Stack:\n {2}TypeError: x is undefined\n {2}at renderDay/);
   assert.ok(items.some((i) => i.text === "Couldn't load /theme.css" && /Staff Login · \/signin · signed out/.test(i.where)));
   assert.ok(!(await admin("GET", "activity?kind=all")).body.items.some((i) => i.kind === "error"), "not mixed into the day's activity");
   const o = (await admin("GET", "overview")).body;

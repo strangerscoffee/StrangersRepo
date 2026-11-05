@@ -224,6 +224,9 @@ button.stat{cursor:pointer}
 @media (prefers-reduced-motion:no-preference){main>*{animation:rise .2s ease both}@keyframes rise{from{transform:translateY(6px)}to{transform:none}}}
 
 /* Errors (Activity → Errors): the technical details, folded */
-.errdetail{margin-top:4px}
+.item.haserr{flex-wrap:wrap}
+.item.haserr .errdetail{flex-basis:100%;margin:0 0 2px}
+.errat{display:block;font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted,inherit);word-break:break-all}
+.errfoot{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px;font-size:12px;color:var(--muted,inherit)}
 .errdetail summary{cursor:pointer;font-size:13px;color:var(--accent);font-weight:600}
-.errdetail pre{margin:6px 0 0;padding:8px 10px;border-radius:10px;background:var(--sunk);font-size:12px;line-height:1.4;white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto}
+.errdetail pre{margin:6px 0 0;padding:10px 12px;border-radius:10px;background:var(--sunk);font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-word;max-height:none;overflow:visible}
