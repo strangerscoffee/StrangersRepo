@@ -172,7 +172,8 @@ async function openPeopleSheet(){
 }
 
 /* ---------- midnight: a kitchen iPad left open overnight moves on to the new day ---------- */
-S.lastToday=today();
+// The date the page started on (core.js): if the server's clock (learned since) says otherwise, rollDay moves it.
+S.lastToday=S.date;
 function rollDay(){
   const t=today();if(t===S.lastToday)return;
   const was=S.lastToday;S.lastToday=t;
@@ -182,6 +183,9 @@ function rollDay(){
   if(S.db){subscribeSummaries();renderAll()}
 }
 setInterval(rollDay,60000);
+// The first reading of the server's clock on a device that was out (public/shared/core.js): the date may have moved.
+addEventListener("sc-clock",()=>{rollDay();if(S.db)renderAll()});
+rollDay();
 document.addEventListener("visibilitychange",()=>{if(!document.hidden)rollDay()});
 
 /* ---------- connection: changes made offline wait on this device (claude-shim.js) ---------- */

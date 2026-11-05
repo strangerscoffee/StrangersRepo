@@ -69,7 +69,7 @@
     if (m < 1) return "just now";
     if (m < 60) return `${m} min ago`;
     if (m < 24 * 60) return `${Math.round(m / 60)} h ago`;
-    return new Date(ms).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+    return new Date(ms).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "Europe/London" });
   };
   const wide = matchMedia("(min-width:1024px)");
 

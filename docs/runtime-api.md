@@ -103,6 +103,9 @@ them from overwriting each other:
 ### Offline
 A write that can't reach the server (no connection, or a 502/503/504) isn't rejected: it's queued on the device (localStorage, per person), applied to every subscription's results so the page shows it at once, and replayed in order when the connection returns (an `update` that finds the document missing is replayed as a `set`). While anything is queued, later writes join the queue so order is kept. The shim reports `diary:connection` events (`{offline, pending}`) and `diary:dropped` when the server refuses a queued change.
 
+### Time
+Every response carries `x-now` (the server's time, ms) and every request from a page carries `x-device-time` (the device's own clock). `public/shared/core.js` replaces the page's `Date` so `Date.now()` and `new Date()` give the server's time (the offset from the quickest round trip, re-measured at least every 10 minutes, kept in localStorage `sc.clock` for offline starts; a change of over a minute fires a `sc-clock` event, on which the diary re-checks its date). Dates and times are UK time (Europe/London). Times in a written document (`at`, `lastAt`, `createdAt`, `updatedAt`, `doneAt`, `reportedAt`, `importedAt`) more than 5 minutes in the future are set to now, except inside `$op` list operations.
+
 ### Errors
 Reject with an object `{code, message}`. Codes the page understands:
 - `invalid_data`: a known field has the wrong kind of value for its record (`src/validate.ts`: a date that isn't YYYY-MM-DD, a log that isn't a list, a reading that isn't a number). A whole document (`set`) is checked in full; an `update`, and a `set` on a day or week page (which merges), only for the fields it sends. Unknown fields and `null` are always allowed. The page shows the message; it doesn't switch to read-only.

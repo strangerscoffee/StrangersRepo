@@ -4,7 +4,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { startServer, SETUP_CODE } from "./harness.mjs";
+import { startServer, SETUP_CODE, serverTimeIs } from "./harness.mjs";
 
 const require = createRequire(import.meta.url);
 let chromium;
@@ -105,6 +105,7 @@ for (const [label, viewport] of [["phone", { width: 393, height: 852 }], ["iPad"
     // Midday on Alex's device, so today's 00:30–23:30 shift is still to come whenever the tests run (they once ran
     // after 23:30 and found no next shift).
     await a.page.clock.setFixedTime(new Date(today + "T12:00:00Z"));
+    await serverTimeIs(a.page, Date.parse(today + "T12:00:00Z"));
     await a.page.goto(srv.base + "/rota/");
     await a.page.locator(".nextshift", { hasText: "00:30–23:30" }).waitFor();
     assert.match(await a.page.locator(".nextshift .kick").innerText(), /today/i);

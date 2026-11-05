@@ -117,6 +117,9 @@ export async function overview(env: Env, links: { rota: string; diary: string })
     attention.push({ tone: "warn", icon: "warn", title: `${errs.n} error${errs.n === 1 ? "" : "s"} on the site in the last day`,
       detail: `Seen ${errs.times} time${errs.times === 1 ? "" : "s"} on staff devices or the server. See what and where.`, action: { label: "See errors", act: "errors" } });
   }
+  // Devices whose own clock is well out (src/index.ts flagClock): the site corrects for it; the device should be fixed.
+  const clocks = await env.DB.prepare("SELECT text FROM audit_log WHERE kind = 'clock_off' AND at > ? ORDER BY at DESC LIMIT 5").bind(now - 864e5).all<{ text: string }>().catch(() => null);
+  for (const c of clocks?.results || []) attention.push({ tone: "warn", icon: "clock", title: c.text.split(". ")[0], detail: "The site uses the right UK time anyway. On the device: Settings → General → Date & Time → Set Automatically.", action: { label: "See activity", go: "activity" } });
   const mailFails = await env.DB.prepare("SELECT COUNT(*) AS n, MAX(text) AS t FROM audit_log WHERE kind = 'email_failed' AND at > ?").bind(now - 864e5).first<{ n: number; t: string }>().catch(() => null);
   if (mailFails && mailFails.n) {
     attention.push({ tone: "warn", icon: "warn", title: `${mailFails.n} rota email${mailFails.n === 1 ? "" : "s"} didn't send in the last day`,
@@ -284,7 +287,7 @@ export async function activity(env: Env, kind: string) {
   for (const t of offs?.results || []) items.push({ kind: "rota", at: t.decided_at, text: `${t.by || "Someone"} ${t.status} ${t.who}'s time off, ${shortDate(t.from_day)}${t.to_day !== t.from_day ? `–${shortDate(t.to_day)}` : ""}`, where: "Rota" });
   for (const r of reqs?.results || []) items.push({ kind: "rota", at: r.decided_at, text: `${r.by || "Someone"} ${r.status} ${r.taker ? `${r.taker} taking` : "a request for"} a shift on ${shortDate(r.day)}`, where: `Rota · ${siteOf(r.site)?.name || r.site}` });
   for (const s of adjusted?.results || []) items.push({ kind: "rota", at: s.adjusted_at, text: `${s.by || "Someone"} amended ${s.who ? `${s.who}'s` : "a"} shift on ${shortDate(s.day)}: ${s.actual_start}–${s.actual_end}${s.adjust_note ? `, ${s.adjust_note}` : ""}`, where: `Rota · ${siteOf(s.site)?.name || s.site}` });
-  for (const l of log?.results || []) items.push({ kind: "account", at: l.at, text: l.text, where: l.kind === "backup" ? "Backups" : l.kind === "setup_copied" ? "Kitchen Diary" : l.kind.startsWith("email_") && l.kind !== "email_changed" ? "Rota emails" : "Accounts" });
+  for (const l of log?.results || []) items.push({ kind: "account", at: l.at, text: l.text, where: l.kind === "backup" ? "Backups" : l.kind === "setup_copied" ? "Kitchen Diary" : l.kind.startsWith("email_") && l.kind !== "email_changed" ? "Rota emails" : l.kind === "clock_off" ? "Devices" : "Accounts" });
   // Errors: only on their own tab (they're for whoever looks after the site, not the day's activity).
   if (kind === "errors") {
     const APP: Record<string, string> = { diary: "Kitchen Diary", rota: "Rota", admin: "Admin", signin: "Staff Login", worker: "Server" };

@@ -132,7 +132,7 @@ function renderDayInner(){
       patchDay(date,{[key]:{items:set,...stamp(),allDone:stamp()}});toast(`All ${key} checks done`,["Undo",()=>patchDay(date,{[key]:{items:back,allDone:null}})])});
     const who=rotaWho(key==="opening"?"opens":"closes");
     // On a phone, closing checks wait folded while the opening checks are still to do in the morning.
-    const later=key==="closing"&&!n&&S.date===today()&&new Date().getHours()<14&&!openDone&&matchMedia("(max-width:1023px)").matches;
+    const later=key==="closing"&&!n&&S.date===today()&&ukHour()<14&&!openDone&&matchMedia("(max-width:1023px)").matches;
     if(key==="opening")openDone=all;
     secCard($(card),key,all,all?badgeEl("done"):ringEl(n,list.length),title,
       (who?who+" · ":"")+(all?`${n} of ${n}${part.allDone||part.at?` · ${nameOf((part.allDone||part).by)}, ${time((part.allDone||part).at)}`:""}`:n?`${n} of ${list.length} ticked`:key==="closing"?`After close · ${list.length} checks`:`${list.length} checks`),later);
@@ -149,7 +149,7 @@ function renderDayInner(){
   const sign=()=>{patchDay(S.date,{signed:{...stamp(),name:S.myName}});toast(`Day signed off by ${S.myName||"you"}`)}; // also replaces any Undo still showing
   if(d.signed){
     ids.push(d.signed.by);
-    const who=d.signed.name||nameOf(d.signed.by),on=d.signed.at&&iso(new Date(d.signed.at))!==S.date?" on "+short(iso(new Date(d.signed.at))):"";
+    const who=d.signed.name||nameOf(d.signed.by),on=d.signed.at&&dayOf(d.signed.at)!==S.date?" on "+short(dayOf(d.signed.at)):"";
     sc.className="scard glass signcard done";
     sc.append(...kids(el("span",{class:"big"},svgi(ICON.check)),el("h2",{text:"Day signed off"}),el("span",{class:"s",text:`By ${who} at ${time(d.signed.at)}${on}`}),
       R||S.role==="staff"?null:el("button",{class:"btn ghost sm",type:"button",onclick:()=>patchDay(S.date,{signed:null})},"Undo sign-off")));
@@ -257,5 +257,5 @@ function renderCloseDay(d){
   det.append(chips,el("div",{class:"row"},txt,go));
   box.append(det);
 }
-function dueDate(t){const n=FREQ[t.freq],b=t.lastAt||t.importedAt;if(!b||!n)return"";const d=new Date(b);d.setDate(d.getDate()+n);return iso(d)}
+function dueDate(t){const n=FREQ[t.freq],b=t.lastAt||t.importedAt;if(!b||!n)return"";return addDays(dayOf(b),n)}
 function goDay(date){S.date=date;show("day");renderDay();renderHead()}
