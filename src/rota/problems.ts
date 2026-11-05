@@ -138,17 +138,12 @@ export function computeProblems(ctx: Ctx): Problem[] {
     }
   }
 
-  // Openers, closers and cover, per open site and day that has shifts (or cover settings).
+  // Cover, per open site and day. (No check for who opens or closes: everyone is trained on the opening and
+  // closing checks, and whoever is on does them. A shift's job, opens or closes, is optional.)
   for (const site of ctx.sites.values()) {
     for (const d of ctx.days) {
       if (!openState(ctx, site.id, d).open) continue;
       const here = inWeek.filter((s) => s.site === site.id && s.day === d);
-      if (here.length) {
-        if (!here.some((s) => s.job === "opens")) out.push({ kind: "no_opener", severity: "warn", day: d, site: site.id, shiftIds: here.map((s) => s.id),
-          message: `No one opens ${site.name} on ${day(d)}` });
-        if (!here.some((s) => s.job === "closes")) out.push({ kind: "no_closer", severity: "warn", day: d, site: site.id, shiftIds: here.map((s) => s.id),
-          message: `No one closes ${site.name} on ${day(d)}` });
-      }
       const { opensAt, closesAt } = hoursOn(site, d);
       if (opensAt && closesAt && mins(closesAt) > mins(opensAt) && site.minPeople > 0) {
         // Who's actually there: a shift cut short on the day stops counting when they left.

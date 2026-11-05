@@ -401,9 +401,6 @@
       out.push({ sev: "warn", text: `${site.name} drops below ${plural(site.minPeople, "person", "people")} at times on ${dayList(ps.map((p) => p.day))}`, sub: ps[0].message + (ps.length > 1 ? `, and ${plural(ps.length - 1, "more gap")}` : ""),
         act: "See", go: () => go(`day/${site.id}/${ps[0].day}`) });
     }
-    for (const [kind, verb] of [["no_opener", "opens"], ["no_closer", "closes"]]) {
-      for (const { site, ps } of perSite(kind)) out.push({ sev: "warn", text: `No one ${verb} ${site.name} on ${dayList(ps.map((p) => p.day))}`, act: "Fix", go: () => go(`day/${site.id}/${ps[0].day}`) });
-    }
     const rows = personRows(d);
     const over = rows.filter((r) => r.ot > 0).sort((a, b) => b.ot - a.ot);
     if (over.length) out.push({ sev: "warn", text: `Overtime: ${over.map((r) => `${first(r.p.name)} +${hrs(r.ot)}h`).join(", ")}`, sub: over.length === 1 ? `Over their ${hrs(over[0].p.contractMax)}h maximum` : "Over their contracted maximum",
@@ -446,7 +443,7 @@
   function focusProblem(d, p) {
     const s = p.shiftIds?.length ? d.shifts.find((x) => x.id === p.shiftIds[p.kind === "clash" ? 1 : 0]) || d.shifts.find((x) => x.id === p.shiftIds[0]) : null;
     if (p.kind === "overtime" || p.kind === "under_contract") { R.view = "person"; render(); return; }
-    if ((p.kind === "clash" || p.kind === "no_opener" || p.kind === "no_closer" || p.kind === "short_cover") && p.site && p.day) { go(`day/${p.site}/${p.day}`); return; }
+    if ((p.kind === "clash" || p.kind === "short_cover") && p.site && p.day) { go(`day/${p.site}/${p.day}`); return; }
     if (s) openShift(s, d);
     else if (p.site && p.day) go(`day/${p.site}/${p.day}`);
   }
@@ -824,7 +821,7 @@
       const rows = r.candidates.map((c) => {
         const flag = c.flags[0];
         const pill = c.best ? el("span", { class: "pill ok", text: "Best fit" })
-          : flag ? el("span", { class: "pill " + (flag.severity === "error" || flag.kind === "untrained" ? "bad" : flag.severity === "warn" ? "warn" : ""), text: { clash: "Clash", time_off: "Time off", overtime: "Overtime", rest: "Short rest", untrained: "Training", availability: "Availability", break: "Break", seven_days: "7 days", closed: "Closed" }[flag.kind] || "Check" }) : null;
+          : flag ? el("span", { class: "pill " + (flag.severity === "error" ? "bad" : flag.severity === "warn" ? "warn" : ""), text: { clash: "Clash", time_off: "Time off", overtime: "Overtime", rest: "Short rest", availability: "Availability", break: "Break", seven_days: "7 days", closed: "Closed" }[flag.kind] || "Check" }) : null;
         const sub = flag ? flag.message : `Free · would be ${hoursText(c.hoursIfGiven, c)}`;
         const row = el("button", { type: "button", class: "lrow cand" + (c.selectable ? "" : " dim"), disabled: !c.selectable, role: "radio", "aria-checked": "false",
           onclick: () => { pick = c.userId; for (const x of who.querySelectorAll(".cand")) x.setAttribute("aria-checked", String(x === row)); drawFoot(c.name); } },
@@ -834,7 +831,7 @@
       });
       who.lastChild.replaceChildren(...(rows.length ? rows : [empty("No one else has an account yet.")]));
       who.lastChild.setAttribute("role", "radiogroup");
-      who.append(el("p", { class: "note", text: "Checks hours, other shifts, time off, when people can work, and opening and closing training for this site." }));
+      who.append(el("p", { class: "note", text: "Checks hours, other shifts, time off and when people can work." }));
       const best = r.candidates.find((c) => c.userId === pick);
       drawFoot(best?.name);
     }
@@ -960,11 +957,6 @@
           fixBtn.textContent = `Give the ${sh.job === "closes" ? "close" : sh.job === "opens" ? "open" : "shift"} to ${first(best.name)}`; fixBtn.disabled = false;
           fixBtn.onclick = async () => { const before = sh.userId; const ok = await act(() => api("PATCH", "/api/rota/shifts/" + sh.id, { userId: best.userId })); if (ok) { toast(`Given to ${first(best.name)}`, ["Undo", async () => { await act(() => api("PATCH", "/api/rota/shifts/" + sh.id, { userId: before })); render(); }]); render(); } };
         }).catch(() => { fixBtn.textContent = "Change person"; fixBtn.disabled = false; fixBtn.onclick = () => openShift(sh, d); });
-      }
-      if ((p.kind === "no_opener" || p.kind === "no_closer") && list.length) {
-        const job = p.kind === "no_opener" ? "opens" : "closes";
-        const cand = [...list].filter((x) => x.userId && !x.job).sort((x, y) => (job === "opens" ? x.start.localeCompare(y.start) : y.end.localeCompare(x.end)))[0];
-        if (cand) fixes.push(btn(`${first(nameOf(d, cand.userId))} ${job === "opens" ? "opens" : "closes"}`, async () => { if (await act(() => api("PATCH", "/api/rota/shifts/" + cand.id, { job }), "Saved")) render(); }));
       }
       if (p.kind === "short_cover") {
         const m = p.message.match(/(\d\d:\d\d)–(\d\d:\d\d)$/);

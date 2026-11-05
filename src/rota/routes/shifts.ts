@@ -99,21 +99,9 @@ export async function shiftRoutes(r: RotaRequest): Promise<Response | null> {
     const week = mondayOf(shift.day);
     const ctxW = await loadCtx(env, week);
     const site = ctxW.sites.get(shift.site)!;
-    // Trained on opening and closing checks: the diary's staff training record at this site, matched by name.
-    let trained: Set<string> | null = null;
-    if (shift.job && !site.trainingOff.includes("diary")) {
-      const pre = ROTA_SITES.find((s) => s.id === shift.site)!.prefix;
-      const r = await env.DB.prepare(
-        `SELECT json_extract(data, '$.name') AS name FROM docs WHERE collection = ? AND deleted = 0 AND json_extract(data, '$.topics.diary.date') IS NOT NULL`,
-      ).bind(pre + "staff").all<{ name: string | null }>();
-      trained = new Set(r.results.map((x) => String(x.name || "").trim().toLowerCase().replace(/\s+/g, " ")));
-    }
     const list = [...ctxW.people.values()].filter((p) => p.id !== shift.userId).map((p) => {
       const { problems, hours } = effectsFor(ctxW, shift, p.id);
       const flags = problems.map((x) => ({ kind: x.kind, severity: x.severity, message: x.message }));
-      if (trained && !trained.has(p.name.trim().toLowerCase().replace(/\s+/g, " "))) {
-        flags.push({ kind: "untrained", severity: "warn", message: `Not trained on ${site.name} opening and closing checks` });
-      }
       const error = flags.find((f) => f.severity === "error");
       const tier = error ? 2 : flags.length ? 1 : 0;
       // Fairest first: whoever is furthest below their minimum (or maximum) gets offered it first.
