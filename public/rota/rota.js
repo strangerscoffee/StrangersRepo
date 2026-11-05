@@ -207,7 +207,14 @@
   /* ---------- shared pieces ---------- */
 
   const sitePill = (id, name) => el("span", { class: "spill " + (SITE_TONE[id] || ""), text: name || id });
-  const avatar = (name, cls = "") => el("span", { class: "avatar sm " + cls, text: initials(name), "aria-hidden": "true" });
+  // Each person's colour (a hue from the API, fixed per person), remembered by id and by name from the last week loaded.
+  const HUE = { id: {}, name: {} };
+  const rememberHues = (people) => { for (const p of people || []) if (p.hue != null) { HUE.id[p.id] = p.hue; HUE.name[p.name] = p.hue; } };
+  const hueStyle = (h) => (h == null ? null : `--h:${h}`);
+  const avatar = (name, cls = "") => {
+    const h = HUE.name[name];
+    return el("span", { class: "avatar sm " + cls + (h != null ? " pc" : ""), style: hueStyle(h), text: initials(name), "aria-hidden": "true" });
+  };
   // A button whose action is still running is disabled, so a double tap can't do it twice.
   const btn = (label, onclick, cls = "btn", extra = {}) => el("button", { type: "button", class: cls, "data-w": "", ...extra, onclick: onclick && (async (e) => {
     const b = e.currentTarget;
@@ -358,6 +365,7 @@
     if (!force && R.weekData && R.weekData.week === week && Date.now() - R.weekData._at < 15000) return R.weekData;
     const d = await get("/api/rota/week?start=" + week);
     d._at = Date.now();
+    rememberHues(d.people);
     if (mgr()) R.weekData = d;
     return d;
   }
@@ -450,7 +458,9 @@
 
   function shiftCard(d, s, { clash, ro, showSite, showName = true, compact } = {}) {
     const nm = nameOf(d, s.userId);
-    const cls = "shc" + (!s.userId ? " open" : "") + (clash ? " clash" : "") + (s.overtime > 0 ? " ot" : "") + (s.adjusted ? " amended" : "") + (showSite ? " tone-" + (SITE_TONE[s.site] || "") : "");
+    const h = s.userId ? personOf(d, s.userId)?.hue ?? HUE.id[s.userId] : null;
+    const tinted = h != null && !showSite; // by site: each person's colour; by person, the row already says who
+    const cls = "shc" + (tinted ? " pc" : "") + (!s.userId ? " open" : "") + (clash ? " clash" : "") + (s.overtime > 0 ? " ot" : "") + (s.adjusted ? " amended" : "") + (showSite ? " tone-" + (SITE_TONE[s.site] || "") : "");
     const site = d.sites.find((x) => x.id === s.site);
     const ot = s.overtime > 0;
     const tag = !s.userId ? [jobWord(s.job), "Fill"].filter(Boolean).join(" · ") : clash ? "Clash" : [jobWord(s.job), s.adjusted ? "Amended" : ""].filter(Boolean).join(" · ");
@@ -459,15 +469,20 @@
     if (compact) {
       // The planner grid: the time on one line, then the name with one small tag (Fill, Clash, Overtime, Opens…).
       const small = !s.userId ? "Fill" : clash ? "Clash" : ot ? "Overtime" : s.adjusted ? "Amended" : jobWord(s.job);
-      const k = [el("b", { class: "tm", text: span(s) }), el("span", { class: "w" }, el("span", { class: "nm", text: showSite && !showName ? site.name : nm ? first(nm) : "Open" }), small ? el("small", { class: ot && s.userId && !clash ? "o" : "", text: small }) : null)];
-      return ro ? el("div", { class: cls + " cmp" + dim, "aria-label": aria }, ...k) : el("button", { type: "button", class: cls + " cmp" + dim, "aria-label": aria, onclick: (e) => { e.stopPropagation(); openShift(s, d); } }, ...k);
+      const who = el("span", { class: "w" }, tinted ? el("span", { class: "pci", "aria-hidden": "true", text: initials(nm) }) : null,
+        el("span", { class: "nm", text: showSite && !showName ? site.name : nm ? first(nm) : "Open" }), small ? el("small", { class: ot && s.userId && !clash ? "o" : "", text: small }) : null);
+      // By site, who it is comes first (the times are often all the same); by person, the time does.
+      const k = tinted ? [who, el("b", { class: "tm", text: span(s) })] : [el("b", { class: "tm", text: span(s) }), who];
+      const st = hueStyle(tinted ? h : null);
+      return ro ? el("div", { class: cls + " cmp" + dim, style: st, "aria-label": aria }, ...k) : el("button", { type: "button", class: cls + " cmp" + dim, style: st, "aria-label": aria, onclick: (e) => { e.stopPropagation(); openShift(s, d); } }, ...k);
     }
     const kids = [el("b", { class: "tm", text: span(s) }),
-      showName ? el("span", { class: "nm", text: nm ? first(nm) : "Open shift" }) : null,
+      showName ? el("span", { class: "nm" }, tinted ? el("span", { class: "pci", "aria-hidden": "true", text: initials(nm) }) : null, nm ? first(nm) : "Open shift") : null,
       showSite ? el("span", { class: "nm", text: site.name }) : null,
       tag ? el("span", { class: "jb", text: tag }) : null,
       ot ? el("span", { class: "otag", text: `Overtime ${hrs(s.overtime)}h` }) : null];
-    return ro ? el("div", { class: cls + dim, "aria-label": aria }, ...kids) : el("button", { type: "button", class: cls + dim, "aria-label": aria, onclick: (e) => { e.stopPropagation(); openShift(s, d); } }, ...kids);
+    const st = hueStyle(tinted ? h : null);
+    return ro ? el("div", { class: cls + dim, style: st, "aria-label": aria }, ...kids) : el("button", { type: "button", class: cls + dim, style: st, "aria-label": aria, onclick: (e) => { e.stopPropagation(); openShift(s, d); } }, ...kids);
   }
 
   function peopleOnDay(d, day) { return new Set(d.shifts.filter((s) => s.day === day && s.userId).map((s) => s.userId)).size; }

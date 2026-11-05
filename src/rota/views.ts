@@ -27,7 +27,7 @@ export async function weekView(env: Env, week: string, user: User) {
       closedWhy: ctx.days.map((d) => { const st = openState(ctx, s.id, d); return st.open ? null : ctx.closures.get(s.id)?.[d] || null; }),
     })),
     // Staff see names only: contracts and availability are for managers.
-    people: [...ctx.people.values()].map((p) => (mgr ? p : { id: p.id, name: p.name, role: p.role })),
+    people: [...ctx.people.values()].map((p) => (mgr ? p : { id: p.id, name: p.name, role: p.role, hue: p.hue })),
     // Staff see who's on, not other people's overtime or why their hours changed.
     shifts: !visible ? [] : mgr ? inWeek : inWeek.map((s) => (s.userId === user.id ? s : { ...s, overtime: 0, adjustNote: "" })),
     timeOff: mgr ? ctx.timeOff : [],

@@ -460,3 +460,19 @@ a.btn.sm{text-decoration:none}
 .emrow .t{flex:1;min-width:0;display:grid;gap:2px}
 .emrow .t b{overflow-wrap:anywhere}
 .emsites{margin-top:6px}
+
+/* Each person's colour (--h, a hue set per shift and avatar from the API): a stripe and a light tint on their
+   shifts in the by-site views, an initials badge, and their avatar. Always with their name and initials. */
+.pc{--pcs:hsl(var(--h) 68% 46%);--pcb:hsl(var(--h) 80% 50% / .12);--pci:hsl(var(--h) 70% 30%);--pcf:#fff}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .pc{--pcs:hsl(var(--h) 78% 64%);--pcb:hsl(var(--h) 70% 55% / .17);--pci:hsl(var(--h) 90% 80%);--pcf:#0b0d12}}
+:root[data-theme="dark"] .pc{--pcs:hsl(var(--h) 78% 64%);--pcb:hsl(var(--h) 70% 55% / .17);--pci:hsl(var(--h) 90% 80%);--pcf:#0b0d12}
+.shc.pc{border-left:4px solid var(--pcs)}
+.shc.pc:not(.clash):not(.ot){background:var(--pcb)}
+.shc.pc .nm{color:var(--pci);font-weight:700}
+.shc.cmp.pc .w{justify-content:flex-start;gap:0 5px}
+.shc.cmp.pc .w small{margin-left:auto}
+.shc.cmp.pc .tm{font-weight:600;color:var(--muted)}
+.pci{display:inline-grid;place-items:center;flex:none;min-width:20px;height:20px;padding:0 3px;box-sizing:border-box;border-radius:99px;
+  background:var(--pcs);color:var(--pcf);font-size:10px;font-weight:800;letter-spacing:.02em;line-height:1;vertical-align:middle}
+.shc:not(.cmp) .nm .pci{margin-right:6px}
+.avatar.pc{background:var(--pcs);color:var(--pcf)}
