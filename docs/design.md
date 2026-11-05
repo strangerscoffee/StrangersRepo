@@ -53,6 +53,10 @@ Short and purposeful, and all of it is off with Reduce Motion:
 - A tick, or a card's badge, pops once when it becomes done (on this device or another), not on every refresh.
 - The toast rises above the tab bar; the sign-off button rises into place when the day is ready.
 
+## Files
+
+No build step: each page loads plain scripts in order. The diary's logic is in `public/diary/` (classic scripts sharing one global scope: `core.js` first, then one file per area, `start.js` last), the rota's in `public/rota/rota.js`, the admin section's in `public/admin/admin.js`; `public/shared/core.js` (loaded first on the diary, rota and admin pages) holds what they share: the element and icon builders, toasts, Europe/London dates and the sign-in and session checks.
+
 ## Styles
 
 Three stylesheets, loaded in this order (later rules win):

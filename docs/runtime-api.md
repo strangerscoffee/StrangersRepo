@@ -1,6 +1,6 @@
 # The page's data API (`window.claude`)
 
-The diary page (`public/app.js`) reads and writes its data only through `window.claude.use(name)`, an interface it was first written against when it ran as a Claude artifact. `public/claude-shim.js` provides it on this site, backed by the Worker's `/api` routes. Keeping that one narrow interface means the page never talks to the network directly.
+The diary page (`public/diary/*.js`) reads and writes its data only through `window.claude.use(name)`, an interface it was first written against when it ran as a Claude artifact. `public/claude-shim.js` provides it on this site, backed by the Worker's `/api` routes. Keeping that one narrow interface means the page never talks to the network directly.
 
 ```js
 window.claude = { use: async (name) => ({db, user, assets}[name] ?? null) };
@@ -62,7 +62,7 @@ them from overwriting each other:
   `update` that replaces a list; never to day and week pages, which only ever merge. `opts.ifVersion` overrides
   it (`null`: no check).
 - **Editors** (suppliers, contacts, allergens, staff training, maintenance, and anything saved with
-  `multiSave`) record the version and a copy of the item when they open (`beginEdit` in `app.js`) and save from
+  `multiSave`) record the version and a copy of the item when they open (`beginEdit` in `diary/core.js`) and save from
   that version (`saveEdited`). On a conflict, what this person changed is put on top of the newer version by
   itself; only when both people changed the same field does the save stop with a message ("Someone else changed
   this on another device just now…"). Saving again then replaces it, having been told. HACCP plans, inspections

@@ -11,14 +11,20 @@ export function appForHost(hostname: string, rotaHost: string | undefined, admin
   return "diary";
 }
 
-/** On the rota's hostname, files it may serve besides its own (/rota/…): the diary's shared styles and icons. */
+/** The helpers all three apps share (public/shared/*.js: code, no data). */
+export function isSharedCode(path: string): boolean {
+  return /^\/shared\/[\w-]+\.js$/.test(path);
+}
+
+/** On the rota's hostname, files it may serve besides its own (/rota/…): the diary's shared styles and icons, and
+ * the helpers all three apps share. */
 export function isRotaSharedFile(path: string): boolean {
   return path === "/app.css" || path === "/ui.css" || path === "/theme.css" || path === "/pinpad.js" || path === "/robots.txt" ||
-    path === "/logo.svg" || path === "/mark.svg" || /^\/icon-\d+\.png$/.test(path) || path.startsWith("/rota/");
+    path === "/logo.svg" || path === "/mark.svg" || /^\/icon-\d+\.png$/.test(path) || path.startsWith("/rota/") || isSharedCode(path);
 }
 
 /**
- * The diary's and the rota's scripts, styles and images (code, no data) load without a session, on their own
+ * The diary's and the rota's scripts (with the helpers they share, /shared/…), styles and images (code, no data) load without a session, on their own
  * address. Safari can show a page from memory after the session has ended (going back to a tab); its files then
  * still load, and its script sends the person to sign in, instead of a page with no styles that does nothing.
  * Pages and every API still need sign-in; the admin section's files stay admin-only.
@@ -28,9 +34,10 @@ export function isPublicCode(app: string, path: string): boolean {
   return app === "rota" ? isRotaSharedFile(path) : app === "diary";
 }
 
-/** On the admin section's hostname, files it may serve: its own (/admin/…) and the shared theme and icons. */
+/** On the admin section's hostname, files it may serve: its own (/admin/…), the shared theme and icons, and the
+ * helpers all three apps share. */
 export function isAdminSharedFile(path: string): boolean {
-  return path === "/theme.css" || path === "/robots.txt" || path === "/logo.svg" || path === "/mark.svg" ||
+  return path === "/theme.css" || path === "/robots.txt" || path === "/logo.svg" || path === "/mark.svg" || isSharedCode(path) ||
     /^\/icon-\d+\.png$/.test(path) || (path.startsWith("/admin/") && path !== "/admin/" && path !== "/admin/index.html");
 }
 
