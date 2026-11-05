@@ -79,7 +79,7 @@ function subscribeHistory(){
   // change made offline meanwhile still shows.
   const old=S.histSubs||[];
   const subs=S.histSubs=[],{site,sub,list}=siteSubs(),n=k=>HIST[k][S.hist?1:0];
-  sub(subs,C("days",site).orderBy("date","desc").limit(n("days")),q=>{const m={};for(const d of q.docs)m[d.id]=d.data();S.days=m;renderDay();renderHistory();renderReview();renderTempLog();renderClosures();inspStale()});
+  sub(subs,C("days",site).orderBy("date","desc").limit(n("days")),q=>{const m={};for(const d of q.docs)m[d.id]=d.data();S.days=m;renderDay();renderHistory();renderReview();renderTempLog();renderClosures();renderSites();inspStale()});
   sub(subs,C("weeks",site).orderBy("week","desc").limit(n("weeks")),q=>{const m={};for(const d of q.docs)m[d.id]=d.data();S.weeks=m;renderWeek();inspStale()});
   list(subs,"deliveries","deliveries",()=>{renderDeliveries();inspStale()},C("deliveries",site).orderBy("at","desc").limit(n("deliveries")));
   list(subs,"proveit","prove",()=>{renderProve();renderReview();inspStale()},C("proveit",site).orderBy("at","desc").limit(n("proveit")));
@@ -95,29 +95,40 @@ function subscribeSite(){
   list("allergenDocs","allergenDocs",renderAllergenDocs);
   S.reviewsLoading=true;
   list("reviews","reviews",()=>{S.reviewsLoading=false;renderReview();renderDay();inspStale()},C("reviews",site).orderBy("date","desc").limit(50));
-  list("extras","extras",()=>{renderTasks("extras");renderReview()});
-  list("cleaning","cleaning",()=>{renderTasks("cleaning");renderReview()});
+  // This site's checks, cleaning and jobs are also what Today's reminders, the bell and the site switcher show.
+  const atGlance=()=>{renderSites();renderNav();if(S.tab==="day")renderDay()};
+  list("extras","extras",()=>{renderTasks("extras");renderReview();atGlance()});
+  list("cleaning","cleaning",()=>{renderTasks("cleaning");renderReview();atGlance()});
   list("suppliers","suppliers",()=>{renderSuppliers();renderDeliveries()});
-  list("maintenance","maintenance",renderMaint);
+  list("maintenance","maintenance",()=>{renderMaint();renderNotifs();atGlance()});
   list("contacts","contacts",renderContacts);
   list("plans","plans",()=>{onPlansSnapshot();renderReview()});
   list("onboarding","onboarding",onOnbSnapshot);
   list("inspections","inspections",()=>{onInspSnapshot();renderReview()});
   list("staff","staff",()=>{renderStaff();renderReview()});
 }
+// Every site at a glance (the site switcher, Today's needs-attention, the maintenance bell, Setup's publish preview):
+// one live summary of all four (src/summary.ts) rather than each site's lists. This site's own lists, already
+// loaded in full, are used for this site (siteAttention, maintNotifs). Asked again at midnight for the new days.
 function subscribeSummaries(){
-  const err=()=>{};
   const upd=()=>{renderSites();renderNav();if(S.tab==="day")renderDay();renderPublish()};
-  for(const x of SITES){
-    const sm=S.sum[x.id]={settings:normSettings(null),days:{},extras:[],cleaning:[],maintenance:[],got:{}};
-    const mark=k=>{sm.got[k]=true;sm.ready=["settings","days","extras","cleaning"].every(n=>sm.got[n]);upd()};
-    D("settings","main",x.id).onSnapshot(s=>{sm.settings=normSettings(s.exists?s.data():null);mark("settings")},err);
-    C("days",x.id).orderBy("date","desc").limit(60).onSnapshot(q=>{const m={};for(const d of q.docs)m[d.id]=d.data();sm.days=m;mark("days")},err);
-    for(const k of["extras","cleaning"])C(k,x.id).onSnapshot(q=>{sm[k]=q.docs.map(d=>({id:d.id,...d.data()}));mark(k)},err);
-    // Every site's maintenance jobs, for Maintenance → All sites.
-    C("maintenance",x.id).onSnapshot(q=>{sm.maintenance=q.docs.map(d=>({id:d.id,...d.data()}));if(S.tab==="maintenance"&&maintAll)renderMaint();renderNotifs();renderNav();if(S.tab==="day")renderDay()},err);
-  }
-  S.db.doc("config/shared").onSnapshot(s=>{S.shared=s.exists?s.data():null;if(!setupDirty){SE=setupDraft();buildSetup()}renderPublish()},err);
+  for(const x of SITES)if(!S.sum[x.id])S.sum[x.id]={settings:normSettings(null),days:{},firstDay:null,extras:[],cleaning:[],maintenance:[],ready:false};
+  if(S.sumUnsub)try{S.sumUnsub()}catch(e){}
+  const t=today();
+  S.sumUnsub=S.db.summary(addDays(t,-8),t).onSnapshot(all=>{
+    for(const x of SITES){const a=all[x.id]||{};S.sum[x.id]={settings:normSettings(a.settings||null),days:a.days||{},firstDay:a.firstDay||null,extras:a.extras||[],cleaning:a.cleaning||[],maintenance:a.maintenance||[],ready:true}}
+    if(S.tab==="maintenance"&&maintAll)renderMaint();
+    renderNotifs();upd();
+  },()=>{});
+}
+// Maintenance → All sites: every job at the other sites (the summary has only open ones and those done lately).
+function subscribeMaintAll(){
+  if(S.maintFull)return;
+  S.maintFull={};
+  for(const x of SITES)C("maintenance",x.id).onSnapshot(q=>{S.maintFull[x.id]=q.docs.map(d=>({id:d.id,...d.data()}));if(S.tab==="maintenance"&&maintAll)renderMaint()},()=>{});
+}
+function subscribeShared(){
+  S.db.doc("config/shared").onSnapshot(s=>{S.shared=s.exists?s.data():null;if(!setupDirty){SE=setupDraft();buildSetup()}renderPublish()},()=>{});
 }
 
 /* ---------- events ---------- */
@@ -166,6 +177,7 @@ applyTabs();renderAll();
     loadTeam();
   }
   subscribeSummaries();
+  subscribeShared();
   subscribeSite();
   renderAll();
   loadRota();

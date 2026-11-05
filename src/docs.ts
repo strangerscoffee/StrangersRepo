@@ -1,6 +1,7 @@
 // The db API behind claude-shim.js (docs/runtime-api.md).
 import { ApiError, Env, SQL_NOW_MS, invalid, readJson, json } from "./http";
 import { checkShape } from "./validate";
+import { checkSummary, siteSummary, summaryCollections } from "./summary";
 import { parseCollectionPath, parseWebDocPath, encodeDoc, deepMerge, canonical, resolveOps } from "./paths";
 import { User } from "./auth";
 import { isStaffRecordPath, recordId, requireDelete, requireOwnSignature, requireOwnStaffRecord, requireStaffDayRules, requireWrite } from "./access";
@@ -188,8 +189,10 @@ export async function queryCollection(env: Env, q: QuerySpec) {
 interface PollQuery extends QuerySpec {
   key: string;
   delta?: boolean;
-  kind: "doc" | "col";
+  kind: "doc" | "col" | "summary";
   ver?: number;
+  from?: string;
+  to?: string;
 }
 
 const MAX_POLL_QUERIES = 200;
@@ -209,10 +212,11 @@ export async function poll(env: Env, body: { since?: number; queries?: PollQuery
 
   const queries = raw.map((q) => ({
     key: String(q.key),
-    kind: q.kind === "doc" ? ("doc" as const) : ("col" as const),
+    kind: q.kind === "doc" ? ("doc" as const) : q.kind === "summary" ? ("sum" as const) : ("col" as const),
     ver: q.ver,
-    spec: q.kind === "doc" ? null : checkQuery(q),
-    path: q.kind === "doc" ? parseWebDocPath(q.path, "read").path : parseCollectionPath(q.path),
+    spec: q.kind === "doc" || q.kind === "summary" ? null : checkQuery(q),
+    sum: q.kind === "summary" ? checkSummary(q as { from?: unknown; to?: unknown }) : null,
+    path: q.kind === "doc" ? parseWebDocPath(q.path, "read").path : q.kind === "summary" ? "" : parseCollectionPath(q.path),
   }));
 
   // One statement; each subquery is a single lookup on the (collection, seq) index or the primary key.
@@ -220,10 +224,11 @@ export async function poll(env: Env, body: { since?: number; queries?: PollQuery
     `SELECT CAST(j.key AS INTEGER) AS i,
        CASE json_extract(j.value, '$.k')
          WHEN 'doc' THEN (SELECT COALESCE(MAX(seq), 0) FROM docs WHERE path = json_extract(j.value, '$.p'))
+         WHEN 'sum' THEN (SELECT COALESCE(MAX(seq), 0) FROM docs WHERE collection IN (SELECT value FROM json_each(json_extract(j.value, '$.p'))))
          ELSE (SELECT COALESCE(MAX(seq), 0) FROM docs WHERE collection = json_extract(j.value, '$.p'))
        END AS v
      FROM json_each(?) j`,
-  ).bind(JSON.stringify(queries.map((q) => ({ k: q.kind, p: q.path })))).all<{ i: number; v: number }>();
+  ).bind(JSON.stringify(queries.map((q) => ({ k: q.kind, p: q.kind === "sum" ? summaryCollections() : q.path })))).all<{ i: number; v: number }>();
   const vers = new Map(verRows.results.map((r) => [r.i, r.v]));
   const changed = queries.map((q, i) => ({ q, v: vers.get(i) ?? 0 })).filter(({ q, v }) => q.ver !== v);
   if (!changed.length) return { seq, results };
@@ -241,7 +246,7 @@ export async function poll(env: Env, body: { since?: number; queries?: PollQuery
     ? env.DB.prepare("SELECT doc_id, data, seq, deleted FROM docs WHERE collection = ? AND seq > ? ORDER BY seq LIMIT ?").bind(q.path, q.ver, MAX_DELTA + 1)
     : queryStatement(env, q.path, q.spec!));
   if (paths.length) stmts.push(env.DB.prepare("SELECT path, data FROM docs WHERE deleted = 0 AND path IN (SELECT value FROM json_each(?))").bind(JSON.stringify(paths)));
-  const out = await env.DB.batch(stmts);
+  const out = stmts.length ? await env.DB.batch(stmts) : [];
   const byPath = new Map<string, Record<string, unknown>>();
   if (paths.length) for (const r of out[out.length - 1].results as { path: string; data: string }[]) byPath.set(r.path, JSON.parse(r.data));
   const again: { q: (typeof queries)[number]; v: number }[] = [];
@@ -256,6 +261,7 @@ export async function poll(env: Env, body: { since?: number; queries?: PollQuery
     again.forEach(({ q, v }, i) => { results[q.key] = { ver: v, docs: toDocs(full[i].results as Row[]) }; });
   }
   for (const { q, v } of changed) if (q.kind === "doc") results[q.key] = { ver: v, exists: byPath.has(q.path), data: byPath.get(q.path), docVer: v };
+  for (const { q, v } of changed) if (q.kind === "sum") results[q.key] = { ver: v, summary: await siteSummary(env, q.sum!) };
   return { seq, results };
 }
 

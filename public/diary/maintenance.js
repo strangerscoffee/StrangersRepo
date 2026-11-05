@@ -74,7 +74,7 @@ function maintNotifs(){
   const out=[],now=Date.now(),since=now-14*DAY_MS,me=S.me,mgr=isMgr();
   if(!me)return out;
   for(const x of SITES){
-    for(const m of (S.sum[x.id]&&S.sum[x.id].maintenance)||[]){
+    for(const m of (x.id===S.site?S.maintenance:S.sum[x.id]&&S.sum[x.id].maintenance)||[]){
       const open=m.status!=="done",rep=m.reportedAt||m.at||0,urgent=m.priority==="urgent";
       const add=(kind,at,text,cls,ic)=>{if(at&&at>=since&&at<=now)out.push({key:`${kind}:${x.id}:${m.id}`,kind,at,site:x.id,id:m.id,title:m.title||"Maintenance job",text,cls,ic,ids:[m.reportedBy,m.doneBy]})};
       if(open&&m.assignee===me){
@@ -131,7 +131,8 @@ function renderMaint(){
   const box=$("#mList");if(!box)return;box.replaceChildren();const ids=[],R=ro();
   if(S.tab==="maintenance"&&!document.hidden)setTimeout(markNotifsSeen,0); // looking at Maintenance counts as seeing them
   for(const b of document.querySelectorAll("#mScope button"))b.setAttribute("aria-pressed",String((b.dataset.scope==="all")===maintAll));
-  const items=maintAll?SITES.flatMap(x=>(x.id===S.site?S.maintenance:(S.sum[x.id]&&S.sum[x.id].maintenance)||[]).map(m=>({m,site:x.id})))
+  if(maintAll)subscribeMaintAll();
+  const items=maintAll?SITES.flatMap(x=>(x.id===S.site?S.maintenance:(S.maintFull&&S.maintFull[x.id])||(S.sum[x.id]&&S.sum[x.id].maintenance)||[]).map(m=>({m,site:x.id})))
     :S.maintenance.map(m=>({m,site:S.site}));
   const rank={urgent:0,soon:1,later:2};
   const open=items.filter(x=>x.m.status!=="done").sort((a,b)=>(rank[a.m.priority]??1)-(rank[b.m.priority]??1)||(a.m.reportedAt||0)-(b.m.reportedAt||0));

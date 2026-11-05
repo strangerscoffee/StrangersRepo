@@ -51,7 +51,7 @@ export async function recordError(env: Env, e: ErrorReport): Promise<string> {
 /** The first place in a stack trace that's the site's own code: "/diary/today.js:123:45 in renderDay (file v1a2b3c4d)". */
 export function whereOf(detail: string): string {
   for (const line of String(detail || "").split("\n")) {
-    const m = line.match(/(?:https?:\/\/[^/\s]+)?(\/?[\w./-]+\.(?:js|ts|mjs))(?:\?v=([\w-]+))?:(\d+):(\d+)/);
+    const m = line.match(/(?:(?:https?|file):\/\/[^/\s]*)?(\/?[\w./-]+\.(?:js|ts|mjs))(?:\?v=([\w-]+))?:(\d+):(\d+)/);
     if (!m) continue;
     const fn = (line.match(/^\s*at (?:async )?([\w$.<>]+) \(/) || line.match(/^\s*([\w$.<>]+)@/) || [])[1];
     return `${m[1]}:${m[3]}:${m[4]}${fn ? ` in ${fn}` : ""}${m[2] ? ` (file v${m[2].replace(/^W-/, "").slice(0, 8)})` : ""}`;
