@@ -38,10 +38,10 @@ Which days a site opens comes from the diary's Setup, and planned closures from 
 
 Admins have their own section at **https://admin.staffstrangerscoffee.com** (account menu → **Admin** in the diary or the rota). It covers both the Kitchen Diary and the Rota, with the same sign-in; managers and staff who open it are sent back to the diary.
 
-- **Overview**: what needs attention (locked accounts, an unpublished rota, rota requests waiting, a site that isn't set up, someone who hasn't signed in yet), each with a button to deal with it; how far each site's diary has got today; this week's rota hours and overtime; the last backup.
+- **Overview**: what needs attention (locked accounts, an unpublished rota, rota requests waiting, a site that isn't set up, someone who hasn't signed in yet, errors on the site in the last day), each with a button to deal with it; how far each site's diary has got today; this week's rota hours and overtime; the last backup.
 - **People**: add people, edit their name, username and role, give a temporary password, unlock, sign out everywhere, switch off. Opening someone shows their account, their rota (hours this week against their contract, sites, **when they can work**, time off) and their training. Which days and sites people work is changed here (**Edit availability**); contracted hours stay in Rota settings, where managers set them.
 - **Sites**: each site's diary Setup and rota hours side by side, with links to change them, and **Copy setup from another site** for a site that has none yet (the Factory).
-- **Activity**: who changed what in the diary, the rota and accounts.
+- **Activity**: who changed what in the diary, the rota and accounts. The **Errors** tab lists what has gone wrong on staff devices (a page that crashed, a file that didn't load) and on the server, with the page, the device, how many times and when; kept 30 days.
 - **Security**: locked accounts, failed sign-ins, quick PINs, **Reset all quick PINs** and **Sign everyone out**.
 - **Backups & exports**: the nightly backups (download, or back up now), payroll hours and all shifts as CSV, the people list, and the EHO inspection pack.
 
