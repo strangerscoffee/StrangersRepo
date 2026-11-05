@@ -70,7 +70,7 @@ async function bumpChanges(env: Env, ...keys: string[]) {
 }
 
 /*
- * Fingerprinted files. Each page's scripts and stylesheets are linked as /app.js?v=<the file's own hash> (from its
+ * Fingerprinted files. Each page's scripts and stylesheets are linked as /diary/core.js?v=<the file's own hash> (from its
  * ETag), and a file asked for with ?v= is kept by the browser for a year: opening a page again costs no requests for
  * them at all, and a changed file has a new address, so a deploy reaches everyone straight away. Hashes are looked up
  * once per Worker instance (a deploy starts new ones).

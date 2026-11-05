@@ -1,6 +1,6 @@
-// claude-shim.js: the diary's data connection. The page (app.js) talks to its data only through
+// claude-shim.js: the diary's data connection. The page (public/diary/*.js) talks to its data only through
 // window.claude.use(name), the API it was first written against in Claude (docs/runtime-api.md);
-// this implements it against the Worker's /api routes. Loaded before app.js.
+// this implements it against the Worker's /api routes. Loaded after /shared/core.js and before the diary's scripts.
 //
 // It also keeps the diary usable on bad Wi-Fi: a change that can't reach the server is queued on this
 // device (localStorage), shown straight away, and sent in order once the connection is back. The page
@@ -10,9 +10,7 @@
 
   /* ---------- the signed-in person ---------- */
 
-  function goSignIn() {
-    location.replace("/signin?next=" + encodeURIComponent(location.pathname + location.search + location.hash));
-  }
+  const { goSignIn } = SC; // public/shared/core.js
 
   // Never settles when redirecting to sign-in, so the page doesn't start up with no one signed in.
   const mePromise = fetch("/api/auth/me")
@@ -21,9 +19,7 @@
 
   // Safari can bring a page back from memory (going back to a tab) after the session has ended: check, and go to
   // sign-in rather than show a page that can't load anything.
-  window.addEventListener("pageshow", (e) => {
-    if (e.persisted) fetch("/api/auth/me").then((r) => r.json()).then((me) => { if (!me.user) goSignIn(); }).catch(() => {});
-  });
+  SC.recheckOnPageshow(() => goSignIn());
 
   // Sign-off asks for a typed name; start it from the signed-in person's. The page fills the box from
   // localStorage on its first render, before we know who's signed in, so clear the last person's name

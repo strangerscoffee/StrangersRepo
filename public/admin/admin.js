@@ -3,7 +3,8 @@
 // refuses everyone else. Talks to /api/admin/* (src/adminView.ts, src/admin.ts) and /api/rota/* with fetch.
 (() => {
   "use strict";
-  const $ = (s, r = document) => r.querySelector(s);
+  // Shared with the diary and the rota (public/shared/core.js). The page itself is built with html`` below, not SC.el.
+  const { $, goSignIn, signOut, monday, londonToday } = SC;
 
   /* ---------- safe HTML: every ${value} is escaped unless it's itself html`` or an icon ---------- */
   const RAW = Symbol("raw");
@@ -45,7 +46,7 @@
     try {
       r = await fetch(path, { method, headers: body ? { "content-type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined });
     } catch (e) { throw new Error("Couldn't reach the site. Check your connection."); }
-    if (r.status === 401) { location.replace("/signin?next=" + encodeURIComponent(location.pathname + location.hash)); throw new Error("Signed out."); }
+    if (r.status === 401) { goSignIn(location.pathname + location.hash); throw new Error("Signed out."); }
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.message || "Something went wrong. Try again.");
     return j;
@@ -363,7 +364,7 @@
 
   VIEWS.data = async () => {
     const d = await api("GET", "/api/admin/backups");
-    const mon = (() => { const t = new Date(new Date().toLocaleDateString("en-CA", LON) + "T00:00:00Z"); t.setUTCDate(t.getUTCDate() - ((t.getUTCDay() + 6) % 7)); return t; })();
+    const mon = new Date(monday(londonToday()) + "T00:00:00Z");
     const weeks = Array.from({ length: 8 }, (_, i) => { const w = new Date(mon); w.setUTCDate(w.getUTCDate() - 7 * i); return w.toISOString().slice(0, 10); });
     const today = dayKey(Date.now());
     const monthAgo = dayKey(Date.now() - 30 * 864e5);
@@ -554,8 +555,7 @@
         return;
       }
       case "logout":
-        try { await fetch("/api/auth/logout", { method: "POST" }); } catch (e) { /* signing out locally anyway */ }
-        location.replace("/signin");
+        await signOut();
         return;
     }
   }
@@ -600,31 +600,17 @@
   /* ---------- several admins (or devices) at once ----------
      Every 15 seconds while the page is in view, ask whether accounts, the rota or the diary changed elsewhere and,
      if so, redraw the page, unless a sheet is open or something is being typed. */
-  let known = null, pending = false;
-  async function watchChanges() {
-    if (document.hidden) return;
-    try {
-      const c = await fetch("/api/changes").then((r) => (r.ok ? r.json() : null));
-      if (!c) return;
-      const now = `${c.accounts}.${c.rota}.${S.page === "overview" || S.page === "activity" ? c.docs : ""}`;
-      if (known !== null && now !== known) pending = true;
-      known = now;
-      const typing = document.activeElement && /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName);
-      if (pending && $("#scrim").hidden && !typing) { pending = false; reload(); }
-    } catch (e) { /* offline: next time */ }
-  }
-  setInterval(watchChanges, 15000);
+  const typing = () => document.activeElement && /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName);
+  SC.watchChanges(15000, (c) => `${c.accounts}.${c.rota}.${S.page === "overview" || S.page === "activity" ? c.docs : ""}`, () => $("#scrim").hidden && !typing(), () => reload());
 
   // Safari can bring the page back from memory after the session has ended: check, and go to sign-in if so.
-  window.addEventListener("pageshow", (e) => {
-    if (e.persisted) fetch("/api/auth/me").then((r) => r.json()).then((me) => { if (!me.user) location.replace("/signin?next=" + encodeURIComponent(location.pathname)); }).catch(() => {});
-  });
+  SC.recheckOnPageshow(() => goSignIn(location.pathname));
 
   /* ---------- start ---------- */
   (async () => {
     try {
       const [me, links] = await Promise.all([api("GET", "/api/auth/me"), api("GET", "/api/rota/links").catch(() => null)]);
-      if (!me.user) { location.replace("/signin?next=" + encodeURIComponent(location.pathname)); return; }
+      if (!me.user) { goSignIn(location.pathname); return; }
       if (me.user.role !== "admin") { location.replace((links && links.diary) || "/"); return; }
       S.me = me.user;
       if (links) S.links = links;

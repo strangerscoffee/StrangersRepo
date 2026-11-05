@@ -56,7 +56,7 @@ test("signed out: only the sign-in page and the site's code are reachable, no pa
   assert.equal((await fetch(srv.base + "/theme.css")).status, 200);
   // The diary's scripts and styles load (they hold no data), so a page Safari shows from memory after the
   // session has ended still works and sends the person to sign in, instead of showing unstyled and stuck.
-  for (const f of ["/claude-shim.js", "/app.js", "/app.css", "/ui.css", "/pdf.js"]) assert.equal((await fetch(srv.base + f, { redirect: "manual" })).status, 200, f);
+  for (const f of ["/claude-shim.js", "/shared/core.js", "/diary/core.js", "/diary/start.js", "/app.css", "/ui.css", "/pdf.js"]) assert.equal((await fetch(srv.base + f, { redirect: "manual" })).status, 200, f);
   assert.equal((await fetch(srv.base + "/index.html", { redirect: "manual" })).status, 302, "the page itself still needs sign-in");
   assert.equal((await fetch(srv.base + "/admin/admin.js", { redirect: "manual" })).status, 302, "the admin section's files don't");
   const r = await db("get", { path: "days/x" }, null);
@@ -73,9 +73,10 @@ test("page is served with the shim and noindex once signed in", async () => {
   const html = await r.text();
   assert.match(html, /<meta name="robots" content="noindex,nofollow">/);
   // In this order, each linked by its fingerprint (?v=, kept by the browser for a year: src/index.ts).
-  assert.match(html, /<script src="\/claude-shim.js\?v=\w+"><\/script>\n<script src="\/pinpad.js\?v=\w+"><\/script>\n<script src="\/pdf.js\?v=\w+"><\/script>\n<script src="\/app.js\?v=\w+"><\/script>/);
-  const v = html.match(/\/app.js\?v=(\w+)/)[1];
-  const js = await fetch(`${srv.base}/app.js?v=${v}`, { headers: { cookie: ADMIN } });
+  // The shared helpers first, then the diary's data connection, and the diary's own scripts in dependency order.
+  assert.match(html, /<script src="\/shared\/core.js\?v=\w+"><\/script>\n<script src="\/claude-shim.js\?v=\w+"><\/script>\n<script src="\/pinpad.js\?v=\w+"><\/script>\n<script src="\/pdf.js\?v=\w+"><\/script>\n<script src="\/diary\/core.js\?v=\w+"><\/script>\n<script src="\/diary\/today.js\?v=\w+"><\/script>\n<script src="\/diary\/week.js\?v=\w+"><\/script>\n<script src="\/diary\/records.js\?v=\w+"><\/script>\n<script src="\/diary\/maintenance.js\?v=\w+"><\/script>\n<script src="\/diary\/management.js\?v=\w+"><\/script>\n<script src="\/diary\/allergens.js\?v=\w+"><\/script>\n<script src="\/diary\/reports.js\?v=\w+"><\/script>\n<script src="\/diary\/shell.js\?v=\w+"><\/script>\n<script src="\/diary\/setup.js\?v=\w+"><\/script>\n<script src="\/diary\/start.js\?v=\w+"><\/script>/);
+  const v = html.match(/\/diary\/core.js\?v=(\w+)/)[1];
+  const js = await fetch(`${srv.base}/diary/core.js?v=${v}`, { headers: { cookie: ADMIN } });
   assert.equal(js.headers.get("cache-control"), "private, max-age=31536000, immutable");
   assert.equal(r.headers.get("x-robots-tag"), "noindex, nofollow");
   assert.equal(r.headers.get("cache-control"), "private, no-store");

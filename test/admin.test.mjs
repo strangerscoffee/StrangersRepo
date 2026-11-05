@@ -141,8 +141,9 @@ test("the admin host: admins only, its page at /, nothing of the diary's", async
     const home = await get("/", setup);
     assert.equal(home.status, 200);
     assert.match(home.text, /admin\.js/);
-    for (const p of ["/admin/admin.js", "/admin/admin.css", "/theme.css", "/icon-192.png"]) assert.equal((await get(p, setup)).status, 200, p);
-    for (const p of ["/app.js", "/index.html", "/rota/", "/admin/"]) assert.equal((await get(p, setup)).headers.get("location"), "/", p + " goes to /");
+    for (const p of ["/admin/admin.js", "/admin/admin.css", "/theme.css", "/icon-192.png", "/shared/core.js"]) assert.equal((await get(p, setup)).status, 200, p);
+    assert.match(home.text, /<script src="\/shared\/core.js\?v=\w+"><\/script>\n<script src="\/admin\/admin.js\?v=\w+"><\/script>/, "the shared helpers load first");
+    for (const p of ["/diary/core.js", "/index.html", "/rota/", "/admin/"]) assert.equal((await get(p, setup)).headers.get("location"), "/", p + " goes to /");
     assert.equal((await call("POST", "/api/db/get", { path: "days/x" }, setup, host.base)).status, 404, "the diary's data API isn't here");
     assert.equal((await get("/api/admin/overview", setup)).status, 200);
     assert.equal((await get("/api/rota/links", setup)).body.admin, "/");
@@ -155,6 +156,7 @@ test("the admin host: admins only, its page at /, nothing of the diary's", async
     assert.ok(diary.includes((await get("/", kim)).headers.get("location")), "managers go to the diary");
     assert.equal((await get("/api/admin/people", kim)).status, 403);
     assert.ok(diary.includes((await get("/admin/admin.js", kim)).headers.get("location")), "not even its files");
+    assert.ok(diary.includes((await get("/shared/core.js", kim)).headers.get("location")), "nor the shared helpers, on the admin address");
   } finally { await host.stop(); }
 });
 

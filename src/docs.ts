@@ -1,5 +1,6 @@
 // The db API behind claude-shim.js (docs/runtime-api.md).
 import { ApiError, Env, SQL_NOW_MS, invalid, readJson, json } from "./http";
+import { checkShape } from "./validate";
 import { parseCollectionPath, parseWebDocPath, encodeDoc, deepMerge, canonical, resolveOps } from "./paths";
 import { User } from "./auth";
 import { isStaffRecordPath, recordId, requireDelete, requireOwnSignature, requireOwnStaffRecord, requireStaffDayRules, requireWrite } from "./access";
@@ -296,6 +297,9 @@ export async function handleDb(req: Request, env: Env, op: string, user: User): 
       // it's checked again against the new one (so a sign-off made meanwhile can't be undone by a stale check).
       for (let attempt = 0; ; attempt++) {
         const checked = await requireWriteDoc(env, user, op, body.path, data);
+        // After the permission check (so staff still get permission_denied). Day and week pages merge on set, so
+        // their set is checked like an update (only what it sends).
+        if (attempt === 0 && op !== "delete") checkShape(parseWebDocPath(body.path, "write").collection, data, op === "set" && !isPagePath(body.path) ? "whole" : "patch");
         try {
           const g = { ...o, guardVer: checked };
           const ver = op === "set" ? await (isPagePath(body.path) ? setOrMergeDoc : setDoc)(env, body.path, data, recordId(user), g)

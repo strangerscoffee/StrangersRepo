@@ -21,7 +21,7 @@
 </head>
 <body>
 <!-- App chrome: top bar (phones and tablets), sidebar (wide screens), bottom tab bar (phones and tablets).
-     Filled in by app.js (renderNav, renderSites). -->
+     Filled in by diary/shell.js (renderNav, renderSites). -->
 <header class="appbar" id="appbar">
   <div class="abrand"><span class="brandmark" role="img" aria-label="Strangers Coffee"></span>
     <button class="sitebtn" type="button" data-sitebtn aria-haspopup="dialog"></button></div>
@@ -477,9 +477,20 @@
 </main>
 <div class="toast" id="toast" hidden></div>
 
+<script src="/shared/core.js"></script>
 <script src="/claude-shim.js"></script>
 <script src="/pinpad.js"></script>
 <script src="/pdf.js"></script>
-<script src="/app.js"></script>
+<script src="/diary/core.js"></script>
+<script src="/diary/today.js"></script>
+<script src="/diary/week.js"></script>
+<script src="/diary/records.js"></script>
+<script src="/diary/maintenance.js"></script>
+<script src="/diary/management.js"></script>
+<script src="/diary/allergens.js"></script>
+<script src="/diary/reports.js"></script>
+<script src="/diary/shell.js"></script>
+<script src="/diary/setup.js"></script>
+<script src="/diary/start.js"></script>
 </body>
 </html>

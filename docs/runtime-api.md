@@ -1,6 +1,6 @@
 # The page's data API (`window.claude`)
 
-The diary page (`public/app.js`) reads and writes its data only through `window.claude.use(name)`, an interface it was first written against when it ran as a Claude artifact. `public/claude-shim.js` provides it on this site, backed by the Worker's `/api` routes. Keeping that one narrow interface means the page never talks to the network directly.
+The diary page (`public/diary/*.js`) reads and writes its data only through `window.claude.use(name)`, an interface it was first written against when it ran as a Claude artifact. `public/claude-shim.js` provides it on this site, backed by the Worker's `/api` routes. Keeping that one narrow interface means the page never talks to the network directly.
 
 ```js
 window.claude = { use: async (name) => ({db, user, assets}[name] ?? null) };
@@ -62,7 +62,7 @@ them from overwriting each other:
   `update` that replaces a list; never to day and week pages, which only ever merge. `opts.ifVersion` overrides
   it (`null`: no check).
 - **Editors** (suppliers, contacts, allergens, staff training, maintenance, and anything saved with
-  `multiSave`) record the version and a copy of the item when they open (`beginEdit` in `app.js`) and save from
+  `multiSave`) record the version and a copy of the item when they open (`beginEdit` in `diary/core.js`) and save from
   that version (`saveEdited`). On a conflict, what this person changed is put on top of the newer version by
   itself; only when both people changed the same field does the save stop with a message ("Someone else changed
   this on another device just now…"). Saving again then replaces it, having been told. HACCP plans, inspections
@@ -97,6 +97,7 @@ A write that can't reach the server (no connection, or a 502/503/504) isn't reje
 
 ### Errors
 Reject with an object `{code, message}`. Codes the page understands:
+- `invalid_data`: a known field has the wrong kind of value for its record (`src/validate.ts`: a date that isn't YYYY-MM-DD, a log that isn't a list, a reading that isn't a number). A whole document (`set`) is checked in full; an `update`, and a `set` on a day or week page (which merges), only for the fields it sends. Unknown fields and `null` are always allowed. The page shows the message; it doesn't switch to read-only.
 - `invalid_argument`: bad path or data. **Note:** the page treats this on a write as "you don't have write access" and switches to read-only, so use it only for genuinely invalid writes.
 - `quota_exceeded`: database full.
 - `revoked`: session ended. Not used on the website: when a session ends the API returns 401 `unauthenticated` and the shim sends the person to the sign-in page.
