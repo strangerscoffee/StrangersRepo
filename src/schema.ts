@@ -1,6 +1,6 @@
 // The database schema. The Worker applies it itself (once per Worker instance) so a fresh deploy needs no
-// migration step. Every statement is idempotent. To change the schema later, append statements here
-// (for example ALTER TABLE ... ADD COLUMN guarded by a check of pragma_table_info).
+// migration step: first the tables (every statement idempotent), then any migrations not yet recorded in
+// schema_migrations (MIGRATIONS below). To change the schema, add a migration.
 import { Env } from "./http";
 
 const SCHEMA = [
@@ -143,35 +143,38 @@ const SCHEMA = [
   "CREATE INDEX IF NOT EXISTS errors_last ON errors(last_at)",
 ];
 
-// Upgrades older databases in place:
-// - before usernames and passwords (when people signed in with name + PIN): each account gets a username
-//   made from its name, and must choose a password at next sign-in (their old PIN works for that sign-in);
-// - before quick switching: adds the quick-PIN columns;
-// - before day-by-day opening hours, amended shifts and contract ranges: adds those rota columns
-//   (contract_min and contract_max start as the old single contract_hours).
-async function migrateRota(env: Env): Promise<void> {
-  const cols = await env.DB.prepare(
-    "SELECT 'shifts' AS t, name FROM pragma_table_info('rota_shifts') UNION ALL SELECT 'sites', name FROM pragma_table_info('rota_sites') UNION ALL SELECT 'people', name FROM pragma_table_info('rota_people')",
-  ).all<{ t: string; name: string }>();
-  const has = (t: string, c: string) => cols.results.some((x) => x.t === t && x.name === c);
-  const steps: string[] = [];
-  for (const [c, type] of [["actual_start", "TEXT"], ["actual_end", "TEXT"], ["actual_break", "INTEGER"], ["adjust_note", "TEXT NOT NULL DEFAULT ''"], ["adjusted_by", "TEXT"], ["adjusted_at", "INTEGER"]]) {
-    if (!has("shifts", c)) steps.push(`ALTER TABLE rota_shifts ADD COLUMN ${c} ${type}`);
-  }
-  if (!has("sites", "day_hours")) steps.push("ALTER TABLE rota_sites ADD COLUMN day_hours TEXT NOT NULL DEFAULT '{}'");
-  if (!has("people", "contract_min")) {
-    steps.push("ALTER TABLE rota_people ADD COLUMN contract_min REAL", "ALTER TABLE rota_people ADD COLUMN contract_max REAL",
-      "UPDATE rota_people SET contract_min = contract_hours, contract_max = contract_hours WHERE contract_hours IS NOT NULL");
-  }
-  if (steps.length) await env.DB.batch(steps.map((s) => env.DB.prepare(s)));
-}
+/*
+ * Migrations: numbered, run once each, in order, and recorded in schema_migrations (id, name, applied_at). Add new ones
+ * at the end with the next id; never change or reorder one that has shipped. Each also checks before it changes
+ * anything, so it's safe if two Worker instances start at once, and on databases from before this list (which
+ * already have some of these changes): running one again changes nothing.
+ */
+interface Migration { id: number; name: string; run(env: Env): Promise<void> }
 
-async function migrate(env: Env): Promise<void> {
-  await migrateRota(env);
-  const cols = await env.DB.prepare("SELECT name FROM pragma_table_info('users')").all<{ name: string }>();
-  const has = new Set(cols.results.map((c) => c.name));
-  const steps: string[] = [];
-  if (!has.has("username") || !has.has("must_change")) {
+const columns = async (env: Env, table: string) =>
+  new Set((await env.DB.prepare(`SELECT name FROM pragma_table_info('${table}')`).all<{ name: string }>()).results.map((c) => c.name));
+const runAll = (env: Env, steps: string[]) => (steps.length ? env.DB.batch(steps.map((s) => env.DB.prepare(s))).then(() => undefined) : Promise.resolve());
+
+const MIGRATIONS: Migration[] = [
+  { id: 1, name: "rota: amended hours on shifts", async run(env) {
+    const has = await columns(env, "rota_shifts");
+    await runAll(env, [["actual_start", "TEXT"], ["actual_end", "TEXT"], ["actual_break", "INTEGER"], ["adjust_note", "TEXT NOT NULL DEFAULT ''"], ["adjusted_by", "TEXT"], ["adjusted_at", "INTEGER"]]
+      .filter(([c]) => !has.has(c)).map(([c, type]) => `ALTER TABLE rota_shifts ADD COLUMN ${c} ${type}`));
+  } },
+  { id: 2, name: "rota: opening hours by day", async run(env) {
+    if (!(await columns(env, "rota_sites")).has("day_hours")) await runAll(env, ["ALTER TABLE rota_sites ADD COLUMN day_hours TEXT NOT NULL DEFAULT '{}'"]);
+  } },
+  { id: 3, name: "rota: contract ranges (min and max), from the old single contract_hours", async run(env) {
+    if ((await columns(env, "rota_people")).has("contract_min")) return;
+    await runAll(env, ["ALTER TABLE rota_people ADD COLUMN contract_min REAL", "ALTER TABLE rota_people ADD COLUMN contract_max REAL",
+      "UPDATE rota_people SET contract_min = contract_hours, contract_max = contract_hours WHERE contract_hours IS NOT NULL"]);
+  } },
+  // Before usernames and passwords (when people signed in with name + PIN): each account gets a username made from
+  // its name, and must choose a password at next sign-in (their old PIN works for that sign-in).
+  { id: 4, name: "accounts: usernames and choosing a password", async run(env) {
+    const has = await columns(env, "users");
+    if (has.has("username") && has.has("must_change")) return;
+    const steps: string[] = [];
     if (!has.has("username")) steps.push("ALTER TABLE users ADD COLUMN username TEXT");
     if (!has.has("must_change")) steps.push("ALTER TABLE users ADD COLUMN must_change INTEGER NOT NULL DEFAULT 0");
     steps.push(
@@ -179,20 +182,45 @@ async function migrate(env: Env): Promise<void> {
       // Same name twice is already impossible (name_key is unique), but keep usernames unique regardless.
       "UPDATE users SET username = username || '-' || substr(id, 1, 4) WHERE rowid NOT IN (SELECT min(rowid) FROM users GROUP BY username)",
     );
-  }
-  if (!has.has("quick_hash")) steps.push("ALTER TABLE users ADD COLUMN quick_hash TEXT", "ALTER TABLE users ADD COLUMN quick_salt TEXT");
+    await runAll(env, steps);
+  } },
+  { id: 5, name: "accounts: quick PINs", async run(env) {
+    if (!(await columns(env, "users")).has("quick_hash")) await runAll(env, ["ALTER TABLE users ADD COLUMN quick_hash TEXT", "ALTER TABLE users ADD COLUMN quick_salt TEXT"]);
+  } },
   // Notifications (the diary's bell): the time up to which this person has seen them, on any device.
-  if (!has.has("notif_seen")) steps.push("ALTER TABLE users ADD COLUMN notif_seen INTEGER NOT NULL DEFAULT 0");
-  if (steps.length) await env.DB.batch(steps.map((s) => env.DB.prepare(s)));
+  { id: 6, name: "accounts: notifications seen", async run(env) {
+    if (!(await columns(env, "users")).has("notif_seen")) await runAll(env, ["ALTER TABLE users ADD COLUMN notif_seen INTEGER NOT NULL DEFAULT 0"]);
+  } },
+  { id: 7, name: "accounts: unique usernames", async run(env) {
+    await runAll(env, ["CREATE UNIQUE INDEX IF NOT EXISTS users_username ON users(username)"]);
+  } },
+  // The fields pages sort diary lists by, so a site's latest 400 days (or deliveries, or Prove it records) are read
+  // straight off an index however many years have built up (src/docs.ts queryStatement). The expressions must match
+  // that query's exactly.
+  { id: 8, name: "diary: indexes for lists by date, week and time", async run(env) {
+    await runAll(env, ["date", "week", "at"].map((f) =>
+      `CREATE INDEX IF NOT EXISTS docs_by_${f} ON docs(collection, deleted, json_extract(data, '$.${f}'), doc_id)`));
+  } },
+];
+
+async function migrate(env: Env): Promise<void> {
+  await env.DB.prepare("CREATE TABLE IF NOT EXISTS schema_migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at INTEGER NOT NULL)").run();
+  const done = new Set((await env.DB.prepare("SELECT id FROM schema_migrations").all<{ id: number }>()).results.map((r) => r.id));
+  for (const m of MIGRATIONS) {
+    if (done.has(m.id)) continue;
+    await m.run(env);
+    await env.DB.prepare("INSERT OR IGNORE INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)").bind(m.id, m.name, Date.now()).run();
+  }
 }
+
+/** The migrations, for tests and the admin section. */
+export const MIGRATION_LIST = () => MIGRATIONS.map(({ id, name }) => ({ id, name }));
 
 let ready: Promise<unknown> | null = null;
 
 export function ensureSchema(env: Env): Promise<unknown> {
   if (!ready) {
-    ready = env.DB.batch(SCHEMA.map((s) => env.DB.prepare(s))).then(() => migrate(env)).then(() =>
-      env.DB.prepare("CREATE UNIQUE INDEX IF NOT EXISTS users_username ON users(username)").run(),
-    ).catch((e) => {
+    ready = env.DB.batch(SCHEMA.map((s) => env.DB.prepare(s))).then(() => migrate(env)).catch((e) => {
       ready = null; // retry on the next request
       throw e;
     });
