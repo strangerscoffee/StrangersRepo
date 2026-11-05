@@ -4,9 +4,10 @@ import { invalid, json } from "../../http";
 import { activeUser } from "../load";
 import { RotaRequest } from "../types";
 import { conflict, dateOf, denied, isDay, londonToday, notFound, nowMs, text } from "../util";
+import { actor, timeOffDecided } from "../../email/rota";
 
 export async function timeOffRoutes(r: RotaRequest): Promise<Response | null> {
-  const { env, user, route, seg, m, mgr, admin, needMgr, body } = r;
+  const { env, exec, user, route, seg, m, mgr, admin, needMgr, body, mailLinks } = r;
 
   if (route === "time-off" && m === "POST") {
     const b = await body();
@@ -29,7 +30,7 @@ export async function timeOffRoutes(r: RotaRequest): Promise<Response | null> {
   }
 
   if (seg[0] === "time-off" && seg.length === 2 && m === "PATCH") {
-    const t = await env.DB.prepare("SELECT * FROM rota_time_off WHERE id = ?").bind(seg[1]).first<{ user_id: string; status: string; from_day: string }>();
+    const t = await env.DB.prepare("SELECT * FROM rota_time_off WHERE id = ?").bind(seg[1]).first<{ user_id: string; status: string; from_day: string; to_day: string }>();
     if (!t) throw notFound("That request has gone. Refresh and try again.");
     const b = await body();
     if (b.status === "cancelled") {
@@ -43,6 +44,7 @@ export async function timeOffRoutes(r: RotaRequest): Promise<Response | null> {
       if (t.user_id === user.id && !admin) throw denied("Another manager or an admin decides your own time off.");
     } else throw invalid("Choose approve, decline or cancel.");
     await env.DB.prepare("UPDATE rota_time_off SET status = ?, decided_by = ?, decided_at = ? WHERE id = ?").bind(b.status, user.id, nowMs(), seg[1]).run();
+    if (b.status === "approved" || b.status === "declined") await timeOffDecided(env, exec, mailLinks, t, b.status === "approved", await actor(env, user)).catch(() => {});
     return json({ id: seg[1], status: b.status });
   }
 

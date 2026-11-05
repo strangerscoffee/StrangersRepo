@@ -7,6 +7,8 @@ import { ReqRow, RotaRequest, SITE_IDS } from "../types";
 import { checkPattern, checkSites } from "../validate";
 import { addDays, dateOf, isDay, londonToday, mondayOf, nowMs, parseJson, round2, siteName } from "../util";
 
+import { emailReady, isEmailKind, prefsOf } from "../../email/send";
+
 export async function meRoutes(r: RotaRequest): Promise<Response | null> {
   const { env, user, route, m, q, mgr, needAdmin, body, links } = r;
 
@@ -57,20 +59,34 @@ export async function meRoutes(r: RotaRequest): Promise<Response | null> {
   }
 
   if (route === "me" && m === "GET") {
-    const [p, offs, reqs, appr] = await Promise.all([
+    const [p, offs, reqs, appr, mail] = await Promise.all([
       env.DB.prepare("SELECT * FROM rota_people WHERE user_id = ?").bind(user.id).first<{ contract_min: number | null; contract_max: number | null; sites: string; pattern: string }>(),
       env.DB.prepare("SELECT id, user_id, from_day, to_day, reason, status, decided_at FROM rota_time_off WHERE user_id = ? AND to_day >= ? ORDER BY from_day")
         .bind(user.id, addDays(londonToday(), -30)).all<any>(),
       env.DB.prepare("SELECT * FROM rota_requests WHERE (from_user = ? OR to_user = ? OR taker = ? OR (to_user IS NULL AND kind = 'cover' AND status = 'open')) AND created_at > ? ORDER BY created_at DESC LIMIT 100")
         .bind(user.id, user.id, user.id, nowMs() - 60 * 864e5).all<ReqRow>(),
       approvers(env),
+      env.DB.prepare("SELECT email, email_prefs FROM users WHERE id = ?").bind(user.id).first<{ email: string | null; email_prefs: string }>(),
     ]);
     return json({
       user: { id: user.id, name: user.name, role: user.role, manager: mgr, admin: user.role === "admin" }, links, today: londonToday(), approvers: appr,
       contractMin: p?.contract_min ?? null, contractMax: p?.contract_max ?? null, contractHours: p?.contract_max ?? null, sites: parseJson(p?.sites, []), pattern: parseJson(p?.pattern, {}),
       timeOff: offs.results.map((t) => ({ id: t.id, from: t.from_day, to: t.to_day, reason: t.reason, status: t.status, decidedAt: t.decided_at })),
       requests: await visibleRequests(env, reqs.results, mgr),
+      // Rota emails: their address (set by an admin) and which emails they get, which they choose themselves.
+      email: { address: mail?.email || null, prefs: prefsOf(mail?.email_prefs), ready: emailReady(env) },
     });
+  }
+
+  if (route === "me/emails" && m === "PUT") {
+    const b = await body();
+    const prefs = prefsOf((await env.DB.prepare("SELECT email_prefs FROM users WHERE id = ?").bind(user.id).first<{ email_prefs: string }>())?.email_prefs);
+    for (const [k, v] of Object.entries(b.prefs || {})) {
+      if (!isEmailKind(k) || typeof v !== "boolean") throw invalid("Choose which emails to get.");
+      prefs[k] = v;
+    }
+    await env.DB.prepare("UPDATE users SET email_prefs = ? WHERE id = ?").bind(JSON.stringify(prefs), user.id).run();
+    return json({ prefs });
   }
 
   if (route === "me/availability" && m === "PUT") {

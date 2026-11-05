@@ -703,14 +703,31 @@
     const still = [errs ? plural(errs, "problem") : "", warns ? plural(warns, "warning") : ""].filter(Boolean).join(" · ");
     const changes = d.published ? plural(d.changesSincePublish, "change") : "";
     const msg = el("p", { class: "smsg", role: "alert" });
+    // Email the people on it (src/email/): who'd get one, filled in once the server has worked it out.
+    const emailBox = el("input", { type: "checkbox", id: "pubEmail", "data-w": "" });
+    emailBox.checked = true;
+    const emailNote = el("span", { class: "s", text: "Checking who to email…" });
+    const emailRow = el("label", { class: "lrow pubemail", for: "pubEmail", hidden: true }, emailBox, el("span", { class: "t" }, el("b", { text: d.published ? "Email the people whose shifts changed" : "Email everyone on this week's rota" }), emailNote));
+    get("/api/rota/week/emails?week=" + d.week).then((e) => {
+      if (!e.ready) return;
+      emailRow.hidden = false;
+      const parts = [e.people ? `${plural(e.people, "person", "people")} to email` : d.published ? "Nobody's shifts changed since the last email" : "Nobody to email yet"];
+      if (e.open) parts.push(`${plural(e.open, "person", "people")} told about open shifts`);
+      if (e.noAddress.length) parts.push(`no email address: ${e.noAddress.join(", ")}`);
+      emailNote.textContent = parts.join(" · ");
+      if (!e.people && !e.open) { emailBox.checked = false; emailBox.disabled = true; }
+    }).catch(() => {});
     openSheet(d.published ? `Publish ${changes}?` : `Publish the ${weekLabel(d.week).replace(/^W/, "w")}?`, el("div", { class: "sbody" },
       d.published ? el("p", { class: "note", text: "Everyone on the rota sees the updated week straight away." }) : null,
       el("div", { class: "kvs" }, kv("Shifts", `${d.shifts.length} · ${hrs(total)} hours`), kv("People who'll see it", String(people)),
         kv("Still to check", still || "Nothing", errs ? "bad" : warns ? "warn" : "ok")),
-      errs ? el("p", { class: "note", text: "You can publish with problems; open shifts go to Open shifts for staff to pick up." }) : null, msg,
+      errs ? el("p", { class: "note", text: "You can publish with problems; open shifts go to Open shifts for staff to pick up." }) : null, emailRow, msg,
       el("div", { class: "sfoot" }, ghost("Not yet", closeSheets), btn(d.published ? "Publish changes" : "Publish", async (e) => {
         const b = e.currentTarget; b.disabled = true;
-        try { await api("POST", "/api/rota/week/publish", { week: d.week }); closeSheets(); toast("Published. Staff can see this week now."); render(); }
+        try {
+          const r = await api("POST", "/api/rota/week/publish", { week: d.week, email: !emailRow.hidden && emailBox.checked });
+          closeSheets(); toast(r.emailed ? `Published. Emailing ${plural(r.emailed, "person", "people")}.` : "Published. Staff can see this week now."); render();
+        }
         catch (err) { msg.textContent = err.message; b.disabled = false; }
       }))), { left: cancelLink() });
   }
@@ -1318,7 +1335,7 @@
       return [label("Each week"), rowsRO,
         label("Sites"), el("section", { class: "panel" }, el("p", { text: siteText })),
         el("p", { class: "note", text: "Only an admin can change which days and sites you work. Ask them if something here is wrong." }),
-        label("Time off"), timeOffList(me), el("div", { class: "row" }, btn("Ask for time off", askTimeOff))];
+        label("Time off"), timeOffList(me), el("div", { class: "row" }, btn("Ask for time off", askTimeOff)), ...emailSettings(me)];
     }
 
     const rows = el("div", { class: "list glass" });
@@ -1352,7 +1369,31 @@
     }
     return [label("Each week"), rows, el("p", { class: "note", text: "Switch off days you can't work. Tap a day's time to give a from or until time." }),
       label("Sites I can get to"), el("section", { class: "panel" }, siteBox, el("p", { class: "note", text: "None ticked means any site." })),
-      label("Time off"), timeOffList(me), el("div", { class: "row" }, btn("Ask for time off", askTimeOff))];
+      label("Time off"), timeOffList(me), el("div", { class: "row" }, btn("Ask for time off", askTimeOff)), ...emailSettings(me)];
+  }
+
+  // Rota emails: the address an admin set, and which emails this person gets (theirs to choose).
+  const EMAIL_KINDS = [["published", "Rota published", "Your shifts when a week goes out"], ["changed", "My shifts change", "Added, moved or removed"],
+    ["requests", "Requests and time off", "When they're approved or declined"], ["open", "Open shifts I could take", "At my sites, when I'm free"]];
+  function emailSettings(me) {
+    const m = me.email;
+    if (!m) return [];
+    const prefs = { ...m.prefs };
+    const rows = EMAIL_KINDS.map(([k, t, s]) => {
+      const sw = el("input", { type: "checkbox", id: "em_" + k, "data-w": "", "aria-label": t });
+      sw.checked = !!prefs[k];
+      sw.disabled = !m.address;
+      sw.onchange = async () => {
+        const want = sw.checked;
+        if (!(await act(() => api("PUT", "/api/rota/me/emails", { prefs: { [k]: want } }), want ? "Emails on" : "Emails off"))) { sw.checked = !want; return; }
+        prefs[k] = want;
+      };
+      return el("div", { class: "lrow emrow" }, el("span", { class: "t" }, el("b", { text: t }), el("span", { class: "s", text: s })), el("label", { class: "rswitch" }, sw));
+    });
+    return [label("Emails"), el("div", { class: "list glass" },
+      el("div", { class: "lrow emrow" }, el("span", { class: "t" }, el("b", { text: m.address || "No email address yet" }),
+        el("span", { class: "s", text: m.address ? "Only an admin can change it." : "Ask an admin to add your email address to get rota emails." }))), ...rows),
+      !m.ready ? el("p", { class: "note", text: "Rota emails aren't switched on for the team yet." }) : null].filter(Boolean);
   }
 
   function timeOffList(me) {

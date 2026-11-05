@@ -161,6 +161,23 @@ async function verifiedCookie(req: Request, env: Env, name: string, prefix: stri
   return null;
 }
 
+/** A signed token (base64url JSON, then its HMAC with the session key), for links sent outside the site, such as an
+ *  email's unsubscribe link. `prefix` keeps one kind of token from being used as another. */
+export async function signToken(env: Env, prefix: string, data: unknown): Promise<string> {
+  const payload = b64url(enc.encode(JSON.stringify(data)));
+  const sig = new Uint8Array(await crypto.subtle.sign("HMAC", await sessionKey(env), enc.encode(prefix + payload)));
+  return `${payload}.${b64url(sig)}`;
+}
+/** The data in a token from signToken with the same prefix, or null if it isn't one. */
+export async function readToken(env: Env, prefix: string, token: unknown): Promise<any | null> {
+  const m = typeof token === "string" ? token.match(/^([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)$/) : null;
+  if (!m) return null;
+  try {
+    if (!(await crypto.subtle.verify("HMAC", await sessionKey(env), unb64url(m[2]), enc.encode(prefix + m[1])))) return null;
+    return JSON.parse(new TextDecoder().decode(unb64url(m[1])));
+  } catch { return null; }
+}
+
 async function sessionCookie(req: Request, env: Env, user: { id: string; session_ver: number }): Promise<[string, string][]> {
   // s: this session's own id, so signing out can end just this one (revoked_sessions) and not the person's others.
   const payload = b64url(enc.encode(JSON.stringify({ u: user.id, v: user.session_ver, s: newId(8), e: Date.now() + SESSION_MS })));

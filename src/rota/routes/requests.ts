@@ -6,9 +6,10 @@ import { blocking, effectsFor, onTimeOff, overlaps } from "../problems";
 import { describeRequests, visibleRequests } from "../requests";
 import { ReqRow, RotaRequest, Shift } from "../types";
 import { addDays, conflict, denied, londonToday, mondayOf, notFound, nowMs, siteName, text } from "../util";
+import { actor, requestDecided } from "../../email/rota";
 
 export async function requestRoutes(r: RotaRequest): Promise<Response | null> {
-  const { env, user, route, seg, m, mgr, needMgr, body } = r;
+  const { env, exec, user, route, seg, m, mgr, needMgr, body, mailLinks } = r;
 
   if (route === "requests" && m === "GET") {
     // Managers: everything waiting for a decision; everyone: what involves them.
@@ -110,6 +111,8 @@ export async function requestRoutes(r: RotaRequest): Promise<Response | null> {
         settled();
         if (!(mgr || (r.kind === "cover" && r.to_user === user.id))) throw denied("Only the person asked, or a manager, can decline it.");
         await set("declined", { decided: true }).run();
+        // A manager's decision is emailed; someone turning down a cover they were asked for isn't.
+        if (mgr && r.to_user !== user.id) await requestDecided(env, exec, mailLinks, r, false, await getShift(env, r.shift_id).catch(() => null) as Shift, await actor(env, user)).catch(() => {});
         break;
       case "cancel":
         settled();
@@ -135,6 +138,7 @@ export async function requestRoutes(r: RotaRequest): Promise<Response | null> {
           env.DB.prepare("UPDATE rota_requests SET status = 'cancelled', decided_by = ?, decided_at = ? WHERE shift_id = ? AND id <> ? AND status IN ('open', 'accepted')").bind(user.id, nowMs(), shift.id, r.id),
           touchWeek(env, mondayOf(shift.day)),
         ]);
+        await requestDecided(env, exec, mailLinks, r, true, shift, await actor(env, user)).catch(() => {});
         break;
       }
       default:

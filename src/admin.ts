@@ -1,6 +1,9 @@
 // Admin API (/api/admin/*): manage accounts. Admins only (enforced in index.ts).
 import { ROLES, Role, User, UserRow, checkPassword, checkUsername, cleanName, hashPassword, nameKey, newId, tempPassword, usernameFrom } from "./auth";
 import { audit } from "./audit";
+import { cleanEmail, emailReady, linksFor, send } from "./email/send";
+import { testEmail } from "./email/templates";
+import { appLinks } from "./hosts";
 import { ApiError, Env, SQL_NOW_MS, invalid, json, readJson } from "./http";
 
 function listItem(r: UserRow) {
@@ -16,6 +19,7 @@ function listItem(r: UserRow) {
     createdBy: r.created_by,
     lastLoginAt: r.last_login_at,
     quickPin: !!r.quick_hash,
+    email: (r as any).email || null,
   };
 }
 
@@ -49,7 +53,7 @@ export async function handleAdmin(req: Request, env: Env, route: string, admin: 
     return json({ users: results.map(listItem) });
   }
 
-  // POST /api/admin/users {name, username?, role, password?}. The password is temporary: the person
+  // POST /api/admin/users {name, username?, email?, role, password?}. The password is temporary: the person
   // chooses their own at first sign-in. A generated one is returned once.
   if (route === "users" && req.method === "POST") {
     const body = await readJson<any>(req, 4096);
@@ -60,17 +64,19 @@ export async function handleAdmin(req: Request, env: Env, route: string, admin: 
     if (await usernameTaken(env, username)) throw new ApiError(409, "username_taken", `The username ${username} is taken. Choose another.`);
     const role = checkRole(body.role ?? "staff");
     const password = body.password ? checkPassword(body.password) : tempPassword();
+    const email = body.email === undefined ? "" : cleanEmail(body.email);
+    if (email === null) throw invalid("Enter an email address like name@example.com, or leave it blank.");
     const { hash, salt } = await hashPassword(password);
     const id = newId();
     await env.DB.prepare(
-      `INSERT INTO users (id, name, name_key, username, role, pin_hash, pin_salt, must_change, created_at, created_by, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ${SQL_NOW_MS}, ?, ${SQL_NOW_MS})`,
-    ).bind(id, name, nameKey(name), username, role, hash, salt, admin.name).run();
+      `INSERT INTO users (id, name, name_key, username, role, pin_hash, pin_salt, must_change, created_at, created_by, updated_at, email)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ${SQL_NOW_MS}, ?, ${SQL_NOW_MS}, ?)`,
+    ).bind(id, name, nameKey(name), username, role, hash, salt, admin.name, email || null).run();
     await audit(env, "user_added", admin.name, `${admin.name} added ${name} as ${role === "staff" ? "staff" : `a${role === "admin" ? "n" : ""} ${role}`}`);
     return json({ user: listItem(await getRow(env, id)), ...(body.password ? {} : { password }) });
   }
 
-  // PATCH /api/admin/users/<id> {name?, username?, role?, active?, password?: "..." | "generate", unlock?, signOut?}
+  // PATCH /api/admin/users/<id> {name?, username?, email?, role?, active?, password?: "..." | "generate", unlock?, signOut?}
   const m = route.match(/^users\/([0-9a-f]{24})$/);
   if (m && req.method === "PATCH") {
     const body = await readJson<any>(req, 4096);
@@ -87,6 +93,15 @@ export async function handleAdmin(req: Request, env: Env, route: string, admin: 
       sets.push("name = ?", "name_key = ?");
       args.push(name, nameKey(name));
       bump = true; // their records are written under their name, so sessions must pick up the new one
+    }
+    // The address rota emails go to (src/email/): admins set it; "" removes it.
+    let emailChanged = false;
+    if (body.email !== undefined) {
+      const email = cleanEmail(body.email);
+      if (email === null) throw invalid("Enter an email address like name@example.com, or leave it blank.");
+      sets.push("email = ?");
+      args.push(email || null);
+      emailChanged = (email || null) !== ((row as any).email || null);
     }
     if (body.username !== undefined) {
       const username = checkUsername(body.username);
@@ -141,8 +156,22 @@ export async function handleAdmin(req: Request, env: Env, route: string, admin: 
     if (body.password !== undefined) events.push(["password_reset", `${admin.name} gave ${newName} a temporary password`]);
     if (body.unlock) events.push(["unlocked", `${admin.name} unlocked ${newName}`]);
     if (body.signOut) events.push(["signed_out", `${admin.name} signed ${newName} out everywhere`]);
+    if (emailChanged) events.push(["email_changed", `${admin.name} ${cleanEmail(body.email) ? "set" : "removed"} ${newName}'s email address`]);
     for (const [k, t] of events) await audit(env, k, admin.name, t);
     return json({ user: listItem(await getRow(env, row.id)), ...(body.password === "generate" ? { password: passwordOut } : {}) });
+  }
+
+  // POST /api/admin/email/test: a test email to the admin's own address, to check Resend is set up.
+  if (route === "email/test" && req.method === "POST") {
+    if (!emailReady(env)) throw new ApiError(409, "email_off", "Rota emails aren't set up yet: add the RESEND_API_KEY secret in Cloudflare first.");
+    const me = await env.DB.prepare("SELECT id, name, email, email_prefs, active FROM users WHERE id = ?").bind(admin.id).first<{ id: string; name: string; email: string | null; email_prefs: string; active: number }>();
+    if (!me?.email) throw new ApiError(409, "no_email", "Add your own email address first (People → you → Edit).");
+    const url = new URL(req.url), links = appLinks(url, env.ROTA_HOST, env.ADMIN_HOST);
+    const base = { rota: new URL(links.rota, url.origin).href, diary: new URL(links.diary, url.origin).href };
+    const l = await linksFor(env, base, me.id, "test");
+    const r = await send(env, { to: { ...me, email: me.email }, kind: "test", mail: testEmail({ name: me.name, links: l }), links: l, about: "a test email" });
+    if (r !== "sent") throw new ApiError(502, "email_failed", r === "limit" ? "Today's email limit has been reached." : "Resend didn't accept it. See Activity → Accounts for why.");
+    return json({ ok: true, to: me.email });
   }
 
   // GET /api/admin/status: how much is in the diary.

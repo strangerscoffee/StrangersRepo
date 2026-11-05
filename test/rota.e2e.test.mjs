@@ -149,7 +149,7 @@ for (const [label, viewport] of [["phone", { width: 393, height: 852 }], ["iPad"
     // Which days and sites people work: read-only for staff; an admin changes it in the admin section.
     await a.page.goto(srv.base + "/rota/#avail");
     await a.page.locator(".note", { hasText: "Only an admin can change which days and sites you work" }).waitFor();
-    assert.equal(await a.page.locator("#page input[type=checkbox], #page .fchip").count(), 0, "no switches for staff");
+    assert.equal(await a.page.locator("#page input[type=checkbox]:not([id^=em_]), #page .fchip").count(), 0, "no availability switches for staff (their email switches are theirs)");
     await a.page.locator(".btn", { hasText: "Ask for time off" }).waitFor();
     await call("PUT", "/api/rota/people/" + ALEX_ID, { pattern: {}, sites: [] });
     await m.page.goto(srv.base + "/rota/#settings");

@@ -3,6 +3,7 @@
 // (checked in index.ts before anything here runs). Reads the diary's documents and the rota's tables directly.
 import { audit } from "./audit";
 import { deviceOf, errorCode, recentErrors, whereOf } from "./errors";
+import { emailReady, prefsOf } from "./email/send";
 import { User, nameKey } from "./auth";
 import { listBackups } from "./backup";
 import { setDoc } from "./docs";
@@ -36,10 +37,10 @@ const shortDate = (day: string) => new Date(day + "T00:00:00Z").toLocaleDateStri
 
 interface UserRow {
   id: string; name: string; username: string; role: string; active: number; must_change: number; locked_until: number;
-  created_at: number; created_by: string | null; last_login_at: number | null; quick_hash: string | null;
+  created_at: number; created_by: string | null; last_login_at: number | null; quick_hash: string | null; email: string | null; email_prefs: string;
 }
 const allUsers = (env: Env) => env.DB.prepare(
-  "SELECT id, name, username, role, active, must_change, locked_until, created_at, created_by, last_login_at, quick_hash FROM users ORDER BY active DESC, name_key",
+  "SELECT id, name, username, role, active, must_change, locked_until, created_at, created_by, last_login_at, quick_hash, email, email_prefs FROM users ORDER BY active DESC, name_key",
 ).all<UserRow>().then((r) => r.results);
 
 /* ---------- the diary today ---------- */
@@ -116,6 +117,11 @@ export async function overview(env: Env, links: { rota: string; diary: string })
     attention.push({ tone: "warn", icon: "warn", title: `${errs.n} error${errs.n === 1 ? "" : "s"} on the site in the last day`,
       detail: `Seen ${errs.times} time${errs.times === 1 ? "" : "s"} on staff devices or the server. See what and where.`, action: { label: "See errors", act: "errors" } });
   }
+  const mailFails = await env.DB.prepare("SELECT COUNT(*) AS n, MAX(text) AS t FROM audit_log WHERE kind = 'email_failed' AND at > ?").bind(now - 864e5).first<{ n: number; t: string }>().catch(() => null);
+  if (mailFails && mailFails.n) {
+    attention.push({ tone: "warn", icon: "warn", title: `${mailFails.n} rota email${mailFails.n === 1 ? "" : "s"} didn't send in the last day`,
+      detail: String(mailFails.t || "").slice(0, 160), action: { label: "See activity", go: "activity" } });
+  }
   for (const u of active.filter((u) => u.must_change && !u.last_login_at && now - u.created_at > 2 * 864e5)) {
     const days = Math.floor((now - u.created_at) / 864e5);
     attention.push({ tone: "warn", icon: "user", title: `${u.name} hasn't signed in yet`, detail: `Added ${days} days ago with a temporary password.`, action: { label: "New password", act: "password", id: u.id } });
@@ -123,6 +129,7 @@ export async function overview(env: Env, links: { rota: string; diary: string })
 
   const worked = thisW.shifts.filter((s) => s.userId);
   const round = (n: number) => Math.round(n * 10) / 10;
+  const sentToday = await env.DB.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE kind = 'email_sent' AND at > ?").bind(now - 864e5).first<{ n: number }>().catch(() => null);
   const open = diaryToday.filter((s) => s.setUp && !s.closed);
   return {
     today, week,
@@ -139,6 +146,8 @@ export async function overview(env: Env, links: { rota: string; diary: string })
       return { id: s.id, name: s.name, hours: round(here.filter((x) => x.userId).reduce((h, x) => h + x.hours, 0)), people: new Set(here.map((x) => x.userId).filter(Boolean)).size, open: here.filter((x) => !x.userId).length, inUse: thisW.sites.find((x) => x.id === s.id)?.inUse ?? false };
     }),
     rotaPublished: thisW.published,
+    // Rota emails (src/email/): set up (the RESEND_API_KEY secret), sent in the last day, and who has an address.
+    emails: { ready: emailReady(env), sentToday: sentToday?.n ?? 0, withAddress: active.filter((u) => u.email).length, active: active.length },
   };
 }
 
@@ -177,6 +186,7 @@ export async function people(env: Env) {
         id: u.id, name: u.name, username: u.username, role: u.role, active: !!u.active, mustChange: !!u.must_change,
         locked: u.locked_until > now, lockedUntil: u.locked_until > now ? u.locked_until : null,
         lastLoginAt: u.last_login_at, createdAt: u.created_at, createdBy: u.created_by, quickPin: !!u.quick_hash,
+        email: u.email || null, emailPrefs: prefsOf(u.email_prefs),
         rota: {
           contractMin: r?.contract_min ?? null, contractMax: r?.contract_max ?? null, sites: parse(r?.sites, []), pattern: parse(r?.pattern, {}),
           weekHours: Math.round(mine.reduce((h, s) => h + s.hours, 0) * 10) / 10, weekOvertime: Math.round(mine.reduce((h, s) => h + (s.overtime || 0), 0) * 10) / 10,
@@ -274,7 +284,7 @@ export async function activity(env: Env, kind: string) {
   for (const t of offs?.results || []) items.push({ kind: "rota", at: t.decided_at, text: `${t.by || "Someone"} ${t.status} ${t.who}'s time off, ${shortDate(t.from_day)}${t.to_day !== t.from_day ? `–${shortDate(t.to_day)}` : ""}`, where: "Rota" });
   for (const r of reqs?.results || []) items.push({ kind: "rota", at: r.decided_at, text: `${r.by || "Someone"} ${r.status} ${r.taker ? `${r.taker} taking` : "a request for"} a shift on ${shortDate(r.day)}`, where: `Rota · ${siteOf(r.site)?.name || r.site}` });
   for (const s of adjusted?.results || []) items.push({ kind: "rota", at: s.adjusted_at, text: `${s.by || "Someone"} amended ${s.who ? `${s.who}'s` : "a"} shift on ${shortDate(s.day)}: ${s.actual_start}–${s.actual_end}${s.adjust_note ? `, ${s.adjust_note}` : ""}`, where: `Rota · ${siteOf(s.site)?.name || s.site}` });
-  for (const l of log?.results || []) items.push({ kind: "account", at: l.at, text: l.text, where: l.kind === "backup" ? "Backups" : l.kind === "setup_copied" ? "Kitchen Diary" : "Accounts" });
+  for (const l of log?.results || []) items.push({ kind: "account", at: l.at, text: l.text, where: l.kind === "backup" ? "Backups" : l.kind === "setup_copied" ? "Kitchen Diary" : l.kind.startsWith("email_") && l.kind !== "email_changed" ? "Rota emails" : "Accounts" });
   // Errors: only on their own tab (they're for whoever looks after the site, not the day's activity).
   if (kind === "errors") {
     const APP: Record<string, string> = { diary: "Kitchen Diary", rota: "Rota", admin: "Admin", signin: "Staff Login", worker: "Server" };

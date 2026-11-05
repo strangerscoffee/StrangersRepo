@@ -201,6 +201,16 @@ const MIGRATIONS: Migration[] = [
     await runAll(env, ["date", "week", "at"].map((f) =>
       `CREATE INDEX IF NOT EXISTS docs_by_${f} ON docs(collection, deleted, json_extract(data, '$.${f}'), doc_id)`));
   } },
+  // Rota emails (src/email/): each person's address (set by admins) and which emails they want; and, per week, what
+  // each person was last emailed about it, so "Publish changes" emails only the people whose shifts changed.
+  { id: 9, name: "rota emails: addresses, preferences and what was sent", async run(env) {
+    const users = await columns(env, "users"), weeks = await columns(env, "rota_weeks");
+    await runAll(env, [
+      ...(users.has("email") ? [] : ["ALTER TABLE users ADD COLUMN email TEXT"]),
+      ...(users.has("email_prefs") ? [] : ["ALTER TABLE users ADD COLUMN email_prefs TEXT NOT NULL DEFAULT '{}'"]),
+      ...(weeks.has("emailed") ? [] : ["ALTER TABLE rota_weeks ADD COLUMN emailed TEXT"]),
+    ]);
+  } },
 ];
 
 async function migrate(env: Env): Promise<void> {

@@ -54,6 +54,17 @@ The admin section is served by the same Worker on its own hostname: the var `ADM
 
 Locally there's no second hostname: `npm run dev` passes `--var ADMIN_HOST:` (empty), so the section is at `http://localhost:8787/admin`, and the tests do the same (`test/harness.mjs`). `test/admin.test.mjs` starts a server with `ADMIN_HOST` set to test the address itself.
 
+## Rota emails (Resend)
+
+The rota emails people their shifts when a week is published, when their shifts change, and when a cover, pick-up or time off is decided (`src/email/`). Nothing is sent until this is set up:
+
+1. Create a free account at resend.com, add the domain `staffstrangerscoffee.com` and use **Auto configure** to add its DNS records in Cloudflare (SPF and DKIM, so emails don't land in spam). This is a DNS change, the host's to make.
+2. Create an API key with sending access to that domain.
+3. In the Worker: **Settings → Variables and Secrets → Add**, type **Secret**, name `RESEND_API_KEY`, the key as its value.
+4. In the admin section, add your own email address (People → you → Edit), then Overview → Rota emails → **Send me a test email**. Add everyone else's addresses the same way.
+
+Emails come from `Strangers Rota <rota@staffstrangerscoffee.com>` (the `EMAIL_FROM` variable changes it); replies go to the manager who made the change. At most 100 are sent a day (`EMAIL_DAILY_LIMIT`), Resend's free allowance. To stop all emails, delete the secret.
+
 ## Change the setup code
 
 In the Worker: **Settings → Variables and Secrets**, edit `SETUP_CODE`. It takes effect immediately and only affects creating the first admin and the "Admin? Forgotten password" recovery. Existing accounts and sessions are unaffected. (`SYNC_TOKEN`, the secret's name before the Claude sync was removed, is still accepted if `SETUP_CODE` isn't set.)

@@ -51,7 +51,8 @@ export async function handleRota(req: Request, env: Env, ctx: ExecutionContext, 
   // Where the rota and the diary live, for links between them.
   if (route === "links" && m === "GET") return json(links);
 
-  const r: RotaRequest = { env, user, route, seg, m, q, mgr, admin, needMgr, needAdmin, body, withProblems, links };
+  const mailLinks = { rota: new URL(links.rota, url.origin).href, diary: new URL(links.diary, url.origin).href };
+  const r: RotaRequest = { mailLinks, env, exec: ctx, user, route, seg, m, q, mgr, admin, needMgr, needAdmin, body, withProblems, links };
   for (const handle of [weekRoutes, shiftRoutes, meRoutes, peopleRoutes, timeOffRoutes, requestRoutes]) {
     const res = await handle(r);
     if (res) return res;
