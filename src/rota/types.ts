@@ -42,6 +42,8 @@ export type Pattern = Record<string, "any" | "off" | { from?: string; to?: strin
 export interface Person {
   id: string; name: string; role: string; contractMin: number | null; contractMax: number | null; contractHours: number | null;
   sites: string[]; pattern: Pattern;
+  /** Their colour on the rota, a hue (0–359): fixed by the order accounts were made, so it never changes. */
+  hue: number;
 }
 export type Hours = { opensAt: string | null; closesAt: string | null };
 export interface SiteInfo {
