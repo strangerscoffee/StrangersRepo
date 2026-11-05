@@ -1,5 +1,6 @@
 // The db API behind claude-shim.js (docs/runtime-api.md).
 import { ApiError, Env, SQL_NOW_MS, invalid, readJson, json } from "./http";
+import { checkShape } from "./validate";
 import { parseCollectionPath, parseWebDocPath, encodeDoc, deepMerge, canonical, resolveOps } from "./paths";
 import { User } from "./auth";
 import { isStaffRecordPath, recordId, requireDelete, requireOwnSignature, requireOwnStaffRecord, requireStaffDayRules, requireWrite } from "./access";
@@ -314,6 +315,8 @@ export async function handleDb(req: Request, env: Env, op: string, user: User): 
     case "delete": {
       const o: WriteOpts = { ifVersion: checkVersion(body.ifVersion) };
       const data = op === "set" ? body.data : op === "update" ? body.patch : undefined;
+      // Day and week pages merge on set, so their set is checked like an update (only what it sends).
+      if (op !== "delete") checkShape(parseWebDocPath(body.path, "write").collection, data, op === "set" && !isPagePath(body.path) ? "whole" : "patch");
       // A staff member's write is checked against the document as it is; if it changes before the write lands,
       // it's checked again against the new one (so a sign-off made meanwhile can't be undone by a stale check).
       for (let attempt = 0; ; attempt++) {
