@@ -324,7 +324,7 @@
         if (c && c.docs === seq) {
           setOffline(false);
           inflight = false;
-          if (again) { again = false; schedule(0); } else schedule(document.hidden ? HIDDEN_MS : VISIBLE_MS);
+          if (again) { again = false; schedule(0); } else schedule(idleMs());
           return;
         }
       }
@@ -350,10 +350,21 @@
     }
     inflight = false;
     if (again) { again = false; schedule(0); }
-    else if (subs.size) schedule(offline ? 4000 : document.hidden ? HIDDEN_MS : VISIBLE_MS);
+    else if (subs.size) schedule(idleMs());
   }
 
   document.addEventListener("visibilitychange", () => { if (!document.hidden && subs.size && !inflight) schedule(0); });
+
+  // Live updates (SC.live, public/shared/core.js): while the server's live line is open it says the moment the
+  // diary changes, so an idle page doesn't ask every 5 seconds; it only checks once a minute in case a message was
+  // missed. When the line drops, polling goes back to every 5 seconds.
+  const LIVE_MS = 60000;
+  const line = window.SC && SC.live ? SC.live((m) => {
+    if (m.open === true) { if (subs.size) refresh(); } // anything missed while it was down
+    else if (m.open === false) { if (subs.size && !inflight) schedule(document.hidden ? HIDDEN_MS : VISIBLE_MS); }
+    else if (typeof m.docs === "number" && m.docs !== seq && subs.size) refresh();
+  }) : null;
+  const idleMs = () => (offline ? 4000 : line && line.open() && !queue.length ? LIVE_MS : document.hidden ? HIDDEN_MS : VISIBLE_MS);
 
   /* ---------- db ---------- */
 

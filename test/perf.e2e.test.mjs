@@ -1,5 +1,6 @@
 // What an open page costs: files linked by fingerprint (kept by the browser for a year, so opening the page again
-// fetches none of them), and an idle diary asking only the one-number change check, not the full poll or names.
+// fetches none of them), and an idle diary asking nothing while its live line is open (it's told of changes), or
+// only the one-number change check when it isn't.
 // Run with `npm run test:e2e` (needs Playwright).
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -35,15 +36,34 @@ test("opening the diary again fetches no scripts or styles; an idle diary only a
   await page.locator("#openList label", { hasText: "Hands washed" }).waitFor();
   const fromNet = await page.evaluate(() => performance.getEntriesByType("resource").filter((e) => /\.(js|css)(\?|$)/.test(e.name) && e.transferSize > 0).map((e) => e.name + " " + e.transferSize));
   assert.deepEqual(fromNet, [], "scripts and styles come from the browser's cache");
-  // Idle for a while: only GET /api/changes, no full polls, no name lookups.
+  // Idle for a while, with the live line open (src/live.ts): no requests at all. No change checks, no polls, no
+  // name lookups: the server says when something changes.
+  await page.waitForFunction(() => window.SC && SC.live().open(), null, { timeout: 10000 });
+  await page.waitForTimeout(1500);
   seen.length = 0;
   await page.waitForTimeout(12000);
   const api = seen.filter((p) => p.startsWith("/api/"));
-  assert.ok(api.includes("/api/changes"), api.join(", "));
-  assert.equal(api.filter((p) => p === "/api/db/poll").length, 0, "no full poll while nothing changes: " + api.join(", "));
-  assert.equal(api.filter((p) => p === "/api/db/profiles").length, 0, "names aren't asked for again");
-  // A change from another device still arrives.
+  assert.deepEqual(api, [], "an idle diary asks nothing while the live line is open");
+  // A change from another device arrives straight away, pushed (well inside the 5 s a poll would have taken).
+  const t0 = Date.now();
   await fetch(srv.base + "/api/db/update", { method: "POST", headers: { "content-type": "application/json", cookie: ADMIN }, body: JSON.stringify({ path: "settings/main", patch: { opening: [{ id: "o1", t: "Hands washed" }, { id: "o2", t: "Fridges checked" }] } }) });
   await page.locator("#openList label", { hasText: "Fridges checked" }).waitFor({ timeout: 15000 });
+  assert.ok(Date.now() - t0 < 4000, `arrived in ${Date.now() - t0} ms`);
+  // Without the live line (say it's blocked, or the server is restarting), a page asks every few seconds as before,
+  // and still gets changes.
+  const ctx2 = await browser.newContext({ viewport: { width: 1180, height: 820 } });
+  await ctx2.addCookies([{ name, value, url: srv.base }]);
+  await ctx2.routeWebSocket(/\/api\/live$/, (ws) => ws.close());
+  const p2 = await ctx2.newPage();
+  const seen2 = [];
+  p2.on("request", (r) => seen2.push(new URL(r.url()).pathname));
+  await p2.goto(srv.base + "/");
+  await p2.locator("#openList label", { hasText: "Hands washed" }).waitFor();
+  seen2.length = 0;
+  await p2.waitForTimeout(7000);
+  assert.ok(seen2.some((x) => x === "/api/changes" || x === "/api/db/poll"), "polling: " + seen2.join(", "));
+  await fetch(srv.base + "/api/db/update", { method: "POST", headers: { "content-type": "application/json", cookie: ADMIN }, body: JSON.stringify({ path: "settings/main", patch: { opening: [{ id: "o1", t: "Hands washed" }, { id: "o3", t: "Floors swept" }] } }) });
+  await p2.locator("#openList label", { hasText: "Floors swept" }).waitFor({ timeout: 15000 });
+  await ctx2.close();
   await ctx.close();
 });

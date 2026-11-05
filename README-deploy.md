@@ -54,6 +54,10 @@ The admin section is served by the same Worker on its own hostname: the var `ADM
 
 Locally there's no second hostname: `npm run dev` passes `--var ADMIN_HOST:` (empty), so the section is at `http://localhost:8787/admin`, and the tests do the same (`test/harness.mjs`). `test/admin.test.mjs` starts a server with `ADMIN_HOST` set to test the address itself.
 
+## Live updates
+
+Open pages are told the moment something changes through one Cloudflare Durable Object (`LiveHub`, `src/live.ts`, declared in `wrangler.jsonc`). Cloudflare creates it on the first deploy; nothing to set up. It's within the Workers Free plan (Durable Objects: 100,000 requests a day; each open page and each change is one), and it saves far more Worker requests than it uses, since idle pages no longer ask every few seconds. If it's ever unavailable, pages quietly go back to asking every few seconds.
+
 ## Rota emails (Resend)
 
 The rota emails people their shifts when a week is published, when their shifts change, and when a cover, pick-up or time off is decided (`src/email/`). Nothing is sent until this is set up:
