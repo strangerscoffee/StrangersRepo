@@ -230,16 +230,45 @@
       const data = w.op === "set" ? merge({}, w.data) : merge(i >= 0 ? docs[i].data : {}, w.patch);
       if (i >= 0) docs[i] = { id, data }; else docs.push({ id, data });
     }
+    return Object.assign({}, res, { docs: ordered(spec, docs) });
+  }
+
+  // A list in the server's order (queryStatement in src/docs.ts): by the field as SQLite's json_extract sorts it
+  // (missing and null first, then numbers with true/false as 1/0, then text, then lists and objects as JSON text),
+  // the id breaking ties, both in the query's direction; then cut to its limit.
+  function sortKey(v) {
+    if (v === undefined || v === null) return [0, 0];
+    if (typeof v === "boolean") return [1, v ? 1 : 0];
+    if (typeof v === "number") return [1, v];
+    if (typeof v === "string") return [2, v];
+    return [2, JSON.stringify(v)];
+  }
+  function ordered(spec, docs) {
     if (spec.orderBy) {
       const f = spec.orderBy, dir = spec.dir === "desc" ? -1 : 1;
-      docs.sort((a, b) => { const x = a.data && a.data[f], y = b.data && b.data[f]; return x === y ? 0 : (x > y ? 1 : -1) * dir; });
+      const cmp = (x, y) => (x < y ? -1 : x > y ? 1 : 0);
+      docs = docs.map((d) => [sortKey(d.data ? d.data[f] : undefined), d]);
+      docs.sort(([ka, a], [kb, b]) => dir * (cmp(ka[0], kb[0]) || cmp(ka[1], kb[1]) || cmp(a.id, b.id)));
+      docs = docs.map(([, d]) => d);
     }
-    if (spec.limit) docs = docs.slice(0, spec.limit);
-    return Object.assign({}, res, { docs });
+    return spec.limit ? docs.slice(0, spec.limit) : docs;
+  }
+
+  // Only what changed since this device's copy (the server sends {id, ver, data} or {id, ver, deleted}), merged in.
+  function applyDelta(spec, raw, changes) {
+    const byId = new Map(((raw && raw.docs) || []).map((d) => [d.id, d]));
+    for (const c of changes) {
+      if (c.deleted) byId.delete(c.id);
+      else byId.set(c.id, { id: c.id, data: c.data, ver: c.ver });
+    }
+    return ordered(spec, [...byId.values()]);
   }
 
   /* ---------- live updates: one batched poll for every subscription ---------- */
 
+  // Every so often a list is fetched whole anyway, so a copy kept up to date by changes alone never drifts for long
+  // (say a record whose date was moved out of the latest 400 lets an older one back in).
+  const FULL_EVERY_MS = 10 * 60 * 1000;
   const VISIBLE_MS = 5000;
   const HIDDEN_MS = 30000;
   const subs = new Map();
@@ -247,7 +276,13 @@
 
   function subscribe(spec, deliver, onError) {
     const key = String(nextKey++);
-    subs.set(key, { spec, deliver, onError, ver: undefined, last: undefined, raw: undefined });
+    // A list that replaces another of the same documents in the same order (say the latest 90 days becoming the
+    // latest 400) starts from that one's copy until its own arrives, so nothing on the page goes blank meanwhile.
+    let raw;
+    if (spec.kind !== "doc") for (const o of subs.values()) {
+      if (o.raw && o.raw.docs && o.spec.kind !== "doc" && o.spec.path === spec.path && o.spec.orderBy === spec.orderBy && o.spec.dir === spec.dir) { raw = { docs: ordered(spec, o.raw.docs) }; break; }
+    }
+    subs.set(key, { spec, deliver, onError, ver: undefined, last: undefined, raw });
     schedule(0);
     return () => { subs.delete(key); };
   }
@@ -293,16 +328,19 @@
           return;
         }
       }
-      const r = await api("poll", { since: seq, queries: entries.map(([key, s]) => Object.assign({ key, ver: s.ver }, s.spec)) });
+      const now = Date.now();
+      const r = await api("poll", { since: seq, queries: entries.map(([key, s]) => Object.assign({ key, ver: s.ver }, s.spec,
+        s.spec.kind !== "doc" && s.raw && s.raw.docs && now - (s.fullAt || 0) < FULL_EVERY_MS ? { delta: true } : null)) });
       seq = r.seq;
       if (!queue.length) setOffline(false);
       for (const [key, res] of Object.entries(r.results || {})) {
         const s = subs.get(key);
         if (!s) continue;
         s.ver = res.ver;
-        s.raw = res;
+        if (res.delta) s.raw = { ver: res.ver, docs: applyDelta(s.spec, s.raw, res.delta) };
+        else { s.raw = res; if (s.spec.kind !== "doc") s.fullAt = now; }
         if (s.spec.kind === "doc") seen(s.spec.path, res.docVer != null ? res.docVer : res.ver);
-        else for (const d of res.docs || []) seen(s.spec.path + "/" + d.id, d.ver);
+        else for (const d of res.delta || res.docs || []) seen(s.spec.path + "/" + d.id, d.ver);
         deliver(s);
       }
       if (queue.length) flush();

@@ -41,6 +41,7 @@ setInterval(()=>{if(!document.hidden)loadRota()},5*60*1000);
 document.addEventListener("visibilitychange",()=>{if(!document.hidden)loadRota()});
 
 function renderDayInner(){
+  needHistory(S.date);
   const d=S.days[S.date]||{},s=S.cfg,st=dayStatus(d,s,S.date),R=ro(),isToday=S.date===today();
   renderOnShift();
   $("#dayDate").value=S.date;$("#dayDate").max=today();$("#dayNext").disabled=S.date>=today();

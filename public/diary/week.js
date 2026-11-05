@@ -2,6 +2,7 @@
 
 /* ---------- week ---------- */
 function renderWeek(){
+  needHistory(S.week);
   const wk=S.week,w=S.weeks[wk]||{},list=checksOn(S.cfg.weekly||[],addDays(wk,6)),items=w.items||{},R=ro();
   $("#wkNext").disabled=wk>=monday(today());
   // the seven days, each with how complete it was

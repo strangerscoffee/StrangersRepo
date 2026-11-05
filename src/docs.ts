@@ -147,6 +147,9 @@ interface QuerySpec {
 const FIELD_RE = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
 const MAX_LIMIT = 2000;
 
+/** Above this many changes since a device's copy, it gets the whole list again (cheaper than merging). */
+const MAX_DELTA = 100;
+
 function checkQuery(q: QuerySpec): QuerySpec {
   const path = parseCollectionPath(q.path);
   if (q.orderBy != null && (typeof q.orderBy !== "string" || !FIELD_RE.test(q.orderBy))) throw invalid("Bad orderBy field.");
@@ -175,7 +178,7 @@ function queryStatement(env: Env, collection: string, q: QuerySpec): D1PreparedS
      ORDER BY json_extract(data, '$.${q.orderBy}') ${dir}, doc_id ${dir} LIMIT ?`,
   ).bind(collection, limit);
 }
-const toDocs = (rows: { doc_id: string; data: string; seq: number }[]): Doc[] => rows.map((r) => ({ id: r.doc_id, data: JSON.parse(r.data), ver: r.seq }));
+const toDocs = (rows: { doc_id: string; data: string | null; seq: number }[]): Doc[] => rows.map((r) => ({ id: r.doc_id, data: JSON.parse(r.data as string), ver: r.seq }));
 
 export async function queryCollection(env: Env, q: QuerySpec) {
   const spec = checkQuery(q);
@@ -184,6 +187,7 @@ export async function queryCollection(env: Env, q: QuerySpec) {
 
 interface PollQuery extends QuerySpec {
   key: string;
+  delta?: boolean;
   kind: "doc" | "col";
   ver?: number;
 }
@@ -224,16 +228,33 @@ export async function poll(env: Env, body: { since?: number; queries?: PollQuery
   const changed = queries.map((q, i) => ({ q, v: vers.get(i) ?? 0 })).filter(({ q, v }) => q.ver !== v);
   if (!changed.length) return { seq, results };
 
-  // Every changed query in one round trip: each collection query sorted and limited by the database, and the
-  // changed single documents together.
+  // Every changed query in one round trip, and the changed single documents together. A collection the device
+  // already has (it sends `delta` and the version it holds) gets only the documents changed since, deleted ones
+  // as {id, deleted}: one reading at a site is a few hundred bytes for each device, not that site's whole history.
+  // Otherwise (or when a delta wouldn't be safe: too many changes, or a deletion in a limited list, which leaves a
+  // gap only the full list can fill) the whole query, sorted and limited by the database.
+  type Row = { doc_id: string; data: string | null; seq: number; deleted: number };
   const colQs = changed.filter(({ q }) => q.kind === "col");
+  const wantsDelta = (q: (typeof queries)[number]) => raw[queries.indexOf(q)]?.delta === true && typeof q.ver === "number" && q.ver > 0;
   const paths = [...new Set(changed.filter(({ q }) => q.kind === "doc").map(({ q }) => q.path))];
-  const stmts = colQs.map(({ q }) => queryStatement(env, q.path, q.spec!));
+  const stmts = colQs.map(({ q }) => wantsDelta(q)
+    ? env.DB.prepare("SELECT doc_id, data, seq, deleted FROM docs WHERE collection = ? AND seq > ? ORDER BY seq LIMIT ?").bind(q.path, q.ver, MAX_DELTA + 1)
+    : queryStatement(env, q.path, q.spec!));
   if (paths.length) stmts.push(env.DB.prepare("SELECT path, data FROM docs WHERE deleted = 0 AND path IN (SELECT value FROM json_each(?))").bind(JSON.stringify(paths)));
   const out = await env.DB.batch(stmts);
   const byPath = new Map<string, Record<string, unknown>>();
   if (paths.length) for (const r of out[out.length - 1].results as { path: string; data: string }[]) byPath.set(r.path, JSON.parse(r.data));
-  colQs.forEach(({ q, v }, i) => { results[q.key] = { ver: v, docs: toDocs(out[i].results as { doc_id: string; data: string; seq: number }[]) }; });
+  const again: { q: (typeof queries)[number]; v: number }[] = [];
+  colQs.forEach(({ q, v }, i) => {
+    const rows = out[i].results as Row[];
+    if (!wantsDelta(q)) { results[q.key] = { ver: v, docs: toDocs(rows) }; return; }
+    if (rows.length > MAX_DELTA || (q.spec!.limit != null && rows.some((r) => r.deleted))) { again.push({ q, v }); return; }
+    results[q.key] = { ver: v, delta: rows.map((r) => (r.deleted ? { id: r.doc_id, ver: r.seq, deleted: true } : { id: r.doc_id, ver: r.seq, data: JSON.parse(r.data!) })) };
+  });
+  if (again.length) {
+    const full = await env.DB.batch(again.map(({ q }) => queryStatement(env, q.path, q.spec!)));
+    again.forEach(({ q, v }, i) => { results[q.key] = { ver: v, docs: toDocs(full[i].results as Row[]) }; });
+  }
   for (const { q, v } of changed) if (q.kind === "doc") results[q.key] = { ver: v, exists: byPath.has(q.path), data: byPath.get(q.path), docVer: v };
   return { seq, results };
 }
