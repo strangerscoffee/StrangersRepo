@@ -21,7 +21,7 @@ Under each site prefix:
 
 Plus two single documents: `config/shared` (the shared setup, below) and `config/people` (read-only: names for people who recorded in the earlier Claude version of the diary, see below).
 
-Reject any other path with `invalid_argument`.
+Reject any other path with `invalid_argument`. The types of the fields below are checked on every write (`src/validate.ts`, 400 `invalid_data`); keep it in step when a field is added or changes type.
 
 ## D1 table
 
@@ -159,4 +159,4 @@ Signed out gets 401 `unauthenticated`; writes count towards the per-IP write lim
 | `GET sites`, `PUT sites/:site` | all / manager | Usual opening and closing time, minimum people and `dayHours` (weekdays with their own hours, for example Sundays) per site. `PUT` without `dayHours` keeps them; `dayHours: null` clears them. The week view gives each site `hours[7]`, that week's hours day by day. |
 | `GET links` | all | `{rota, diary}`: where each app lives, as seen from this address. |
 
-The checks (`computeProblems` in `src/rota.ts`): `open_shift`, `clash`, `time_off` and `closed` are errors; `no_opener`, `no_closer`, `short_cover` (against each day's own hours, counting who's actually there), `overtime` (over the max contracted hours) and `rest` (under 11 hours) are warnings; `break` (over 6 hours with under 20 minutes), `availability`, `seven_days` and `under_contract` (under the min contracted hours) are notes. They're prompts for the manager: publishing is allowed with problems.
+The checks (`computeProblems` in `src/rota/problems.ts`): `open_shift`, `clash`, `time_off` and `closed` are errors; `no_opener`, `no_closer`, `short_cover` (against each day's own hours, counting who's actually there), `overtime` (over the max contracted hours) and `rest` (under 11 hours) are warnings; `break` (over 6 hours with under 20 minutes), `availability`, `seven_days` and `under_contract` (under the min contracted hours) are notes. They're prompts for the manager: publishing is allowed with problems.

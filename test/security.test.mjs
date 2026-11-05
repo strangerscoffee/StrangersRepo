@@ -69,10 +69,12 @@ test("security: staff can't use manager or admin features, managers can't use ad
   }
   for (const [op, body] of [["set", { path: "config/shared", data: { a: 1 } }], ["update", { path: "config/shared", patch: { a: 1 } }], ["delete", { path: "config/shared" }]])
     assert.equal((await db(op, body, STAFF)).body.code, "permission_denied", "staff " + op + " config/shared");
+  // A badly shaped write to manager data is still refused as permission_denied (not invalid_data) for staff.
+  assert.equal((await db("set", { path: "settings/main", data: { closedDays: "Sunday" } }, STAFF)).body.code, "permission_denied");
 
   // Diary records: staff can't delete day pages, week pages or signed reviews; managers can.
   for (const path of ["sites/cafe/days/2026-09-10", "weeks/2026-09-07", "sites/asg/reviews/2026-09-10"]) {
-    assert.equal((await db("set", { path, data: { date: "x" } })).status, 200);
+    assert.equal((await db("set", { path, data: { seed: "x" } })).status, 200);
     assert.equal((await db("delete", { path }, STAFF)).body.code, "permission_denied", "staff delete " + path);
     assert.equal((await db("get", { path })).body.exists, true, "still there");
     assert.equal((await db("delete", { path }, MANAGER)).status, 200, "manager delete " + path);
