@@ -77,3 +77,33 @@ test("an ordinary visit reports nothing; a page that throws reports it, and admi
   if (process.env.SHOTS) await ap.screenshot({ path: process.env.SHOTS + "/error-report-ipad.png", fullPage: true });
   await ctx.close(); await a.close();
 });
+
+test("only the site's own errors count; a dropped signal is noted but not shown; the diary opens when it returns", async () => {
+  const ctx = await browser.newContext({ ...devices["iPhone 15 Pro"] });
+  const [name, value] = ADMIN.split("=");
+  await ctx.addCookies([{ name, value, url: srv.base }]);
+  // The first "who's signed in?" doesn't get through, as when 4G drops just as the diary opens.
+  let failed = 0;
+  await ctx.route("**/api/auth/me", (r) => (failed++ === 0 ? r.abort("internetdisconnected") : r.continue()));
+  const page = await ctx.newPage();
+  const before = (await errors()).length;
+  await page.goto(srv.base + "/");
+  await page.locator("#openList label", { hasText: "Hands washed" }).waitFor({ timeout: 15000 });
+  assert.ok(failed >= 2, "it asked again");
+
+  // Another site's script that's blocked or fails (like Cloudflare's analytics beacon), another site's "Script error.",
+  // and an error thrown from a file elsewhere: none reported, no card.
+  await page.evaluate(() => {
+    const s = document.createElement("script"); s.src = "https://static.example.invalid/beacon.min.js"; document.head.append(s);
+    dispatchEvent(new ErrorEvent("error", { message: "Script error." }));
+    dispatchEvent(new ErrorEvent("error", { message: "boom", filename: "moz-extension://abc/content.js", lineno: 1, colno: 1 }));
+  });
+  // A request nothing caught when the signal dropped: noted for the admin section, but no card on the screen.
+  await page.evaluate(() => { Promise.reject(new TypeError("Load failed")); });
+  let list = [];
+  for (let i = 0; i < 20 && !list.some((e) => e.text === "Unhandled: Load failed"); i++) { await page.waitForTimeout(250); list = await errors(); }
+  assert.ok(list.some((e) => e.text === "Unhandled: Load failed"), JSON.stringify(list.map((e) => e.text)));
+  assert.deepEqual(list.slice(0, list.length - before).map((e) => e.text).filter((t) => /beacon|Script error|boom/.test(t)), [], "nothing from elsewhere");
+  assert.equal(await page.locator("#sc-error").count(), 0, "no card for any of them");
+  await ctx.close();
+});
