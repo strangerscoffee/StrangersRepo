@@ -199,6 +199,11 @@
         <section class="panel glass" aria-labelledby="rtw"><h2 id="rtw">Rota this week ${d.rotaPublished ? "" : html`<span class="pill warn">Not published</span>`}<a class="link" href="${S.links.rota}#week/${d.week}">Open</a></h2>
           ${(() => { const max = Math.max(1, ...d.rotaWeek.map((s) => s.hours)); return d.rotaWeek.map((s) => html`<div class="siteline"><span class="nm"><span class="dot ${s.id}"></span>${s.name}</span>${meter((s.hours / max) * 100)}<span class="st num">${!s.inUse ? "Not set up" : s.hours || s.open ? `${hrs(s.hours)} · ${plural(s.people, "person", "people")}${s.open ? ` · ${s.open} open` : ""}` : "No shifts"}</span></div>`); })()}
         </section>
+        ${d.emails ? html`<section class="panel glass" aria-labelledby="rem"><h2 id="rem">Rota emails ${d.emails.ready ? html`<span class="pill ok">On</span>` : html`<span class="pill warn">Not set up</span>`}</h2>
+          <p class="emline">${d.emails.ready ? `${plural(d.emails.sentToday, "email", "emails")} sent in the last day.` : "Add the RESEND_API_KEY secret in Cloudflare to start sending. Until then nothing is sent."}</p>
+          <p class="emline">${d.emails.withAddress} of ${d.emails.active} ${d.emails.active === 1 ? "person has" : "people have"} an email address. Add them in People → Edit.</p>
+          ${d.emails.ready ? html`<div class="row"><button class="btn sm soft" type="button" data-act="testemail">Send me a test email</button></div>` : ""}
+        </section>` : ""}
       </div>`;
   };
 
@@ -212,7 +217,7 @@
     d.people.forEach((p) => { if (p.active) counts[p.role]++; });
     const q = S.q.trim().toLowerCase();
     const list = d.people.filter((p) => (S.filter === "off" ? !p.active : p.active && (S.filter === "all" || p.role === S.filter)) &&
-      (!q || p.name.toLowerCase().includes(q) || p.username.toLowerCase().includes(q)));
+      (!q || p.name.toLowerCase().includes(q) || p.username.toLowerCase().includes(q) || (p.email || "").includes(q)));
     const filters = [["all", "Everyone"], ["staff", "Staff"], ["manager", "Managers"], ["admin", "Admins"], ...(counts.off ? [["off", "Switched off"]] : [])];
     return html`
       ${head("People", "Everyone's account, rota details and training in one place.", html`<button class="btn" type="button" data-act="add">${svg("plus")}Add person</button>`)}
@@ -257,7 +262,7 @@
         <div class="cards">
           <section class="card" aria-label="Account">
             <div class="chead"><h3><span class="ic acc">${svg("user")}</span>Account</h3></div>
-            ${kv("Username", p.username)}${kv("Role", rolePill(p.role))}${kv("Last sign-in", p.lastLoginAt ? cap(when(p.lastLoginAt)) : "Never")}
+            ${kv("Username", p.username)}${kv("Email", p.email || "None: no rota emails")}${kv("Role", rolePill(p.role))}${kv("Last sign-in", p.lastLoginAt ? cap(when(p.lastLoginAt)) : "Never")}
             ${kv("Quick PIN", p.role === "admin" ? "Admins use their password" : p.quickPin ? "Set" : "Not set")}
             ${kv("Added", `${dmy(p.createdAt)}${p.createdBy ? ` by ${p.createdBy}` : ""}`)}
           </section>
@@ -414,6 +419,7 @@
     return html`<form class="sheetform" novalidate><h2 id="sheetTitle">${title}</h2>
       <div class="field"><label for="fName">Name (shown on records)</label><input id="fName" maxlength="60" autocapitalize="words" required value="${p ? p.name : ""}" placeholder="e.g. Sam Patel"></div>
       <div class="field"><label for="fUser">Username</label><input id="fUser" maxlength="32" autocapitalize="none" autocorrect="off" spellcheck="false" required value="${p ? p.username : ""}" placeholder="e.g. sam.patel"></div>
+      <div class="field"><label for="fEmail">Email (for rota emails, optional)</label><input id="fEmail" type="email" maxlength="254" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="off" value="${p && p.email ? p.email : ""}" placeholder="e.g. sam@example.com"></div>
       <div class="field"><label for="fRole">Role</label><select id="fRole">${["staff", "manager", "admin"].map((r) => html`<option value="${r}" ${(p ? p.role : "staff") === r ? raw("selected") : ""}>${ROLE[r]}</option>`)}</select></div>
       ${p ? "" : html`<div class="field"><label for="fPw">Temporary password (optional)</label><input id="fPw" maxlength="128" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Leave blank to create one"></div>`}
       ${p ? "" : html`<p>They sign in with the username and the temporary password, then choose their own. If they've recorded entries before, use exactly the same name to keep their history together.</p>`}
@@ -424,9 +430,9 @@
   async function addPerson() {
     openSheet(personForm({ title: "Add a person", submit: "Add person" }), async (act, form) => {
       if (act !== "submit") return;
-      const name = $("#fName").value.trim(), username = $("#fUser").value.trim(), role = $("#fRole").value, password = $("#fPw").value.trim();
+      const name = $("#fName").value.trim(), username = $("#fUser").value.trim(), role = $("#fRole").value, password = $("#fPw").value.trim(), email = $("#fEmail").value.trim();
       try {
-        const r = await api("POST", "/api/admin/users", { name, username, role, ...(password ? { password } : {}) });
+        const r = await api("POST", "/api/admin/users", { name, username, role, ...(password ? { password } : {}), ...(email ? { email } : {}) });
         S.open = r.user.id;
         if (r.password) showPassword(r.user.name, r.user.username, r.password);
         else { closeSheet(); toast(`${r.user.name} added. They sign in with the password you chose.`); }
@@ -446,6 +452,8 @@
       if (name !== p.name) body.name = name;
       if (username !== p.username) body.username = username;
       if (role !== p.role) body.role = role;
+      const email = $("#fEmail").value.trim();
+      if (email !== (p.email || "")) body.email = email;
       if (!Object.keys(body).length) { closeSheet(); return; }
       try {
         await api("PATCH", `/api/admin/users/${p.id}`, body);
@@ -516,6 +524,10 @@
     switch (name) {
       case "go": show(id); return;
       case "errors": S.feed = "errors"; show("activity"); return;
+      case "testemail":
+        try { const r = await api("POST", "/api/admin/email/test", {}); toast("Test email sent to " + r.to); }
+        catch (e) { toast(e.message); }
+        return;
       case "copyerr": {
         const text = (S.reports || {})[id] || "";
         try { await navigator.clipboard.writeText(text); toast("Copied the report for " + id); }

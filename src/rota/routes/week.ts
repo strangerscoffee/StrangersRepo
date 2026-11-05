@@ -6,9 +6,11 @@ import { openState } from "../problems";
 import { ROTA_SITES, RotaRequest } from "../types";
 import { weekView } from "../views";
 import { addDays, conflict, dow, isDay, londonToday, mondayOf, nowMs, round2 } from "../util";
+import { actor, planWeek, sendWeek } from "../../email/rota";
+import { emailReady } from "../../email/send";
 
 export async function weekRoutes(r: RotaRequest): Promise<Response | null> {
-  const { env, user, route, m, q, needMgr, body } = r;
+  const { env, exec, user, route, m, q, needMgr, body, mailLinks } = r;
 
   if (route === "week" && m === "GET") {
     const start = q("start") || londonToday();
@@ -63,7 +65,19 @@ export async function weekRoutes(r: RotaRequest): Promise<Response | null> {
       `INSERT INTO rota_weeks (week, published_at, published_by, changed_at, changes) VALUES (?, ?, ?, ?, 0)
        ON CONFLICT (week) DO UPDATE SET published_at = excluded.published_at, published_by = excluded.published_by, changes = 0`,
     ).bind(week, nowMs(), user.id, nowMs()).run();
-    return json(await weekView(env, week, user));
+    // {email: true}: email the people on it (only those whose shifts changed, once it has been emailed before).
+    let emailed = 0;
+    if (b.email === true) emailed = await sendWeek(env, exec, await planWeek(env, week), week, mailLinks, await actor(env, user));
+    return json({ ...(await weekView(env, week, user)), emailed });
+  }
+
+  // What publishing would email: for the publish sheet's "Email …" line.
+  if (route === "week/emails" && m === "GET") {
+    needMgr();
+    const start = q("week") || "";
+    if (!isDay(start)) throw invalid("Choose a real week.");
+    const plan = await planWeek(env, mondayOf(start));
+    return json({ ready: emailReady(env), first: plan.first, people: plan.people.length, noAddress: plan.noAddress, open: plan.open.length });
   }
 
   if (route === "hours" && m === "GET") {

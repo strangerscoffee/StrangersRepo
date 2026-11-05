@@ -445,3 +445,12 @@ a.btn.sm{text-decoration:none}
 .avail span.off{background:none;border:1px dashed var(--line);color:var(--muted);text-decoration:line-through}
 .mnote{margin:0 6px}
 .shc.open[class*="tone-"]{border:1.5px dashed var(--bad);background:var(--bad-bg)}.shc.open[class*="tone-"] .nm{color:var(--bad)}
+
+/* Publish sheet: email the people on it */
+.pubemail{display:flex;gap:12px;align-items:flex-start;padding:12px 0;cursor:pointer}
+.pubemail input{width:20px;height:20px;margin:2px 0 0;flex:none;accent-color:var(--accent)}
+.pubemail .t{display:grid;gap:2px}
+.pubemail .s{font-size:13.5px;color:var(--muted)}
+/* When I can work → Emails */
+.emrow .t{flex:1;min-width:0;display:grid;gap:2px}
+.emrow .t b{overflow-wrap:anywhere}

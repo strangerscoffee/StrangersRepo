@@ -129,7 +129,7 @@ test("security: staff can't use manager or admin features, managers can't use ad
     const who = cookie === STAFF ? "staff" : "manager";
     for (const [method, route, body] of [
       ["GET", "users"], ["POST", "users", { name: "Eve Sneaky", role: "admin", password: "eve-pass-123" }],
-      ["PATCH", `users/${someone.id}`, { role: "admin" }], ["GET", "status"], ["GET", "backups"], ["POST", "backups"],
+      ["PATCH", `users/${someone.id}`, { role: "admin" }], ["PATCH", `users/${someone.id}`, { email: "eve@example.com" }], ["POST", "email/test"], ["GET", "status"], ["GET", "backups"], ["POST", "backups"],
       ["GET", "overview"], ["GET", "people"], ["GET", "sites"], ["POST", "sites/factory/copy-setup", { from: "roastery" }], ["GET", "activity"],
       ["GET", "security"], ["POST", "security/reset-pins"], ["POST", "security/sign-out-all"], ["GET", "export/people.csv"], ["GET", "export/shifts.csv"],
     ]) await denied(await send(method, "/api/admin/" + route, cookie, body), `${who} ${method} /api/admin/${route}`);
@@ -141,7 +141,7 @@ test("security: staff can't use manager or admin features, managers can't use ad
   for (const [method, route, body] of [
     ["POST", "shifts", { site: "cafe", day: "2026-12-01", start: "09:00", end: "17:00" }], ["PATCH", "shifts/x", { start: "08:00" }],
     ["DELETE", "shifts/x"], ["PUT", "shifts/x/actual", { start: "09:00", end: "12:00" }], ["POST", "week/copy", { from: "2026-11-23", to: "2026-11-30" }],
-    ["POST", "week/publish", { week: "2026-11-30" }], ["GET", "suggest?shift=x"], ["GET", "hours?start=2026-11-30"],
+    ["POST", "week/publish", { week: "2026-11-30" }], ["POST", "week/publish", { week: "2026-11-30", email: true }], ["GET", "week/emails?week=2026-11-30"], ["GET", "suggest?shift=x"], ["GET", "hours?start=2026-11-30"],
     ["PUT", `people/${someone.id}`, { contractMax: 60 }], ["PUT", "sites/cafe", { minPeople: 0 }], ["PUT", "me/availability", { sites: ["cafe"] }],
     ["POST", "time-off", { userId: other.id, from: "2026-12-01", to: "2026-12-02", reason: "x" }],
   ]) await denied(await send(method, "/api/rota/" + route, STAFF, body), `staff ${method} /api/rota/${route}`);

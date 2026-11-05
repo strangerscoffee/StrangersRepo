@@ -12,6 +12,7 @@ import { ApiError, Env, errorResponse, json, readJson } from "./http";
 import { handleRota } from "./rota";
 import { ensureSchema } from "./schema";
 import { codeFor, recordError } from "./errors";
+import { handleUnsubscribe } from "./email/unsubscribe";
 
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -154,6 +155,12 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
 
   await ensureSchema(env);
   const caller = await authorize(req, env);
+
+  // The unsubscribe link at the foot of rota emails (src/email/unsubscribe.ts): signed in or not, by its signed token.
+  if (p === "/email/unsubscribe" && (req.method === "GET" || req.method === "POST")) {
+    if (req.method === "POST") await limitWrites(req, env, ctx);
+    return handleUnsubscribe(req, env, url);
+  }
 
   // Errors from the site's own pages (public/errors.js), signed in or not (a page that fails to load is often one
   // whose session has ended). Rate-limited like any write; the Origin check above keeps other sites out.

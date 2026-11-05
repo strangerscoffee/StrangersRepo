@@ -122,7 +122,7 @@ The staff rota (`src/rota.ts`, at `ROTA_HOST`) keeps its data in its own D1 tabl
 | Table | Columns |
 |---|---|
 | `rota_shifts` | `id, site (roastery\|cafe\|asg\|factory), day, start, end (after start, same day), break_mins (unpaid, 0–180), job ('opens'\|'closes'\|''), user_id (NULL = open shift), note, updated_at, updated_by, actual_start, actual_end, actual_break (as worked when amended on the day; NULL = as planned), adjust_note (why), adjusted_by, adjusted_at` |
-| `rota_weeks` | `week (Monday), published_at (NULL = draft), published_by, changed_at, changes (shift changes since it was last published)` |
+| `rota_weeks` | `week (Monday), published_at (NULL = draft), published_by, changed_at, changes (shift changes since it was last published), emailed (JSON: what each person was last emailed about the week, {people:{<userId>:[{id,day,start,end,site,job,hours}]}, open:[shiftIds]}; NULL until first emailed)` |
 | `rota_sites` | `site, opens_at, closes_at (the usual hours; NULL = not set), min_people (default 1), day_hours (JSON {"sat"\|"sun"\|…: {"opensAt","closesAt"}}: weekdays with their own hours)` |
 | `rota_people` | `user_id, contract_min, contract_max (contracted hours a week, a range; NULL = none; hours over the max are overtime), contract_hours (kept equal to contract_max for older pages), sites (JSON site ids they can get to; [] = any), pattern (JSON {"mon":"any"\|"off"\|{"from","to"}, …}; a missing day = any), updated_at` |
 | `rota_time_off` | `id, user_id, from_day, to_day (inclusive), reason, status ('requested'\|'approved'\|'declined'\|'cancelled'), decided_by, decided_at, created_at` |
@@ -132,7 +132,7 @@ The rota also reads three things from the diary's documents: a site is in use on
 
 ## The audit log
 
-`audit_log` (`src/schema.ts`, written by `src/audit.ts`): `id, at (ms), kind, actor (a name or NULL), text`. Kinds: `user_added`, `renamed`, `username_changed`, `role_changed`, `active_changed`, `password_reset`, `unlocked`, `signed_out`, `locked`, `signin_failed`, `backup`, `setup_copied`, `pins_reset`, `signed_out_all`. The text is in words for the admin section ("Sam Patel made Priya Shah a manager"); it never holds a password, PIN or a typed username. Rows older than about 400 days are removed.
+`audit_log` (`src/schema.ts`, written by `src/audit.ts`): `id, at (ms), kind, actor (a name or NULL), text`. Kinds: `user_added`, `renamed`, `username_changed`, `role_changed`, `active_changed`, `password_reset`, `unlocked`, `signed_out`, `locked`, `signin_failed`, `backup`, `setup_copied`, `pins_reset`, `signed_out_all`, and for rota emails `email_sent`, `email_failed`, `email_unsubscribed`, `email_changed` (an admin set or removed someone's address). The text is in words for the admin section ("Sam Patel made Priya Shah a manager"); it never holds a password, PIN or a typed username. Rows older than about 400 days are removed.
 
 Backups (`src/backup.ts`) include every rota table under `rota`.
 
@@ -146,11 +146,13 @@ Signed out gets 401 `unauthenticated`; writes count towards the per-IP write lim
 | `POST shifts`, `PATCH shifts/:id`, `DELETE shifts/:id` | manager | Create, change or delete a shift; each returns the shift and its `week`, and the week's new `problems` only when asked (`?with=problems`: the rota page redraws the week instead). A change sent with `ifUpdatedAt` (the shift's `updatedAt` when it was opened) is refused with 409 `conflict` if someone changed it since. Shifts on a closed day are refused. Shift objects carry `start`/`end`/`breakMins` as planned, `actualStart`/`actualEnd`/`actualBreakMins`/`adjustNote` once amended (`adjusted`), `hours` (as worked), `plannedHours`, and in the week and My shifts views `overtime` (the part of `hours` over the person's max that week, marked in time order). Staff don't see other people's `overtime` or `adjustNote`. |
 | `PUT shifts/:id/actual` | manager | Amend a shift on the day (from its day on): `{start, end, breakMins?, note?}` as worked, or `{clear: true}` to go back to the plan (`?with=problems` as above). The plan is kept; hours, overtime and cover use the amended times. Giving the shift to someone else clears it. |
 | `POST week/copy` | manager | `{from, to, replace?}`: copies a week's shifts, skipping days a site is now closed; refuses (409) to overwrite unless `replace`. |
-| `POST week/publish` | manager | `{week}`: publishes or republishes. |
+| `POST week/publish` | manager | `{week, email?}`: publishes or republishes. With `email: true`, emails the people on it (`src/email/rota.ts`): the first time, everyone with shifts; after that, only those whose shifts changed since their last email, with what changed; plus open shifts to people who turned those emails on and are free. Answers with `emailed` (how many are being sent). |
+| `GET week/emails?week=` | manager | What publishing would email: `{ready, first, people, noAddress:[names], open}`, for the publish sheet. |
 | `GET mine?from=&to=` | all | My shifts in published weeks, each with who else is on at that site, plus `contractMin`, `contractMax` and `weeks: [{week, hours, overtime}]` (whole weeks). |
 | `GET today?site=` | all | Today's (UK) shifts at a site when its week is published; for the diary's Today (with `actualStart`/`actualEnd` when amended). |
 | `GET suggest?shift=` | manager | Everyone who could take a shift, best fit first, with flags: clash, time off, overtime, short rest, availability, untrained. |
 | `GET hours?start=` (`&format=csv`) | manager | Paid hours per person and site against contract; CSV columns `name,role,contract_hours,rota_hours,difference,roastery,cafe,asg,factory`. |
+| `PUT me/emails` | all | `{prefs:{published?, changed?, requests?, open?}}`: which rota emails I get. My address is set by an admin; `GET me` returns `email: {address, prefs, ready}`. |
 | `GET me`, `PUT me/availability` | all / admin | My pattern, sites, contract, time off and requests (`user.admin` says whether I'm an admin); only admins set their own pattern and sites (`permission_denied` for anyone else). |
 | `PUT people/:userId` | manager (sites and pattern: admin) | `{contractMin?, contractMax?, sites?, pattern?}` for anyone; `sites` and `pattern` are admin-only (min ≤ max; a field left out is kept). The older `{contractHours}` sets both. |
 | `POST time-off`, `PATCH time-off/:id` | all / manager / owner | Ask for time off (managers can add it for anyone, approved); approve or decline (manager); cancel (owner). |
@@ -160,3 +162,8 @@ Signed out gets 401 `unauthenticated`; writes count towards the per-IP write lim
 | `GET links` | all | `{rota, diary}`: where each app lives, as seen from this address. |
 
 The checks (`computeProblems` in `src/rota/problems.ts`): `open_shift`, `clash`, `time_off` and `closed` are errors; `no_opener`, `no_closer`, `short_cover` (against each day's own hours, counting who's actually there), `overtime` (over the max contracted hours) and `rest` (under 11 hours) are warnings; `break` (over 6 hours with under 20 minutes), `availability`, `seven_days` and `under_contract` (under the min contracted hours) are notes. They're prompts for the manager: publishing is allowed with problems.
+
+
+## Rota emails
+
+Sent through Resend (`src/email/`) when the `RESEND_API_KEY` secret is set; without it nothing is sent. `users.email` is the address (admins set it: `PATCH /api/admin/users/<id> {email}`, `""` removes it) and `users.email_prefs` a JSON object of which emails the person gets: `published` (their week when it's published, on by default), `changed` (their shifts changed after publishing, on), `requests` (cover, pick-up and time-off decisions, on) and `open` (open shifts they're free for, off). Each email has a calendar file of the shifts (for a week), a link to the rota, and a signed one-tap unsubscribe link (`/email/unsubscribe?t=…`, no sign-in; opening it only asks). At most `EMAIL_DAILY_LIMIT` (100) a day. Each one sent or refused is logged in `audit_log` (Admin → Activity, "Rota emails"); failures in the last day are flagged on the Overview.

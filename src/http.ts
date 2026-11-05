@@ -8,6 +8,10 @@ export interface Env {
   COOKIE_DOMAIN?: string; // sign-in cookies are shared across this domain and its subdomains (wrangler.jsonc vars)
   ADMIN_HOST?: string; // the admin section's own hostname, e.g. admin.staffstrangerscoffee.com (wrangler.jsonc vars)
   ROTA_HOST?: string; // the rota app's own hostname, e.g. rota.staffstrangerscoffee.com (wrangler.jsonc vars)
+  RESEND_API_KEY?: string; // rota emails (src/email/): a secret the host adds in Cloudflare; without it nothing is sent
+  RESEND_API_URL?: string; // for tests only: where to send instead of Resend
+  EMAIL_FROM?: string; // default "Strangers Rota <rota@staffstrangerscoffee.com>"
+  EMAIL_DAILY_LIMIT?: string; // default 100 (Resend's free plan)
 }
 
 /** Error the page understands: rejected to it as {code, message}. */
