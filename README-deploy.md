@@ -1,5 +1,7 @@
 # Deploying and running the Kitchen Diary
 
+**Wholesale ordering concept:** `/wholesale-preview/` is a separate, static demo behind the existing staff sign-in when served by this Worker. It uses example prices and a browser-local basket, with no order submission or backend integration. See [docs/wholesale-preview.md](docs/wholesale-preview.md) for how to try it or serve the demo independently. Preview work stays in a draft pull request until reviewed.
+
 The site is one Cloudflare Worker serving the diary's pages and the API they talk to. It runs at **https://staffstrangerscoffee.com**, and the staff rota, from the same Worker, at **https://rota.staffstrangerscoffee.com**. **Every push to `main` redeploys it automatically** (Cloudflare Workers Builds).
 
 | Path | What it is |
