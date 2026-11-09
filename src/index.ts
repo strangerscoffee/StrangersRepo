@@ -17,6 +17,7 @@ import { handleUnsubscribe } from "./email/unsubscribe";
 import { notifyLive, openLive } from "./live";
 import { sendWeeklySummaries } from "./email/weekly";
 import { handleWholesale, handleWholesaleAdmin } from "./wholesale";
+import { handleWholesaleAuth, wholesaleSession } from "./wholesaleAccounts";
 export { LiveHub } from "./live";
 
 export default {
@@ -163,6 +164,19 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
   const isGet = req.method === "GET" || req.method === "HEAD";
   const app = appForHost(url.hostname, env.ROTA_HOST, env.ADMIN_HOST, env.PREVIEW_HOST);
   const links = appLinks(url, env.ROTA_HOST, env.ADMIN_HOST, env.PREVIEW_HOST);
+  const wholesaleHost = app === "preview" || app === "diary";
+  const wholesaleSignin = app === "preview" ? "/signin" : "/wholesale-preview/signin";
+  if (wholesaleHost && isGet && (p === "/wholesale-preview/signin" || p === "/wholesale-preview/signin.html" || (app === "preview" && (p === "/signin" || p === "/signin.html")))) {
+    const response = await env.ASSETS.fetch(new Request(new URL("/wholesale-preview/signin", url), req));
+    return withFingerprints(noStore(response), env, url);
+  }
+  if (wholesaleHost && isGet && p === "/wholesale-preview/staff-signin") {
+    if (app === "diary") return redirect("/signin?next=" + encodeURIComponent("/wholesale-preview/"));
+    const target = new URL("signin", new URL(links.diary, url));
+    target.searchParams.set("next", new URL(app === "preview" ? "/" : "/wholesale-preview/", url).toString());
+    return redirect(target.toString());
+  }
+  if (wholesaleHost && isGet && ["/wholesale-preview/signin.js", "/wholesale-preview/wholesale.css", "/shared/core.js"].includes(p)) return staticFile(req, env, p);
   // One Staff Login for every address: the rota's sign-in page is the diary's (src/hosts.ts).
   if (isGet && (p === "/signin" || p === "/signin.html")) {
     const to = unifiedSignin(url, env.COOKIE_DOMAIN);
@@ -208,6 +222,38 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
 
   if (p.startsWith("/api/auth/")) return handleAuth(req, env, p.slice("/api/auth/".length), caller.kind === "user" ? caller.user : null);
 
+  // Wholesale cookies have their own namespace and are never accepted by any staff route.
+  const wholesaleScope = app === "preview" || (app === "diary" && (p.startsWith("/api/wholesale/") || WHOLESALE_PAGES.has(p) || OLD_WHOLESALE_DASHBOARD.has(p) || (p.startsWith("/wholesale-preview/") && isPreviewFile(p))));
+  if (wholesaleScope) {
+    if (p.startsWith("/api/wholesale/auth/")) {
+      if (!isGet) await limitWrites(req, env, ctx);
+      const response = await handleWholesaleAuth(req, env, p.slice("/api/wholesale/auth/".length));
+      if (!isGet && response.ok) await bumpChanges(env, "accounts");
+      return response;
+    }
+    const user = await wholesaleSession(req, env) || (caller.kind === "user" ? caller.user : null);
+    if (!user) {
+      if (p.startsWith("/api/") || p.startsWith("/_blob/")) throw new ApiError(401, "unauthenticated", "Sign in to continue.");
+      if (!isGet) return new Response("Method not allowed", { status: 405 });
+      return redirect(wholesaleSignin);
+    }
+    if (p.startsWith("/api/wholesale/")) {
+      if (!isGet) await limitWrites(req, env, ctx, user.id);
+      const response = await handleWholesale(req, env, p.slice("/api/wholesale/".length), user, links);
+      if (!isGet && response.ok) await bumpChanges(env, "accounts");
+      return response;
+    }
+    if (p.startsWith("/api/") || p.startsWith("/_blob/")) throw new ApiError(404, "not_found", "Not available on the ordering address.");
+    if (!isGet) return new Response("Method not allowed", { status: 405 });
+    if (OLD_WHOLESALE_DASHBOARD.has(p) || p === "/dashboard" || p === "/dashboard/") {
+      if (user.role !== "admin") throw new ApiError(403, "permission_denied", "Only admins can open Wholesale in Admin.");
+      return redirect(links.admin + "#wholesale");
+    }
+    if ((app === "preview" && (p === "/" || p === "/index.html")) || (app === "diary" && WHOLESALE_PAGES.has(p))) return wholesalePage(req, env, url);
+    if (isPreviewFile(p)) return staticFile(req, env, p);
+    return redirect("/");
+  }
+
   // Everything below needs a signed-in person.
   if (caller.kind !== "user") {
     if (p.startsWith("/api/") || p.startsWith("/_blob/")) throw new ApiError(401, "unauthenticated", "Sign in to continue.");
@@ -238,26 +284,6 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
     const { results } = await env.DB.prepare("SELECT k, v FROM meta WHERE k IN ('seq', 'rota', 'accounts')").all<{ k: string; v: number }>();
     const v = Object.fromEntries(results.map((r) => [r.k, r.v]));
     return json({ docs: v.seq ?? 0, rota: v.rota ?? 0, accounts: v.accounts ?? 0 });
-  }
-
-  // The signed-in ordering preview is an isolated app on the existing Worker and session cookie domain.
-  if (app === "preview") {
-    if (p.startsWith("/api/wholesale/")) {
-      if (!isGet) await limitWrites(req, env, ctx, user.id);
-      const response = await handleWholesale(req, env, p.slice("/api/wholesale/".length), user, links);
-      if (!isGet && response.ok) await bumpChanges(env, "accounts");
-      return response;
-    }
-    if (p.startsWith("/api/") || p.startsWith("/_blob/")) throw new ApiError(404, "not_found", "Not available on the ordering preview's address.");
-    if (!isGet) return new Response("Method not allowed", { status: 405 });
-    if (p === "/" || p === "/index.html") return wholesalePage(req, env, url);
-    if (WHOLESALE_PAGES.has(p)) return redirect("/" + url.search);
-    if (OLD_WHOLESALE_DASHBOARD.has(p) || p === "/dashboard" || p === "/dashboard/") {
-      if (user.role !== "admin") throw new ApiError(403, "permission_denied", "Only admins can open Wholesale in Admin.");
-      return redirect(links.admin + "#wholesale");
-    }
-    if (isPreviewFile(p)) return staticFile(req, env, p);
-    return redirect("/");
   }
 
   if (p.startsWith("/api/rota/")) {

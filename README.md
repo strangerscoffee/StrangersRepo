@@ -73,6 +73,8 @@ Records show the person's name (set by an admin), not their username. The first 
 
 Everything fits Cloudflare's free tier (Workers, D1, KV and a custom domain) for a team this size, with no card needed. `README-deploy.md` → "Limits and costs" has the numbers to watch.
 
-## Wholesale ordering preview
+## Wholesale ordering
 
-The signed-in wholesale ordering preview is at **https://preview.staffstrangerscoffee.com**, using the existing Staff Login. Staff can build and save preview coffee orders. Admins manage shared orders, preview customers, coffee prices and visibility from **Admin → Wholesale** (in **More** on phones), at **https://admin.staffstrangerscoffee.com/#wholesale**. The default catalogue uses product data and published retail prices from strangerscoffee.com, clearly labelled for preview use. Orders are stored in D1 for review; no payment, email or fulfilment action is sent. See [docs/wholesale-preview.md](docs/wholesale-preview.md) for access, data sources and testing.
+Wholesale customers register and sign in at **https://preview.staffstrangerscoffee.com**. Admins must approve new registrations in **Admin → Wholesale → Customers** before customers can access the catalogue or order. Wholesale identities never grant staff access. Customers manage delivery details, place orders, view their history and build a repeat basket at current prices. Admins review orders, update statuses, manage accounts and edit catalogue prices and visibility at **https://admin.staffstrangerscoffee.com/#wholesale**.
+
+Existing staff can still use Staff sign-in for clearly marked preview orders. Orders and account details are shared in D1; payment, email and fulfilment integrations are not automatic. See [docs/wholesale-preview.md](docs/wholesale-preview.md).

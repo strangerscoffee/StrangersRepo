@@ -220,6 +220,15 @@ const MIGRATIONS: Migration[] = [
       "CREATE INDEX IF NOT EXISTS wholesale_preview_updated ON wholesale_preview(kind, updated_at DESC, id)",
     ]);
   } },
+  { id: 12, name: "wholesale customer accounts and isolated sessions", async run(env) {
+    await runAll(env, [
+      "CREATE TABLE IF NOT EXISTS wholesale_accounts (id TEXT PRIMARY KEY, customer_id TEXT NOT NULL UNIQUE, username TEXT NOT NULL UNIQUE COLLATE NOCASE, password_hash TEXT NOT NULL, password_salt TEXT NOT NULL, must_change INTEGER NOT NULL DEFAULT 1, active INTEGER NOT NULL DEFAULT 1, approval_status TEXT NOT NULL DEFAULT 'approved' CHECK(approval_status IN ('pending', 'approved', 'rejected')), session_ver INTEGER NOT NULL DEFAULT 1, failed INTEGER NOT NULL DEFAULT 0, locked_until INTEGER NOT NULL DEFAULT 0, version INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, last_login_at INTEGER)",
+      "CREATE TABLE IF NOT EXISTS wholesale_sessions (hash TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES wholesale_accounts(id) ON DELETE CASCADE, session_ver INTEGER NOT NULL, expires_at INTEGER NOT NULL)",
+      "CREATE INDEX IF NOT EXISTS wholesale_sessions_expiry ON wholesale_sessions(expires_at)",
+      "CREATE INDEX IF NOT EXISTS wholesale_sessions_account ON wholesale_sessions(account_id)",
+      "CREATE INDEX IF NOT EXISTS wholesale_customer_orders ON wholesale_preview(kind, json_extract(data, '$.customerId'), updated_at DESC)",
+    ]);
+  } },
 ];
 
 async function migrate(env: Env): Promise<void> {

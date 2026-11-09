@@ -1,51 +1,39 @@
-# Signed-in wholesale ordering preview
+# Wholesale accounts and ordering
 
-- Ordering: **https://preview.staffstrangerscoffee.com/**
-- Management: **https://admin.staffstrangerscoffee.com/#wholesale**
+Ordering: **https://preview.staffstrangerscoffee.com/**. Management: **https://admin.staffstrangerscoffee.com/#wholesale**, in the existing Admin sidebar or More menu. The independent public Site from the earlier design pass is a separate historical demo.
 
-These addresses are the configured deployment targets. They become available when this branch is deployed through the repository’s normal pull-request/Cloudflare workflow. The independent public Site built in the earlier design pass is a separate historical demo and does not connect to these staff records.
+## Registration and approval
 
-## Staff sign-in and Admin integration
+Customers request an account on the wholesale sign-in page with their business, contact name, email, username and password. Registration creates a pending sign-in and an On hold customer record; it issues no session. An admin reviews it under **Wholesale → Customers → the customer → Review sign-in**, selects Approved and leaves Allow sign-in checked. Approval activates the customer. Pending and declined accounts cannot access ordering or change their password through a session. No registration or approval email is sent automatically.
 
-The ordering page is a fourth app on the existing Worker, selected by `PREVIEW_HOST`. Every ordering page and preview asset passes the existing staff session check. Signed-out pages redirect to Staff Login; APIs return 401. `/signin` on the preview subdomain redirects to the existing sign-in page on `staffstrangerscoffee.com` with a return URL to the preview. The shared cookie domain and existing account/session revocation rules apply. The preview hostname cannot serve diary, rota, document, blob or admin management APIs.
+Admins may also create a customer and use Create sign-in, which generates an approved account with a one-time temporary password. The customer chooses their own password on first sign-in. Manage sign-in lets admins change usernames, disable access, decline applications, or reset passwords and unlock accounts. Resets return a temporary password once and invalidate existing sessions. Customers change their own password in My account; that signs out their other devices.
 
-All signed-in staff roles can browse coffee and save preview orders. Only admins can manage the **Wholesale** menu section, see all preview orders/customers or edit catalogue prices and visibility. It is part of the existing admin page, with the same theme, sidebar, mobile More menu, sheets, clock correction, session checks and live-change notifications. There is no separate dashboard app. The old `/wholesale-preview/dashboard/` address redirects admins to Admin → Wholesale; other roles receive 403.
+Wholesale passwords and sessions are separate from staff accounts. Migration 12 adds `wholesale_accounts` and `wholesale_sessions`. The host-only `sf_wholesale_session` cookie is HttpOnly, Secure and SameSite=Lax, valid for 30 days. Only its SHA-256 hash is stored in D1. Sessions check approval, account activity and session version on every request. They never authorize diary, rota or Admin access. Five wrong account passwords lock it for ten minutes; sign-in attempts are also limited per IP, and registration is limited to five requests per IP per hour.
 
-## Shared backend
+Staff retain their existing Staff Login through the Staff sign-in link. Their ordering page shows a Staff preview banner and creates `PREVIEW-…` test orders. Customer orders use `WS-…` IDs and `preview:false`; the admin list distinguishes them. Staff sessions retain their existing shared-cookie behavior. The preview hostname refuses diary, rota, document and management APIs.
 
-Migration 11 creates `wholesale_preview`, with `(kind, id)` as its primary key and JSON data, version and server update time. Its kinds are `order`, `customer` and `catalogue`. Orders and customer records start empty; no fictional customers are silently seeded into staff data. Orders saved from one signed-in device appear in Admin on another. Admin-created preview customers can be linked to orders.
+## Ordering and business details
 
-`src/wholesale.ts` validates all requests. The server fixes the creator identity and UK date, validates bag/grind variants and integer quantities (1–99 per variant), calculates prices/weights from the server catalogue and stores immutable line-price snapshots. The client’s quoted price is checked against the current price; stale or hidden coffee choices return 409 for a new review. A UUID request ID makes retried submissions idempotent and cannot be reused by another account or with another payload. Staff may read their own preview orders; admins may read all. Management writes require `ifVersion` and reject stale saves with 409.
+Approved customers maintain their own business, contact and delivery details in My account, using version checks. Internal account notes, approval and hold status are admin-only fields. An account on hold can still view its orders but cannot submit a new one.
 
-Records are rate-limited through the existing per-user write limiter. Preview changes are audited and notify the admin change watcher; the table is included in nightly/manual backups. Admin views show the latest 200 orders/customers and the total record counts. No payment, email, invoice or fulfilment action is performed.
+Customers select coffee, pack size, grind and quantity, review their basket and choose delivery or collection. Delivery requires an address and postcode. The server fixes business ownership and identity, checks current quoted prices and variants, and snapshots delivery details and line descriptions/prices. Later address or price edits do not rewrite old orders. UUID request IDs make identical retries idempotent; another account or payload cannot reuse one. Successful checkout clears the basket.
 
-The shopping basket alone is browser-local, stored per signed-in user under `strangers.wholesale-preview.v2.<user-id>`. No old public-demo orders/customers/pricing overrides are imported from localStorage. Blocked browser storage makes only the basket temporary; saved preview orders go to D1.
+Orders arrive in Admin → Wholesale for the team to prepare and update through New, Preparing, Ready, Dispatched or Cancelled. Customers see only their business's orders and public statuses in My orders. Internal order notes remain admin-only. Customer orders cannot be reassigned to another business. Order again builds a new basket at current catalogue prices and waits for confirmation; it never submits automatically.
 
-## Sourced catalogue
+There is no payment gateway, automatic email, invoice or shipping integration. The coffee subtotal excludes delivery-charge calculations; Strangers confirms delivery separately. Default prices remain the source retail snapshot until admins edit them; negotiated wholesale rates are not invented.
 
-`catalogue.js` contains all ten public coffees retrieved from strangerscoffee.com on **9 November 2026**: title, origin, process, tasting notes, original imagery, source URL and one-off retail prices for **250 g, 500 g and 1 kg** bags. Each weight uses its own published price, in integer GBP pence. All 150 source weight/grind variants were verified against the imported snapshot. The same JavaScript catalogue is imported by the server, with `catalogue.d.ts` supplying its TypeScript interface. There is one source snapshot.
+## Data and backups
 
-These are **retail prices, not agreed wholesale rates**. That distinction is visible on both apps. Admins can set shared preview price/visibility overrides; historical orders keep their original prices. Delivery charges, tax treatment, minimum orders, subscriptions and live inventory are not imported. Product JSON is available at each source URL with `?format=json`; `variants`, `excerpt` and `assetUrl` supply the imported fields. Images are local files; no external scripts, fonts, trackers or runtime image requests are used.
+Migration 11's versioned `wholesale_preview` records remain in place for customers, orders and catalogue overrides. Migration 12 adds an index for customer order lookups. Order reads are bounded to the latest 200; management lists show the latest 200 customers/orders and total counts. The basket alone is browser-local, per identity. No old browser-local demo records are imported.
 
-## Files and checks
+All writes validate server-side, use the same Origin protection and rate limits, and are audited. Record edits use `ifVersion` and reject stale copies with 409. Wholesale writes notify the existing Admin change watcher. Backups include the shared records and wholesale account metadata, including approval status; password hashes, salts and sessions are excluded. Restoring an account therefore requires an admin password reset.
 
-`public/wholesale-preview/index.html`, `wholesale.css` and `wholesale.js` implement the ordering page; `order.js` is its basket model. `public/admin/wholesale.js` implements the native admin menu section through the existing escaped HTML builder. `src/hosts.ts`, `src/index.ts`, `src/access.ts` and `src/wholesale.ts` own routing, sign-in boundaries and backend access.
+## Catalogue and presentation
 
-Run `npm test` for the typecheck, existing API tests, basket tests and new wholesale routing/API tests. `npm run test:e2e` includes the ordering-to-admin journey, permissions/sign-out and phone/iPad checks in light/dark mode. Use `CHROMIUM_PATH=/usr/bin/chromium` when using the environment’s installed system browser. Optional `WHOLESALE_SCREENSHOT_DIR` captures the new app views during those tests.
+`public/wholesale-preview/catalogue.js` is the shared ten-coffee source snapshot retrieved from strangerscoffee.com on 9 November 2026. It contains original imagery, descriptions, source URLs and independently published 250 g, 500 g and 1 kg prices for 150 weight/grind variants. Images are local originals; CSS preserves their full intrinsic proportions instead of forcing a tall crop. The introductory marketing block has been removed.
 
-## Source products and images
+`public/wholesale-preview/` holds ordering, account/registration UI and the basket model. `public/admin/wholesale.js` is the native admin view and uses the existing escaped HTML helpers and sheets. `src/wholesaleAccounts.ts` owns customer authentication and account management; `src/wholesale.ts` owns profiles and orders; host isolation is in `src/index.ts` and `src/hosts.ts`.
 
-The logo is copied from the repository. Product imagery belongs to Strangers and is used for this Strangers demo.
+Run `npm test`, then `CHROMIUM_PATH=/usr/bin/chromium npm run test:e2e` when using system Chromium. Tests cover registration/approval, cross-business privacy, staff isolation, version conflicts, reset/disable/logout revocation, holds, immutable delivery snapshots and retry safety. Browser journeys cover customer and staff ordering on phones and iPads in light and dark mode, full-image proportions, admin approval, history and reorder.
 
-| Coffee | Product source | Local image |
-| --- | --- | --- |
-| Brazil Fazenda Bom Jesus Natural | [Source](https://strangerscoffee.com/coffee/p/brazil-fazenda-bom-jesus-natural) | `brazil.webp` |
-| Colombia Anserma Natural | [Source](https://strangerscoffee.com/coffee/p/colombia-anserma-natural) | `colombia.webp` |
-| Ethiopia Idido Anaerobic Natural | [Source](https://strangerscoffee.com/coffee/p/ethiopia-idido-anaerobic-natural) | `ethiopia.webp` |
-| Christmas Blend | [Source](https://strangerscoffee.com/coffee/p/christmas-blend) | `christmas.webp` |
-| Decaf Colombia San Lorenzo | [Source](https://strangerscoffee.com/coffee/p/decaf-colombia-san-lorenzo) | `decaf.webp` |
-| Ethiopia Rocko Mountain Natural | [Source](https://strangerscoffee.com/coffee/p/ethiopia-rocko-mountain-natural) | `rocko.webp` |
-| Honduras Rosalina Ramos Natural | [Source](https://strangerscoffee.com/coffee/p/honduras-rosalina-ramos-natural) | `rosalina.webp` |
-| Colombia Campo Santo Washed | [Source](https://strangerscoffee.com/coffee/p/colombia-campo-santo-washed) | `campo.webp` |
-| Half Caff Blend | [Source](https://strangerscoffee.com/coffee/p/half-caff-blend) | `half-caff.jpg` |
-| House Blend | [Source](https://strangerscoffee.com/coffee/p/house-blend) | `house.jpg` |
+For local development: `npm run dev -- --var PREVIEW_HOST:`. Ordering is at `/wholesale-preview/`, customer sign-in at `/wholesale-preview/signin`, and management at `/admin#wholesale`.

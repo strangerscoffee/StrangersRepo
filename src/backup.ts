@@ -40,6 +40,7 @@ export async function makeBackup(env: Env, by: string): Promise<BackupInfo> {
     users: users.results,
     rota,
     wholesalePreview: (await env.DB.prepare("SELECT kind, id, data, version, updated_at FROM wholesale_preview ORDER BY kind, id").all()).results,
+    wholesaleAccounts: await env.DB.prepare("SELECT id, customer_id, username, active, approval_status, created_at, last_login_at FROM wholesale_accounts ORDER BY username").all().then((rows) => rows.results),
   });
   const gz = await gzip(body);
   const id = new Date(at).toISOString().replace(/\.\d+Z$/, "Z").replace(/:/g, "-");

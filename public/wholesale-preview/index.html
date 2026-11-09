@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex, nofollow">
   <meta name="theme-color" content="#e8deca">
-  <meta name="description" content="A first look at wholesale ordering with Strangers Coffee. Explore the coffees and build a sample order.">
-  <title>Wholesale ordering preview · Strangers Coffee</title>
+  <meta name="description" content="Order Strangers Coffee for your business.">
+  <title>Wholesale ordering · Strangers Coffee</title>
   <link rel="icon" href="/wholesale-preview/images/logo.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/wholesale-preview/wholesale.css">
   <script src="/errors.js"></script>
@@ -15,13 +15,13 @@
 </head>
 <body>
   <a class="skip-link" href="#coffee">Skip to the coffee</a>
-  <div class="preview-banner"><span class="banner-dot" aria-hidden="true"></span> A FIRST LOOK AT WHOLESALE <span class="banner-divider" aria-hidden="true">/</span> <span>Signed-in preview. No payments or fulfilment.</span></div>
+  <div class="preview-banner" id="staff-preview-notice" hidden>Staff preview — orders from this staff login are for testing.</div>
   <header class="site-header wrap">
     <a class="brand" id="preview-home" href="/wholesale-preview/" aria-label="Strangers Coffee wholesale home"><img src="/wholesale-preview/images/logo.svg" width="116" height="65" alt="Strangers Coffee"></a>
     <nav aria-label="Main navigation">
       <a class="nav-link active" href="#coffee" aria-current="page">Order coffee</a>
-      <button class="nav-link" type="button" data-help>How it works <span aria-hidden="true">↗</span></button>
-      <a class="nav-link" id="admin-wholesale-link" href="/admin#wholesale" hidden>Admin · Wholesale <span aria-hidden="true">↗</span></a>
+      <button class="nav-link" type="button" id="my-orders">My orders</button>
+      <a class="nav-link" id="admin-wholesale-link" href="/admin#wholesale" hidden>Admin · Wholesale <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></a>
     </nav>
     <button class="basket-link" type="button" data-basket aria-label="View your order, 0 packs">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 3h3l3 12h11l3-9H6M9 19a1 1 0 1 0 0 .01M18 19a1 1 0 1 0 0 .01"/></svg>
@@ -29,14 +29,10 @@
     </button>
   </header>
 
-  <div class="session-strip wrap"><span>Signed in as <strong id="signed-in-name">…</strong></span><button class="text-button" type="button" id="preview-sign-out">Sign out</button></div>
+  <div class="session-strip wrap"><span><strong id="signed-in-name">…</strong></span><button class="text-button" type="button" id="my-account" hidden>My account</button><button class="text-button" type="button" id="preview-sign-out">Sign out</button></div>
   <main class="wrap">
-    <section class="intro" aria-labelledby="page-title">
-      <div><p class="eyebrow"><span class="tiny-star" aria-hidden="true">✳</span> STRANGERS, FOR YOUR PEOPLE</p><h1 id="page-title">Good coffee.<br>By the kilo.</h1></div>
-      <div class="intro-copy"><p>From our roastery to your counter.<br>Find your favourites and stock up for<br class="desktop-break"> the good cups ahead.</p><div class="intro-note"><span aria-hidden="true">↙</span> Roasted in Norwich. Shared everywhere.</div></div>
-      <div class="roastery-stamp" aria-hidden="true"><span>INDEPENDENTLY</span><b>S</b><span>ROASTED IN NORWICH</span></div>
-    </section>
-
+    <h1 class="sr-only">Wholesale ordering</h1>
+    <p class="account-hold" id="account-hold" role="status" hidden>Your account is on hold. Contact Strangers before placing an order.</p>
     <div class="shop-layout">
       <section class="catalogue" id="coffee" aria-labelledby="coffee-title">
         <div class="section-heading"><div><p class="eyebrow">01 / MAKE IT YOURS</p><h2 id="coffee-title">The coffee line-up</h2></div><span class="product-count" id="product-count" role="status">10 coffees</span></div>
@@ -49,11 +45,9 @@
           </div>
           <label class="search-field"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><span class="sr-only">Search coffees, origins or tasting notes</span><input id="coffee-search" type="search" placeholder="Find your coffee" autocomplete="off"></label>
         </div>
-        <p class="pricing-note"><span aria-hidden="true">ⓘ</span><span id="pricing-context">Retail catalogue from <a href="https://strangerscoffee.com/coffee" target="_blank" rel="noopener noreferrer">strangerscoffee.com ↗</a> · 9 Nov 2026. Demo only; wholesale rates to be confirmed.</span></p>
-        <p class="catalogue-status" id="catalogue-status" role="status">Loading the signed-in catalogue…</p><button class="text-button" id="retry-catalogue" type="button" hidden>Try loading again ↗</button><div class="product-grid" id="products"></div>
-        <div class="no-results" id="no-results" hidden><h3>No coffees found.</h3><p>Try another origin, name or tasting note.</p><button class="text-button" type="button" id="reset-filters">Show all coffee <span aria-hidden="true">↗</span></button></div>
+        <p class="catalogue-status" id="catalogue-status" role="status">Loading the signed-in catalogue…</p><button class="text-button" id="retry-catalogue" type="button" hidden>Try loading again</button><div class="product-grid" id="products"></div>
+        <div class="no-results" id="no-results" hidden><h3>No coffees found.</h3><p>Try another origin, name or tasting note.</p><button class="text-button" type="button" id="reset-filters">Show all coffee <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></button></div>
         <noscript><p class="no-results">Please enable JavaScript to explore the coffee and build a sample order.</p></noscript>
-        <div class="coffee-footnote"><span class="tiny-star" aria-hidden="true">✳</span><p>Different origins. One shared obsession.<br><strong>Really good coffee, every single time.</strong></p></div>
       </section>
 
       <aside class="order-column" id="your-order" aria-labelledby="order-title" tabindex="-1">
@@ -63,43 +57,69 @@
           <div class="order-totals" id="order-totals" hidden>
             <div class="weight-total"><span>Total coffee</span><span id="total-weight">0 kg</span></div>
             <div class="subtotal"><span>Coffee subtotal</span><strong id="subtotal">£0.00</strong></div>
-            <p class="terms-note">Public retail prices used for this demo. Wholesale rates, delivery, tax treatment and account terms are to be confirmed.</p>
+            <p class="terms-note">Coffee subtotal. Delivery charges are confirmed by Strangers.</p>
           </div>
-          <button class="button button-dark review-button" id="review-order" type="button" disabled>Review order <span aria-hidden="true">↗</span></button>
+          <button class="button button-dark review-button" id="review-order" type="button" disabled>Review order <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></button>
           <div class="basket-meta"><span class="small-dot" aria-hidden="true"></span><span id="basket-storage-note">Your basket stays on this browser.</span></div>
-          <p class="preview-note">A little look at what’s brewing.<br>Saved preview orders are visible to admins. No payment or fulfilment action is sent.</p>
         </div>
-        <div class="help-note"><span aria-hidden="true">↗</span><div><h3>A hand with your next order?</h3><p>We’re always happy to talk coffee.</p><button class="text-button" type="button" data-help>Ordering guide <span aria-hidden="true">→</span></button></div></div>
+        <div class="help-note"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg><div><h3>A hand with your next order?</h3><p>We’re always happy to talk coffee.</p><button class="text-button" type="button" data-help>Ordering guide <span aria-hidden="true">→</span></button></div></div>
       </aside>
     </div>
   </main>
 
-  <footer class="site-footer wrap"><a class="footer-brand" href="https://strangerscoffee.com/" target="_blank" rel="noopener noreferrer">STRANGERS COFFEE <span aria-hidden="true">↗</span></a><p>Good coffee. Good company. Norwich, since 2009.</p><span>Wholesale / Preview 01</span></footer>
+  <footer class="site-footer wrap"><a class="footer-brand" href="https://strangerscoffee.com/" target="_blank" rel="noopener noreferrer">STRANGERS COFFEE <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></a><p>Good coffee. Good company. Norwich, since 2009.</p><span>Wholesale</span></footer>
 
-  <div class="mobile-basket" id="mobile-basket" hidden><div><span id="mobile-packs">0 packs</span><strong id="mobile-total">£0.00</strong></div><button class="button button-dark" type="button" data-basket>View order <span aria-hidden="true">↗</span></button></div>
+  <div class="mobile-basket" id="mobile-basket" hidden><div><span id="mobile-packs">0 packs</span><strong id="mobile-total">£0.00</strong></div><button class="button button-dark" type="button" data-basket>View order <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></button></div>
   <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
   <dialog id="review-dialog" aria-labelledby="review-title">
     <div class="dialog-inner">
       <button class="close-button" type="button" data-close aria-label="Close order review">×</button>
       <div id="review-content">
-        <p class="eyebrow">YOUR WHOLESALE ORDER / PREVIEW</p><h2 id="review-title">One last look.</h2><p class="dialog-intro">All your good coffee, in one place.</p>
+        <p class="eyebrow">YOUR WHOLESALE ORDER</p><h2 id="review-title">Review your order</h2>
         <div id="review-items" class="review-items"></div>
         <div class="review-subtotal"><span>Coffee subtotal</span><strong id="review-total">£0.00</strong></div>
-        <p class="terms-note">Public retail prices, or locally edited demo prices. Wholesale rates, delivery and tax treatment are not calculated in this preview.</p>
+        <p class="terms-note">Coffee subtotal. Delivery charges are confirmed by Strangers.</p>
         <form id="review-form">
           <fieldset class="delivery-options"><legend>Delivery preference</legend><label><input type="radio" name="delivery" value="dispatch" checked><span>Send it to me</span></label><label><input type="radio" name="delivery" value="collection"><span>Roastery collection</span></label></fieldset>
-          <label class="form-field">Business name <span>(optional)</span><input name="business" maxlength="120" placeholder="Company or café for this preview" autocomplete="off"></label>
+          <label class="form-field">Business name<input name="business" maxlength="120" autocomplete="organization"></label>
+          <p class="dialog-intro" id="delivery-summary"></p><button class="text-button" type="button" id="review-account" hidden>Edit delivery details</button>
           <label class="form-field">Purchase reference <span>(optional)</span><input name="reference" maxlength="80" placeholder="e.g. Your café name or PO number" autocomplete="off"></label>
-          <p class="demo-disclaimer"><strong>Just trying things out.</strong> This saves a shared preview order for the admin team, including your reference and delivery preference. No payment, email or fulfilment action is sent.</p>
-          <p class="quantity-error" id="preview-submit-error" role="alert" hidden></p><button class="button button-dark" id="submit-preview-order" type="submit">Save preview order <span aria-hidden="true">↗</span></button>
+          <p class="quantity-error" id="preview-submit-error" role="alert" hidden></p><button class="button button-dark" id="submit-preview-order" type="submit">Place order</button>
           <button class="button button-outline" type="button" data-close>Keep choosing coffee</button>
         </form>
       </div>
-      <div class="preview-complete" id="preview-complete" hidden><span class="complete-star" aria-hidden="true">✳</span><p class="eyebrow">THAT’S A FIRST LOOK</p><h2 id="complete-title">Looks like<br>good company.</h2><p>Your sample order comes to <strong id="complete-total">£0.00</strong>.</p><p id="complete-message"></p><a class="button button-dark" id="complete-dashboard-link" href="/admin#wholesale">Open Admin · Wholesale <span aria-hidden="true">↗</span></a><button class="button button-outline" type="button" data-close>Back to the coffee <span aria-hidden="true">↗</span></button></div>
+      <div class="preview-complete" id="preview-complete" hidden><p class="eyebrow">ORDER RECEIVED</p><h2 id="complete-title">Thank you.</h2><p>Coffee subtotal <strong id="complete-total">£0.00</strong></p><p id="complete-message"></p><a class="button button-dark" id="complete-dashboard-link" href="/admin#wholesale" hidden>Open Admin · Wholesale</a><button class="button button-outline" type="button" data-close>Back to the coffee</button></div>
     </div>
   </dialog>
 
-  <dialog id="help-dialog" aria-labelledby="help-title"><div class="dialog-inner"><button class="close-button" type="button" data-close aria-label="Close ordering guide">×</button><p class="eyebrow">FROM OUR ROASTERY TO YOUR COUNTER</p><h2 id="help-title">Let’s stock you up.</h2><ol class="guide-steps"><li><span>01</span><div><h3>Find your coffee.</h3><p>Browse single origins, blends and decaf, or search for a favourite tasting note.</p></div></li><li><span>02</span><div><h3>Make it yours.</h3><p>Choose the 250 g, 500 g or 1 kg bags listed on Strangers’ website. Pick a grind, set the number of packs, and add them to your order.</p></div></li><li><span>03</span><div><h3>Give it a once-over.</h3><p>Edit your basket and review the sample order. Save a preview order for admins to review in Admin → Wholesale. Default prices are published retail prices or admin-set preview prices; no payment or fulfilment is triggered.</p></div></li></ol><p class="demo-disclaimer">Looking for a real wholesale account? Visit the Strangers website to get in touch with the team.</p><a class="button button-dark" href="https://strangerscoffee.com/" target="_blank" rel="noopener noreferrer">Visit Strangers Coffee <span aria-hidden="true">↗</span></a></div></dialog>
+  <dialog id="account-dialog" aria-labelledby="account-title"><div class="dialog-inner">
+    <button class="close-button" type="button" data-close aria-label="Close account">×</button>
+    <p class="eyebrow">MY ACCOUNT</p><h2 id="account-title">Business details</h2>
+    <form id="account-form">
+      <label class="form-field">Business name<input name="business" maxlength="120" autocomplete="organization" required></label>
+      <label class="form-field">Contact name<input name="contact" maxlength="120" autocomplete="name"></label>
+      <label class="form-field">Email<input name="email" type="email" maxlength="150" autocomplete="email"></label>
+      <label class="form-field">Phone<input name="phone" type="tel" maxlength="40" autocomplete="tel"></label>
+      <label class="form-field">Delivery address<textarea name="address" maxlength="500" autocomplete="street-address" rows="3"></textarea></label>
+      <label class="form-field">Postcode<input name="postcode" maxlength="20" autocomplete="postal-code"></label>
+      <label class="form-field">Delivery notes <span>(optional)</span><textarea name="deliveryNotes" maxlength="1000" rows="2"></textarea></label>
+      <p class="quantity-error" id="account-error" role="alert" hidden></p>
+      <button class="button button-dark" type="submit">Save details</button>
+    </form>
+    <details class="password-settings"><summary>Change password</summary><form id="account-password-form">
+      <label class="form-field">Current password<input name="password" type="password" autocomplete="current-password" minlength="8" maxlength="128" required></label>
+      <label class="form-field">New password<input name="newPassword" type="password" autocomplete="new-password" minlength="8" maxlength="128" required></label>
+      <label class="form-field">Confirm new password<input name="confirmPassword" type="password" autocomplete="new-password" minlength="8" maxlength="128" required></label>
+      <p class="quantity-error" id="password-error" role="alert" hidden></p>
+      <button class="button button-outline" type="submit">Change password</button>
+    </form></details>
+  </div></dialog>
+  <dialog id="orders-dialog" aria-labelledby="orders-title"><div class="dialog-inner">
+    <button class="close-button" type="button" data-close aria-label="Close order history">×</button>
+    <p class="eyebrow">MY ORDERS</p><h2 id="orders-title">Order history</h2>
+    <div id="order-history" aria-live="polite"></div>
+  </div></dialog>
+  <dialog id="help-dialog" aria-labelledby="help-title"><div class="dialog-inner"><button class="close-button" type="button" data-close aria-label="Close ordering guide">×</button><h2 id="help-title">Ordering guide</h2><ol class="guide-steps"><li><span>01</span><div><h3>Choose your coffee.</h3><p>Pick a bag size, grind and quantity, then add it to your basket.</p></div></li><li><span>02</span><div><h3>Check your details.</h3><p>Keep your contact and delivery details up to date in My account, or choose roastery collection.</p></div></li><li><span>03</span><div><h3>Place your order.</h3><p>Review the coffee and subtotal, add a purchase reference if needed, then place your order. Follow its progress and order again from My orders.</p></div></li></ol><a class="button button-outline" href="https://strangerscoffee.com/" target="_blank" rel="noopener noreferrer">Contact Strangers Coffee</a></div></dialog>
 </body>
 </html>
