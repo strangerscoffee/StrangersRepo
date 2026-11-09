@@ -149,3 +149,9 @@ upload(file: Blob, opts?: {type?: string}): Promise<{id, url, sizeBytes, content
 delete(id: string): Promise<{deleted: boolean}>
 ```
 Stored in Workers KV under a random 32-character hex id. PDFs only, 20 MB maximum (rejected with `too_large` or `unsupported_type`). Served at `GET /_blob/<id>` with the stored content type, `Content-Disposition: inline` and `X-Content-Type-Options: nosniff`. `url` = `"/_blob/" + id`.
+
+## Signed-in wholesale preview
+
+These routes are separate from the diary shim and use the existing session cookie and same-site Origin checks. `GET /api/wholesale/catalogue` returns shared coffee prices/visibility, `sourceDate`, the signed-in person and links. `POST /api/wholesale/orders` accepts `{requestId,lines:[{productId,pack,grind,quantity,price}],delivery,reference?,business?}`; `price` is a quoted pence amount checked against the server catalogue. The server creates a preview order with its own prices/totals and caller identity (201); an identical retry returns the same order (200). `GET /api/wholesale/orders/<id>` returns only the caller’s own record or, for admins, any preview record. Other owners’ IDs return 404. All these routes require sign-in.
+
+Admin-only endpoints: `GET /api/admin/wholesale` (latest 200 preview orders/customers, all coffees and total counts), `POST /api/admin/wholesale/customers`, `PUT /api/admin/wholesale/customers/<uuid>`, `PUT /api/admin/wholesale/catalogue/<product-id>` and `PATCH /api/admin/wholesale/orders/<id>`. Customer updates send all editable fields and `ifVersion`; catalogue updates send `prices:{quarter,half,kilo}`, `active` and `ifVersion`; order updates send `status,note,customerId,ifVersion`. Stale versions return 409. Staff/managers receive 403 on every management route. The preview hostname refuses diary/rota/admin APIs; administration remains on the admin app. No preview endpoint triggers payment, email or fulfilment.

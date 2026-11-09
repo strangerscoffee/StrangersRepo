@@ -214,6 +214,12 @@ const MIGRATIONS: Migration[] = [
   { id: 10, name: "admin overview: notices an admin has dismissed", async run(env) {
     await env.DB.prepare("CREATE TABLE IF NOT EXISTS admin_dismissed (key TEXT PRIMARY KEY, at INTEGER NOT NULL, by TEXT)").run();
   } },
+  { id: 11, name: "wholesale preview: shared orders, customers and catalogue settings", async run(env) {
+    await runAll(env, [
+      "CREATE TABLE IF NOT EXISTS wholesale_preview (kind TEXT NOT NULL CHECK(kind IN ('order', 'customer', 'catalogue')), id TEXT NOT NULL, data TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1, updated_at INTEGER NOT NULL, PRIMARY KEY(kind, id))",
+      "CREATE INDEX IF NOT EXISTS wholesale_preview_updated ON wholesale_preview(kind, updated_at DESC, id)",
+    ]);
+  } },
 ];
 
 async function migrate(env: Env): Promise<void> {

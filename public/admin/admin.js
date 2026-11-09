@@ -24,6 +24,7 @@
     cal: '<rect x="4" y="5" width="16" height="15" rx="3"/><path d="M4 10h16M9 3v4M15 3v4"/>',
     clock: '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>',
     more: '<circle cx="6" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="18" cy="12" r="1.3"/>',
+    coffee: '<path d="M5 8h12v7a6 6 0 0 1-12 0V8ZM17 9h2a3 3 0 0 1 0 6h-2M3 22h17M8 2v3M13 2v3"/>',
     lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
     user: '<circle cx="12" cy="8" r="3.5"/><path d="M5 20c.9-3.8 3.8-6 7-6s6.1 2.2 7 6"/>',
     warn: '<path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17v.5"/>',
@@ -136,13 +137,13 @@
   }
 
   /* ---------- navigation ---------- */
-  const NAV = [["overview", "Overview", "grid"], ["people", "People", "people"], ["sites", "Sites", "house"], ["activity", "Activity", "pulse"], ["security", "Security", "shield"], ["data", "Backups & exports", "db"]];
+  const NAV = [["overview", "Overview", "grid"], ["people", "People", "people"], ["sites", "Sites", "house"], ["wholesale", "Wholesale", "coffee"], ["activity", "Activity", "pulse"], ["security", "Security", "shield"], ["data", "Backups & exports", "db"]];
   const TABS = [["overview", "Overview", "grid"], ["people", "People", "people"], ["sites", "Sites", "house"], ["activity", "Activity", "pulse"], ["more", "More", "more"]];
-  const PAGES = ["overview", "people", "sites", "activity", "security", "data", "more"];
+  const PAGES = ["overview", "people", "sites", "wholesale", "activity", "security", "data", "more"];
   function renderNav() {
     const badge = S.locked ? html`<span class="badge" aria-label="${plural(S.locked, "account")} locked">${S.locked}</span>` : "";
     put($("#sideNav"), html`${NAV.map(([id, t, ic]) => html`<button class="nav" type="button" data-go="${id}" aria-current="${S.page === id ? "page" : "false"}">${svg(ic)}${t}${id === "security" ? badge : ""}</button>`)}`);
-    const tab = S.page === "security" || S.page === "data" ? "more" : S.page;
+    const tab = S.page === "security" || S.page === "data" || S.page === "wholesale" ? "more" : S.page;
     put($("#tabBar"), html`${TABS.map(([id, t, ic]) => html`<button type="button" data-go="${id}" aria-current="${tab === id ? "page" : "false"}">${svg(ic)}${t}${id === "more" ? badge : ""}</button>`)}`);
   }
   async function refreshBadge() {
@@ -171,6 +172,8 @@
 
   /* ---------- views ---------- */
   const VIEWS = {};
+  const wholesale = window.WholesaleAdmin({ api, html, raw, svg, head, openSheet, closeSheet, reload, toast });
+  VIEWS.wholesale = wholesale.view;
   let cache = {};
 
   VIEWS.overview = async () => {
@@ -403,6 +406,7 @@
   VIEWS.more = async () => html`
     ${head("More", "")}
     <div class="group glass">
+      <button class="item" type="button" data-go="wholesale"><span class="ic acc">${svg("coffee")}</span><span class="tx"><b>Wholesale</b><span>Preview orders, customers and coffee catalogue</span></span><span class="end"><span class="chev">${svg("chev")}</span></span></button>
       <button class="item" type="button" data-go="security"><span class="ic ${S.locked ? "bad" : "ok"}">${svg("shield")}</span><span class="tx"><b>Security</b><span>${S.locked ? `${plural(S.locked, "account")} locked` : "Sign-ins, PINs and protections"}</span></span><span class="end">${S.locked ? html`<span class="badge">${S.locked}</span>` : ""}<span class="chev">${svg("chev")}</span></span></button>
       <button class="item" type="button" data-go="data"><span class="ic mut">${svg("db")}</span><span class="tx"><b>Backups &amp; exports</b><span>Nightly backups, payroll hours and other downloads</span></span><span class="end"><span class="chev">${svg("chev")}</span></span></button>
     </div>
@@ -550,6 +554,10 @@
   }
 
   async function act(name, id, el) {
+    if (name.startsWith("wh-")) {
+      try { await wholesale.act(name, id); } catch (error) { toast(error.message); }
+      return;
+    }
     const p = person(id);
     switch (name) {
       case "go": show(id); return;
@@ -645,6 +653,7 @@
   // Search as you type, keeping the cursor in the box.
   let searchT;
   document.addEventListener("input", (e) => {
+    if (e.target.id === "wq") { wholesale.search(e.target.value); return; }
     if (e.target.id !== "q" && e.target.id !== "fq") return;
     const id = e.target.id;
     if (id === "q") S.q = e.target.value; else S.fq = e.target.value;

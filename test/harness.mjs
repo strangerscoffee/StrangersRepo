@@ -32,7 +32,7 @@ export async function startServer({ writeLimit, preSql, scheduled, vars = {} } =
     "--var", `SETUP_CODE:${SETUP_CODE}`, "--show-interactive-dev-session=false"];
   if (writeLimit) args.push("--var", `WRITE_LIMIT_PER_15_MIN:${writeLimit}`);
   // The admin section's own address is for the real site: here it's at /admin on the diary's (unless a test sets it).
-  for (const [k, v] of Object.entries({ ADMIN_HOST: "", ...vars })) args.push("--var", `${k}:${v}`);
+  for (const [k, v] of Object.entries({ ADMIN_HOST: "", PREVIEW_HOST: "", ...vars })) args.push("--var", `${k}:${v}`);
   if (scheduled) args.push("--test-scheduled"); // GET /__scheduled runs the Worker's scheduled() handler
   const proc = spawn(WRANGLER, args, { cwd: ROOT, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, CI: "1" } });
   let log = "";

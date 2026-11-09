@@ -132,6 +132,8 @@ test("security: staff can't use manager or admin features, managers can't use ad
       ["PATCH", `users/${someone.id}`, { role: "admin" }], ["PATCH", `users/${someone.id}`, { email: "eve@example.com" }], ["POST", "email/test"], ["POST", "email/weekly-test"], ["PATCH", `users/${someone.id}`, { emailPrefs: { weekly: false } }], ["GET", "status"], ["GET", "backups"], ["POST", "backups"],
       ["GET", "overview"], ["POST", "overview/dismiss", { key: "errors" }], ["GET", "people"], ["GET", "sites"], ["POST", "sites/factory/copy-setup", { from: "roastery" }], ["GET", "activity"],
       ["GET", "security"], ["POST", "security/reset-pins"], ["POST", "security/sign-out-all"], ["GET", "export/people.csv"], ["GET", "export/shifts.csv"],
+      ["GET", "wholesale"], ["POST", "wholesale/customers", {}], ["PUT", "wholesale/customers/00000000-0000-0000-0000-000000000000", {}],
+      ["PUT", "wholesale/catalogue/brazil", {}], ["PATCH", "wholesale/orders/PREVIEW-00000000000000000000000000000000", {}],
     ]) await denied(await send(method, "/api/admin/" + route, cookie, body), `${who} ${method} /api/admin/${route}`);
     for (const page of ["/admin", "/admin/", "/admin.html", "/admin/index.html"]) assert.equal((await send("GET", page, cookie)).headers.get("location"), "/", `${who} ${page}`);
   }

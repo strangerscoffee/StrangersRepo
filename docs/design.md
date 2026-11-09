@@ -74,3 +74,7 @@ Three stylesheets, loaded in this order (later rules win):
 - Status pills and text pass WCAG AA contrast in light and dark.
 - The diary content is a `<main>` landmark, the page is marked British English, and the site sheet, account menu and section cards use the matching ARIA roles and states (`dialog`, `menu`, `aria-expanded`, `aria-current`).
 - Blur is GPU work. It's fine on recent iPhones and iPads; on an old kitchen tablet that feels slow, turning on Reduce Transparency switches it off.
+
+## Wholesale preview
+
+Wholesale management is a native admin page (**Wholesale** in the sidebar, **More → Wholesale** on phones), using the existing Liquid Glass theme, escaped templates and sheets. It has Orders, Customers and Coffee catalogue views, preview-status filters, search, shared D1 records and version-checked forms. The separate ordering app at `PREVIEW_HOST` retains the supplied Strangers cream/green coffee shop style, with sign-in/account identity, per-user local baskets and a checkout that saves only preview orders. Both apps use the shared session and server-corrected UK clock. Source retail prices and preview-only commerce behaviour are stated visibly.
