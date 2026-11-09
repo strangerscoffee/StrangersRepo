@@ -2,11 +2,13 @@
 import { checkPassword, checkUsername, hashPassword, newId, tempPassword, type User } from "./auth";
 import { audit } from "./audit";
 import { ApiError, type Env, invalid, json, readJson, safeEqual } from "./http";
+import { locationDefaults, type CustomerLocation } from "./wholesaleCustomers";
 
 export interface Customer {
   business: string; contact: string; email: string; status: "Active" | "On hold"; note: string;
   phone?: string; address?: string; postcode?: string; deliveryNotes?: string;
   paymentTerms?: string; paymentNote?: string;
+  locations?: CustomerLocation[]; defaultLocationId?: string;
 }
 export const PAYMENT_TERMS = [
   { id: "to-agree", label: "To be agreed" },
@@ -44,7 +46,8 @@ export async function wholesaleCustomer(env: Env, id: string): Promise<CustomerR
   return row ? { ...JSON.parse(row.data), id, version: row.version, updatedAt: row.updated_at } : null;
 }
 export function publicCustomer(row: CustomerRecord) {
-  return { id: row.id, version: row.version, updatedAt: row.updatedAt, business: row.business, contact: row.contact, email: row.email, phone: row.phone || "", address: row.address || "", postcode: row.postcode || "", deliveryNotes: row.deliveryNotes || "", status: row.status, paymentTerms: paymentTermsFor(row) };
+  const { locations, defaultLocationId } = locationDefaults(row);
+  return { id: row.id, version: row.version, updatedAt: row.updatedAt, business: row.business, contact: row.contact, email: row.email, phone: row.phone || "", address: row.address || "", postcode: row.postcode || "", deliveryNotes: row.deliveryNotes || "", status: row.status, paymentTerms: paymentTermsFor(row), locations, defaultLocationId };
 }
 export async function wholesaleSession(req: Request, env: Env): Promise<WholesaleUser | null> {
   const token = tokenFrom(req);

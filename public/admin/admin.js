@@ -406,7 +406,7 @@
   VIEWS.more = async () => html`
     ${head("More", "")}
     <div class="group glass">
-      <button class="item" type="button" data-go="wholesale"><span class="ic acc">${svg("coffee")}</span><span class="tx"><b>Wholesale</b><span>Wholesale beta · orders, customers and coffee catalogue</span></span><span class="end"><span class="chev">${svg("chev")}</span></span></button>
+      <button class="item" type="button" data-go="wholesale"><span class="ic acc">${svg("coffee")}</span><span class="tx"><b>Wholesale</b><span>Orders, customers and coffee catalogue</span></span><span class="end"><span class="chev">${svg("chev")}</span></span></button>
       <button class="item" type="button" data-go="security"><span class="ic ${S.locked ? "bad" : "ok"}">${svg("shield")}</span><span class="tx"><b>Security</b><span>${S.locked ? `${plural(S.locked, "account")} locked` : "Sign-ins, PINs and protections"}</span></span><span class="end">${S.locked ? html`<span class="badge">${S.locked}</span>` : ""}<span class="chev">${svg("chev")}</span></span></button>
       <button class="item" type="button" data-go="data"><span class="ic mut">${svg("db")}</span><span class="tx"><b>Backups &amp; exports</b><span>Nightly backups, payroll hours and other downloads</span></span><span class="end"><span class="chev">${svg("chev")}</span></span></button>
     </div>

@@ -28,6 +28,15 @@ async function contextFor(viewport, colorScheme, cookie = ADMIN) {
   await context.addCookies([{ name, value, url: srv.base }]);
   return context;
 }
+async function assertDialogCloseClear(page, selector) {
+  const geometry = await page.locator(selector).evaluate((dialog) => {
+    const close = dialog.querySelector('.close-button').getBoundingClientRect();
+    const heading = [...dialog.querySelectorAll('h1,h2')].map((node) => node.getBoundingClientRect()).find((box) => box.width && box.height);
+    return { overlap: heading && Math.min(close.right, heading.right) > Math.max(close.left, heading.left) && Math.min(close.bottom, heading.bottom) > Math.max(close.top, heading.top), inViewport: close.left >= 0 && close.top >= 0 && close.right <= innerWidth + 1 && close.bottom <= innerHeight + 1 };
+  });
+  assert.equal(geometry.overlap, false, 'the modal close control has its own space above the heading');
+  assert.equal(geometry.inViewport, true, 'the modal close control remains visible on the screen');
+}
 
 for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad", { width: 1180, height: 820 }]]) for (const color of ["light", "dark"]) {
   test(`wholesale ${device} ${color}: staff order saves to native Admin menu and can be managed`, async () => {
@@ -39,7 +48,8 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       await page.goto(srv.base + "/wholesale-preview/");
       await page.locator("#products article").first().waitFor();
       assert.equal(await page.locator('link[rel="stylesheet"][href^="/theme.css"]').count(), 1, 'ordering uses the shared staff/Admin theme');
-      assert.equal(await page.locator('.beta-badge', { hasText: 'Beta' }).isVisible(), true);
+      assert.equal(await page.locator('main h1').textContent(), 'Wholesale');
+      assert.equal(await page.locator('.beta-badge, .help-note, #help-dialog').count(), 0);
       const design = await page.evaluate(() => {
         const card = document.querySelector('#products article');
         const controls = [...card.querySelectorAll('button, .pack-choice'), ...document.querySelectorAll('.filter, .basket-link, #my-orders, #preview-sign-out')];
@@ -60,6 +70,25 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       assert.ok(Math.abs(photo.width / photo.height - photo.naturalWidth / photo.naturalHeight) < 0.02, "photo keeps the full source image proportions");
       assert.equal(photo.fit, "contain");
       assert.equal(await page.locator('.intro').count(), 0, "requested marketing introduction is removed");
+      assert.equal(await page.locator('#basket-count').isHidden(), true, 'an empty order has no zero badge');
+      assert.match(await page.locator('#order-items').textContent(), /Your order is empty/);
+      assert.equal(await page.locator('.site-header #signed-in-name').count(), 1, 'the signed-in identity belongs in the glass header');
+      assert.equal(await page.locator('.session-strip').count(), 0, 'there is no separate account strip below the header');
+      const otherCard = page.locator('article[data-product="colombia"]');
+      await card.locator('[data-grind-open]').click();
+      await page.locator('#grind-dialog').waitFor();
+      await assertDialogCloseClear(page, '#grind-dialog');
+      await page.locator('#grind-choice-form [value="filter"]').check();
+      await page.locator('#grind-dialog [data-close]').last().click();
+      assert.equal(await card.locator('select[name="grind"]').inputValue(), 'beans', 'cancelling a grind choice preserves the card selection');
+      assert.equal(await card.locator('[data-grind-open]').evaluate((button) => document.activeElement === button), true, 'cancel returns focus to the grind picker');
+      await card.locator('[data-grind-open]').click();
+      await page.locator('#grind-choice-form [value="espresso"]').check();
+      await page.locator('#confirm-grind').click();
+      assert.equal(await card.locator('select[name="grind"]').inputValue(), 'espresso');
+      assert.match(await card.locator('[data-grind-label]').textContent(), /Espresso/);
+      assert.equal(await otherCard.locator('select[name="grind"]').inputValue(), 'beans', 'confirming grind changes only the chosen coffee card');
+      assert.equal(await card.locator('[data-grind-open]').evaluate((button) => document.activeElement === button), true, 'confirmation returns focus to the updated card');
       await card.locator('input[name="pack"][value="quarter"]').check();
       await card.locator('input[type="number"]').fill("2");
       await card.locator('button[type="submit"]').click();
@@ -71,6 +100,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       }
       await page.locator("#review-order").click();
       await page.locator("#review-dialog").waitFor();
+      await assertDialogCloseClear(page, '#review-dialog');
       const business = `${device} ${color} Preview Café`;
       await page.locator('#review-form input[name="business"]').fill(business);
       await page.locator('input[name="reference"]').fill(`Preview ${device} ${color}`);
@@ -79,7 +109,15 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       assert.match(await page.locator("#complete-message").textContent(), /was saved as a staff preview order/);
       const order = (await api("GET", "/api/admin/wholesale")).body.orders.find((order) => order.business === business);
       assert.ok(order, "order is saved on the server"); assert.equal(order.pence, 2100);
-      await page.locator("#complete-dashboard-link").click();
+      assert.equal(order.lines[0].grind, 'espresso', 'the saved order receives the confirmed picker value');
+      await assertDialogCloseClear(page, '#review-dialog');
+      await page.locator('#preview-complete [data-close]').click();
+      await page.locator('footer [data-order-history]').click();
+      await page.locator('#orders-dialog').waitFor();
+      await page.locator(`[data-history-order="${order.id}"]`).waitFor();
+      await assertDialogCloseClear(page, '#orders-dialog');
+      await page.locator('#orders-dialog .close-button').click();
+      await page.locator('#admin-wholesale-link').click();
       await page.locator("#main h1", { hasText: "Wholesale" }).waitFor();
       if (device === "phone") {
         await page.locator('#tabBar [data-go="more"]').click();
@@ -181,6 +219,8 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       assert.equal(await page.locator('#staff-preview-notice').isHidden(), true);
       await page.locator('#my-account').click();
       await page.locator('#account-dialog').waitFor();
+      assert.equal(await page.locator('#account-business').textContent(), business, 'the approved business name is shown without an editable customer field');
+      assert.equal(await page.locator('#account-form input[name="business"]:not([readonly]):not([hidden])').count(), 0);
       await page.locator('#account-form [name="address"]').fill('10 Coffee Street\nNorwich');
       await page.locator('#account-form [name="postcode"]').fill('NR1 1AA');
       await page.locator('#account-form [name="deliveryNotes"]').fill('Ring the bell');
@@ -196,7 +236,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       await card.locator('button[type="submit"]').click();
       await page.locator('#review-order').click();
       await page.locator('#review-dialog').waitFor();
-      assert.equal(await page.locator('#review-form [name="business"]').inputValue(), business);
+      assert.equal(await page.locator('#review-business').textContent(), business);
       assert.match(await page.locator('#delivery-summary').textContent(), /10 Coffee Street/);
       await page.locator('#review-form [name="reference"]').fill(username);
       await page.locator('#submit-preview-order').click();

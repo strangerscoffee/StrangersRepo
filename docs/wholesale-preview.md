@@ -1,6 +1,6 @@
-# Wholesale beta: accounts and ordering
+# Wholesale: accounts and ordering
 
-The operational Beta retains the existing address and data. Ordering: **https://preview.staffstrangerscoffee.com/**. Management: **https://admin.staffstrangerscoffee.com/#wholesale**, in the existing Admin sidebar or More menu. The independent public Site from the earlier design pass is a separate historical demo.
+Wholesale retains the existing address and data, with no Beta labels in the interface. Ordering: **https://preview.staffstrangerscoffee.com/**. Management: **https://admin.staffstrangerscoffee.com/#wholesale**, in the existing Admin sidebar or More menu. The independent public Site from the earlier design pass is a separate historical demo.
 
 ## Registration and approval
 
@@ -14,7 +14,7 @@ Staff retain their existing Staff Login through the Staff sign-in link. Their or
 
 ## Ordering and business details
 
-Approved customers maintain their own business, contact and delivery details in My account, using version checks. Internal account notes, approval, hold status and payment-term changes are admin-only fields. An account on hold can still view its orders but cannot submit a new one.
+Approved customers maintain contact details and saved delivery locations in My account, using version checks. The approved business name is displayed read-only; only admins can change it. Internal account notes, approval, hold status and payment-term changes are admin-only fields. An account on hold can still view its orders but cannot submit a new one.
 
 Customers select coffee, pack size, grind and quantity, review their basket and choose delivery or collection. Review reloads the current catalogue and business profile, including payment terms. Delivery requires an address and postcode. The server fixes business ownership and identity, checks current prices, stock and variants, and snapshots delivery details, line descriptions/prices and payment terms. Checkout carries the reviewed `customerVersion`; changed business details or terms require closing the review and reviewing again. An older client without that version must reload. Later edits do not rewrite old orders. UUID request IDs make identical retries idempotent, including after stock or terms change; another account or payload cannot reuse one. Successful checkout clears the basket.
 
@@ -46,7 +46,7 @@ Run `npm test`, then `CHROMIUM_PATH=/usr/bin/chromium npm run test:e2e` when usi
 
 For local development: `npm run dev -- --var PREVIEW_HOST:`. Ordering is at `/wholesale-preview/`, customer sign-in at `/wholesale-preview/signin`, and management at `/admin#wholesale`.
 
-## Beta interface and checkout recovery
+## Interface and checkout recovery
 
 Customer ordering and sign-in now use the staff apps’ shared Liquid Glass theme (`/theme.css`): system fonts, translucent cards and chrome, rounded controls, dark mode, safe areas and accessibility preferences. Admin Wholesale follows the existing admin section patterns. The hostname, API paths, storage keys and account/session/data identifiers are retained for compatibility; `preview` flags still distinguish staff test orders from real customer orders. Catalogue/session/bootstrap responses carry `stage:"beta"`.
 
@@ -67,3 +67,9 @@ Returning to a page from the browser’s back/forward cache closes private dialo
 Admins can choose Delete order from the order details sheet, then confirm the identified business/order and subtotal. Cancelling confirmation keeps the order and the editor draft. Successful removal hides the order from admin, customer and staff lists, history, counts and preparation totals. Staff, managers and wholesale customers cannot delete orders. A stale version is rejected so another admin’s updated order cannot be removed without review. Deletion does not change any existing payment or trigger a refund.
 
 The server retains the removed record with `deletedAt`/`deletedBy` for audit and duplicate-submission protection; backup exports retain it. The original successful request UUID cannot recreate a removed order: matching retries return 410 `order_deleted`. Removed orders return 404 on reads and further edits/deletes. This adds no table or schema migration.
+
+## Saved delivery locations and ordering controls
+
+Each business can keep up to 20 named delivery locations and choose a default. The main location remains linked to the existing primary address; additional locations can be added, edited and removed. Edits are staged in My account or the admin customer sheet and saved atomically with the customer version. At checkout, the business name stays fixed and a location picker shows the selected address and instructions. Receipts, history and admin packing views retain the chosen location as it was when ordered. Pending submissions retain the exact reviewed location/payload until resolved.
+
+The customer header groups account identity, account actions, catalogue/history navigation and basket access. Empty baskets use plain guidance; populated counts show bags. Grind choices open a built-in dialog with explicit confirmation; cancellation preserves the card selection. The footer groups Wholesale branding and catalogue, order-history and website links. Help-card/ordering-guide windows and visible Beta labels are removed. Dialog close controls sit in their own sticky toolbar above the content.
