@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <meta name="theme-color" content="#e8deca">
+  <title>Wholesale sign-in · Strangers Coffee</title>
+  <link rel="icon" href="/mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/wholesale-preview/wholesale.css">
+  <script src="/errors.js"></script>
+  <script src="/shared/core.js"></script>
+  <script src="/wholesale-preview/signin.js" defer></script>
+</head>
+<body class="wholesale-login">
+  <main class="login-panel">
+    <img class="login-mark" src="/mark.svg" width="64" height="64" alt="Strangers Coffee">
+    <p class="eyebrow">WHOLESALE</p>
+    <h1 id="login-title">Welcome back.</h1>
+    <p class="dialog-intro" id="login-intro">Sign in to order coffee for your business.</p>
+    <form id="wholesale-login">
+      <div id="registration-fields" hidden>
+        <label class="form-field">Business name<input name="business" maxlength="120" autocomplete="organization"></label>
+        <label class="form-field">Contact name<input name="contact" maxlength="120" autocomplete="name"></label>
+        <label class="form-field">Email<input name="email" type="email" maxlength="150" autocomplete="email"></label>
+        <label class="form-field">Phone <span>(optional)</span><input name="phone" type="tel" maxlength="40" autocomplete="tel"></label>
+      </div>
+      <label class="form-field">Username<input id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="32" required></label>
+      <label class="form-field">Password<input id="password" name="password" type="password" autocomplete="current-password" minlength="8" maxlength="128" required></label>
+      <div id="password-change" hidden>
+        <p class="dialog-intro">Choose your own password to finish setting up your account.</p>
+        <label class="form-field">New password<input id="new-password" name="newPassword" type="password" autocomplete="new-password" minlength="8" maxlength="128"></label>
+        <label class="form-field">Confirm new password<input id="confirm-password" type="password" autocomplete="new-password" minlength="8" maxlength="128"></label>
+      </div>
+      <p class="quantity-error" id="login-error" role="alert" hidden></p>
+      <button class="button button-dark" id="login-submit" type="submit">Sign in</button>
+    </form>
+    <div id="registration-complete" hidden><h2>Thanks for registering.</h2><p class="dialog-intro">Your account is awaiting review by Strangers. You can sign in and order once an admin has approved it.</p></div>
+    <button class="text-button" type="button" id="registration-toggle">Request a wholesale account</button>
+    <p class="login-help">Forgotten your password? Contact the Strangers team.</p>
+    <a class="text-button" href="/wholesale-preview/staff-signin">Staff sign-in</a>
+  </main>
+</body>
+</html>

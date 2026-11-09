@@ -61,7 +61,7 @@ test("rota tables from before day-by-day hours, amended shifts and contract rang
 test("migrations run once each, in order, and are recorded; the list indexes are used", async () => {
   await post("/api/auth/login", { username: "nobody", password: "x" }); // any API call sets the schema up
   const done = srv.sql("SELECT id, name FROM schema_migrations ORDER BY id");
-  assert.deepEqual(done.map((r) => r.id), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+  assert.deepEqual(done.map((r) => r.id), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
   assert.deepEqual(srv.sql("SELECT kind, id FROM wholesale_preview"), [], "the new preview table starts empty");
   assert.ok(done.every((r) => r.name), "each has a name");
   // The older rota columns were added by migrations 1-3 on this old database.

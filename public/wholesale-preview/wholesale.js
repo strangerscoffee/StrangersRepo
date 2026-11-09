@@ -12,6 +12,9 @@ let basket = [];
 let currentFilter = "all";
 let orderVisible = false;
 let toastTimer;
+let history = [];
+const canOrder = () => session?.customer?.status !== "On hold";
+const goSignIn = () => location.replace(location.pathname.startsWith("/wholesale-preview/") ? "/wholesale-preview/signin" : "/signin");
 
 function loadBasket() {
   let stored;
@@ -108,7 +111,7 @@ function renderBasket() {
   $("#order-totals").hidden = !basket.length;
   $("#total-weight").textContent = weight(sum.grams);
   $("#subtotal").textContent = money(sum.pence);
-  $("#review-order").disabled = !basket.length || basket.some((line) => productFor(line.productId).active === false);
+  $("#review-order").disabled = !canOrder() || !basket.length || basket.some((line) => productFor(line.productId).active === false);
   $("#basket-storage-note").textContent = storageAvailable ? "Your basket stays on this browser." : "Basket is temporary: browser storage is unavailable.";
   $("#mobile-packs").textContent = packText;
   $("#mobile-total").textContent = money(sum.pence);
@@ -139,7 +142,7 @@ document.addEventListener("input", (event) => {
   if (event.target.matches(".stepper input")) {
     validateQuantity(event.target);
     // Do not let the review include a different quantity from an invalid basket field on screen.
-    if (event.target.closest("#order-items")) $("#review-order").disabled = !!$("#order-items input[aria-invalid='true']") || basket.some((line) => productFor(line.productId).active === false);
+    if (event.target.closest("#order-items")) $("#review-order").disabled = !canOrder() || !!$("#order-items input[aria-invalid='true']") || basket.some((line) => productFor(line.productId).active === false);
   }
 });
 
@@ -207,13 +210,17 @@ document.querySelectorAll("[data-basket]").forEach((button) => button.addEventLi
 }));
 
 $("#review-order").addEventListener("click", () => {
-  if (!basket.length || $("#order-items input[aria-invalid='true']") || basket.some((line) => productFor(line.productId).active === false)) return;
+  if (!canOrder() || !basket.length || $("#order-items input[aria-invalid='true']") || basket.some((line) => productFor(line.productId).active === false)) return;
   $("#review-items").innerHTML = basket.map((line) => {
     const product = productFor(line.productId);
     return `<div class="review-line"><div><h3>${escape(product.name)}</h3><p>${line.quantity} × ${escape(packs[line.pack].label)} · ${escape(grinds[line.grind])}</p></div><strong>${money(unitPrice(product, line.pack) * line.quantity)}</strong></div>`;
   }).join("");
   $("#review-total").textContent = money(totals(basket).pence);
   $("#review-form").reset();
+  $("#review-form").elements.business.value = session.customer?.business || "";
+  $("#review-form").elements.business.readOnly = !!session.customer;
+  $("#delivery-summary").textContent = session.customer ? [session.customer.address, session.customer.postcode, session.customer.deliveryNotes].filter(Boolean).join(" · ") || "Add delivery details in My account, or choose roastery collection." : "";
+  $("#review-account").hidden = !session.customer;
   requestId = crypto.randomUUID();
   $("#preview-submit-error").hidden = true;
   $("#review-content").hidden = false;
@@ -237,10 +244,11 @@ $("#review-form").addEventListener("submit", async (event) => {
       delivery: form.elements.delivery.value === "collection" ? "Roastery collection" : "Delivery",
       reference: form.elements.reference.value, business: form.elements.business.value,
     });
-    $("#complete-message").textContent = `${result.order.id} was saved for the admin team to review. No payment, email or fulfilment action was sent.`;
+    $("#complete-message").textContent = result.preview ? `${result.order.id} was saved as a staff preview order.` : `${result.order.id} has been received by Strangers. Follow its progress in My orders.`;
     $("#complete-dashboard-link").hidden = session.me.role !== "admin";
     $("#complete-dashboard-link").href = session.links.admin + "#wholesale";
     $("#complete-total").textContent = money(result.order.pence);
+    basket = []; changedBasket();
     $("#review-content").hidden = true;
     $("#preview-complete").hidden = false;
     $("#review-dialog").setAttribute("aria-labelledby", "complete-title");
@@ -260,13 +268,13 @@ document.querySelectorAll("dialog").forEach((dialog) => {
   dialog.addEventListener("close", () => { if (dialog.id === "review-dialog") $("#review-form").reset(); });
 });
 
-async function api(path, body) {
+async function api(path, body, method) {
   let response;
-  try { response = await fetch(path, { method: body ? "POST" : "GET", cache: "no-store", credentials: "same-origin", headers: body ? { "content-type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined }); }
+  try { response = await fetch(path, { method: method || (body ? "POST" : "GET"), cache: "no-store", credentials: "same-origin", headers: body ? { "content-type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined }); }
   catch { throw new Error("Couldn’t reach the site. Check your connection and try again."); }
-  if (response.status === 401) { SC.goSignIn(); throw new Error("Sign in to continue."); }
+  if (response.status === 401 && !path.startsWith("/api/wholesale/auth/")) { goSignIn(); throw new Error("Sign in to continue."); }
   const data = await response.json();
-  if (!response.ok) throw new Error(data.message || "Couldn’t save this preview. Try again.");
+  if (!response.ok) throw Object.assign(new Error(data.message || "Couldn’t save. Try again."), { status: response.status, code: data.code });
   return data;
 }
 async function start() {
@@ -281,11 +289,14 @@ async function start() {
     }
     STORAGE_KEY = "strangers.wholesale-preview.v2." + session.me.id;
     basket = loadBasket();
-    $("#signed-in-name").textContent = session.me.name;
+    $("#signed-in-name").textContent = session.customer?.business || session.me.name;
     $("#preview-home").href = session.links.preview;
     $("#admin-wholesale-link").hidden = session.me.role !== "admin";
     $("#admin-wholesale-link").href = session.links.admin + "#wholesale";
-    $("#pricing-context").textContent = `Product data from strangerscoffee.com · ${session.sourceDate}. Published retail prices or admin-set preview prices. Wholesale rates to be confirmed.`;
+    $("#my-account").hidden = !session.customer;
+    $("#staff-preview-notice").hidden = !session.preview;
+    $("#submit-preview-order").textContent = session.preview ? "Save preview order" : "Place order";
+    $("#account-hold").hidden = canOrder();
     ready = true;
     renderProducts(); filterProducts(); renderBasket();
     $("#catalogue-status").hidden = true;
@@ -294,9 +305,76 @@ async function start() {
     $("#retry-catalogue").hidden = false;
   }
 }
-$("#preview-sign-out").addEventListener("click", () => SC.signOut());
+$("#preview-sign-out").addEventListener("click", async () => {
+  if (session?.me.role !== "wholesale") return SC.signOut();
+  try { await api("/api/wholesale/auth/logout", {}); goSignIn(); }
+  catch (error) { toast(error.message); }
+});
 $("#retry-catalogue").addEventListener("click", start);
-SC.recheckOnPageshow(() => SC.goSignIn());
+window.addEventListener("pageshow", (event) => { if (event.persisted) api("/api/wholesale/session").catch(() => {}); });
+
+async function openAccount() {
+  try {
+    const current = await api("/api/wholesale/session");
+    session.customer = current.customer;
+    if (!session.customer) return;
+    for (const key of ["business", "contact", "email", "phone", "address", "postcode", "deliveryNotes"]) $("#account-form").elements[key].value = session.customer[key] || "";
+    $("#account-error").hidden = $("#password-error").hidden = true;
+    $("#account-dialog").showModal();
+  } catch (error) { toast(error.message); }
+}
+$("#my-account").addEventListener("click", openAccount);
+$("#review-account").addEventListener("click", () => { $("#review-dialog").close(); openAccount(); });
+$("#account-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.target, button = form.querySelector('[type="submit"]');
+  button.disabled = true;
+  $("#account-error").hidden = true;
+  try {
+    const fields = Object.fromEntries(["business", "contact", "email", "phone", "address", "postcode", "deliveryNotes"].map((key) => [key, form.elements[key].value]));
+    const result = await api("/api/wholesale/account", { ...fields, ifVersion: session.customer.version }, "PUT");
+    session.customer = result.customer;
+    $("#signed-in-name").textContent = session.customer.business;
+    $("#account-dialog").close(); toast("Business details saved.");
+  } catch (error) { $("#account-error").textContent = error.message; $("#account-error").hidden = false; }
+  finally { button.disabled = false; }
+});
+$("#account-password-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.target, button = form.querySelector('[type="submit"]');
+  button.disabled = true;
+  $("#password-error").hidden = true;
+  try {
+    if (form.elements.newPassword.value !== form.elements.confirmPassword.value) throw new Error("The new passwords do not match.");
+    await api("/api/wholesale/auth/change-password", { username: session.me.username, password: form.elements.password.value, newPassword: form.elements.newPassword.value });
+    form.reset(); toast("Password changed. Your other sessions have been signed out.");
+  } catch (error) { $("#password-error").textContent = error.message; $("#password-error").hidden = false; }
+  finally { button.disabled = false; }
+});
+
+async function loadOrders() {
+  $("#order-history").textContent = "Loading your orders…";
+  try {
+    history = (await api("/api/wholesale/orders")).orders;
+    $("#order-history").innerHTML = history.length ? history.map((order) => `<article class="history-card"><p class="history-id">${escape(order.id)}</p><h3>${new Date(order.createdAt).toLocaleDateString("en-GB", { timeZone: "Europe/London", day: "numeric", month: "short", year: "numeric" })} · ${money(order.pence)}</h3><span class="order-state">${escape(order.status)}</span><p>${order.packs} bags · ${escape(order.delivery)}${order.reference ? ` · ${escape(order.reference)}` : ""}</p>${order.lines.map((line) => `<p>${line.quantity} × ${escape(line.title)} · ${escape(line.packLabel)} · ${escape(line.grindLabel)}</p>`).join("")}<button class="button button-outline" type="button" data-reorder="${escape(order.id)}">Order again</button></article>`).join("") : '<p class="dialog-intro">Your orders will appear here once you place one.</p>';
+  } catch (error) { $("#order-history").textContent = error.message; }
+}
+$("#my-orders").addEventListener("click", () => { $("#orders-dialog").showModal(); loadOrders(); });
+$("#order-history").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-reorder]");
+  if (!button || !ready) return;
+  const order = history.find((row) => row.id === button.dataset.reorder);
+  if (!order) return;
+  let added = 0;
+  for (const line of order.lines) {
+    const product = productFor(line.productId);
+    if (!product || product.active === false) continue;
+    const result = addToBasket(basket, line, line.quantity);
+    basket = result.basket; added += result.added;
+  }
+  changedBasket(); $("#orders-dialog").close();
+  toast(added ? `${added} bags added at current prices. Review your basket before placing the order.` : "These coffees are unavailable or already at the basket limit.");
+});
 if ("IntersectionObserver" in window) {
   new IntersectionObserver(([entry]) => { orderVisible = entry.isIntersecting; updateMobileBasket(); }, { threshold: 0 }).observe($("#your-order"));
 }

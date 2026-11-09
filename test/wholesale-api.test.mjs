@@ -48,7 +48,7 @@ test("wholesale: preview hostname uses Staff Login and isolates the ordering app
     assert.equal(signedOut.status, 302); assert.equal(signedOut.headers.get("location"), "/signin");
     for (const path of ["/", "/index.html"]) {
       const page = await call("GET", path, undefined, owner, preview.base);
-      assert.equal(page.status, 200); assert.match(page.text, /Good coffee/); assert.match(page.text, /\/wholesale-preview\/wholesale.js\?v=/);
+      assert.equal(page.status, 200); assert.match(page.text, /Wholesale ordering/); assert.doesNotMatch(page.text, /By the kilo/); assert.match(page.text, /\/wholesale-preview\/wholesale.js\?v=/);
       assert.equal(page.headers.get("cache-control"), "private, no-store");
     }
     for (const path of ["/api/db/get", "/api/rota/week", "/api/admin/wholesale"]) assert.equal((await call("GET", path, undefined, owner, preview.base)).status, 404, path);
@@ -60,6 +60,9 @@ test("wholesale: preview hostname uses Staff Login and isolates the ordering app
 });
 
 test("wholesale: catalogue, ordering pages and every management route require the right session", async () => {
+  const signin = await call("GET", "/wholesale-preview/signin", undefined, null);
+  assert.equal(signin.status, 200); assert.match(signin.text, /Request a wholesale account/);
+  assert.equal((await call("GET", "/wholesale-preview/staff-signin", undefined, null)).headers.get("location"), "/signin?next=%2Fwholesale-preview%2F");
   for (const path of ["/wholesale-preview/", "/wholesale-preview/index.html"]) assert.equal((await call("GET", path, undefined, null)).status, 302);
   assert.equal((await call("GET", "/api/wholesale/catalogue", undefined, null)).status, 401);
   assert.equal((await call("POST", "/api/wholesale/orders", payload(), null)).status, 401);

@@ -3,6 +3,7 @@ import { products as sourceProducts, catalogueRetrievedAt, type SourceCoffee } f
 import type { User } from "./auth";
 import { audit } from "./audit";
 import { ApiError, type Env, invalid, json, readJson } from "./http";
+import { manageWholesaleAccount, publicCustomer, wholesaleAccounts, wholesaleCustomer, type Customer, type OrderingUser } from "./wholesaleAccounts";
 
 type Kind = "order" | "customer" | "catalogue";
 type Pack = "quarter" | "half" | "kilo";
@@ -13,12 +14,12 @@ interface Row { id: string; data: string; version: number; updated_at: number }
 interface Versioned { id: string; version: number; updatedAt: number }
 interface CatalogueSettings { prices: Record<Pack, number>; active: boolean }
 type Coffee = SourceCoffee & { active: boolean; version: number };
-interface Customer { business: string; contact: string; email: string; status: "Active" | "On hold"; note: string }
 interface Line { productId: string; title: string; pack: Pack; packLabel: string; grind: string; grindLabel: string; quantity: number; price: number; grams: number }
 interface Order {
   createdBy: string; createdName: string; business: string; reference: string; delivery: string;
   customerId: string | null; status: string; note: string; date: string; createdAt: number;
   requestKey: string; lines: Line[]; pence: number; grams: number; packs: number;
+  preview?: boolean; customerSnapshot?: ReturnType<typeof publicCustomer>; deliveryNotes?: string;
 }
 type Links = { admin: string; diary: string; preview?: string };
 const denied = () => new ApiError(403, "permission_denied", "Only admins can manage the wholesale preview.");
@@ -61,9 +62,9 @@ async function catalogue(env: Env): Promise<Coffee[]> {
     return { ...product, prices: { ...prices }, price: prices.kilo, active: entry?.active ?? true, version: entry?.version ?? 0 };
   });
 }
-function visibleOrder(order: Order & Versioned) {
-  const { requestKey, ...visible } = order;
-  return visible;
+function visibleOrder(order: Order & Versioned, admin = false) {
+  const { requestKey, note, ...visible } = order;
+  return admin ? { ...visible, note } : visible;
 }
 function orderBody(value: unknown) {
   const body = object(value);
@@ -88,14 +89,24 @@ function orderBody(value: unknown) {
     delivery: body.delivery as string, reference: text(body.reference, "purchase reference", 80), business: text(body.business, "business name", 120),
   };
 }
-async function createOrder(req: Request, env: Env, user: User): Promise<Response> {
+async function createOrder(req: Request, env: Env, user: OrderingUser): Promise<Response> {
   const body = orderBody(await readJson(req, 32 * 1024));
-  const requestKey = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(body))))].map((n) => n.toString(16).padStart(2, "0")).join("");
+  const customer = user.role === "wholesale" ? await wholesaleCustomer(env, user.customerId) : null;
+  if (user.role === "wholesale") {
+    if (!customer) throw new ApiError(403, "permission_denied", "Your wholesale account is unavailable. Contact Strangers.");
+    body.id = body.id.replace("PREVIEW-", "WS-");
+    body.business = customer.business;
+  }
+  // Retrying a customer request still finds its original snapshot if business details changed meanwhile.
+  const request = user.role === "wholesale" ? { ...body, business: user.customerId } : body;
+  const requestKey = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(request))))].map((n) => n.toString(16).padStart(2, "0")).join("");
   const existing = await get<Order>(env, "order", body.id);
   if (existing) {
     if (existing.createdBy !== user.id || existing.requestKey !== requestKey) throw new ApiError(409, "conflict", "That requestId has already been used for another preview order.");
-    return json({ order: visibleOrder(existing), preview: true });
+    return json({ order: visibleOrder(existing), preview: existing.preview !== false });
   }
+  if (customer?.status === "On hold") throw new ApiError(403, "account_on_hold", "Your account is on hold. Contact Strangers before placing an order.");
+  if (customer && body.delivery === "Delivery" && (!customer.address?.trim() || !customer.postcode?.trim())) throw invalid("Add your delivery address and postcode in My account before ordering delivery.");
   const coffees = await catalogue(env);
   const lines = body.lines.map((line): Line => {
     const product = coffees.find((product) => product.id === line.productId)!;
@@ -106,7 +117,7 @@ async function createOrder(req: Request, env: Env, user: User): Promise<Response
   const at = Date.now();
   const order: Order = {
     createdBy: user.id, createdName: user.name, business: body.business, reference: body.reference, delivery: body.delivery,
-    customerId: null, status: "New", note: "", date: new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone: "Europe/London" }).format(new Date(at)),
+    customerId: customer?.id || null, status: "New", note: "", preview: !customer, ...(customer ? { customerSnapshot: publicCustomer(customer), deliveryNotes: customer.deliveryNotes || "" } : {}), date: new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone: "Europe/London" }).format(new Date(at)),
     createdAt: at, requestKey, lines,
     pence: lines.reduce((sum, line) => sum + line.price * line.quantity, 0), grams: lines.reduce((sum, line) => sum + line.grams * line.quantity, 0), packs: lines.reduce((sum, line) => sum + line.quantity, 0),
   };
@@ -116,21 +127,39 @@ async function createOrder(req: Request, env: Env, user: User): Promise<Response
     if (!(error instanceof ApiError) || error.code !== "conflict") throw error;
     const raced = await get<Order>(env, "order", body.id);
     if (!raced || raced.createdBy !== user.id || raced.requestKey !== requestKey) throw error;
-    return json({ order: visibleOrder(raced), preview: true });
+    return json({ order: visibleOrder(raced), preview: raced.preview !== false });
   }
-  await audit(env, "wholesale_preview_order", user.name, `${user.name} saved wholesale preview order ${body.id}. No fulfilment action was sent.`);
-  return json({ order: visibleOrder(saved), preview: true }, 201);
+  await audit(env, customer ? "wholesale_order" : "wholesale_preview_order", user.name, `${user.name} placed ${customer ? "wholesale" : "staff preview"} order ${body.id}.`);
+  return json({ order: visibleOrder(saved), preview: !customer }, 201);
 }
 
 /** All staff can browse the signed-in catalogue and save preview orders. They cannot read others' records. */
-export async function handleWholesale(req: Request, env: Env, route: string, user: User, links: Links): Promise<Response> {
-  if (route === "catalogue" && req.method === "GET") return json({ products: await catalogue(env), sourceDate: catalogueRetrievedAt, me: user, links: { ...links, preview: links.preview || "/wholesale-preview/" }, preview: true });
+export async function handleWholesale(req: Request, env: Env, route: string, user: OrderingUser, links: Links): Promise<Response> {
+  const customer = user.role === "wholesale" ? await wholesaleCustomer(env, user.customerId) : null;
+  if ((route === "catalogue" || route === "session") && req.method === "GET") return json({ ...(route === "catalogue" ? { products: await catalogue(env), sourceDate: catalogueRetrievedAt } : {}), me: user, customer: customer ? publicCustomer(customer) : null, links: { ...(user.role === "wholesale" ? {} : links), preview: links.preview || "/wholesale-preview/" }, preview: user.role !== "wholesale" });
+  if (route === "account" && req.method === "PUT" && customer) {
+    const body = object(await readJson(req, 8192));
+    const email = text(body.email, "email", 150);
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw invalid("Check the contact email.");
+    const { id, version: oldVersion, updatedAt, ...current } = customer;
+    const saved = await save(env, "customer", id, { ...current, business: text(body.business, "business name", 120, true), contact: text(body.contact, "contact name", 120), email, phone: text(body.phone, "phone number", 40), address: text(body.address, "delivery address", 500), postcode: text(body.postcode, "postcode", 20), deliveryNotes: text(body.deliveryNotes, "delivery notes", 1000) }, version(body.ifVersion));
+    await audit(env, "wholesale_profile", user.name, `${user.name} updated their wholesale business details.`);
+    return json({ customer: publicCustomer(saved) });
+  }
+  if (route === "orders" && req.method === "GET") {
+    const sql = user.role === "wholesale"
+      ? "SELECT id, data, version, updated_at FROM wholesale_preview WHERE kind = 'order' AND json_extract(data, '$.customerId') = ? AND json_extract(data, '$.preview') = 0 ORDER BY updated_at DESC LIMIT 200"
+      : "SELECT id, data, version, updated_at FROM wholesale_preview WHERE kind = 'order' AND json_extract(data, '$.createdBy') = ? ORDER BY updated_at DESC LIMIT 200";
+    const rows = await env.DB.prepare(sql).bind(user.role === "wholesale" ? user.customerId : user.id).all<Row>();
+    return json({ orders: rows.results.map((row) => visibleOrder(decode<Order>(row))) });
+  }
   if (route === "orders" && req.method === "POST") return createOrder(req, env, user);
-  const match = /^orders\/(PREVIEW-[A-F0-9]{32})$/.exec(route);
+  const match = /^orders\/((?:PREVIEW|WS)-[A-F0-9]{32})$/.exec(route);
   if (match && req.method === "GET") {
     const order = await get<Order>(env, "order", match[1]);
-    if (!order || (order.createdBy !== user.id && user.role !== "admin")) throw new ApiError(404, "not_found", "Preview order not found.");
-    return json({ order: visibleOrder(order), preview: true });
+    const permitted = order && (user.role === "wholesale" ? order.customerId === user.customerId && order.preview === false : order.createdBy === user.id || user.role === "admin");
+    if (!order || !permitted) throw new ApiError(404, "not_found", "Order not found.");
+    return json({ order: visibleOrder(order, user.role === "admin"), preview: order.preview !== false });
   }
   throw new ApiError(404, "not_found", "Unknown wholesale preview route.");
 }
@@ -143,19 +172,22 @@ export async function handleWholesaleAdmin(req: Request, env: Env, route: string
       list<Order>(env, "order"), list<Customer>(env, "customer"), catalogue(env),
       env.DB.prepare("SELECT kind, COUNT(*) AS n FROM wholesale_preview GROUP BY kind").all<{ kind: string; n: number }>(),
     ]);
-    return json({ orders: orders.map(visibleOrder), customers, products, statuses: STATUSES, sourceDate: catalogueRetrievedAt, counts: Object.fromEntries(counts.results.map((row) => [row.kind, row.n])), links: { ...links, preview: links.preview || "/wholesale-preview/" }, preview: true });
+    return json({ orders: orders.map((order) => visibleOrder(order, true)), customers, accounts: await wholesaleAccounts(env), products, statuses: STATUSES, sourceDate: catalogueRetrievedAt, counts: Object.fromEntries(counts.results.map((row) => [row.kind, row.n])), links: { ...links, preview: links.preview || "/wholesale-preview/" }, preview: true });
   }
+  const accountMatch = /^customers\/([a-f0-9-]{36})\/account(\/reset-password)?$/.exec(route);
+  if (accountMatch && ((accountMatch[2] && req.method === "POST") || (!accountMatch[2] && ["POST", "PUT"].includes(req.method)))) return manageWholesaleAccount(req, env, accountMatch[1], !!accountMatch[2], user.name);
   if (!["POST", "PUT", "PATCH"].includes(req.method)) throw new ApiError(404, "not_found", "Unknown wholesale management route.");
   const body = object(await readJson(req, 16 * 1024));
   const customerMatch = /^customers\/([a-f0-9-]{36})$/.exec(route);
   if ((route === "customers" && req.method === "POST") || (customerMatch && req.method === "PUT")) {
     const expected = customerMatch ? version(body.ifVersion) : 0;
-    if (customerMatch && !await get<Customer>(env, "customer", customerMatch[1])) throw new ApiError(404, "not_found", "Preview customer not found.");
+    const oldCustomer = customerMatch ? await get<Customer>(env, "customer", customerMatch[1]) : null;
+    if (customerMatch && !oldCustomer) throw new ApiError(404, "not_found", "Customer not found.");
     const business = text(body.business, "business name", 120, true);
     const email = text(body.email, "email", 150);
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw invalid("Check the contact email.");
     if (body.status !== "Active" && body.status !== "On hold") throw invalid("Choose Active or On hold.");
-    const data: Customer = { business, email, contact: text(body.contact, "contact name", 120), status: body.status, note: text(body.note, "account note", 1000) };
+    const data: Customer = { business, email, contact: text(body.contact, "contact name", 120), phone: body.phone === undefined ? oldCustomer?.phone || "" : text(body.phone, "phone number", 40), address: body.address === undefined ? oldCustomer?.address || "" : text(body.address, "delivery address", 500), postcode: body.postcode === undefined ? oldCustomer?.postcode || "" : text(body.postcode, "postcode", 20), deliveryNotes: body.deliveryNotes === undefined ? oldCustomer?.deliveryNotes || "" : text(body.deliveryNotes, "delivery notes", 1000), status: body.status, note: text(body.note, "account note", 1000) };
     const customer = await save(env, "customer", customerMatch?.[1] || crypto.randomUUID(), data, expected);
     await audit(env, "wholesale_preview_customer", user.name, `${user.name} ${customerMatch ? "updated" : "added"} wholesale preview customer ${business}.`);
     return json({ customer }, customerMatch ? 200 : 201);
@@ -170,17 +202,18 @@ export async function handleWholesaleAdmin(req: Request, env: Env, route: string
     await audit(env, "wholesale_preview_catalogue", user.name, `${user.name} updated wholesale preview coffee ${productMatch[1]}.`);
     return json({ product });
   }
-  const orderMatch = /^orders\/(PREVIEW-[A-F0-9]{32})$/.exec(route);
+  const orderMatch = /^orders\/((?:PREVIEW|WS)-[A-F0-9]{32})$/.exec(route);
   if (orderMatch && req.method === "PATCH") {
     const order = await get<Order>(env, "order", orderMatch[1]);
     if (!order) throw new ApiError(404, "not_found", "Preview order not found.");
     if (!STATUSES.includes(body.status)) throw invalid("Choose a listed preview order status.");
     const customerId = body.customerId ?? null;
     if (customerId !== null && (typeof customerId !== "string" || !await get<Customer>(env, "customer", customerId))) throw invalid("Choose an existing preview customer.");
+    if (order.preview === false && customerId !== order.customerId) throw invalid("Customer orders stay linked to the business that placed them.");
     const { id, version: oldVersion, updatedAt, ...current } = order;
     const updated = await save(env, "order", id, { ...current, status: body.status, customerId, note: text(body.note, "order note", 1000) }, version(body.ifVersion));
     await audit(env, "wholesale_preview_status", user.name, `${user.name} marked wholesale preview order ${id} as ${body.status}. No fulfilment action was sent.`);
-    return json({ order: visibleOrder(updated) });
+    return json({ order: visibleOrder(updated, true) });
   }
   throw new ApiError(404, "not_found", "Unknown wholesale management route.");
 }
