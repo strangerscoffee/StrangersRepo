@@ -1,67 +1,26 @@
 // Shared, signed-in wholesale PREVIEW. No payments, emails or fulfilment actions are performed.
-import { products as sourceProducts, catalogueRetrievedAt, type SourceCoffee } from "../public/wholesale-preview/catalogue.js";
+import { catalogueRetrievedAt } from "../public/wholesale-preview/catalogue.js";
 import type { User } from "./auth";
+import { object, text, version, decode, get, list, save, type Row, type Versioned } from "./wholesaleStore";
+import { catalogue, handleCatalogueAdmin, serveCatalogueImage } from "./wholesaleCatalogue";
 import { audit } from "./audit";
 import { ApiError, type Env, invalid, json, readJson } from "./http";
-import { manageWholesaleAccount, publicCustomer, wholesaleAccounts, wholesaleCustomer, type Customer, type OrderingUser } from "./wholesaleAccounts";
+import { manageWholesaleAccount, publicCustomer, wholesaleAccounts, wholesaleCustomer, paymentTermsFor, PAYMENT_TERMS, type Customer, type OrderingUser } from "./wholesaleAccounts";
 
-type Kind = "order" | "customer" | "catalogue";
 type Pack = "quarter" | "half" | "kilo";
 const PACKS: Record<Pack, { label: string; grams: number }> = { quarter: { label: "250 g bag", grams: 250 }, half: { label: "500 g bag", grams: 500 }, kilo: { label: "1 kg bag", grams: 1000 } };
 const GRINDS: Record<string, string> = { beans: "Beans", espresso: "Espresso / Fine", moka: "Moka Pot / Fine", filter: "Filter / Medium", cafetiere: "Cafetiere / Coarse" };
 const STATUSES = ["New", "Preparing", "Ready", "Dispatched", "Cancelled"];
-interface Row { id: string; data: string; version: number; updated_at: number }
-interface Versioned { id: string; version: number; updatedAt: number }
-interface CatalogueSettings { prices: Record<Pack, number>; active: boolean }
-type Coffee = SourceCoffee & { active: boolean; version: number };
 interface Line { productId: string; title: string; pack: Pack; packLabel: string; grind: string; grindLabel: string; quantity: number; price: number; grams: number }
 interface Order {
   createdBy: string; createdName: string; business: string; reference: string; delivery: string;
   customerId: string | null; status: string; note: string; date: string; createdAt: number;
   requestKey: string; lines: Line[]; pence: number; grams: number; packs: number;
   preview?: boolean; customerSnapshot?: ReturnType<typeof publicCustomer>; deliveryNotes?: string;
+  paymentTerms?: ReturnType<typeof paymentTermsFor>;
 }
 type Links = { admin: string; diary: string; preview?: string };
 const denied = () => new ApiError(403, "permission_denied", "Only admins can manage the wholesale preview.");
-const conflict = () => new ApiError(409, "conflict", "This record changed on another device. Reload it before saving.");
-const object = (value: unknown): Record<string, any> => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid("Send a JSON object.");
-  return value as Record<string, any>;
-};
-function text(value: unknown, label: string, max: number, required = false): string {
-  if (value === undefined && !required) return "";
-  if (typeof value !== "string" || value.trim().length > max || (required && !value.trim())) throw invalid(`Check ${label} (maximum ${max} characters).`);
-  return value.trim();
-}
-function version(value: unknown): number {
-  if (!Number.isSafeInteger(value) || (value as number) < 0) throw invalid("Send the record's ifVersion.");
-  return value as number;
-}
-const decode = <T>(row: Row): T & Versioned => ({ ...JSON.parse(row.data), id: row.id, version: row.version, updatedAt: row.updated_at });
-async function get<T>(env: Env, kind: Kind, id: string): Promise<(T & Versioned) | null> {
-  const row = await env.DB.prepare("SELECT id, data, version, updated_at FROM wholesale_preview WHERE kind = ? AND id = ?").bind(kind, id).first<Row>();
-  return row ? decode<T>(row) : null;
-}
-async function list<T>(env: Env, kind: Kind, limit = 200): Promise<(T & Versioned)[]> {
-  const rows = await env.DB.prepare("SELECT id, data, version, updated_at FROM wholesale_preview WHERE kind = ? ORDER BY updated_at DESC, id LIMIT ?").bind(kind, limit).all<Row>();
-  return rows.results.map((row) => decode<T>(row));
-}
-async function save<T extends object>(env: Env, kind: Kind, id: string, data: T, expected: number): Promise<T & Versioned> {
-  const at = Date.now();
-  const result = expected === 0
-    ? await env.DB.prepare("INSERT INTO wholesale_preview (kind, id, data, version, updated_at) VALUES (?, ?, ?, 1, ?) ON CONFLICT(kind, id) DO NOTHING").bind(kind, id, JSON.stringify(data), at).run()
-    : await env.DB.prepare("UPDATE wholesale_preview SET data = ?, version = version + 1, updated_at = ? WHERE kind = ? AND id = ? AND version = ?").bind(JSON.stringify(data), at, kind, id, expected).run();
-  if (!result.meta.changes) throw conflict();
-  return { ...data, id, version: expected + 1, updatedAt: at };
-}
-async function catalogue(env: Env): Promise<Coffee[]> {
-  const settings = await list<CatalogueSettings>(env, "catalogue", 100);
-  return sourceProducts.map((product) => {
-    const entry = settings.find((row) => row.id === product.id);
-    const prices = entry?.prices || product.prices;
-    return { ...product, prices: { ...prices }, price: prices.kilo, active: entry?.active ?? true, version: entry?.version ?? 0 };
-  });
-}
 function visibleOrder(order: Order & Versioned, admin = false) {
   const { requestKey, note, ...visible } = order;
   return admin ? { ...visible, note } : visible;
@@ -73,7 +32,7 @@ function orderBody(value: unknown) {
   const lines: { productId: string; pack: Pack; grind: string; quantity: number; price: number }[] = [];
   for (const value of body.lines) {
     const line = object(value);
-    if (!sourceProducts.some((product) => product.id === line.productId) || typeof line.pack !== "string" || !Object.hasOwn(PACKS, line.pack) || typeof line.grind !== "string" || !Object.hasOwn(GRINDS, line.grind)) throw invalid("Choose a listed coffee, bag size and grind.");
+    if ((typeof line.productId !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(line.productId)) || typeof line.pack !== "string" || !Object.hasOwn(PACKS, line.pack) || typeof line.grind !== "string" || !Object.hasOwn(GRINDS, line.grind)) throw invalid("Choose a listed coffee, bag size and grind.");
     if (!Number.isInteger(line.quantity) || line.quantity < 1 || line.quantity > 99) throw invalid("Choose a whole number of bags from 1 to 99.");
     if (!Number.isInteger(line.price) || line.price < 1 || line.price > 1000000) throw invalid("Check the quoted coffee price.");
     const previous = lines.find((item) => item.productId === line.productId && item.pack === line.pack && item.grind === line.grind);
@@ -90,7 +49,8 @@ function orderBody(value: unknown) {
   };
 }
 async function createOrder(req: Request, env: Env, user: OrderingUser): Promise<Response> {
-  const body = orderBody(await readJson(req, 32 * 1024));
+  const submitted = object(await readJson(req, 32 * 1024));
+  const body = orderBody(submitted);
   const customer = user.role === "wholesale" ? await wholesaleCustomer(env, user.customerId) : null;
   if (user.role === "wholesale") {
     if (!customer) throw new ApiError(403, "permission_denied", "Your wholesale account is unavailable. Contact Strangers.");
@@ -107,9 +67,13 @@ async function createOrder(req: Request, env: Env, user: OrderingUser): Promise<
   }
   if (customer?.status === "On hold") throw new ApiError(403, "account_on_hold", "Your account is on hold. Contact Strangers before placing an order.");
   if (customer && body.delivery === "Delivery" && (!customer.address?.trim() || !customer.postcode?.trim())) throw invalid("Add your delivery address and postcode in My account before ordering delivery.");
+  if (customer && !Number.isSafeInteger(submitted.customerVersion)) throw new ApiError(409, "account_changed", "Reload the page to update ordering, then review your basket again.");
+  if (customer && submitted.customerVersion !== customer.version) throw new ApiError(409, "account_changed", "Your business details or payment terms changed. Close this review and review your basket again.");
   const coffees = await catalogue(env);
   const lines = body.lines.map((line): Line => {
-    const product = coffees.find((product) => product.id === line.productId)!;
+    const product = coffees.find((product) => product.id === line.productId);
+    if (!product) throw invalid("Choose a listed coffee.");
+    if (!product.inStock) throw new ApiError(409, "out_of_stock", `${product.name} is out of stock. Remove it from your basket to continue.`);
     if (!product.active) throw new ApiError(409, "conflict", `${product.name} is no longer in the preview catalogue. Reload your basket.`);
     if (line.price !== product.prices[line.pack]) throw new ApiError(409, "conflict", "The preview prices have changed. Reload and review your order again.");
     return { ...line, title: product.title, packLabel: PACKS[line.pack].label, grindLabel: GRINDS[line.grind], price: product.prices[line.pack], grams: PACKS[line.pack].grams };
@@ -117,7 +81,7 @@ async function createOrder(req: Request, env: Env, user: OrderingUser): Promise<
   const at = Date.now();
   const order: Order = {
     createdBy: user.id, createdName: user.name, business: body.business, reference: body.reference, delivery: body.delivery,
-    customerId: customer?.id || null, status: "New", note: "", preview: !customer, ...(customer ? { customerSnapshot: publicCustomer(customer), deliveryNotes: customer.deliveryNotes || "" } : {}), date: new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone: "Europe/London" }).format(new Date(at)),
+    customerId: customer?.id || null, status: "New", note: "", preview: !customer, ...(customer ? { customerSnapshot: publicCustomer(customer), deliveryNotes: customer.deliveryNotes || "", paymentTerms: paymentTermsFor(customer) } : {}), date: new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone: "Europe/London" }).format(new Date(at)),
     createdAt: at, requestKey, lines,
     pence: lines.reduce((sum, line) => sum + line.price * line.quantity, 0), grams: lines.reduce((sum, line) => sum + line.grams * line.quantity, 0), packs: lines.reduce((sum, line) => sum + line.quantity, 0),
   };
@@ -153,6 +117,7 @@ export async function handleWholesale(req: Request, env: Env, route: string, use
     const rows = await env.DB.prepare(sql).bind(user.role === "wholesale" ? user.customerId : user.id).all<Row>();
     return json({ orders: rows.results.map((row) => visibleOrder(decode<Order>(row))) });
   }
+  if (/^images\/[a-f0-9]{32}$/.test(route) && req.method === "GET") return serveCatalogueImage(env, route.slice("images/".length));
   if (route === "orders" && req.method === "POST") return createOrder(req, env, user);
   const match = /^orders\/((?:PREVIEW|WS)-[A-F0-9]{32})$/.exec(route);
   if (match && req.method === "GET") {
@@ -169,11 +134,13 @@ export async function handleWholesaleAdmin(req: Request, env: Env, route: string
   if (user.role !== "admin") throw denied();
   if (route === "" && req.method === "GET") {
     const [orders, customers, products, counts] = await Promise.all([
-      list<Order>(env, "order"), list<Customer>(env, "customer"), catalogue(env),
+      list<Order>(env, "order"), list<Customer>(env, "customer"), catalogue(env, true),
       env.DB.prepare("SELECT kind, COUNT(*) AS n FROM wholesale_preview GROUP BY kind").all<{ kind: string; n: number }>(),
     ]);
-    return json({ orders: orders.map((order) => visibleOrder(order, true)), customers, accounts: await wholesaleAccounts(env), products, statuses: STATUSES, sourceDate: catalogueRetrievedAt, counts: Object.fromEntries(counts.results.map((row) => [row.kind, row.n])), links: { ...links, preview: links.preview || "/wholesale-preview/" }, preview: true });
+    return json({ orders: orders.map((order) => visibleOrder(order, true)), customers, accounts: await wholesaleAccounts(env), products, paymentTermChoices: PAYMENT_TERMS, statuses: STATUSES, sourceDate: catalogueRetrievedAt, counts: Object.fromEntries(counts.results.map((row) => [row.kind, row.n])), links: { ...links, preview: links.preview || "/wholesale-preview/" }, preview: true });
   }
+  const catalogueResponse = await handleCatalogueAdmin(req, env, route, user.name);
+  if (catalogueResponse) return catalogueResponse;
   const accountMatch = /^customers\/([a-f0-9-]{36})\/account(\/reset-password)?$/.exec(route);
   if (accountMatch && ((accountMatch[2] && req.method === "POST") || (!accountMatch[2] && ["POST", "PUT"].includes(req.method)))) return manageWholesaleAccount(req, env, accountMatch[1], !!accountMatch[2], user.name);
   if (!["POST", "PUT", "PATCH"].includes(req.method)) throw new ApiError(404, "not_found", "Unknown wholesale management route.");
@@ -187,20 +154,15 @@ export async function handleWholesaleAdmin(req: Request, env: Env, route: string
     const email = text(body.email, "email", 150);
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw invalid("Check the contact email.");
     if (body.status !== "Active" && body.status !== "On hold") throw invalid("Choose Active or On hold.");
+    const paymentTerms = body.paymentTerms === undefined ? oldCustomer?.paymentTerms || "to-agree" : body.paymentTerms;
+    if (typeof paymentTerms !== "string" || !PAYMENT_TERMS.some((term) => term.id === paymentTerms)) throw invalid("Choose listed payment terms.");
     const data: Customer = { business, email, contact: text(body.contact, "contact name", 120), phone: body.phone === undefined ? oldCustomer?.phone || "" : text(body.phone, "phone number", 40), address: body.address === undefined ? oldCustomer?.address || "" : text(body.address, "delivery address", 500), postcode: body.postcode === undefined ? oldCustomer?.postcode || "" : text(body.postcode, "postcode", 20), deliveryNotes: body.deliveryNotes === undefined ? oldCustomer?.deliveryNotes || "" : text(body.deliveryNotes, "delivery notes", 1000), status: body.status, note: text(body.note, "account note", 1000) };
+    data.paymentTerms = paymentTerms;
+    data.paymentNote = body.paymentNote === undefined ? oldCustomer?.paymentNote || "" : text(body.paymentNote, "payment instructions", 500);
+    if (paymentTerms === "custom" && !data.paymentNote.trim()) throw invalid("Add the agreed custom payment terms in payment instructions.");
     const customer = await save(env, "customer", customerMatch?.[1] || crypto.randomUUID(), data, expected);
     await audit(env, "wholesale_preview_customer", user.name, `${user.name} ${customerMatch ? "updated" : "added"} wholesale preview customer ${business}.`);
     return json({ customer }, customerMatch ? 200 : 201);
-  }
-  const productMatch = /^catalogue\/([a-z-]+)$/.exec(route);
-  if (productMatch && req.method === "PUT") {
-    if (!sourceProducts.some((product) => product.id === productMatch[1])) throw invalid("Unknown coffee.");
-    const prices = object(body.prices);
-    if (Object.keys(prices).length !== 3 || Object.keys(PACKS).some((pack) => !Number.isInteger(prices[pack]) || prices[pack] < 1 || prices[pack] > 1000000)) throw invalid("Send all three bag prices in pence, from £0.01 to £10,000.00.");
-    if (typeof body.active !== "boolean") throw invalid("Choose whether this coffee is visible in the preview.");
-    const product = await save<CatalogueSettings>(env, "catalogue", productMatch[1], { prices: { quarter: prices.quarter, half: prices.half, kilo: prices.kilo }, active: body.active }, version(body.ifVersion));
-    await audit(env, "wholesale_preview_catalogue", user.name, `${user.name} updated wholesale preview coffee ${productMatch[1]}.`);
-    return json({ product });
   }
   const orderMatch = /^orders\/((?:PREVIEW|WS)-[A-F0-9]{32})$/.exec(route);
   if (orderMatch && req.method === "PATCH") {

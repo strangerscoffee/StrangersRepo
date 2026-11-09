@@ -172,7 +172,7 @@
 
   /* ---------- views ---------- */
   const VIEWS = {};
-  const wholesale = window.WholesaleAdmin({ api, html, raw, svg, head, openSheet, closeSheet, reload, toast });
+  const wholesale = window.WholesaleAdmin({ api, html, raw, svg, put, head, openSheet, closeSheet, reload, toast });
   VIEWS.wholesale = wholesale.view;
   let cache = {};
 

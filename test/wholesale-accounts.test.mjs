@@ -43,6 +43,7 @@ test("wholesale registration: pending accounts cannot access until an admin appr
   const session = (await call("GET", "/api/wholesale/session", undefined, A)).body;
   customerA = session.customer; customerB = (await call("GET", "/api/wholesale/session", undefined, B)).body.customer;
   assert.equal(customerA.status, "Active"); assert.equal(session.me.role, "wholesale");
+  assert.equal(customerA.paymentTerms.id, "to-agree");
   assert.equal(session.links.admin, undefined); assert.equal(customerA.note, undefined);
   assert.equal(JSON.stringify(before).includes("password_hash"), false);
 });
@@ -64,6 +65,7 @@ test("wholesale ordering: customer identity and delivery snapshots are server-ow
   const body = { requestId: crypto.randomUUID(), lines: [{ productId: "brazil", pack: "kilo", grind: "beans", quantity: 2, price: 3700 }], delivery: "Delivery", business: "Forged business", customerId: customerB.id, reference: "PO 123" };
   assert.equal((await call("POST", "/api/wholesale/orders", body, A)).status, 400, "delivery needs an address");
   customerA = (await call("PUT", "/api/wholesale/account", { ...customerA, ifVersion: customerA.version, address: "10 Coffee Street\nNorwich", postcode: "NR1 1AA", deliveryNotes: "Side door", note: "cannot write private notes", status: "On hold" }, A)).body.customer;
+  body.customerVersion = customerA.version;
   assert.equal(customerA.status, "Active"); assert.equal(customerA.note, undefined);
   const created = await call("POST", "/api/wholesale/orders", body, A);
   assert.equal(created.status, 201, created.text); order = created.body.order;

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { addToBasket, sanitiseBasket, totals, validQuantity, money, weight } from "../public/wholesale-preview/order.js";
+import { addToBasket, sanitiseBasket, totals, validQuantity, money, weight, setCatalogue, products, isAvailable } from "../public/wholesale-preview/order.js";
 
 const brazil = { productId: "brazil", pack: "kilo", grind: "beans" };
 
@@ -48,4 +48,18 @@ test("wholesale preview: stale or malformed storage cannot add unknown products 
     { ...brazil, quantity: 2, extra: "discard me" }, { ...brazil, quantity: 3 },
   ]), [{ ...brazil, quantity: 5 }]);
   assert.deepEqual(totals([{ ...brazil, quantity: -10 }]), { packs: 0, grams: 0, pence: 0 });
+});
+
+test("wholesale basket: added catalogue coffees use server prices, unavailable lines remain visible but cannot be added", () => {
+  const original = products.map((product) => ({ ...product, prices: { ...product.prices } }));
+  try {
+    setCatalogue([{ id: "coffee-new", title: "New coffee", name: "New", prices: { quarter: 1100, half: 2100, kilo: 4100 }, active: true, inStock: true, imageUrls: [] }]);
+    const line = { productId: "coffee-new", pack: "kilo", grind: "beans" };
+    const { basket } = addToBasket([], line, 2);
+    assert.equal(totals(basket).pence, 8200);
+    setCatalogue([{ ...products[0], inStock: false }]);
+    assert.equal(isAvailable(products[0]), false);
+    assert.equal(addToBasket(basket, line, 1).added, 0);
+    assert.equal(sanitiseBasket(basket).length, 1, "out-of-stock intent is kept for the customer to remove");
+  } finally { setCatalogue(original); }
 });
