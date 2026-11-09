@@ -39,6 +39,7 @@ export async function makeBackup(env: Env, by: string): Promise<BackupInfo> {
     docs: docs.results.map((d) => ({ path: d.path, data: JSON.parse(d.data), updatedAt: d.updated_at, updatedBy: d.updated_by })),
     users: users.results,
     rota,
+    wholesalePreview: (await env.DB.prepare("SELECT kind, id, data, version, updated_at FROM wholesale_preview ORDER BY kind, id").all()).results,
   });
   const gz = await gzip(body);
   const id = new Date(at).toISOString().replace(/\.\d+Z$/, "Z").replace(/:/g, "-");

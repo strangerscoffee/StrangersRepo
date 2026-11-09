@@ -1,7 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { addToBasket, sanitiseBasket, totals, validQuantity, money, weight } from "../public/wholesale-preview/order.js";
-import { sanitiseCatalogue, applyCatalogue, freshCatalogue, readDashboard, createDemoOrder, orderTotals } from "../public/wholesale-preview/dashboard/store.js";
 
 const brazil = { productId: "brazil", pack: "kilo", grind: "beans" };
 
@@ -21,50 +20,6 @@ test("wholesale preview: bag weights and independently published retail prices t
   assert.equal(weight(totals(basket).grams), "4 kg");
   assert.equal(weight(750), "0.75 kg");
   assert.equal(totals([{ ...brazil, pack: "quarter", quantity: 1 }]).pence, 1050, "250 g uses its own source price, not one quarter of the kilo price");
-});
-
-test("wholesale demo dashboard: malformed catalogue edits cannot replace valid source prices", () => {
-  const original = freshCatalogue();
-  const edited = sanitiseCatalogue([{ id: "brazil", prices: { kilo: -50, half: 0, quarter: 1250 }, active: false }, { id: "unknown-coffee", prices: { kilo: 1 } }]);
-  assert.equal(edited.length, 10);
-  assert.deepEqual(edited.find((entry) => entry.id === "brazil"), { id: "brazil", prices: { quarter: 1250, half: original[0].prices.half, kilo: original[0].prices.kilo }, active: false });
-});
-
-test("wholesale demo dashboard: checkout creates a local order with price snapshots and delivery preference", () => {
-  const previousStorage = globalThis.localStorage;
-  const values = new Map();
-  globalThis.localStorage = { getItem: (key) => values.get(key) || null, setItem: (key, value) => values.set(key, value) };
-  try {
-    const result = createDemoOrder([{ ...brazil, quantity: 2 }, { productId: "colombia", pack: "quarter", grind: "filter", quantity: 1 }], { delivery: "Roastery collection", reference: "Demo PO 123" });
-    assert.equal(result.saved, true);
-    const dashboard = readDashboard();
-    assert.equal(dashboard.orders.length, 7);
-    const order = dashboard.orders[0];
-    assert.equal(order.id, result.id);
-    assert.equal(order.delivery, "Roastery collection");
-    assert.equal(order.note, "Demo reference: Demo PO 123");
-    assert.equal(order.customerId, "ordering-demo");
-    assert.deepEqual(orderTotals(order), { pence: 8800, grams: 2250, packs: 3 });
-    const revised = freshCatalogue();
-    revised[0].prices.kilo = 9900;
-    applyCatalogue(revised);
-    assert.equal(readDashboard().orders[0].lines[0].price, 3700, "catalogue edits never rewrite prices on an existing order");
-  } finally {
-    applyCatalogue(freshCatalogue());
-    if (previousStorage === undefined) delete globalThis.localStorage; else globalThis.localStorage = previousStorage;
-  }
-});
-
-test("wholesale demo dashboard: blocked browser storage reports that no sample order was saved", () => {
-  const previousStorage = globalThis.localStorage;
-  globalThis.localStorage = { getItem() { throw new Error("Storage blocked"); }, setItem() { throw new Error("Storage blocked"); } };
-  try {
-    const result = createDemoOrder([{ ...brazil, quantity: 1 }]);
-    assert.equal(result.saved, false);
-    assert.match(result.reason, /storage is unavailable/);
-  } finally {
-    if (previousStorage === undefined) delete globalThis.localStorage; else globalThis.localStorage = previousStorage;
-  }
 });
 
 test("wholesale preview: repeated adds stop at 99 and report how many were actually added", () => {

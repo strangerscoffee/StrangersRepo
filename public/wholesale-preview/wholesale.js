@@ -1,19 +1,21 @@
 import { products, packs, grinds, MAX_QUANTITY, money, weight, productFor, lineKey, unitPrice, validQuantity, sanitiseBasket, addToBasket, totals } from "./order.js";
-import { readCatalogue, applyCatalogue, catalogueIsEdited, createDemoOrder } from "./dashboard/store.js";
 
-applyCatalogue(readCatalogue());
-
-const STORAGE_KEY = "strangers.wholesale-preview.v1";
+let STORAGE_KEY = null;
+let session = null;
+let ready = false;
+let requestId = null;
+let saving = false;
 const $ = (selector) => document.querySelector(selector);
 const escape = (value) => String(value).replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
 let storageAvailable = true;
-let basket = loadBasket();
+let basket = [];
 let currentFilter = "all";
 let orderVisible = false;
 let toastTimer;
 
 function loadBasket() {
   let stored;
+  if (!STORAGE_KEY) return [];
   try { stored = localStorage.getItem(STORAGE_KEY); }
   catch { storageAvailable = false; return []; }
   try { return sanitiseBasket(JSON.parse(stored || "[]")); }
@@ -21,6 +23,7 @@ function loadBasket() {
 }
 
 function saveBasket() {
+  if (!STORAGE_KEY) return;
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(basket)); storageAvailable = true; }
   catch { storageAvailable = false; }
 }
@@ -43,7 +46,7 @@ function stepper(id, quantity, label, errorId) {
 
 function renderProducts() {
   $("#products").innerHTML = products.map((product, index) => `<article class="product-card" data-product="${product.id}" aria-labelledby="name-${product.id}">
-    <div class="product-image"><img src="./images/${product.image}" alt="${escape(`${product.title} coffee label`)}" width="722" height="511" ${index > 1 ? 'loading="lazy"' : 'fetchpriority="high"'}><span class="product-badge">${escape(product.badge)}</span></div>
+    <div class="product-image"><img src="/wholesale-preview/images/${product.image}" alt="${escape(`${product.title} coffee label`)}" width="722" height="511" ${index > 1 ? 'loading="lazy"' : 'fetchpriority="high"'}><span class="product-badge">${escape(product.badge)}</span></div>
     <div class="product-info"><p class="product-origin">${escape(product.origin)}</p><h3 class="product-name" id="name-${product.id}"><a href="${escape(product.sourceUrl)}" target="_blank" rel="noopener noreferrer" aria-label="${escape(`View ${product.title} on Strangers Coffee`)}">${escape(product.name)}</a></h3><p class="product-process">${escape(product.process)}</p><p class="tasting-notes">${escape(product.notes)}</p></div>
     <form class="product-config" data-product="${product.id}">
       <fieldset class="pack-options"><legend>Pack size <span class="sr-only">for ${escape(product.name)}</span></legend>${Object.entries(packs).map(([id, pack]) => `<label class="pack-choice"><input type="radio" name="pack" value="${id}" ${id === "kilo" ? "checked" : ""}><span>${escape(pack.short)} bag</span></label>`).join("")}</fieldset>
@@ -56,6 +59,7 @@ function renderProducts() {
 }
 
 function filterProducts() {
+  if (!ready) return;
   const query = $("#coffee-search").value.trim().toLocaleLowerCase("en-GB");
   let count = 0;
   for (const product of products) {
@@ -94,7 +98,7 @@ function renderBasket() {
   $("#order-items").innerHTML = basket.length ? basket.map((line, index) => {
     const product = productFor(line.productId);
     return `<div class="order-item" data-line="${lineKey(line)}">
-      <img src="./images/${product.image}" alt="" width="42" height="48">
+      <img src="/wholesale-preview/images/${product.image}" alt="" width="42" height="48">
       <div><h3>${escape(product.name)}</h3><p class="line-variant">${escape(packs[line.pack].label)} · ${escape(grinds[line.grind])}<br>${money(unitPrice(product, line.pack))} per pack${product.active === false ? "<br>Hidden in preview catalogue — remove to continue." : ""}</p>
       <div class="line-actions">${stepper(`line-qty-${index}`, line.quantity, `${product.name}, ${packs[line.pack].label}, ${grinds[line.grind]}`, `line-error-${index}`)}<strong class="line-price">${money(unitPrice(product, line.pack) * line.quantity)}</strong></div>
       <p class="quantity-error" id="line-error-${index}" role="status" hidden>Choose a whole number from 1 to 99.</p>
@@ -210,27 +214,43 @@ $("#review-order").addEventListener("click", () => {
   }).join("");
   $("#review-total").textContent = money(totals(basket).pence);
   $("#review-form").reset();
+  requestId = crypto.randomUUID();
+  $("#preview-submit-error").hidden = true;
   $("#review-content").hidden = false;
   $("#preview-complete").hidden = true;
   $("#review-dialog").setAttribute("aria-labelledby", "review-title");
   $("#review-dialog").showModal();
 });
 
-$("#review-form").addEventListener("submit", (event) => {
+$("#review-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  // A local sample record only: no fetch, server, payment, email, or real order.
-  const form = $("#review-form");
-  const result = createDemoOrder(basket, { delivery: form.elements.delivery.value === "collection" ? "Roastery collection" : "Delivery", reference: form.elements.reference.value });
-  $("#complete-message").textContent = result.saved ? `${result.id} was saved in this browser’s demo dashboard. No real order was sent. Your basket is still here for changes.` : `No real order was sent. ${result.reason} Your basket is still here for changes.`;
-  $("#complete-dashboard-link").hidden = !result.saved;
-  if (result.saved) $("#complete-dashboard-link").href = `./dashboard/?order=${result.id}#orders`;
-  $("#complete-total").textContent = money(totals(basket).pence);
-  $("#review-content").hidden = true;
-  $("#preview-complete").hidden = false;
-  $("#review-dialog").setAttribute("aria-labelledby", "complete-title");
-  $("#review-dialog").scrollTop = 0;
-  $("#preview-complete [data-close]").focus({ preventScroll: true });
-  $("#review-form").reset();
+  if (saving || !ready || !basket.length) return;
+  saving = true;
+  const button = $("#submit-preview-order");
+  button.disabled = true;
+  $("#preview-submit-error").hidden = true;
+  try {
+    const form = $("#review-form");
+    const result = await api("/api/wholesale/orders", {
+      requestId,
+      lines: basket.map((line) => ({ ...line, price: unitPrice(productFor(line.productId), line.pack) })),
+      delivery: form.elements.delivery.value === "collection" ? "Roastery collection" : "Delivery",
+      reference: form.elements.reference.value, business: form.elements.business.value,
+    });
+    $("#complete-message").textContent = `${result.order.id} was saved for the admin team to review. No payment, email or fulfilment action was sent.`;
+    $("#complete-dashboard-link").hidden = session.me.role !== "admin";
+    $("#complete-dashboard-link").href = session.links.admin + "#wholesale";
+    $("#complete-total").textContent = money(result.order.pence);
+    $("#review-content").hidden = true;
+    $("#preview-complete").hidden = false;
+    $("#review-dialog").setAttribute("aria-labelledby", "complete-title");
+    $("#review-dialog").scrollTop = 0;
+    $("#preview-complete [data-close]").focus({ preventScroll: true });
+    form.reset();
+  } catch (error) {
+    $("#preview-submit-error").textContent = error.message;
+    $("#preview-submit-error").hidden = false;
+  } finally { saving = false; button.disabled = false; }
 });
 
 document.querySelectorAll("[data-help]").forEach((button) => button.addEventListener("click", () => $("#help-dialog").showModal()));
@@ -240,10 +260,44 @@ document.querySelectorAll("dialog").forEach((dialog) => {
   dialog.addEventListener("close", () => { if (dialog.id === "review-dialog") $("#review-form").reset(); });
 });
 
-if (catalogueIsEdited(readCatalogue())) $("#pricing-context").textContent = "Locally edited demo prices are active. Reset demo data in the dashboard to restore the published retail prices.";
-renderProducts();
-filterProducts();
-renderBasket();
+async function api(path, body) {
+  let response;
+  try { response = await fetch(path, { method: body ? "POST" : "GET", cache: "no-store", credentials: "same-origin", headers: body ? { "content-type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined }); }
+  catch { throw new Error("Couldn’t reach the site. Check your connection and try again."); }
+  if (response.status === 401) { SC.goSignIn(); throw new Error("Sign in to continue."); }
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.message || "Couldn’t save this preview. Try again.");
+  return data;
+}
+async function start() {
+  $("#retry-catalogue").hidden = true;
+  $("#catalogue-status").hidden = false;
+  $("#catalogue-status").textContent = "Loading the signed-in catalogue…";
+  try {
+    session = await api("/api/wholesale/catalogue");
+    for (const coffee of session.products) {
+      const product = productFor(coffee.id);
+      if (product) Object.assign(product, { prices: coffee.prices, price: coffee.prices.kilo, active: coffee.active });
+    }
+    STORAGE_KEY = "strangers.wholesale-preview.v2." + session.me.id;
+    basket = loadBasket();
+    $("#signed-in-name").textContent = session.me.name;
+    $("#preview-home").href = session.links.preview;
+    $("#admin-wholesale-link").hidden = session.me.role !== "admin";
+    $("#admin-wholesale-link").href = session.links.admin + "#wholesale";
+    $("#pricing-context").textContent = `Product data from strangerscoffee.com · ${session.sourceDate}. Published retail prices or admin-set preview prices. Wholesale rates to be confirmed.`;
+    ready = true;
+    renderProducts(); filterProducts(); renderBasket();
+    $("#catalogue-status").hidden = true;
+  } catch (error) {
+    $("#catalogue-status").textContent = error.message;
+    $("#retry-catalogue").hidden = false;
+  }
+}
+$("#preview-sign-out").addEventListener("click", () => SC.signOut());
+$("#retry-catalogue").addEventListener("click", start);
+SC.recheckOnPageshow(() => SC.goSignIn());
 if ("IntersectionObserver" in window) {
   new IntersectionObserver(([entry]) => { orderVisible = entry.isIntersecting; updateMobileBasket(); }, { threshold: 0 }).observe($("#your-order"));
 }
+start();

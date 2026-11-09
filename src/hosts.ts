@@ -1,14 +1,20 @@
 // The three apps on one Worker: the diary on its own address, the rota on ROTA_HOST and the admin section on
 // ADMIN_HOST (wrangler.jsonc). Kept free of imports so test/rota.test.mjs can load it directly. Re-exported from access.ts.
 
-export type App = "diary" | "rota" | "admin";
+export type App = "diary" | "rota" | "admin" | "preview";
 
 /** Which app a hostname serves: the rota on ROTA_HOST, the admin section on ADMIN_HOST, the diary everywhere else. */
-export function appForHost(hostname: string, rotaHost: string | undefined, adminHost?: string): App {
+export function appForHost(hostname: string, rotaHost: string | undefined, adminHost?: string, previewHost?: string): App {
   const h = hostname.toLowerCase();
   if (rotaHost && h === rotaHost.toLowerCase()) return "rota";
   if (adminHost && h === adminHost.toLowerCase()) return "admin";
+  if (previewHost && h === previewHost.toLowerCase()) return "preview";
   return "diary";
+}
+
+/** Ordering preview assets only; this hostname never serves the diary, rota or admin app. */
+export function isPreviewFile(path: string): boolean {
+  return isSharedCode(path) || /^\/wholesale-preview\/(?:images\/[\w-]+\.(?:svg|png|webp|jpg)|[\w-]+\.(?:js|css))$/.test(path);
 }
 
 /** The helpers all three apps share (public/shared/*.js: code, no data). */
@@ -38,20 +44,22 @@ export function isPublicCode(app: string, path: string): boolean {
  * helpers all three apps share. */
 export function isAdminSharedFile(path: string): boolean {
   return path === "/theme.css" || path === "/robots.txt" || path === "/logo.svg" || path === "/mark.svg" || isSharedCode(path) ||
+    /^\/wholesale-preview\/images\/[\w-]+\.(svg|png|webp|jpg)$/.test(path) ||
     /^\/icon-\d+\.png$/.test(path) || (path.startsWith("/admin/") && path !== "/admin/" && path !== "/admin/index.html");
 }
 
 /** Links between the apps, as seen from this request. Without a ROTA_HOST or ADMIN_HOST (local dev, tests) the rota
  * is at /rota/ and the admin section at /admin on the diary's address. */
-export function appLinks(url: URL, rotaHost: string | undefined, adminHost?: string): { rota: string; diary: string; admin: string } {
-  const app = appForHost(url.hostname, rotaHost, adminHost);
+export function appLinks(url: URL, rotaHost: string | undefined, adminHost?: string, previewHost?: string): { rota: string; diary: string; admin: string; preview?: string } {
+  const app = appForHost(url.hostname, rotaHost, adminHost, previewHost);
   // The diary is the rota's (or admin section's) host without its first label (rota.example.com -> example.com).
-  const other = rotaHost || adminHost || "";
+  const other = rotaHost || adminHost || previewHost || "";
   const diaryHost = other.includes(".") ? other.slice(other.indexOf(".") + 1) : url.hostname;
   return {
     rota: app === "rota" ? "/" : rotaHost ? `https://${rotaHost}/` : "/rota/",
     diary: app === "diary" ? "/" : `https://${diaryHost}/`,
     admin: app === "admin" ? "/" : adminHost ? `https://${adminHost}/` : "/admin",
+    ...(previewHost ? { preview: app === "preview" ? "/" : `https://${previewHost}/` } : {}),
   };
 }
 

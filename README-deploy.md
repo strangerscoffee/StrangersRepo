@@ -1,6 +1,6 @@
 # Deploying and running the Kitchen Diary
 
-**Wholesale ordering demo:** `/wholesale-preview/` and `/wholesale-preview/dashboard/` are isolated static demos behind the existing staff sign-in when served by this Worker. A separate [public demo](https://strangers-wholesale-preview.magicloom512.chatgpt.site) is hosted for review. Product data and retail reference prices come from strangerscoffee.com; fictional orders, customers and catalogue edits stay in each visitor’s browser. There is no live ordering or backend integration. See [docs/wholesale-preview.md](docs/wholesale-preview.md) for sources and how to run it. Changes should be reviewed as a draft pull request.
+**Wholesale preview:** ordering is at **https://preview.staffstrangerscoffee.com** using the existing Staff Login; admins manage it in **Admin → Wholesale** at `https://admin.staffstrangerscoffee.com/#wholesale`. The same Worker serves both and stores shared preview orders, customers and catalogue settings in D1. No payment, email or fulfilment action is triggered. See [docs/wholesale-preview.md](docs/wholesale-preview.md).
 
 The site is one Cloudflare Worker serving the diary's pages and the API they talk to. It runs at **https://staffstrangerscoffee.com**, and the staff rota, from the same Worker, at **https://rota.staffstrangerscoffee.com**. **Every push to `main` redeploys it automatically** (Cloudflare Workers Builds).
 
@@ -118,3 +118,20 @@ Writes are limited to 600 per IP address per 15 minutes (`WRITE_LIMIT_PER_15_MIN
 - **The only admin forgot their password.** On the sign-in page, choose "Admin? Forgotten password" and use the setup code.
 
 Access is decided in one function, `authorize()` in `src/access.ts`. Sign-in and sessions are in `src/auth.ts`, the admin API in `src/admin.ts` (accounts) and `src/adminView.ts` (the admin section's overview, people, sites, activity, security and exports). Section permissions are `MANAGER_TABS` and `MANAGER_COLLECTIONS` in `src/access.ts`; the page mirrors `MANAGER_TABS` in `public/diary/shell.js` to hide those sections from staff, but the Worker is what enforces them.
+
+## Wholesale ordering preview
+
+`PREVIEW_HOST=preview.staffstrangerscoffee.com` selects the ordering app on that hostname. Its custom-domain route in `wrangler.jsonc` lets the normal Cloudflare deployment provision DNS/TLS for that subdomain in the existing zone. The domain must be available to this Worker; resolve any conflicting route or DNS record in Cloudflare if deployment reports one. The user requested this hostname. No new secret or separate identity provider is needed.
+
+Staff sign in at the existing domain; the shared `COOKIE_DOMAIN` cookie carries the session back to the preview. Admins open **Wholesale** from the admin sidebar or **More → Wholesale** on phones. The old `/wholesale-preview/dashboard/` path redirects admins to that menu section and refuses non-admins. The preview hostname serves no diary, rota, admin-management or document APIs.
+
+For local development, clear the hostname variables so both apps are reachable locally:
+
+```sh
+npm ci
+npm run dev -- --var PREVIEW_HOST:
+```
+
+Then sign in and use `/wholesale-preview/` and `/admin#wholesale`. Alternatively, keep `PREVIEW_HOST` set and access the configured hostname when testing a deployed Worker.
+
+Migration 11 creates `wholesale_preview` automatically, without changing diary or rota records. The shared preview data is included in nightly and manual backups. Preview edits use record versions, so stale edits return 409 rather than overwrite another admin’s changes. Default prices are sourced retail prices, and admins can change preview prices/visibility. Production customer login, agreed wholesale rates, billing and fulfilment remain outside this preview.

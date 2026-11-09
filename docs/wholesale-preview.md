@@ -1,39 +1,37 @@
-# Wholesale ordering public demo
+# Signed-in wholesale ordering preview
 
-- Ordering page: https://strangers-wholesale-preview.magicloom512.chatgpt.site
-- Dashboard: https://strangers-wholesale-preview.magicloom512.chatgpt.site/dashboard/
+- Ordering: **https://preview.staffstrangerscoffee.com/**
+- Management: **https://admin.staffstrangerscoffee.com/#wholesale**
 
-The user requested a public demo. Both pages are published as an independent public Site, using a static copy of `public/wholesale-preview/`. Changes to the GitHub repository do not automatically update that copy. The staff Worker, its sign-in, diary, rota, admin, database and APIs have not been changed.
+These addresses are the configured deployment targets. They become available when this branch is deployed through the repository’s normal pull-request/Cloudflare workflow. The independent public Site built in the earlier design pass is a separate historical demo and does not connect to these staff records.
 
-## Data from strangerscoffee.com
+## Staff sign-in and Admin integration
 
-`catalogue.js` contains a snapshot of all ten coffees on the public shop, retrieved **9 November 2026**. It includes the published product title, short display name, tasting notes, original product image, product URL and one-off retail prices for **250 g, 500 g and 1 kg** bags. Prices are stored in integer GBP pence and weights in integer grams. Each bag size uses its independently listed price. The five grind options follow the public product listings. Images are downloaded locally; there are no external runtime fonts, scripts, trackers or image dependencies.
+The ordering page is a fourth app on the existing Worker, selected by `PREVIEW_HOST`. Every ordering page and preview asset passes the existing staff session check. Signed-out pages redirect to Staff Login; APIs return 401. `/signin` on the preview subdomain redirects to the existing sign-in page on `staffstrangerscoffee.com` with a return URL to the preview. The shared cookie domain and existing account/session revocation rules apply. The preview hostname cannot serve diary, rota, document, blob or admin management APIs.
 
-These are **retail prices, not wholesale rates**. That distinction and the snapshot date are visible on the ordering page and dashboard. Delivery, tax treatment, minimum orders and wholesale account terms are not calculated. The public retail free-shipping offer has not been assumed to apply to wholesale. Live stock and subscription offers are not imported. The single-origin/blend/decaf filters are demo groupings based on the products, not claims about brew suitability.
+All signed-in staff roles can browse coffee and save preview orders. Only admins can manage the **Wholesale** menu section, see all preview orders/customers or edit catalogue prices and visibility. It is part of the existing admin page, with the same theme, sidebar, mobile More menu, sheets, clock correction, session checks and live-change notifications. There is no separate dashboard app. The old `/wholesale-preview/dashboard/` address redirects admins to Admin → Wholesale; other roles receive 403.
 
-The public product JSON can be read at the source product URL with `?format=json`. The imported `variants` provide weight, grind and one-off retail prices; `excerpt` supplies tasting notes; `assetUrl` supplies imagery. Every product record retains its source URL and source update timestamp. This is a snapshot, not an automatic sync.
+## Shared backend
 
-## Trying the demo
+Migration 11 creates `wholesale_preview`, with `(kind, id)` as its primary key and JSON data, version and server update time. Its kinds are `order`, `customer` and `catalogue`. Orders and customer records start empty; no fictional customers are silently seeded into staff data. Orders saved from one signed-in device appear in Admin on another. Admin-created preview customers can be linked to orders.
 
-1. Browse or search the catalogue, choose a weight, grind and whole number of bags from 1 to 99, and add to the basket. Matching variants combine; different weights and grinds stay separate.
-2. Review the order. **Create demo order** saves a fictional order in this browser and offers a direct link to its dashboard record. It does not submit a real order, email anyone, take payment or contact the roastery. The basket is retained.
-3. Open **Dashboard preview** to filter orders, change a demo status, edit an order note, create/edit fictional customer accounts, or edit demo catalogue prices and visibility. A new dashboard order can also be built from the current browser basket.
-4. Reload the ordering page after editing the catalogue to see new demo prices/visibility. A visible notice identifies locally edited prices. Historical sample orders keep their original price snapshots. Hidden coffees cannot be reviewed from an existing basket until removed.
-5. **Reset demo data** restores fictional orders/customers and the imported retail prices after a review dialog. The ordering basket keeps its items.
+`src/wholesale.ts` validates all requests. The server fixes the creator identity and UK date, validates bag/grind variants and integer quantities (1–99 per variant), calculates prices/weights from the server catalogue and stores immutable line-price snapshots. The client’s quoted price is checked against the current price; stale or hidden coffee choices return 409 for a new review. A UUID request ID makes retried submissions idempotent and cannot be reused by another account or with another payload. Staff may read their own preview orders; admins may read all. Management writes require `ifVersion` and reject stale saves with 409.
 
-The initial six orders and three customers are fictional. Customer email examples use `example.test`. Orders created from the shop use a fictional “Ordering preview account”. No real customer data was obtained from Strangers. The dashboard is a functional UI prototype, **not a server-backed admin system**.
+Records are rate-limited through the existing per-user write limiter. Preview changes are audited and notify the admin change watcher; the table is included in nightly/manual backups. Admin views show the latest 200 orders/customers and the total record counts. No payment, email, invoice or fulfilment action is performed.
 
-## Local storage and privacy
+The shopping basket alone is browser-local, stored per signed-in user under `strangers.wholesale-preview.v2.<user-id>`. No old public-demo orders/customers/pricing overrides are imported from localStorage. Blocked browser storage makes only the basket temporary; saved preview orders go to D1.
 
-Each visitor has their own browser-local demo state; edits are not shared with other visitors or devices. The keys are `strangers.wholesale-preview.v1` (basket), `strangers.wholesale-dashboard-preview.v2` (demo customers/orders, including optional reference, notes and delivery preference), and `strangers.wholesale-catalogue-preview.v2` (price/visibility overrides). Stored input is validated and rendered as escaped text. Blocked/full browser storage is reported; the UI never claims a demo order was saved when storage failed. Do not enter real customer or account details in this public demo.
+## Sourced catalogue
 
-## Files and verification
+`catalogue.js` contains all ten public coffees retrieved from strangerscoffee.com on **9 November 2026**: title, origin, process, tasting notes, original imagery, source URL and one-off retail prices for **250 g, 500 g and 1 kg** bags. Each weight uses its own published price, in integer GBP pence. All 150 source weight/grind variants were verified against the imported snapshot. The same JavaScript catalogue is imported by the server, with `catalogue.d.ts` supplying its TypeScript interface. There is one source snapshot.
 
-`index.html`, `wholesale.css` and `wholesale.js` own the shop. `order.js` holds the basket model. `catalogue.js` is the sourced product snapshot. `dashboard/index.html`, `dashboard.css`, `dashboard.js` and `store.js` implement the management demo and browser storage. No server, secrets or API configuration is required.
+These are **retail prices, not agreed wholesale rates**. That distinction is visible on both apps. Admins can set shared preview price/visibility overrides; historical orders keep their original prices. Delivery charges, tax treatment, minimum orders, subscriptions and live inventory are not imported. Product JSON is available at each source URL with `?format=json`; `variants`, `excerpt` and `assetUrl` supply the imported fields. Images are local files; no external scripts, fonts, trackers or runtime image requests are used.
 
-For local staff Worker development, use `npm ci`, `npm run dev`, sign in and visit `/wholesale-preview/` or `/wholesale-preview/dashboard/`. For an independent static demo, serve only `public/wholesale-preview/` as the document root. Relative asset URLs support either location.
+## Files and checks
 
-`test/wholesale.test.mjs` covers variants, weight/retail-price totals, quantity limits, storage validation, catalogue overrides, checkout-to-dashboard records, historical prices and blocked storage. It is included in `npm test`; run it alone with `node --test test/wholesale.test.mjs`. Browser QA remains limited by this environment's missing Chromium executable and unavailable managed browser-control tool. The initial hosted desktop screenshot was inspected; interactive phone/iPad and dark-mode browser checks remain unverified.
+`public/wholesale-preview/index.html`, `wholesale.css` and `wholesale.js` implement the ordering page; `order.js` is its basket model. `public/admin/wholesale.js` implements the native admin menu section through the existing escaped HTML builder. `src/hosts.ts`, `src/index.ts`, `src/access.ts` and `src/wholesale.ts` own routing, sign-in boundaries and backend access.
+
+Run `npm test` for the typecheck, existing API tests, basket tests and new wholesale routing/API tests. `npm run test:e2e` includes the ordering-to-admin journey, permissions/sign-out and phone/iPad checks in light/dark mode. Use `CHROMIUM_PATH=/usr/bin/chromium` when using the environment’s installed system browser. Optional `WHOLESALE_SCREENSHOT_DIR` captures the new app views during those tests.
 
 ## Source products and images
 

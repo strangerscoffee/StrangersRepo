@@ -50,6 +50,10 @@ h1, h2, h3 { text-wrap: balance; }
 .brand { margin-right: auto; padding: 12px 0; }
 .brand img { width: 105px; height: auto; }
 .site-header nav { display: flex; align-items: center; gap: 34px; }
+.session-strip{display:flex;align-items:center;justify-content:flex-end;gap:20px;font-size:11px;min-height:44px}
+.session-strip strong{font-weight:500}
+.catalogue-status{padding:22px 0;font-size:14px}
+.preview-complete p{overflow-wrap:anywhere}
 .nav-link { border: 0; background: transparent; display: inline-flex; align-items: center; gap: 12px; min-height: 44px; padding: 8px 0; font-size: 12px; }
 .nav-link.active { text-decoration: underline; text-underline-offset: 6px; }
 .nav-link:hover, .text-button:hover, .footer-brand:hover { text-decoration: underline; text-underline-offset: 5px; }

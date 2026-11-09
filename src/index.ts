@@ -1,7 +1,7 @@
 // Strangers Coffee Kitchen Diary staff site.
 // Serves the diary page (public/index.html) and the API it uses through claude-shim.js, and, on its own
 // hostname (ROTA_HOST), the staff rota (public/rota/, src/rota.ts). One Worker, one database, one set of accounts.
-import { appForHost, appLinks, authorize, isAdminSharedFile, isPublicAsset, isPublicCode, isRotaManager, isRotaSharedFile, limitWrites, recordId, requireUser, unifiedSignin } from "./access";
+import { appForHost, appLinks, authorize, isAdminSharedFile, isPreviewFile, isPublicAsset, isPublicCode, isRotaManager, isRotaSharedFile, limitWrites, recordId, requireUser, unifiedSignin } from "./access";
 import { handleAdmin } from "./admin";
 import { handleAdminView } from "./adminView";
 import { handleAuth } from "./auth";
@@ -16,6 +16,7 @@ import { audit } from "./audit";
 import { handleUnsubscribe } from "./email/unsubscribe";
 import { notifyLive, openLive } from "./live";
 import { sendWeeklySummaries } from "./email/weekly";
+import { handleWholesale, handleWholesaleAdmin } from "./wholesale";
 export { LiveHub } from "./live";
 
 export default {
@@ -89,7 +90,7 @@ async function flagClock(env: Env, user: { name: string }, diffMs: number, ua: s
 }
 
 /** The writes that move a change counter (diary saves, the rota, accounts and sites, stored files). */
-const LIVE_WRITES = /^\/api\/(db\/(set|update|delete)$|rota\/|admin\/|assets)/;
+const LIVE_WRITES = /^\/api\/(db\/(set|update|delete)$|rota\/|admin\/|wholesale\/|assets)/;
 
 /** A database error that's worth one more try: the connection dropped or D1 was busy restarting. */
 function isTransient(e: unknown): boolean {
@@ -152,13 +153,16 @@ const redirect = (location: string) => new Response(null, { status: 302, headers
 const rotaPage = (req: Request, env: Env, url: URL) => env.ASSETS.fetch(new Request(new URL("/rota/", url), req)).then(noStore).then((r) => withFingerprints(r, env, url));
 // The admin section's page. Served at / on its own host (ADMIN_HOST), and at /admin on the diary's when there's none.
 const adminPage = (req: Request, env: Env, url: URL) => env.ASSETS.fetch(new Request(new URL("/admin/", url), req)).then(noStore).then((r) => withFingerprints(r, env, url));
+const wholesalePage = (req: Request, env: Env, url: URL) => env.ASSETS.fetch(new Request(new URL("/wholesale-preview/", url), req)).then(noStore).then((r) => withFingerprints(r, env, url));
 const ADMIN_PAGES = new Set(["/admin", "/admin/", "/admin.html", "/admin/index.html"]);
+const WHOLESALE_PAGES = new Set(["/wholesale-preview", "/wholesale-preview/", "/wholesale-preview/index.html"]);
+const OLD_WHOLESALE_DASHBOARD = new Set(["/wholesale-preview/dashboard", "/wholesale-preview/dashboard/", "/wholesale-preview/dashboard/index.html"]);
 
 async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): Promise<Response> {
   const p = url.pathname;
   const isGet = req.method === "GET" || req.method === "HEAD";
-  const app = appForHost(url.hostname, env.ROTA_HOST, env.ADMIN_HOST);
-  const links = appLinks(url, env.ROTA_HOST, env.ADMIN_HOST);
+  const app = appForHost(url.hostname, env.ROTA_HOST, env.ADMIN_HOST, env.PREVIEW_HOST);
+  const links = appLinks(url, env.ROTA_HOST, env.ADMIN_HOST, env.PREVIEW_HOST);
   // One Staff Login for every address: the rota's sign-in page is the diary's (src/hosts.ts).
   if (isGet && (p === "/signin" || p === "/signin.html")) {
     const to = unifiedSignin(url, env.COOKIE_DOMAIN);
@@ -236,6 +240,26 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
     return json({ docs: v.seq ?? 0, rota: v.rota ?? 0, accounts: v.accounts ?? 0 });
   }
 
+  // The signed-in ordering preview is an isolated app on the existing Worker and session cookie domain.
+  if (app === "preview") {
+    if (p.startsWith("/api/wholesale/")) {
+      if (!isGet) await limitWrites(req, env, ctx, user.id);
+      const response = await handleWholesale(req, env, p.slice("/api/wholesale/".length), user, links);
+      if (!isGet && response.ok) await bumpChanges(env, "accounts");
+      return response;
+    }
+    if (p.startsWith("/api/") || p.startsWith("/_blob/")) throw new ApiError(404, "not_found", "Not available on the ordering preview's address.");
+    if (!isGet) return new Response("Method not allowed", { status: 405 });
+    if (p === "/" || p === "/index.html") return wholesalePage(req, env, url);
+    if (WHOLESALE_PAGES.has(p)) return redirect("/" + url.search);
+    if (OLD_WHOLESALE_DASHBOARD.has(p) || p === "/dashboard" || p === "/dashboard/") {
+      if (user.role !== "admin") throw new ApiError(403, "permission_denied", "Only admins can open Wholesale in Admin.");
+      return redirect(links.admin + "#wholesale");
+    }
+    if (isPreviewFile(p)) return staticFile(req, env, p);
+    return redirect("/");
+  }
+
   if (p.startsWith("/api/rota/")) {
     const res = await handleRota(req, env, ctx, p.slice("/api/rota/".length), user, links);
     if (!isGet && res.ok) await bumpChanges(env, "rota");
@@ -271,10 +295,21 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
     if (user.role !== "admin") throw new ApiError(403, "permission_denied", "Only admins can do this.");
     const r = p.slice("/api/admin/".length);
     if (r === "backups" || r.startsWith("backups/")) return handleBackups(req, env, r.slice("backups/".length), user.name);
-    const res = (await handleAdminView(req, env, r, user, links)) ?? (await handleAdmin(req, env, r, user));
+    let res;
+    if (r === "wholesale" || r.startsWith("wholesale/")) {
+      if (!isGet) await limitWrites(req, env, ctx, user.id);
+      res = await handleWholesaleAdmin(req, env, r === "wholesale" ? "" : r.slice("wholesale/".length), user, links);
+    } else res = (await handleAdminView(req, env, r, user, links)) ?? (await handleAdmin(req, env, r, user));
     // Accounts and sites show on the rota too (names, who's switched off, opening hours).
     if (!isGet && res.ok) await bumpChanges(env, "accounts", "rota");
     return res;
+  }
+
+  if (p.startsWith("/api/wholesale/")) {
+    if (!isGet) await limitWrites(req, env, ctx, user.id);
+    const response = await handleWholesale(req, env, p.slice("/api/wholesale/".length), user, links);
+    if (!isGet && response.ok) await bumpChanges(env, "accounts");
+    return response;
   }
 
   const db = p.match(/^\/api\/db\/([a-z]+)$/);
@@ -311,6 +346,14 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
   if (ADMIN_PAGES.has(p)) {
     if (user.role !== "admin") return redirect("/");
     return env.ADMIN_HOST ? redirect(links.admin) : adminPage(req, env, url);
+  }
+  if (OLD_WHOLESALE_DASHBOARD.has(p)) {
+    if (user.role !== "admin") throw new ApiError(403, "permission_denied", "Only admins can open Wholesale in Admin.");
+    return redirect(links.admin + "#wholesale");
+  }
+  if (WHOLESALE_PAGES.has(p)) {
+    if (env.PREVIEW_HOST) return redirect(`https://${env.PREVIEW_HOST}/${url.search}`);
+    return p === "/wholesale-preview" ? redirect("/wholesale-preview/" + url.search) : wholesalePage(req, env, url);
   }
   // Pages behind sign-in must not be cached by shared devices' browsers or proxies.
   if (p === "/" || p === "/index.html") return withFingerprints(noStore(await env.ASSETS.fetch(req)), env, url);
