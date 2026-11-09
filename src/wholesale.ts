@@ -23,12 +23,24 @@ interface Order {
   paymentTerms?: ReturnType<typeof paymentTermsFor>;
   locationId?: string; locationSnapshot?: CustomerLocation;
   deletedAt?: number; deletedBy?: string;
+  trackingUrl?: string;
 }
 type Links = { admin: string; diary: string; preview?: string };
 const denied = () => new ApiError(403, "permission_denied", "Only admins can manage wholesale ordering.");
 function visibleOrder(order: Order & Versioned, admin = false) {
   const { requestKey, note, ...visible } = order;
-  return admin ? { ...visible, note } : visible;
+  return admin ? { ...visible, trackingUrl: order.trackingUrl || "", note } : { ...visible, trackingUrl: order.trackingUrl || "" };
+}
+function trackingUrl(value: unknown): string {
+  if (typeof value !== "string" || /[\u0000-\u001f\u007f]/.test(value) || /%(?:0[0-9a-f]|1[0-9a-f]|7f)/i.test(value)) throw invalid("Use a tracking link without control characters.");
+  const link = value.trim();
+  if (!link) return "";
+  if (link.length > 2000 || !/^https?:\/\//i.test(link)) throw invalid("Use a full http or https tracking link, up to 2,000 characters.");
+  let url: URL;
+  try { url = new URL(link); } catch { throw invalid("Check the tracking link."); }
+  const authority = link.slice(link.indexOf("//") + 2).split(/[/?#]/, 1)[0];
+  if (!["http:", "https:"].includes(url.protocol) || !url.hostname || url.username || url.password || authority.includes("@") || url.href.length > 2000) throw invalid("Use a tracking link without a username or password.");
+  return url.href;
 }
 function orderBody(value: unknown) {
   const body = object(value);
@@ -98,7 +110,7 @@ async function createOrder(req: Request, env: Env, user: OrderingUser): Promise<
   })() : undefined;
   const order: Order = {
     createdBy: user.id, createdName: user.name, business: body.business, reference: body.reference, delivery: body.delivery,
-    customerId: customer?.id || null, status: "New", note: "", preview: !customer, ...(customer && location ? { customerSnapshot, deliveryNotes: location.deliveryNotes, paymentTerms: paymentTermsFor(customer), locationId: location.id, locationSnapshot: { ...location } } : {}), date: new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone: "Europe/London" }).format(new Date(at)),
+    customerId: customer?.id || null, status: "New", note: "", trackingUrl: "", preview: !customer, ...(customer && location ? { customerSnapshot, deliveryNotes: location.deliveryNotes, paymentTerms: paymentTermsFor(customer), locationId: location.id, locationSnapshot: { ...location } } : {}), date: new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone: "Europe/London" }).format(new Date(at)),
     createdAt: at, requestKey, lines,
     pence: lines.reduce((sum, line) => sum + line.price * line.quantity, 0), grams: lines.reduce((sum, line) => sum + line.grams * line.quantity, 0), packs: lines.reduce((sum, line) => sum + line.quantity, 0),
   };
@@ -236,7 +248,7 @@ export async function handleWholesaleAdmin(req: Request, env: Env, route: string
     if (customerId !== null && (typeof customerId !== "string" || !await get<Customer>(env, "customer", customerId))) throw invalid("Choose an existing wholesale customer.");
     if (order.preview === false && customerId !== order.customerId) throw invalid("Customer orders stay linked to the business that placed them.");
     const { id, version: oldVersion, updatedAt, ...current } = order;
-    const updated = await save(env, "order", id, { ...current, status: body.status, customerId, note: text(body.note, "order note", 1000) }, version(body.ifVersion));
+    const updated = await save(env, "order", id, { ...current, status: body.status, customerId, note: text(body.note, "order note", 1000), trackingUrl: body.trackingUrl === undefined ? order.trackingUrl || "" : trackingUrl(body.trackingUrl) }, version(body.ifVersion));
     await audit(env, "wholesale_preview_status", user.name, `${user.name} marked wholesale order ${id} as ${body.status}. No fulfilment action was sent.`);
     return json({ order: visibleOrder(updated, true) });
   }

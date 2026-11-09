@@ -69,7 +69,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     if (current !== sequence) return html``;
     data = snapshot;
     const stats = data.stats || { openOrders: data.orders.filter((row) => row.preview === false && !["Dispatched", "Cancelled"].includes(row.status)).length, gramsToPrepare: data.orders.filter((row) => row.preview === false && ["New", "Preparing"].includes(row.status)).reduce((total, row) => total + row.grams, 0), totalCustomers: data.counts.customer || 0, visibleCoffees: data.products.filter((row) => row.active).length, totalCoffees: data.products.length, pendingAccounts: data.accounts.filter((row) => row.approvalStatus === "pending").length };
-    return html`<div class="w-workspace">${head("Wholesale", "Orders, business accounts and coffee catalogue.")}
+    return html`<div class="w-workspace">${head("Wholesale")}
       <div class="label">Wholesale at a glance</div><div class="stats w-stats">${[["Open orders", stats.openOrders, "New, preparing and ready"], ["Coffee to prepare", weight(stats.gramsToPrepare), "Customer orders only"], ["Customers", stats.totalCustomers, "Business accounts"], ["Visible coffees", stats.visibleCoffees, `Of ${stats.totalCoffees} coffees`]].map(([label, value, sub]) => html`<div class="stat glass"><span class="k">${label}</span><span class="v">${value}</span><span class="s">${sub}</span></div>`)}</div>
       <div class="segwrap w-sections"><div class="seg" role="group" aria-label="Wholesale sections">${[["orders", "Orders"], ["customers", "Customers"], ["catalogue", "Coffee catalogue"], ["invoices", "Invoicing"]].map(([id, label]) => html`<span class="w-section-item"><button type="button" data-act="wh-tab" data-id="${id}" aria-pressed="${tab === id}">${label}</button>${id === "customers" && stats.pendingAccounts > 0 ? html`<button class="w-review-chip" type="button" data-act="wh-pending" aria-label="${stats.pendingAccounts} ${stats.pendingAccounts === 1 ? "account awaits" : "accounts await"} review"><span>${stats.pendingAccounts}</span><span class="w-review-word"> ${stats.pendingAccounts === 1 ? "review" : "reviews"}</span></button>` : ""}</span>`)}</div></div>
       ${tab === "orders" ? orders() : tab === "customers" ? customers() : tab === "invoices" ? await invoiceUI.view() : catalogue()}</div>`;
@@ -110,6 +110,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     if (quickBusy.has(id) || orderErrors.has(id)) return;
     const row = data.orders.find((order) => order.id === id), next = row && nextStatus(row);
     if (!next) return;
+    if (next === "Dispatched") { dispatchOrder(row); return; }
     const source = document.querySelector(`[data-act="wh-next"][data-id="${id}"]`), wasFocused = document.activeElement === source;
     let restoreFocus = false;
     quickBusy.add(id); refreshOrderFeedback(id);
@@ -130,6 +131,69 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
         target?.focus({ preventScroll: true });
       }
     }
+  }
+  function validTrackingUrl(value) {
+    if (!value) return true;
+    if (value.length > 2000 || /[\u0000-\u001f\u007f]/.test(value)) return false;
+    try { const url = new URL(value); return ["http:", "https:"].includes(url.protocol) && !!url.hostname && !url.username && !url.password; }
+    catch { return false; }
+  }
+  function dispatchOrder(row, restoredTracking) {
+    let cleanup = () => {};
+    const back = () => {
+      cleanup(); closeSheet();
+      const target = document.querySelector(`[data-act="wh-refresh-orders"][data-id="${row.id}"]`) || document.querySelector(`[data-act="wh-next"][data-id="${row.id}"]:not(:disabled)`) || document.querySelector(`[data-act="wh-order"][data-id="${row.id}"]`);
+      if (target) target.focus({ preventScroll: true }); else focusOrderList(row.id);
+    };
+    openSheet(html`<form id="wDispatchOrderForm" class="w-sheet"><h2 id="sheetTitle" tabindex="-1">Dispatch order</h2><p>${row.business || row.createdName}</p><p class="w-id">${row.id}</p><div class="kv"><span>Coffee subtotal</span><strong>${money(row.pence)}</strong></div>
+      ${field("Tracking link (optional)", html`<input id="wDispatchTracking" type="url" inputmode="url" maxlength="2000" placeholder="https://" autocapitalize="none" spellcheck="false" autocomplete="off" value="${restoredTracking ?? row.trackingUrl ?? ""}">`)}<p class="hint">A tracking link is optional. Customers see it on dispatched delivery orders.</p><p class="err" id="wErr" role="alert"></p><button class="btn soft" type="button" data-sheet="dispatch-reload" hidden>Reload latest order</button><div class="row w-actions"><button class="btn soft" type="button" data-sheet="dispatch-cancel">Cancel</button><fieldset id="wDispatchConfirmControls" class="w-delete-confirm-controls"><button class="btn" type="submit">Confirm dispatch</button></fieldset></div></form>`, async (action, element) => {
+      const form = element.closest("form");
+      if (form.dataset.whBusy) return;
+      if (action === "dispatch-cancel") { back(); return; }
+      if (action === "dispatch-reload") {
+        const typed = form.querySelector("#wDispatchTracking").value;
+        await saveForm(form, async () => {
+          await reload();
+          let latest = data.orders.find((order) => order.id === row.id);
+          if (!latest) latest = (await api("GET", "/api/admin/wholesale/orders?q=" + encodeURIComponent(row.id))).orders.find((order) => order.id === row.id);
+          cleanup(); orderErrors.delete(row.id); refreshOrderFeedback(row.id);
+          if (!latest) { closeSheet(); focusOrderList(row.id); toast("This order is no longer available."); return; }
+          const draftTracking = (latest.trackingUrl || "") === (row.trackingUrl || "") ? typed : undefined;
+          if (latest.status === "Ready") dispatchOrder(latest, draftTracking);
+          else editOrder(latest.id, draftTracking === undefined ? null : { trackingUrl: draftTracking }, latest);
+        });
+        return;
+      }
+      if (action !== "submit" || form.querySelector("#wDispatchConfirmControls").disabled || quickBusy.has(row.id)) return;
+      const tracking = form.querySelector("#wDispatchTracking").value.trim();
+      if (!validTrackingUrl(tracking)) { form.querySelector("#wErr").textContent = "Use a full HTTP or HTTPS tracking link without a username or password."; form.querySelector("#wDispatchTracking").focus(); return; }
+      const button = form.querySelector('button[type="submit"]'); button.textContent = "Saving…";
+      quickBusy.add(row.id); refreshOrderFeedback(row.id);
+      try {
+        await saveForm(form, async () => {
+          const result = await api("PATCH", `/api/admin/wholesale/orders/${row.id}`, { ifVersion: row.version, status: "Dispatched", customerId: row.customerId, note: row.note || "", trackingUrl: tracking });
+          if (result.order?.id !== row.id || result.order.status !== "Dispatched" || result.order.version !== row.version + 1) throw new Error("The dispatch could not be confirmed. Reload the latest order to check its status.");
+          orderErrors.delete(row.id); cleanup(); closeSheet(); await reload(); toast(`${row.business || "Order"} marked dispatched.`);
+        });
+        if (form.isConnected) {
+          button.textContent = "Confirm dispatch";
+          if (form.querySelector("#wErr").textContent) {
+            form.querySelector("#wDispatchConfirmControls").disabled = true; form.querySelector('[data-sheet="dispatch-reload"]').hidden = false;
+            orderErrors.set(row.id, { version: row.version, message: form.querySelector("#wErr").textContent + " Reload orders before updating this order again." });
+          }
+        }
+      } finally {
+        quickBusy.delete(row.id); refreshOrderFeedback(row.id);
+        if (!form.isConnected && $("#scrim").hidden) focusOrderList(row.id);
+      }
+    });
+    const form = $("#wDispatchOrderForm"), controller = new AbortController(), scrim = $("#scrim");
+    const observer = new MutationObserver(() => { if (!form.isConnected) cleanup(); });
+    cleanup = () => { controller.abort(); observer.disconnect(); };
+    observer.observe($("#sheet"), { childList: true });
+    document.addEventListener("keydown", (event) => { if (event.key !== "Escape" || !form.isConnected) return; event.preventDefault(); event.stopImmediatePropagation(); if (!form.dataset.whBusy) back(); }, { capture: true, signal: controller.signal });
+    scrim.addEventListener("click", (event) => { if (event.target !== scrim || !form.isConnected) return; event.preventDefault(); event.stopImmediatePropagation(); if (!form.dataset.whBusy) back(); }, { capture: true, signal: controller.signal });
+    $("#sheetTitle").focus({ preventScroll: true }); $("#sheet").scrollTop = 0;
   }
   function customers() {
     const rows = [...data.customers].sort((a,b) => Number(accountFor(b.id)?.approvalStatus === "pending") - Number(accountFor(a.id)?.approvalStatus === "pending"));
@@ -153,20 +217,21 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
       ${invoiceUI.orderPanel(row)}
       <section class="w-order-section w-order-management" aria-labelledby="wManageTitle"><h3 id="wManageTitle">Manage order</h3>${field("Order status", html`<select id="wStatus">${data.statuses.map((value) => html`<option ${value === (draft?.status ?? row.status) ? raw("selected") : ""}>${value}</option>`)}</select>`)}
       ${field("Customer", html`<select id="wCustomer" ${row.preview === false ? raw("disabled") : ""}><option value="">Not linked to a customer</option>${selectedCustomer && !customer(selectedCustomer) ? html`<option value="${selectedCustomer}" selected>${snapshot?.business || row.business}</option>` : ""}${data.customers.map((value) => html`<option value="${value.id}" ${value.id === selectedCustomer ? raw("selected") : ""}>${value.business}</option>`)}</select>`)}
+      ${field("Tracking link (optional)", html`<input id="wTrackingUrl" type="url" inputmode="url" maxlength="2000" placeholder="https://" autocapitalize="none" spellcheck="false" autocomplete="off" value="${draft?.trackingUrl ?? row.trackingUrl ?? ""}">`)}<p class="hint">Add, edit or clear the link. Customers see it on dispatched delivery orders.</p>
       ${field("Internal note", html`<textarea id="wNote" maxlength="1000">${draft?.note ?? row.note}</textarea>`)}</section>${note}${buttons("Save order")}<div class="w-order-danger"><button class="btn bad" type="button" data-sheet="delete-order">Delete order</button></div></form>`, async (action, element) => {
       const form = element.closest("form");
       if (action === "invoice-open") {
-        const draft = { status: form.querySelector("#wStatus").value, customerId: row.preview === false ? row.customerId : form.querySelector("#wCustomer").value || null, note: form.querySelector("#wNote").value };
+        const draft = { status: form.querySelector("#wStatus").value, customerId: row.preview === false ? row.customerId : form.querySelector("#wCustomer").value || null, note: form.querySelector("#wNote").value, trackingUrl: form.querySelector("#wTrackingUrl").value };
         await invoiceUI.openOrder(row, () => editOrder(row.id, draft, row));
         return;
       }
       if (action === "delete-order") {
-        confirmOrderDeletion(row, { status: form.querySelector("#wStatus").value, customerId: row.preview === false ? row.customerId : form.querySelector("#wCustomer").value || null, note: form.querySelector("#wNote").value });
+        confirmOrderDeletion(row, { status: form.querySelector("#wStatus").value, customerId: row.preview === false ? row.customerId : form.querySelector("#wCustomer").value || null, note: form.querySelector("#wNote").value, trackingUrl: form.querySelector("#wTrackingUrl").value });
         return;
       }
       if (action !== "submit") return;
       await saveForm(form, async () => {
-        await api("PATCH", `/api/admin/wholesale/orders/${row.id}`, { ifVersion: row.version, status: $("#wStatus").value, customerId: row.preview === false ? row.customerId : $("#wCustomer").value || null, note: $("#wNote").value });
+        await api("PATCH", `/api/admin/wholesale/orders/${row.id}`, { ifVersion: row.version, status: $("#wStatus").value, customerId: row.preview === false ? row.customerId : $("#wCustomer").value || null, note: $("#wNote").value, trackingUrl: $("#wTrackingUrl").value });
         orderErrors.delete(row.id);
         if (form.isConnected) closeSheet(); await reload(); toast("Order saved.");
       });

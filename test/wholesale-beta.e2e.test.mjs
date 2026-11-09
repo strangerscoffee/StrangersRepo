@@ -49,6 +49,118 @@ async function buyer(username, productId, reference) {
 async function ownOrders(customerId) {
   return (await api("GET", "/api/admin/wholesale")).body.orders.filter((row) => row.customerId === customerId);
 }
+async function cartKey(page) {
+  return page.evaluate(async () => {
+    const session = await fetch("/api/wholesale/session", { cache: "no-store" }).then(response => response.json());
+    return "strangers.wholesale-preview.v2." + session.me.id;
+  });
+}
+async function assertEmptyCart(page, { stored = true } = {}) {
+  assert.equal(await page.locator("#order-items [data-line]").count(), 0, "confirmed lines leave the rendered cart");
+  assert.match(await page.locator("#order-items").textContent(), /Your order is empty/);
+  assert.equal(await page.locator("#basket-count").textContent(), "0");
+  assert.equal(await page.locator("#basket-count").isHidden(), true);
+  assert.equal(await page.locator("#order-totals").isHidden(), true);
+  assert.equal(await page.locator("#subtotal").textContent(), "£0.00");
+  assert.equal(await page.locator("#mobile-packs").textContent(), "0 packs");
+  assert.equal(await page.locator("#mobile-total").textContent(), "£0.00");
+  assert.equal(await page.locator("#mobile-basket").isHidden(), true);
+  assert.equal(await page.locator("#review-order").isDisabled(), true, "the confirmed cart cannot be placed again");
+  if (stored) {
+    const key = await cartKey(page);
+    const saved = await page.evaluate(key => ({ cart: localStorage.getItem(key), pending: localStorage.getItem(key + ".pending-order") }), key);
+    assert.deepEqual(JSON.parse(saved.cart || "[]"), [], "confirmed lines leave the saved cart");
+    assert.equal(saved.pending, null, "a confirmed order has no shared unresolved attempt");
+  }
+}
+async function assertReceiptStaysCleared(page) {
+  await assertEmptyCart(page);
+  await page.locator("#preview-complete [data-close]").click();
+  await page.locator("#review-dialog").waitFor({ state: "hidden" });
+  await assertEmptyCart(page);
+  await page.reload();
+  await page.locator("#products article").first().waitFor();
+  await assertEmptyCart(page);
+}
+
+test("checkout cart: a confirmed order clears stale tabs and survives reload even when empty setItem writes fail", { timeout: 90000 }, async () => {
+  const { context, page, customer } = await buyer("cart.confirmed", "colombia", "CART-CONFIRMED");
+  try {
+    const rejectEmptyWrites = () => {
+      const original = Storage.prototype.setItem;
+      Storage.prototype.setItem = function (key, value) {
+        if (this === localStorage && key.startsWith("strangers.wholesale-preview.v2.") && value === "[]") throw new DOMException("Storage quota exceeded", "QuotaExceededError");
+        return original.apply(this, arguments);
+      };
+    };
+    await context.addInitScript(rejectEmptyWrites);
+    await page.evaluate(rejectEmptyWrites);
+    const stale = await context.newPage();
+    await stale.goto(srv.base + "/wholesale-preview/");
+    await stale.locator("#products article").first().waitFor();
+    assert.equal(await stale.locator("#basket-count").textContent(), "1", "another tab starts with the same unsubmitted cart");
+    const otherKey = "strangers.wholesale-preview.v2.other-customer";
+    const otherCart = JSON.stringify([{ productId: "colombia", pack: "quarter", grind: "beans", quantity: 7 }]);
+    await stale.evaluate(({ key, cart }) => localStorage.setItem(key, cart), { key: otherKey, cart: otherCart });
+
+    await page.locator("#submit-preview-order").click();
+    await page.locator("#preview-complete").waitFor();
+    await assertReceiptStaysCleared(page);
+    await stale.waitForFunction(() => document.querySelector("#basket-count")?.textContent === "0" && !document.querySelector("#order-items [data-line]"));
+    await assertEmptyCart(stale);
+    await stale.reload();
+    await stale.locator("#products article").first().waitFor();
+    await assertEmptyCart(stale);
+    assert.equal(await page.evaluate(key => localStorage.getItem(key), otherKey), otherCart, "clearing one business does not touch another identity's cart");
+    assert.equal((await ownOrders(customer.id)).length, 1);
+  } finally { await context.close(); }
+});
+
+test("checkout cart: confirmation preserves a newer different cart saved while its reviewed order was in flight", { timeout: 90000 }, async () => {
+  const { context, page, customer } = await buyer("cart.newer", "colombia", "CART-OLDER-REVIEW");
+  let release = () => {};
+  try {
+    const key = await cartKey(page);
+    const editor = await context.newPage();
+    await editor.goto(srv.base + "/wholesale-preview/");
+    await editor.locator("#products article").first().waitFor();
+    let persisted, sent;
+    const saved = new Promise(resolve => { persisted = resolve; });
+    const waiting = new Promise(resolve => { release = resolve; });
+    await page.route("**/api/wholesale/orders", async route => {
+      if (route.request().method() !== "POST") return route.continue();
+      sent = route.request().postDataJSON();
+      const response = await route.fetch();
+      persisted({ status: response.status(), body: await response.json() });
+      await waiting;
+      await route.fulfill({ response });
+    });
+    await page.locator("#submit-preview-order").click();
+    const original = await saved;
+    assert.equal(original.status, 201, JSON.stringify(original.body));
+    await editor.locator("#order-items [data-remove]").click();
+    const coffee = editor.locator('article[data-product="colombia"]');
+    await coffee.locator('input[name="pack"][value="quarter"]').check();
+    await coffee.locator('button[type="submit"]').click();
+    const newer = await editor.evaluate(key => localStorage.getItem(key), key);
+    assert.deepEqual(JSON.parse(newer), [{ productId: "colombia", pack: "quarter", grind: "beans", quantity: 1 }]);
+    release();
+    await page.locator("#preview-complete").waitFor();
+    await assertEmptyCart(page, { stored: false });
+    assert.equal(await page.evaluate(key => localStorage.getItem(key), key), newer, "an older receipt cannot delete a genuinely different saved cart");
+    assert.equal(await editor.locator("#basket-count").textContent(), "1");
+    assert.match(await editor.locator("#order-items .line-variant").textContent(), /250 g bag/);
+    await page.locator("#preview-complete [data-close]").click();
+    await page.reload();
+    await page.locator("#products article").first().waitFor();
+    assert.equal(await page.locator("#basket-count").textContent(), "1", "the newer unsubmitted cart remains available on reload");
+    assert.match(await page.locator("#order-items .line-variant").textContent(), /250 g bag/);
+    const orders = await ownOrders(customer.id);
+    assert.equal(orders.length, 1);
+    assert.equal(orders[0].lines[0].pack, "kilo");
+    assert.equal(sent.lines[0].pack, "kilo", "confirmation still refers to the original frozen review");
+  } finally { release(); await context.close(); }
+});
 
 test("beta checkout: a saved order with a lost response is recovered after reload, even if stock, prices and terms changed", { timeout: 90000 }, async () => {
   const { context, page, customer } = await buyer("beta.saved", "brazil", "BETA-LOST-RESPONSE");
@@ -87,6 +199,7 @@ test("beta checkout: a saved order with a lost response is recovered after reloa
     assert.equal((await ownOrders(customer.id)).length, 1, "recovering a receipt cannot submit a duplicate order");
     assert.equal(saved.body.order.reference, submitted.reference);
     assert.equal(saved.body.order.paymentTerms.id, "net-30");
+    await assertReceiptStaysCleared(page);
   } finally { await context.close(); }
 });
 
@@ -104,6 +217,13 @@ test("beta checkout: an unsent request survives reload and retries its exact rev
     await page.locator("#submit-preview-order").click();
     await page.locator("#preview-submit-error:not([hidden])").waitFor();
     assert.equal((await ownOrders(customer.id)).length, 0, "the first request never reached the Worker");
+    const key = await cartKey(page), peer = await context.newPage();
+    await peer.goto(srv.base + "/robots.txt");
+    await peer.evaluate(key => { localStorage.removeItem(key); localStorage.removeItem(key + ".pending-order"); }, key);
+    await page.bringToFront();
+    assert.equal(await page.locator('#review-form [name="reference"]').inputValue(), "BETA-FROZEN-REFERENCE");
+    assert.equal(await page.locator('#review-form [name="reference"]').getAttribute("readonly"), "", "external shared-storage removal cannot unlock an uncertain review");
+    assert.equal(await page.locator('article[data-product="colombia"] button[type="submit"]').isDisabled(), true);
     await page.reload();
     await page.locator("#products article").first().waitFor();
     await page.locator("#review-order").click();
@@ -119,6 +239,7 @@ test("beta checkout: an unsent request survives reload and retries its exact rev
     assert.equal(orders.length, 1);
     assert.equal(orders[0].reference, "BETA-FROZEN-REFERENCE");
     assert.match(await page.locator("#complete-message").textContent(), new RegExp(orders[0].id));
+    await assertReceiptStaysCleared(page);
   } finally { await context.close(); }
 });
 
@@ -142,6 +263,7 @@ test("beta checkout: malformed success JSON preserves recovery of an order that 
     await page.locator("#preview-complete").waitFor();
     assert.match(await page.locator("#complete-message").textContent(), new RegExp(saved.body.order.id));
     assert.equal((await ownOrders(customer.id)).length, 1, "invalid confirmation data cannot discard the saved attempt and create a new order");
+    await assertReceiptStaysCleared(page);
   } finally { await context.close(); }
 });
 
@@ -177,6 +299,13 @@ for (const restored of [true, false]) {
     try {
       const other = await buyerAccount(`beta.${suffix}.second`);
       await page.locator("#review-dialog .close-button").click();
+      await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
+      await page.waitForFunction(() => {
+        const header = document.querySelector(".site-header"), row = document.querySelector(".header-account");
+        return window.scrollY <= 8 && row && !row.inert && !header.classList.contains("is-account-collapsed")
+          && getComputedStyle(row).visibility === "visible" && getComputedStyle(row).opacity === "1"
+          && !row.getAnimations().some(animation => animation.playState === "running");
+      });
       await page.locator("#my-account").click();
       await page.locator("#account-dialog").waitFor();
       assert.equal(await page.locator('#account-business').textContent(), customer.business);
