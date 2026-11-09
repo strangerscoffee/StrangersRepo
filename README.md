@@ -2,7 +2,7 @@
 
 The food safety diary (Safer Food, Better Business) for Strangers Coffee's four Norwich sites, online at **https://staffstrangerscoffee.com**. Staff sign in on a phone, iPad or computer and record the day's checks; managers keep the records an Environmental Health Officer asks to see.
 
-It runs on Cloudflare (one Worker, a D1 database and a KV store for PDFs), deployed automatically from this repo. **`README-deploy.md`** covers deploying, secrets, backups and running it locally.
+It runs on Cloudflare (one Worker, a D1 database and a KV store for PDFs and catalogue photos), deployed automatically from this repo. **`README-deploy.md`** covers deploying, secrets, backups and running it locally.
 
 ## Sites
 
@@ -75,6 +75,8 @@ Everything fits Cloudflare's free tier (Workers, D1, KV and a custom domain) for
 
 ## Wholesale ordering
 
-Wholesale customers register and sign in at **https://preview.staffstrangerscoffee.com**. Admins must approve new registrations in **Admin → Wholesale → Customers** before customers can access the catalogue or order. Wholesale identities never grant staff access. Customers manage delivery details, place orders, view their history and build a repeat basket at current prices. Admins review orders, update statuses, manage accounts and edit catalogue prices and visibility at **https://admin.staffstrangerscoffee.com/#wholesale**.
+Wholesale customers register and sign in at **https://preview.staffstrangerscoffee.com**. Admins must approve new registrations in **Admin → Wholesale → Customers** before customers can access the catalogue or order. Wholesale identities never grant staff access. Customers manage delivery details, place orders, view their history and build a repeat basket at current prices. Admins review orders, update statuses and manage accounts at **https://admin.staffstrangerscoffee.com/#wholesale**.
+
+**Coffee catalogue** adds and edits coffees, descriptions, categories, bag prices and photos. Admins can upload or remove photos, mark a coffee out of stock while keeping it visible, or hide it. Out-of-stock and hidden coffees cannot be ordered. **Customers** sets each business's payment terms and instructions; customers see them in My account, checkout and their saved orders. Prices, delivery details and payment terms are saved with each order so later edits preserve its original agreement.
 
 Existing staff can still use Staff sign-in for clearly marked preview orders. Orders and account details are shared in D1; payment, email and fulfilment integrations are not automatic. See [docs/wholesale-preview.md](docs/wholesale-preview.md).

@@ -1,6 +1,11 @@
-// Public retail catalogue used for the wholesale design demo. No order or API connection.
-import { products } from "./catalogue.js";
-export { products };
+// The source snapshot is a fallback; the signed-in API supplies the editable catalogue.
+import { products as sourceProducts } from "./catalogue.js";
+export let products = sourceProducts.map((product) => ({ ...product, prices: { ...product.prices } }));
+export function setCatalogue(value) {
+  if (!Array.isArray(value)) throw new Error("Could not load the coffee catalogue.");
+  products = value.map((product) => ({ ...product, prices: { ...product.prices }, inStock: product.inStock !== false, active: product.active !== false, imageUrls: Array.isArray(product.imageUrls) ? product.imageUrls.filter((url) => typeof url === "string" && url.startsWith("/") && !url.startsWith("//")) : product.image ? ["/wholesale-preview/images/" + product.image] : [] }));
+}
+export const isAvailable = (product) => !!product && product.active !== false && product.inStock !== false;
 
 export const packs = {
   quarter: { label: "250 g bag", short: "250 g", grams: 250 },
@@ -37,7 +42,7 @@ export function sanitiseBasket(value) {
 }
 
 export function addToBasket(basket, variant, quantity) {
-  if (!validQuantity(quantity) || !sanitiseBasket([{ ...variant, quantity }]).length) return { basket, added: 0 };
+  if (!isAvailable(productFor(variant.productId)) || !validQuantity(quantity) || !sanitiseBasket([{ ...variant, quantity }]).length) return { basket, added: 0 };
   const next = sanitiseBasket(basket);
   const existing = next.find((line) => lineKey(line) === lineKey(variant));
   const added = Math.min(Number(quantity), MAX_QUANTITY - (existing?.quantity || 0));

@@ -247,3 +247,5 @@ button.stat{cursor:pointer}
 #sheet .checks input[type=checkbox]{width:24px;height:24px;min-height:0;min-width:0;padding:0;align-self:center}
 
 .w-address{white-space:pre-line;overflow-wrap:anywhere}
+
+.w-photos{display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:12px;margin:12px 0 20px}.w-photo{display:grid;gap:8px;min-width:0}.w-photo img{width:100%;height:95px;object-fit:contain;background:var(--tint);border-radius:8px}.w-photo .btn{justify-content:center;min-height:44px}.w-categories{border:0;padding:12px 0;margin:0;display:flex;flex-wrap:wrap;gap:12px}.w-categories legend{font-size:13px;color:var(--muted);margin-bottom:8px}.w-categories label{display:flex;align-items:center;gap:7px;min-height:44px}#wCoffeeForm input[type=file]{max-width:100%;min-width:0}

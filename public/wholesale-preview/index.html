@@ -35,7 +35,7 @@
     <p class="account-hold" id="account-hold" role="status" hidden>Your account is on hold. Contact Strangers before placing an order.</p>
     <div class="shop-layout">
       <section class="catalogue" id="coffee" aria-labelledby="coffee-title">
-        <div class="section-heading"><div><p class="eyebrow">01 / MAKE IT YOURS</p><h2 id="coffee-title">The coffee line-up</h2></div><span class="product-count" id="product-count" role="status">10 coffees</span></div>
+        <div class="section-heading"><div><p class="eyebrow">01 / MAKE IT YOURS</p><h2 id="coffee-title">The coffee line-up</h2></div><div class="catalogue-actions"><span class="product-count" id="product-count" role="status">10 coffees</span><button class="text-button" id="refresh-catalogue" type="button" aria-label="Refresh coffee availability">Refresh</button></div></div>
         <div class="catalogue-tools">
           <div class="filters" role="group" aria-label="Filter coffees">
             <button class="filter selected" type="button" data-filter="all" aria-pressed="true">All coffee</button>
@@ -84,12 +84,13 @@
           <fieldset class="delivery-options"><legend>Delivery preference</legend><label><input type="radio" name="delivery" value="dispatch" checked><span>Send it to me</span></label><label><input type="radio" name="delivery" value="collection"><span>Roastery collection</span></label></fieldset>
           <label class="form-field">Business name<input name="business" maxlength="120" autocomplete="organization"></label>
           <p class="dialog-intro" id="delivery-summary"></p><button class="text-button" type="button" id="review-account" hidden>Edit delivery details</button>
+          <p class="payment-terms" id="review-payment-terms"></p>
           <label class="form-field">Purchase reference <span>(optional)</span><input name="reference" maxlength="80" placeholder="e.g. Your café name or PO number" autocomplete="off"></label>
           <p class="quantity-error" id="preview-submit-error" role="alert" hidden></p><button class="button button-dark" id="submit-preview-order" type="submit">Place order</button>
           <button class="button button-outline" type="button" data-close>Keep choosing coffee</button>
         </form>
       </div>
-      <div class="preview-complete" id="preview-complete" hidden><p class="eyebrow">ORDER RECEIVED</p><h2 id="complete-title">Thank you.</h2><p>Coffee subtotal <strong id="complete-total">£0.00</strong></p><p id="complete-message"></p><a class="button button-dark" id="complete-dashboard-link" href="/admin#wholesale" hidden>Open Admin · Wholesale</a><button class="button button-outline" type="button" data-close>Back to the coffee</button></div>
+      <div class="preview-complete" id="preview-complete" hidden><p class="eyebrow">ORDER RECEIVED</p><h2 id="complete-title">Thank you.</h2><p>Coffee subtotal <strong id="complete-total">£0.00</strong></p><p id="complete-message"></p><p class="payment-terms" id="complete-payment-terms"></p><a class="button button-dark" id="complete-dashboard-link" href="/admin#wholesale" hidden>Open Admin · Wholesale</a><button class="button button-outline" type="button" data-close>Back to the coffee</button></div>
     </div>
   </dialog>
 
@@ -107,6 +108,7 @@
       <p class="quantity-error" id="account-error" role="alert" hidden></p>
       <button class="button button-dark" type="submit">Save details</button>
     </form>
+    <section class="account-terms" aria-labelledby="account-terms-title"><h3 id="account-terms-title">Payment terms</h3><p id="account-payment-terms"></p><p id="account-payment-note"></p></section>
     <details class="password-settings"><summary>Change password</summary><form id="account-password-form">
       <label class="form-field">Current password<input name="password" type="password" autocomplete="current-password" minlength="8" maxlength="128" required></label>
       <label class="form-field">New password<input name="newPassword" type="password" autocomplete="new-password" minlength="8" maxlength="128" required></label>

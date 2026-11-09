@@ -22,7 +22,7 @@ The site is one Cloudflare Worker serving the diary's pages and the API they tal
 | `test/` | `api.test.mjs`, `migration.test.mjs` and `rota.test.mjs` (the API and the rota's hostname, against `wrangler dev`), `e2e.test.mjs` (the diary in a browser, phone-sized), `rota.e2e.test.mjs` (the rota in a browser, phone and iPad) and `pdf.e2e.test.mjs` (the EHO records and allergen matrix PDFs with very long content: no text off the page or over other text) `readonly.e2e.test.mjs` (what staff see read-only: no stray "null", no Undo sign-off) and `today.e2e.test.mjs` (Today on a phone: reminders fold, closing checks wait in the morning). |
 | `docs/rota-designs/` | The rota's screen designs (PNG and HTML), for reference. |
 
-Data lives in a D1 database (`kitchen-diary`) and allergen PDFs in a KV namespace. Cloudflare creates both on the first deploy and the Worker creates its own tables, so there are no ids to copy and no migrations to run. The only secret is the **setup code**.
+Data lives in a D1 database (`kitchen-diary`); allergen PDFs and uploaded catalogue photos use the existing `FILES` KV namespace. Cloudflare creates both on the first deploy and the Worker creates its own tables, so there are no ids to copy and no migrations to run. The only required secret is the **setup code**.
 
 ## First deployment (in the Cloudflare dashboard, no terminal)
 
@@ -85,7 +85,7 @@ To restore, the JSON's `docs` are documents to write back at their `path`s (ask 
 npx wrangler d1 export kitchen-diary --remote --output backup-$(date +%F).sql
 ```
 
-Keep backups private: they contain the whole diary, including staff names. D1 also keeps point-in-time history (7 days on the free plan, 30 on paid): `npx wrangler d1 time-travel restore kitchen-diary --timestamp=<ISO time>`. Allergen PDFs live in KV and aren't in the export; keep the originals.
+Keep backups private: they contain the whole diary, including staff names. D1 also keeps point-in-time history (7 days on the free plan, 30 on paid): `npx wrangler d1 time-travel restore kitchen-diary --timestamp=<ISO time>`. Allergen PDFs and uploaded catalogue photos live in KV and aren't in the JSON or SQL export; keep the originals. Wholesale catalogue records include image references, not image bytes. After restoring to an empty KV namespace, reupload missing photos in Admin → Wholesale → Coffee catalogue. Bundled source photos remain in the repository.
 
 ## Run it locally (for code changes)
 
@@ -126,5 +126,11 @@ The existing `PREVIEW_HOST` custom domain serves wholesale ordering, its custome
 Migration 12 creates isolated wholesale account and session tables and an order lookup index. No manual migration is required. Account metadata and approval state are backed up; passwords and sessions are not. A restored wholesale account needs an admin password reset.
 
 Review requests under **Admin → Wholesale → Customers → the customer → Review sign-in**. Set Approved and allow sign-in to activate the account. Manage sign-in also disables accounts or resets/unlocks their passwords. Customers with temporary passwords choose their own on first sign-in. Approval does not automatically send an email; contact the customer directly.
+
+Under **Coffee catalogue**, add or edit coffees, descriptions, categories, three bag prices, visibility and stock availability. Save a new coffee before adding photos. Uploads and removals save immediately; JPEG, PNG and WebP are supported, up to six photos per coffee and 5 MB each. Original source photos can be restored after removal. Existing source prices are retail references until an admin sets the agreed wholesale prices.
+
+Under **Customers**, set payment terms and customer-facing instructions. Choices are To be agreed, Before dispatch, 7/14/30/60 days from invoice, or Custom with instructions. Existing accounts default to To be agreed. Customers can read these terms but only admins can change them. Each order keeps the terms agreed at checkout; changing a customer's terms requires a new checkout review. This records the agreement without collecting payment or generating invoices.
+
+Catalogue and payment-term fields use the existing versioned JSON records; photos use the existing KV binding. This release adds no schema migration, secret, service or DNS change.
 
 For local development, use `npm run dev -- --var PREVIEW_HOST:` and open `/wholesale-preview/`, `/wholesale-preview/signin` or `/admin#wholesale`. Run both test suites before publishing. Source prices remain retail reference prices until edited by an admin; payment and fulfilment integrations remain manual.
