@@ -88,3 +88,5 @@ My orders shows each order’s progress and saved details, with Load earlier ord
 Admins can remove customer or staff-preview orders after confirmation. Removed orders leave histories and preparation totals; audit and duplicate-request protection are retained, and payments remain unchanged.
 
 Wholesale keeps the approved business name fixed. Customers and admins can maintain named delivery locations and choose a default; checkout selects the destination, and orders retain its original address. Customer navigation, footer and empty baskets are simplified, and grind/location choices use built-in sheets.
+
+Wholesale now uses wider grouped desktop editors, a viewport-sized basket and a wider workspace. Pending account reviews appear only as a count beside Customers. Admins configure supplier/VAT details under Invoicing, preview and issue VAT invoices from saved orders, and record payments. Customers can view issued invoices, payment terms, due dates, outstanding balances and PDFs in My orders.

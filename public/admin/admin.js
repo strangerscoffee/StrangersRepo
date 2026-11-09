@@ -37,6 +37,7 @@
     out: '<path d="M10 5H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h4M15 8l4 4-4 4M19 12H9"/>',
     pen: '<path d="M4 20h4L19 9l-4-4L4 16z"/>',
     x: '<path d="M6 6l12 12M18 6L6 18"/>',
+    doc: '<path d="M6 3h8l4 4v14H6zM14 3v5h4M9 12h6M9 16h6"/>',
     copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>',
   };
   const svg = (k) => raw(`<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${P[k]}</svg>`);
@@ -50,7 +51,7 @@
     } catch (e) { throw new Error("Couldn't reach the site. Check your connection."); }
     if (r.status === 401) { goSignIn(location.pathname + location.hash); throw new Error("Signed out."); }
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(j.message || "Something went wrong. Try again.");
+    if (!r.ok) throw Object.assign(new Error(j.message || "Something went wrong. Try again."), { status: r.status, code: j.code });
     return j;
   }
 

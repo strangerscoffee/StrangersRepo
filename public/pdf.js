@@ -41,8 +41,10 @@ function wrap(s,w,size,bold){
       if(width(tryLine,size,bold)<=w){line=tryLine;continue}
       if(line)lines.push(line);
       while(width(word,size,bold)>w&&word.length>1){
-        let k=word.length-1;while(k>1&&width(word.slice(0,k),size,bold)>w)k--;
-        lines.push(word.slice(0,k));word=word.slice(k);
+        // Find the same largest fitting prefix without repeatedly rescanning every shorter token.
+        let lo=1,hi=word.length-1;
+        while(lo<hi){const mid=Math.ceil((lo+hi)/2);if(width(word.slice(0,mid),size,bold)<=w)lo=mid;else hi=mid-1}
+        const k=lo;lines.push(word.slice(0,k));word=word.slice(k);
       }
       line=word;
     }
@@ -59,9 +61,9 @@ function fit(s,w,size,bold){
 }
 
 class Doc{
-  constructor({landscape=false,title="",author=""}={}){
+  constructor({landscape=false,title="",author="",createdAt=null}={}){
     this.W=landscape?841.89:595.28;this.H=landscape?595.28:841.89;
-    this.title=title;this.author=author;this.pages=[];this.addPage();
+    this.title=title;this.author=author;this.createdAt=createdAt;this.pages=[];this.addPage();
   }
   addPage(){this.ops=[];this.pages.push(this.ops);return this}
   get pageCount(){return this.pages.length}
@@ -121,8 +123,9 @@ class Doc{
     }
     objs[pagesId-1]=`<< /Type /Pages /Kids [${kids.map(k=>k+" 0 R").join(" ")}] /Count ${kids.length} >>`;
     objs[catalog-1]=`<< /Type /Catalog /Pages ${pagesId} 0 R >>`;
-    const d=new Date(),p=n=>String(n).padStart(2,"0");
-    const info=add(`<< /Title ${hex(codes(this.title))} /Author ${hex(codes(this.author))} /Producer (Strangers Coffee Kitchen Diary) /CreationDate (D:${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}) >>`);
+    const d=this.createdAt==null?new Date():new Date(this.createdAt),p=n=>String(n).padStart(2,"0");
+    const created=this.createdAt==null?`${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`:d.toISOString().replace(/\D/g,"").slice(0,14)+"Z";
+    const info=add(`<< /Title ${hex(codes(this.title))} /Author ${hex(codes(this.author))} /Producer (Strangers Coffee Kitchen Diary) /CreationDate (D:${created}) >>`);
     let out="%PDF-1.4\n%\xe2\xe3\xcf\xd3\n";const offs=[];
     objs.forEach((o,i)=>{offs.push(out.length);out+=`${i+1} 0 obj\n${o}\nendobj\n`});
     const xref=out.length;
@@ -277,5 +280,5 @@ function download(bytes,name){
   return "downloaded";
 }
 
-window.DiaryPDF={create:o=>new Doc(o),Doc,Flow,wrap,width,fit,save};
+globalThis.DiaryPDF={create:o=>new Doc(o),Doc,Flow,wrap,width,fit,save};
 })();

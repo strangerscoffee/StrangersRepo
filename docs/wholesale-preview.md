@@ -20,11 +20,11 @@ Customers select coffee, pack size, grind and quantity, review their basket and 
 
 Orders arrive in Admin → Wholesale for the team to prepare and update through New, Preparing, Ready, Dispatched or Cancelled. Customers see only their business's orders and public statuses in My orders. Internal order notes remain admin-only. Customer orders cannot be reassigned to another business. Order again builds a new basket at current catalogue prices and waits for confirmation; it never submits automatically.
 
-There is no payment gateway, automatic email, invoice or shipping integration. The coffee subtotal excludes delivery-charge calculations; Strangers confirms delivery separately. Default prices remain the source retail snapshot until admins edit them; negotiated wholesale rates are not invented.
+There is no payment gateway, automatic email or shipping integration. Invoices are explicitly reviewed and issued in Admin. The coffee subtotal excludes delivery-charge calculations; Strangers confirms delivery separately. Default prices remain the source retail snapshot until admins edit them; negotiated wholesale rates are not invented.
 
 ## Payment terms
 
-Admins set each business's terms under **Customers**: To be agreed (the default), Before dispatch, 7/14/30/60 days from invoice, or Custom. Payment instructions are customer-facing, up to 500 characters; Custom requires instructions describing the agreement. Customers see their current terms read-only in My account and checkout. The receipt, My orders and admin order details show the terms captured with that order. Older orders without a terms snapshot are preserved. The system records terms; invoicing and payment remain manual.
+Admins set each business's terms under **Customers**: To be agreed (the default), Before dispatch, 7/14/30/60 days from invoice, or Custom. Payment instructions are customer-facing, up to 500 characters; Custom requires instructions describing the agreement. Customers see their current terms read-only in My account and checkout. The receipt, My orders and admin order details show the terms captured with that order. Older orders without a terms snapshot are preserved. The system records terms for invoice generation; payment collection remains manual.
 
 ## Data and backups
 
@@ -73,3 +73,11 @@ The server retains the removed record with `deletedAt`/`deletedBy` for audit and
 Each business can keep up to 20 named delivery locations and choose a default. The main location remains linked to the existing primary address; additional locations can be added, edited and removed. Edits are staged in My account or the admin customer sheet and saved atomically with the customer version. At checkout, the business name stays fixed and a location picker shows the selected address and instructions. Receipts, history and admin packing views retain the chosen location as it was when ordered. Pending submissions retain the exact reviewed location/payload until resolved.
 
 The customer header groups account identity, account actions, catalogue/history navigation and basket access. Empty baskets use plain guidance; populated counts show bags. Grind choices open a built-in dialog with explicit confirmation; cancellation preserves the card selection. The footer groups Wholesale branding and catalogue, order-history and website links. Help-card/ordering-guide windows and visible Beta labels are removed. Dialog close controls sit in their own sticky toolbar above the content.
+
+## VAT invoices and desktop workspace
+
+In Admin → Wholesale → Invoicing, configure legal supplier/VAT details, tax rates, price basis, invoice numbering and payment instructions. No seller identity or tax treatment is invented. Incomplete setup can be saved, but invoice issuance waits for complete confirmed settings. Open a real customer order to review the bill-to address, saved line prices, VAT rates, delivery charge and captured payment terms. Preview calculates exact line/rate totals without allocating a number. Issue creates a unique sequential invoice once; repeated identical submissions recover it.
+
+Issued invoice financial content is immutable. Payment recording has a separate versioned status, date and reference and never initiates a bank transaction. Net payment terms compute due dates using calendar days. Customers open My orders → Invoices to view their own documents, amounts outstanding/overdue, terms and PDFs. Invoices stay available if an admin removes the source order. This adds migration 13 and backup fields, with no new service or secret.
+
+Desktop layouts use grouped wider windows and persistent controls. Customer payment/default/status pickers preserve the complete editing draft. Pending reviews are a notification beside Customers rather than an attention section. The customer account panel and long-basket layout use desktop width and independent scrolling while preserving phone controls.

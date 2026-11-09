@@ -229,6 +229,13 @@ const MIGRATIONS: Migration[] = [
       "CREATE INDEX IF NOT EXISTS wholesale_customer_orders ON wholesale_preview(kind, json_extract(data, '$.customerId'), updated_at DESC)",
     ]);
   } },
+  { id: 13, name: "wholesale immutable VAT invoices and payment records", async run(env) {
+    await runAll(env, [
+      "CREATE TABLE IF NOT EXISTS wholesale_invoice_settings (id INTEGER PRIMARY KEY CHECK(id = 1), data TEXT NOT NULL, version INTEGER NOT NULL, updated_at INTEGER NOT NULL)",
+      "CREATE TABLE IF NOT EXISTS wholesale_invoices (seq INTEGER PRIMARY KEY AUTOINCREMENT, invoice_number TEXT NOT NULL UNIQUE, order_id TEXT NOT NULL UNIQUE, customer_id TEXT NOT NULL, request_key TEXT NOT NULL, data TEXT NOT NULL, issued_at INTEGER NOT NULL, issued_by TEXT NOT NULL, paid INTEGER NOT NULL DEFAULT 0 CHECK(paid IN (0,1)), paid_date TEXT, paid_at INTEGER, payment_reference TEXT NOT NULL DEFAULT '', payment_version INTEGER NOT NULL DEFAULT 1)",
+      "CREATE INDEX IF NOT EXISTS wholesale_invoices_customer ON wholesale_invoices(customer_id, seq DESC)",
+    ]);
+  } },
 ];
 
 async function migrate(env: Env): Promise<void> {

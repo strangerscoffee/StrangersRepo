@@ -195,7 +195,7 @@ for (const restored of [true, false]) {
       let profileWrites = 0;
       await page.route("**/api/wholesale/account", async (route) => { if (route.request().method() === "PUT") profileWrites++; return route.continue(); });
       if (restored) await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })));
-      else await page.locator('#account-form button[type="submit"]').click();
+      else await page.locator('#save-account').click();
       await page.waitForFunction((business) => document.querySelector("#signed-in-name")?.textContent === business, other.customer.business);
       assert.equal(await page.locator("dialog[open]").count(), 0, "the newly signed-in business sees no previous account, history or repeat dialog");
       assert.equal(await page.evaluate(() => window.profileBeforeSessionChange), undefined, "session changes replace the old document and its private form state");

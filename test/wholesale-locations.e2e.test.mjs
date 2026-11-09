@@ -49,7 +49,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
         await page.locator("#location-dialog").waitFor({ state: "hidden" });
       }
       async function saveCustomer() {
-        await page.locator('#account-form button[type="submit"]').click();
+        await page.locator('#save-account').click();
         await page.locator("#account-dialog").waitFor({ state: "hidden" });
         return profile();
       }
@@ -145,7 +145,10 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       current = await saveAdmin();
       const airport = current.locations.find((location) => location.name === "Airport kiosk");
       assert.ok(uuid.test(airport.id)); assert.equal(current.locations.length, 3);
-      await openAdminCustomer(); await admin.locator("#wDefaultLocation").selectOption(airport.id);
+      await openAdminCustomer();
+      await admin.locator('[data-sheet="customer-choice"][data-choice="wDefaultLocation"]').click();
+      await admin.locator(`#wCustomerChoice [data-sheet="customer-choice-apply"][data-value="${airport.id}"]`).click();
+      await admin.locator('#wCustomerForm').waitFor();
       const riversideIndex = current.locations.findIndex((location) => location.id === riverside.id);
       await admin.locator(`#wLocations [data-sheet="location-edit"][data-index="${riversideIndex}"]`).click();
       await admin.locator('[data-sheet="location-remove"]').click();

@@ -201,7 +201,9 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       await admin.goto(srv.base + '/admin#wholesale');
       await admin.locator('[data-act="wh-tab"][data-id="customers"]').click();
       await admin.locator('[data-act="wh-customer"]', { hasText: business }).click();
-      await admin.locator('#wPaymentTerms').selectOption('net-30');
+      await admin.locator('[data-sheet="customer-choice"][data-choice="wPaymentTerms"]').click();
+      await admin.locator('#wCustomerChoice [data-sheet="customer-choice-apply"][data-value="net-30"]').click();
+      await admin.locator('#wCustomerForm').waitFor();
       await admin.locator('[data-sheet="account"]').click();
       await admin.locator('#wApproval').selectOption('approved');
       await admin.locator('#sheet button[type="submit"]').click();
@@ -224,7 +226,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       await page.locator('#account-form [name="address"]').fill('10 Coffee Street\nNorwich');
       await page.locator('#account-form [name="postcode"]').fill('NR1 1AA');
       await page.locator('#account-form [name="deliveryNotes"]').fill('Ring the bell');
-      await page.locator('#account-form button[type="submit"]').click();
+      await page.locator('#save-account').click();
       await page.locator('#account-dialog').waitFor({ state: 'hidden' });
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
       if (process.env.WHOLESALE_SCREENSHOT_DIR) {

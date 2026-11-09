@@ -157,8 +157,8 @@ test("the admin host: admins only, its page at /, nothing of the diary's", async
     const home = await get("/", setup);
     assert.equal(home.status, 200);
     assert.match(home.text, /admin\.js/);
-    for (const p of ["/admin/admin.js", "/admin/wholesale.js", "/admin/admin.css", "/theme.css", "/icon-192.png", "/shared/core.js", "/wholesale-preview/images/brazil.webp"]) assert.equal((await get(p, setup)).status, 200, p);
-    assert.match(home.text, /<script src="\/shared\/core.js\?v=\w+"><\/script>\n<script src="\/admin\/wholesale.js\?v=\w+"><\/script>\n<script src="\/admin\/admin.js\?v=\w+"><\/script>/, "shared helpers and wholesale view load before the admin shell");
+    for (const p of ["/admin/admin.js", "/admin/wholesale-invoices.js", "/admin/wholesale.js", "/admin/admin.css", "/admin/wholesale-invoices.css", "/theme.css", "/icon-192.png", "/shared/core.js", "/wholesale-preview/images/brazil.webp"]) assert.equal((await get(p, setup)).status, 200, p);
+    assert.match(home.text, /<script src="\/shared\/core.js\?v=\w+"><\/script>\n<script src="\/admin\/wholesale-invoices.js\?v=\w+"><\/script>\n<script src="\/admin\/wholesale.js\?v=\w+"><\/script>\n<script src="\/admin\/admin.js\?v=\w+"><\/script>/, "shared helpers, invoicing and wholesale view load before the admin shell");
     for (const p of ["/diary/core.js", "/index.html", "/rota/", "/admin/"]) assert.equal((await get(p, setup)).headers.get("location"), "/", p + " goes to /");
     assert.equal((await call("POST", "/api/db/get", { path: "days/x" }, setup, host.base)).status, 404, "the diary's data API isn't here");
     assert.equal((await get("/api/admin/overview", setup)).status, 200);
