@@ -19,6 +19,62 @@ const photoIndexes = new Map();
 const canOrder = () => session?.customer?.status !== "On hold";
 const goSignIn = () => location.replace(location.pathname.startsWith("/wholesale-preview/") ? "/wholesale-preview/signin" : "/signin");
 
+const LOCATION_FIELDS = ["name", "contact", "phone", "address", "postcode", "deliveryNotes"];
+let accountLocations = [], accountDefaultLocation = "primary", editingLocation = null, removingLocation = null, accountSaving = false;
+const locationKey = (location) => location.id || location.draftKey;
+function locationsFor(customer = session?.customer) {
+  if (!customer) return [];
+  return (customer.locations?.length ? customer.locations : [{ id: "primary", name: "Main location", ...Object.fromEntries(["contact", "phone", "address", "postcode", "deliveryNotes"].map(key => [key, customer[key] || ""])) }]).map(location => ({ ...location }));
+}
+function locationSummary(location) {
+  return [location?.contact, location?.phone, location?.address, location?.postcode, location?.deliveryNotes].filter(Boolean).join(" · ");
+}
+function reviewBusiness(business) {
+  const customer = !!session.customer, input = $("#review-form").elements.business;
+  $("#review-business-block").hidden = !customer;
+  $("#review-business").textContent = business || "";
+  $("#staff-business-field").hidden = customer;
+  input.type = customer ? "hidden" : "text";
+  input.value = business || "";
+  input.readOnly = customer;
+}
+function renderReviewLocation() {
+  const customer = session.customer, block = $("#review-location-block");
+  block.hidden = !customer;
+  if (!customer) { $("#delivery-summary").textContent = ""; return; }
+  const field = $("#review-form").elements.locationId, locations = locationsFor(customer);
+  const selected = locations.find(location => location.id === field.value) || locations.find(location => location.id === customer.defaultLocationId) || locations[0];
+  field.value = selected.id;
+  $("#review-location-label").textContent = $("#review-form").elements.delivery.value === "collection" ? "Business location" : "Delivery location";
+  $("#review-location-name").textContent = selected.name;
+  $("#delivery-summary").textContent = locationSummary(selected) || "Add delivery details in My account, or choose roastery collection.";
+}
+function syncPrimaryLocation() {
+  const primary = accountLocations.find(location => location.id === "primary"), form = $("#account-form");
+  if (primary) for (const key of ["contact", "phone", "address", "postcode", "deliveryNotes"]) primary[key] = form.elements[key].value;
+}
+function renderAccountLocations() {
+  $("#account-locations").innerHTML = accountLocations.map(location => {
+    const key = locationKey(location), primary = location.id === "primary", currentDefault = location.id === accountDefaultLocation;
+    return `<article class="saved-location" data-account-location="${escape(key)}"><div class="location-row-heading"><strong>${escape(location.name)}</strong>${currentDefault ? '<span class="location-default">Default</span>' : ""}</div><p>${escape([location.address, location.postcode].filter(Boolean).join(" · ") || "Add a delivery address")}</p><div class="location-row-actions"><button class="text-button" type="button" data-location-edit="${escape(key)}">Edit location</button>${!currentDefault && location.id ? `<button class="text-button" type="button" data-location-default="${escape(key)}">Make default</button>` : ""}${!primary ? `<button class="text-button location-remove" type="button" data-location-remove="${escape(key)}">Remove</button>` : ""}</div>${!location.id ? '<p class="location-hint">Save account details before making this the default.</p>' : ""}</article>`;
+  }).join("");
+  $("#add-location").disabled = accountLocations.length >= 20 || accountSaving;
+  $("#location-limit-note").hidden = accountLocations.length < 20;
+}
+function openLocationEditor(key) {
+  if (accountSaving) return;
+  syncPrimaryLocation();
+  const row = key ? accountLocations.find(location => locationKey(location) === key) : null;
+  if (key && !row) return;
+  if (!row && accountLocations.length >= 20) { toast("You can save up to 20 locations."); return; }
+  editingLocation = row ? locationKey(row) : null;
+  $("#location-title").textContent = row ? "Edit location" : "Add location";
+  const form = $("#location-form");
+  form.reset();
+  for (const key of LOCATION_FIELDS) form.elements[key].value = row?.[key] || "";
+  $("#location-dialog").showModal();
+}
+
 function loadBasket() {
   let stored;
   if (!STORAGE_KEY) return [];
@@ -57,7 +113,7 @@ function renderProducts() {
     <div class="product-info"><p class="product-origin">${escape(product.origin)}</p><h3 class="product-name" id="name-${product.id}">${escape(product.name)}</h3><p class="product-process">${escape(product.process)}</p><p class="tasting-notes">${escape(product.notes)}</p><p class="product-stock ${product.inStock ? "" : "out"}">${product.inStock ? "In stock" : "Out of stock"}</p></div>
     <form class="product-config" data-product="${product.id}">
       <fieldset class="pack-options"><legend>Pack size <span class="sr-only">for ${escape(product.name)}</span></legend>${Object.entries(packs).map(([id, pack]) => `<label class="pack-choice"><input type="radio" name="pack" value="${id}" ${id === "kilo" ? "checked" : ""}><span>${escape(pack.short)} bag</span></label>`).join("")}</fieldset>
-      <label class="grind-label">Grind <span class="sr-only">for ${escape(product.name)}</span><select name="grind">${Object.entries(grinds).map(([id, grind]) => `<option value="${id}">${escape(grind)}</option>`).join("")}</select></label>
+      <div class="grind-field"><span class="field-label">Grind</span><select name="grind" hidden aria-label="Grind for ${escape(product.name)}">${Object.entries(grinds).map(([id, grind]) => `<option value="${id}">${escape(grind)}</option>`).join("")}</select><button class="grind-picker" type="button" data-grind-open aria-haspopup="dialog" aria-controls="grind-dialog" aria-label="Choose grind for ${escape(product.name)}"><span data-grind-label>${escape(grinds.beans)}</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 7 7-7 7"/></svg></button></div>
       <div class="product-price"><strong data-price>${money(product.price)}</strong><span data-price-unit>per 1 kg bag</span></div>
       <div class="add-row">${stepper(`qty-${product.id}`, 1, product.name, `error-${product.id}`)}<button class="button button-dark" type="submit" aria-label="Add ${escape(product.name)} to order" ${isAvailable(product) ? "" : "disabled"}>${product.inStock ? 'Add to order <span aria-hidden="true">+</span>' : "Out of stock"}</button></div>
       <p class="quantity-error" id="error-${product.id}" hidden role="status">Choose a whole number of packs, from 1 to 99.</p>
@@ -100,8 +156,10 @@ function renderBasket() {
   const sum = totals(basket);
   const packText = `${sum.packs} ${sum.packs === 1 ? "pack" : "packs"}`;
   $("#basket-count").textContent = sum.packs;
-  $("#order-count").textContent = String(sum.packs).padStart(2, "0");
-  $(".basket-link").setAttribute("aria-label", `View your order, ${packText}`);
+  $("#basket-count").hidden = !sum.packs;
+  $("#order-count").textContent = `${sum.packs} ${sum.packs === 1 ? "bag" : "bags"}`;
+  $("#order-count").hidden = !sum.packs;
+  $(".basket-link").setAttribute("aria-label", `View your order, ${sum.packs} ${sum.packs === 1 ? "bag" : "bags"}`);
   $("#order-items").innerHTML = basket.length ? basket.map((line, index) => {
     const product = productFor(line.productId);
     return `<div class="order-item" data-line="${lineKey(line)}">
@@ -111,7 +169,7 @@ function renderBasket() {
       <p class="quantity-error" id="line-error-${index}" role="status" hidden>Choose a whole number from 1 to 99.</p>
       <button class="remove-button" type="button" data-remove aria-label="Remove ${escape(`${product.name}, ${packs[line.pack].label}, ${grinds[line.grind]}`)}">Remove</button></div>
     </div>`;
-  }).join("") : `<div class="empty-basket"><svg viewBox="0 0 80 80" aria-hidden="true"><path d="M18 30h38v20c0 12-8 18-19 18s-19-6-19-18V30Zm38 4h5a10 10 0 0 1 0 20h-6M12 72h50M29 21c-7-8 6-8 0-16M40 21c-7-8 6-8 0-16M50 21c-7-8 6-8 0-16"/></svg><h3>Room for something good.</h3><p>Choose your coffee and add a few favourites. We’ll keep count.</p></div>`;
+  }).join("") : `<div class="empty-basket"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 3h3l3 12h11l3-9H6M9 19a1 1 0 1 0 0 .01M18 19a1 1 0 1 0 0 .01"/></svg><h3>Your order is empty</h3><p>Choose a coffee, bag size and grind, then add it to your order.</p></div>`;
   $("#order-totals").hidden = !basket.length;
   $("#total-weight").textContent = weight(sum.grams);
   $("#subtotal").textContent = money(sum.pence);
@@ -154,6 +212,30 @@ $("#products").addEventListener("click", (event) => {
   photoIndexes.set(product.id, next);
   card.querySelector("[data-product-photo]").src = product.imageUrls[next];
   card.querySelector("[data-photo-count]").textContent = `${next + 1} / ${length}`;
+});
+
+let grindProductId = null;
+$("#products").addEventListener("click", event => {
+  const button = event.target.closest("[data-grind-open]");
+  if (!button || !ready || pendingAttempt) return;
+  const form = button.closest(".product-config"), product = productFor(form.dataset.product);
+  if (!product) return;
+  grindProductId = product.id;
+  $("#grind-product-name").textContent = product.name;
+  for (const radio of $("#grind-choice-form").elements["grind-choice"]) radio.checked = radio.value === form.elements.grind.value;
+  $("#grind-dialog").showModal();
+});
+$("#grind-choice-form").addEventListener("submit", event => {
+  event.preventDefault();
+  if (!ready || pendingAttempt) return;
+  const form = document.querySelector(`.product-config[data-product="${grindProductId}"]`);
+  const selected = $("#grind-choice-form").elements["grind-choice"].value;
+  if (!form || !Object.hasOwn(grinds, selected)) { $("#grind-dialog").close(); return; }
+  form.elements.grind.value = selected;
+  form.querySelector("[data-grind-label]").textContent = grinds[selected];
+  form.elements.grind.dispatchEvent(new Event("change", { bubbles: true }));
+  $("#grind-dialog").close();
+  form.querySelector("[data-grind-open]").focus({ preventScroll: true });
 });
 
 document.addEventListener("input", (event) => {
@@ -228,6 +310,26 @@ document.querySelectorAll("[data-basket]").forEach((button) => button.addEventLi
   $("#your-order").focus({ preventScroll: true });
 }));
 
+$("#review-form").addEventListener("change", event => {
+  if (event.target.name === "delivery" && !saving && !pendingAttempt) renderReviewLocation();
+});
+$("#review-location").addEventListener("click", () => {
+  if (!session.customer || saving || pendingAttempt) return;
+  const selected = $("#review-form").elements.locationId.value;
+  $("#location-choices").innerHTML = '<legend class="sr-only">Saved locations</legend>' + locationsFor().map(location => `<label><input type="radio" name="location-choice" value="${escape(location.id)}" ${location.id === selected ? "checked" : ""}><span><strong>${escape(location.name)}</strong><small>${escape([location.address, location.postcode].filter(Boolean).join(" · ") || "Delivery address not yet added")}</small></span></label>`).join("");
+  $("#location-choice-dialog").showModal();
+});
+$("#location-choice-form").addEventListener("submit", event => {
+  event.preventDefault();
+  if (!session.customer || saving || pendingAttempt) return;
+  const selected = event.target.elements["location-choice"]?.value;
+  if (!locationsFor().some(location => location.id === selected)) return;
+  $("#review-form").elements.locationId.value = selected;
+  renderReviewLocation();
+  $("#location-choice-dialog").close();
+  $("#review-location").focus({ preventScroll: true });
+});
+
 $("#review-order").addEventListener("click", async () => {
   if (pendingAttempt) { await resumeAttempt(); return; }
   reviewNeedsRefresh = false;
@@ -246,9 +348,9 @@ $("#review-order").addEventListener("click", async () => {
   }).join("");
   $("#review-total").textContent = money(totals(basket).pence);
   $("#review-form").reset();
-  $("#review-form").elements.business.value = session.customer?.business || "";
-  $("#review-form").elements.business.readOnly = !!session.customer;
-  $("#delivery-summary").textContent = session.customer ? [session.customer.address, session.customer.postcode, session.customer.deliveryNotes].filter(Boolean).join(" · ") || "Add delivery details in My account, or choose roastery collection." : "";
+  reviewBusiness(session.customer?.business || "");
+  $("#review-form").elements.locationId.value = session.customer?.defaultLocationId || "primary";
+  renderReviewLocation();
   $("#review-account").hidden = !session.customer;
   $("#review-payment-terms").textContent = session.customer ? `Payment terms: ${session.customer.paymentTerms.label}${session.customer.paymentTerms.note ? " · " + session.customer.paymentTerms.note : ""}` : "";
   requestId = crypto.randomUUID();
@@ -281,6 +383,7 @@ function lockReview(locked) {
     else field.readOnly = locked || (field.name === "business" && !!session.customer);
   }
   $("#review-account").disabled = locked;
+  $("#review-location").disabled = locked;
   $("#submit-preview-order").textContent = locked ? "Retry same order" : session?.preview ? "Save preview order" : "Place order";
 }
 function lockPendingUi() {
@@ -295,6 +398,8 @@ function showReceipt(result) {
   $("#complete-dashboard-link").hidden = session.me.role !== "admin";
   if (session.me.role === "admin") $("#complete-dashboard-link").href = session.links.admin + "#wholesale";
   $("#complete-total").textContent = money(result.order.pence);
+  $("#complete-location").hidden = !result.order.locationSnapshot;
+  $("#complete-location").textContent = result.order.locationSnapshot ? `${result.order.delivery === "Delivery" ? "Delivery to" : "Ordered for"}: ${result.order.locationSnapshot.name}` : "";
   $("#complete-payment-terms").textContent = result.order.paymentTerms ? `Payment terms: ${result.order.paymentTerms.label}${result.order.paymentTerms.note ? " · " + result.order.paymentTerms.note : ""}` : "";
   basket = []; changedBasket(); renderProducts(); filterProducts();
   $("#review-content").hidden = true;
@@ -321,7 +426,10 @@ async function resumeAttempt() {
   $("#review-total").textContent = money(attempt.payload.lines.reduce((sum,line) => sum + line.price * line.quantity, 0));
   form.elements.delivery.value = attempt.payload.delivery === "Roastery collection" ? "collection" : "dispatch";
   form.elements.reference.value = attempt.payload.reference;
-  form.elements.business.value = attempt.payload.business;
+  reviewBusiness(attempt.payload.business);
+  form.elements.locationId.value = attempt.payload.locationId || "";
+  $("#review-location-block").hidden = !session.customer;
+  $("#review-location-name").textContent = attempt.locationLabel || "Saved account location";
   $("#delivery-summary").textContent = attempt.deliverySummary;
   $("#review-payment-terms").textContent = attempt.terms;
   $("#review-account").hidden = !session.customer;
@@ -345,9 +453,9 @@ $("#review-form").addEventListener("submit", async (event) => {
     requestId, orderingIdentity: session.me.id, lines: basket.map(line => ({ ...line, price: unitPrice(productFor(line.productId), line.pack) })),
     delivery: form.elements.delivery.value === "collection" ? "Roastery collection" : "Delivery",
     reference: form.elements.reference.value, business: form.elements.business.value,
-    ...(session.customer ? { customerVersion: session.customer.version } : {}),
+    ...(session.customer ? { customerVersion: session.customer.version, locationId: form.elements.locationId.value } : {}),
   }, summary: basket.map(line => ({ title: productFor(line.productId).name, description: `${line.quantity} × ${packs[line.pack].label} · ${grinds[line.grind]}`, pence: unitPrice(productFor(line.productId),line.pack) * line.quantity })),
-    deliverySummary: $("#delivery-summary").textContent, terms: $("#review-payment-terms").textContent });
+    deliverySummary: $("#delivery-summary").textContent, locationLabel: session.customer ? $("#review-location-name").textContent : "", terms: $("#review-payment-terms").textContent });
   if (!pendingAttempt) { saving = false; button.disabled = false; $("#preview-submit-error").textContent = "Allow browser storage before placing an order so an interrupted submission can be recovered safely."; $("#preview-submit-error").hidden = false; return; }
   lockReview(true); lockPendingUi();
   try { showReceipt(await api("/api/wholesale/orders", pendingAttempt.payload)); }
@@ -359,11 +467,11 @@ $("#review-form").addEventListener("submit", async (event) => {
   } finally { saving = false; button.disabled = reviewNeedsRefresh; }
 });
 
-document.querySelectorAll("[data-help]").forEach((button) => button.addEventListener("click", () => $("#help-dialog").showModal()));
-document.querySelectorAll("[data-close]").forEach((button) => button.addEventListener("click", () => (saving && button.closest("dialog").id === "review-dialog") || button.closest("dialog").close()));
+const dialogBusy = (dialog) => (saving && dialog.id === "review-dialog") || (accountSaving && dialog.id === "account-dialog");
+document.querySelectorAll("[data-close]").forEach((button) => button.addEventListener("click", () => dialogBusy(button.closest("dialog")) || button.closest("dialog").close()));
 document.querySelectorAll("dialog").forEach((dialog) => {
-  dialog.addEventListener("cancel", event => { if (saving && dialog.id === "review-dialog") event.preventDefault(); });
-  dialog.addEventListener("click", (event) => { if (event.target === dialog && !(saving && dialog.id === "review-dialog")) dialog.close(); });
+  dialog.addEventListener("cancel", event => { if (dialogBusy(dialog)) event.preventDefault(); });
+  dialog.addEventListener("click", (event) => { if (event.target === dialog && !dialogBusy(dialog)) dialog.close(); });
   dialog.addEventListener("close", () => { if (dialog.id === "review-dialog") $("#review-form").reset(); });
 });
 
@@ -389,6 +497,7 @@ function applyCatalogue(fresh, initial) {
     pendingAttempt = readAttempt();
   } else { basket = sanitiseBasket(basket); saveBasket(); }
   $("#signed-in-name").textContent = session.customer?.business || session.me.name;
+  $("#signed-in-name").title = session.customer?.business || session.me.name;
   $("#preview-home").href = session.links.preview;
   $("#admin-wholesale-link").hidden = session.me.role !== "admin";
   if (session.me.role === "admin") $("#admin-wholesale-link").href = session.links.admin + "#wholesale";
@@ -435,28 +544,88 @@ async function openAccount() {
     session.customer = current.customer;
     if (!session.customer) return;
     showPaymentTerms();
-    for (const key of ["business", "contact", "email", "phone", "address", "postcode", "deliveryNotes"]) $("#account-form").elements[key].value = session.customer[key] || "";
+    for (const key of ["contact", "email", "phone", "address", "postcode", "deliveryNotes"]) $("#account-form").elements[key].value = session.customer[key] || "";
+    $("#account-business").textContent = session.customer.business;
+    accountLocations = locationsFor();
+    accountDefaultLocation = session.customer.defaultLocationId || "primary";
+    renderAccountLocations();
     $("#account-error").hidden = $("#password-error").hidden = true;
     $("#account-dialog").showModal();
   } catch (error) { toast(error.message); }
 }
+$("#add-location").addEventListener("click", () => openLocationEditor(null));
+$("#account-form").addEventListener("input", event => {
+  if (!["contact", "phone", "address", "postcode", "deliveryNotes"].includes(event.target.name)) return;
+  syncPrimaryLocation();
+  // Preserve location action buttons while a field loses focus during a click.
+  const primary = accountLocations.find(location => location.id === "primary");
+  const summary = document.querySelector('[data-account-location="primary"] > p');
+  if (primary && summary) summary.textContent = [primary.address, primary.postcode].filter(Boolean).join(" · ") || "Add a delivery address";
+});
+$("#account-locations").addEventListener("click", event => {
+  if (accountSaving) return;
+  const button = event.target.closest("button"), key = button?.dataset.locationEdit || button?.dataset.locationRemove || button?.dataset.locationDefault;
+  const location = key && accountLocations.find(row => locationKey(row) === key);
+  if (!location) return;
+  if (button.dataset.locationEdit) { openLocationEditor(key); return; }
+  if (button.dataset.locationDefault && location.id) { accountDefaultLocation = location.id; renderAccountLocations(); document.querySelector(`[data-location-edit="${location.id}"]`)?.focus({ preventScroll: true }); return; }
+  if (button.dataset.locationRemove && location.id !== "primary") {
+    removingLocation = key;
+    $("#location-remove-summary").textContent = `Remove ${location.name} from your saved locations?`;
+    $("#location-remove-dialog").showModal();
+  }
+});
+$("#location-form").addEventListener("submit", event => {
+  event.preventDefault();
+  if (accountSaving || !$("#account-dialog").open || !event.target.reportValidity()) return;
+  const fields = Object.fromEntries(LOCATION_FIELDS.map(key => [key, event.target.elements[key].value.trim()]));
+  const current = editingLocation && accountLocations.find(location => locationKey(location) === editingLocation);
+  if (editingLocation && !current) return;
+  if (current) {
+    Object.assign(current, fields);
+    if (current.id === "primary") for (const key of ["contact", "phone", "address", "postcode", "deliveryNotes"]) $("#account-form").elements[key].value = current[key];
+  } else {
+    if (accountLocations.length >= 20) return;
+    accountLocations.push({ ...fields, draftKey: "draft-" + crypto.randomUUID() });
+  }
+  renderAccountLocations();
+  $("#location-dialog").close();
+  $("#add-location").focus({ preventScroll: true });
+});
+$("#confirm-location-remove").addEventListener("click", () => {
+  if (accountSaving || !$("#account-dialog").open) return;
+  const location = accountLocations.find(row => locationKey(row) === removingLocation);
+  if (!location || location.id === "primary") return;
+  accountLocations = accountLocations.filter(row => locationKey(row) !== removingLocation);
+  if (location.id === accountDefaultLocation) accountDefaultLocation = "primary";
+  removingLocation = null;
+  renderAccountLocations();
+  $("#location-remove-dialog").close();
+  $("#add-location").focus({ preventScroll: true });
+});
 $("#my-account").addEventListener("click", openAccount);
 $("#review-account").addEventListener("click", () => { if (saving || pendingAttempt) return; $("#review-dialog").close(); openAccount(); });
 $("#account-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.target, button = form.querySelector('[type="submit"]');
-  button.disabled = true;
+  if (accountSaving) return;
+  accountSaving = true;
+  const controls = [...form.querySelectorAll("button,input,textarea")];
+  controls.forEach(control => { control.disabled = true; });
   $("#account-error").hidden = true;
   try {
     if (!await confirmIdentity()) return;
-    const fields = Object.fromEntries(["business", "contact", "email", "phone", "address", "postcode", "deliveryNotes"].map((key) => [key, form.elements[key].value]));
-    const result = await api("/api/wholesale/account", { ...fields, ifVersion: session.customer.version, orderingIdentity: session.me.id }, "PUT");
+    syncPrimaryLocation();
+    const fields = Object.fromEntries(["contact", "email", "phone", "address", "postcode", "deliveryNotes"].map((key) => [key, form.elements[key].value]));
+    const locations = accountLocations.map(location => ({ ...(location.id ? { id: location.id } : {}), ...Object.fromEntries(LOCATION_FIELDS.map(key => [key, location[key] || ""])) }));
+    const result = await api("/api/wholesale/account", { ...fields, locations, defaultLocationId: accountDefaultLocation, ifVersion: session.customer.version, orderingIdentity: session.me.id }, "PUT");
     session.customer = result.customer;
     showPaymentTerms();
     $("#signed-in-name").textContent = session.customer.business;
+    $("#signed-in-name").title = session.customer.business;
     $("#account-dialog").close(); toast("Business details saved.");
   } catch (error) { $("#account-error").textContent = error.message; $("#account-error").hidden = false; }
-  finally { button.disabled = false; }
+  finally { accountSaving = false; controls.forEach(control => { if (control.isConnected) control.disabled = false; }); if ($("#account-dialog").open) renderAccountLocations(); }
 });
 $("#account-password-form").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -491,7 +660,7 @@ function historyCard(order, expanded) {
   const date = new Date(order.createdAt).toLocaleDateString("en-GB", { timeZone: "Europe/London", day: "numeric", month: "short", year: "numeric" });
   const snapshot = order.customerSnapshot;
   return `<article class="history-card" data-history-order="${escape(order.id)}"><div class="history-card-head"><h3>${date}</h3><strong>${money(order.pence)}</strong></div><p class="history-summary">${bagCount(order.packs)} · ${escape(order.delivery)}</p>${order.reference ? `<p class="history-summary">Reference: ${escape(order.reference)}</p>` : ""}${historyStatus(order)}
-    <details class="history-details" ${expanded.has(order.id) ? "open" : ""}><summary>Order details · ${bagCount(order.packs)}</summary><p class="history-id">${escape(order.id)}</p><ul class="history-lines">${order.lines.map(line => `<li><span>${line.quantity} × ${escape(line.title)}</span><small>${escape(line.packLabel)} · ${escape(line.grindLabel)}</small><strong>${money(line.price * line.quantity)}</strong></li>`).join("")}</ul>${snapshot?.address && order.delivery === "Delivery" ? `<p class="history-address"><b>Delivery address at order</b><br>${escape(snapshot.address)}<br>${escape(snapshot.postcode || "")}</p>` : ""}${order.deliveryNotes ? `<p class="history-address">${escape(order.deliveryNotes)}</p>` : ""}${order.paymentTerms ? `<p class="payment-terms">Payment terms: ${escape(order.paymentTerms.label)}${order.paymentTerms.note ? `<br>${escape(order.paymentTerms.note)}` : ""}</p>` : ""}</details>
+    <details class="history-details" ${expanded.has(order.id) ? "open" : ""}><summary>Order details · ${bagCount(order.packs)}</summary><p class="history-id">${escape(order.id)}</p><ul class="history-lines">${order.lines.map(line => `<li><span>${line.quantity} × ${escape(line.title)}</span><small>${escape(line.packLabel)} · ${escape(line.grindLabel)}</small><strong>${money(line.price * line.quantity)}</strong></li>`).join("")}</ul>${order.locationSnapshot ? `<p class="history-address"><b>Location at order</b><br>${escape(order.locationSnapshot.name)}</p>` : ""}${snapshot?.address && order.delivery === "Delivery" ? `<p class="history-address"><b>Delivery address at order</b><br>${escape(snapshot.address)}<br>${escape(snapshot.postcode || "")}</p>` : ""}${order.deliveryNotes ? `<p class="history-address">${escape(order.deliveryNotes)}</p>` : ""}${order.paymentTerms ? `<p class="payment-terms">Payment terms: ${escape(order.paymentTerms.label)}${order.paymentTerms.note ? `<br>${escape(order.paymentTerms.note)}` : ""}</p>` : ""}</details>
     <button class="button button-outline history-reorder" type="button" data-reorder="${escape(order.id)}" ${pendingAttempt ? "disabled" : ""}>Order again</button></article>`;
 }
 let historyCursor = null;
@@ -517,7 +686,7 @@ async function loadOrders(append = false) {
   } catch (error) { if (!append) $("#order-history").textContent = error.message; $("#history-count").textContent = append ? "Couldn’t load earlier orders. Try again." : ""; }
   finally { historyLoading = false; $("#order-history").setAttribute("aria-busy", "false"); $("#refresh-orders").disabled = $("#history-more").disabled = false; }
 }
-$("#my-orders").addEventListener("click", () => { $("#orders-dialog").showModal(); loadOrders(); });
+document.querySelectorAll("#my-orders,[data-order-history]").forEach(button => button.addEventListener("click", () => { $("#orders-dialog").showModal(); loadOrders(); }));
 $("#refresh-orders").addEventListener("click", () => loadOrders());
 $("#history-more").addEventListener("click", () => { if (historyCursor) loadOrders(true); });
 function buildReorderPlan(order) {

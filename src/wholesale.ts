@@ -7,6 +7,7 @@ import { adminWholesalePage, adminWholesaleStats } from "./wholesaleAdminLists";
 import { audit } from "./audit";
 import { ApiError, type Env, invalid, json, readJson } from "./http";
 import { manageWholesaleAccount, publicCustomer, wholesaleAccounts, wholesaleCustomer, paymentTermsFor, PAYMENT_TERMS, type Customer, type OrderingUser } from "./wholesaleAccounts";
+import { customerLocations, editedCustomerLocations, locationDefaults, validLocationId, type CustomerLocation } from "./wholesaleCustomers";
 
 type Pack = "quarter" | "half" | "kilo";
 const PACKS: Record<Pack, { label: string; grams: number }> = { quarter: { label: "250 g bag", grams: 250 }, half: { label: "500 g bag", grams: 500 }, kilo: { label: "1 kg bag", grams: 1000 } };
@@ -17,8 +18,9 @@ interface Order {
   createdBy: string; createdName: string; business: string; reference: string; delivery: string;
   customerId: string | null; status: string; note: string; date: string; createdAt: number;
   requestKey: string; lines: Line[]; pence: number; grams: number; packs: number;
-  preview?: boolean; customerSnapshot?: ReturnType<typeof publicCustomer>; deliveryNotes?: string;
+  preview?: boolean; customerSnapshot?: Omit<ReturnType<typeof publicCustomer>, "locations" | "defaultLocationId">; deliveryNotes?: string;
   paymentTerms?: ReturnType<typeof paymentTermsFor>;
+  locationId?: string; locationSnapshot?: CustomerLocation;
   deletedAt?: number; deletedBy?: string;
 }
 type Links = { admin: string; diary: string; preview?: string };
@@ -44,10 +46,13 @@ function orderBody(value: unknown) {
     } else lines.push({ productId: line.productId, pack: line.pack as Pack, grind: line.grind, quantity: line.quantity, price: line.price });
   }
   if (body.delivery !== "Delivery" && body.delivery !== "Roastery collection") throw invalid("Choose delivery or roastery collection.");
+  const locationId = body.locationId === undefined ? undefined : text(body.locationId, "location", 36, true);
+  if (locationId !== undefined && !validLocationId(locationId)) throw invalid("Choose a saved business location.");
   return {
     id: `PREVIEW-${body.requestId.replaceAll("-", "").toUpperCase()}`,
     lines: lines.sort((a, b) => `${a.productId}:${a.pack}:${a.grind}`.localeCompare(`${b.productId}:${b.pack}:${b.grind}`)),
     delivery: body.delivery as string, reference: text(body.reference, "purchase reference", 80), business: text(body.business, "business name", 120),
+    ...(locationId === undefined ? {} : { locationId }),
   };
 }
 async function createOrder(req: Request, env: Env, user: OrderingUser): Promise<Response> {
@@ -70,9 +75,12 @@ async function createOrder(req: Request, env: Env, user: OrderingUser): Promise<
     return json({ order: visibleOrder(existing), preview: existing.preview !== false });
   }
   if (customer?.status === "On hold") throw new ApiError(403, "account_on_hold", "Your account is on hold. Contact Strangers before placing an order.");
-  if (customer && body.delivery === "Delivery" && (!customer.address?.trim() || !customer.postcode?.trim())) throw invalid("Add your delivery address and postcode in My account before ordering delivery.");
+  const location = customer ? customerLocations(customer).find((location) => location.id === (body.locationId || "primary")) : null;
+  if (customer && location && body.delivery === "Delivery" && (!location.address.trim() || !location.postcode.trim())) throw invalid("Add the selected location's delivery address and postcode in My account before ordering delivery.");
   if (customer && !Number.isSafeInteger(submitted.customerVersion)) throw new ApiError(409, "account_changed", "Reload the page to update ordering, then review your basket again.");
   if (customer && submitted.customerVersion !== customer.version) throw new ApiError(409, "account_changed", "Your business details or payment terms changed. Close this review and review your basket again.");
+  if (customer && !location) throw invalid("Choose a location saved to your business.");
+  if (!customer && body.locationId !== undefined) throw invalid("Saved locations are available for wholesale customer accounts.");
   const coffees = await catalogue(env);
   const lines = body.lines.map((line): Line => {
     const product = coffees.find((product) => product.id === line.productId);
@@ -83,9 +91,13 @@ async function createOrder(req: Request, env: Env, user: OrderingUser): Promise<
     return { ...line, title: product.title, packLabel: PACKS[line.pack].label, grindLabel: GRINDS[line.grind], price: product.prices[line.pack], grams: PACKS[line.pack].grams };
   });
   const at = Date.now();
+  const customerSnapshot = customer && location ? (() => {
+    const { locations, defaultLocationId, ...profile } = publicCustomer(customer);
+    return { ...profile, contact: location.contact, phone: location.phone, address: location.address, postcode: location.postcode, deliveryNotes: location.deliveryNotes };
+  })() : undefined;
   const order: Order = {
     createdBy: user.id, createdName: user.name, business: body.business, reference: body.reference, delivery: body.delivery,
-    customerId: customer?.id || null, status: "New", note: "", preview: !customer, ...(customer ? { customerSnapshot: publicCustomer(customer), deliveryNotes: customer.deliveryNotes || "", paymentTerms: paymentTermsFor(customer) } : {}), date: new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone: "Europe/London" }).format(new Date(at)),
+    customerId: customer?.id || null, status: "New", note: "", preview: !customer, ...(customer && location ? { customerSnapshot, deliveryNotes: location.deliveryNotes, paymentTerms: paymentTermsFor(customer), locationId: location.id, locationSnapshot: { ...location } } : {}), date: new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone: "Europe/London" }).format(new Date(at)),
     createdAt: at, requestKey, lines,
     pence: lines.reduce((sum, line) => sum + line.price * line.quantity, 0), grams: lines.reduce((sum, line) => sum + line.grams * line.quantity, 0), packs: lines.reduce((sum, line) => sum + line.quantity, 0),
   };
@@ -107,12 +119,16 @@ export async function handleWholesale(req: Request, env: Env, route: string, use
   const customer = user.role === "wholesale" ? await wholesaleCustomer(env, user.customerId) : null;
   if ((route === "catalogue" || route === "session") && req.method === "GET") return json({ ...(route === "catalogue" ? { products: await catalogue(env), sourceDate: catalogueRetrievedAt } : {}), stage: "beta", me: user, customer: customer ? publicCustomer(customer) : null, links: { ...(user.role === "wholesale" ? {} : links), preview: links.preview || "/wholesale-preview/" }, preview: user.role !== "wholesale" });
   if (route === "account" && req.method === "PUT" && customer) {
-    const body = object(await readJson(req, 8192));
+    const body = object(await readJson(req, 64 * 1024));
     if (body.orderingIdentity !== undefined && body.orderingIdentity !== user.id) throw new ApiError(409, "account_changed", "The signed-in account changed. Reload ordering before saving business details.");
-    const email = text(body.email, "email", 150);
+    if (body.business !== undefined && text(body.business, "business name", 120, true) !== customer.business) throw new ApiError(403, "permission_denied", "Only Strangers admins can change the registered business name. Contact the team to update it.");
+    const expected = version(body.ifVersion);
+    if (expected !== customer.version) throw new ApiError(409, "conflict", "This business changed on another device. Reload it before saving.");
+    const email = body.email === undefined ? customer.email : text(body.email, "email", 150);
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw invalid("Check the contact email.");
     const { id, version: oldVersion, updatedAt, ...current } = customer;
-    const saved = await save(env, "customer", id, { ...current, business: text(body.business, "business name", 120, true), contact: text(body.contact, "contact name", 120), email, phone: text(body.phone, "phone number", 40), address: text(body.address, "delivery address", 500), postcode: text(body.postcode, "postcode", 20), deliveryNotes: text(body.deliveryNotes, "delivery notes", 1000) }, version(body.ifVersion));
+    const data = editedCustomerLocations({ ...current, business: customer.business, contact: body.contact === undefined ? customer.contact : text(body.contact, "contact name", 120), email, phone: body.phone === undefined ? customer.phone || "" : text(body.phone, "phone number", 40), address: body.address === undefined ? customer.address || "" : text(body.address, "delivery address", 500), postcode: body.postcode === undefined ? customer.postcode || "" : text(body.postcode, "postcode", 20), deliveryNotes: body.deliveryNotes === undefined ? customer.deliveryNotes || "" : text(body.deliveryNotes, "delivery notes", 1000) }, body);
+    const saved = await save(env, "customer", id, data, expected);
     await audit(env, "wholesale_profile", user.name, `${user.name} updated their wholesale business details.`);
     return json({ customer: publicCustomer(saved) });
   }
@@ -159,7 +175,7 @@ export async function handleWholesaleAdmin(req: Request, env: Env, route: string
       env.DB.prepare("SELECT kind, COUNT(*) AS n FROM wholesale_preview WHERE kind <> 'order' OR json_extract(data, '$.deletedAt') IS NULL GROUP BY kind").all<{ kind: string; n: number }>(),
       adminWholesaleStats(env),
     ]);
-    return json({ orders: orderPage.records.map((order) => visibleOrder(order, true)), customers: customerPage.records, orderCursor: orderPage.nextCursor, customerCursor: customerPage.nextCursor, stats: { ...stats, totalCustomers: customerPage.count, visibleCoffees: products.filter((product) => product.active).length, totalCoffees: products.length }, accounts: await wholesaleAccounts(env), products, paymentTermChoices: PAYMENT_TERMS, statuses: STATUSES, sourceDate: catalogueRetrievedAt, counts: Object.fromEntries(counts.results.map((row) => [row.kind, row.n])), links: { ...links, preview: links.preview || "/wholesale-preview/" }, preview: true, stage: "beta" });
+    return json({ orders: orderPage.records.map((order) => visibleOrder(order, true)), customers: customerPage.records.map(locationDefaults), orderCursor: orderPage.nextCursor, customerCursor: customerPage.nextCursor, stats: { ...stats, totalCustomers: customerPage.count, visibleCoffees: products.filter((product) => product.active).length, totalCoffees: products.length }, accounts: await wholesaleAccounts(env), products, paymentTermChoices: PAYMENT_TERMS, statuses: STATUSES, sourceDate: catalogueRetrievedAt, counts: Object.fromEntries(counts.results.map((row) => [row.kind, row.n])), links: { ...links, preview: links.preview || "/wholesale-preview/" }, preview: true, stage: "beta" });
   }
   if ((route === "orders" || route === "customers") && req.method === "GET") {
     const query = new URL(req.url).searchParams;
@@ -169,32 +185,34 @@ export async function handleWholesaleAdmin(req: Request, env: Env, route: string
     }
     const page = await adminWholesalePage<Customer>(env, "customer", query);
     const ids = new Set(page.records.map((customer) => customer.id));
-    return json({ customers: page.records, accounts: (await wholesaleAccounts(env)).filter((account) => ids.has(account.customerId)), nextCursor: page.nextCursor, count: page.count });
+    return json({ customers: page.records.map(locationDefaults), accounts: (await wholesaleAccounts(env)).filter((account) => ids.has(account.customerId)), nextCursor: page.nextCursor, count: page.count });
   }
   const catalogueResponse = await handleCatalogueAdmin(req, env, route, user.name);
   if (catalogueResponse) return catalogueResponse;
   const accountMatch = /^customers\/([a-f0-9-]{36})\/account(\/reset-password)?$/.exec(route);
   if (accountMatch && ((accountMatch[2] && req.method === "POST") || (!accountMatch[2] && ["POST", "PUT"].includes(req.method)))) return manageWholesaleAccount(req, env, accountMatch[1], !!accountMatch[2], user.name);
   if (!["POST", "PUT", "PATCH", "DELETE"].includes(req.method)) throw new ApiError(404, "not_found", "Unknown wholesale management route.");
-  const body = object(await readJson(req, 16 * 1024));
   const customerMatch = /^customers\/([a-f0-9-]{36})$/.exec(route);
-  if ((route === "customers" && req.method === "POST") || (customerMatch && req.method === "PUT")) {
+  const customerWrite = (route === "customers" && req.method === "POST") || (customerMatch && req.method === "PUT");
+  const body = object(await readJson(req, (customerWrite ? 64 : 16) * 1024));
+  if (customerWrite) {
     const expected = customerMatch ? version(body.ifVersion) : 0;
     const oldCustomer = customerMatch ? await get<Customer>(env, "customer", customerMatch[1]) : null;
     if (customerMatch && !oldCustomer) throw new ApiError(404, "not_found", "Customer not found.");
+    if (oldCustomer && expected !== oldCustomer.version) throw new ApiError(409, "conflict", "This business changed on another device. Reload it before saving.");
     const business = text(body.business, "business name", 120, true);
     const email = text(body.email, "email", 150);
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw invalid("Check the contact email.");
     if (body.status !== "Active" && body.status !== "On hold") throw invalid("Choose Active or On hold.");
     const paymentTerms = body.paymentTerms === undefined ? oldCustomer?.paymentTerms || "to-agree" : body.paymentTerms;
     if (typeof paymentTerms !== "string" || !PAYMENT_TERMS.some((term) => term.id === paymentTerms)) throw invalid("Choose listed payment terms.");
-    const data: Customer = { business, email, contact: text(body.contact, "contact name", 120), phone: body.phone === undefined ? oldCustomer?.phone || "" : text(body.phone, "phone number", 40), address: body.address === undefined ? oldCustomer?.address || "" : text(body.address, "delivery address", 500), postcode: body.postcode === undefined ? oldCustomer?.postcode || "" : text(body.postcode, "postcode", 20), deliveryNotes: body.deliveryNotes === undefined ? oldCustomer?.deliveryNotes || "" : text(body.deliveryNotes, "delivery notes", 1000), status: body.status, note: text(body.note, "account note", 1000) };
+    const data: Customer = { business, email, contact: text(body.contact, "contact name", 120), phone: body.phone === undefined ? oldCustomer?.phone || "" : text(body.phone, "phone number", 40), address: body.address === undefined ? oldCustomer?.address || "" : text(body.address, "delivery address", 500), postcode: body.postcode === undefined ? oldCustomer?.postcode || "" : text(body.postcode, "postcode", 20), deliveryNotes: body.deliveryNotes === undefined ? oldCustomer?.deliveryNotes || "" : text(body.deliveryNotes, "delivery notes", 1000), status: body.status, note: text(body.note, "account note", 1000), locations: oldCustomer?.locations, defaultLocationId: oldCustomer?.defaultLocationId };
     data.paymentTerms = paymentTerms;
     data.paymentNote = body.paymentNote === undefined ? oldCustomer?.paymentNote || "" : text(body.paymentNote, "payment instructions", 500);
     if (paymentTerms === "custom" && !data.paymentNote.trim()) throw invalid("Add the agreed custom payment terms in payment instructions.");
-    const customer = await save(env, "customer", customerMatch?.[1] || crypto.randomUUID(), data, expected);
+    const customer = await save(env, "customer", customerMatch?.[1] || crypto.randomUUID(), editedCustomerLocations(data, body), expected);
     await audit(env, "wholesale_preview_customer", user.name, `${user.name} ${customerMatch ? "updated" : "added"} wholesale customer ${business}.`);
-    return json({ customer }, customerMatch ? 200 : 201);
+    return json({ customer: locationDefaults(customer) }, customerMatch ? 200 : 201);
   }
   const orderMatch = /^orders\/((?:PREVIEW|WS)-[A-F0-9]{32})$/.exec(route);
   if (orderMatch && req.method === "DELETE") {

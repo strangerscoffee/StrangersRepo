@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#edf1f6" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#05070b" media="(prefers-color-scheme: dark)">
   <meta name="description" content="Order Strangers Coffee for your business.">
-  <title>Wholesale Beta · Strangers Coffee</title>
+  <title>Wholesale · Strangers Coffee</title>
   <link rel="icon" href="/wholesale-preview/images/logo.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/theme.css">
   <link rel="stylesheet" href="/wholesale-preview/wholesale.css">
@@ -25,15 +25,17 @@
       <button class="nav-link" type="button" id="my-orders">My orders</button>
       <a class="nav-link" id="admin-wholesale-link" href="/admin#wholesale" hidden>Admin · Wholesale <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></a>
     </nav>
-    <button class="basket-link" type="button" data-basket aria-label="View your order, 0 packs">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 3h3l3 12h11l3-9H6M9 19a1 1 0 1 0 0 .01M18 19a1 1 0 1 0 0 .01"/></svg>
-      <span class="basket-label">Your order</span><span class="basket-count" id="basket-count">0</span>
-    </button>
+    <div class="header-tools">
+      <button class="basket-link" type="button" data-basket aria-label="View your order, 0 bags">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 3h3l3 12h11l3-9H6M9 19a1 1 0 1 0 0 .01M18 19a1 1 0 1 0 0 .01"/></svg>
+        <span class="basket-label">Your order</span><span class="basket-count" id="basket-count" hidden>0</span>
+      </button>
+      <div class="header-account"><strong id="signed-in-name">…</strong><div class="account-buttons"><button class="text-button" type="button" id="my-account" hidden>My account</button><button class="text-button" type="button" id="preview-sign-out">Sign out</button></div></div>
+    </div>
   </header>
 
-  <div class="session-strip wrap"><span><strong id="signed-in-name">…</strong></span><button class="text-button" type="button" id="my-account" hidden>My account</button><button class="text-button" type="button" id="preview-sign-out">Sign out</button></div>
   <main class="wrap">
-    <div class="page-heading"><div><h1>Order coffee</h1><p>Your wholesale account, coffee and orders.</p></div><span class="beta-badge">Beta</span></div>
+    <div class="page-heading"><h1>Wholesale</h1></div>
     <p class="account-hold" id="account-hold" role="status" hidden>Your account is on hold. Contact Strangers before placing an order.</p>
     <div class="shop-layout">
       <section class="catalogue" id="coffee" aria-labelledby="coffee-title">
@@ -54,7 +56,7 @@
 
       <aside class="order-column" id="your-order" aria-labelledby="order-title" tabindex="-1">
         <div class="order-panel">
-          <div class="order-heading"><div><h2 id="order-title">Your order</h2></div><span class="order-count" id="order-count">0</span></div>
+          <div class="order-heading"><h2 id="order-title">Your order</h2><span class="order-count" id="order-count" hidden></span></div>
           <div id="order-items"></div>
           <div class="order-totals" id="order-totals" hidden>
             <div class="weight-total"><span>Total coffee</span><span id="total-weight">0 kg</span></div>
@@ -64,19 +66,18 @@
           <button class="button button-dark review-button" id="review-order" type="button" disabled>Review order <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></button>
           <div class="basket-meta"><span class="small-dot" aria-hidden="true"></span><span id="basket-storage-note">Your basket stays on this browser.</span></div>
         </div>
-        <div class="help-note"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg><div><h3>A hand with your next order?</h3><p>We’re always happy to talk coffee.</p><button class="text-button" type="button" data-help>Ordering guide <span aria-hidden="true">→</span></button></div></div>
       </aside>
     </div>
   </main>
 
-  <footer class="site-footer wrap"><a class="footer-brand" href="https://strangerscoffee.com/" target="_blank" rel="noopener noreferrer">Strangers Coffee <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></a><p>Roasted in Norwich.</p><span>Wholesale · Beta</span></footer>
+  <footer class="site-footer wrap"><div class="footer-panel"><a class="footer-brand" href="#coffee"><img src="/mark.svg" width="36" height="36" alt=""><span><strong>Strangers Coffee</strong><span>Wholesale · Roasted in Norwich</span></span></a><nav class="footer-actions" aria-label="Wholesale footer"><a href="#coffee">Browse coffee</a><button type="button" data-order-history>My orders</button><a href="https://strangerscoffee.com/" target="_blank" rel="noopener noreferrer">Visit website <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg><span class="sr-only">(opens in a new tab)</span></a></nav></div></footer>
 
   <div class="mobile-basket" id="mobile-basket" hidden><div><span id="mobile-packs">0 packs</span><strong id="mobile-total">£0.00</strong></div><button class="button button-dark" type="button" data-basket>View order <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></button></div>
   <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
   <dialog id="review-dialog" aria-labelledby="review-title">
     <div class="dialog-inner">
-      <button class="close-button" type="button" data-close aria-label="Close order review">×</button>
+      <div class="dialog-chrome"><button class="close-button" type="button" data-close aria-label="Close order review">×</button></div>
       <div id="review-content">
         <p class="eyebrow">YOUR WHOLESALE ORDER</p><h2 id="review-title">Review your order</h2>
         <div id="review-items" class="review-items"></div>
@@ -84,7 +85,9 @@
         <p class="terms-note">Coffee subtotal. Delivery charges are confirmed by Strangers.</p>
         <form id="review-form">
           <fieldset class="delivery-options"><legend>Delivery preference</legend><label><input type="radio" name="delivery" value="dispatch" checked><span>Send it to me</span></label><label><input type="radio" name="delivery" value="collection"><span>Roastery collection</span></label></fieldset>
-          <label class="form-field">Business name<input name="business" maxlength="120" autocomplete="organization"></label>
+          <div class="business-summary" id="review-business-block" hidden><span>Business</span><strong id="review-business"></strong></div>
+          <label class="form-field" id="staff-business-field">Business name<input name="business" maxlength="120" autocomplete="organization"></label>
+          <div class="review-location-field" id="review-location-block" hidden><span class="field-label" id="review-location-label">Delivery location</span><input type="hidden" name="locationId"><button class="location-picker" type="button" id="review-location" aria-haspopup="dialog" aria-controls="location-choice-dialog"><span id="review-location-name"></span><span aria-hidden="true">⌄</span></button></div>
           <p class="dialog-intro" id="delivery-summary"></p><button class="text-button" type="button" id="review-account" hidden>Edit delivery details</button>
           <p class="payment-terms" id="review-payment-terms"></p>
           <label class="form-field">Purchase reference <span>(optional)</span><input name="reference" maxlength="80" placeholder="e.g. Your café name or PO number" autocomplete="off"></label>
@@ -92,21 +95,22 @@
           <button class="button button-outline" type="button" data-close>Keep choosing coffee</button>
         </form>
       </div>
-      <div class="preview-complete" id="preview-complete" hidden><p class="eyebrow">ORDER RECEIVED</p><h2 id="complete-title">Thank you.</h2><p>Coffee subtotal <strong id="complete-total">£0.00</strong></p><p id="complete-message"></p><p class="payment-terms" id="complete-payment-terms"></p><a class="button button-dark" id="complete-dashboard-link" href="/admin#wholesale" hidden>Open Admin · Wholesale</a><button class="button button-outline" type="button" data-close>Back to the coffee</button></div>
+      <div class="preview-complete" id="preview-complete" hidden><p class="eyebrow">ORDER RECEIVED</p><h2 id="complete-title">Thank you.</h2><p>Coffee subtotal <strong id="complete-total">£0.00</strong></p><p id="complete-message"></p><p class="receipt-location" id="complete-location" hidden></p><p class="payment-terms" id="complete-payment-terms"></p><a class="button button-dark" id="complete-dashboard-link" href="/admin#wholesale" hidden>Open Admin · Wholesale</a><button class="button button-outline" type="button" data-close>Back to the coffee</button></div>
     </div>
   </dialog>
 
   <dialog id="account-dialog" aria-labelledby="account-title"><div class="dialog-inner">
-    <button class="close-button" type="button" data-close aria-label="Close account">×</button>
+    <div class="dialog-chrome"><button class="close-button" type="button" data-close aria-label="Close account">×</button></div>
     <p class="eyebrow">MY ACCOUNT</p><h2 id="account-title">Business details</h2>
     <form id="account-form">
-      <label class="form-field">Business name<input name="business" maxlength="120" autocomplete="organization" required></label>
+      <div class="business-summary"><span>Approved business</span><strong id="account-business"></strong><p>Contact Strangers if your business name needs to change.</p></div>
       <label class="form-field">Contact name<input name="contact" maxlength="120" autocomplete="name"></label>
       <label class="form-field">Email<input name="email" type="email" maxlength="150" autocomplete="email"></label>
       <label class="form-field">Phone<input name="phone" type="tel" maxlength="40" autocomplete="tel"></label>
       <label class="form-field">Delivery address<textarea name="address" maxlength="500" autocomplete="street-address" rows="3"></textarea></label>
       <label class="form-field">Postcode<input name="postcode" maxlength="20" autocomplete="postal-code"></label>
       <label class="form-field">Delivery notes <span>(optional)</span><textarea name="deliveryNotes" maxlength="1000" rows="2"></textarea></label>
+      <section class="saved-locations" aria-labelledby="account-locations-title"><div class="location-section-heading"><h3 id="account-locations-title">Saved locations</h3><button class="text-button" type="button" id="add-location">Add location</button></div><p class="location-hint">Choose a saved location when ordering. Changes are saved with your account details.</p><div id="account-locations"></div><p class="location-hint" id="location-limit-note" hidden>You can save up to 20 locations.</p></section>
       <p class="quantity-error" id="account-error" role="alert" hidden></p>
       <button class="button button-dark" type="submit">Save details</button>
     </form>
@@ -120,7 +124,7 @@
     </form></details>
   </div></dialog>
   <dialog id="orders-dialog" aria-labelledby="orders-title"><div class="dialog-inner">
-    <button class="close-button" type="button" data-close aria-label="Close order history">×</button>
+    <div class="dialog-chrome"><button class="close-button" type="button" data-close aria-label="Close order history">×</button></div>
     <p class="eyebrow">MY ORDERS</p><h2 id="orders-title">Order history</h2>
     <div class="history-toolbar"><p>Track your coffee or build a repeat basket.</p><button class="text-button" id="refresh-orders" type="button">Refresh orders</button></div>
     <p class="history-count" id="history-count" role="status"></p>
@@ -128,7 +132,7 @@
     <button class="button button-outline history-more" id="history-more" type="button" hidden>Load earlier orders</button>
   </div></dialog>
   <dialog id="reorder-dialog" aria-labelledby="reorder-title"><div class="dialog-inner">
-    <button class="close-button" type="button" data-close aria-label="Close repeat order">×</button>
+    <div class="dialog-chrome"><button class="close-button" type="button" data-close aria-label="Close repeat order">×</button></div>
     <p class="eyebrow">REPEAT ORDER</p><h2 id="reorder-title">Build a repeat basket</h2>
     <p class="dialog-intro" id="reorder-summary"></p>
     <div id="reorder-items" class="review-items"></div>
@@ -137,6 +141,27 @@
     <p class="quantity-error" id="reorder-error" role="alert" hidden></p>
     <div class="reorder-actions"><button class="button button-dark" id="confirm-reorder" type="button">Add to basket</button><button class="button button-outline" type="button" data-close>Keep current basket</button></div>
   </div></dialog>
-  <dialog id="help-dialog" aria-labelledby="help-title"><div class="dialog-inner"><button class="close-button" type="button" data-close aria-label="Close ordering guide">×</button><h2 id="help-title">Ordering guide</h2><ol class="guide-steps"><li><span>01</span><div><h3>Choose your coffee.</h3><p>Pick a bag size, grind and quantity, then add it to your basket.</p></div></li><li><span>02</span><div><h3>Check your details.</h3><p>Keep your contact and delivery details up to date in My account, or choose roastery collection.</p></div></li><li><span>03</span><div><h3>Place your order.</h3><p>Review the coffee and subtotal, add a purchase reference if needed, then place your order. Follow its progress and order again from My orders.</p></div></li></ol><a class="button button-outline" href="https://strangerscoffee.com/" target="_blank" rel="noopener noreferrer">Contact Strangers Coffee</a></div></dialog>
+  <dialog id="grind-dialog" aria-labelledby="grind-title"><div class="dialog-inner"><div class="dialog-chrome"><button class="close-button" type="button" data-close aria-label="Close grind choices">×</button></div><p class="eyebrow">COFFEE PREPARATION</p><h2 id="grind-title">Choose your grind</h2><p class="dialog-intro" id="grind-product-name"></p><form id="grind-choice-form"><fieldset class="grind-choices"><legend class="sr-only">Grind options</legend><label><input type="radio" name="grind-choice" value="beans" checked><span><strong>Whole beans</strong><small>Grind at home or in your business.</small></span></label><label><input type="radio" name="grind-choice" value="espresso"><span><strong>Espresso / Fine</strong><small>For espresso machines.</small></span></label><label><input type="radio" name="grind-choice" value="moka"><span><strong>Moka pot / Fine</strong><small>For stovetop coffee makers.</small></span></label><label><input type="radio" name="grind-choice" value="filter"><span><strong>Filter / Medium</strong><small>For pour-over and filter brewers.</small></span></label><label><input type="radio" name="grind-choice" value="cafetiere"><span><strong>Cafetiere / Coarse</strong><small>For cafetieres and French presses.</small></span></label></fieldset><div class="grind-actions"><button class="button button-dark" id="confirm-grind" type="submit">Use this grind</button><button class="button button-outline" type="button" data-close>Keep current grind</button></div></form></div></dialog>
+  <dialog id="location-dialog" aria-labelledby="location-title"><div class="dialog-inner">
+    <div class="dialog-chrome"><button class="close-button" type="button" data-close aria-label="Close location editor">×</button></div>
+    <p class="eyebrow">DELIVERY LOCATION</p><h2 id="location-title">Add location</h2><p class="dialog-intro">Save this location with your account details, then choose it when ordering.</p>
+    <form id="location-form">
+      <label class="form-field">Location name<input name="name" maxlength="80" placeholder="e.g. City centre café" required></label>
+      <label class="form-field">Contact name <span>(optional)</span><input name="contact" maxlength="120" autocomplete="name"></label>
+      <label class="form-field">Phone <span>(optional)</span><input name="phone" type="tel" maxlength="40" autocomplete="tel"></label>
+      <label class="form-field">Delivery address<textarea name="address" maxlength="500" autocomplete="street-address" rows="3" required></textarea></label>
+      <label class="form-field">Postcode<input name="postcode" maxlength="20" autocomplete="postal-code" required></label>
+      <label class="form-field">Delivery notes <span>(optional)</span><textarea name="deliveryNotes" maxlength="1000" rows="2"></textarea></label>
+      <div class="location-actions"><button class="button button-dark" id="save-location" type="submit">Use these details</button><button class="button button-outline" type="button" data-close>Cancel</button></div>
+    </form>
+  </div></dialog>
+  <dialog id="location-remove-dialog" aria-labelledby="location-remove-title"><div class="dialog-inner">
+    <div class="dialog-chrome"><button class="close-button" type="button" data-close aria-label="Close location removal">×</button></div>
+    <h2 id="location-remove-title">Remove location?</h2><p class="dialog-intro" id="location-remove-summary"></p><p class="location-hint">Existing orders keep their original delivery details. Save your account details to finish removing this location.</p><div class="location-actions"><button class="button button-danger" type="button" id="confirm-location-remove">Remove location</button><button class="button button-outline" type="button" data-close>Keep location</button></div>
+  </div></dialog>
+  <dialog id="location-choice-dialog" aria-labelledby="location-choice-title"><div class="dialog-inner">
+    <div class="dialog-chrome"><button class="close-button" type="button" data-close aria-label="Close location choices">×</button></div>
+    <p class="eyebrow">YOUR BUSINESS</p><h2 id="location-choice-title">Choose a location</h2><p class="dialog-intro">Use the saved details for the site this order is for.</p><form id="location-choice-form"><fieldset class="location-choices" id="location-choices"><legend class="sr-only">Saved locations</legend></fieldset><div class="location-actions"><button class="button button-dark" type="submit" id="confirm-location">Use this location</button><button class="button button-outline" type="button" data-close>Keep current location</button></div></form>
+  </div></dialog>
 </body>
 </html>

@@ -68,7 +68,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     if (current !== sequence) return html``;
     data = snapshot;
     const stats = data.stats || { openOrders: data.orders.filter((row) => row.preview === false && !["Dispatched", "Cancelled"].includes(row.status)).length, gramsToPrepare: data.orders.filter((row) => row.preview === false && ["New", "Preparing"].includes(row.status)).reduce((total, row) => total + row.grams, 0), totalCustomers: data.counts.customer || 0, visibleCoffees: data.products.filter((row) => row.active).length, totalCoffees: data.products.length, pendingAccounts: data.accounts.filter((row) => row.approvalStatus === "pending").length };
-    return html`<div class="w-workspace">${head("Wholesale", "Orders, business accounts and coffee catalogue.", html`<div class="w-page-actions"><span class="pill acc">Beta</span></div>`)}
+    return html`<div class="w-workspace">${head("Wholesale", "Orders, business accounts and coffee catalogue.")}
       <div class="label">Needs attention</div><div class="group glass">${stats.pendingAccounts ? html`<button class="item" type="button" data-act="wh-pending"><span class="ic warn">${svg("people")}</span><span class="tx"><b>${stats.pendingAccounts} ${stats.pendingAccounts === 1 ? "account awaits" : "accounts await"} review</b><span>Review the business and payment terms before approving access.</span></span><span class="end"><span class="chev">${svg("chev")}</span></span></button>` : html`<div class="item"><span class="ic ok">${svg("ok")}</span><span class="tx"><b>Account reviews are up to date</b><span>New registrations appear here for approval.</span></span></div>`}</div>
       <div class="label">Wholesale at a glance</div><div class="stats w-stats">${[["Open orders", stats.openOrders, "New, preparing and ready"], ["Coffee to prepare", weight(stats.gramsToPrepare), "Customer orders only"], ["Customers", stats.totalCustomers, "Business accounts"], ["Visible coffees", stats.visibleCoffees, `Of ${stats.totalCoffees} coffees`]].map(([label, value, sub]) => html`<div class="stat glass"><span class="k">${label}</span><span class="v">${value}</span><span class="s">${sub}</span></div>`)}</div>
       <div class="segwrap w-sections"><div class="seg" role="group" aria-label="Wholesale sections">${[["orders", "Orders"], ["customers", "Customers"], ["catalogue", "Coffee catalogue"]].map(([id, label]) => html`<button type="button" data-act="wh-tab" data-id="${id}" aria-pressed="${tab === id}">${label}</button>`)}</div></div>
@@ -87,7 +87,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
   }
   function orderRow(row) {
     const next = nextStatus(row), busy = quickBusy.has(row.id), problem = orderErrors.get(row.id);
-    return html`<div class="w-order-entry" data-order-entry="${row.id}" aria-busy="${busy}"><button class="item w-order" type="button" data-act="wh-order" data-id="${row.id}" ${busy ? raw("disabled") : ""}><span class="ic ${row.preview === false ? "acc" : "mut"}">${svg("coffee")}</span><span class="tx"><b>${row.business || customer(row.customerId)?.business || row.createdName}</b><span>${shortId(row.id)}… · ${date(row.createdAt)}</span><span>${row.delivery} · ${row.packs} ${row.packs === 1 ? "bag" : "bags"} · ${weight(row.grams)}</span>${row.reference ? html`<span>Reference: ${row.reference}</span>` : ""}${row.preview === false ? "" : html`<span class="w-test-label">Staff preview · ${row.createdName}</span>`}</span><span class="end"><strong class="num">${money(row.pence)}</strong>${pill(row.status)}<span class="chev">${svg("chev")}</span></span></button>
+    return html`<div class="w-order-entry" data-order-entry="${row.id}" aria-busy="${busy}"><button class="item w-order" type="button" data-act="wh-order" data-id="${row.id}" ${busy ? raw("disabled") : ""}><span class="ic ${row.preview === false ? "acc" : "mut"}">${svg("coffee")}</span><span class="tx"><b>${row.business || customer(row.customerId)?.business || row.createdName}</b><span>${shortId(row.id)}… · ${date(row.createdAt)}</span><span>${row.locationSnapshot?.name ? row.locationSnapshot.name + " · " : ""}${row.delivery} · ${row.packs} ${row.packs === 1 ? "bag" : "bags"} · ${weight(row.grams)}</span>${row.reference ? html`<span>Reference: ${row.reference}</span>` : ""}${row.preview === false ? "" : html`<span class="w-test-label">Staff preview · ${row.createdName}</span>`}</span><span class="end"><strong class="num">${money(row.pence)}</strong>${pill(row.status)}<span class="chev">${svg("chev")}</span></span></button>
       ${next || problem ? html`<div class="w-order-actions"><div class="w-order-feedback" data-order-error="${row.id}" role="alert" ${problem ? "" : raw("hidden")}>${problem ? html`<p>${problem.message}</p><button class="btn sm soft" type="button" data-act="wh-refresh-orders" data-id="${row.id}">Reload orders</button>` : ""}</div>${next ? html`<button class="btn sm soft" type="button" data-act="wh-next" data-id="${row.id}" aria-label="Mark ${row.business || "order"} ${next.toLowerCase()}" ${busy || problem ? raw("disabled") : ""}>${busy ? "Saving…" : "Mark " + next.toLowerCase()}</button>` : ""}</div>` : ""}</div>`;
   }
   function refreshOrderFeedback(id) {
@@ -146,7 +146,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     if (!row || quickBusy.has(id)) return;
     const snapshot = row.customerSnapshot, selectedCustomer = draft && Object.hasOwn(draft, "customerId") ? draft.customerId : row.customerId;
     openSheet(html`<form class="w-sheet w-order-sheet"><h2 id="sheetTitle" tabindex="-1">Order details</h2><div class="w-order-heading"><h3>${row.business || row.createdName}</h3>${pill(row.status)}${row.preview === false ? "" : html`<span class="pill">Staff preview</span>`}</div><p class="w-id">${row.id}</p>
-      <div class="kvs"><div class="kv"><span>Received</span><span>${date(row.createdAt)}</span></div><div class="kv"><span>Reference</span><span>${row.reference || "None supplied"}</span></div><div class="kv"><span>Ordered by</span><span>${row.createdName}</span></div></div>
+      <div class="kvs">${row.locationSnapshot?.name ? html`<div class="kv"><span>Location</span><span>${row.locationSnapshot.name}</span></div>` : ""}<div class="kv"><span>Received</span><span>${date(row.createdAt)}</span></div><div class="kv"><span>Reference</span><span>${row.reference || "None supplied"}</span></div><div class="kv"><span>Ordered by</span><span>${row.createdName}</span></div></div>
       <section class="w-order-section" aria-labelledby="wPackingTitle"><h3 id="wPackingTitle">Packing list</h3><div class="group w-packing-list">${row.lines.map((line) => html`<div class="item w-packing-line"><span class="w-pack-quantity"><b>${line.quantity}</b><span>${line.quantity === 1 ? "bag" : "bags"}</span></span><span class="tx"><b>${line.title}</b><span>${line.packLabel}</span><span>${line.grindLabel}</span></span><span class="end num">${money(line.price * line.quantity)}</span></div>`)}</div><div class="kv"><span>${row.packs} ${row.packs === 1 ? "bag" : "bags"} · ${weight(row.grams)} total</span><strong>${money(row.pence)}</strong></div></section>
       <section class="w-order-section" aria-labelledby="wDeliveryTitle"><h3 id="wDeliveryTitle">${row.delivery}</h3>${snapshot ? html`<p class="w-address">${[snapshot.contact, snapshot.email, snapshot.phone].filter(Boolean).join(" · ") || "No contact details recorded"}</p>${row.delivery === "Delivery" ? html`<div class="kvs"><div class="kv"><span>Delivery address at checkout</span><span class="w-address">${[snapshot.address, snapshot.postcode].filter(Boolean).join("\n") || "Not recorded"}</span></div><div class="kv"><span>Delivery instructions</span><span class="w-address">${row.deliveryNotes || "None supplied"}</span></div></div>` : ""}` : html`<p class="hint">Staff preview order.</p>`}</section>
       ${row.preview === false ? html`<section class="w-order-section" aria-labelledby="wTermsTitle"><h3 id="wTermsTitle">Payment terms at order</h3><p>${row.paymentTerms?.label || "Not recorded on this order"}</p>${row.paymentTerms?.note ? html`<p class="w-address">${row.paymentTerms.note}</p>` : ""}</section>` : ""}
@@ -218,31 +218,103 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     const target = id && document.querySelector(`[data-act="wh-order"][data-id="${id}"]`) || document.querySelector(`[data-act="wh-status"][data-id="${status}"]`) || document.querySelector('[data-act="wh-tab"][data-id="orders"]');
     target?.focus({ preventScroll: true });
   }
-  function editCustomer(id) {
-    const row = id ? customer(id) : { business: "", contact: "", email: "", status: "Active", note: "" };
+  const locationKeys = ["contact", "phone", "address", "postcode", "deliveryNotes"];
+  function customerLocations(row) {
+    return row.locations?.length ? row.locations.map((location) => ({ ...location })) : [{ id: "primary", name: "Main location", ...Object.fromEntries(locationKeys.map((key) => [key, row[key] || ""])) }];
+  }
+  function editCustomer(id, restored = null, displayed = null) {
+    const row = displayed || (id ? customer(id) : { business: "", contact: "", email: "", status: "Active", note: "" });
     if (!row) return;
-    openSheet(html`<form class="w-sheet"><h2 id="sheetTitle">${id ? "Edit customer" : "Add customer"}</h2>
-      ${field("Business name", html`<input id="wBusiness" value="${row.business}" maxlength="120" required>`)}
-      ${field("Contact name (optional)", html`<input id="wContact" value="${row.contact}" maxlength="120">`)}
-      ${field("Contact email (optional)", html`<input id="wEmail" type="email" value="${row.email}" maxlength="150">`)}
-      ${field("Phone (optional)", html`<input id="wPhone" type="tel" value="${row.phone || ""}" maxlength="40">`)}
-      ${field("Delivery address", html`<textarea id="wAddress" maxlength="500">${row.address || ""}</textarea>`)}
-      ${field("Postcode", html`<input id="wPostcode" value="${row.postcode || ""}" maxlength="20">`)}
-      ${field("Delivery notes", html`<textarea id="wDeliveryNotes" maxlength="1000">${row.deliveryNotes || ""}</textarea>`)}
-      ${field("Payment terms", html`<select id="wPaymentTerms">${data.paymentTermChoices.map((term) => html`<option value="${term.id}" ${(row.paymentTerms || "to-agree") === term.id ? raw("selected") : ""}>${term.label}</option>`)}</select>`)}
-      ${field("Payment instructions (shown to the customer)", html`<textarea id="wPaymentNote" maxlength="500">${row.paymentNote || ""}</textarea>`)}
+    const state = restored || { ...row, locations: customerLocations(row), defaultLocationId: row.defaultLocationId || "primary" };
+    const locations = state.locations.map((location) => ({ ...location }));
+    const defaultId = locations.some((location) => location.id === state.defaultLocationId) ? state.defaultLocationId : "primary";
+    let form;
+    const capture = () => {
+      const fields = { business: "wBusiness", contact: "wContact", email: "wEmail", phone: "wPhone", address: "wAddress", postcode: "wPostcode", deliveryNotes: "wDeliveryNotes", paymentTerms: "wPaymentTerms", paymentNote: "wPaymentNote", status: "wStatus", note: "wNote" };
+      const draft = Object.fromEntries(Object.entries(fields).map(([key, input]) => [key, form.querySelector("#" + input).value]));
+      draft.locations = locations.map((location) => ({ ...location }));
+      draft.locations[0] = { ...draft.locations[0], ...Object.fromEntries(locationKeys.map((key) => [key, draft[key]])) };
+      draft.defaultLocationId = form.querySelector("#wDefaultLocation").value;
+      draft.scrollTop = $("#sheet").scrollTop;
+      return draft;
+    };
+    openSheet(html`<form id="wCustomerForm" class="w-sheet"><h2 id="sheetTitle" tabindex="-1">${id ? "Edit customer" : "Add customer"}</h2>
+      ${field("Business name", html`<input id="wBusiness" value="${state.business}" maxlength="120" required>`)}
+      ${field("Contact name (optional)", html`<input id="wContact" value="${state.contact || ""}" maxlength="120">`)}
+      ${field("Contact email (optional)", html`<input id="wEmail" type="email" value="${state.email || ""}" maxlength="150">`)}
+      ${field("Phone (optional)", html`<input id="wPhone" type="tel" value="${state.phone || ""}" maxlength="40">`)}
+      ${field("Main location address", html`<textarea id="wAddress" maxlength="500">${state.address || ""}</textarea>`)}
+      ${field("Postcode", html`<input id="wPostcode" value="${state.postcode || ""}" maxlength="20">`)}
+      ${field("Delivery notes", html`<textarea id="wDeliveryNotes" maxlength="1000">${state.deliveryNotes || ""}</textarea>`)}
+      <section class="w-location-section" aria-labelledby="wLocationsTitle"><div class="w-location-heading"><h3 id="wLocationsTitle">Saved locations</h3><button class="btn sm soft" type="button" data-sheet="location-add" ${locations.length >= 20 ? raw("disabled") : ""}>${svg("plus")}Add location</button></div><p class="hint">Keep an address and contact for each shop. Location changes save when you save the customer.</p><div class="group w-location-list" id="wLocations">${locations.map((location, index) => html`<button class="item" type="button" data-sheet="location-edit" data-index="${index}"><span class="ic mut">${svg("house")}</span><span class="tx"><b>${location.name}</b><span>${[location.address, location.postcode].filter(Boolean).join(", ") || "No address yet"}</span>${!location.id ? html`<span>Not saved yet</span>` : ""}</span><span class="end">${location.id === defaultId ? html`<span class="pill acc">Default</span>` : index === 0 ? html`<span class="pill">Main</span>` : ""}<span class="chev">${svg("chev")}</span></span></button>`)}</div>
+      ${field("Default location", html`<select id="wDefaultLocation">${locations.filter((location) => location.id).map((location) => html`<option value="${location.id}" ${location.id === defaultId ? raw("selected") : ""}>${location.name}</option>`)}</select>`)}<p class="hint">${locations.some((location) => !location.id) ? "Save new locations before choosing one as default." : "The default is preselected for new orders."} ${locations.length} of 20 locations.</p></section>
+      ${field("Payment terms", html`<select id="wPaymentTerms">${data.paymentTermChoices.map((term) => html`<option value="${term.id}" ${(state.paymentTerms || "to-agree") === term.id ? raw("selected") : ""}>${term.label}</option>`)}</select>`)}
+      ${field("Payment instructions (shown to the customer)", html`<textarea id="wPaymentNote" maxlength="500">${state.paymentNote || ""}</textarea>`)}
       ${id ? html`<div class="kv"><span>Wholesale sign-in</span><span>${accountFor(id)?.username || "Not created"}</span></div><button class="btn soft" type="button" data-sheet="account">${accountFor(id)?.approvalStatus === "pending" ? "Save and review sign-in" : accountFor(id) ? "Save and manage sign-in" : "Save and create sign-in"}</button>` : ""}
-      ${field("Status", html`<select id="wStatus"><option ${row.status === "Active" ? raw("selected") : ""}>Active</option><option ${row.status === "On hold" ? raw("selected") : ""}>On hold</option></select>`)}
-      ${field("Internal account note", html`<textarea id="wNote" maxlength="1000">${row.note}</textarea>`)}${note}${buttons("Save customer")}</form>`, async (action, element) => {
+      ${field("Status", html`<select id="wStatus"><option ${state.status === "Active" ? raw("selected") : ""}>Active</option><option ${state.status === "On hold" ? raw("selected") : ""}>On hold</option></select>`)}
+      ${field("Internal account note", html`<textarea id="wNote" maxlength="1000">${state.note || ""}</textarea>`)}${note}${buttons("Save customer")}</form>`, async (action, element) => {
+      if (action === "location-add" || action === "location-edit") {
+        const draft = capture(), index = action === "location-add" ? -1 : Number(element.dataset.index);
+        draft.focusLocationIndex = index;
+        editCustomerLocation(id, index, draft, row);
+        return;
+      }
       if (!["submit", "account"].includes(action)) return;
-      const form = element.closest("form");
+      const draft = capture();
       await saveForm(form, async () => {
-        await api(id ? "PUT" : "POST", "/api/admin/wholesale/customers" + (id ? `/${id}` : ""), { ifVersion: row.version, business: $("#wBusiness").value, contact: $("#wContact").value, email: $("#wEmail").value, phone: $("#wPhone").value, address: $("#wAddress").value, postcode: $("#wPostcode").value, deliveryNotes: $("#wDeliveryNotes").value, paymentTerms: $("#wPaymentTerms").value, paymentNote: $("#wPaymentNote").value, status: $("#wStatus").value, note: $("#wNote").value });
+        const { scrollTop, focusLocationIndex, ...body } = draft;
+        await api(id ? "PUT" : "POST", "/api/admin/wholesale/customers" + (id ? `/${id}` : ""), { ...body, ifVersion: row.version });
         const stillOpen = form.isConnected;
         if (stillOpen) closeSheet(); await reload();
         if (action === "account" && stillOpen) editAccount(id); else toast("Customer saved.");
       });
     });
+    form = $("#wCustomerForm");
+    if (restored) {
+      const target = restored.focusLocationIndex >= 0 ? form.querySelector(`[data-sheet="location-edit"][data-index="${restored.focusLocationIndex}"]`) : form.querySelector('[data-sheet="location-add"]');
+      (target || $("#sheetTitle")).focus({ preventScroll: true }); $("#sheet").scrollTop = restored.scrollTop || 0;
+    }
+  }
+  function editCustomerLocation(customerId, index, draft, row) {
+    if (index < 0 && draft.locations.length >= 20) { editCustomer(customerId, draft, row); toast("A customer can have up to 20 saved locations."); return; }
+    const location = index < 0 ? { name: "", contact: "", phone: "", address: "", postcode: "", deliveryNotes: "" } : draft.locations[index];
+    if (!location) return;
+    let cleanup = () => {};
+    const back = () => { cleanup(); editCustomer(customerId, draft, row); };
+    openSheet(html`<form id="wLocationForm" class="w-sheet"><h2 id="sheetTitle" tabindex="-1">${index < 0 ? "Add location" : "Edit location"}</h2><p>${draft.business || "Customer location"}</p>
+      ${field("Location name", html`<input id="wLocationName" maxlength="80" required value="${location.name}" placeholder="e.g. City centre café">`)}
+      ${field("Contact name (optional)", html`<input id="wLocationContact" maxlength="120" value="${location.contact || ""}">`)}
+      ${field("Phone (optional)", html`<input id="wLocationPhone" type="tel" maxlength="40" value="${location.phone || ""}">`)}
+      ${field("Address", html`<textarea id="wLocationAddress" maxlength="500">${location.address || ""}</textarea>`)}
+      ${field("Postcode", html`<input id="wLocationPostcode" maxlength="20" value="${location.postcode || ""}">`)}
+      ${field("Delivery instructions", html`<textarea id="wLocationNotes" maxlength="1000">${location.deliveryNotes || ""}</textarea>`)}
+      <p class="hint">Apply the location, then save the customer to keep these changes. Existing orders retain their saved address.</p><p class="err" id="wErr" role="alert"></p><div class="row"><button class="btn soft" type="button" data-sheet="location-cancel">Cancel</button><button class="btn" type="submit">Apply location</button></div>
+      ${index > 0 ? html`<div class="w-order-danger"><button class="btn bad" type="button" data-sheet="location-remove">Remove location</button></div><div class="w-location-remove" id="wLocationRemoveConfirm" hidden><p>Remove this saved location? Existing orders keep their original location and address.</p><div class="row"><button class="btn soft" type="button" data-sheet="location-remove-cancel">Keep location</button><button class="btn bad" type="button" data-sheet="location-remove-confirm">Confirm remove location</button></div></div>` : index === 0 ? html`<p class="hint">The main location stays linked to the business contact and address.</p>` : ""}</form>`, (action) => {
+      const form = $("#wLocationForm");
+      if (action === "location-cancel") { back(); return; }
+      if (action === "location-remove") { form.querySelector("#wLocationRemoveConfirm").hidden = false; form.querySelector('[data-sheet="location-remove-confirm"]').focus(); return; }
+      if (action === "location-remove-cancel") { form.querySelector("#wLocationRemoveConfirm").hidden = true; form.querySelector('[data-sheet="location-remove"]').focus(); return; }
+      if (action === "location-remove-confirm" && index > 0) {
+        draft.locations.splice(index, 1);
+        if (draft.defaultLocationId === location.id) draft.defaultLocationId = "primary";
+        draft.focusLocationIndex = Math.max(0, index - 1); back(); return;
+      }
+      if (action !== "submit") return;
+      const value = (id) => form.querySelector(id).value.trim();
+      const updated = { ...(location.id ? { id: location.id } : {}), name: value("#wLocationName"), contact: value("#wLocationContact"), phone: value("#wLocationPhone"), address: value("#wLocationAddress"), postcode: value("#wLocationPostcode"), deliveryNotes: value("#wLocationNotes") };
+      if (!updated.name) { form.querySelector("#wErr").textContent = "Add a location name."; return; }
+      if (index < 0) { draft.locations.push(updated); draft.focusLocationIndex = draft.locations.length - 1; }
+      else draft.locations[index] = updated;
+      if (index === 0) for (const key of locationKeys) draft[key] = updated[key];
+      back();
+    });
+    const form = $("#wLocationForm"), controller = new AbortController(), scrim = $("#scrim");
+    const observer = new MutationObserver(() => { if (!form.isConnected) cleanup(); });
+    cleanup = () => { controller.abort(); observer.disconnect(); };
+    observer.observe($("#sheet"), { childList: true });
+    document.addEventListener("keydown", (event) => { if (event.key !== "Escape" || !form.isConnected) return; event.preventDefault(); event.stopImmediatePropagation(); back(); }, { capture: true, signal: controller.signal });
+    scrim.addEventListener("click", (event) => { if (event.target !== scrim || !form.isConnected) return; event.preventDefault(); event.stopImmediatePropagation(); back(); }, { capture: true, signal: controller.signal });
+    $("#sheetTitle").focus({ preventScroll: true }); $("#sheet").scrollTop = 0;
   }
   function showCredentials(row, result) {
     openSheet(html`<h2 id="sheetTitle">Wholesale sign-in</h2><p>Give these details to ${row.business}. They will choose their own password on first sign-in. The temporary password is shown only once.</p><div class="secret"><span>Username</span><b>${result.account.username}</b></div><div class="secret"><span>Temporary password</span><b id="wTemporaryPassword">${result.temporaryPassword}</b></div><div class="row"><button class="btn soft" type="button" data-sheet="copy">${svg("copy")}Copy both</button><button class="btn" type="button" data-sheet="close">Done</button></div>`, async (action) => {

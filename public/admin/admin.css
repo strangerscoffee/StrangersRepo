@@ -243,7 +243,6 @@ button.stat{cursor:pointer}
 
 /* Wholesale uses the admin shell's grouped lists, flat controls and form sheets. */
 .w-workspace{display:grid;gap:12px;min-width:0}
-.w-page-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap;min-width:0}
 .w-workspace .pagehead{min-width:0}
 .w-workspace .pagehead .btn{min-height:44px}
 .w-workspace .label{min-width:0}
@@ -288,7 +287,6 @@ button.stat{cursor:pointer}
 @media (max-width:600px){
   .w-workspace .pagehead{grid-template-columns:minmax(0,1fr);gap:10px}
   .w-workspace .pagehead p{grid-row:2}
-  .w-page-actions{grid-row:3;justify-content:flex-start;justify-self:start}
   .w-order .end,.w-customer .end{flex-direction:column;align-items:flex-end;gap:6px}
   .w-order .end .chev{display:none}
   .w-coffee{display:grid;grid-template-columns:40px minmax(0,1fr);gap:8px 12px;align-items:start}
@@ -337,3 +335,17 @@ button.stat{cursor:pointer}
 .w-delete-confirm-controls>.btn{width:100%}
 .w-delete-confirm-controls:disabled .btn{opacity:.5;cursor:default}
 #wDeleteOrderForm .solidbad{color:var(--accent-ink)}
+
+/* Saved locations stay compact; one native location editor opens at a time. */
+.w-location-section{display:grid;gap:12px;padding-top:16px;border-top:1px solid var(--line);min-width:0}
+.w-location-heading{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.w-location-heading h3{font-size:15px;font-weight:650}
+.w-location-list{border:1px solid var(--line);border-radius:14px;background:var(--sunk)}
+.w-location-list .item{padding:12px;align-items:flex-start}
+.w-location-list .item .end{flex-wrap:wrap;justify-content:flex-end;max-width:35%}
+.w-location-list .item .tx{gap:3px}
+.w-location-section .hint{padding:0}
+.w-location-remove{display:grid;gap:12px;padding:12px;border-radius:14px;background:var(--warn-bg)}
+.w-location-remove p{font-size:14px;color:var(--fg)}
+#wLocationForm .btn.bad{white-space:normal;text-align:center;min-height:44px}
+@media(max-width:600px){.w-location-list .item .end{flex-direction:column;align-items:flex-end;gap:6px}}

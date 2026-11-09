@@ -179,9 +179,10 @@ for (const restored of [true, false]) {
       await page.locator("#review-dialog .close-button").click();
       await page.locator("#my-account").click();
       await page.locator("#account-dialog").waitFor();
-      assert.equal(await page.locator('#account-form [name="business"]').inputValue(), customer.business);
+      assert.equal(await page.locator('#account-business').textContent(), customer.business);
+      assert.equal(await page.locator('#account-form input[name="business"]:not([readonly]):not([hidden])').count(), 0, 'the approved business name is read-only');
       if (!restored) {
-        await page.locator('#account-form [name="business"]').fill("Unsaved first-business name");
+        await page.locator('#account-form [name="contact"]').fill("Unsaved first-business contact");
         await page.locator('#account-form [name="address"]').fill("Do not copy this address to another business");
       }
       const before = (await api("GET", "/api/admin/wholesale")).body.customers.filter((row) => [customer.id, other.customer.id].includes(row.id));

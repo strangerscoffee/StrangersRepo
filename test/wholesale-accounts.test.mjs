@@ -64,7 +64,7 @@ let order;
 test("wholesale ordering: customer identity and delivery snapshots are server-owned, orders are private and retries safe", async () => {
   const body = { requestId: crypto.randomUUID(), lines: [{ productId: "brazil", pack: "kilo", grind: "beans", quantity: 2, price: 3700 }], delivery: "Delivery", business: "Forged business", customerId: customerB.id, reference: "PO 123" };
   assert.equal((await call("POST", "/api/wholesale/orders", body, A)).status, 400, "delivery needs an address");
-  customerA = (await call("PUT", "/api/wholesale/account", { ...customerA, ifVersion: customerA.version, address: "10 Coffee Street\nNorwich", postcode: "NR1 1AA", deliveryNotes: "Side door", note: "cannot write private notes", status: "On hold" }, A)).body.customer;
+  customerA = (await call("PUT", "/api/wholesale/account", { ...customerA, locations: undefined, ifVersion: customerA.version, address: "10 Coffee Street\nNorwich", postcode: "NR1 1AA", deliveryNotes: "Side door", note: "cannot write private notes", status: "On hold" }, A)).body.customer;
   body.customerVersion = customerA.version;
   assert.equal(customerA.status, "Active"); assert.equal(customerA.note, undefined);
   const created = await call("POST", "/api/wholesale/orders", body, A);
@@ -78,7 +78,7 @@ test("wholesale ordering: customer identity and delivery snapshots are server-ow
   const own = (await call("GET", "/api/wholesale/orders", undefined, A)).body.orders[0];
   assert.equal(own.status, "Preparing"); assert.equal(own.note, undefined); assert.equal(own.requestKey, undefined);
   assert.equal((await call("PATCH", `/api/admin/wholesale/orders/${order.id}`, { ifVersion: update.body.order.version, status: "Ready", customerId: customerB.id, note: "" })).status, 400);
-  const changed = await call("PUT", "/api/wholesale/account", { ...customerA, ifVersion: customerA.version, address: "Another address" }, A);
+  const changed = await call("PUT", "/api/wholesale/account", { ...customerA, locations: undefined, ifVersion: customerA.version, address: "Another address" }, A);
   assert.equal(changed.status, 200); customerA = changed.body.customer;
   assert.equal((await call("GET", `/api/wholesale/orders/${order.id}`, undefined, A)).body.order.customerSnapshot.address, "10 Coffee Street\nNorwich");
   assert.equal((await call("POST", "/api/wholesale/orders", body, A)).body.order.id, order.id, "a retry retains the original snapshot after a profile edit");

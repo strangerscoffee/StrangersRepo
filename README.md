@@ -73,9 +73,9 @@ Records show the person's name (set by an admin), not their username. The first 
 
 Everything fits Cloudflare's free tier (Workers, D1, KV and a custom domain) for a team this size, with no card needed. `README-deploy.md` → "Limits and costs" has the numbers to watch.
 
-## Wholesale ordering beta
+## Wholesale
 
-The operational wholesale beta keeps its existing address. Wholesale customers register and sign in at **https://preview.staffstrangerscoffee.com**. Admins must approve new registrations in **Admin → Wholesale → Customers** before customers can access the catalogue or order. Wholesale identities never grant staff access. Customers manage delivery details, place orders, view their history and build a repeat basket at current prices. Admins review orders, update statuses and manage accounts at **https://admin.staffstrangerscoffee.com/#wholesale**.
+Wholesale keeps its existing address. Wholesale customers register and sign in at **https://preview.staffstrangerscoffee.com**. Admins must approve new registrations in **Admin → Wholesale → Customers** before customers can access the catalogue or order. Wholesale identities never grant staff access. Customers manage delivery details, place orders, view their history and build a repeat basket at current prices. Admins review orders, update statuses and manage accounts at **https://admin.staffstrangerscoffee.com/#wholesale**.
 
 **Coffee catalogue** adds and edits coffees, descriptions, categories, bag prices and photos. Admins can upload or remove photos, mark a coffee out of stock while keeping it visible, or hide it. Out-of-stock and hidden coffees cannot be ordered. **Customers** sets each business's payment terms and instructions; customers see them in My account, checkout and their saved orders. Prices, delivery details and payment terms are saved with each order so later edits preserve its original agreement.
 
@@ -86,3 +86,5 @@ Wholesale uses the same Liquid Glass design system as the staff apps, including 
 My orders shows each order’s progress and saved details, with Load earlier orders for the full history. Order again previews current prices and availability, explains skipped coffees and asks before merging bags into the existing basket. Admin order rows offer version-checked preparation shortcuts; the packing view separates quantities, bag sizes, grinds, delivery instructions and saved payment terms.
 
 Admins can remove customer or staff-preview orders after confirmation. Removed orders leave histories and preparation totals; audit and duplicate-request protection are retained, and payments remain unchanged.
+
+Wholesale keeps the approved business name fixed. Customers and admins can maintain named delivery locations and choose a default; checkout selects the destination, and orders retain its original address. Customer navigation, footer and empty baskets are simplified, and grind/location choices use built-in sheets.

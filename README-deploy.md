@@ -1,6 +1,6 @@
 # Deploying and running the Kitchen Diary
 
-**Wholesale ordering beta:** customers register at **https://preview.staffstrangerscoffee.com** and wait for admin approval. Manage registrations, customer accounts and orders in **Admin → Wholesale** at `https://admin.staffstrangerscoffee.com/#wholesale`. Wholesale credentials are separate from staff credentials. No new secret or external identity provider is required. See [docs/wholesale-preview.md](docs/wholesale-preview.md).
+**Wholesale:** customers register at **https://preview.staffstrangerscoffee.com** and wait for admin approval. Manage registrations, customer accounts and orders in **Admin → Wholesale** at `https://admin.staffstrangerscoffee.com/#wholesale`. Wholesale credentials are separate from staff credentials. No new secret or external identity provider is required. See [docs/wholesale-preview.md](docs/wholesale-preview.md).
 
 The site is one Cloudflare Worker serving the diary's pages and the API they talk to. It runs at **https://staffstrangerscoffee.com**, and the staff rota, from the same Worker, at **https://rota.staffstrangerscoffee.com**. **Every push to `main` redeploys it automatically** (Cloudflare Workers Builds).
 
@@ -135,8 +135,10 @@ Catalogue and payment-term fields use the existing versioned JSON records; photo
 
 For local development, use `npm run dev -- --var PREVIEW_HOST:` and open `/wholesale-preview/`, `/wholesale-preview/signin` or `/admin#wholesale`. Run both test suites before publishing. Source prices remain retail reference prices until edited by an admin; payment and fulfilment integrations remain manual.
 
-The beta keeps `preview.staffstrangerscoffee.com` and the existing `PREVIEW_HOST` setting, cookies, records and asset paths. The stage is labelled Beta in the customer and admin apps; no DNS, secret, migration or new service is needed. Shared `/theme.css` is available on the ordering host, including at sign-in. Checkout persists an unresolved submitted request in browser storage per identity before sending; keep that storage until its receipt is confirmed. Payment collection, invoices and fulfilment are still handled by the team under the recorded terms.
+Wholesale keeps `preview.staffstrangerscoffee.com` and the existing `PREVIEW_HOST` setting, cookies, records and asset paths. Customer and admin interfaces use the name Wholesale without Beta badges; no DNS, secret, migration or new service is needed. Shared `/theme.css` is available on the ordering host, including at sign-in. Checkout persists an unresolved submitted request in browser storage per identity before sending; keep that storage until its receipt is confirmed. Payment collection, invoices and fulfilment are still handled by the team under the recorded terms.
 
 The follow-up wholesale UX update uses the same routes, accounts and schema. Customer order history loads 200 owned records per page with an explicit earlier-orders action. Repeat baskets require confirmation at current prices and preserve existing choices. Admin quick-status controls update only the saved status through the existing versioned API; they never trigger shipping, invoicing or payment. Conflicts require refreshing the order before another quick update.
 
 Admin order removal uses optional JSON metadata in the existing table and needs no migration. Backup exports retain removed records for audit/idempotency; the normal UI and order queries hide them. Removal does not change external payments or shipping.
+
+Saved wholesale locations and defaults use optional JSON fields in existing customer/order records; no migration, secret or hostname change is required. Legacy primary addresses and already-submitted request hashes remain compatible. The approved business name is admin-controlled; new checkout clients send the selected location ID.
