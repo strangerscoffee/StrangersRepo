@@ -120,6 +120,15 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       const retained = await orderFor(order.id);
       assert.equal(retained.version, changed.version); assert.equal(retained.status, "Ready"); assert.equal(retained.note, otherNote);
       await screenshot(page, `quick-conflict-${device}-${color}`);
+      // A normal view redraw (also used by live updates) must not acknowledge a rejected edit.
+      const previousError = await error.elementHandle();
+      await page.locator('[data-act="wh-tab"][data-id="orders"]').click();
+      await page.waitForFunction((previous) => !previous.isConnected, previousError);
+      await previousError.dispose();
+      await error.waitFor();
+      assert.match(await error.textContent(), /changed|reload/i, "a redraw retains the unresolved conflict message");
+      assert.equal(await quick.isDisabled(), true, "a redraw cannot re-enable an unresolved quick action");
+      assert.equal(await page.locator(`[data-act="wh-refresh-orders"][data-id="${order.id}"]`).isVisible(), true, "explicit refresh remains available after the view redraws");
       await page.locator(`[data-act="wh-refresh-orders"][data-id="${order.id}"]`).click();
       await page.waitForFunction((id) => {
         const button = document.querySelector(`[data-act="wh-next"][data-id="${id}"]`);

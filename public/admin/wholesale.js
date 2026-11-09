@@ -67,7 +67,6 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     }
     if (current !== sequence) return html``;
     data = snapshot;
-    for (const row of data.orders) if (orderErrors.has(row.id) && orderErrors.get(row.id).version !== row.version) orderErrors.delete(row.id);
     const stats = data.stats || { openOrders: data.orders.filter((row) => row.preview === false && !["Dispatched", "Cancelled"].includes(row.status)).length, gramsToPrepare: data.orders.filter((row) => row.preview === false && ["New", "Preparing"].includes(row.status)).reduce((total, row) => total + row.grams, 0), totalCustomers: data.counts.customer || 0, visibleCoffees: data.products.filter((row) => row.active).length, totalCoffees: data.products.length, pendingAccounts: data.accounts.filter((row) => row.approvalStatus === "pending").length };
     return html`<div class="w-workspace">${head("Wholesale", "Orders, business accounts and coffee catalogue.", html`<div class="w-page-actions"><span class="pill acc">Beta</span></div>`)}
       <div class="label">Needs attention</div><div class="group glass">${stats.pendingAccounts ? html`<button class="item" type="button" data-act="wh-pending"><span class="ic warn">${svg("people")}</span><span class="tx"><b>${stats.pendingAccounts} ${stats.pendingAccounts === 1 ? "account awaits" : "accounts await"} review</b><span>Review the business and payment terms before approving access.</span></span><span class="end"><span class="chev">${svg("chev")}</span></span></button>` : html`<div class="item"><span class="ic ok">${svg("ok")}</span><span class="tx"><b>Account reviews are up to date</b><span>New registrations appear here for approval.</span></span></div>`}</div>
@@ -162,6 +161,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
       if (action !== "submit") return;
       await saveForm(form, async () => {
         await api("PATCH", `/api/admin/wholesale/orders/${row.id}`, { ifVersion: row.version, status: $("#wStatus").value, customerId: row.preview === false ? row.customerId : $("#wCustomer").value || null, note: $("#wNote").value });
+        orderErrors.delete(row.id);
         if (form.isConnected) closeSheet(); await reload(); toast("Order saved.");
       });
     });
