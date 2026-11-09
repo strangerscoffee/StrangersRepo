@@ -180,6 +180,7 @@ function renderBasket() {
   $("#mobile-packs").textContent = packText;
   $("#mobile-total").textContent = money(sum.pence);
   updateMobileBasket();
+  scheduleDesktopBasketLayout();
   if (focusId?.startsWith("line-qty-")) {
     const replacement = focusStep ? document.querySelector(`[data-for="${focusId}"][data-step="${focusStep}"]`) : document.getElementById(focusId);
     // At a limit the step button becomes disabled; keep keyboard focus in its quantity field instead.
@@ -472,7 +473,14 @@ document.querySelectorAll("[data-close]").forEach((button) => button.addEventLis
 document.querySelectorAll("dialog").forEach((dialog) => {
   dialog.addEventListener("cancel", event => { if (dialogBusy(dialog)) event.preventDefault(); });
   dialog.addEventListener("click", (event) => { if (event.target === dialog && !dialogBusy(dialog)) dialog.close(); });
-  dialog.addEventListener("close", () => { if (dialog.id === "review-dialog") $("#review-form").reset(); });
+  dialog.addEventListener("close", () => {
+    if (dialog.id !== "review-dialog") return;
+    $("#review-form").reset();
+    requestAnimationFrame(() => {
+      if (document.querySelector("dialog[open]")) return;
+      ($("#review-order").disabled ? $("#your-order") : $("#review-order")).focus({ preventScroll: true });
+    });
+  });
 });
 
 async function api(path, body, method) {
@@ -502,6 +510,7 @@ function applyCatalogue(fresh, initial) {
   $("#admin-wholesale-link").hidden = session.me.role !== "admin";
   if (session.me.role === "admin") $("#admin-wholesale-link").href = session.links.admin + "#wholesale";
   $("#my-account").hidden = !session.customer;
+  $("#history-invoices").hidden = !session.customer;
   $("#staff-preview-notice").hidden = !session.preview;
   $("#submit-preview-order").textContent = session.preview ? "Save preview order" : "Place order";
   $("#account-hold").hidden = canOrder();
@@ -551,6 +560,7 @@ async function openAccount() {
     renderAccountLocations();
     $("#account-error").hidden = $("#password-error").hidden = true;
     $("#account-dialog").showModal();
+    $("#account-body").scrollTop = 0;
   } catch (error) { toast(error.message); }
 }
 $("#add-location").addEventListener("click", () => openLocationEditor(null));
@@ -607,10 +617,10 @@ $("#my-account").addEventListener("click", openAccount);
 $("#review-account").addEventListener("click", () => { if (saving || pendingAttempt) return; $("#review-dialog").close(); openAccount(); });
 $("#account-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const form = event.target, button = form.querySelector('[type="submit"]');
-  if (accountSaving) return;
+  const form = event.target;
+  if (accountSaving || !form.reportValidity()) return;
   accountSaving = true;
-  const controls = [...form.querySelectorAll("button,input,textarea")];
+  const controls = [...$("#account-dialog").querySelectorAll("button,input,textarea,select")];
   controls.forEach(control => { control.disabled = true; });
   $("#account-error").hidden = true;
   try {
@@ -686,7 +696,20 @@ async function loadOrders(append = false) {
   } catch (error) { if (!append) $("#order-history").textContent = error.message; $("#history-count").textContent = append ? "Couldn’t load earlier orders. Try again." : ""; }
   finally { historyLoading = false; $("#order-history").setAttribute("aria-busy", "false"); $("#refresh-orders").disabled = $("#history-more").disabled = false; }
 }
-document.querySelectorAll("#my-orders,[data-order-history]").forEach(button => button.addEventListener("click", () => { $("#orders-dialog").showModal(); loadOrders(); }));
+function showHistorySection(section) {
+  const invoices = section === "invoices" && !!session.customer;
+  $("#orders-panel").hidden = invoices; $("#invoices-panel").hidden = !invoices;
+  $("#history-orders").setAttribute("aria-pressed", String(!invoices)); $("#history-invoices").setAttribute("aria-pressed", String(invoices));
+  $("#orders-title").textContent = invoices ? "Invoices" : "Order history";
+  $("#orders-body").scrollTop = 0;
+}
+document.querySelectorAll("#my-orders,[data-order-history]").forEach(button => button.addEventListener("click", () => {
+  showHistorySection("orders"); $("#orders-dialog").showModal(); loadOrders();
+  if (session.customer) loadInvoices();
+}));
+$("#history-orders").addEventListener("click", () => showHistorySection("orders"));
+$("#history-invoices").addEventListener("click", () => showHistorySection("invoices"));
+$("#history-invoice-note").addEventListener("click", () => { showHistorySection("invoices"); $("#history-invoices").focus({ preventScroll: true }); });
 $("#refresh-orders").addEventListener("click", () => loadOrders());
 $("#history-more").addEventListener("click", () => { if (historyCursor) loadOrders(true); });
 function buildReorderPlan(order) {
@@ -753,7 +776,70 @@ $("#confirm-reorder").addEventListener("click", async () => {
   } catch (error) { $("#reorder-error").textContent = error.message; $("#reorder-error").hidden = false; }
   finally { reordering = false; $("#confirm-reorder").disabled = !reorderPlan?.added.packs; }
 });
+// Fit the desktop basket to its actual position, including the first viewport before it sticks.
+let basketLayoutFrame = 0;
+function scheduleDesktopBasketLayout() {
+  if (basketLayoutFrame) return;
+  basketLayoutFrame = requestAnimationFrame(() => {
+    basketLayoutFrame = 0;
+    const column = $("#your-order"), panel = column.querySelector(".order-panel"), header = $(".site-header");
+    if (!matchMedia("(min-width: 1101px)").matches) { column.style.removeProperty("--basket-top"); panel.style.removeProperty("--basket-height"); return; }
+    const inset = parseFloat(getComputedStyle(header).top) || 8;
+    const stickyTop = Math.ceil(header.offsetHeight + inset + 16);
+    column.style.setProperty("--basket-top", `${stickyTop}px`);
+    const top = Math.max(column.getBoundingClientRect().top, stickyTop);
+    panel.style.setProperty("--basket-height", `${Math.max(220, innerHeight - top - 20)}px`);
+  });
+}
+window.addEventListener("resize", scheduleDesktopBasketLayout, { passive: true });
+window.addEventListener("scroll", scheduleDesktopBasketLayout, { passive: true });
+if ("ResizeObserver" in window) {
+  const basketLayoutObserver = new ResizeObserver(scheduleDesktopBasketLayout);
+  basketLayoutObserver.observe($(".site-header"));
+}
+scheduleDesktopBasketLayout();
 if ("IntersectionObserver" in window) {
   new IntersectionObserver(([entry]) => { orderVisible = entry.isIntersecting; updateMobileBasket(); }, { threshold: 0 }).observe($("#your-order"));
 }
 start();
+
+
+// Issued invoices remain available in My orders even after their source order is removed.
+let customerInvoices = [], invoiceCursor = null, invoiceTotal = 0, invoiceLoading = false;
+function customerInvoiceCard(invoice, expanded) {
+  const paid = !!invoice.payment?.paid, overdue = !paid && invoice.payment?.status === "overdue";
+  const label = paid ? "Paid" : overdue ? "Overdue" : "Unpaid";
+  const date = value => value ? new Date(value + "T12:00:00Z").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "Europe/London" }) : "Not set";
+  const href = "/api/wholesale/invoices/" + encodeURIComponent(invoice.id) + "/pdf";
+  return `<article class="customer-invoice-card" data-customer-invoice="${escape(invoice.id)}"><div class="history-card-head"><h3>${escape(invoice.number)}</h3><strong>${money(invoice.totals.grossPence)}</strong></div><div class="invoice-status-line"><span class="invoice-state ${paid ? "paid" : overdue ? "overdue" : "unpaid"}">${label}</span><span>${paid ? "Paid " + escape(date(invoice.payment.paidDate)) : invoice.dueDate ? "Due " + escape(date(invoice.dueDate)) : "Payment due under the agreed terms"}</span></div><p class="history-summary">Invoice date: ${escape(date(invoice.invoiceDate))}${invoice.deliveryLocation?.name ? " · " + escape(invoice.deliveryLocation.name) : ""}</p><p class="payment-terms">${escape(invoice.paymentTerms.label)}${invoice.paymentTerms.note ? " · " + escape(invoice.paymentTerms.note) : ""}</p>${!paid ? `<p class="invoice-balance">Outstanding <strong>${money(invoice.payment.outstandingPence)}</strong></p>` : ""}<details class="invoice-details" ${expanded.has(String(invoice.id)) ? "open" : ""}><summary>Invoice details and payment instructions</summary><p class="history-address"><b>Billed to</b><br>${escape([invoice.billTo.name, invoice.billTo.address, invoice.billTo.postcode].filter(Boolean).join("\n")).replaceAll("\n", "<br>")}</p><p>Order: ${escape(invoice.orderId)}${invoice.orderReference ? " · Reference: " + escape(invoice.orderReference) : ""}</p><dl class="invoice-amounts"><div><dt>Net subtotal</dt><dd>${money(invoice.totals.netPence)}</dd></div><div><dt>VAT</dt><dd>${money(invoice.totals.vatPence)}</dd></div><div><dt>Invoice total</dt><dd>${money(invoice.totals.grossPence)}</dd></div></dl>${invoice.paymentInstructions ? `<p class="history-address"><b>How to pay</b><br>${escape(invoice.paymentInstructions).replaceAll("\n", "<br>")}</p>` : ""}</details><a class="button button-outline invoice-pdf" data-invoice-pdf href="${href}" target="_blank" rel="noopener">View invoice PDF <span class="sr-only">(opens in a new tab)</span></a></article>`;
+}
+async function loadInvoices(append = false) {
+  if (invoiceLoading || !session?.customer) return;
+  invoiceLoading = true;
+  const expanded = new Set([...document.querySelectorAll('[data-customer-invoice]:has(details[open])')].map(node => node.dataset.customerInvoice));
+  if (!append) { customerInvoices = []; invoiceCursor = null; invoiceTotal = 0; $("#customer-invoices-list").textContent = "Loading your invoices…"; $("#invoice-more").hidden = true; $("#history-invoice-note").hidden = true; }
+  $("#invoice-count").textContent = append ? "Loading earlier invoices…" : "Loading invoices…";
+  $("#customer-invoices-list").setAttribute("aria-busy", "true");
+  $("#refresh-invoices").disabled = $("#invoice-more").disabled = true;
+  try {
+    if (!await confirmIdentity()) return;
+    const result = await api("/api/wholesale/invoices" + (append && invoiceCursor ? "?cursor=" + encodeURIComponent(invoiceCursor) : ""));
+    customerInvoices = append ? [...new Map([...customerInvoices, ...result.invoices].map(invoice => [invoice.id, invoice])).values()] : result.invoices;
+    invoiceCursor = result.nextCursor || null; invoiceTotal = result.count;
+    const summary = result.summary;
+    $("#customer-invoice-summary").innerHTML = `<div><span>Outstanding</span><strong>${money(summary.outstandingPence)}</strong></div><div><span>Overdue</span><strong>${money(summary.overduePence)}</strong></div>`;
+    $("#history-invoice-note").hidden = !summary.outstandingPence;
+    $("#history-invoice-note").textContent = `${money(summary.outstandingPence)} outstanding${summary.overdueCount ? " · " + summary.overdueCount + " overdue" : ""} · View invoices`;
+    $("#customer-invoices-list").innerHTML = customerInvoices.length ? customerInvoices.map(invoice => customerInvoiceCard(invoice, expanded)).join("") : '<p class="dialog-intro">Your issued invoices will appear here. Contact Strangers if you need an invoice for an order.</p>';
+    $("#invoice-count").textContent = `Showing ${customerInvoices.length} of ${invoiceTotal} ${invoiceTotal === 1 ? "invoice" : "invoices"}`;
+    $("#invoice-more").hidden = !invoiceCursor;
+  } catch (error) {
+    if (!append) $("#customer-invoices-list").textContent = error.message;
+    $("#invoice-count").textContent = append ? "Couldn’t load earlier invoices. Try again." : "Couldn’t load invoices. Use Refresh invoices to try again.";
+  } finally {
+    invoiceLoading = false; $("#customer-invoices-list").setAttribute("aria-busy", "false");
+    $("#refresh-invoices").disabled = $("#invoice-more").disabled = false;
+  }
+}
+$("#refresh-invoices").addEventListener("click", () => loadInvoices());
+$("#invoice-more").addEventListener("click", () => { if (invoiceCursor) loadInvoices(true); });

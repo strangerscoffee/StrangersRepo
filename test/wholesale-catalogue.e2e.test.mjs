@@ -74,7 +74,9 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       async function editTerms(term, note) {
         await admin.locator('[data-act="wh-tab"][data-id="customers"]').click();
         await admin.locator('[data-act="wh-customer"]', { hasText: business }).click();
-        await admin.locator('#wPaymentTerms').selectOption(term);
+        await admin.locator('[data-sheet="customer-choice"][data-choice="wPaymentTerms"]').click();
+        await admin.locator(`#wCustomerChoice [data-sheet="customer-choice-apply"][data-value="${term}"]`).click();
+        await admin.locator('#wCustomerForm').waitFor();
         await admin.locator('#wPaymentNote').fill(note);
         await screenshot(admin, `payment-settings-${device}-${color}`);
         await admin.locator('#sheet button[type="submit"]').click();

@@ -8,6 +8,7 @@ import { audit } from "./audit";
 import { ApiError, type Env, invalid, json, readJson } from "./http";
 import { manageWholesaleAccount, publicCustomer, wholesaleAccounts, wholesaleCustomer, paymentTermsFor, PAYMENT_TERMS, type Customer, type OrderingUser } from "./wholesaleAccounts";
 import { customerLocations, editedCustomerLocations, locationDefaults, validLocationId, type CustomerLocation } from "./wholesaleCustomers";
+import { handleInvoiceAdmin, handleInvoiceCustomer, invoiceLinks } from "./wholesaleInvoices";
 
 type Pack = "quarter" | "half" | "kilo";
 const PACKS: Record<Pack, { label: string; grams: number }> = { quarter: { label: "250 g bag", grams: 250 }, half: { label: "500 g bag", grams: 500 }, kilo: { label: "1 kg bag", grams: 1000 } };
@@ -116,6 +117,8 @@ async function createOrder(req: Request, env: Env, user: OrderingUser): Promise<
 
 /** All staff can browse the signed-in catalogue and save preview orders. They cannot read others' records. */
 export async function handleWholesale(req: Request, env: Env, route: string, user: OrderingUser, links: Links): Promise<Response> {
+  const invoiceResponse = await handleInvoiceCustomer(req, env, route, user);
+  if (invoiceResponse) return invoiceResponse;
   const customer = user.role === "wholesale" ? await wholesaleCustomer(env, user.customerId) : null;
   if ((route === "catalogue" || route === "session") && req.method === "GET") return json({ ...(route === "catalogue" ? { products: await catalogue(env), sourceDate: catalogueRetrievedAt } : {}), stage: "beta", me: user, customer: customer ? publicCustomer(customer) : null, links: { ...(user.role === "wholesale" ? {} : links), preview: links.preview || "/wholesale-preview/" }, preview: user.role !== "wholesale" });
   if (route === "account" && req.method === "PUT" && customer) {
@@ -152,7 +155,7 @@ export async function handleWholesale(req: Request, env: Env, route: string, use
     ]);
     const page = rows.results.slice(0, 200);
     const last = page.at(-1);
-    return json({ orders: page.map((row) => visibleOrder(decode<Order>(row))), count: total?.n || 0, nextCursor: rows.results.length > 200 && last ? `${last.updated_at}:${last.id}` : null });
+    return json({ orders: await invoiceLinks(env, page.map((row) => visibleOrder(decode<Order>(row)))), count: total?.n || 0, nextCursor: rows.results.length > 200 && last ? `${last.updated_at}:${last.id}` : null });
   }
   if (/^images\/[a-f0-9]{32}$/.test(route) && req.method === "GET") return serveCatalogueImage(env, route.slice("images/".length));
   if (route === "orders" && req.method === "POST") return createOrder(req, env, user);
@@ -169,6 +172,8 @@ export async function handleWholesale(req: Request, env: Env, route: string, use
 /** Management is part of the existing admin app and uses its admin-only API boundary. */
 export async function handleWholesaleAdmin(req: Request, env: Env, route: string, user: User, links: Links): Promise<Response> {
   if (user.role !== "admin") throw denied();
+  const invoiceResponse = await handleInvoiceAdmin(req, env, route, user.name);
+  if (invoiceResponse) return invoiceResponse;
   if (route === "" && req.method === "GET") {
     const [orderPage, customerPage, products, counts, stats] = await Promise.all([
       adminWholesalePage<Order>(env, "order"), adminWholesalePage<Customer>(env, "customer"), catalogue(env, true),
