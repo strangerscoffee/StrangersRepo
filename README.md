@@ -82,3 +82,5 @@ The operational wholesale beta keeps its existing address. Wholesale customers r
 Existing staff can still use Staff sign-in for clearly marked preview orders. Orders and account details are shared in D1; payment, email and fulfilment integrations are not automatic. See [docs/wholesale-preview.md](docs/wholesale-preview.md).
 
 Wholesale uses the same Liquid Glass design system as the staff apps, including phone/iPad layouts, dark mode and accessibility preferences. Admin search and Load more reach older orders/customers; dashboard totals cover all customer orders. Interrupted checkout submissions are recovered or retried using the original request, including after reload.
+
+My orders shows each order’s progress and saved details, with Load earlier orders for the full history. Order again previews current prices and availability, explains skipped coffees and asks before merging bags into the existing basket. Admin order rows offer version-checked preparation shortcuts; the packing view separates quantities, bag sizes, grinds, delivery instructions and saved payment terms.

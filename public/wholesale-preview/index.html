@@ -122,7 +122,20 @@
   <dialog id="orders-dialog" aria-labelledby="orders-title"><div class="dialog-inner">
     <button class="close-button" type="button" data-close aria-label="Close order history">×</button>
     <p class="eyebrow">MY ORDERS</p><h2 id="orders-title">Order history</h2>
-    <div id="order-history" aria-live="polite"></div>
+    <div class="history-toolbar"><p>Track your coffee or build a repeat basket.</p><button class="text-button" id="refresh-orders" type="button">Refresh orders</button></div>
+    <p class="history-count" id="history-count" role="status"></p>
+    <div id="order-history"></div>
+    <button class="button button-outline history-more" id="history-more" type="button" hidden>Load earlier orders</button>
+  </div></dialog>
+  <dialog id="reorder-dialog" aria-labelledby="reorder-title"><div class="dialog-inner">
+    <button class="close-button" type="button" data-close aria-label="Close repeat order">×</button>
+    <p class="eyebrow">REPEAT ORDER</p><h2 id="reorder-title">Build a repeat basket</h2>
+    <p class="dialog-intro" id="reorder-summary"></p>
+    <div id="reorder-items" class="review-items"></div>
+    <section class="reorder-skipped" id="reorder-skipped" hidden><h3>Not added</h3><ul id="reorder-skipped-items"></ul></section>
+    <p class="payment-terms" id="reorder-existing"></p>
+    <p class="quantity-error" id="reorder-error" role="alert" hidden></p>
+    <div class="reorder-actions"><button class="button button-dark" id="confirm-reorder" type="button">Add to basket</button><button class="button button-outline" type="button" data-close>Keep current basket</button></div>
   </div></dialog>
   <dialog id="help-dialog" aria-labelledby="help-title"><div class="dialog-inner"><button class="close-button" type="button" data-close aria-label="Close ordering guide">×</button><h2 id="help-title">Ordering guide</h2><ol class="guide-steps"><li><span>01</span><div><h3>Choose your coffee.</h3><p>Pick a bag size, grind and quantity, then add it to your basket.</p></div></li><li><span>02</span><div><h3>Check your details.</h3><p>Keep your contact and delivery details up to date in My account, or choose roastery collection.</p></div></li><li><span>03</span><div><h3>Place your order.</h3><p>Review the coffee and subtotal, add a purchase reference if needed, then place your order. Follow its progress and order again from My orders.</p></div></li></ol><a class="button button-outline" href="https://strangerscoffee.com/" target="_blank" rel="noopener noreferrer">Contact Strangers Coffee</a></div></dialog>
 </body>

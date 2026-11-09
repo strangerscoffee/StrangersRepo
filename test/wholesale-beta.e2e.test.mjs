@@ -169,3 +169,39 @@ test("beta checkout: switching business sessions cannot send another customer's 
     assert.equal((await ownOrders(other.customer.id)).length, 0, "a pending request from a previous business can never be submitted as the newly signed-in business");
   } finally { await context.close(); }
 });
+
+for (const restored of [true, false]) {
+  test(`beta account: ${restored ? "a restored cached page" : "saving an open stale profile"} cannot expose or copy another business's details`, { timeout: 90000 }, async () => {
+    const suffix = restored ? "cached" : "active";
+    const { context, page, customer } = await buyer(`beta.${suffix}.first`, "colombia", "UNSUBMITTED-PROFILE-CHECK");
+    try {
+      const other = await buyerAccount(`beta.${suffix}.second`);
+      await page.locator("#review-dialog .close-button").click();
+      await page.locator("#my-account").click();
+      await page.locator("#account-dialog").waitFor();
+      assert.equal(await page.locator('#account-form [name="business"]').inputValue(), customer.business);
+      if (!restored) {
+        await page.locator('#account-form [name="business"]').fill("Unsaved first-business name");
+        await page.locator('#account-form [name="address"]').fill("Do not copy this address to another business");
+      }
+      const before = (await api("GET", "/api/admin/wholesale")).body.customers.filter((row) => [customer.id, other.customer.id].includes(row.id));
+      const switched = await page.evaluate(async ({ username, password }) => {
+        window.profileBeforeSessionChange = true;
+        const response = await fetch("/api/wholesale/auth/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ username, password }) });
+        return { status: response.status, body: await response.json() };
+      }, { username: other.username, password: other.password });
+      assert.equal(switched.status, 200, JSON.stringify(switched.body));
+      let profileWrites = 0;
+      await page.route("**/api/wholesale/account", async (route) => { if (route.request().method() === "PUT") profileWrites++; return route.continue(); });
+      if (restored) await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })));
+      else await page.locator('#account-form button[type="submit"]').click();
+      await page.waitForFunction((business) => document.querySelector("#signed-in-name")?.textContent === business, other.customer.business);
+      assert.equal(await page.locator("dialog[open]").count(), 0, "the newly signed-in business sees no previous account, history or repeat dialog");
+      assert.equal(await page.evaluate(() => window.profileBeforeSessionChange), undefined, "session changes replace the old document and its private form state");
+      assert.equal(profileWrites, 0, "a stale profile is refused before any customer update is sent");
+      const after = (await api("GET", "/api/admin/wholesale")).body.customers.filter((row) => [customer.id, other.customer.id].includes(row.id));
+      const byId = (rows) => [...rows].sort((a, b) => a.id.localeCompare(b.id));
+      assert.deepEqual(byId(after), byId(before), "neither business's contact, delivery or account details change");
+    } finally { await context.close(); }
+  });
+}

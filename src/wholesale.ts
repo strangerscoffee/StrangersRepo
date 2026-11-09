@@ -105,6 +105,7 @@ export async function handleWholesale(req: Request, env: Env, route: string, use
   if ((route === "catalogue" || route === "session") && req.method === "GET") return json({ ...(route === "catalogue" ? { products: await catalogue(env), sourceDate: catalogueRetrievedAt } : {}), stage: "beta", me: user, customer: customer ? publicCustomer(customer) : null, links: { ...(user.role === "wholesale" ? {} : links), preview: links.preview || "/wholesale-preview/" }, preview: user.role !== "wholesale" });
   if (route === "account" && req.method === "PUT" && customer) {
     const body = object(await readJson(req, 8192));
+    if (body.orderingIdentity !== undefined && body.orderingIdentity !== user.id) throw new ApiError(409, "account_changed", "The signed-in account changed. Reload ordering before saving business details.");
     const email = text(body.email, "email", 150);
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw invalid("Check the contact email.");
     const { id, version: oldVersion, updatedAt, ...current } = customer;
@@ -113,11 +114,26 @@ export async function handleWholesale(req: Request, env: Env, route: string, use
     return json({ customer: publicCustomer(saved) });
   }
   if (route === "orders" && req.method === "GET") {
-    const sql = user.role === "wholesale"
-      ? "SELECT id, data, version, updated_at FROM wholesale_preview WHERE kind = 'order' AND json_extract(data, '$.customerId') = ? AND json_extract(data, '$.preview') = 0 ORDER BY updated_at DESC LIMIT 200"
-      : "SELECT id, data, version, updated_at FROM wholesale_preview WHERE kind = 'order' AND json_extract(data, '$.createdBy') = ? ORDER BY updated_at DESC LIMIT 200";
-    const rows = await env.DB.prepare(sql).bind(user.role === "wholesale" ? user.customerId : user.id).all<Row>();
-    return json({ orders: rows.results.map((row) => visibleOrder(decode<Order>(row))) });
+    const owner = user.role === "wholesale" ? user.customerId : user.id;
+    const scope = user.role === "wholesale"
+      ? "kind = 'order' AND json_extract(data, '$.customerId') = ? AND json_extract(data, '$.preview') = 0"
+      : "kind = 'order' AND json_extract(data, '$.createdBy') = ?";
+    const cursor = new URL(req.url).searchParams.get("cursor");
+    let after = "";
+    const values: (string | number)[] = [owner];
+    if (cursor) {
+      const match = /^(\d{1,16}):([a-zA-Z0-9-]{1,80})$/.exec(cursor);
+      if (!match || !Number.isSafeInteger(Number(match[1]))) throw invalid("Refresh your order history before loading more orders.");
+      after = " AND (updated_at < ? OR (updated_at = ? AND id > ?))";
+      values.push(Number(match[1]), Number(match[1]), match[2]);
+    }
+    const [rows, total] = await Promise.all([
+      env.DB.prepare(`SELECT id, data, version, updated_at FROM wholesale_preview WHERE ${scope}${after} ORDER BY updated_at DESC, id LIMIT 201`).bind(...values).all<Row>(),
+      env.DB.prepare(`SELECT COUNT(*) AS n FROM wholesale_preview WHERE ${scope}`).bind(owner).first<{ n: number }>(),
+    ]);
+    const page = rows.results.slice(0, 200);
+    const last = page.at(-1);
+    return json({ orders: page.map((row) => visibleOrder(decode<Order>(row))), count: total?.n || 0, nextCursor: rows.results.length > 200 && last ? `${last.updated_at}:${last.id}` : null });
   }
   if (/^images\/[a-f0-9]{32}$/.test(route) && req.method === "GET") return serveCatalogueImage(env, route.slice("images/".length));
   if (route === "orders" && req.method === "POST") return createOrder(req, env, user);
