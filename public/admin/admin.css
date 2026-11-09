@@ -13,11 +13,6 @@ button,input,select{font:inherit;color:inherit}
 svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;flex:none}
 .glass{background:var(--glass);-webkit-backdrop-filter:var(--blur);backdrop-filter:var(--blur);border:1px solid var(--glass-edge);box-shadow:var(--glass-hi),var(--lift)}
 .num{font-variant-numeric:tabular-nums}
-.w-id{overflow-wrap:anywhere;font-size:13px;color:var(--muted)}
-.w-stats .v{font-size:clamp(24px,3vw,34px)}
-.w-coffee>img{width:52px;height:52px;object-fit:contain;border-radius:12px;flex:none}
-.w-order .end{flex-wrap:wrap;justify-content:flex-end;max-width:42%}
-@media(max-width:600px){.w-order .end,.w-coffee .end{flex-direction:column;align-items:flex-end;gap:6px}.w-coffee>img{width:40px;height:48px}.w-order .end .chev{display:none}}
 .loading{color:var(--muted);padding:24px 6px}
 
 /* shell */
@@ -246,6 +241,59 @@ button.stat{cursor:pointer}
 /* Round tick boxes in sheets (the sheets' text-field sizes mustn't stretch them) */
 #sheet .checks input[type=checkbox]{width:24px;height:24px;min-height:0;min-width:0;padding:0;align-self:center}
 
+/* Wholesale uses the admin shell's grouped lists, flat controls and form sheets. */
+.w-workspace{display:grid;gap:12px;min-width:0}
+.w-page-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap;min-width:0}
+.w-workspace .pagehead{min-width:0}
+.w-workspace .pagehead .btn{min-height:44px}
+.w-workspace .label{min-width:0}
+.w-workspace .label .count{flex:none}
+.w-workspace .seg button{min-height:44px}
+.w-workspace .w-sections{padding-top:8px}
+.w-workspace .w-sections .seg{display:flex;width:100%}
+.w-workspace .w-sections button{flex:1;padding-inline:12px}
+.w-workspace .btn.sm,.w-sheet .btn.sm{min-height:44px}
+.w-stats .v{font-size:clamp(24px,3vw,34px);overflow-wrap:anywhere}
+.w-coffee>img{width:52px;height:60px;object-fit:contain;border-radius:10px;flex:none;background:var(--surface)}
+.w-coffee .end{max-width:40%;flex-wrap:wrap;justify-content:flex-end}
+.w-coffee-state{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end}
+.w-order .end{flex-wrap:wrap;justify-content:flex-end;max-width:42%}
+.w-order .end .num{font-size:15px}
+.w-more{display:flex;justify-content:center;padding:4px 0}
+.w-workspace .empty{align-items:flex-start;min-height:76px}
+.w-workspace .empty>svg{margin-top:2px;flex:none}
+.w-sheet{display:grid;gap:16px;min-width:0}
+.w-sheet h2{overflow-wrap:anywhere}
+.w-sheet .field{min-width:0}
+.w-sheet .field input,.w-sheet .field select,.w-sheet textarea{min-width:0;width:100%;max-width:100%;font:inherit;font-size:16px;color:var(--fg)}
+.w-sheet textarea{min-height:90px;padding:11px 12px;resize:vertical;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+.w-sheet .checks label{min-height:44px}
+.w-sheet .kv>*{max-width:100%;overflow-wrap:anywhere}
+.w-sheet .err{color:var(--bad);overflow-wrap:anywhere}
+.w-id{overflow-wrap:anywhere;font-size:13px;color:var(--muted)}
 .w-address{white-space:pre-line;overflow-wrap:anywhere}
-
-.w-photos{display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:12px;margin:12px 0 20px}.w-photo{display:grid;gap:8px;min-width:0}.w-photo img{width:100%;height:95px;object-fit:contain;background:var(--tint);border-radius:8px}.w-photo .btn{justify-content:center;min-height:44px}.w-categories{border:0;padding:12px 0;margin:0;display:flex;flex-wrap:wrap;gap:12px}.w-categories legend{font-size:13px;color:var(--muted);margin-bottom:8px}.w-categories label{display:flex;align-items:center;gap:7px;min-height:44px}#wCoffeeForm input[type=file]{max-width:100%;min-width:0}
+.w-actions{padding-top:6px}
+.w-photos{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:14px}
+.w-photo{display:grid;align-content:start;gap:8px;min-width:0}
+.w-photo img{width:100%;height:116px;object-fit:contain;background:var(--sunk);border:1px solid var(--line);border-radius:12px}
+.w-photo .btn{justify-content:center;white-space:normal;text-align:center}
+.w-photo-confirm{display:grid;gap:8px;padding:10px;border:1px solid var(--line);border-radius:14px;background:var(--sunk)}
+.w-photo-confirm p{font-size:13px;color:var(--fg)}
+.w-categories{border:0;padding:0;margin:0;display:flex;flex-wrap:wrap;gap:10px 16px;min-width:0}
+.w-categories legend{font-size:13.5px;font-weight:600;color:var(--muted);margin-bottom:6px}
+.w-categories label{display:flex;align-items:center;gap:8px;min-height:44px;font-size:15px}
+.w-categories input[type=checkbox]{width:22px;height:22px;margin:0;accent-color:var(--accent)}
+#wCoffeeForm input[type=file]{max-width:100%;min-width:0;padding:6px;min-height:56px}
+#wCoffeeForm input[type=file]::file-selector-button{font:inherit;color:var(--accent);background:var(--tint);border:0;border-radius:9px;padding:10px;margin-right:8px;min-height:42px;cursor:pointer}
+@media (max-width:600px){
+  .w-workspace .pagehead{grid-template-columns:minmax(0,1fr);gap:10px}
+  .w-workspace .pagehead p{grid-row:2}
+  .w-page-actions{grid-row:3;justify-content:flex-start;justify-self:start}
+  .w-order .end,.w-customer .end{flex-direction:column;align-items:flex-end;gap:6px}
+  .w-order .end .chev{display:none}
+  .w-coffee{display:grid;grid-template-columns:40px minmax(0,1fr);gap:8px 12px;align-items:start}
+  .w-coffee>img{width:40px;height:48px}
+  .w-coffee .end{grid-column:2;max-width:100%;justify-content:space-between;gap:8px;align-items:center}
+  .w-coffee-state{justify-content:flex-start}
+}
+@media (min-width:1024px){.w-workspace{gap:14px}}

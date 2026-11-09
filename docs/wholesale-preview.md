@@ -1,6 +1,6 @@
-# Wholesale accounts and ordering
+# Wholesale beta: accounts and ordering
 
-Ordering: **https://preview.staffstrangerscoffee.com/**. Management: **https://admin.staffstrangerscoffee.com/#wholesale**, in the existing Admin sidebar or More menu. The independent public Site from the earlier design pass is a separate historical demo.
+The operational Beta retains the existing address and data. Ordering: **https://preview.staffstrangerscoffee.com/**. Management: **https://admin.staffstrangerscoffee.com/#wholesale**, in the existing Admin sidebar or More menu. The independent public Site from the earlier design pass is a separate historical demo.
 
 ## Registration and approval
 
@@ -28,7 +28,7 @@ Admins set each business's terms under **Customers**: To be agreed (the default)
 
 ## Data and backups
 
-Migration 11's versioned `wholesale_preview` records remain in place for customers, orders and catalogue records. Migration 12 adds an index for customer order lookups. Catalogue editing and terms need no new schema migration. Order reads are bounded to the latest 200; management lists show the latest 200 customers/orders and total counts. The basket alone is browser-local, per identity. No old browser-local demo records are imported.
+Migration 11's versioned `wholesale_preview` records remain in place for customers, orders and catalogue records. Migration 12 adds an index for customer order lookups. Catalogue editing and terms need no new schema migration. Customer histories read the latest 200. Admin lists load 200 records per page, with server search/status/approval filters and Load more for older records. Dashboard counts and preparation totals cover all real customer orders, not just a loaded page. The basket alone is browser-local, per identity. No old browser-local demo records are imported.
 
 All writes validate server-side, use the same Origin protection and rate limits, and are audited. Record edits use `ifVersion` and reject stale copies with 409. Wholesale writes notify the existing Admin change watcher. Backups include the shared records and wholesale account metadata, including approval status; password hashes, salts and sessions are excluded. Restoring an account therefore requires an admin password reset. Photo bytes in KV are not included in JSON or D1 backups; keep original files and reupload any missing photos after restoring to an empty KV namespace.
 
@@ -45,3 +45,9 @@ Save a new coffee before adding photos. Upload or remove photos in its editor; t
 Run `npm test`, then `CHROMIUM_PATH=/usr/bin/chromium npm run test:e2e` when using system Chromium. Tests cover registration/approval, cross-business privacy, staff isolation, version conflicts, reset/disable/logout revocation, holds, catalogue creation/editing, raster uploads/removal and limits, stock enforcement, admin-only terms, immutable order snapshots and retry safety. Browser journeys cover customer/staff ordering and catalogue/photo/terms management on phones and iPads in light and dark mode, full-image proportions, admin approval, history and reorder.
 
 For local development: `npm run dev -- --var PREVIEW_HOST:`. Ordering is at `/wholesale-preview/`, customer sign-in at `/wholesale-preview/signin`, and management at `/admin#wholesale`.
+
+## Beta interface and checkout recovery
+
+Customer ordering and sign-in now use the staff apps’ shared Liquid Glass theme (`/theme.css`): system fonts, translucent cards and chrome, rounded controls, dark mode, safe areas and accessibility preferences. Admin Wholesale follows the existing admin section patterns. The hostname, API paths, storage keys and account/session/data identifiers are retained for compatibility; `preview` flags still distinguish staff test orders from real customer orders. Catalogue/session/bootstrap responses carry `stage:"beta"`.
+
+Before sending checkout, the browser keeps the exact submitted payload and review summary under the signed-in identity’s basket key plus `.pending-order`. Unknown outcomes (network failure, malformed response or server error) keep that request frozen across closing/reloading; Check submitted order retrieves the owned receipt, or Retry same order resubmits the original UUID/payload. Successful receipts clear it; confirmed validation rejections permit a fresh review. Browser storage must be available before a new submission can be sent. A lost response cannot silently become a new request ID.

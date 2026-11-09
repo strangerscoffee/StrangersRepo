@@ -1,6 +1,6 @@
 # Deploying and running the Kitchen Diary
 
-**Wholesale ordering:** customers register at **https://preview.staffstrangerscoffee.com** and wait for admin approval. Manage registrations, customer accounts and orders in **Admin → Wholesale** at `https://admin.staffstrangerscoffee.com/#wholesale`. Wholesale credentials are separate from staff credentials. No new secret or external identity provider is required. See [docs/wholesale-preview.md](docs/wholesale-preview.md).
+**Wholesale ordering beta:** customers register at **https://preview.staffstrangerscoffee.com** and wait for admin approval. Manage registrations, customer accounts and orders in **Admin → Wholesale** at `https://admin.staffstrangerscoffee.com/#wholesale`. Wholesale credentials are separate from staff credentials. No new secret or external identity provider is required. See [docs/wholesale-preview.md](docs/wholesale-preview.md).
 
 The site is one Cloudflare Worker serving the diary's pages and the API they talk to. It runs at **https://staffstrangerscoffee.com**, and the staff rota, from the same Worker, at **https://rota.staffstrangerscoffee.com**. **Every push to `main` redeploys it automatically** (Cloudflare Workers Builds).
 
@@ -38,7 +38,7 @@ Data lives in a D1 database (`kitchen-diary`); allergen PDFs and uploaded catalo
 
 ## Changing the site
 
-Edit the files in `public/` (or `src/` for the API), run the tests, and push to `main`. The deploy takes about a minute. If a deploy fails, the build log is in the Cloudflare dashboard under the Worker → **Deployments**, and GitHub shows a red cross next to the commit.
+Edit the files in `public/` (or `src/` for the API), run the tests, and open a pull request. Once Tests passes, squash-merge it into `main`; Cloudflare deploys that commit. The deploy takes about a minute. If a deploy fails, the build log is in the Cloudflare dashboard under the Worker → **Deployments**, and GitHub shows a red cross next to the commit.
 
 **Tests on GitHub.** Every pull request, and every merge to `main`, runs the typecheck, the API tests and the browser test (the "Tests" check). If one fails, its error message is shown as an annotation on the check. Cloudflare deploys whatever reaches `main`, so the safe way to change the site is a branch and a pull request, merged once Tests is green. That's a rule on `main` (GitHub → the repo → **Settings → Rules → Rulesets**: "Tests must pass", requiring the **test** status check).
 
@@ -134,3 +134,5 @@ Under **Customers**, set payment terms and customer-facing instructions. Choices
 Catalogue and payment-term fields use the existing versioned JSON records; photos use the existing KV binding. This release adds no schema migration, secret, service or DNS change.
 
 For local development, use `npm run dev -- --var PREVIEW_HOST:` and open `/wholesale-preview/`, `/wholesale-preview/signin` or `/admin#wholesale`. Run both test suites before publishing. Source prices remain retail reference prices until edited by an admin; payment and fulfilment integrations remain manual.
+
+The beta keeps `preview.staffstrangerscoffee.com` and the existing `PREVIEW_HOST` setting, cookies, records and asset paths. The stage is labelled Beta in the customer and admin apps; no DNS, secret, migration or new service is needed. Shared `/theme.css` is available on the ordering host, including at sign-in. Checkout persists an unresolved submitted request in browser storage per identity before sending; keep that storage until its receipt is confirmed. Payment collection, invoices and fulfilment are still handled by the team under the recorded terms.

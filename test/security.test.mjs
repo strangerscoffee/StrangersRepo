@@ -132,7 +132,7 @@ test("security: staff can't use manager or admin features, managers can't use ad
       ["PATCH", `users/${someone.id}`, { role: "admin" }], ["PATCH", `users/${someone.id}`, { email: "eve@example.com" }], ["POST", "email/test"], ["POST", "email/weekly-test"], ["PATCH", `users/${someone.id}`, { emailPrefs: { weekly: false } }], ["GET", "status"], ["GET", "backups"], ["POST", "backups"],
       ["GET", "overview"], ["POST", "overview/dismiss", { key: "errors" }], ["GET", "people"], ["GET", "sites"], ["POST", "sites/factory/copy-setup", { from: "roastery" }], ["GET", "activity"],
       ["GET", "security"], ["POST", "security/reset-pins"], ["POST", "security/sign-out-all"], ["GET", "export/people.csv"], ["GET", "export/shifts.csv"],
-      ["GET", "wholesale"], ["POST", "wholesale/customers", {}], ["PUT", "wholesale/customers/00000000-0000-0000-0000-000000000000", {}],
+      ["GET", "wholesale"], ["GET", "wholesale/orders"], ["GET", "wholesale/customers"], ["POST", "wholesale/customers", {}], ["PUT", "wholesale/customers/00000000-0000-0000-0000-000000000000", {}],
       ["POST", "wholesale/customers/00000000-0000-0000-0000-000000000000/account", {}], ["PUT", "wholesale/customers/00000000-0000-0000-0000-000000000000/account", {}], ["POST", "wholesale/customers/00000000-0000-0000-0000-000000000000/account/reset-password", {}],
       ["PUT", "wholesale/catalogue/brazil", {}], ["PATCH", "wholesale/orders/PREVIEW-00000000000000000000000000000000", {}],
       ["POST", "wholesale/catalogue", {}], ["POST", "wholesale/catalogue/brazil/images?ifVersion=0", {}], ["PATCH", "wholesale/catalogue/brazil/images", {}], ["GET", "wholesale/images/00000000000000000000000000000000"],

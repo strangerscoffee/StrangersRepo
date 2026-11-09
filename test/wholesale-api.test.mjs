@@ -31,7 +31,7 @@ before(async () => {
 });
 after(async () => { await srv?.stop(); });
 
-test("wholesale: preview hostname uses Staff Login and isolates the ordering app", async () => {
+test("wholesale: beta keeps the existing hostname and isolates customer and staff ordering", async () => {
   const host = "preview.staffstrangerscoffee.com";
   assert.equal(appForHost(host, undefined, undefined, host), "preview");
   assert.equal(appForHost(host.toUpperCase(), undefined, undefined, host), "preview");
@@ -44,11 +44,16 @@ test("wholesale: preview hostname uses Staff Login and isolates the ordering app
   const preview = await startServer({ vars: { PREVIEW_HOST: "staffstrangerscoffee.com" } });
   try {
     const owner = await setup(preview.base);
+    const signin = await call("GET", "/signin", undefined, null, preview.base);
+    assert.equal(signin.status, 200); assert.match(signin.text, /Beta/); assert.match(signin.text, /\/theme.css\?v=/);
+    const theme = await call("GET", "/theme.css", undefined, null, preview.base);
+    assert.equal(theme.status, 200); assert.match(theme.headers.get("content-type"), /text\/css/);
+    assert.match(theme.text, /--glass/);
     const signedOut = await call("GET", "/", undefined, null, preview.base);
     assert.equal(signedOut.status, 302); assert.equal(signedOut.headers.get("location"), "/signin");
     for (const path of ["/", "/index.html"]) {
       const page = await call("GET", path, undefined, owner, preview.base);
-      assert.equal(page.status, 200); assert.match(page.text, /Wholesale ordering/); assert.doesNotMatch(page.text, /By the kilo/); assert.match(page.text, /\/wholesale-preview\/wholesale.js\?v=/);
+      assert.equal(page.status, 200); assert.match(page.text, /Wholesale Beta/); assert.doesNotMatch(page.text, /By the kilo/); assert.match(page.text, /\/wholesale-preview\/wholesale.js\?v=/);
       assert.equal(page.headers.get("cache-control"), "private, no-store");
     }
     for (const path of ["/api/db/get", "/api/rota/week", "/api/admin/wholesale"]) assert.equal((await call("GET", path, undefined, owner, preview.base)).status, 404, path);
@@ -67,7 +72,7 @@ test("wholesale: catalogue, ordering pages and every management route require th
   assert.equal((await call("GET", "/api/wholesale/catalogue", undefined, null)).status, 401);
   assert.equal((await call("POST", "/api/wholesale/orders", payload(), null)).status, 401);
   const data = (await call("GET", "/api/wholesale/catalogue", undefined, STAFF)).body;
-  assert.equal(data.products.length, 10); assert.equal(data.products[0].prices.quarter, 1050); assert.equal(data.preview, true);
+  assert.equal(data.products.length, 10); assert.equal(data.products[0].prices.quarter, 1050); assert.equal(data.preview, true); assert.equal(data.stage, "beta");
   for (const cookie of [STAFF, MANAGER]) for (const [method, path, body] of [
     ["GET", "/api/admin/wholesale"], ["POST", "/api/admin/wholesale/customers", {}],
     ["PUT", "/api/admin/wholesale/catalogue/brazil", {}], ["PATCH", "/api/admin/wholesale/orders/PREVIEW-" + "A".repeat(32), {}],

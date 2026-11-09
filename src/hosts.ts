@@ -14,7 +14,7 @@ export function appForHost(hostname: string, rotaHost: string | undefined, admin
 
 /** Ordering preview assets only; this hostname never serves the diary, rota or admin app. */
 export function isPreviewFile(path: string): boolean {
-  return isSharedCode(path) || /^\/wholesale-preview\/(?:images\/[\w-]+\.(?:svg|png|webp|jpg)|[\w-]+\.(?:js|css))$/.test(path);
+  return path === "/theme.css" || isSharedCode(path) || /^\/wholesale-preview\/(?:images\/[\w-]+\.(?:svg|png|webp|jpg)|[\w-]+\.(?:js|css))$/.test(path);
 }
 
 /** The helpers all three apps share (public/shared/*.js: code, no data). */

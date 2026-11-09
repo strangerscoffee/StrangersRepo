@@ -176,7 +176,7 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
     target.searchParams.set("next", new URL(app === "preview" ? "/" : "/wholesale-preview/", url).toString());
     return redirect(target.toString());
   }
-  if (wholesaleHost && isGet && ["/wholesale-preview/signin.js", "/wholesale-preview/wholesale.css", "/shared/core.js"].includes(p)) return staticFile(req, env, p);
+  if (wholesaleHost && isGet && ["/wholesale-preview/signin.js", "/wholesale-preview/wholesale.css", "/theme.css", "/shared/core.js"].includes(p)) return staticFile(req, env, p);
   // One Staff Login for every address: the rota's sign-in page is the diary's (src/hosts.ts).
   if (isGet && (p === "/signin" || p === "/signin.html")) {
     const to = unifiedSignin(url, env.COOKIE_DOMAIN);
