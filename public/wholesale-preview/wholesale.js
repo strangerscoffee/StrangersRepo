@@ -1,4 +1,7 @@
 import { products, packs, grinds, MAX_QUANTITY, money, weight, productFor, lineKey, unitPrice, validQuantity, sanitiseBasket, addToBasket, totals } from "./order.js";
+import { readCatalogue, applyCatalogue, catalogueIsEdited, createDemoOrder } from "./dashboard/store.js";
+
+applyCatalogue(readCatalogue());
 
 const STORAGE_KEY = "strangers.wholesale-preview.v1";
 const $ = (selector) => document.querySelector(selector);
@@ -40,10 +43,10 @@ function stepper(id, quantity, label, errorId) {
 
 function renderProducts() {
   $("#products").innerHTML = products.map((product, index) => `<article class="product-card" data-product="${product.id}" aria-labelledby="name-${product.id}">
-    <div class="product-image"><img src="./images/${product.id}.webp" alt="${escape(`${product.origin} ${product.name} coffee label`)}" width="722" height="511" ${index > 1 ? 'loading="lazy"' : 'fetchpriority="high"'}><span class="product-badge">${escape(product.badge)}</span></div>
-    <div class="product-info"><p class="product-origin">${escape(product.origin)}</p><h3 class="product-name" id="name-${product.id}">${escape(product.name)}</h3><p class="product-process">${escape(product.process)}</p><p class="tasting-notes">${escape(product.notes)}</p></div>
+    <div class="product-image"><img src="./images/${product.image}" alt="${escape(`${product.title} coffee label`)}" width="722" height="511" ${index > 1 ? 'loading="lazy"' : 'fetchpriority="high"'}><span class="product-badge">${escape(product.badge)}</span></div>
+    <div class="product-info"><p class="product-origin">${escape(product.origin)}</p><h3 class="product-name" id="name-${product.id}"><a href="${escape(product.sourceUrl)}" target="_blank" rel="noopener noreferrer" aria-label="${escape(`View ${product.title} on Strangers Coffee`)}">${escape(product.name)}</a></h3><p class="product-process">${escape(product.process)}</p><p class="tasting-notes">${escape(product.notes)}</p></div>
     <form class="product-config" data-product="${product.id}">
-      <fieldset class="pack-options"><legend>Pack size <span class="sr-only">for ${escape(product.name)}</span></legend>${Object.entries(packs).map(([id, pack]) => `<label class="pack-choice"><input type="radio" name="pack" value="${id}" ${id === "kilo" ? "checked" : ""}><span>${escape(pack.short)}${id === "case" ? " case" : " bag"}</span></label>`).join("")}</fieldset>
+      <fieldset class="pack-options"><legend>Pack size <span class="sr-only">for ${escape(product.name)}</span></legend>${Object.entries(packs).map(([id, pack]) => `<label class="pack-choice"><input type="radio" name="pack" value="${id}" ${id === "kilo" ? "checked" : ""}><span>${escape(pack.short)} bag</span></label>`).join("")}</fieldset>
       <label class="grind-label">Grind <span class="sr-only">for ${escape(product.name)}</span><select name="grind">${Object.entries(grinds).map(([id, grind]) => `<option value="${id}">${escape(grind)}</option>`).join("")}</select></label>
       <div class="product-price"><strong data-price>${money(product.price)}</strong><span data-price-unit>per 1 kg bag</span></div>
       <div class="add-row">${stepper(`qty-${product.id}`, 1, product.name, `error-${product.id}`)}<button class="button button-dark" type="submit" aria-label="Add ${escape(product.name)} to order">Add to order <span aria-hidden="true">+</span></button></div>
@@ -58,7 +61,7 @@ function filterProducts() {
   for (const product of products) {
     const matchesFilter = currentFilter === "all" || product.categories.includes(currentFilter);
     const matchesQuery = `${product.origin} ${product.name} ${product.process} ${product.notes}`.toLocaleLowerCase("en-GB").includes(query);
-    const visible = matchesFilter && matchesQuery;
+    const visible = product.active !== false && matchesFilter && matchesQuery;
     $(`article[data-product="${product.id}"]`).hidden = !visible;
     if (visible) count++;
   }
@@ -91,8 +94,8 @@ function renderBasket() {
   $("#order-items").innerHTML = basket.length ? basket.map((line, index) => {
     const product = productFor(line.productId);
     return `<div class="order-item" data-line="${lineKey(line)}">
-      <img src="./images/${product.id}.webp" alt="" width="42" height="48">
-      <div><h3>${escape(product.name)}</h3><p class="line-variant">${escape(packs[line.pack].label)} · ${escape(grinds[line.grind])}<br>${money(unitPrice(product, line.pack))} per pack</p>
+      <img src="./images/${product.image}" alt="" width="42" height="48">
+      <div><h3>${escape(product.name)}</h3><p class="line-variant">${escape(packs[line.pack].label)} · ${escape(grinds[line.grind])}<br>${money(unitPrice(product, line.pack))} per pack${product.active === false ? "<br>Hidden in preview catalogue — remove to continue." : ""}</p>
       <div class="line-actions">${stepper(`line-qty-${index}`, line.quantity, `${product.name}, ${packs[line.pack].label}, ${grinds[line.grind]}`, `line-error-${index}`)}<strong class="line-price">${money(unitPrice(product, line.pack) * line.quantity)}</strong></div>
       <p class="quantity-error" id="line-error-${index}" role="status" hidden>Choose a whole number from 1 to 99.</p>
       <button class="remove-button" type="button" data-remove aria-label="Remove ${escape(`${product.name}, ${packs[line.pack].label}, ${grinds[line.grind]}`)}">Remove</button></div>
@@ -101,7 +104,7 @@ function renderBasket() {
   $("#order-totals").hidden = !basket.length;
   $("#total-weight").textContent = weight(sum.grams);
   $("#subtotal").textContent = money(sum.pence);
-  $("#review-order").disabled = !basket.length;
+  $("#review-order").disabled = !basket.length || basket.some((line) => productFor(line.productId).active === false);
   $("#basket-storage-note").textContent = storageAvailable ? "Your basket stays on this browser." : "Basket is temporary: browser storage is unavailable.";
   $("#mobile-packs").textContent = packText;
   $("#mobile-total").textContent = money(sum.pence);
@@ -132,7 +135,7 @@ document.addEventListener("input", (event) => {
   if (event.target.matches(".stepper input")) {
     validateQuantity(event.target);
     // Do not let the review include a different quantity from an invalid basket field on screen.
-    if (event.target.closest("#order-items")) $("#review-order").disabled = !!$("#order-items input[aria-invalid='true']");
+    if (event.target.closest("#order-items")) $("#review-order").disabled = !!$("#order-items input[aria-invalid='true']") || basket.some((line) => productFor(line.productId).active === false);
   }
 });
 
@@ -200,7 +203,7 @@ document.querySelectorAll("[data-basket]").forEach((button) => button.addEventLi
 }));
 
 $("#review-order").addEventListener("click", () => {
-  if (!basket.length || $("#order-items input[aria-invalid='true']")) return;
+  if (!basket.length || $("#order-items input[aria-invalid='true']") || basket.some((line) => productFor(line.productId).active === false)) return;
   $("#review-items").innerHTML = basket.map((line) => {
     const product = productFor(line.productId);
     return `<div class="review-line"><div><h3>${escape(product.name)}</h3><p>${line.quantity} × ${escape(packs[line.pack].label)} · ${escape(grinds[line.grind])}</p></div><strong>${money(unitPrice(product, line.pack) * line.quantity)}</strong></div>`;
@@ -215,7 +218,12 @@ $("#review-order").addEventListener("click", () => {
 
 $("#review-form").addEventListener("submit", (event) => {
   event.preventDefault();
-  // Deliberately no fetch, payment, email, or durable order. This is the end of the demo only.
+  // A local sample record only: no fetch, server, payment, email, or real order.
+  const form = $("#review-form");
+  const result = createDemoOrder(basket, { delivery: form.elements.delivery.value === "collection" ? "Roastery collection" : "Delivery", reference: form.elements.reference.value });
+  $("#complete-message").textContent = result.saved ? `${result.id} was saved in this browser’s demo dashboard. No real order was sent. Your basket is still here for changes.` : `No real order was sent. ${result.reason} Your basket is still here for changes.`;
+  $("#complete-dashboard-link").hidden = !result.saved;
+  if (result.saved) $("#complete-dashboard-link").href = `./dashboard/?order=${result.id}#orders`;
   $("#complete-total").textContent = money(totals(basket).pence);
   $("#review-content").hidden = true;
   $("#preview-complete").hidden = false;
@@ -232,7 +240,9 @@ document.querySelectorAll("dialog").forEach((dialog) => {
   dialog.addEventListener("close", () => { if (dialog.id === "review-dialog") $("#review-form").reset(); });
 });
 
+if (catalogueIsEdited(readCatalogue())) $("#pricing-context").textContent = "Locally edited demo prices are active. Reset demo data in the dashboard to restore the published retail prices.";
 renderProducts();
+filterProducts();
 renderBasket();
 if ("IntersectionObserver" in window) {
   new IntersectionObserver(([entry]) => { orderVisible = entry.isIntersecting; updateMobileBasket(); }, { threshold: 0 }).observe($("#your-order"));

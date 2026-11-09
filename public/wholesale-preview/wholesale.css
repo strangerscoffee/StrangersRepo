@@ -92,6 +92,8 @@ input::placeholder { opacity: 1; color: var(--muted); }
 .product-info { padding-top: 18px; }
 .product-origin { text-transform: uppercase; font-size: 9px; letter-spacing: .13em; margin-bottom: 5px; }
 .product-name { font-family: var(--heading); font-size: clamp(22px, 2vw, 27px); letter-spacing: -.04em; line-height: 1.15; }
+.product-name a:hover { text-decoration: underline; text-underline-offset: 4px; }
+.pricing-note a { text-decoration: underline; text-underline-offset: 3px; }
 .product-process { font-size: 11px; color: var(--muted); margin-top: 5px; }
 .tasting-notes { font-size: 11px; line-height: 1.6; margin-top: 12px; min-height: 36px; }
 .product-config { margin-top: 17px; }
@@ -268,6 +270,7 @@ dialog::backdrop { background: #17221899; backdrop-filter: blur(3px); }
   .site-header nav { gap: 17px; }
   .nav-link { font-size: 10px; }
   .nav-link > span { display: none; }
+  .site-header nav [data-help] { display: none; }
   .basket-link { padding-left: 0; gap: 6px; }
   .basket-label { display: none; }
   .basket-link svg { width: 24px; height: 24px; }
@@ -301,9 +304,10 @@ dialog::backdrop { background: #17221899; backdrop-filter: blur(3px); }
   .product-process { font-size: 9px; min-height: 27px; margin-top: 3px; }
   .tasting-notes { font-size: 10px; min-height: 49px; margin-top: 7px; }
   .product-config { margin-top: 15px; }
-  .pack-options { display: grid; grid-template-columns: 1fr; gap: 6px; }
+  .pack-options { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .pack-choice:last-child { grid-column: 1 / -1; }
   .pack-choice { margin: 0; }
-  .pack-choice span { width: 100%; padding: 10px 5px; font-size: 11px; min-height: 44px; }
+  .pack-choice span { width: 100%; padding: 10px 2px; font-size: 10px; min-height: 44px; }
   .grind-label { margin-top: 12px; font-size: 10px; }
   .grind-label select { font-size: 16px; padding: 10px 4px; min-height: 44px; }
   .product-price { flex-wrap: wrap; gap: 0 6px; margin-bottom: 12px; padding-top: 14px; }

@@ -1,27 +1,22 @@
-// Demo catalogue and prices only. This module never sends an order or contacts an API.
-export const products = [
-  { id: "brazil", origin: "Brazil", name: "Fazenda Bom Jesus", process: "Natural", notes: "Hazelnut, milk chocolate, praline", badge: "The everyday favourite", categories: ["espresso"], price: 1800, casePrice: 3300 },
-  { id: "colombia", origin: "Colombia", name: "Anserma", process: "Natural", notes: "Black forest gateau, liqueur chocolate, cherry", badge: "Rich & rounded", categories: ["espresso", "filter"], price: 2200, casePrice: 3900 },
-  { id: "ethiopia", origin: "Ethiopia", name: "Idido", process: "Anaerobic natural", notes: "Mango, papaya, honeydew melon", badge: "Something a little different", categories: ["filter"], price: 2600, casePrice: 4500 },
-  { id: "christmas", origin: "Seasonal blend", name: "Christmas Blend", process: "A festive favourite", notes: "Gingerbread, marmalade, liqueur chocolate", badge: "A little festive spirit", categories: ["espresso", "filter"], price: 2200, casePrice: 3900 },
-  { id: "decaf", origin: "Colombia", name: "San Lorenzo Decaf", process: "Decaffeinated coffee", notes: "All the coffee. A little less caffeine.", badge: "Any time of day", categories: ["decaf"], price: 2000, casePrice: 3600 },
-  { id: "rocko", origin: "Ethiopia", name: "Rocko Mountain", process: "Natural", notes: "An Ethiopian favourite for your filter line-up.", badge: "For the filter lovers", categories: ["filter"], price: 2400, casePrice: 4200 },
-];
+// Public retail catalogue used for the wholesale design demo. No order or API connection.
+import { products } from "./catalogue.js";
+export { products };
 
 export const packs = {
+  quarter: { label: "250 g bag", short: "250 g", grams: 250 },
+  half: { label: "500 g bag", short: "500 g", grams: 500 },
   kilo: { label: "1 kg bag", short: "1 kg", grams: 1000 },
-  case: { label: "6 × 250 g case", short: "6 × 250 g", grams: 1500 },
 };
 export const grinds = {
-  beans: "Whole beans", espresso: "Espresso / fine", moka: "Moka pot / fine",
-  filter: "Filter / medium", cafetiere: "Cafetière / coarse",
+  beans: "Beans", espresso: "Espresso / Fine", moka: "Moka Pot / Fine",
+  filter: "Filter / Medium", cafetiere: "Cafetiere / Coarse",
 };
 export const MAX_QUANTITY = 99;
 export const money = (pence) => new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(pence / 100);
 export const weight = (grams) => `${new Intl.NumberFormat("en-GB", { maximumFractionDigits: 2 }).format(grams / 1000)} kg`;
 export const productFor = (id) => products.find((product) => product.id === id);
 export const lineKey = (line) => `${line.productId}:${line.pack}:${line.grind}`;
-export const unitPrice = (product, pack) => pack === "case" ? product.casePrice : product.price;
+export const unitPrice = (product, pack) => product.prices[pack];
 
 export function validQuantity(value) {
   const number = Number(value);

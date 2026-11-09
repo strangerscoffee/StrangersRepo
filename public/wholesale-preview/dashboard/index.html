@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#e8deca">
+  <meta name="description" content="A preview of the Strangers wholesale management dashboard, with sample orders, customers and coffee catalogue management.">
+  <title>Wholesale dashboard preview · Strangers Coffee</title>
+  <link rel="icon" href="../images/logo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../wholesale.css">
+  <link rel="stylesheet" href="./dashboard.css">
+  <script type="module" src="./dashboard.js"></script>
+</head>
+<body class="dashboard-body">
+  <a class="skip-link" href="#dashboard-main">Skip to dashboard</a>
+  <div class="preview-banner"><span class="banner-dot" aria-hidden="true"></span> WHOLESALE DASHBOARD PREVIEW <span class="banner-divider" aria-hidden="true">/</span><span>Sample data. Changes stay in this browser.</span></div>
+  <div class="dashboard-layout">
+    <aside class="dashboard-sidebar">
+      <a href="../" class="brand dashboard-brand" aria-label="Strangers Coffee ordering preview"><img src="../images/logo.svg" alt="Strangers Coffee" width="105" height="63"></a>
+      <p class="eyebrow sidebar-label">THE WHOLESALE DESK</p>
+      <nav class="dashboard-nav" aria-label="Dashboard sections">
+        <a href="#orders" data-tab="orders"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4h12v17H6zM9 2h6v5H9zM9 11h6M9 15h6"/></svg>Orders <span id="nav-order-count">6</span></a>
+        <a href="#customers" data-tab="customers"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="7" r="3"/><path d="M2 21v-3a7 7 0 0 1 14 0v3M17 4a3 3 0 0 1 0 6M19 14a6 6 0 0 1 3 5v2"/></svg>Customers</a>
+        <a href="#catalogue" data-tab="catalogue"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8h12v7a6 6 0 0 1-12 0V8ZM17 9h2a3 3 0 0 1 0 6h-2M3 22h17M8 2v3M13 2v3"/></svg>Coffee catalogue</a>
+      </nav>
+      <div class="sidebar-bottom"><a class="text-button" href="../">Open ordering preview <span aria-hidden="true">↗</span></a><div class="sidebar-preview"><span class="small-dot" aria-hidden="true"></span><p>Design preview<br><strong>Sample data only</strong></p></div></div>
+    </aside>
+    <main class="dashboard-main" id="dashboard-main">
+      <div class="dashboard-topbar"><p>WHOLESALE <span aria-hidden="true">/</span> <span id="breadcrumb">Orders</span></p><span class="demo-badge"><span class="small-dot" aria-hidden="true"></span>Demo workspace</span></div>
+      <header class="dashboard-heading"><div><p class="eyebrow">GOOD COFFEE. RUNNING SMOOTHLY.</p><h1>The wholesale desk.</h1><p class="dashboard-subtitle">A little less admin. A lot more good coffee.</p></div><span class="desk-star" aria-hidden="true">✳</span></header>
+      <div class="dashboard-notice"><span aria-hidden="true">ⓘ</span><p>This is a dashboard concept with fictional customers and sample orders. It is not connected to a server, payments or fulfilment. Edits are saved only in this browser.</p></div>
+      <div class="dashboard-stats" id="dashboard-stats"></div>
+      <section id="orders-view" aria-labelledby="orders-title">
+        <div class="dashboard-section-heading"><div><p class="eyebrow">01 / FROM ORDER TO ROASTERY</p><h2 id="orders-title">Orders</h2></div><button class="button button-dark" type="button" id="create-order">Add demo order <span aria-hidden="true">+</span></button></div>
+        <div class="dashboard-tools"><div class="order-filters" role="group" aria-label="Filter orders by status"><button type="button" data-status="all" aria-pressed="true">All orders</button><button type="button" data-status="New" aria-pressed="false">New</button><button type="button" data-status="Preparing" aria-pressed="false">Preparing</button><button type="button" data-status="Ready" aria-pressed="false">Ready</button><button type="button" data-status="Dispatched" aria-pressed="false">Dispatched</button></div><label class="dashboard-search"><span class="sr-only">Search order number or customer</span><input type="search" id="order-search" placeholder="Search orders" autocomplete="off"></label></div>
+        <div class="order-table" role="table" aria-label="Sample wholesale orders"><div class="order-table-head" role="row"><span role="columnheader">Order / customer</span><span role="columnheader">Placed</span><span role="columnheader">Coffee</span><span role="columnheader">Subtotal</span><span role="columnheader">Status</span><span role="columnheader"><span class="sr-only">Open order</span></span></div><div id="orders-list" role="rowgroup"></div></div>
+        <p class="dashboard-empty" id="orders-empty" hidden>No orders match. Try another customer or status.</p>
+        <p class="table-footnote" id="orders-count" role="status"></p>
+      </section>
+      <section id="customers-view" aria-labelledby="customers-title" hidden>
+        <div class="dashboard-section-heading"><div><p class="eyebrow">02 / GOOD COMPANY</p><h2 id="customers-title">Wholesale customers</h2></div><button class="button button-dark" type="button" id="create-customer">Add demo customer <span aria-hidden="true">+</span></button></div>
+        <p class="section-explainer">A first look at customer accounts, contact details and account notes. Every account below is fictional.</p><div class="customer-grid" id="customers-list"></div>
+      </section>
+      <section id="catalogue-view" aria-labelledby="catalogue-title" hidden>
+        <div class="dashboard-section-heading"><div><p class="eyebrow">03 / WHAT’S BREWING</p><h2 id="catalogue-title">Coffee catalogue</h2></div><a class="text-button" href="../">View ordering page <span aria-hidden="true">↗</span></a></div>
+        <p class="section-explainer">The coffee names, tasting notes, images and default retail prices are sourced from strangerscoffee.com (9 Nov 2026). Wholesale rates are not public. Try editing the demo prices and visibility. These demo settings also apply to the ordering preview in this browser after you reload it.</p><div id="catalogue-list" class="catalogue-list"></div>
+      </section>
+      <footer class="dashboard-footer"><p>STRANGERS COFFEE <span>Wholesale / Dashboard preview 01</span></p><button class="text-button" type="button" id="reset-demo">Reset demo data <span aria-hidden="true">↺</span></button></footer>
+    </main>
+  </div>
+  <div class="toast" id="dashboard-toast" role="status" aria-live="polite" aria-atomic="true"></div>
+  <dialog id="dashboard-dialog" aria-labelledby="dashboard-dialog-title"><div class="dialog-inner"><button class="close-button" type="button" id="close-dialog" aria-label="Close dashboard dialog">×</button><div id="dashboard-dialog-content"></div></div></dialog>
+</body>
+</html>

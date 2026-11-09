@@ -1,6 +1,6 @@
 # Deploying and running the Kitchen Diary
 
-**Wholesale ordering concept:** `/wholesale-preview/` is a separate, static demo behind the existing staff sign-in when served by this Worker. It uses example prices and a browser-local basket, with no order submission or backend integration. See [docs/wholesale-preview.md](docs/wholesale-preview.md) for how to try it or serve the demo independently. Preview work stays in a draft pull request until reviewed.
+**Wholesale ordering demo:** `/wholesale-preview/` and `/wholesale-preview/dashboard/` are isolated static demos behind the existing staff sign-in when served by this Worker. A separate [public demo](https://strangers-wholesale-preview.magicloom512.chatgpt.site) is hosted for review. Product data and retail reference prices come from strangerscoffee.com; fictional orders, customers and catalogue edits stay in each visitor’s browser. There is no live ordering or backend integration. See [docs/wholesale-preview.md](docs/wholesale-preview.md) for sources and how to run it. Changes should be reviewed as a draft pull request.
 
 The site is one Cloudflare Worker serving the diary's pages and the API they talk to. It runs at **https://staffstrangerscoffee.com**, and the staff rota, from the same Worker, at **https://rota.staffstrangerscoffee.com**. **Every push to `main` redeploys it automatically** (Cloudflare Workers Builds).
 
