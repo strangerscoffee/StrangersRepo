@@ -6,6 +6,20 @@ import { ApiError, type Env, invalid, json, readJson, safeEqual } from "./http";
 export interface Customer {
   business: string; contact: string; email: string; status: "Active" | "On hold"; note: string;
   phone?: string; address?: string; postcode?: string; deliveryNotes?: string;
+  paymentTerms?: string; paymentNote?: string;
+}
+export const PAYMENT_TERMS = [
+  { id: "to-agree", label: "To be agreed" },
+  { id: "before-dispatch", label: "Payment before dispatch" },
+  { id: "net-7", label: "7 days from invoice" },
+  { id: "net-14", label: "14 days from invoice" },
+  { id: "net-30", label: "30 days from invoice" },
+  { id: "net-60", label: "60 days from invoice" },
+  { id: "custom", label: "Custom terms" },
+];
+export function paymentTermsFor(customer: Customer) {
+  const choice = PAYMENT_TERMS.find((term) => term.id === customer.paymentTerms) || PAYMENT_TERMS[0];
+  return { ...choice, note: customer.paymentNote || "" };
 }
 export type CustomerRecord = Customer & { id: string; version: number; updatedAt: number };
 export interface WholesaleUser { id: string; accountId: string; customerId: string; username: string; name: string; role: "wholesale" }
@@ -30,7 +44,7 @@ export async function wholesaleCustomer(env: Env, id: string): Promise<CustomerR
   return row ? { ...JSON.parse(row.data), id, version: row.version, updatedAt: row.updated_at } : null;
 }
 export function publicCustomer(row: CustomerRecord) {
-  return { id: row.id, version: row.version, updatedAt: row.updatedAt, business: row.business, contact: row.contact, email: row.email, phone: row.phone || "", address: row.address || "", postcode: row.postcode || "", deliveryNotes: row.deliveryNotes || "", status: row.status };
+  return { id: row.id, version: row.version, updatedAt: row.updatedAt, business: row.business, contact: row.contact, email: row.email, phone: row.phone || "", address: row.address || "", postcode: row.postcode || "", deliveryNotes: row.deliveryNotes || "", status: row.status, paymentTerms: paymentTermsFor(row) };
 }
 export async function wholesaleSession(req: Request, env: Env): Promise<WholesaleUser | null> {
   const token = tokenFrom(req);

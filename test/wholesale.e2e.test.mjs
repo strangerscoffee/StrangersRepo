@@ -56,6 +56,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
         await page.screenshot({ path: `${process.env.WHOLESALE_SCREENSHOT_DIR}/ordering-${device}-${color}.png` });
       }
       await page.locator("#review-order").click();
+      await page.locator("#review-dialog").waitFor();
       const business = `${device} ${color} Preview Café`;
       await page.locator('#review-form input[name="business"]').fill(business);
       await page.locator('input[name="reference"]').fill(`Preview ${device} ${color}`);
@@ -148,6 +149,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       await admin.goto(srv.base + '/admin#wholesale');
       await admin.locator('[data-act="wh-tab"][data-id="customers"]').click();
       await admin.locator('[data-act="wh-customer"]', { hasText: business }).click();
+      await admin.locator('#wPaymentTerms').selectOption('net-30');
       await admin.locator('[data-sheet="account"]').click();
       await admin.locator('#wApproval').selectOption('approved');
       await admin.locator('#sheet button[type="submit"]').click();
@@ -179,6 +181,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       await card.locator('input[type="number"]').fill('2');
       await card.locator('button[type="submit"]').click();
       await page.locator('#review-order').click();
+      await page.locator('#review-dialog').waitFor();
       assert.equal(await page.locator('#review-form [name="business"]').inputValue(), business);
       assert.match(await page.locator('#delivery-summary').textContent(), /10 Coffee Street/);
       await page.locator('#review-form [name="reference"]').fill(username);
@@ -187,6 +190,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       assert.match(await page.locator('#complete-message').textContent(), /has been received by Strangers/);
       const order = (await api('GET', '/api/admin/wholesale')).body.orders.find((row) => row.reference === username);
       assert.ok(order); assert.equal(order.preview, false); assert.equal(order.pence, 7400);
+      assert.equal(order.paymentTerms.id, 'net-30', 'reviewing the sign-in preserves the edited customer terms');
       assert.equal(order.customerSnapshot.postcode, 'NR1 1AA');
       assert.equal(await page.locator('#basket-count').textContent(), '0');
       await page.locator('#preview-complete [data-close]').click();

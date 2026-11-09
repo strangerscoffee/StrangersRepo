@@ -1,4 +1,4 @@
-import { products, packs, grinds, MAX_QUANTITY, money, weight, productFor, lineKey, unitPrice, validQuantity, sanitiseBasket, addToBasket, totals } from "./order.js";
+import { products, setCatalogue, isAvailable, packs, grinds, MAX_QUANTITY, money, weight, productFor, lineKey, unitPrice, validQuantity, sanitiseBasket, addToBasket, totals } from "./order.js";
 
 let STORAGE_KEY = null;
 let session = null;
@@ -13,6 +13,7 @@ let currentFilter = "all";
 let orderVisible = false;
 let toastTimer;
 let history = [];
+const photoIndexes = new Map();
 const canOrder = () => session?.customer?.status !== "On hold";
 const goSignIn = () => location.replace(location.pathname.startsWith("/wholesale-preview/") ? "/wholesale-preview/signin" : "/signin");
 
@@ -49,13 +50,14 @@ function stepper(id, quantity, label, errorId) {
 
 function renderProducts() {
   $("#products").innerHTML = products.map((product, index) => `<article class="product-card" data-product="${product.id}" aria-labelledby="name-${product.id}">
-    <div class="product-image"><img src="/wholesale-preview/images/${product.image}" alt="${escape(`${product.title} coffee label`)}" width="722" height="511" ${index > 1 ? 'loading="lazy"' : 'fetchpriority="high"'}><span class="product-badge">${escape(product.badge)}</span></div>
-    <div class="product-info"><p class="product-origin">${escape(product.origin)}</p><h3 class="product-name" id="name-${product.id}"><a href="${escape(product.sourceUrl)}" target="_blank" rel="noopener noreferrer" aria-label="${escape(`View ${product.title} on Strangers Coffee`)}">${escape(product.name)}</a></h3><p class="product-process">${escape(product.process)}</p><p class="tasting-notes">${escape(product.notes)}</p></div>
+    <div class="product-image"><div class="product-photo">${product.imageUrls.length ? `<img data-product-photo src="${escape(product.imageUrls[Math.min(photoIndexes.get(product.id) || 0, product.imageUrls.length - 1)])}" alt="${escape(product.title)}" width="722" height="511" ${index > 1 ? 'loading="lazy"' : 'fetchpriority="high"'}>` : '<div class="image-placeholder"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h12v7a6 6 0 0 1-12 0V7Zm12 1h2a3 3 0 0 1 0 6h-2M3 22h15M8 4V1M12 4V1"/></svg><span>Photo coming soon</span></div>'}</div>${product.badge ? `<span class="product-badge">${escape(product.badge)}</span>` : ""}</div>
+    ${product.imageUrls.length > 1 ? `<div class="photo-controls"><button type="button" data-photo-step="-1" aria-label="Previous photo of ${escape(product.name)}">Previous</button><span data-photo-count>${Math.min(photoIndexes.get(product.id) || 0, product.imageUrls.length - 1) + 1} / ${product.imageUrls.length}</span><button type="button" data-photo-step="1" aria-label="Next photo of ${escape(product.name)}">Next</button></div>` : ""}
+    <div class="product-info"><p class="product-origin">${escape(product.origin)}</p><h3 class="product-name" id="name-${product.id}">${product.sourceUrl ? `<a href="${escape(product.sourceUrl)}" target="_blank" rel="noopener noreferrer" aria-label="${escape(`View ${product.title} on Strangers Coffee`)}">${escape(product.name)}</a>` : escape(product.name)}</h3><p class="product-process">${escape(product.process)}</p><p class="tasting-notes">${escape(product.notes)}</p><p class="product-stock ${product.inStock ? "" : "out"}">${product.inStock ? "In stock" : "Out of stock"}</p></div>
     <form class="product-config" data-product="${product.id}">
       <fieldset class="pack-options"><legend>Pack size <span class="sr-only">for ${escape(product.name)}</span></legend>${Object.entries(packs).map(([id, pack]) => `<label class="pack-choice"><input type="radio" name="pack" value="${id}" ${id === "kilo" ? "checked" : ""}><span>${escape(pack.short)} bag</span></label>`).join("")}</fieldset>
       <label class="grind-label">Grind <span class="sr-only">for ${escape(product.name)}</span><select name="grind">${Object.entries(grinds).map(([id, grind]) => `<option value="${id}">${escape(grind)}</option>`).join("")}</select></label>
       <div class="product-price"><strong data-price>${money(product.price)}</strong><span data-price-unit>per 1 kg bag</span></div>
-      <div class="add-row">${stepper(`qty-${product.id}`, 1, product.name, `error-${product.id}`)}<button class="button button-dark" type="submit" aria-label="Add ${escape(product.name)} to order">Add to order <span aria-hidden="true">+</span></button></div>
+      <div class="add-row">${stepper(`qty-${product.id}`, 1, product.name, `error-${product.id}`)}<button class="button button-dark" type="submit" aria-label="Add ${escape(product.name)} to order" ${isAvailable(product) ? "" : "disabled"}>${product.inStock ? 'Add to order <span aria-hidden="true">+</span>' : "Out of stock"}</button></div>
       <p class="quantity-error" id="error-${product.id}" hidden role="status">Choose a whole number of packs, from 1 to 99.</p>
     </form>
   </article>`).join("");
@@ -85,7 +87,7 @@ function validateQuantity(input) {
   stepper.querySelector('[data-step="-1"]').disabled = valid && Number(input.value) <= 1;
   stepper.querySelector('[data-step="1"]').disabled = valid && Number(input.value) >= MAX_QUANTITY;
   const form = input.closest(".product-config");
-  if (form) form.querySelector('[type="submit"]').disabled = !valid;
+  if (form) form.querySelector('[type="submit"]').disabled = !valid || !isAvailable(productFor(form.dataset.product));
   return valid;
 }
 
@@ -101,8 +103,8 @@ function renderBasket() {
   $("#order-items").innerHTML = basket.length ? basket.map((line, index) => {
     const product = productFor(line.productId);
     return `<div class="order-item" data-line="${lineKey(line)}">
-      <img src="/wholesale-preview/images/${product.image}" alt="" width="42" height="48">
-      <div><h3>${escape(product.name)}</h3><p class="line-variant">${escape(packs[line.pack].label)} · ${escape(grinds[line.grind])}<br>${money(unitPrice(product, line.pack))} per pack${product.active === false ? "<br>Hidden in preview catalogue — remove to continue." : ""}</p>
+      ${product.imageUrls?.length ? `<img src="${escape(product.imageUrls[0])}" alt="" width="42" height="48">` : '<span class="basket-photo-placeholder" aria-hidden="true">—</span>'}
+      <div><h3>${escape(product.name)}</h3><p class="line-variant">${escape(packs[line.pack].label)} · ${escape(grinds[line.grind])}<br>${money(unitPrice(product, line.pack))} per pack${!isAvailable(product) ? "<br>Unavailable — remove to continue." : ""}</p>
       <div class="line-actions">${stepper(`line-qty-${index}`, line.quantity, `${product.name}, ${packs[line.pack].label}, ${grinds[line.grind]}`, `line-error-${index}`)}<strong class="line-price">${money(unitPrice(product, line.pack) * line.quantity)}</strong></div>
       <p class="quantity-error" id="line-error-${index}" role="status" hidden>Choose a whole number from 1 to 99.</p>
       <button class="remove-button" type="button" data-remove aria-label="Remove ${escape(`${product.name}, ${packs[line.pack].label}, ${grinds[line.grind]}`)}">Remove</button></div>
@@ -111,7 +113,7 @@ function renderBasket() {
   $("#order-totals").hidden = !basket.length;
   $("#total-weight").textContent = weight(sum.grams);
   $("#subtotal").textContent = money(sum.pence);
-  $("#review-order").disabled = !canOrder() || !basket.length || basket.some((line) => productFor(line.productId).active === false);
+  $("#review-order").disabled = !canOrder() || !basket.length || basket.some((line) => !isAvailable(productFor(line.productId)));
   $("#basket-storage-note").textContent = storageAvailable ? "Your basket stays on this browser." : "Basket is temporary: browser storage is unavailable.";
   $("#mobile-packs").textContent = packText;
   $("#mobile-total").textContent = money(sum.pence);
@@ -137,12 +139,24 @@ $("#products").addEventListener("change", (event) => {
   }
   if (event.target.type === "number") validateQuantity(event.target);
 });
+$("#products").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-photo-step]");
+  if (!button) return;
+  const card = button.closest("article"), product = productFor(card.dataset.product);
+  const length = product?.imageUrls.length || 0;
+  if (!length) return;
+  const current = Math.min(photoIndexes.get(product.id) || 0, length - 1);
+  const next = (current + Number(button.dataset.photoStep) + length) % length;
+  photoIndexes.set(product.id, next);
+  card.querySelector("[data-product-photo]").src = product.imageUrls[next];
+  card.querySelector("[data-photo-count]").textContent = `${next + 1} / ${length}`;
+});
 
 document.addEventListener("input", (event) => {
   if (event.target.matches(".stepper input")) {
     validateQuantity(event.target);
     // Do not let the review include a different quantity from an invalid basket field on screen.
-    if (event.target.closest("#order-items")) $("#review-order").disabled = !canOrder() || !!$("#order-items input[aria-invalid='true']") || basket.some((line) => productFor(line.productId).active === false);
+    if (event.target.closest("#order-items")) $("#review-order").disabled = !canOrder() || !!$("#order-items input[aria-invalid='true']") || basket.some((line) => !isAvailable(productFor(line.productId)));
   }
 });
 
@@ -159,6 +173,7 @@ $("#products").addEventListener("submit", (event) => {
   event.preventDefault();
   const form = event.target;
   const product = productFor(form.dataset.product);
+  if (!isAvailable(product)) { toast("This coffee is unavailable."); return; }
   const quantity = form.querySelector('input[type="number"]');
   if (!validateQuantity(quantity)) { quantity.focus(); return; }
   const result = addToBasket(basket, { productId: product.id, pack: form.elements.pack.value, grind: form.elements.grind.value }, quantity.value);
@@ -209,8 +224,15 @@ document.querySelectorAll("[data-basket]").forEach((button) => button.addEventLi
   $("#your-order").focus({ preventScroll: true });
 }));
 
-$("#review-order").addEventListener("click", () => {
-  if (!canOrder() || !basket.length || $("#order-items input[aria-invalid='true']") || basket.some((line) => productFor(line.productId).active === false)) return;
+$("#review-order").addEventListener("click", async () => {
+  if (!canOrder() || !basket.length || $("#order-items input[aria-invalid='true']") || basket.some((line) => !isAvailable(productFor(line.productId)))) return;
+  $("#review-order").disabled = true;
+  try {
+    const fresh = await api("/api/wholesale/catalogue");
+    if (fresh.me.id !== session.me.id) { location.reload(); return; }
+    applyCatalogue(fresh, false);
+    if (!canOrder() || !basket.length || basket.some((line) => !isAvailable(productFor(line.productId)))) { toast("Check the updated basket before ordering."); return; }
+  } catch (error) { toast(error.message); renderBasket(); return; }
   $("#review-items").innerHTML = basket.map((line) => {
     const product = productFor(line.productId);
     return `<div class="review-line"><div><h3>${escape(product.name)}</h3><p>${line.quantity} × ${escape(packs[line.pack].label)} · ${escape(grinds[line.grind])}</p></div><strong>${money(unitPrice(product, line.pack) * line.quantity)}</strong></div>`;
@@ -221,6 +243,7 @@ $("#review-order").addEventListener("click", () => {
   $("#review-form").elements.business.readOnly = !!session.customer;
   $("#delivery-summary").textContent = session.customer ? [session.customer.address, session.customer.postcode, session.customer.deliveryNotes].filter(Boolean).join(" · ") || "Add delivery details in My account, or choose roastery collection." : "";
   $("#review-account").hidden = !session.customer;
+  $("#review-payment-terms").textContent = session.customer ? `Payment terms: ${session.customer.paymentTerms.label}${session.customer.paymentTerms.note ? " · " + session.customer.paymentTerms.note : ""}` : "";
   requestId = crypto.randomUUID();
   $("#preview-submit-error").hidden = true;
   $("#review-content").hidden = false;
@@ -243,11 +266,13 @@ $("#review-form").addEventListener("submit", async (event) => {
       lines: basket.map((line) => ({ ...line, price: unitPrice(productFor(line.productId), line.pack) })),
       delivery: form.elements.delivery.value === "collection" ? "Roastery collection" : "Delivery",
       reference: form.elements.reference.value, business: form.elements.business.value,
+      ...(session.customer ? { customerVersion: session.customer.version } : {}),
     });
     $("#complete-message").textContent = result.preview ? `${result.order.id} was saved as a staff preview order.` : `${result.order.id} has been received by Strangers. Follow its progress in My orders.`;
     $("#complete-dashboard-link").hidden = session.me.role !== "admin";
     $("#complete-dashboard-link").href = session.links.admin + "#wholesale";
     $("#complete-total").textContent = money(result.order.pence);
+    $("#complete-payment-terms").textContent = result.order.paymentTerms ? `Payment terms: ${result.order.paymentTerms.label}${result.order.paymentTerms.note ? " · " + result.order.paymentTerms.note : ""}` : "";
     basket = []; changedBasket();
     $("#review-content").hidden = true;
     $("#preview-complete").hidden = false;
@@ -277,33 +302,41 @@ async function api(path, body, method) {
   if (!response.ok) throw Object.assign(new Error(data.message || "Couldn’t save. Try again."), { status: response.status, code: data.code });
   return data;
 }
+function showPaymentTerms() {
+  $("#account-payment-terms").textContent = session.customer?.paymentTerms.label || "";
+  $("#account-payment-note").textContent = session.customer?.paymentTerms.note || "";
+}
+function applyCatalogue(fresh, initial) {
+  session = fresh;
+  setCatalogue(session.products);
+  if (initial) {
+    STORAGE_KEY = "strangers.wholesale-preview.v2." + session.me.id;
+    basket = loadBasket();
+  } else { basket = sanitiseBasket(basket); saveBasket(); }
+  $("#signed-in-name").textContent = session.customer?.business || session.me.name;
+  $("#preview-home").href = session.links.preview;
+  $("#admin-wholesale-link").hidden = session.me.role !== "admin";
+  if (session.me.role === "admin") $("#admin-wholesale-link").href = session.links.admin + "#wholesale";
+  $("#my-account").hidden = !session.customer;
+  $("#staff-preview-notice").hidden = !session.preview;
+  $("#submit-preview-order").textContent = session.preview ? "Save preview order" : "Place order";
+  $("#account-hold").hidden = canOrder();
+  showPaymentTerms();
+  ready = true;
+  renderProducts(); filterProducts(); renderBasket();
+}
 async function start() {
+  $("#refresh-catalogue").disabled = true;
   $("#retry-catalogue").hidden = true;
   $("#catalogue-status").hidden = false;
   $("#catalogue-status").textContent = "Loading the signed-in catalogue…";
   try {
-    session = await api("/api/wholesale/catalogue");
-    for (const coffee of session.products) {
-      const product = productFor(coffee.id);
-      if (product) Object.assign(product, { prices: coffee.prices, price: coffee.prices.kilo, active: coffee.active });
-    }
-    STORAGE_KEY = "strangers.wholesale-preview.v2." + session.me.id;
-    basket = loadBasket();
-    $("#signed-in-name").textContent = session.customer?.business || session.me.name;
-    $("#preview-home").href = session.links.preview;
-    $("#admin-wholesale-link").hidden = session.me.role !== "admin";
-    $("#admin-wholesale-link").href = session.links.admin + "#wholesale";
-    $("#my-account").hidden = !session.customer;
-    $("#staff-preview-notice").hidden = !session.preview;
-    $("#submit-preview-order").textContent = session.preview ? "Save preview order" : "Place order";
-    $("#account-hold").hidden = canOrder();
-    ready = true;
-    renderProducts(); filterProducts(); renderBasket();
+    applyCatalogue(await api("/api/wholesale/catalogue"), true);
     $("#catalogue-status").hidden = true;
   } catch (error) {
     $("#catalogue-status").textContent = error.message;
     $("#retry-catalogue").hidden = false;
-  }
+  } finally { $("#refresh-catalogue").disabled = false; }
 }
 $("#preview-sign-out").addEventListener("click", async () => {
   if (session?.me.role !== "wholesale") return SC.signOut();
@@ -311,13 +344,15 @@ $("#preview-sign-out").addEventListener("click", async () => {
   catch (error) { toast(error.message); }
 });
 $("#retry-catalogue").addEventListener("click", start);
-window.addEventListener("pageshow", (event) => { if (event.persisted) api("/api/wholesale/session").catch(() => {}); });
+$("#refresh-catalogue").addEventListener("click", start);
+window.addEventListener("pageshow", (event) => { if (event.persisted) api("/api/wholesale/session").then((fresh) => { if (session && session.me.id !== fresh.me.id) location.reload(); }).catch(() => {}); });
 
 async function openAccount() {
   try {
     const current = await api("/api/wholesale/session");
     session.customer = current.customer;
     if (!session.customer) return;
+    showPaymentTerms();
     for (const key of ["business", "contact", "email", "phone", "address", "postcode", "deliveryNotes"]) $("#account-form").elements[key].value = session.customer[key] || "";
     $("#account-error").hidden = $("#password-error").hidden = true;
     $("#account-dialog").showModal();
@@ -334,6 +369,7 @@ $("#account-form").addEventListener("submit", async (event) => {
     const fields = Object.fromEntries(["business", "contact", "email", "phone", "address", "postcode", "deliveryNotes"].map((key) => [key, form.elements[key].value]));
     const result = await api("/api/wholesale/account", { ...fields, ifVersion: session.customer.version }, "PUT");
     session.customer = result.customer;
+    showPaymentTerms();
     $("#signed-in-name").textContent = session.customer.business;
     $("#account-dialog").close(); toast("Business details saved.");
   } catch (error) { $("#account-error").textContent = error.message; $("#account-error").hidden = false; }
@@ -356,7 +392,7 @@ async function loadOrders() {
   $("#order-history").textContent = "Loading your orders…";
   try {
     history = (await api("/api/wholesale/orders")).orders;
-    $("#order-history").innerHTML = history.length ? history.map((order) => `<article class="history-card"><p class="history-id">${escape(order.id)}</p><h3>${new Date(order.createdAt).toLocaleDateString("en-GB", { timeZone: "Europe/London", day: "numeric", month: "short", year: "numeric" })} · ${money(order.pence)}</h3><span class="order-state">${escape(order.status)}</span><p>${order.packs} bags · ${escape(order.delivery)}${order.reference ? ` · ${escape(order.reference)}` : ""}</p>${order.lines.map((line) => `<p>${line.quantity} × ${escape(line.title)} · ${escape(line.packLabel)} · ${escape(line.grindLabel)}</p>`).join("")}<button class="button button-outline" type="button" data-reorder="${escape(order.id)}">Order again</button></article>`).join("") : '<p class="dialog-intro">Your orders will appear here once you place one.</p>';
+    $("#order-history").innerHTML = history.length ? history.map((order) => `<article class="history-card"><p class="history-id">${escape(order.id)}</p><h3>${new Date(order.createdAt).toLocaleDateString("en-GB", { timeZone: "Europe/London", day: "numeric", month: "short", year: "numeric" })} · ${money(order.pence)}</h3><span class="order-state">${escape(order.status)}</span><p>${order.packs} bags · ${escape(order.delivery)}${order.reference ? ` · ${escape(order.reference)}` : ""}</p>${order.paymentTerms ? `<p class="payment-terms">Payment terms: ${escape(order.paymentTerms.label)}${order.paymentTerms.note ? `<br>${escape(order.paymentTerms.note)}` : ""}</p>` : ""}${order.lines.map((line) => `<p>${line.quantity} × ${escape(line.title)} · ${escape(line.packLabel)} · ${escape(line.grindLabel)}</p>`).join("")}<button class="button button-outline" type="button" data-reorder="${escape(order.id)}">Order again</button></article>`).join("") : '<p class="dialog-intro">Your orders will appear here once you place one.</p>';
   } catch (error) { $("#order-history").textContent = error.message; }
 }
 $("#my-orders").addEventListener("click", () => { $("#orders-dialog").showModal(); loadOrders(); });
@@ -368,7 +404,7 @@ $("#order-history").addEventListener("click", (event) => {
   let added = 0;
   for (const line of order.lines) {
     const product = productFor(line.productId);
-    if (!product || product.active === false) continue;
+    if (!isAvailable(product)) continue;
     const result = addToBasket(basket, line, line.quantity);
     basket = result.basket; added += result.added;
   }
