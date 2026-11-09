@@ -5,6 +5,8 @@ let session = null;
 let ready = false;
 let requestId = null;
 let saving = false;
+let pendingAttempt = null;
+let reviewNeedsRefresh = false;
 const $ = (selector) => document.querySelector(selector);
 const escape = (value) => String(value).replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
 let storageAvailable = true;
@@ -52,7 +54,7 @@ function renderProducts() {
   $("#products").innerHTML = products.map((product, index) => `<article class="product-card" data-product="${product.id}" aria-labelledby="name-${product.id}">
     <div class="product-image"><div class="product-photo">${product.imageUrls.length ? `<img data-product-photo src="${escape(product.imageUrls[Math.min(photoIndexes.get(product.id) || 0, product.imageUrls.length - 1)])}" alt="${escape(product.title)}" width="722" height="511" ${index > 1 ? 'loading="lazy"' : 'fetchpriority="high"'}>` : '<div class="image-placeholder"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h12v7a6 6 0 0 1-12 0V7Zm12 1h2a3 3 0 0 1 0 6h-2M3 22h15M8 4V1M12 4V1"/></svg><span>Photo coming soon</span></div>'}</div>${product.badge ? `<span class="product-badge">${escape(product.badge)}</span>` : ""}</div>
     ${product.imageUrls.length > 1 ? `<div class="photo-controls"><button type="button" data-photo-step="-1" aria-label="Previous photo of ${escape(product.name)}">Previous</button><span data-photo-count>${Math.min(photoIndexes.get(product.id) || 0, product.imageUrls.length - 1) + 1} / ${product.imageUrls.length}</span><button type="button" data-photo-step="1" aria-label="Next photo of ${escape(product.name)}">Next</button></div>` : ""}
-    <div class="product-info"><p class="product-origin">${escape(product.origin)}</p><h3 class="product-name" id="name-${product.id}">${product.sourceUrl ? `<a href="${escape(product.sourceUrl)}" target="_blank" rel="noopener noreferrer" aria-label="${escape(`View ${product.title} on Strangers Coffee`)}">${escape(product.name)}</a>` : escape(product.name)}</h3><p class="product-process">${escape(product.process)}</p><p class="tasting-notes">${escape(product.notes)}</p><p class="product-stock ${product.inStock ? "" : "out"}">${product.inStock ? "In stock" : "Out of stock"}</p></div>
+    <div class="product-info"><p class="product-origin">${escape(product.origin)}</p><h3 class="product-name" id="name-${product.id}">${escape(product.name)}</h3><p class="product-process">${escape(product.process)}</p><p class="tasting-notes">${escape(product.notes)}</p><p class="product-stock ${product.inStock ? "" : "out"}">${product.inStock ? "In stock" : "Out of stock"}</p></div>
     <form class="product-config" data-product="${product.id}">
       <fieldset class="pack-options"><legend>Pack size <span class="sr-only">for ${escape(product.name)}</span></legend>${Object.entries(packs).map(([id, pack]) => `<label class="pack-choice"><input type="radio" name="pack" value="${id}" ${id === "kilo" ? "checked" : ""}><span>${escape(pack.short)} bag</span></label>`).join("")}</fieldset>
       <label class="grind-label">Grind <span class="sr-only">for ${escape(product.name)}</span><select name="grind">${Object.entries(grinds).map(([id, grind]) => `<option value="${id}">${escape(grind)}</option>`).join("")}</select></label>
@@ -113,7 +115,9 @@ function renderBasket() {
   $("#order-totals").hidden = !basket.length;
   $("#total-weight").textContent = weight(sum.grams);
   $("#subtotal").textContent = money(sum.pence);
-  $("#review-order").disabled = !canOrder() || !basket.length || basket.some((line) => !isAvailable(productFor(line.productId)));
+  $("#review-order").disabled = !pendingAttempt && (!canOrder() || !basket.length || basket.some((line) => !isAvailable(productFor(line.productId))));
+  $("#review-order").textContent = pendingAttempt ? "Check submitted order" : "Review order";
+  lockPendingUi();
   $("#basket-storage-note").textContent = storageAvailable ? "Your basket stays on this browser." : "Basket is temporary: browser storage is unavailable.";
   $("#mobile-packs").textContent = packText;
   $("#mobile-total").textContent = money(sum.pence);
@@ -225,6 +229,9 @@ document.querySelectorAll("[data-basket]").forEach((button) => button.addEventLi
 }));
 
 $("#review-order").addEventListener("click", async () => {
+  if (pendingAttempt) { await resumeAttempt(); return; }
+  reviewNeedsRefresh = false;
+  lockReview(false);
   if (!canOrder() || !basket.length || $("#order-items input[aria-invalid='true']") || basket.some((line) => !isAvailable(productFor(line.productId)))) return;
   $("#review-order").disabled = true;
   try {
@@ -245,6 +252,7 @@ $("#review-order").addEventListener("click", async () => {
   $("#review-account").hidden = !session.customer;
   $("#review-payment-terms").textContent = session.customer ? `Payment terms: ${session.customer.paymentTerms.label}${session.customer.paymentTerms.note ? " · " + session.customer.paymentTerms.note : ""}` : "";
   requestId = crypto.randomUUID();
+  $("#submit-preview-order").disabled = false;
   $("#preview-submit-error").hidden = true;
   $("#review-content").hidden = false;
   $("#preview-complete").hidden = true;
@@ -252,44 +260,110 @@ $("#review-order").addEventListener("click", async () => {
   $("#review-dialog").showModal();
 });
 
+// Persist an uncertain submission before sending it. Every retry uses exactly the same ID and payload.
+function pendingKey() { return STORAGE_KEY + ".pending-order"; }
+function saveAttempt(attempt) {
+  pendingAttempt = attempt;
+  try { if (attempt) localStorage.setItem(pendingKey(), JSON.stringify(attempt)); else localStorage.removeItem(pendingKey()); }
+  catch { storageAvailable = false; if (attempt) pendingAttempt = null; }
+}
+function readAttempt() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(pendingKey()) || "null");
+    if (saved?.identity === session.me.id && /^[a-f0-9-]{36}$/i.test(saved.payload?.requestId) && Array.isArray(saved.payload.lines) && saved.payload.lines.length && Array.isArray(saved.summary)) return saved;
+  } catch {}
+  return null;
+}
+function lockReview(locked) {
+  for (const field of $("#review-form").elements) {
+    if (field.tagName === "BUTTON") continue;
+    if (field.type === "radio") field.disabled = locked;
+    else field.readOnly = locked || (field.name === "business" && !!session.customer);
+  }
+  $("#review-account").disabled = locked;
+  $("#submit-preview-order").textContent = locked ? "Retry same order" : session?.preview ? "Save preview order" : "Place order";
+}
+function lockPendingUi() {
+  if (!pendingAttempt) return;
+  for (const control of document.querySelectorAll('.product-config input,.product-config button,.product-config select,#order-items input,#order-items button')) control.disabled = true;
+}
+function showReceipt(result) {
+  const expected = pendingAttempt && (session.preview ? "PREVIEW-" : "WS-") + pendingAttempt.payload.requestId.replaceAll("-", "").toUpperCase();
+  if (pendingAttempt?.identity !== session.me.id || !result?.order || result.order.id !== expected || !Number.isSafeInteger(result.order.pence) || result.order.pence < 0 || !Array.isArray(result.order.lines) || typeof result.preview !== "boolean") throw new Error("The order response was incomplete. Check the submitted order before trying again.");
+  saveAttempt(null);
+  $("#complete-message").textContent = result.preview ? `${result.order.id} was saved as a staff preview order.` : `${result.order.id} has been received by Strangers. Follow its progress in My orders.`;
+  $("#complete-dashboard-link").hidden = session.me.role !== "admin";
+  if (session.me.role === "admin") $("#complete-dashboard-link").href = session.links.admin + "#wholesale";
+  $("#complete-total").textContent = money(result.order.pence);
+  $("#complete-payment-terms").textContent = result.order.paymentTerms ? `Payment terms: ${result.order.paymentTerms.label}${result.order.paymentTerms.note ? " · " + result.order.paymentTerms.note : ""}` : "";
+  basket = []; changedBasket(); renderProducts(); filterProducts();
+  $("#review-content").hidden = true;
+  $("#preview-complete").hidden = false;
+  $("#review-dialog").setAttribute("aria-labelledby", "complete-title");
+  if (!$("#review-dialog").open) $("#review-dialog").showModal();
+  $("#review-dialog").scrollTop = 0;
+  $("#preview-complete [data-close]").focus({ preventScroll: true });
+  $("#review-form").reset();
+}
+async function confirmIdentity() {
+  const current = await api("/api/wholesale/session");
+  if (current.me.id !== session.me.id) { location.reload(); return false; }
+  return true;
+}
+async function resumeAttempt() {
+  if (saving || !pendingAttempt) return;
+  try { if (!await confirmIdentity()) return; } catch (error) { toast(error.message); return; }
+  const id = (session.preview ? "PREVIEW-" : "WS-") + pendingAttempt.payload.requestId.replaceAll("-", "").toUpperCase();
+  try { const result = await api("/api/wholesale/orders/" + id); showReceipt(result); return; }
+  catch (error) { if (error.status === 401) return; }
+  const attempt = pendingAttempt, form = $("#review-form");
+  $("#review-items").innerHTML = attempt.summary.map(line => `<div class="review-line"><div><h3>${escape(line.title)}</h3><p>${escape(line.description)}</p></div><strong>${money(line.pence)}</strong></div>`).join("");
+  $("#review-total").textContent = money(attempt.payload.lines.reduce((sum,line) => sum + line.price * line.quantity, 0));
+  form.elements.delivery.value = attempt.payload.delivery === "Roastery collection" ? "collection" : "dispatch";
+  form.elements.reference.value = attempt.payload.reference;
+  form.elements.business.value = attempt.payload.business;
+  $("#delivery-summary").textContent = attempt.deliverySummary;
+  $("#review-payment-terms").textContent = attempt.terms;
+  $("#review-account").hidden = !session.customer;
+  lockReview(true);
+  $("#preview-submit-error").textContent = "The previous submission is awaiting confirmation. Retry checks the same order and cannot create a second copy.";
+  $("#preview-submit-error").hidden = false;
+  $("#review-content").hidden = false; $("#preview-complete").hidden = true;
+  $("#review-dialog").setAttribute("aria-labelledby", "review-title");
+  if (!$("#review-dialog").open) $("#review-dialog").showModal();
+}
 $("#review-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (saving || !ready || !basket.length) return;
+  if (saving || reviewNeedsRefresh || !ready || (!basket.length && !pendingAttempt)) return;
+  if (pendingAttempt) { try { if (!await confirmIdentity()) return; } catch (error) { toast(error.message); return; } }
+  if (saving) return;
   saving = true;
-  const button = $("#submit-preview-order");
+  const button = $("#submit-preview-order"), form = $("#review-form");
   button.disabled = true;
   $("#preview-submit-error").hidden = true;
-  try {
-    const form = $("#review-form");
-    const result = await api("/api/wholesale/orders", {
-      requestId,
-      lines: basket.map((line) => ({ ...line, price: unitPrice(productFor(line.productId), line.pack) })),
-      delivery: form.elements.delivery.value === "collection" ? "Roastery collection" : "Delivery",
-      reference: form.elements.reference.value, business: form.elements.business.value,
-      ...(session.customer ? { customerVersion: session.customer.version } : {}),
-    });
-    $("#complete-message").textContent = result.preview ? `${result.order.id} was saved as a staff preview order.` : `${result.order.id} has been received by Strangers. Follow its progress in My orders.`;
-    $("#complete-dashboard-link").hidden = session.me.role !== "admin";
-    $("#complete-dashboard-link").href = session.links.admin + "#wholesale";
-    $("#complete-total").textContent = money(result.order.pence);
-    $("#complete-payment-terms").textContent = result.order.paymentTerms ? `Payment terms: ${result.order.paymentTerms.label}${result.order.paymentTerms.note ? " · " + result.order.paymentTerms.note : ""}` : "";
-    basket = []; changedBasket();
-    $("#review-content").hidden = true;
-    $("#preview-complete").hidden = false;
-    $("#review-dialog").setAttribute("aria-labelledby", "complete-title");
-    $("#review-dialog").scrollTop = 0;
-    $("#preview-complete [data-close]").focus({ preventScroll: true });
-    form.reset();
-  } catch (error) {
-    $("#preview-submit-error").textContent = error.message;
+  if (!pendingAttempt) saveAttempt({ identity: session.me.id, payload: {
+    requestId, orderingIdentity: session.me.id, lines: basket.map(line => ({ ...line, price: unitPrice(productFor(line.productId), line.pack) })),
+    delivery: form.elements.delivery.value === "collection" ? "Roastery collection" : "Delivery",
+    reference: form.elements.reference.value, business: form.elements.business.value,
+    ...(session.customer ? { customerVersion: session.customer.version } : {}),
+  }, summary: basket.map(line => ({ title: productFor(line.productId).name, description: `${line.quantity} × ${packs[line.pack].label} · ${grinds[line.grind]}`, pence: unitPrice(productFor(line.productId),line.pack) * line.quantity })),
+    deliverySummary: $("#delivery-summary").textContent, terms: $("#review-payment-terms").textContent });
+  if (!pendingAttempt) { saving = false; button.disabled = false; $("#preview-submit-error").textContent = "Allow browser storage before placing an order so an interrupted submission can be recovered safely."; $("#preview-submit-error").hidden = false; return; }
+  lockReview(true); lockPendingUi();
+  try { showReceipt(await api("/api/wholesale/orders", pendingAttempt.payload)); }
+  catch (error) {
+    // A validated rejection means nothing was saved. Network/5xx/invalid-response failures remain uncertain.
+    if (error.status >= 400 && error.status < 500 && error.status !== 401) { saveAttempt(null); reviewNeedsRefresh = true; lockReview(false); renderProducts(); filterProducts(); renderBasket(); }
+    $("#preview-submit-error").textContent = pendingAttempt ? "We couldn’t confirm this order. Retry the same order, or reopen this page to check its status. Your submission has been kept." : error.message;
     $("#preview-submit-error").hidden = false;
-  } finally { saving = false; button.disabled = false; }
+  } finally { saving = false; button.disabled = reviewNeedsRefresh; }
 });
 
 document.querySelectorAll("[data-help]").forEach((button) => button.addEventListener("click", () => $("#help-dialog").showModal()));
-document.querySelectorAll("[data-close]").forEach((button) => button.addEventListener("click", () => button.closest("dialog").close()));
+document.querySelectorAll("[data-close]").forEach((button) => button.addEventListener("click", () => (saving && button.closest("dialog").id === "review-dialog") || button.closest("dialog").close()));
 document.querySelectorAll("dialog").forEach((dialog) => {
-  dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
+  dialog.addEventListener("cancel", event => { if (saving && dialog.id === "review-dialog") event.preventDefault(); });
+  dialog.addEventListener("click", (event) => { if (event.target === dialog && !(saving && dialog.id === "review-dialog")) dialog.close(); });
   dialog.addEventListener("close", () => { if (dialog.id === "review-dialog") $("#review-form").reset(); });
 });
 
@@ -297,7 +371,7 @@ async function api(path, body, method) {
   let response;
   try { response = await fetch(path, { method: method || (body ? "POST" : "GET"), cache: "no-store", credentials: "same-origin", headers: body ? { "content-type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined }); }
   catch { throw new Error("Couldn’t reach the site. Check your connection and try again."); }
-  if (response.status === 401 && !path.startsWith("/api/wholesale/auth/")) { goSignIn(); throw new Error("Sign in to continue."); }
+  if (response.status === 401 && !path.startsWith("/api/wholesale/auth/")) { goSignIn(); throw Object.assign(new Error("Sign in to continue."), { status: 401 }); }
   const data = await response.json();
   if (!response.ok) throw Object.assign(new Error(data.message || "Couldn’t save. Try again."), { status: response.status, code: data.code });
   return data;
@@ -312,6 +386,7 @@ function applyCatalogue(fresh, initial) {
   if (initial) {
     STORAGE_KEY = "strangers.wholesale-preview.v2." + session.me.id;
     basket = loadBasket();
+    pendingAttempt = readAttempt();
   } else { basket = sanitiseBasket(basket); saveBasket(); }
   $("#signed-in-name").textContent = session.customer?.business || session.me.name;
   $("#preview-home").href = session.links.preview;
@@ -324,6 +399,7 @@ function applyCatalogue(fresh, initial) {
   showPaymentTerms();
   ready = true;
   renderProducts(); filterProducts(); renderBasket();
+  if (pendingAttempt) toast("An order is awaiting confirmation. Choose Check submitted order.");
 }
 async function start() {
   $("#refresh-catalogue").disabled = true;
@@ -345,11 +421,12 @@ $("#preview-sign-out").addEventListener("click", async () => {
 });
 $("#retry-catalogue").addEventListener("click", start);
 $("#refresh-catalogue").addEventListener("click", start);
-window.addEventListener("pageshow", (event) => { if (event.persisted) api("/api/wholesale/session").then((fresh) => { if (session && session.me.id !== fresh.me.id) location.reload(); }).catch(() => {}); });
+window.addEventListener("pageshow", (event) => { if (event.persisted) { $("#review-dialog").close(); start(); } });
 
 async function openAccount() {
   try {
     const current = await api("/api/wholesale/session");
+    if (current.me.id !== session.me.id) { location.reload(); return; }
     session.customer = current.customer;
     if (!session.customer) return;
     showPaymentTerms();
@@ -359,7 +436,7 @@ async function openAccount() {
   } catch (error) { toast(error.message); }
 }
 $("#my-account").addEventListener("click", openAccount);
-$("#review-account").addEventListener("click", () => { $("#review-dialog").close(); openAccount(); });
+$("#review-account").addEventListener("click", () => { if (saving || pendingAttempt) return; $("#review-dialog").close(); openAccount(); });
 $("#account-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.target, button = form.querySelector('[type="submit"]');
@@ -391,6 +468,7 @@ $("#account-password-form").addEventListener("submit", async (event) => {
 async function loadOrders() {
   $("#order-history").textContent = "Loading your orders…";
   try {
+    if (!await confirmIdentity()) return;
     history = (await api("/api/wholesale/orders")).orders;
     $("#order-history").innerHTML = history.length ? history.map((order) => `<article class="history-card"><p class="history-id">${escape(order.id)}</p><h3>${new Date(order.createdAt).toLocaleDateString("en-GB", { timeZone: "Europe/London", day: "numeric", month: "short", year: "numeric" })} · ${money(order.pence)}</h3><span class="order-state">${escape(order.status)}</span><p>${order.packs} bags · ${escape(order.delivery)}${order.reference ? ` · ${escape(order.reference)}` : ""}</p>${order.paymentTerms ? `<p class="payment-terms">Payment terms: ${escape(order.paymentTerms.label)}${order.paymentTerms.note ? `<br>${escape(order.paymentTerms.note)}` : ""}</p>` : ""}${order.lines.map((line) => `<p>${line.quantity} × ${escape(line.title)} · ${escape(line.packLabel)} · ${escape(line.grindLabel)}</p>`).join("")}<button class="button button-outline" type="button" data-reorder="${escape(order.id)}">Order again</button></article>`).join("") : '<p class="dialog-intro">Your orders will appear here once you place one.</p>';
   } catch (error) { $("#order-history").textContent = error.message; }
@@ -399,6 +477,7 @@ $("#my-orders").addEventListener("click", () => { $("#orders-dialog").showModal(
 $("#order-history").addEventListener("click", (event) => {
   const button = event.target.closest("[data-reorder]");
   if (!button || !ready) return;
+  if (pendingAttempt) { toast("Check your submitted order before building another basket."); return; }
   const order = history.find((row) => row.id === button.dataset.reorder);
   if (!order) return;
   let added = 0;

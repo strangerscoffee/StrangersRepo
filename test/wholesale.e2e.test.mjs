@@ -38,6 +38,20 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       page.on("pageerror", (error) => errors.push(error.message));
       await page.goto(srv.base + "/wholesale-preview/");
       await page.locator("#products article").first().waitFor();
+      assert.equal(await page.locator('link[rel="stylesheet"][href^="/theme.css"]').count(), 1, 'ordering uses the shared staff/Admin theme');
+      assert.equal(await page.locator('.beta-badge', { hasText: 'Beta' }).isVisible(), true);
+      const design = await page.evaluate(() => {
+        const card = document.querySelector('#products article');
+        const controls = [...card.querySelectorAll('button, .pack-choice'), ...document.querySelectorAll('.filter, .basket-link, #my-orders, #preview-sign-out')];
+        const probe = document.createElement('span');
+        probe.style.backgroundColor = 'var(--accent)'; document.body.append(probe);
+        const accent = getComputedStyle(probe).backgroundColor; probe.remove();
+        return { font: getComputedStyle(document.body).fontFamily, headingFont: getComputedStyle(card.querySelector('h3')).fontFamily, actionColour: getComputedStyle(card.querySelector('[type="submit"]')).backgroundColor, accent, smallTargets: controls.filter((control) => { const box = control.getBoundingClientRect(); return box.width < 43.5 || box.height < 43.5; }).map((control) => control.getAttribute('aria-label') || control.textContent) };
+      });
+      assert.match(design.font, /system-ui/, 'customer text uses the shared system font');
+      assert.match(design.headingFont, /system-ui/, 'customer headings use the same system type as Admin');
+      assert.equal(design.actionColour, design.accent, 'ordering actions follow the shared light/dark accent');
+      assert.deepEqual(design.smallTargets, [], 'primary touch controls are at least 44 by 44 pixels');
       assert.equal(await page.locator("#products article").count(), 10);
       assert.equal(await page.locator("#signed-in-name").textContent(), "Wholesale Owner");
       assert.equal(await page.locator("#admin-wholesale-link").getAttribute("href"), "/admin#wholesale");

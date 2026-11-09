@@ -1,8 +1,9 @@
-// Shared, signed-in wholesale PREVIEW. No payments, emails or fulfilment actions are performed.
+// Wholesale beta: real customer orders and isolated staff test orders. Payments and fulfilment are managed by the team.
 import { catalogueRetrievedAt } from "../public/wholesale-preview/catalogue.js";
 import type { User } from "./auth";
-import { object, text, version, decode, get, list, save, type Row, type Versioned } from "./wholesaleStore";
+import { object, text, version, decode, get, save, type Row, type Versioned } from "./wholesaleStore";
 import { catalogue, handleCatalogueAdmin, serveCatalogueImage } from "./wholesaleCatalogue";
+import { adminWholesalePage, adminWholesaleStats } from "./wholesaleAdminLists";
 import { audit } from "./audit";
 import { ApiError, type Env, invalid, json, readJson } from "./http";
 import { manageWholesaleAccount, publicCustomer, wholesaleAccounts, wholesaleCustomer, paymentTermsFor, PAYMENT_TERMS, type Customer, type OrderingUser } from "./wholesaleAccounts";
@@ -20,14 +21,14 @@ interface Order {
   paymentTerms?: ReturnType<typeof paymentTermsFor>;
 }
 type Links = { admin: string; diary: string; preview?: string };
-const denied = () => new ApiError(403, "permission_denied", "Only admins can manage the wholesale preview.");
+const denied = () => new ApiError(403, "permission_denied", "Only admins can manage wholesale ordering.");
 function visibleOrder(order: Order & Versioned, admin = false) {
   const { requestKey, note, ...visible } = order;
   return admin ? { ...visible, note } : visible;
 }
 function orderBody(value: unknown) {
   const body = object(value);
-  if (typeof body.requestId !== "string" || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(body.requestId)) throw invalid("Send a unique requestId for this preview order.");
+  if (typeof body.requestId !== "string" || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(body.requestId)) throw invalid("Send a unique requestId for this order.");
   if (!Array.isArray(body.lines) || !body.lines.length || body.lines.length > 150) throw invalid("Choose from 1 to 150 coffee variants.");
   const lines: { productId: string; pack: Pack; grind: string; quantity: number; price: number }[] = [];
   for (const value of body.lines) {
@@ -50,6 +51,7 @@ function orderBody(value: unknown) {
 }
 async function createOrder(req: Request, env: Env, user: OrderingUser): Promise<Response> {
   const submitted = object(await readJson(req, 32 * 1024));
+  if (submitted.orderingIdentity !== undefined && submitted.orderingIdentity !== user.id) throw new ApiError(409, "account_changed", "The signed-in account changed. Reload ordering before placing an order.");
   const body = orderBody(submitted);
   const customer = user.role === "wholesale" ? await wholesaleCustomer(env, user.customerId) : null;
   if (user.role === "wholesale") {
@@ -62,7 +64,7 @@ async function createOrder(req: Request, env: Env, user: OrderingUser): Promise<
   const requestKey = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(request))))].map((n) => n.toString(16).padStart(2, "0")).join("");
   const existing = await get<Order>(env, "order", body.id);
   if (existing) {
-    if (existing.createdBy !== user.id || existing.requestKey !== requestKey) throw new ApiError(409, "conflict", "That requestId has already been used for another preview order.");
+    if (existing.createdBy !== user.id || existing.requestKey !== requestKey) throw new ApiError(409, "conflict", "That requestId has already been used for another order.");
     return json({ order: visibleOrder(existing), preview: existing.preview !== false });
   }
   if (customer?.status === "On hold") throw new ApiError(403, "account_on_hold", "Your account is on hold. Contact Strangers before placing an order.");
@@ -74,8 +76,8 @@ async function createOrder(req: Request, env: Env, user: OrderingUser): Promise<
     const product = coffees.find((product) => product.id === line.productId);
     if (!product) throw invalid("Choose a listed coffee.");
     if (!product.inStock) throw new ApiError(409, "out_of_stock", `${product.name} is out of stock. Remove it from your basket to continue.`);
-    if (!product.active) throw new ApiError(409, "conflict", `${product.name} is no longer in the preview catalogue. Reload your basket.`);
-    if (line.price !== product.prices[line.pack]) throw new ApiError(409, "conflict", "The preview prices have changed. Reload and review your order again.");
+    if (!product.active) throw new ApiError(409, "conflict", `${product.name} is no longer in the catalogue. Reload your basket.`);
+    if (line.price !== product.prices[line.pack]) throw new ApiError(409, "conflict", "The prices have changed. Reload and review your order again.");
     return { ...line, title: product.title, packLabel: PACKS[line.pack].label, grindLabel: GRINDS[line.grind], price: product.prices[line.pack], grams: PACKS[line.pack].grams };
   });
   const at = Date.now();
@@ -100,7 +102,7 @@ async function createOrder(req: Request, env: Env, user: OrderingUser): Promise<
 /** All staff can browse the signed-in catalogue and save preview orders. They cannot read others' records. */
 export async function handleWholesale(req: Request, env: Env, route: string, user: OrderingUser, links: Links): Promise<Response> {
   const customer = user.role === "wholesale" ? await wholesaleCustomer(env, user.customerId) : null;
-  if ((route === "catalogue" || route === "session") && req.method === "GET") return json({ ...(route === "catalogue" ? { products: await catalogue(env), sourceDate: catalogueRetrievedAt } : {}), me: user, customer: customer ? publicCustomer(customer) : null, links: { ...(user.role === "wholesale" ? {} : links), preview: links.preview || "/wholesale-preview/" }, preview: user.role !== "wholesale" });
+  if ((route === "catalogue" || route === "session") && req.method === "GET") return json({ ...(route === "catalogue" ? { products: await catalogue(env), sourceDate: catalogueRetrievedAt } : {}), stage: "beta", me: user, customer: customer ? publicCustomer(customer) : null, links: { ...(user.role === "wholesale" ? {} : links), preview: links.preview || "/wholesale-preview/" }, preview: user.role !== "wholesale" });
   if (route === "account" && req.method === "PUT" && customer) {
     const body = object(await readJson(req, 8192));
     const email = text(body.email, "email", 150);
@@ -126,18 +128,29 @@ export async function handleWholesale(req: Request, env: Env, route: string, use
     if (!order || !permitted) throw new ApiError(404, "not_found", "Order not found.");
     return json({ order: visibleOrder(order, user.role === "admin"), preview: order.preview !== false });
   }
-  throw new ApiError(404, "not_found", "Unknown wholesale preview route.");
+  throw new ApiError(404, "not_found", "Unknown wholesale ordering route.");
 }
 
 /** Management is part of the existing admin app and uses its admin-only API boundary. */
 export async function handleWholesaleAdmin(req: Request, env: Env, route: string, user: User, links: Links): Promise<Response> {
   if (user.role !== "admin") throw denied();
   if (route === "" && req.method === "GET") {
-    const [orders, customers, products, counts] = await Promise.all([
-      list<Order>(env, "order"), list<Customer>(env, "customer"), catalogue(env, true),
+    const [orderPage, customerPage, products, counts, stats] = await Promise.all([
+      adminWholesalePage<Order>(env, "order"), adminWholesalePage<Customer>(env, "customer"), catalogue(env, true),
       env.DB.prepare("SELECT kind, COUNT(*) AS n FROM wholesale_preview GROUP BY kind").all<{ kind: string; n: number }>(),
+      adminWholesaleStats(env),
     ]);
-    return json({ orders: orders.map((order) => visibleOrder(order, true)), customers, accounts: await wholesaleAccounts(env), products, paymentTermChoices: PAYMENT_TERMS, statuses: STATUSES, sourceDate: catalogueRetrievedAt, counts: Object.fromEntries(counts.results.map((row) => [row.kind, row.n])), links: { ...links, preview: links.preview || "/wholesale-preview/" }, preview: true });
+    return json({ orders: orderPage.records.map((order) => visibleOrder(order, true)), customers: customerPage.records, orderCursor: orderPage.nextCursor, customerCursor: customerPage.nextCursor, stats: { ...stats, totalCustomers: customerPage.count, visibleCoffees: products.filter((product) => product.active).length, totalCoffees: products.length }, accounts: await wholesaleAccounts(env), products, paymentTermChoices: PAYMENT_TERMS, statuses: STATUSES, sourceDate: catalogueRetrievedAt, counts: Object.fromEntries(counts.results.map((row) => [row.kind, row.n])), links: { ...links, preview: links.preview || "/wholesale-preview/" }, preview: true, stage: "beta" });
+  }
+  if ((route === "orders" || route === "customers") && req.method === "GET") {
+    const query = new URL(req.url).searchParams;
+    if (route === "orders") {
+      const page = await adminWholesalePage<Order>(env, "order", query);
+      return json({ orders: page.records.map((order) => visibleOrder(order, true)), nextCursor: page.nextCursor, count: page.count });
+    }
+    const page = await adminWholesalePage<Customer>(env, "customer", query);
+    const ids = new Set(page.records.map((customer) => customer.id));
+    return json({ customers: page.records, accounts: (await wholesaleAccounts(env)).filter((account) => ids.has(account.customerId)), nextCursor: page.nextCursor, count: page.count });
   }
   const catalogueResponse = await handleCatalogueAdmin(req, env, route, user.name);
   if (catalogueResponse) return catalogueResponse;
@@ -161,20 +174,20 @@ export async function handleWholesaleAdmin(req: Request, env: Env, route: string
     data.paymentNote = body.paymentNote === undefined ? oldCustomer?.paymentNote || "" : text(body.paymentNote, "payment instructions", 500);
     if (paymentTerms === "custom" && !data.paymentNote.trim()) throw invalid("Add the agreed custom payment terms in payment instructions.");
     const customer = await save(env, "customer", customerMatch?.[1] || crypto.randomUUID(), data, expected);
-    await audit(env, "wholesale_preview_customer", user.name, `${user.name} ${customerMatch ? "updated" : "added"} wholesale preview customer ${business}.`);
+    await audit(env, "wholesale_preview_customer", user.name, `${user.name} ${customerMatch ? "updated" : "added"} wholesale customer ${business}.`);
     return json({ customer }, customerMatch ? 200 : 201);
   }
   const orderMatch = /^orders\/((?:PREVIEW|WS)-[A-F0-9]{32})$/.exec(route);
   if (orderMatch && req.method === "PATCH") {
     const order = await get<Order>(env, "order", orderMatch[1]);
-    if (!order) throw new ApiError(404, "not_found", "Preview order not found.");
-    if (!STATUSES.includes(body.status)) throw invalid("Choose a listed preview order status.");
+    if (!order) throw new ApiError(404, "not_found", "Order not found.");
+    if (!STATUSES.includes(body.status)) throw invalid("Choose a listed order status.");
     const customerId = body.customerId ?? null;
-    if (customerId !== null && (typeof customerId !== "string" || !await get<Customer>(env, "customer", customerId))) throw invalid("Choose an existing preview customer.");
+    if (customerId !== null && (typeof customerId !== "string" || !await get<Customer>(env, "customer", customerId))) throw invalid("Choose an existing wholesale customer.");
     if (order.preview === false && customerId !== order.customerId) throw invalid("Customer orders stay linked to the business that placed them.");
     const { id, version: oldVersion, updatedAt, ...current } = order;
     const updated = await save(env, "order", id, { ...current, status: body.status, customerId, note: text(body.note, "order note", 1000) }, version(body.ifVersion));
-    await audit(env, "wholesale_preview_status", user.name, `${user.name} marked wholesale preview order ${id} as ${body.status}. No fulfilment action was sent.`);
+    await audit(env, "wholesale_preview_status", user.name, `${user.name} marked wholesale order ${id} as ${body.status}. No fulfilment action was sent.`);
     return json({ order: visibleOrder(updated, true) });
   }
   throw new ApiError(404, "not_found", "Unknown wholesale management route.");

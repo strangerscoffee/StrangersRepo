@@ -129,6 +129,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
 
       await admin.locator('[data-act="wh-coffee"][data-id="' + product.id + '"]').click();
       await admin.locator('#wPhotos [aria-label="Remove photo 2"]').click();
+      await admin.locator('#wPhotos [data-sheet="photo-confirm"]').click();
       await admin.waitForFunction(() => document.querySelectorAll('#wPhotos .w-photo').length === 2);
       await admin.locator('#sheet [data-sheet="close"]').click();
       await buyer.locator('#refresh-catalogue').click();
@@ -143,6 +144,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       await editTerms('net-7', 'Payment within seven days of invoice.');
       await buyer.locator('#submit-preview-order').click();
       await buyer.locator('#preview-submit-error', { hasText: 'terms changed' }).waitFor();
+      assert.equal(await buyer.locator("#submit-preview-order").isDisabled(), true, "changed agreement requires a new review before submitting again");
       await buyer.locator('#review-dialog .close-button').click();
       await buyer.locator('#review-order').click();
       await buyer.locator('#review-dialog').waitFor();
