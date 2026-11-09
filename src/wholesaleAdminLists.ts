@@ -9,6 +9,7 @@ const ORDER_STATUSES = ["New", "Preparing", "Ready", "Dispatched", "Cancelled"];
 function filters(kind: ListKind, query: URLSearchParams) {
   const where = ["kind = ?"];
   const values: (string | number)[] = [kind];
+  if (kind === "order") where.push("json_extract(data, '$.deletedAt') IS NULL");
   const q = (query.get("q") || "").trim();
   if (q.length > 120) throw invalid("Search can be up to 120 characters.");
   if (q) {
@@ -54,7 +55,7 @@ export async function adminWholesalePage<T>(env: Env, kind: ListKind, query = ne
 
 export async function adminWholesaleStats(env: Env) {
   const [orders, pending] = await Promise.all([
-    env.DB.prepare("SELECT COALESCE(SUM(CASE WHEN json_extract(data, '$.status') IN ('New', 'Preparing', 'Ready') THEN 1 ELSE 0 END), 0) AS openOrders, COALESCE(SUM(CASE WHEN json_extract(data, '$.status') IN ('New', 'Preparing') THEN json_extract(data, '$.grams') ELSE 0 END), 0) AS gramsToPrepare FROM wholesale_preview WHERE kind = 'order' AND json_extract(data, '$.preview') = 0").first<{ openOrders: number; gramsToPrepare: number }>(),
+    env.DB.prepare("SELECT COALESCE(SUM(CASE WHEN json_extract(data, '$.status') IN ('New', 'Preparing', 'Ready') THEN 1 ELSE 0 END), 0) AS openOrders, COALESCE(SUM(CASE WHEN json_extract(data, '$.status') IN ('New', 'Preparing') THEN json_extract(data, '$.grams') ELSE 0 END), 0) AS gramsToPrepare FROM wholesale_preview WHERE kind = 'order' AND json_extract(data, '$.preview') = 0 AND json_extract(data, '$.deletedAt') IS NULL").first<{ openOrders: number; gramsToPrepare: number }>(),
     env.DB.prepare("SELECT COUNT(*) AS n FROM wholesale_accounts WHERE approval_status = 'pending'").first<{ n: number }>(),
   ]);
   return { openOrders: orders?.openOrders || 0, gramsToPrepare: orders?.gramsToPrepare || 0, pendingAccounts: pending?.n || 0 };

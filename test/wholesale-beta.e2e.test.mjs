@@ -205,3 +205,53 @@ for (const restored of [true, false]) {
     } finally { await context.close(); }
   });
 }
+
+test("beta checkout: deleting a saved uncertain order prevents frozen retries from recreating it", { timeout: 90000 }, async () => {
+  const { context, page, customer } = await buyer("beta.deleted", "colombia", "BETA-DELETED-PENDING");
+  try {
+    let saved, postCount = 0;
+    page.on("request", (request) => { if (request.method() === "POST" && new URL(request.url()).pathname === "/api/wholesale/orders") postCount++; });
+    const lostResponse = async (route) => {
+      if (route.request().method() !== "POST") return route.continue();
+      const response = await route.fetch();
+      saved = { status: response.status(), body: await response.json() };
+      await route.abort("failed");
+    };
+    await page.route("**/api/wholesale/orders", lostResponse);
+    await page.locator("#submit-preview-order").click();
+    await page.locator("#preview-submit-error:not([hidden])").waitFor();
+    assert.equal(saved.status, 201, JSON.stringify(saved.body));
+    const original = saved.body.order;
+    assert.equal((await ownOrders(customer.id)).length, 1);
+    const removed = await api("DELETE", `/api/admin/wholesale/orders/${original.id}`, { ifVersion: original.version });
+    assert.equal(removed.body.deleted, true);
+    assert.equal((await ownOrders(customer.id)).length, 0);
+    const deletedRead = await page.evaluate(async (id) => (await fetch(`/api/wholesale/orders/${id}`)).status, original.id);
+    assert.equal(deletedRead, 404);
+
+    await page.unroute("**/api/wholesale/orders", lostResponse);
+    await page.reload();
+    await page.locator("#products article").first().waitFor();
+    await page.locator("#review-order").click();
+    await page.locator("#review-dialog").waitFor();
+    assert.equal(await page.locator('#review-form [name="reference"]').inputValue(), "BETA-DELETED-PENDING");
+    const rejected = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/wholesale/orders");
+    await page.locator("#submit-preview-order").click();
+    const response = await rejected;
+    assert.equal(response.status(), 410);
+    assert.equal((await response.json()).code, "order_deleted");
+    await page.locator("#preview-submit-error", { hasText: "removed by Strangers" }).waitFor();
+    assert.equal(await page.locator("#submit-preview-order").isDisabled(), true, "a deleted frozen request requires closing and freshly reviewing");
+    assert.equal(await page.evaluate(() => Object.keys(localStorage).some((key) => key.endsWith(".pending-order"))), false, "the confirmed deletion clears uncertain submission recovery");
+    await page.locator("#review-form").evaluate((form) => form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+    assert.equal(postCount, 2, "the rejected review cannot submit again, including through a form submit event");
+    await page.locator("#review-dialog .close-button").click();
+    await page.locator("#review-order").click();
+    await page.locator("#review-dialog").waitFor();
+    assert.equal(await page.locator("#submit-preview-order").isEnabled(), true, "a fresh review permits a genuinely new order");
+    assert.equal(await page.locator('#review-form [name="reference"]').inputValue(), "");
+    assert.equal(await page.locator('#review-form [name="reference"]').getAttribute("readonly"), null);
+    assert.equal(postCount, 2, "opening a fresh review never places another order automatically");
+    assert.equal((await ownOrders(customer.id)).length, 0, "the removed order stays removed");
+  } finally { await context.close(); }
+});

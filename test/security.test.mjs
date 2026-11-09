@@ -134,7 +134,7 @@ test("security: staff can't use manager or admin features, managers can't use ad
       ["GET", "security"], ["POST", "security/reset-pins"], ["POST", "security/sign-out-all"], ["GET", "export/people.csv"], ["GET", "export/shifts.csv"],
       ["GET", "wholesale"], ["GET", "wholesale/orders"], ["GET", "wholesale/customers"], ["POST", "wholesale/customers", {}], ["PUT", "wholesale/customers/00000000-0000-0000-0000-000000000000", {}],
       ["POST", "wholesale/customers/00000000-0000-0000-0000-000000000000/account", {}], ["PUT", "wholesale/customers/00000000-0000-0000-0000-000000000000/account", {}], ["POST", "wholesale/customers/00000000-0000-0000-0000-000000000000/account/reset-password", {}],
-      ["PUT", "wholesale/catalogue/brazil", {}], ["PATCH", "wholesale/orders/PREVIEW-00000000000000000000000000000000", {}],
+      ["PUT", "wholesale/catalogue/brazil", {}], ["PATCH", "wholesale/orders/PREVIEW-00000000000000000000000000000000", {}], ["DELETE", "wholesale/orders/PREVIEW-00000000000000000000000000000000", { ifVersion: 1 }],
       ["POST", "wholesale/catalogue", {}], ["POST", "wholesale/catalogue/brazil/images?ifVersion=0", {}], ["PATCH", "wholesale/catalogue/brazil/images", {}], ["GET", "wholesale/images/00000000000000000000000000000000"],
     ]) await denied(await send(method, "/api/admin/" + route, cookie, body), `${who} ${method} /api/admin/${route}`);
     for (const page of ["/admin", "/admin/", "/admin.html", "/admin/index.html"]) assert.equal((await send("GET", page, cookie)).headers.get("location"), "/", `${who} ${page}`);

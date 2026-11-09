@@ -61,3 +61,9 @@ Order again refreshes the catalogue and opens a repeat-basket confirmation showi
 Admin customer-order rows show references and delivery preferences and offer Mark preparing / Mark ready / Mark dispatched shortcuts. Each uses the displayed version and preserves internal notes, business ownership and immutable snapshots. Busy rows reject repeat taps. Failed or conflicting saves show an inline error and require Reload orders before another quick update. Staff preview rows have no shortcuts. The full order sheet remains available for status changes, and opens at its accessible title above a packing list with distinct bag quantities, sizes and grinds.
 
 Returning to a page from the browser’s back/forward cache closes private dialogs and reloads against the current session. Profile saves also check the signed-in identity in the browser and server; switching accounts cannot copy one business’s open form into another account. Pending checkout and basket recovery keep their existing per-identity keys.
+
+## Removing orders
+
+Admins can choose Delete order from the order details sheet, then confirm the identified business/order and subtotal. Cancelling confirmation keeps the order and the editor draft. Successful removal hides the order from admin, customer and staff lists, history, counts and preparation totals. Staff, managers and wholesale customers cannot delete orders. A stale version is rejected so another admin’s updated order cannot be removed without review. Deletion does not change any existing payment or trigger a refund.
+
+The server retains the removed record with `deletedAt`/`deletedBy` for audit and duplicate-submission protection; backup exports retain it. The original successful request UUID cannot recreate a removed order: matching retries return 410 `order_deleted`. Removed orders return 404 on reads and further edits/deletes. This adds no table or schema migration.

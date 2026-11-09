@@ -325,3 +325,15 @@ button.stat{cursor:pointer}
 .w-pack-quantity>b{font-size:20px;line-height:1.1}
 .w-pack-quantity>span{font-size:11px;color:var(--muted)}
 @media(max-width:600px){.w-order-actions{padding-left:14px}.w-order-actions>.btn{flex:1}.w-packing-line .tx{min-width:0}.w-packing-line .end{font-size:13px}}
+
+.w-order-danger{padding-top:14px;border-top:1px solid var(--line);display:flex;justify-content:flex-start}
+.w-order-danger .btn{min-height:44px}
+.w-delete-summary .kv strong{margin-left:auto;text-align:right;overflow-wrap:anywhere}
+#wDeleteOrderForm .w-id{max-width:100%}
+#wDeleteOrderForm .solidbad{white-space:normal;min-height:48px;text-align:center}
+@media(max-width:600px){.w-order-danger .btn{width:100%}}
+
+.w-delete-confirm-controls{flex:1 1 140px;min-width:0;margin:0;padding:0;border:0}
+.w-delete-confirm-controls>.btn{width:100%}
+.w-delete-confirm-controls:disabled .btn{opacity:.5;cursor:default}
+#wDeleteOrderForm .solidbad{color:var(--accent-ink)}
