@@ -139,12 +139,12 @@
 
   /* ---------- navigation ---------- */
   const NAV = [["overview", "Overview", "grid"], ["people", "People", "people"], ["sites", "Sites", "house"], ["wholesale", "Wholesale", "coffee"], ["activity", "Activity", "pulse"], ["security", "Security", "shield"], ["data", "Backups & exports", "db"]];
-  const TABS = [["overview", "Overview", "grid"], ["people", "People", "people"], ["sites", "Sites", "house"], ["activity", "Activity", "pulse"], ["more", "More", "more"]];
+  const TABS = [["overview", "Overview", "grid"], ["wholesale", "Wholesale", "coffee"], ["people", "People", "people"], ["activity", "Activity", "pulse"], ["more", "More", "more"]];
   const PAGES = ["overview", "people", "sites", "wholesale", "activity", "security", "data", "more"];
   function renderNav() {
     const badge = S.locked ? html`<span class="badge" aria-label="${plural(S.locked, "account")} locked">${S.locked}</span>` : "";
     put($("#sideNav"), html`${NAV.map(([id, t, ic]) => html`<button class="nav" type="button" data-go="${id}" aria-current="${S.page === id ? "page" : "false"}">${svg(ic)}${t}${id === "security" ? badge : ""}</button>`)}`);
-    const tab = S.page === "security" || S.page === "data" || S.page === "wholesale" ? "more" : S.page;
+    const tab = S.page === "security" || S.page === "data" || S.page === "sites" ? "more" : S.page;
     put($("#tabBar"), html`${TABS.map(([id, t, ic]) => html`<button type="button" data-go="${id}" aria-current="${tab === id ? "page" : "false"}">${svg(ic)}${t}${id === "more" ? badge : ""}</button>`)}`);
   }
   async function refreshBadge() {
@@ -407,7 +407,7 @@
   VIEWS.more = async () => html`
     ${head("More", "")}
     <div class="group glass">
-      <button class="item" type="button" data-go="wholesale"><span class="ic acc">${svg("coffee")}</span><span class="tx"><b>Wholesale</b><span>Orders, customers and coffee catalogue</span></span><span class="end"><span class="chev">${svg("chev")}</span></span></button>
+      <button class="item" type="button" data-go="sites"><span class="ic acc">${svg("house")}</span><span class="tx"><b>Sites</b><span>Site setup, diary settings and rota hours</span></span><span class="end"><span class="chev">${svg("chev")}</span></span></button>
       <button class="item" type="button" data-go="security"><span class="ic ${S.locked ? "bad" : "ok"}">${svg("shield")}</span><span class="tx"><b>Security</b><span>${S.locked ? `${plural(S.locked, "account")} locked` : "Sign-ins, PINs and protections"}</span></span><span class="end">${S.locked ? html`<span class="badge">${S.locked}</span>` : ""}<span class="chev">${svg("chev")}</span></span></button>
       <button class="item" type="button" data-go="data"><span class="ic mut">${svg("db")}</span><span class="tx"><b>Backups &amp; exports</b><span>Nightly backups, payroll hours and other downloads</span></span><span class="end"><span class="chev">${svg("chev")}</span></span></button>
     </div>

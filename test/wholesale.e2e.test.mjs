@@ -121,7 +121,9 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       await page.locator("#main h1", { hasText: "Wholesale" }).waitFor();
       if (device === "phone") {
         await page.locator('#tabBar [data-go="more"]').click();
-        await page.locator('#main [data-go="wholesale"]').click();
+        await page.locator('#main [data-go="sites"]').click();
+        await page.locator('#main h1', { hasText: "Sites" }).waitFor();
+        await page.locator('#tabBar [data-go="wholesale"]').click();
       } else {
         await page.locator('#sideNav [data-go="overview"]').click();
         await page.locator('#sideNav [data-go="wholesale"]').click();

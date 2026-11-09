@@ -21,7 +21,7 @@ svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.9;stro
 .topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;
   padding-block:calc(10px + env(safe-area-inset-top,0px)) 2px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
 .brand{display:flex;align-items:center;gap:10px;min-width:0;font-size:17px}
-.brand .mk{width:36px;height:36px;border-radius:11px;display:grid;place-items:center;background:var(--accent);color:var(--accent-ink);flex:none}
+.brand .brandlogo{width:64px}
 .me{width:40px;height:40px;border-radius:50%;border:0;display:grid;place-items:center;font-weight:700;font-size:14px;background:var(--tint);color:var(--accent);cursor:pointer;flex:none}
 main{max-width:1000px;margin:0 auto;display:grid;gap:12px;align-content:start;outline:0;
   padding-block:8px calc(116px + env(safe-area-inset-bottom,0px));padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}

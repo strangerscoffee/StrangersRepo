@@ -1,6 +1,6 @@
 # Wholesale: accounts and ordering
 
-Wholesale retains the existing address and data, with no Beta labels in the interface. Ordering: **https://preview.staffstrangerscoffee.com/**. Management: **https://admin.staffstrangerscoffee.com/#wholesale**, in the existing Admin sidebar or More menu. The independent public Site from the earlier design pass is a separate historical demo.
+Wholesale retains the existing address and data, with no Beta labels in the interface. Ordering: **https://preview.staffstrangerscoffee.com/**. Management: **https://admin.staffstrangerscoffee.com/#wholesale**, in the Admin sidebar or the Wholesale tab on mobile. The independent public Site from the earlier design pass is a separate historical demo.
 
 ## Registration and approval
 
@@ -81,3 +81,12 @@ In Admin → Wholesale → Invoicing, configure legal supplier/VAT details, tax 
 Issued invoice financial content is immutable. Payment recording has a separate versioned status, date and reference and never initiates a bank transaction. Net payment terms compute due dates using calendar days. Customers open My orders → Invoices to view their own documents, amounts outstanding/overdue, terms and PDFs. Invoices stay available if an admin removes the source order. This adds migration 13 and backup fields, with no new service or secret.
 
 Desktop layouts use grouped wider windows and persistent controls. Customer payment/default/status pickers preserve the complete editing draft. Pending reviews are a notification beside Customers rather than an attention section. The customer account panel and long-basket layout use desktop width and independent scrolling while preserving phone controls.
+
+
+## Mobile navigation and dispatch tracking
+
+Admin mobile navigation is Overview, Wholesale, People, Activity and More; Sites is under More. The header/sidebar use the shared Strangers logo. On the customer page, the mobile account row collapses smoothly after scrolling away from the top and returns at the top, with reduced-motion and keyboard-focus support. Brand, navigation and basket remain available.
+
+A confirmed receipt clears its submitted basket using the identity-scoped key. Other tabs reconcile stale baskets, while newer different baskets and other identities remain intact. Uncertain submissions retain their frozen request and a per-tab recovery copy until confirmed; a storage failure must not turn a recovered order into a new submission.
+
+Ready orders open a native Dispatch order window with an optional tracking link. Confirmation saves status and link together using the reviewed version; Cancel writes nothing, and a failed or stale update requires reloading the order. Order details can edit or remove the link later. Customers see Track delivery on their own dispatched delivery orders. Tracking is a saved external link, without automatic courier integration or a database migration.

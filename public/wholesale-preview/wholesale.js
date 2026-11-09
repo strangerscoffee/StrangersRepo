@@ -90,6 +90,37 @@ function saveBasket() {
   catch { storageAvailable = false; }
 }
 
+const basketKeyFor = identity => "strangers.wholesale-preview.v2." + identity;
+const basketSnapshot = lines => JSON.stringify(sanitiseBasket(lines).sort((a, b) => lineKey(a).localeCompare(lineKey(b))));
+function reconcileStoredBasket() {
+  if (!ready || saving || pendingAttempt || $("#review-dialog").open || STORAGE_KEY !== basketKeyFor(session?.me.id)) return;
+  let stored;
+  try { stored = sanitiseBasket(JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]")); }
+  catch { storageAvailable = false; return; }
+  if (basketSnapshot(stored) === basketSnapshot(basket)) return;
+  basket = stored;
+  renderBasket();
+}
+window.addEventListener("storage", event => {
+  // A different tab's pending-key removal is not evidence that this tab's request succeeded.
+  try { if (event.storageArea === localStorage && (event.key === STORAGE_KEY || event.key === null)) reconcileStoredBasket(); } catch {}
+});
+async function reconcileVisibleBasket() {
+  if (!ready || saving || document.visibilityState === "hidden") return;
+  try { if (await confirmIdentity()) reconcileStoredBasket(); } catch {}
+}
+document.addEventListener("visibilitychange", reconcileVisibleBasket);
+window.addEventListener("focus", reconcileVisibleBasket);
+let basketChannel = null;
+try {
+  if ("BroadcastChannel" in window) {
+    basketChannel = new BroadcastChannel("strangers.wholesale.basket");
+    basketChannel.addEventListener("message", event => {
+      if (event.data?.type === "order-confirmed" && event.data.identity === session?.me.id) reconcileStoredBasket();
+    });
+  }
+} catch {}
+
 function toast(message) {
   clearTimeout(toastTimer);
   const element = $("#toast");
@@ -365,15 +396,33 @@ $("#review-order").addEventListener("click", async () => {
 
 // Persist an uncertain submission before sending it. Every retry uses exactly the same ID and payload.
 function pendingKey() { return STORAGE_KEY + ".pending-order"; }
+function validAttempt(value) {
+  return value?.identity === session?.me.id && /^[a-f0-9-]{36}$/i.test(value.payload?.requestId) && Array.isArray(value.payload.lines) && value.payload.lines.length && Array.isArray(value.summary);
+}
+function removeOwnAttempt(store, key, attempt) {
+  const saved = JSON.parse(store.getItem(key) || "null");
+  if (!saved || (saved.identity === attempt?.identity && saved.payload?.requestId === attempt?.payload.requestId)) store.removeItem(key);
+}
 function saveAttempt(attempt) {
-  pendingAttempt = attempt;
-  try { if (attempt) localStorage.setItem(pendingKey(), JSON.stringify(attempt)); else localStorage.removeItem(pendingKey()); }
-  catch { storageAvailable = false; if (attempt) pendingAttempt = null; }
+  const previous = pendingAttempt;
+  if (attempt) {
+    try { localStorage.setItem(pendingKey(), JSON.stringify(attempt)); pendingAttempt = attempt; }
+    catch { storageAvailable = false; pendingAttempt = null; return; }
+    // A tab keeps its own recovery copy if another tab replaces/removes the shared pending key.
+    try { sessionStorage.setItem(pendingKey(), JSON.stringify(attempt)); } catch {}
+  } else {
+    try { removeOwnAttempt(localStorage, pendingKey(), previous); } catch { storageAvailable = false; }
+    try { removeOwnAttempt(sessionStorage, pendingKey(), previous); } catch {}
+    pendingAttempt = null;
+  }
 }
 function readAttempt() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(pendingKey()) || "null");
-    if (saved?.identity === session.me.id && /^[a-f0-9-]{36}$/i.test(saved.payload?.requestId) && Array.isArray(saved.payload.lines) && saved.payload.lines.length && Array.isArray(saved.summary)) return saved;
+  for (const name of ["sessionStorage", "localStorage"]) try {
+    const store = window[name];
+    const saved = JSON.parse(store.getItem(pendingKey()) || "null");
+    if (!validAttempt(saved)) continue;
+    try { sessionStorage.setItem(pendingKey(), JSON.stringify(saved)); } catch {}
+    return saved;
   } catch {}
   return null;
 }
@@ -393,16 +442,31 @@ function lockPendingUi() {
 }
 function showReceipt(result) {
   const expected = pendingAttempt && (session.preview ? "PREVIEW-" : "WS-") + pendingAttempt.payload.requestId.replaceAll("-", "").toUpperCase();
-  if (pendingAttempt?.identity !== session.me.id || !result?.order || result.order.id !== expected || !Number.isSafeInteger(result.order.pence) || result.order.pence < 0 || !Array.isArray(result.order.lines) || typeof result.preview !== "boolean") throw new Error("The order response was incomplete. Check the submitted order before trying again.");
+  if (pendingAttempt?.identity !== session.me.id || !result?.order || result.order.id !== expected || !Number.isSafeInteger(result.order.pence) || result.order.pence < 0 || !Array.isArray(result.order.lines) || result.preview !== session.preview || result.order.createdBy !== session.me.id) throw new Error("The order response was incomplete. Check the submitted order before trying again.");
+  const attempt = pendingAttempt, key = basketKeyFor(attempt.identity);
+  if (STORAGE_KEY !== key) throw new Error("Sign in to the account that placed this order to check its receipt.");
+  let newerBasketKept = false;
+  try {
+    const saved = localStorage.getItem(key);
+    if (saved !== null && basketSnapshot(JSON.parse(saved)) !== basketSnapshot(attempt.payload.lines)) newerBasketKept = true;
+    else localStorage.removeItem(key);
+  } catch {
+    storageAvailable = false;
+    throw new Error("Your order was received, but this browser could not clear its saved basket. Check the submitted order again to recover the receipt.");
+  }
+  // Commit the confirmed state before rendering optional receipt details. Never write [] over a newer tab's basket.
   saveAttempt(null);
+  basket = []; requestId = null; reviewNeedsRefresh = false;
+  renderBasket(); renderProducts(); filterProducts();
+  try { basketChannel?.postMessage({ type: "order-confirmed", identity: attempt.identity, orderId: result.order.id, requestId: attempt.payload.requestId }); } catch {}
   $("#complete-message").textContent = result.preview ? `${result.order.id} was saved as a staff preview order.` : `${result.order.id} has been received by Strangers. Follow its progress in My orders.`;
+  if (newerBasketKept) $("#complete-message").textContent += " A newer basket from another tab has been kept for your next order.";
   $("#complete-dashboard-link").hidden = session.me.role !== "admin";
   if (session.me.role === "admin") $("#complete-dashboard-link").href = session.links.admin + "#wholesale";
   $("#complete-total").textContent = money(result.order.pence);
   $("#complete-location").hidden = !result.order.locationSnapshot;
   $("#complete-location").textContent = result.order.locationSnapshot ? `${result.order.delivery === "Delivery" ? "Delivery to" : "Ordered for"}: ${result.order.locationSnapshot.name}` : "";
   $("#complete-payment-terms").textContent = result.order.paymentTerms ? `Payment terms: ${result.order.paymentTerms.label}${result.order.paymentTerms.note ? " · " + result.order.paymentTerms.note : ""}` : "";
-  basket = []; changedBasket(); renderProducts(); filterProducts();
   $("#review-content").hidden = true;
   $("#preview-complete").hidden = false;
   $("#review-dialog").setAttribute("aria-labelledby", "complete-title");
@@ -478,6 +542,7 @@ document.querySelectorAll("dialog").forEach((dialog) => {
     $("#review-form").reset();
     requestAnimationFrame(() => {
       if (document.querySelector("dialog[open]")) return;
+      reconcileStoredBasket();
       ($("#review-order").disabled ? $("#your-order") : $("#review-order")).focus({ preventScroll: true });
     });
   });
@@ -503,6 +568,7 @@ function applyCatalogue(fresh, initial) {
     STORAGE_KEY = "strangers.wholesale-preview.v2." + session.me.id;
     basket = loadBasket();
     pendingAttempt = readAttempt();
+    if (pendingAttempt) basket = sanitiseBasket(pendingAttempt.payload.lines);
   } else { basket = sanitiseBasket(basket); saveBasket(); }
   $("#signed-in-name").textContent = session.customer?.business || session.me.name;
   $("#signed-in-name").title = session.customer?.business || session.me.name;
@@ -666,10 +732,21 @@ function historyStatus(order) {
   if (status === "Cancelled") return `${badge}<p class="history-cancelled">This order was cancelled. No further preparation updates are expected.</p>`;
   return `<div class="history-status">${badge}<p>${descriptions[status] || "Contact Strangers for an update."}</p></div>${current >= 0 ? `<ol class="history-progress" aria-label="Order progress">${states.map((step, i) => `<li ${i < current ? 'class="done"' : ""} ${i === current ? 'aria-current="step"' : ""}><span class="progress-marker" aria-hidden="true">${i < current ? "✓" : i + 1}</span><span>${step === "New" ? "Received" : step}<span class="sr-only">${i < current ? ", completed" : i === current ? ", current stage" : ", not reached"}</span></span></li>`).join("")}</ol>` : ""}`;
 }
+function historyTrackingUrl(order) {
+  if (!session?.customer || order.preview || order.status !== "Dispatched" || order.delivery !== "Delivery") return "";
+  const value = typeof order.trackingUrl === "string" ? order.trackingUrl.trim() : "";
+  if (!value || value.length > 2000 || !/^https?:\/\//i.test(value) || /[\u0000-\u001f\u007f]/.test(value)) return "";
+  try {
+    const url = new URL(value);
+    return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password ? url.href : "";
+  } catch { return ""; }
+}
 function historyCard(order, expanded) {
   const date = new Date(order.createdAt).toLocaleDateString("en-GB", { timeZone: "Europe/London", day: "numeric", month: "short", year: "numeric" });
   const snapshot = order.customerSnapshot;
+  const trackingUrl = historyTrackingUrl(order);
   return `<article class="history-card" data-history-order="${escape(order.id)}"><div class="history-card-head"><h3>${date}</h3><strong>${money(order.pence)}</strong></div><p class="history-summary">${bagCount(order.packs)} · ${escape(order.delivery)}</p>${order.reference ? `<p class="history-summary">Reference: ${escape(order.reference)}</p>` : ""}${historyStatus(order)}
+    ${trackingUrl ? `<a class="button button-outline history-tracking" data-order-tracking="${escape(order.id)}" href="${escape(trackingUrl)}" target="_blank" rel="noopener noreferrer">Track delivery <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg><span class="sr-only">(opens in a new tab)</span></a>` : ""}
     <details class="history-details" ${expanded.has(order.id) ? "open" : ""}><summary>Order details · ${bagCount(order.packs)}</summary><p class="history-id">${escape(order.id)}</p><ul class="history-lines">${order.lines.map(line => `<li><span>${line.quantity} × ${escape(line.title)}</span><small>${escape(line.packLabel)} · ${escape(line.grindLabel)}</small><strong>${money(line.price * line.quantity)}</strong></li>`).join("")}</ul>${order.locationSnapshot ? `<p class="history-address"><b>Location at order</b><br>${escape(order.locationSnapshot.name)}</p>` : ""}${snapshot?.address && order.delivery === "Delivery" ? `<p class="history-address"><b>Delivery address at order</b><br>${escape(snapshot.address)}<br>${escape(snapshot.postcode || "")}</p>` : ""}${order.deliveryNotes ? `<p class="history-address">${escape(order.deliveryNotes)}</p>` : ""}${order.paymentTerms ? `<p class="payment-terms">Payment terms: ${escape(order.paymentTerms.label)}${order.paymentTerms.note ? `<br>${escape(order.paymentTerms.note)}` : ""}</p>` : ""}</details>
     <button class="button button-outline history-reorder" type="button" data-reorder="${escape(order.id)}" ${pendingAttempt ? "disabled" : ""}>Order again</button></article>`;
 }
@@ -776,6 +853,58 @@ $("#confirm-reorder").addEventListener("click", async () => {
   } catch (error) { $("#reorder-error").textContent = error.message; $("#reorder-error").hidden = false; }
   finally { reordering = false; $("#confirm-reorder").disabled = !reorderPlan?.added.packs; }
 });
+// Collapse only the mobile account row, keeping a stable sticky shell and any active control visible.
+const mobileHeaderQuery = matchMedia("(max-width: 700px)");
+const mobileHeader = $(".site-header"), headerShell = $(".header-shell"), headerAccount = $(".header-account");
+let mobileHeaderFrame = 0, mobileHeaderNeedsMeasure = true, measuredHeaderWidth = 0;
+function scheduleMobileHeaderLayout(measure = false) {
+  mobileHeaderNeedsMeasure ||= measure;
+  if (mobileHeaderFrame) return;
+  mobileHeaderFrame = requestAnimationFrame(() => {
+    mobileHeaderFrame = 0;
+    let collapsed = mobileHeader.classList.contains("is-account-collapsed");
+    if (!mobileHeaderQuery.matches) {
+      collapsed = false;
+      headerShell.style.removeProperty("--header-expanded-height");
+      mobileHeader.style.removeProperty("--header-account-height");
+    } else {
+      const pageTop = Math.max(0, window.scrollY);
+      if (pageTop <= 8 || headerAccount.contains(document.activeElement)) collapsed = false;
+      else if (pageTop >= 64) collapsed = true;
+      if (mobileHeaderNeedsMeasure) {
+        // Measure the expanded state before painting, including after width or navigation changes.
+        mobileHeader.classList.add("is-measuring-header");
+        mobileHeader.classList.remove("is-account-collapsed");
+        mobileHeader.style.setProperty("--header-account-height", `${headerAccount.offsetHeight}px`);
+        headerShell.style.setProperty("--header-expanded-height", `${mobileHeader.offsetHeight}px`);
+        mobileHeader.classList.toggle("is-account-collapsed", collapsed);
+        void mobileHeader.offsetHeight;
+        mobileHeader.classList.remove("is-measuring-header");
+      }
+    }
+    mobileHeaderNeedsMeasure = false;
+    measuredHeaderWidth = mobileHeader.offsetWidth;
+    mobileHeader.classList.toggle("is-account-collapsed", collapsed);
+    headerAccount.inert = collapsed;
+    if (collapsed) headerAccount.setAttribute("aria-hidden", "true");
+    else headerAccount.removeAttribute("aria-hidden");
+  });
+}
+window.addEventListener("scroll", () => scheduleMobileHeaderLayout(), { passive: true });
+window.addEventListener("resize", () => scheduleMobileHeaderLayout(true), { passive: true });
+window.addEventListener("pageshow", () => scheduleMobileHeaderLayout(true));
+mobileHeaderQuery.addEventListener("change", () => scheduleMobileHeaderLayout(true));
+headerAccount.addEventListener("focusin", () => scheduleMobileHeaderLayout());
+headerAccount.addEventListener("focusout", () => scheduleMobileHeaderLayout());
+if ("ResizeObserver" in window) {
+  const mobileHeaderObserver = new ResizeObserver(entries => {
+    const changedContent = entries.some(entry => entry.target !== mobileHeader);
+    scheduleMobileHeaderLayout(changedContent || mobileHeader.offsetWidth !== measuredHeaderWidth);
+  });
+  [mobileHeader, mobileHeader.querySelector("nav"), ...headerAccount.children].forEach(node => mobileHeaderObserver.observe(node));
+}
+scheduleMobileHeaderLayout(true);
+
 // Fit the desktop basket to its actual position, including the first viewport before it sticks.
 let basketLayoutFrame = 0;
 function scheduleDesktopBasketLayout() {
