@@ -159,7 +159,9 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       await buyer.locator('#preview-complete [data-close]').click();
       await editTerms('net-30', 'Future invoices only.');
       await buyer.locator('#my-orders').click();
-      await buyer.locator('#order-history .payment-terms', { hasText: '7 days from invoice' }).waitFor();
+      const savedOrder = buyer.locator(`[data-history-order="${orders[0].id}"]`);
+      await savedOrder.locator('.history-details summary').click();
+      await savedOrder.locator('.payment-terms', { hasText: '7 days from invoice' }).waitFor();
       assert.ok(await buyer.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
       assert.deepEqual(errors, []);
     } finally { await adminContext.close(); await customerContext.close(); }

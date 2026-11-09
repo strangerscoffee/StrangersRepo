@@ -217,8 +217,20 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       await admin.locator('#scrim').waitFor({ state: 'hidden' });
       await page.locator('#my-orders').click();
       await page.locator('#order-history .order-state', { hasText: 'Ready' }).waitFor();
+      assert.equal(await page.locator('#history-count').textContent(), 'Showing 1 of 1 order');
+      assert.equal(await page.locator('.history-progress [aria-current="step"]').textContent().then(value => value.includes('Ready')), true);
+      assert.equal(await page.locator('.history-details').getAttribute('open'), null, 'order details start folded');
+      await page.locator('.history-details summary').click();
+      assert.match(await page.locator('.history-details').textContent(), /10 Coffee Street/);
+      if (process.env.WHOLESALE_SCREENSHOT_DIR) await page.screenshot({ path: `${process.env.WHOLESALE_SCREENSHOT_DIR}/history-${device}-${color}.png` });
       assert.doesNotMatch(await page.locator('#order-history').textContent(), /Private admin note/);
       await page.locator('[data-reorder]').click();
+      await page.locator('#reorder-dialog').waitFor();
+      assert.equal(await page.locator('#basket-count').textContent(), '0', 'repeat confirmation preserves the basket until accepted');
+      assert.match(await page.locator('#reorder-summary').textContent(), /2 bags available to add · £74.00/);
+      if (process.env.WHOLESALE_SCREENSHOT_DIR) await page.screenshot({ path: `${process.env.WHOLESALE_SCREENSHOT_DIR}/repeat-${device}-${color}.png` });
+      await page.locator('#confirm-reorder').click();
+      await page.locator('#reorder-dialog').waitFor({ state: 'hidden' });
       assert.equal(await page.locator('#basket-count').textContent(), '2');
       const ownOrders = await page.evaluate(() => fetch('/api/wholesale/orders').then(r => r.json()));
       assert.equal(ownOrders.orders.length, 1, 'reorder builds a basket and waits for confirmation');
@@ -229,3 +241,77 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
     } finally { await context.close(); await adminContext.close(); }
   });
 }
+
+// A repeat is a reviewed basket merge, including current availability, price changes and unresolved submissions.
+test('repeat order: current availability and prices, basket merge, cancellation and pending-submit guard', { timeout: 90000 }, async () => {
+  const created = [];
+  for (const [title, price] of [['Repeat Espresso', 3000], ['Repeat Filter', 2400]]) {
+    const result = await api('POST', '/api/admin/wholesale/catalogue', { title, name: title, origin: 'Colombia', process: 'Washed', notes: 'Cocoa', badge: '', categories: ['single-origin'], prices: { quarter: 1000, half: 2000, kilo: price }, active: true, inStock: true });
+    assert.equal(result.response.status, 201); created.push(result.body.product);
+  }
+  let [espresso, filter] = created;
+  const { customer } = (await api('POST', '/api/admin/wholesale/customers', { business: 'Repeat Coffee Buyer', contact: 'Buyer', email: 'repeat@example.com', status: 'Active', note: '' })).body;
+  const { temporaryPassword } = (await api('POST', `/api/admin/wholesale/customers/${customer.id}/account`, { username: 'repeat.buyer' })).body;
+  const changed = await api('POST', '/api/wholesale/auth/change-password', { username: 'repeat.buyer', password: temporaryPassword, newPassword: 'repeat-buyer-password' }, null);
+  const buyerCookie = changed.response.headers.getSetCookie().find(value => /^sf_wholesale_session=[\w-]/.test(value)).split(';')[0];
+  const identity = (await api('GET', '/api/wholesale/catalogue', undefined, buyerCookie)).body;
+  let order = (await api('POST', '/api/wholesale/orders', { requestId: crypto.randomUUID(), orderingIdentity: identity.me.id, customerVersion: identity.customer.version, lines: [{ productId: espresso.id, pack: 'kilo', grind: 'beans', quantity: 2, price: 3000 }, { productId: filter.id, pack: 'half', grind: 'filter', quantity: 1, price: 2000 }], delivery: 'Roastery collection' }, buyerCookie)).body.order;
+  order = (await api('PATCH', `/api/admin/wholesale/orders/${order.id}`, { ifVersion: order.version, status: 'Cancelled', customerId: customer.id, note: 'Internal only' })).body.order;
+  const context = await contextFor({ width: 393, height: 852 }, 'light', buyerCookie);
+  try {
+    const page = await context.newPage(); await page.goto(srv.base + '/wholesale-preview/');
+    const card = page.locator(`article[data-product="${filter.id}"]`); await card.waitFor();
+    await card.locator('[name="pack"][value="quarter"]').check(); await card.locator('button[type="submit"]').click();
+    assert.equal(await page.locator('#basket-count').textContent(), '1');
+    espresso = (await api('PUT', `/api/admin/wholesale/catalogue/${espresso.id}`, { ifVersion: espresso.version, prices: espresso.prices, active: true, inStock: false })).body.product;
+    await page.locator('#my-orders').click(); await page.locator('.order-state', { hasText: 'Cancelled' }).waitFor();
+    assert.equal(await page.locator('.history-progress').count(), 0, 'cancelled orders never imply completed preparation stages');
+    assert.match(await page.locator('.history-cancelled').textContent(), /cancelled/);
+    if (process.env.WHOLESALE_SCREENSHOT_DIR) { await mkdir(process.env.WHOLESALE_SCREENSHOT_DIR, { recursive: true }); await page.screenshot({ path: `${process.env.WHOLESALE_SCREENSHOT_DIR}/history-cancelled-phone-light.png` }); }
+    // Page-shaped UI fixtures exercise count, append deduplication and refresh independently of the API's paging tests.
+    const earlier = { ...order, id: 'WS-' + crypto.randomUUID().replaceAll('-', '').toUpperCase(), createdAt: order.createdAt - 86400000 };
+    let earlierReads = 0;
+    await page.route('**/api/wholesale/orders*', async route => {
+      if (route.request().method() !== 'GET') return route.continue();
+      const more = new URL(route.request().url()).searchParams.has('cursor');
+      if (more) { earlierReads++; await new Promise(resolve => setTimeout(resolve, 250)); }
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ orders: more ? [order, earlier] : [order], count: 2, nextCursor: more ? null : 'earlier-page' }) });
+    });
+    await page.locator('#refresh-orders').click(); await page.locator('#history-count', { hasText: 'Showing 1 of 2 orders' }).waitFor();
+    await page.locator('.history-details summary').click();
+    await page.locator('#history-more').click(); assert.equal(await page.locator('#history-more').isDisabled(), true);
+    await page.locator('#history-count', { hasText: 'Showing 2 of 2 orders' }).waitFor();
+    assert.equal(await page.locator('[data-history-order]').count(), 2, 'appended pages merge duplicate IDs');
+    assert.equal(await page.locator('.history-details').first().getAttribute('open'), '', 'loading earlier orders preserves expanded details');
+    assert.equal(earlierReads, 1); assert.equal(await page.locator('#history-more').isHidden(), true);
+    await page.locator('#refresh-orders').click(); await page.locator('#history-count', { hasText: 'Showing 1 of 2 orders' }).waitFor();
+    await page.unroute('**/api/wholesale/orders*');
+    await page.locator('#refresh-orders').click(); await page.locator('#history-count', { hasText: 'Showing 1 of 1 order' }).waitFor();
+    await page.locator('[data-reorder]').click(); await page.locator('#reorder-dialog').waitFor();
+    assert.match(await page.locator('#reorder-summary').textContent(), /1 bag available to add · £20.00/);
+    assert.match(await page.locator('#reorder-skipped').textContent(), /2 bags of Repeat Espresso — out of stock/);
+    assert.match(await page.locator('#reorder-existing').textContent(), /current 1 bag will stay/);
+    assert.equal(await page.locator('#basket-count').textContent(), '1');
+    if (process.env.WHOLESALE_SCREENSHOT_DIR) await page.screenshot({ path: `${process.env.WHOLESALE_SCREENSHOT_DIR}/repeat-unavailable-phone-light.png` });
+    await page.locator('#reorder-dialog [data-close]').last().click();
+    espresso = (await api('PUT', `/api/admin/wholesale/catalogue/${espresso.id}`, { ifVersion: espresso.version, prices: { ...espresso.prices, kilo: 3300 }, active: true, inStock: true })).body.product;
+    await page.locator('#my-orders').click(); await page.locator('[data-reorder]').click(); await page.locator('#reorder-dialog').waitFor();
+    assert.match(await page.locator('#reorder-summary').textContent(), /3 bags available to add · £86.00/);
+    espresso = (await api('PUT', `/api/admin/wholesale/catalogue/${espresso.id}`, { ifVersion: espresso.version, prices: { ...espresso.prices, kilo: 3400 }, active: true, inStock: true })).body.product;
+    await page.locator('#confirm-reorder').click(); await page.locator('#reorder-error', { hasText: 'changed' }).waitFor();
+    assert.match(await page.locator('#reorder-summary').textContent(), /3 bags available to add · £88.00/);
+    assert.equal(await page.locator('#basket-count').textContent(), '1', 'a price change requires reviewing again before merge');
+    if (process.env.WHOLESALE_SCREENSHOT_DIR) await page.screenshot({ path: `${process.env.WHOLESALE_SCREENSHOT_DIR}/repeat-updated-phone-light.png` });
+    await page.locator('#confirm-reorder').click(); await page.locator('#reorder-dialog').waitFor({ state: 'hidden' });
+    assert.equal(await page.locator('#basket-count').textContent(), '4'); assert.equal(await page.locator('#subtotal').textContent(), '£98.00');
+    assert.equal((await api('GET', '/api/wholesale/orders', undefined, buyerCookie)).body.orders.length, 1, 'confirming a repeat only builds the merged basket');
+    await page.route('**/api/wholesale/orders', route => route.request().method() === 'POST' ? route.abort() : route.continue());
+    await page.locator('#review-order').click(); await page.locator('#review-dialog').waitFor();
+    await page.locator('#review-form [name="delivery"][value="collection"]').check();
+    await page.locator('#submit-preview-order').click(); await page.locator('#preview-submit-error', { hasText: 'couldn’t confirm' }).waitFor();
+    await page.locator('#review-dialog .close-button').click();
+    await page.locator('#my-orders').click(); await page.locator('[data-reorder]').waitFor();
+    assert.equal(await page.locator('[data-reorder]').isDisabled(), true, 'an unresolved submission blocks repeat baskets');
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+  } finally { await context.close(); }
+});

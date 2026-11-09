@@ -194,6 +194,46 @@ dialog::backdrop { background: rgba(0,0,0,.3); -webkit-backdrop-filter: blur(6px
 .history-card h3 { margin-top: 10px; font-size: 19px; }
 .history-card p { margin-top: 10px; font-size: 13px; overflow-wrap: anywhere; }
 .history-card .button { margin-top: 16px; }
+.history-toolbar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px 12px; margin-top: 16px; }
+.history-toolbar p { color: var(--muted); font-size: 13px; }
+.history-toolbar .text-button { padding-inline: 0; }
+.history-count { color: var(--muted); font-size: 12px; margin-top: 8px; }
+.history-more { display: flex; width: 100%; margin-top: 18px; }
+.history-card { padding: 18px; }
+.history-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.history-card-head h3 { font-size: 18px; margin-top: 0; }
+.history-card-head strong { font-size: 20px; white-space: nowrap; letter-spacing: -.025em; }
+.history-card .history-id { margin-top: 8px; }
+.history-card .history-summary { color: var(--muted); font-size: 13px; margin-top: 6px; }
+.history-status { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: baseline; margin-top: 14px; }
+.history-status .order-state { margin: 0; }
+.history-status p { color: var(--muted); font-size: 12px; margin: 0; }
+.order-state.status-new { color: var(--accent); background: var(--tint); }
+.order-state.status-preparing { color: var(--warn); background: var(--warn-bg); }
+.order-state.status-ready, .order-state.status-dispatched { color: var(--ok); background: var(--ok-bg); }
+.order-state.status-cancelled { color: var(--bad); background: var(--bad-bg); }
+.history-progress { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 5px; padding: 0; margin: 16px 0; list-style: none; }
+.history-progress li { display: grid; justify-items: center; gap: 6px; text-align: center; color: var(--muted); font-size: 10px; }
+.history-progress .progress-marker { display: grid; place-items: center; width: 25px; height: 25px; border: 1px solid var(--line); border-radius: 50%; color: var(--muted); font-size: 11px; font-weight: 650; }
+.history-progress li.done .progress-marker { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
+.history-progress li[aria-current="step"] { color: var(--accent); font-weight: 650; }
+.history-progress li[aria-current="step"] .progress-marker { color: var(--accent); background: var(--tint); border-color: var(--accent); }
+.history-cancelled { padding: 12px 14px; border-radius: 12px; color: var(--bad); background: var(--bad-bg); }
+.history-details { margin-top: 10px; border-top: 1px solid var(--line); }
+.history-details summary { display: flex; justify-content: space-between; align-items: center; gap: 10px; min-height: 44px; color: var(--accent); font-size: 13px; font-weight: 600; cursor: pointer; }
+.history-details summary::after { content: "+"; font-size: 20px; }
+.history-details[open] summary::after { content: "−"; }
+.history-lines { display: grid; gap: 12px; list-style: none; padding: 10px 0 4px; margin: 0; }
+.history-lines li { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 4px 12px; font-size: 13px; }
+.history-lines li small { grid-column: 1; color: var(--muted); font-size: 12px; }
+.history-lines li strong { grid-column: 2; grid-row: 1; font-size: 13px; white-space: nowrap; }
+.history-address { white-space: pre-line; overflow-wrap: anywhere; }
+.history-card .history-reorder { display: flex; width: 100%; margin-top: 14px; }
+.reorder-skipped { padding: 14px 16px; margin-top: 18px; border-radius: 14px; background: var(--warn-bg); color: var(--warn); }
+.reorder-skipped h3 { font-size: 15px; }
+.reorder-skipped ul { display: grid; gap: 8px; padding-left: 18px; margin: 10px 0 0; font-size: 13px; }
+.reorder-actions { display: grid; gap: 10px; margin-top: 20px; }
+.reorder-actions .button { width: 100%; }
 .order-state { display: inline-flex; align-items: center; border-radius: 99px; padding: 5px 10px; margin-top: 12px; background: var(--tint); color: var(--accent); font-size: 12px; font-weight: 650; }
 .preview-complete p { margin-top: 16px; overflow-wrap: anywhere; }
 .preview-complete > .button { display: flex; width: 100%; margin-top: 20px; }

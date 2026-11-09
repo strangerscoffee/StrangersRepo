@@ -421,7 +421,12 @@ $("#preview-sign-out").addEventListener("click", async () => {
 });
 $("#retry-catalogue").addEventListener("click", start);
 $("#refresh-catalogue").addEventListener("click", start);
-window.addEventListener("pageshow", (event) => { if (event.persisted) { $("#review-dialog").close(); start(); } });
+window.addEventListener("pageshow", (event) => {
+  if (!event.persisted) return;
+  // Cached dialogs contain private business data; restore against the current session and scoped storage.
+  document.querySelectorAll("dialog[open]").forEach(dialog => dialog.close());
+  location.reload();
+});
 
 async function openAccount() {
   try {
@@ -443,8 +448,9 @@ $("#account-form").addEventListener("submit", async (event) => {
   button.disabled = true;
   $("#account-error").hidden = true;
   try {
+    if (!await confirmIdentity()) return;
     const fields = Object.fromEntries(["business", "contact", "email", "phone", "address", "postcode", "deliveryNotes"].map((key) => [key, form.elements[key].value]));
-    const result = await api("/api/wholesale/account", { ...fields, ifVersion: session.customer.version }, "PUT");
+    const result = await api("/api/wholesale/account", { ...fields, ifVersion: session.customer.version, orderingIdentity: session.me.id }, "PUT");
     session.customer = result.customer;
     showPaymentTerms();
     $("#signed-in-name").textContent = session.customer.business;
@@ -465,30 +471,118 @@ $("#account-password-form").addEventListener("submit", async (event) => {
   finally { button.disabled = false; }
 });
 
-async function loadOrders() {
-  $("#order-history").textContent = "Loading your orders…";
+const bagCount = (value) => `${value} ${value === 1 ? "bag" : "bags"}`;
+let reorderPlan = null;
+let reordering = false;
+function historyStatus(order) {
+  const states = ["New", "Preparing", "Ready", "Dispatched"];
+  const current = states.indexOf(order.status);
+  const descriptions = {
+    New: "Received by Strangers.", Preparing: "Your coffee is being prepared.",
+    Ready: order.delivery === "Roastery collection" ? "Ready for roastery collection." : "Ready for dispatch.",
+    Dispatched: "Marked dispatched by Strangers.", Cancelled: "This order was cancelled.",
+  };
+  const status = Object.hasOwn(descriptions, order.status) ? order.status : "Status unavailable";
+  const badge = `<span class="order-state status-${status.toLowerCase().replaceAll(" ", "-")}">${escape(status)}</span>`;
+  if (status === "Cancelled") return `${badge}<p class="history-cancelled">This order was cancelled. No further preparation updates are expected.</p>`;
+  return `<div class="history-status">${badge}<p>${descriptions[status] || "Contact Strangers for an update."}</p></div>${current >= 0 ? `<ol class="history-progress" aria-label="Order progress">${states.map((step, i) => `<li ${i < current ? 'class="done"' : ""} ${i === current ? 'aria-current="step"' : ""}><span class="progress-marker" aria-hidden="true">${i < current ? "✓" : i + 1}</span><span>${step === "New" ? "Received" : step}<span class="sr-only">${i < current ? ", completed" : i === current ? ", current stage" : ", not reached"}</span></span></li>`).join("")}</ol>` : ""}`;
+}
+function historyCard(order, expanded) {
+  const date = new Date(order.createdAt).toLocaleDateString("en-GB", { timeZone: "Europe/London", day: "numeric", month: "short", year: "numeric" });
+  const snapshot = order.customerSnapshot;
+  return `<article class="history-card" data-history-order="${escape(order.id)}"><div class="history-card-head"><h3>${date}</h3><strong>${money(order.pence)}</strong></div><p class="history-summary">${bagCount(order.packs)} · ${escape(order.delivery)}</p>${order.reference ? `<p class="history-summary">Reference: ${escape(order.reference)}</p>` : ""}${historyStatus(order)}
+    <details class="history-details" ${expanded.has(order.id) ? "open" : ""}><summary>Order details · ${bagCount(order.packs)}</summary><p class="history-id">${escape(order.id)}</p><ul class="history-lines">${order.lines.map(line => `<li><span>${line.quantity} × ${escape(line.title)}</span><small>${escape(line.packLabel)} · ${escape(line.grindLabel)}</small><strong>${money(line.price * line.quantity)}</strong></li>`).join("")}</ul>${snapshot?.address && order.delivery === "Delivery" ? `<p class="history-address"><b>Delivery address at order</b><br>${escape(snapshot.address)}<br>${escape(snapshot.postcode || "")}</p>` : ""}${order.deliveryNotes ? `<p class="history-address">${escape(order.deliveryNotes)}</p>` : ""}${order.paymentTerms ? `<p class="payment-terms">Payment terms: ${escape(order.paymentTerms.label)}${order.paymentTerms.note ? `<br>${escape(order.paymentTerms.note)}` : ""}</p>` : ""}</details>
+    <button class="button button-outline history-reorder" type="button" data-reorder="${escape(order.id)}" ${pendingAttempt ? "disabled" : ""}>Order again</button></article>`;
+}
+let historyCursor = null;
+let historyTotal = 0;
+let historyLoading = false;
+async function loadOrders(append = false) {
+  if (historyLoading) return;
+  historyLoading = true;
+  const expanded = new Set([...document.querySelectorAll('[data-history-order]:has(details[open])')].map(node => node.dataset.historyOrder));
+  if (!append) { history = []; historyCursor = null; historyTotal = 0; $("#order-history").textContent = "Loading your orders…"; $("#history-more").hidden = true; }
+  $("#history-count").textContent = append ? "Loading earlier orders…" : "Loading orders…";
+  $("#order-history").setAttribute("aria-busy", "true");
+  $("#refresh-orders").disabled = $("#history-more").disabled = true;
   try {
     if (!await confirmIdentity()) return;
-    history = (await api("/api/wholesale/orders")).orders;
-    $("#order-history").innerHTML = history.length ? history.map((order) => `<article class="history-card"><p class="history-id">${escape(order.id)}</p><h3>${new Date(order.createdAt).toLocaleDateString("en-GB", { timeZone: "Europe/London", day: "numeric", month: "short", year: "numeric" })} · ${money(order.pence)}</h3><span class="order-state">${escape(order.status)}</span><p>${order.packs} bags · ${escape(order.delivery)}${order.reference ? ` · ${escape(order.reference)}` : ""}</p>${order.paymentTerms ? `<p class="payment-terms">Payment terms: ${escape(order.paymentTerms.label)}${order.paymentTerms.note ? `<br>${escape(order.paymentTerms.note)}` : ""}</p>` : ""}${order.lines.map((line) => `<p>${line.quantity} × ${escape(line.title)} · ${escape(line.packLabel)} · ${escape(line.grindLabel)}</p>`).join("")}<button class="button button-outline" type="button" data-reorder="${escape(order.id)}">Order again</button></article>`).join("") : '<p class="dialog-intro">Your orders will appear here once you place one.</p>';
-  } catch (error) { $("#order-history").textContent = error.message; }
+    const result = await api("/api/wholesale/orders" + (append && historyCursor ? "?cursor=" + encodeURIComponent(historyCursor) : ""));
+    history = append ? [...new Map([...history, ...result.orders].map(order => [order.id, order])).values()] : result.orders;
+    historyTotal = Number.isSafeInteger(result.count) ? result.count : history.length;
+    historyCursor = typeof result.nextCursor === "string" && result.nextCursor ? result.nextCursor : null;
+    $("#order-history").innerHTML = history.length ? history.map(order => historyCard(order, expanded)).join("") : '<p class="dialog-intro">Your orders will appear here once you place one.</p>';
+    $("#history-count").textContent = `Showing ${history.length} of ${historyTotal} ${historyTotal === 1 ? "order" : "orders"}`;
+    $("#history-more").hidden = !historyCursor;
+  } catch (error) { if (!append) $("#order-history").textContent = error.message; $("#history-count").textContent = append ? "Couldn’t load earlier orders. Try again." : ""; }
+  finally { historyLoading = false; $("#order-history").setAttribute("aria-busy", "false"); $("#refresh-orders").disabled = $("#history-more").disabled = false; }
 }
 $("#my-orders").addEventListener("click", () => { $("#orders-dialog").showModal(); loadOrders(); });
-$("#order-history").addEventListener("click", (event) => {
-  const button = event.target.closest("[data-reorder]");
-  if (!button || !ready) return;
-  if (pendingAttempt) { toast("Check your submitted order before building another basket."); return; }
-  const order = history.find((row) => row.id === button.dataset.reorder);
-  if (!order) return;
-  let added = 0;
+$("#refresh-orders").addEventListener("click", () => loadOrders());
+$("#history-more").addEventListener("click", () => { if (historyCursor) loadOrders(true); });
+function buildReorderPlan(order) {
+  let next = sanitiseBasket(basket);
+  const additions = [], skipped = [];
   for (const line of order.lines) {
     const product = productFor(line.productId);
-    if (!isAvailable(product)) continue;
-    const result = addToBasket(basket, line, line.quantity);
-    basket = result.basket; added += result.added;
+    if (!isAvailable(product)) { skipped.push({ title: line.title, quantity: line.quantity, reason: product?.active === false || !product ? "no longer offered" : "out of stock" }); continue; }
+    const result = addToBasket(next, line, line.quantity);
+    next = result.basket;
+    if (result.added) additions.push({ productId: line.productId, pack: line.pack, grind: line.grind, quantity: result.added, title: product.name, price: unitPrice(product, line.pack) });
+    if (result.added < line.quantity) skipped.push({ title: line.title, quantity: line.quantity - result.added, reason: "basket limit of 99 bags for this size and grind" });
   }
-  changedBasket(); $("#orders-dialog").close();
-  toast(added ? `${added} bags added at current prices. Review your basket before placing the order.` : "These coffees are unavailable or already at the basket limit.");
+  const added = totals(additions), combined = totals(next), existing = totals(basket);
+  const signature = JSON.stringify({ identity: session.me.id, additions, skipped, next, combined });
+  return { order, identity: session.me.id, additions, skipped, next, added, combined, existing, signature };
+}
+function renderReorderPlan(plan) {
+  reorderPlan = plan;
+  $("#reorder-summary").textContent = `${bagCount(plan.added.packs)} available to add · ${money(plan.added.pence)} at current prices.`;
+  $("#reorder-items").innerHTML = plan.additions.map(line => `<div class="review-line"><div><h3>${escape(line.title)}</h3><p>${line.quantity} × ${escape(packs[line.pack].label)} · ${escape(grinds[line.grind])}</p></div><strong>${money(line.price * line.quantity)}</strong></div>`).join("");
+  $("#reorder-skipped").hidden = !plan.skipped.length;
+  $("#reorder-skipped-items").innerHTML = plan.skipped.map(line => `<li>${bagCount(line.quantity)} of ${escape(line.title)} — ${escape(line.reason)}.</li>`).join("");
+  $("#reorder-existing").textContent = plan.existing.packs ? `Your current ${bagCount(plan.existing.packs)} will stay in the basket. Matching sizes and grinds merge. After adding: ${bagCount(plan.combined.packs)} · ${money(plan.combined.pence)} coffee subtotal.` : `This builds a basket for you to review. Coffee subtotal: ${money(plan.added.pence)}. It does not place an order.`;
+  $("#confirm-reorder").textContent = plan.added.packs ? `Add ${bagCount(plan.added.packs)} to basket` : "No available bags to add";
+  $("#confirm-reorder").disabled = !plan.added.packs;
+  $("#reorder-error").hidden = true;
+}
+$("#order-history").addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-reorder]");
+  if (!button || !ready || reordering) return;
+  if (pendingAttempt) { toast("Check your submitted order before building another basket."); return; }
+  const order = history.find(row => row.id === button.dataset.reorder);
+  if (!order) return;
+  reordering = true; button.disabled = true;
+  try {
+    const fresh = await api("/api/wholesale/catalogue");
+    if (fresh.me.id !== session.me.id) { location.reload(); return; }
+    if (!$("#orders-dialog").open || pendingAttempt) return;
+    applyCatalogue(fresh, false);
+    renderReorderPlan(buildReorderPlan(order));
+    $("#orders-dialog").close();
+    $("#reorder-dialog").showModal();
+  } catch (error) { toast(error.message); }
+  finally { reordering = false; if (button.isConnected) button.disabled = !!pendingAttempt; }
+});
+$("#confirm-reorder").addEventListener("click", async () => {
+  if (reordering || !reorderPlan?.added.packs || !ready) return;
+  if (pendingAttempt) { $("#reorder-error").textContent = "Check your submitted order before building another basket."; $("#reorder-error").hidden = false; return; }
+  const reviewed = reorderPlan;
+  reordering = true; $("#confirm-reorder").disabled = true;
+  try {
+    const fresh = await api("/api/wholesale/catalogue");
+    if (fresh.me.id !== reviewed.identity || fresh.me.id !== session.me.id) { location.reload(); return; }
+    if (!$("#reorder-dialog").open || pendingAttempt) return;
+    applyCatalogue(fresh, false);
+    const current = buildReorderPlan(reviewed.order);
+    if (current.signature !== reviewed.signature) { renderReorderPlan(current); $("#reorder-error").textContent = "Prices, availability or your basket changed. Review these updated items before adding."; $("#reorder-error").hidden = false; return; }
+    basket = current.next; changedBasket();
+    $("#reorder-dialog").close(); reorderPlan = null;
+    toast(`${bagCount(current.added.packs)} added at current prices. Review your basket before placing the order.`);
+    $("#your-order").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start" });
+    $("#your-order").focus({ preventScroll: true });
+  } catch (error) { $("#reorder-error").textContent = error.message; $("#reorder-error").hidden = false; }
+  finally { reordering = false; $("#confirm-reorder").disabled = !reorderPlan?.added.packs; }
 });
 if ("IntersectionObserver" in window) {
   new IntersectionObserver(([entry]) => { orderVisible = entry.isIntersecting; updateMobileBasket(); }, { threshold: 0 }).observe($("#your-order"));

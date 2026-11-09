@@ -7,6 +7,8 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
   const date = (ms) => new Date(ms).toLocaleString("en-GB", { timeZone: "Europe/London", year: "numeric", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
   let tab = "orders", status = "all", approval = "all", query = "", data = null, timer, sequence = 0;
   let orderPages = 1, customerPages = 1, loadingMore = false;
+  const quickBusy = new Set(), orderErrors = new Map();
+  const nextStatus = (row) => row.preview === false ? ({ New: "Preparing", Preparing: "Ready", Ready: "Dispatched" }[row.status] || null) : null;
   const customer = (id) => data.customers.find((row) => row.id === id);
   const accountFor = (id) => data.accounts.find((row) => row.customerId === id);
   const pill = (value) => html`<span class="pill ${["New", "Pending review", "Out of stock"].includes(value) ? "warn" : ["Ready", "Active", "In stock"].includes(value) ? "ok" : ["Cancelled", "On hold", "Declined"].includes(value) ? "bad" : ""}">${value}</span>`;
@@ -66,7 +68,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     if (current !== sequence) return html``;
     data = snapshot;
     const stats = data.stats || { openOrders: data.orders.filter((row) => row.preview === false && !["Dispatched", "Cancelled"].includes(row.status)).length, gramsToPrepare: data.orders.filter((row) => row.preview === false && ["New", "Preparing"].includes(row.status)).reduce((total, row) => total + row.grams, 0), totalCustomers: data.counts.customer || 0, visibleCoffees: data.products.filter((row) => row.active).length, totalCoffees: data.products.length, pendingAccounts: data.accounts.filter((row) => row.approvalStatus === "pending").length };
-    return html`<div class="w-workspace">${head("Wholesale", "Orders, business accounts and coffee catalogue.", html`<div class="w-page-actions"><span class="pill acc">Beta</span><a class="btn soft" href="${data.links.preview}">Open wholesale ordering</a></div>`)}
+    return html`<div class="w-workspace">${head("Wholesale", "Orders, business accounts and coffee catalogue.", html`<div class="w-page-actions"><span class="pill acc">Beta</span></div>`)}
       <div class="label">Needs attention</div><div class="group glass">${stats.pendingAccounts ? html`<button class="item" type="button" data-act="wh-pending"><span class="ic warn">${svg("people")}</span><span class="tx"><b>${stats.pendingAccounts} ${stats.pendingAccounts === 1 ? "account awaits" : "accounts await"} review</b><span>Review the business and payment terms before approving access.</span></span><span class="end"><span class="chev">${svg("chev")}</span></span></button>` : html`<div class="item"><span class="ic ok">${svg("ok")}</span><span class="tx"><b>Account reviews are up to date</b><span>New registrations appear here for approval.</span></span></div>`}</div>
       <div class="label">Wholesale at a glance</div><div class="stats w-stats">${[["Open orders", stats.openOrders, "New, preparing and ready"], ["Coffee to prepare", weight(stats.gramsToPrepare), "Customer orders only"], ["Customers", stats.totalCustomers, "Business accounts"], ["Visible coffees", stats.visibleCoffees, `Of ${stats.totalCoffees} coffees`]].map(([label, value, sub]) => html`<div class="stat glass"><span class="k">${label}</span><span class="v">${value}</span><span class="s">${sub}</span></div>`)}</div>
       <div class="segwrap w-sections"><div class="seg" role="group" aria-label="Wholesale sections">${[["orders", "Orders"], ["customers", "Customers"], ["catalogue", "Coffee catalogue"]].map(([id, label]) => html`<button type="button" data-act="wh-tab" data-id="${id}" aria-pressed="${tab === id}">${label}</button>`)}</div></div>
@@ -80,8 +82,54 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     return html`<div class="toolbar">${search("Search wholesale orders", "Search order, reference or customer")}</div>
       <div class="segwrap w-filters"><div class="seg" role="group" aria-label="Order status">${["all", ...data.statuses].map((value) => html`<button type="button" data-act="wh-status" data-id="${value}" aria-pressed="${status === value}">${value === "all" ? "All orders" : value}</button>`)}</div></div>
       <div class="label">Orders <span class="count">${rows.length} of ${data.matchingCount}</span></div>
-      <div class="group glass">${rows.length ? rows.map((row) => html`<button class="item w-order" type="button" data-act="wh-order" data-id="${row.id}"><span class="ic ${row.preview === false ? "acc" : "mut"}">${svg("coffee")}</span><span class="tx"><b>${customer(row.customerId)?.business || row.business || row.createdName}</b><span>${shortId(row.id)}… · ${date(row.createdAt)}</span><span>${row.packs} bags · ${weight(row.grams)} · ${row.preview === false ? "Ordered" : "Staff preview"} by ${row.createdName}</span></span><span class="end"><strong class="num">${money(row.pence)}</strong>${pill(row.status)}<span class="chev">${svg("chev")}</span></span></button>`) : html`<div class="empty">${svg("coffee")}<span>${query || status !== "all" ? "No matching orders. Try another search or status." : "No orders yet. Customer orders will appear here when submitted."}</span></div>`}</div>
+      <div class="group glass">${rows.length ? rows.map(orderRow) : html`<div class="empty">${svg("coffee")}<span>${query || status !== "all" ? "No matching orders. Try another search or status." : "No orders yet. Customer orders will appear here when submitted."}</span></div>`}</div>
       ${more("orders")}<p class="hint">Coffee subtotals are saved with each order. Delivery and invoicing are managed separately.</p>`;
+  }
+  function orderRow(row) {
+    const next = nextStatus(row), busy = quickBusy.has(row.id), problem = orderErrors.get(row.id);
+    return html`<div class="w-order-entry" data-order-entry="${row.id}" aria-busy="${busy}"><button class="item w-order" type="button" data-act="wh-order" data-id="${row.id}" ${busy ? raw("disabled") : ""}><span class="ic ${row.preview === false ? "acc" : "mut"}">${svg("coffee")}</span><span class="tx"><b>${row.business || customer(row.customerId)?.business || row.createdName}</b><span>${shortId(row.id)}… · ${date(row.createdAt)}</span><span>${row.delivery} · ${row.packs} ${row.packs === 1 ? "bag" : "bags"} · ${weight(row.grams)}</span>${row.reference ? html`<span>Reference: ${row.reference}</span>` : ""}${row.preview === false ? "" : html`<span class="w-test-label">Staff preview · ${row.createdName}</span>`}</span><span class="end"><strong class="num">${money(row.pence)}</strong>${pill(row.status)}<span class="chev">${svg("chev")}</span></span></button>
+      ${next || problem ? html`<div class="w-order-actions"><div class="w-order-feedback" data-order-error="${row.id}" role="alert" ${problem ? "" : raw("hidden")}>${problem ? html`<p>${problem.message}</p><button class="btn sm soft" type="button" data-act="wh-refresh-orders" data-id="${row.id}">Reload orders</button>` : ""}</div>${next ? html`<button class="btn sm soft" type="button" data-act="wh-next" data-id="${row.id}" aria-label="Mark ${row.business || "order"} ${next.toLowerCase()}" ${busy || problem ? raw("disabled") : ""}>${busy ? "Saving…" : "Mark " + next.toLowerCase()}</button>` : ""}</div>` : ""}</div>`;
+  }
+  function refreshOrderFeedback(id) {
+    const entry = document.querySelector(`[data-order-entry="${id}"]`);
+    if (!entry) return;
+    const row = data.orders.find((order) => order.id === id);
+    if (!row) return;
+    const busy = quickBusy.has(id), problem = orderErrors.get(id), next = nextStatus(row);
+    entry.setAttribute("aria-busy", String(busy));
+    entry.querySelector('[data-act="wh-order"]').disabled = busy;
+    const button = entry.querySelector('[data-act="wh-next"]');
+    if (button) { button.disabled = busy || !!problem || !next; button.textContent = busy ? "Saving…" : next ? "Mark " + next.toLowerCase() : "Up to date"; }
+    const feedback = entry.querySelector('[data-order-error]');
+    if (feedback) {
+      feedback.hidden = !problem;
+      put(feedback, problem ? html`<p>${problem.message}</p><button class="btn sm soft" type="button" data-act="wh-refresh-orders" data-id="${id}">Reload orders</button>` : html``);
+    }
+  }
+  async function advanceOrder(id) {
+    if (quickBusy.has(id) || orderErrors.has(id)) return;
+    const row = data.orders.find((order) => order.id === id), next = row && nextStatus(row);
+    if (!next) return;
+    const source = document.querySelector(`[data-act="wh-next"][data-id="${id}"]`), wasFocused = document.activeElement === source;
+    let restoreFocus = false;
+    quickBusy.add(id); refreshOrderFeedback(id);
+    try {
+      const result = await api("PATCH", `/api/admin/wholesale/orders/${id}`, { ifVersion: row.version, status: next, customerId: row.customerId, note: row.note || "" });
+      if (result.order?.id !== id || result.order.status !== next || result.order.version !== row.version + 1) throw new Error("The status update could not be confirmed. Reload orders to check the latest status.");
+      orderErrors.delete(id);
+      restoreFocus = wasFocused && (document.activeElement === source || document.activeElement === document.body);
+      await reload();
+      toast(`${row.business || "Order"} marked ${next.toLowerCase()}.`);
+    } catch (error) {
+      orderErrors.set(id, { version: row.version, message: error.message + " Reload orders before updating this order again." });
+      restoreFocus = wasFocused && (document.activeElement === source || document.activeElement === document.body);
+    } finally {
+      quickBusy.delete(id); refreshOrderFeedback(id);
+      if (restoreFocus && $("#scrim").hidden) {
+        const target = document.querySelector(`[data-act="wh-refresh-orders"][data-id="${id}"]`) || document.querySelector(`[data-act="wh-next"][data-id="${id}"]`) || document.querySelector(`[data-act="wh-order"][data-id="${id}"]`) || document.querySelector(`[data-act="wh-status"][data-id="${status}"]`);
+        target?.focus({ preventScroll: true });
+      }
+    }
   }
   function customers() {
     const rows = [...data.customers].sort((a,b) => Number(accountFor(b.id)?.approvalStatus === "pending") - Number(accountFor(a.id)?.approvalStatus === "pending"));
@@ -93,22 +141,82 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     const rows = data.products.filter((row) => matches(`${row.title} ${row.name} ${row.origin} ${row.process} ${row.notes}`));
     return html`<div class="toolbar">${search("Search coffee catalogue", "Search coffee, origin or tasting notes")}<button class="btn" type="button" data-act="wh-coffee">${svg("plus")}Add coffee</button></div><div class="label">Coffee catalogue <span class="count">${rows.length} of ${data.products.length}</span></div><div class="group glass">${rows.length ? rows.map((row) => html`<div class="item w-coffee">${row.imageUrls.length ? html`<img src="${row.imageUrls[0]}" alt="" width="52" height="52" loading="lazy">` : html`<span class="ic mut">${svg("coffee")}</span>`}<span class="tx"><b>${row.title}</b><span>250 g ${money(row.prices.quarter)} · 500 g ${money(row.prices.half)} · 1 kg ${money(row.prices.kilo)}</span><span>${row.notes}</span></span><span class="end"><span class="w-coffee-state">${pill(row.active ? "Visible" : "Hidden")}${pill(row.inStock ? "In stock" : "Out of stock")}</span><button class="btn sm soft" type="button" data-act="wh-coffee" data-id="${row.id}" aria-label="Edit ${row.name}">Edit</button></span></div>`) : html`<div class="empty">${svg("coffee")}<span>${query ? "No matching coffees. Try another search." : "Add your first coffee to start the catalogue."}</span></div>`}</div><p class="hint">Edit coffees, bag prices, photos and availability. Existing orders retain their original details.</p>`;
   }
-  function editOrder(id) {
-    const row = data.orders.find((row) => row.id === id);
-    if (!row) return;
-    openSheet(html`<form class="w-sheet"><h2 id="sheetTitle">Order</h2><p class="w-id">${row.id}</p><div class="kvs"><div class="kv"><span>Saved by</span><span>${row.createdName} · ${date(row.createdAt)}</span></div><div class="kv"><span>Business</span><span>${row.business || "Not provided"}</span></div><div class="kv"><span>Reference</span><span>${row.reference || "None"}</span></div><div class="kv"><span>Delivery preference</span><span>${row.delivery}</span></div></div>
-      <div class="group">${row.lines.map((line) => html`<div class="item"><span class="tx"><b>${line.title}</b><span>${line.quantity} × ${line.packLabel} · ${line.grindLabel}</span></span><span class="end num">${money(line.price * line.quantity)}</span></div>`)}</div><div class="kv"><span>Coffee subtotal · ${weight(row.grams)}</span><strong>${money(row.pence)}</strong></div>
-      ${field("Order status", html`<select id="wStatus">${data.statuses.map((value) => html`<option ${value === row.status ? raw("selected") : ""}>${value}</option>`)}</select>`)}
-      ${field("Customer", html`<select id="wCustomer" ${row.preview === false ? raw("disabled") : ""}><option value="">Not linked to a customer</option>${row.customerId && !customer(row.customerId) ? html`<option value="${row.customerId}" selected>${row.customerSnapshot?.business || row.business}</option>` : ""}${data.customers.map((value) => html`<option value="${value.id}" ${value.id === row.customerId ? raw("selected") : ""}>${value.business}</option>`)}</select>`)}
-      ${row.customerSnapshot ? html`<div class="kvs"><div class="kv"><span>Contact</span><span>${row.customerSnapshot.contact} · ${row.customerSnapshot.email} · ${row.customerSnapshot.phone}</span></div><div class="kv"><span>Delivery address at checkout</span><span class="w-address">${row.customerSnapshot.address} ${row.customerSnapshot.postcode}</span></div><div class="kv"><span>Delivery notes</span><span>${row.deliveryNotes || "None"}</span></div></div>` : html`<p class="hint">Staff preview order.</p>`}
-      ${row.preview === false ? html`<div class="kvs"><div class="kv"><span>Payment terms at order</span><span>${row.paymentTerms?.label || "Not recorded"}</span></div>${row.paymentTerms?.note ? html`<div class="kv"><span>Payment instructions</span><span class="w-address">${row.paymentTerms.note}</span></div>` : ""}</div>` : ""}
-      ${field("Internal note", html`<textarea id="wNote" maxlength="1000">${row.note}</textarea>`)}${note}${buttons("Save order")}</form>`, async (action, form) => {
+  function editOrder(id, draft = null, displayed = null) {
+    const row = displayed || data.orders.find((row) => row.id === id);
+    if (!row || quickBusy.has(id)) return;
+    const snapshot = row.customerSnapshot, selectedCustomer = draft && Object.hasOwn(draft, "customerId") ? draft.customerId : row.customerId;
+    openSheet(html`<form class="w-sheet w-order-sheet"><h2 id="sheetTitle" tabindex="-1">Order details</h2><div class="w-order-heading"><h3>${row.business || row.createdName}</h3>${pill(row.status)}${row.preview === false ? "" : html`<span class="pill">Staff preview</span>`}</div><p class="w-id">${row.id}</p>
+      <div class="kvs"><div class="kv"><span>Received</span><span>${date(row.createdAt)}</span></div><div class="kv"><span>Reference</span><span>${row.reference || "None supplied"}</span></div><div class="kv"><span>Ordered by</span><span>${row.createdName}</span></div></div>
+      <section class="w-order-section" aria-labelledby="wPackingTitle"><h3 id="wPackingTitle">Packing list</h3><div class="group w-packing-list">${row.lines.map((line) => html`<div class="item w-packing-line"><span class="w-pack-quantity"><b>${line.quantity}</b><span>${line.quantity === 1 ? "bag" : "bags"}</span></span><span class="tx"><b>${line.title}</b><span>${line.packLabel}</span><span>${line.grindLabel}</span></span><span class="end num">${money(line.price * line.quantity)}</span></div>`)}</div><div class="kv"><span>${row.packs} ${row.packs === 1 ? "bag" : "bags"} · ${weight(row.grams)} total</span><strong>${money(row.pence)}</strong></div></section>
+      <section class="w-order-section" aria-labelledby="wDeliveryTitle"><h3 id="wDeliveryTitle">${row.delivery}</h3>${snapshot ? html`<p class="w-address">${[snapshot.contact, snapshot.email, snapshot.phone].filter(Boolean).join(" · ") || "No contact details recorded"}</p>${row.delivery === "Delivery" ? html`<div class="kvs"><div class="kv"><span>Delivery address at checkout</span><span class="w-address">${[snapshot.address, snapshot.postcode].filter(Boolean).join("\n") || "Not recorded"}</span></div><div class="kv"><span>Delivery instructions</span><span class="w-address">${row.deliveryNotes || "None supplied"}</span></div></div>` : ""}` : html`<p class="hint">Staff preview order.</p>`}</section>
+      ${row.preview === false ? html`<section class="w-order-section" aria-labelledby="wTermsTitle"><h3 id="wTermsTitle">Payment terms at order</h3><p>${row.paymentTerms?.label || "Not recorded on this order"}</p>${row.paymentTerms?.note ? html`<p class="w-address">${row.paymentTerms.note}</p>` : ""}</section>` : ""}
+      <section class="w-order-section w-order-management" aria-labelledby="wManageTitle"><h3 id="wManageTitle">Manage order</h3>${field("Order status", html`<select id="wStatus">${data.statuses.map((value) => html`<option ${value === (draft?.status ?? row.status) ? raw("selected") : ""}>${value}</option>`)}</select>`)}
+      ${field("Customer", html`<select id="wCustomer" ${row.preview === false ? raw("disabled") : ""}><option value="">Not linked to a customer</option>${selectedCustomer && !customer(selectedCustomer) ? html`<option value="${selectedCustomer}" selected>${snapshot?.business || row.business}</option>` : ""}${data.customers.map((value) => html`<option value="${value.id}" ${value.id === selectedCustomer ? raw("selected") : ""}>${value.business}</option>`)}</select>`)}
+      ${field("Internal note", html`<textarea id="wNote" maxlength="1000">${draft?.note ?? row.note}</textarea>`)}</section>${note}${buttons("Save order")}<div class="w-order-danger"><button class="btn bad" type="button" data-sheet="delete-order">Delete order</button></div></form>`, async (action, element) => {
+      const form = element.closest("form");
+      if (action === "delete-order") {
+        confirmOrderDeletion(row, { status: form.querySelector("#wStatus").value, customerId: row.preview === false ? row.customerId : form.querySelector("#wCustomer").value || null, note: form.querySelector("#wNote").value });
+        return;
+      }
       if (action !== "submit") return;
       await saveForm(form, async () => {
         await api("PATCH", `/api/admin/wholesale/orders/${row.id}`, { ifVersion: row.version, status: $("#wStatus").value, customerId: row.preview === false ? row.customerId : $("#wCustomer").value || null, note: $("#wNote").value });
+        orderErrors.delete(row.id);
         if (form.isConnected) closeSheet(); await reload(); toast("Order saved.");
       });
     });
+    $("#sheetTitle").focus({ preventScroll: true });
+    $("#sheet").scrollTop = 0;
+  }
+  function confirmOrderDeletion(row, draft) {
+    let cleanup = () => {};
+    const back = () => { cleanup(); editOrder(row.id, draft, row); };
+    openSheet(html`<form id="wDeleteOrderForm" class="w-sheet"><h2 id="sheetTitle" tabindex="-1">Delete order?</h2><p>${row.preview === false ? "This removes the order from Admin and the customer’s order history." : "This removes the staff preview order from Admin."}</p><div class="kvs w-delete-summary"><div class="kv"><span>Business</span><strong>${row.business || row.createdName}</strong></div><div class="kv"><span>Order</span><span class="w-id">${row.id}</span></div><div class="kv"><span>Coffee subtotal</span><strong>${money(row.pence)}</strong></div><div class="kv"><span>Status</span><span>${row.status}</span></div></div><p>The order cannot be restored from this page. An audit record is kept.</p><p>Payments are unchanged. No refund is issued.</p><p class="err" id="wErr" role="alert"></p><button class="btn soft" type="button" data-sheet="reload-delete" hidden>Reload latest order</button><div class="row w-actions"><button class="btn soft" type="button" data-sheet="cancel-delete">Cancel</button><fieldset id="wDeleteConfirmControls" class="w-delete-confirm-controls"><button class="btn solidbad" type="submit">Confirm delete order</button></fieldset></div></form>`, async (action, element) => {
+      const form = element.closest("form");
+      if (form.dataset.whBusy) return;
+      if (action === "cancel-delete") { back(); return; }
+      if (action === "reload-delete") {
+        await saveForm(form, async () => {
+          await reload();
+          let latest = data.orders.find((order) => order.id === row.id);
+          if (!latest) latest = (await api("GET", "/api/admin/wholesale/orders?q=" + encodeURIComponent(row.id))).orders.find((order) => order.id === row.id);
+          cleanup();
+          if (latest) editOrder(row.id, null, latest);
+          else { closeSheet(); focusOrderList(row.id); toast("This order is no longer available."); }
+        });
+        return;
+      }
+      if (action !== "submit" || form.querySelector("#wDeleteConfirmControls").disabled) return;
+      const position = data.orders.findIndex((order) => order.id === row.id), button = form.querySelector('button[type="submit"]');
+      button.textContent = "Deleting…";
+      await saveForm(form, async () => {
+        const result = await api("DELETE", `/api/admin/wholesale/orders/${row.id}`, { ifVersion: row.version });
+        if (result.deleted !== true || result.id !== row.id) throw new Error("The deletion could not be confirmed. Reload the latest order to check its status.");
+        orderErrors.delete(row.id); cleanup(); closeSheet(); await reload(); focusOrderList(data.orders[Math.min(Math.max(position, 0), data.orders.length - 1)]?.id); toast("Order deleted from the order lists.");
+      });
+      if (form.isConnected) {
+        button.textContent = "Confirm delete order";
+        if (form.querySelector("#wErr").textContent) { form.querySelector("#wDeleteConfirmControls").disabled = true; form.querySelector('[data-sheet="reload-delete"]').hidden = false; }
+      }
+    });
+    const form = $("#wDeleteOrderForm"), controller = new AbortController(), scrim = $("#scrim");
+    const observer = new MutationObserver(() => { if (!form.isConnected) cleanup(); });
+    cleanup = () => { controller.abort(); observer.disconnect(); };
+    observer.observe($("#sheet"), { childList: true });
+    // Cancel confirmation gestures return to the original editor without discarding its draft.
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape" || !form.isConnected) return;
+      event.preventDefault(); event.stopImmediatePropagation(); if (!form.dataset.whBusy) back();
+    }, { capture: true, signal: controller.signal });
+    scrim.addEventListener("click", (event) => {
+      if (event.target !== scrim || !form.isConnected) return;
+      event.preventDefault(); event.stopImmediatePropagation(); if (!form.dataset.whBusy) back();
+    }, { capture: true, signal: controller.signal });
+    $("#sheetTitle").focus({ preventScroll: true }); $("#sheet").scrollTop = 0;
+  }
+  function focusOrderList(id) {
+    const target = id && document.querySelector(`[data-act="wh-order"][data-id="${id}"]`) || document.querySelector(`[data-act="wh-status"][data-id="${status}"]`) || document.querySelector('[data-act="wh-tab"][data-id="orders"]');
+    target?.focus({ preventScroll: true });
   }
   function editCustomer(id) {
     const row = id ? customer(id) : { business: "", contact: "", email: "", status: "Active", note: "" };
@@ -228,6 +336,8 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
       if (name === "wh-approval" && ["all", "pending"].includes(id)) { clearTimeout(timer); approval = id; customerPages = 1; await reload(); }
       if (name === "wh-pending") { clearTimeout(timer); tab = "customers"; approval = "pending"; query = ""; customerPages = 1; await reload(); }
       if (name === "wh-more" && id === tab && data.nextCursor && !loadingMore) { loadingMore = true; const button = $(".w-more button"); if (button) { button.disabled = true; button.setAttribute("aria-busy", "true"); } try { if (id === "orders") orderPages++; else if (id === "customers") customerPages++; await reload(); } finally { loadingMore = false; } }
+      if (name === "wh-next") await advanceOrder(id);
+      if (name === "wh-refresh-orders") { orderErrors.delete(id); await reload(); (document.querySelector(`[data-act="wh-next"][data-id="${id}"]`) || document.querySelector(`[data-act="wh-order"][data-id="${id}"]`))?.focus({ preventScroll: true }); }
       if (name === "wh-order") editOrder(id);
       if (name === "wh-customer") editCustomer(id);
       if (name === "wh-coffee") editCoffee(id);
