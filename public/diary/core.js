@@ -40,15 +40,30 @@ const PROVE={
   other:{label:"Other check",manual:true,hint:"Record the reading if there is one, and choose pass or fail."}};
 const ALL_TOPICS=[["hygiene","Personal hygiene & handwashing"],["cross","Cross-contamination"],["cleaning","Cleaning"],["chilling","Chilling"],["cooking","Cooking & reheating"],["allergens","Allergens"],["diary","Opening & closing checks"],["l2","Level 2 Food Hygiene certificate"]];
 const TOPICS=ALL_TOPICS;
+/* The 4-weekly review (SFBB "4-weekly review" page). [key, question, the answer that needs noting]: most questions
+   flag a "Yes" (something changed or went wrong); the "have you done it" ones flag a "No"; null flags neither.
+   Keys are stored with each review's answers: never rename or reuse one. */
 const REVIEW_QS=[
-  ["problems","Were there any problems recorded in the diary this period?"],
-  ["supplier","Have you started using a new supplier or new types of food?"],
-  ["menu","Have you added new menu items, recipes or ways of working?"],
-  ["equipment","Have you got new equipment, or has any broken down?"],
-  ["staff","Have new staff started, and have they been trained on the safe methods?"],
-  ["allergen","Has any allergen information changed?"],
-  ["pests","Any signs of pests?"],
-  ["methods","Have you updated your safe methods to reflect any changes?"]];
+  ["problems","Were there any problems recorded in the diary this period?","Yes"],
+  ["repeat","Did you see any problems on a walk round the kitchen, or has the same problem come up in the diary three times or more?","Yes"],
+  ["reviewed","Have you reviewed your safe methods?","No"],
+  ["supplier","Have you started using a new supplier or new types of food?","Yes"],
+  ["supplierContacts","Have any new suppliers been recorded with their contact details?","No"],
+  ["menu","Have you added new menu items, recipes or ways of working?","Yes"],
+  ["allergen","Has any allergen information changed?","Yes"],
+  ["equipment","Have you got new equipment, or has any broken down?","Yes"],
+  ["cleaning","Does the cleaning schedule need updating?","Yes"],
+  ["staff","Have new staff started, and have they been trained on the safe methods?","Yes"],
+  ["refresher","Do any existing staff need safe method refresher training?","Yes"],
+  ["openClose","Are any extra opening or closing checks needed?","Yes"],
+  ["complaints","Have any food complaints come in? If so, have they been investigated and the safe methods reviewed?","Yes"],
+  ["probes","Have probes been calibrated in the last 4 weeks and the results recorded?","No"],
+  ["extrasDone","Have the extra checks been done and recorded each week?","No"],
+  ["proveIt","Are Prove it checks being done regularly and recorded?","No"],
+  ["pests","Any signs of pests?","Yes"],
+  ["methods","Have you updated your safe methods to reflect any changes?",null]];
+/* An answer that needs noting: in the review history, the inspection PDF and to open the details box. */
+const revFlagged=(q,r)=>q[2]!=null&&!!(r&&r.answers&&r.answers[q[0]]&&r.answers[q[0]].a===q[2]);
 /* Sites. The Roastery's records live at the original top-level paths (they were recorded before sites existed);
    every other site keeps its own copy of each collection under sites/<id>/. */
 const SITES=[

@@ -104,7 +104,7 @@ Records → Staff training. Admins manage all records and link ownership. Staff 
 
 Training topics (`<topic>`): `hygiene`, `cross`, `cleaning`, `chilling`, `cooking`, `allergens`, `diary`, `l2`. A site's `trainingOff` (set from Staff training → Topics for this site) lists the topics it doesn't use: they're hidden there and not counted as training to do, and any dates already in `topics` are kept.
 
-**`reviews/<YYYY-MM-DD>`**: `date, answers:{<q>:{a:"Yes"|"No", d}}, notes, by, at`. Anyone can sign it (Records → 4-weekly review); when it's overdue, Today shows a reminder that opens it.
+**`reviews/<YYYY-MM-DD>`**: `date, answers:{<q>:{a:"Yes"|"No", d}}, notes, by, at`. Anyone can sign it (Records → 4-weekly review); when it's overdue, Today shows a reminder that opens it. The questions and their keys are `REVIEW_QS` in `public/diary/core.js`, following the SFBB 4-weekly review page; each says which answer needs noting (most a "Yes", the "have you done it" ones a "No"), which is what the review history and the inspection PDF list. Keys are stored with old answers, so never rename or reuse one; new questions only need answering on new reviews.
 
 **`plans/<id>`** (HACCP plans and risk assessments): `type:"haccp"|"risk", title, …metadata, steps[] or rows[], notes, source, createdBy, createdAt, updatedBy, updatedAt, history[]`
 
