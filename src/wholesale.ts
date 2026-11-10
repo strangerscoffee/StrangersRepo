@@ -1,4 +1,5 @@
 // Wholesale beta: real customer orders and isolated staff test orders. Payments and fulfilment are managed by the team.
+import { validGrindId } from "../public/wholesale-preview/grinds.js";
 import { catalogueRetrievedAt } from "../public/wholesale-preview/catalogue.js";
 import type { User } from "./auth";
 import { object, text, version, decode, get, save, type Row, type Versioned } from "./wholesaleStore";
@@ -12,7 +13,6 @@ import { handleInvoiceAdmin, handleInvoiceCustomer, invoiceLinks } from "./whole
 
 type Pack = "quarter" | "half" | "kilo";
 const PACKS: Record<Pack, { label: string; grams: number }> = { quarter: { label: "250 g bag", grams: 250 }, half: { label: "500 g bag", grams: 500 }, kilo: { label: "1 kg bag", grams: 1000 } };
-const GRINDS: Record<string, string> = { beans: "Beans", espresso: "Espresso / Fine", moka: "Moka Pot / Fine", filter: "Filter / Medium", cafetiere: "Cafetiere / Coarse" };
 const STATUSES = ["New", "Preparing", "Ready", "Dispatched", "Cancelled"];
 interface Line { productId: string; title: string; pack: Pack; packLabel: string; grind: string; grindLabel: string; quantity: number; price: number; grams: number }
 interface Order {
@@ -49,7 +49,7 @@ function orderBody(value: unknown) {
   const lines: { productId: string; pack: Pack; grind: string; quantity: number; price: number }[] = [];
   for (const value of body.lines) {
     const line = object(value);
-    if ((typeof line.productId !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(line.productId)) || typeof line.pack !== "string" || !Object.hasOwn(PACKS, line.pack) || typeof line.grind !== "string" || !Object.hasOwn(GRINDS, line.grind)) throw invalid("Choose a listed coffee, bag size and grind.");
+    if ((typeof line.productId !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(line.productId)) || typeof line.pack !== "string" || !Object.hasOwn(PACKS, line.pack) || typeof line.grind !== "string" || !validGrindId(line.grind)) throw invalid("Choose a listed coffee, bag size and grind.");
     if (!Number.isInteger(line.quantity) || line.quantity < 1 || line.quantity > 99) throw invalid("Choose a whole number of bags from 1 to 99.");
     if (!Number.isInteger(line.price) || line.price < 1 || line.price > 1000000) throw invalid("Check the quoted coffee price.");
     const previous = lines.find((item) => item.productId === line.productId && item.pack === line.pack && item.grind === line.grind);
@@ -101,7 +101,9 @@ async function createOrder(req: Request, env: Env, user: OrderingUser): Promise<
     if (!product.inStock) throw new ApiError(409, "out_of_stock", `${product.name} is out of stock. Remove it from your basket to continue.`);
     if (!product.active) throw new ApiError(409, "conflict", `${product.name} is no longer in the catalogue. Reload your basket.`);
     if (line.price !== product.prices[line.pack]) throw new ApiError(409, "conflict", "The prices have changed. Reload and review your order again.");
-    return { ...line, title: product.title, packLabel: PACKS[line.pack].label, grindLabel: GRINDS[line.grind], price: product.prices[line.pack], grams: PACKS[line.pack].grams };
+    const grind = product.grindOptions.find(option => option.id === line.grind && option.enabled);
+    if (!grind) throw new ApiError(409, "grind_unavailable", `${product.name} no longer offers this grind. Remove it from your basket and choose an available option.`);
+    return { ...line, title: product.title, packLabel: PACKS[line.pack].label, grindLabel: grind.label, price: product.prices[line.pack], grams: PACKS[line.pack].grams };
   });
   const at = Date.now();
   const customerSnapshot = customer && location ? (() => {

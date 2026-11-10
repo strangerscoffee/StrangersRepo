@@ -5,9 +5,11 @@ import { audit } from "./audit";
 import { ApiError, type Env, invalid, json, readJson } from "./http";
 import { list, object, save, text, version } from "./wholesaleStore";
 
+import { defaultGrinds, validGrindId, type GrindOption } from "../public/wholesale-preview/grinds.js";
+
 type Prices = SourceCoffee["prices"];
-interface Settings { prices: Prices; active: boolean; inStock?: boolean; product?: SourceCoffee; images?: string[] }
-export type Coffee = SourceCoffee & { active: boolean; inStock: boolean; images: string[]; imageUrls: string[]; version: number };
+interface Settings { grindOptions?: GrindOption[]; prices: Prices; active: boolean; inStock?: boolean; product?: SourceCoffee; images?: string[] }
+export type Coffee = SourceCoffee & { grindOptions: GrindOption[]; active: boolean; inStock: boolean; images: string[]; imageUrls: string[]; version: number };
 interface ImageMeta { contentType: string; size: number; productId: string; filename: string; by: string; at: number }
 const PHOTO_PREFIX = "wholesale-image:";
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -20,7 +22,7 @@ function decorate(product: SourceCoffee, settings: Settings | null, version: num
   const prices = settings?.prices || product.prices;
   const images = settings?.images ?? (product.image ? ["source:" + product.image] : []);
   return {
-    ...product, prices: { ...prices }, price: prices.kilo,
+    ...product, grindOptions: (settings?.grindOptions ?? defaultGrinds).map(option => ({ ...option })), prices: { ...prices }, price: prices.kilo,
     active: settings?.active ?? true, inStock: settings?.inStock ?? true, images, version,
     imageUrls: images.map((id) => id.startsWith("source:") ? "/wholesale-preview/images/" + id.slice(7) : `/api/${admin ? "admin/" : ""}wholesale/images/` + id.slice(7)),
   };
@@ -35,8 +37,8 @@ export async function catalogue(env: Env, admin = false): Promise<Coffee[]> {
   return [...sourced, ...added];
 }
 function settingsFor(coffee: Coffee): Settings {
-  const { active, inStock, images, imageUrls, version, ...product } = coffee;
-  return { product, prices: product.prices, active, inStock, images };
+  const { active, inStock, images, imageUrls, version, grindOptions, ...product } = coffee;
+  return { product, prices: product.prices, active, inStock, images, grindOptions };
 }
 async function write(env: Env, coffee: Coffee, expected: number): Promise<Coffee> {
   const settings = settingsFor(coffee);
@@ -47,6 +49,17 @@ function pricesFor(value: unknown): Prices {
   const prices = object(value);
   if (Object.keys(prices).length !== 3 || ["quarter", "half", "kilo"].some((pack) => !Number.isInteger(prices[pack]) || prices[pack] < 1 || prices[pack] > 1000000)) throw invalid("Send all three bag prices in pence, from £0.01 to £10,000.00.");
   return { quarter: prices.quarter, half: prices.half, kilo: prices.kilo };
+}
+function editedGrinds(value: unknown, previous: GrindOption[] = []): GrindOption[] {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 20) throw invalid("Choose between 1 and 20 grind options.");
+  const options = value.map(entry => {
+    const option = object(entry);
+    if (!validGrindId(option.id) || typeof option.enabled !== "boolean") throw invalid("Choose a valid grind option and availability.");
+    return { id: option.id as string, label: text(option.label, "grind label", 60, true), enabled: option.enabled };
+  });
+  if (new Set(options.map(option => option.id)).size !== options.length || new Set(options.map(option => option.label.toLocaleLowerCase("en-GB"))).size !== options.length) throw invalid("Each grind needs a unique ID and name.");
+  if (!options.some(option => option.enabled)) throw invalid("Keep at least one grind available for ordering.");
+  return options.map(option => previous.some(old => old.id === option.id && old.label !== option.label) ? { ...option, id: "grind-" + crypto.randomUUID() } : option);
 }
 function edited(body: Record<string, any>, current: Coffee | null): Coffee {
   const field = (key: "name" | "title" | "origin" | "process" | "notes" | "badge", max: number, required = false) => body[key] === undefined && current ? current[key] : text(body[key], key, max, required);
@@ -61,7 +74,7 @@ function edited(body: Record<string, any>, current: Coffee | null): Coffee {
   return {
     id: current?.id || "coffee-" + crypto.randomUUID(), title, name,
     origin: field("origin", 100), process: field("process", 120), notes: field("notes", 400), badge: field("badge", 60), categories: [...categories],
-    prices, price: prices.kilo, active: body.active, inStock,
+    prices, price: prices.kilo, active: body.active, inStock, grindOptions: editedGrinds(body.grindOptions === undefined ? current?.grindOptions ?? defaultGrinds : body.grindOptions, current?.grindOptions),
     image: current?.image || "", sourceUrl: current?.sourceUrl || "", sourceImage: current?.sourceImage || "", sourceUpdatedAt: current?.sourceUpdatedAt || Date.now(),
     images: current?.images || [], imageUrls: current?.imageUrls || [], version: current?.version || 0,
   };
