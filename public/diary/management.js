@@ -937,23 +937,23 @@ function renderReview(){
   $("#revSummary").replaceChildren(el("div",{class:"s",text:`Since ${nice(start)}`}),...facts.map(([t,text,c])=>
     el("button",{class:"lrow",type:"button",onclick:()=>show(t)},el("span",{class:"sdot "+c}),el("span",{class:"t"},el("b",{text})),el("span",{class:"chev"},svgi(ICON.chevR)))));
   const qs=$("#revQs");qs.replaceChildren();
-  for(const[k,q]of REVIEW_QS){
+  for(const[k,q,flag]of REVIEW_QS){
     const cur=S.rev[k]||{};
     const seg=el("div",{class:"seg",role:"group","aria-label":q});
     for(const v of["Yes","No"])seg.append(el("button",{type:"button","aria-pressed":String(cur.a===v),disabled:ro(),onclick:()=>{S.rev[k]={...cur,a:v};renderReview()}},v));
     const det=el("input",{type:"text",id:"rq_"+k,placeholder:"Details (what changed, what you did)",value:cur.d||"",disabled:ro()});
     det.addEventListener("input",()=>{S.rev[k]={...(S.rev[k]||{}),d:det.value}});
-    qs.append(el("div",{class:"qa"},el("div",{class:"row spread"},el("span",{text:q}),seg),cur.a==="Yes"||cur.d?det:null));
+    qs.append(el("div",{class:"qa"},el("div",{class:"row spread"},el("span",{text:q}),seg),(flag?cur.a===flag:cur.a==="Yes")||cur.d?det:null));
   }
   $("#revSave").disabled=ro();$("#revNotes").disabled=ro();
 
   const list=$("#revList");list.replaceChildren();
   if(!S.reviews.length)list.append(el("div",{class:"empty",text:"No reviews signed yet. Your first one is due "+nice(due)+"."}));
   for(const r of S.reviews){
-    const yes=REVIEW_QS.filter(([k])=>r.answers&&r.answers[k]&&r.answers[k].a==="Yes");
+    const yes=REVIEW_QS.filter(q=>revFlagged(q,r));
     list.append(el("div",{class:"qa"},
       el("div",{class:"row spread"},el("strong",{text:nice(r.date)}),el("span",{class:"by",text:"Signed by "+nameOf(r.by)})),
-      el("div",{class:"note",text:yes.length?"Yes to: "+yes.map(([k,q])=>q+(r.answers[k].d?` (${r.answers[k].d})`:"")).join(" "):"No changes recorded."}),
+      el("div",{class:"note",text:yes.length?"To note: "+yes.map(([k,q])=>`${q} ${r.answers[k].a}`+(r.answers[k].d?` (${r.answers[k].d})`:"")+".").join(" "):"Nothing to note."}),
       r.notes?el("div",{class:"note",text:"Actions: "+r.notes}):null));
   }
   resolveNames(S.reviews.map(r=>r.by));

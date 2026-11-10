@@ -253,8 +253,8 @@ function inspectSections(R){
       return[m.reportedAt?pdfDate(dayOf(m.reportedAt)):"",m.title,m.area||"",{t:pr[1],cls:pr[3]},m.status==="done"?{t:`Done ${m.doneAt?pdfDate(dayOf(m.doneAt)):""}`,cls:"ok"}:{t:"Open"+(m.assignee?` · ${m.assigneeName||fullName(m.assignee)}`:""),cls:pr[0]==="urgent"?"bad":"warn"},m.fixNote||m.details||""]}),
     empty:"No maintenance jobs."});
   out.push({id:"reviews",title:"4-weekly reviews",
-    cols:[{l:"Date",w:80},{l:"Signed by",w:100},{l:"Changes reported",flex:1.4},{l:"Actions taken",flex:1.4}],
-    rows:R.reviews.slice().sort((a,b)=>b.date.localeCompare(a.date)).map(r=>[pdfDate(r.date),fullName(r.by),REVIEW_QS.filter(([k])=>r.answers&&r.answers[k]&&r.answers[k].a==="Yes"&&k!=="methods").map(([k,q])=>q.replace(/\?$/,"")+(r.answers[k].d?": "+r.answers[k].d:"")).join("\n")||"None",r.notes||""]),
+    cols:[{l:"Date",w:80},{l:"Signed by",w:100},{l:"Changes and issues",flex:1.4},{l:"Actions taken",flex:1.4}],
+    rows:R.reviews.slice().sort((a,b)=>b.date.localeCompare(a.date)).map(r=>[pdfDate(r.date),fullName(r.by),REVIEW_QS.filter(q=>revFlagged(q,r)).map(([k,q])=>`${q} ${r.answers[k].a}`+(r.answers[k].d?": "+r.answers[k].d:"")).join("\n")||"None",r.notes||""]),
     empty:"No 4-weekly reviews in this period."});
   if(algSectionsOn()){
     for(const[k,t]of ALG_SECTIONS){const list=allergenItems().filter(it=>algKind(it)===k),sm=algSummary(list);
