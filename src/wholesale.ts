@@ -193,8 +193,8 @@ export async function handleWholesale(req: Request, env: Env, route: string, use
 }
 
 /** Management is part of the existing admin app and uses its admin-only API boundary. */
-export async function handleWholesaleAdmin(req: Request, env: Env, route: string, user: User, links: Links): Promise<Response> {
-  const quickbooks = await handleQuickBooks(req, env, route, user); if (quickbooks) return quickbooks;
+export async function handleWholesaleAdmin(req: Request, env: Env, route: string, user: User, links: Links, ctx?:ExecutionContext): Promise<Response> {
+  const quickbooks = await handleQuickBooks(req, env, route, user, ctx); if (quickbooks) return quickbooks;
   if (user.role !== "admin") throw denied();
   const invoiceResponse = await handleInvoiceAdmin(req, env, route, user.name);
   if (invoiceResponse) return invoiceResponse;

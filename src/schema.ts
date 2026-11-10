@@ -3,6 +3,7 @@
 // schema_migrations (MIGRATIONS below). To change the schema, add a migration.
 import { Env } from "./http";
 import { migrateQuickBooks } from "./quickbooks/schema";
+import { migrateQuickBooksRuntime } from "./quickbooks/runtimeSchema";
 
 const SCHEMA = [
   // Every diary document, stored by path (see docs/data-model.md).
@@ -252,6 +253,7 @@ const MIGRATIONS: Migration[] = [
     ]);
   } },
   { id: 15, name: "QuickBooks sandbox connection", run: migrateQuickBooks },
+  { id: 16, name: "QuickBooks environments and durable accounting operations", run: migrateQuickBooksRuntime },
 ];
 
 async function migrate(env: Env): Promise<void> {

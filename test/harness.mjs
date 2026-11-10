@@ -28,7 +28,8 @@ export async function startServer({ writeLimit, preSql, scheduled, vars = {} } =
     });
   }
   const port = await freePort();
-  const args = ["dev", "--local", "--port", String(port), "--ip", "127.0.0.1", "--persist-to", state,
+  // Let the OS allocate the inspector socket too: parallel Workers must not race for 9229.
+  const args = ["dev", "--local", "--port", String(port), "--inspector-port", "0", "--ip", "127.0.0.1", "--persist-to", state,
     "--var", `SETUP_CODE:${SETUP_CODE}`, "--show-interactive-dev-session=false"];
   if (writeLimit) args.push("--var", `WRITE_LIMIT_PER_15_MIN:${writeLimit}`);
   // The admin section's own address is for the real site: here it's at /admin on the diary's (unless a test sets it).

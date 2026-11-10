@@ -43,11 +43,17 @@ export async function makeBackup(env: Env, by: string): Promise<BackupInfo> {
     wholesalePreview: (await env.DB.prepare("SELECT kind, id, data, version, updated_at FROM wholesale_preview ORDER BY kind, id").all()).results,
     wholesaleAccounts: await env.DB.prepare("SELECT id, customer_id, username, active, approval_status, created_at, last_login_at FROM wholesale_accounts ORDER BY username").all().then((rows) => rows.results),
     quickbooks: {
-      mode: "sandbox-disconnected-on-restore",
+      mode: "disconnected-on-restore",
       installation: (await env.DB.prepare("SELECT id,namespace FROM quickbooks_installation").all()).results,
-      mappings: (await env.DB.prepare("SELECT realm_id,data,version,updated_at FROM quickbooks_mappings").all()).results,
-      // No tokens, OAuth states, leases or active-connection flags are backed up.
-      company: await env.DB.prepare("SELECT realm_id,company_name,country,currency,vat_number FROM quickbooks_connection WHERE id=1").first(),
+      mappings: (await env.DB.prepare("SELECT environment,realm_id,data,version,updated_at FROM quickbooks_environment_mappings").all()).results,
+      companies: (await env.DB.prepare("SELECT environment,realm_id,company_name,country,currency,vat_number FROM quickbooks_connections").all()).results,
+      // Credentials, OAuth nonces, leases and Live approval are intentionally excluded.
+      settings: { active_environment: "sandbox", live_approval: null },
+      exports: (await env.DB.prepare("SELECT id,environment,realm_id,company_name,company_vat,invoice_id,request_id,fingerprint,payload,payload_hash,source_hash,created_by,preview,profiles,connection_generation,mapping_version,CASE WHEN state='linked' THEN 'linked' ELSE 'review' END AS state,remote_id,sync_token,created_remote,sandbox_eligible,write_started_at,attempts,retry_at,last_error,version,created_at,updated_at FROM quickbooks_exports").all()).results,
+      observations: (await env.DB.prepare("SELECT * FROM quickbooks_observations").all()).results,
+      verifications: (await env.DB.prepare("SELECT * FROM quickbooks_verifications").all()).results,
+      events: (await env.DB.prepare("SELECT event_key,environment,realm_id,entity,entity_id,operation,event_at,'queued' AS state,created_at FROM quickbooks_events").all()).results,
+      reconciliation: (await env.DB.prepare("SELECT environment,realm_id,checkpoint,cursor,updated_at,last_full_at,last_error,retry_at FROM quickbooks_reconciliation").all()).results,
     },
     wholesaleInvoices: {
       settings: (await env.DB.prepare("SELECT * FROM wholesale_invoice_settings ORDER BY id").all()).results,

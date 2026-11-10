@@ -1008,11 +1008,26 @@ start();
 // Issued invoices remain available in My orders even after their source order is removed.
 let customerInvoices = [], invoiceCursor = null, invoiceTotal = 0, invoiceLoading = false;
 function customerInvoiceCard(invoice, expanded) {
-  const paid = !!invoice.payment?.paid, overdue = !paid && invoice.payment?.status === "overdue";
-  const label = paid ? "Paid" : overdue ? "Overdue" : "Unpaid";
+  const review = invoice.accounting?.status === "review", paid = !!invoice.payment?.paid, overdue = !paid && invoice.payment?.status === "overdue", partial = invoice.payment?.status === "part-paid";
+  const label = review ? "Payment status being checked" : paid ? "Paid" : partial ? "Part paid" : overdue ? "Overdue" : "Unpaid";
   const date = value => value ? new Date(value + "T12:00:00Z").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "Europe/London" }) : "Not set";
   const href = "/api/wholesale/invoices/" + encodeURIComponent(invoice.id) + "/pdf";
-  return `<article class="customer-invoice-card" data-customer-invoice="${escape(invoice.id)}"><div class="history-card-head"><h3>${escape(invoice.number)}</h3><strong>${money(invoice.totals.grossPence)}</strong></div><div class="invoice-status-line"><span class="invoice-state ${paid ? "paid" : overdue ? "overdue" : "unpaid"}">${label}</span><span>${paid ? "Paid " + escape(date(invoice.payment.paidDate)) : invoice.dueDate ? "Due " + escape(date(invoice.dueDate)) : "Payment due under the agreed terms"}</span></div><p class="history-summary">Invoice date: ${escape(date(invoice.invoiceDate))}${invoice.deliveryLocation?.name ? " · " + escape(invoice.deliveryLocation.name) : ""}</p><p class="payment-terms">${escape(invoice.paymentTerms.label)}${invoice.paymentTerms.note ? " · " + escape(invoice.paymentTerms.note) : ""}</p>${!paid ? `<p class="invoice-balance">Outstanding <strong>${money(invoice.payment.outstandingPence)}</strong></p>` : ""}<details class="invoice-details" ${expanded.has(String(invoice.id)) ? "open" : ""}><summary>Invoice details and payment instructions</summary><p class="history-address"><b>Billed to</b><br>${escape([invoice.billTo.name, invoice.billTo.address, invoice.billTo.postcode].filter(Boolean).join("\n")).replaceAll("\n", "<br>")}</p><p>Order: ${escape(invoice.orderId)}${invoice.orderReference ? " · Reference: " + escape(invoice.orderReference) : ""}</p><dl class="invoice-amounts"><div><dt>Net subtotal</dt><dd>${money(invoice.totals.netPence)}</dd></div><div><dt>VAT</dt><dd>${money(invoice.totals.vatPence)}</dd></div><div><dt>Invoice total</dt><dd>${money(invoice.totals.grossPence)}</dd></div></dl>${invoice.paymentInstructions ? `<p class="history-address"><b>How to pay</b><br>${escape(invoice.paymentInstructions).replaceAll("\n", "<br>")}</p>` : ""}</details><a class="button button-outline invoice-pdf" data-invoice-pdf href="${href}" target="_blank" rel="noopener">View invoice PDF <span class="sr-only">(opens in a new tab)</span></a></article>`;
+  const checked = invoice.payment.checkedAt ? new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "Europe/London" }).format(new Date(invoice.payment.checkedAt)) : "";
+  const due = review ? "Contact Strangers to confirm the current balance" : paid ? (invoice.payment.paidDate ? "Paid " + date(invoice.payment.paidDate) : "Payment received") : invoice.dueDate ? "Due " + date(invoice.dueDate) : "Payment due under the agreed terms";
+  return `<article class="customer-invoice-card" data-customer-invoice="${escape(invoice.id)}">
+    <div class="history-card-head"><h3>${escape(invoice.number)}</h3><strong>${money(invoice.totals.grossPence)}</strong></div>
+    <div class="invoice-status-line"><span class="invoice-state ${review ? "review" : paid ? "paid" : overdue ? "overdue" : "unpaid"}">${label}</span><span>${escape(due)}</span></div>
+    <p class="history-summary">Invoice date: ${escape(date(invoice.invoiceDate))}${invoice.deliveryLocation?.name ? " · " + escape(invoice.deliveryLocation.name) : ""}</p>
+    <p class="payment-terms">${escape(invoice.paymentTerms.label)}${invoice.paymentTerms.note ? " · " + escape(invoice.paymentTerms.note) : ""}</p>
+    ${!review && !paid ? `<p class="invoice-balance">${partial ? "Remaining balance" : "Outstanding"} <strong>${money(invoice.payment.outstandingPence)}</strong></p>` : ""}
+    ${checked ? `<p class="history-summary invoice-checked">Payment status checked ${escape(checked)}</p>` : ""}
+    <details class="invoice-details" ${expanded.has(String(invoice.id)) ? "open" : ""}><summary>Invoice details and payment instructions</summary>
+      <p class="history-address"><b>Billed to</b><br>${escape([invoice.billTo.name, invoice.billTo.address, invoice.billTo.postcode].filter(Boolean).join("\n")).replaceAll("\n", "<br>")}</p>
+      <p>Order: ${escape(invoice.orderId)}${invoice.orderReference ? " · Reference: " + escape(invoice.orderReference) : ""}</p>
+      <dl class="invoice-amounts"><div><dt>Net subtotal</dt><dd>${money(invoice.totals.netPence)}</dd></div><div><dt>VAT</dt><dd>${money(invoice.totals.vatPence)}</dd></div><div><dt>Invoice total</dt><dd>${money(invoice.totals.grossPence)}</dd></div></dl>
+      ${invoice.paymentInstructions ? `<p class="history-address"><b>How to pay</b><br>${escape(invoice.paymentInstructions).replaceAll("\n", "<br>")}</p>` : ""}
+    </details><a class="button button-outline invoice-pdf" data-invoice-pdf href="${href}" target="_blank" rel="noopener">View invoice PDF <span class="sr-only">(opens in a new tab)</span></a>
+  </article>`;
 }
 async function loadInvoices(append = false) {
   if (invoiceLoading || !session?.customer) return;
@@ -1028,7 +1043,7 @@ async function loadInvoices(append = false) {
     customerInvoices = append ? [...new Map([...customerInvoices, ...result.invoices].map(invoice => [invoice.id, invoice])).values()] : result.invoices;
     invoiceCursor = result.nextCursor || null; invoiceTotal = result.count;
     const summary = result.summary;
-    $("#customer-invoice-summary").innerHTML = `<div><span>Outstanding</span><strong>${money(summary.outstandingPence)}</strong></div><div><span>Overdue</span><strong>${money(summary.overduePence)}</strong></div>`;
+    $("#customer-invoice-summary").innerHTML = `<div><span>${summary.reviewCount ? "Saved outstanding*" : "Outstanding"}</span><strong>${money(summary.outstandingPence)}</strong></div><div><span>Overdue</span><strong>${money(summary.overduePence)}</strong></div>${summary.reviewCount ? `<p class="invoice-review-note">${summary.reviewCount} ${summary.reviewCount === 1 ? "invoice is" : "invoices are"} being checked. Totals include saved balances until confirmed.</p>` : ""}`;
     $("#history-invoice-note").hidden = !summary.outstandingPence;
     $("#history-invoice-note").textContent = `${money(summary.outstandingPence)} outstanding${summary.overdueCount ? " · " + summary.overdueCount + " overdue" : ""} · View invoices`;
     $("#customer-invoices-list").innerHTML = customerInvoices.length ? customerInvoices.map(invoice => customerInvoiceCard(invoice, expanded)).join("") : '<p class="dialog-intro">Your issued invoices will appear here. Contact Strangers if you need an invoice for an order.</p>';

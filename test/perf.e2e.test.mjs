@@ -1,6 +1,6 @@
 // What an open page costs: files linked by fingerprint (kept by the browser for a year, so opening the page again
 // fetches none of them), and an idle diary asking nothing while its live line is open (it's told of changes), or
-// only the one-number change check when it isn't.
+// only the one-number change check when it isn't. Periodic identity verification protects private data in both modes.
 // Run with `npm run test:e2e` (needs Playwright).
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -36,14 +36,15 @@ test("opening the diary again fetches no scripts or styles; an idle diary only a
   await page.locator("#openList label", { hasText: "Hands washed" }).waitFor();
   const fromNet = await page.evaluate(() => performance.getEntriesByType("resource").filter((e) => /\.(js|css)(\?|$)/.test(e.name) && e.transferSize > 0).map((e) => e.name + " " + e.transferSize));
   assert.deepEqual(fromNet, [], "scripts and styles come from the browser's cache");
-  // Idle for a while, with the live line open (src/live.ts): no requests at all. No change checks, no polls, no
-  // name lookups: the server says when something changes.
+  // An idle live diary needs no operational polls or lookups. The privacy guard still verifies identity every
+  // 15 seconds; whether that tick falls in this 12-second observation depends on page-startup time.
   await page.waitForFunction(() => window.SC && SC.live().open(), null, { timeout: 10000 });
   await page.waitForTimeout(1500);
   seen.length = 0;
   await page.waitForTimeout(12000);
   const api = seen.filter((p) => p.startsWith("/api/"));
-  assert.deepEqual(api, [], "an idle diary asks nothing while the live line is open");
+  assert.deepEqual(api.filter(path => path !== "/api/auth/me"), [], "an idle live diary makes no operational requests");
+  assert.ok(api.length <= 1, "at most one scheduled identity verification in twelve idle seconds: " + api.join(", "));
   // A change from another device arrives straight away, pushed (well inside the 5 s a poll would have taken).
   const t0 = Date.now();
   await fetch(srv.base + "/api/db/update", { method: "POST", headers: { "content-type": "application/json", cookie: ADMIN }, body: JSON.stringify({ path: "settings/main", patch: { opening: [{ id: "o1", t: "Hands washed" }, { id: "o2", t: "Fridges checked" }] } }) });

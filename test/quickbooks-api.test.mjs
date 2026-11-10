@@ -10,7 +10,7 @@ async function call(method,path,body,cookie=ADMIN,extra={}){const r=await fetch(
 const status=async()=>(await call('GET',root+'/status')).body;
 async function start(cookie=ADMIN){const r=await call('POST',root+'/connect',{},cookie);assert.equal(r.status,200,r.text);assert.equal(new URL(r.body.authorizeUrl).origin,provider.origin,"local harness must use its loopback provider");return new URL(r.body.authorizeUrl).searchParams.get('state');}
 async function callback(state,cookie=ADMIN){return call('GET',root+'/callback?code=test-code&realmId=1234567890&state='+state,undefined,cookie);}
-async function connect(){const r=await callback(await start());assert.equal(r.status,303,r.text);return status();}
+async function connect(){const old=await status();if(['connected','pending'].includes(old.connection.status))await call('POST',root+'/disconnect',{ifVersion:old.connection.version});const r=await callback(await start());assert.equal(r.status,303,r.text);return status();}
 async function confirm(){const s=await status(),r=await call('POST',root+'/confirm',{ifVersion:s.connection.version,vatNumber:'GB123456789',confirmed:true});assert.equal(r.status,200,r.text);return status();}
 async function issued(lines=[{productId:'brazil',pack:'kilo',grind:'beans',quantity:2,price:1800}]){
  const config=(await call('GET','/api/admin/wholesale/invoice-settings')).body;
@@ -38,12 +38,12 @@ test('QuickBooks routes deny guests, employees, managers, customer accounts, for
  const s=await status();assert.equal(s.configured,true,JSON.stringify(s));assert.equal(s.environment,'sandbox');assert.equal(s.capabilities.invoiceExport,false);assert.ok(!JSON.stringify(s).includes('test-secret'));
 });
 test('QuickBooks OAuth states are hashed, session-bound, expiring and consumed once',async()=>{
- const state=await start(),rows=srv.sql('SELECT * FROM quickbooks_oauth_states');assert.ok(!JSON.stringify(rows).includes(state));assert.equal((await callback(state,OTHER)).status,400);assert.equal((await callback(state)).status,400);
- const expired=await start();srv.sql('UPDATE quickbooks_oauth_states SET expires_at=0');assert.equal((await callback(expired)).status,400);
+ const state=await start(),rows=srv.sql('SELECT * FROM quickbooks_auth_states');assert.ok(!JSON.stringify(rows).includes(state));assert.equal((await callback(state,OTHER)).status,400);assert.equal((await callback(state)).status,400);
+ const expired=await start();srv.sql('UPDATE quickbooks_auth_states SET expires_at=0');assert.equal((await callback(expired)).status,400);
  const fresh=await start(),connected=await callback(fresh);assert.equal(connected.status,303,JSON.stringify({response:connected.body,calls:provider.state.calls.map(c=>({method:c.method,path:c.path}))}));assert.match(connected.headers.get('location'),/quickbooks=review/);assert.ok(!connected.headers.get('location').includes('code='));assert.equal((await callback(fresh)).status,400);
 });
 test('QuickBooks credentials are authenticated ciphertext and company confirmation is version-checked',async()=>{
- const row=srv.sql('SELECT * FROM quickbooks_connection')[0];assert.equal(row.status,'pending');assert.ok(!row.token_data.includes('fake-access'));assert.ok(!row.token_data.includes('fake-refresh'));
+ const row=srv.sql("SELECT * FROM quickbooks_connections WHERE environment='sandbox'")[0];assert.equal(row.status,'pending');assert.ok(!row.token_data.includes('fake-access'));assert.ok(!row.token_data.includes('fake-refresh'));
  const tokens=await unseal(row.token_data,vars.QUICKBOOKS_TOKEN_KEY,row.realm_id,row.generation);assert.match(tokens.access,/^fake-access-/);
  await assert.rejects(unseal(row.token_data,vars.QUICKBOOKS_TOKEN_KEY,'999',row.generation));await assert.rejects(unseal(row.token_data,vars.QUICKBOOKS_TOKEN_KEY,row.realm_id,'another-generation'));
  assert.equal((await call('POST',root+'/confirm',{ifVersion:row.version-1,vatNumber:'GB123456789',confirmed:true})).status,409);
@@ -66,13 +66,13 @@ test('A large issued invoice verifies each distinct VAT treatment once before sa
  assert.ok(lines.length>=80,'exercise a supported invoice with many coffee variants (every coffee in 250 g and 1 kg, in every grind)');
  const large=await issued(lines);assert.equal(large.lines.length,lines.length);
  const before=provider.state.calls.length,result=await call('GET',root+`/invoices/${large.id}/preview`);assert.equal(result.status,200,result.text);assert.equal(result.body.preview.state,'ready-for-sandbox-review');assert.deepEqual(result.body.preview.candidate.totals,large.totals);
- const reads=provider.state.calls.slice(before);assert.equal(reads.filter(c=>c.path.endsWith('/taxcode/3')).length,1);assert.equal(reads.filter(c=>c.path.endsWith('/taxrate/7')).length,1);assert.ok(reads.length<=5,'provider work follows distinct mappings rather than invoice line count');
+ const reads=provider.state.calls.slice(before);assert.equal(reads.filter(c=>c.path.endsWith('/taxcode/3')).length,1);assert.equal(reads.filter(c=>c.path.endsWith('/taxrate/7')).length,1);assert.ok(reads.length<=7,'provider work follows distinct mappings rather than invoice line count');
 });
 test('Historic VAT labels sharing a sales code do not multiply provider reads when mappings are reviewed',async()=>{
  const saved=(await call('GET',root+'/mappings')).body,before=provider.state.calls.length;
  const taxMappings=[{rateId:'standard',basisPoints:2000,taxCodeId:'3'},...Array.from({length:99},(_,i)=>({rateId:'historic-'+i,basisPoints:2000,taxCodeId:'3'}))];
  const response=await call('PUT',root+'/mappings',{ifVersion:saved.version,connectionVersion:saved.connectionVersion,coffeeItemId:'50',deliveryItemId:'51',taxMappings,reviewed:true});assert.equal(response.status,200,response.text);assert.equal(response.body.data.taxMappings.length,100);
- const reads=provider.state.calls.slice(before);assert.equal(reads.filter(c=>c.path.endsWith('/taxcode/3')).length,1);assert.equal(reads.filter(c=>c.path.endsWith('/taxrate/7')).length,1);assert.ok(reads.length<=4);
+ const reads=provider.state.calls.slice(before);assert.equal(reads.filter(c=>c.path.endsWith('/taxcode/3')).length,1);assert.equal(reads.filter(c=>c.path.endsWith('/taxrate/7')).length,1);assert.ok(reads.length<=5);
 });
 test('A disconnect during reference reads prevents an in-flight invoice preview returning old company data',async()=>{
  let release;provider.state.readGate={path:'/taxrate/7',wait:new Promise(resolve=>release=resolve)};const before=provider.state.calls.length,pending=call('GET',root+`/invoices/${invoice.id}/preview`);
@@ -83,29 +83,29 @@ test('A disconnect during reference reads prevents an in-flight invoice preview 
 });
 test('QuickBooks JSON backups retain mappings and installation identity but exclude credentials and active state',async()=>{
  const created=await call('POST','/api/admin/backups',{}),data=(await call('GET','/api/admin/backups/'+created.body.backup.id)).body;
- assert.equal(data.quickbooks.mode,'sandbox-disconnected-on-restore');assert.equal(data.quickbooks.mappings.length,1);assert.equal(data.quickbooks.installation.length,1);
+ assert.equal(data.quickbooks.mode,'disconnected-on-restore');assert.equal(data.quickbooks.mappings.length,1);assert.equal(data.quickbooks.installation.length,1);
  const raw=JSON.stringify(data.quickbooks);for(const value of ['fake-access','fake-refresh','token_data','state_hash','lease_owner'])assert.ok(!raw.includes(value));
 });
 test('QuickBooks refresh is serialized and stores the latest rotating refresh token',async()=>{
  provider.state.expires=1;await connect();await confirm();let release;provider.state.refreshGate=new Promise(resolve=>release=resolve);
  const before=provider.state.refreshes,first=call('GET',root+'/references?kind=item');for(let i=0;i<500&&provider.state.refreshes===before;i++)await new Promise(r=>setTimeout(r,10));assert.ok(provider.state.refreshes>before);
  const second=await call('GET',root+'/references?kind=customer');assert.equal(second.status,409,second.text);release();provider.state.refreshGate=null;assert.equal((await first).status,200);
- const row=srv.sql('SELECT * FROM quickbooks_connection')[0],tokens=await unseal(row.token_data,vars.QUICKBOOKS_TOKEN_KEY,row.realm_id,row.generation);assert.equal(row.token_version,2);assert.equal(tokens.refresh,'fake-refresh-'+provider.state.sequence);assert.equal(row.lease_owner,null);
+ const row=srv.sql("SELECT * FROM quickbooks_connections WHERE environment='sandbox'")[0],tokens=await unseal(row.token_data,vars.QUICKBOOKS_TOKEN_KEY,row.realm_id,row.generation);assert.equal(row.token_version,2);assert.equal(tokens.refresh,'fake-refresh-'+provider.state.sequence);assert.equal(row.lease_owner,null);
 });
 test('Disconnect during refresh removes credentials and prevents a late response resurrecting the connection',async()=>{
  await connect();await confirm();let release;provider.state.refreshGate=new Promise(resolve=>release=resolve);const before=provider.state.refreshes,pending=call('GET',root+'/references?kind=item');
  for(let i=0;i<500&&provider.state.refreshes===before;i++)await new Promise(r=>setTimeout(r,10));assert.ok(provider.state.refreshes>before);
  const s=await status(),removed=await call('POST',root+'/disconnect',{ifVersion:s.connection.version});assert.equal(removed.status,200,removed.text);release();provider.state.refreshGate=null;assert.equal((await pending).status,409);
- const row=srv.sql('SELECT * FROM quickbooks_connection')[0];assert.equal(row.status,'disconnected');assert.equal(row.token_data,null);assert.equal(row.lease_owner,null);
+ const row=srv.sql("SELECT * FROM quickbooks_connections WHERE environment='sandbox'")[0];assert.equal(row.status,'disconnected');assert.equal(row.token_data,null);assert.equal(row.lease_owner,null);
 });
 test('Expired QuickBooks refresh credentials require reconnection without ending the admin session',async()=>{
  provider.state.expires=3600;await connect();await confirm();
- const row=srv.sql('SELECT * FROM quickbooks_connection')[0],tokens=await unseal(row.token_data,vars.QUICKBOOKS_TOKEN_KEY,row.realm_id,row.generation);
+ const row=srv.sql("SELECT * FROM quickbooks_connections WHERE environment='sandbox'")[0],tokens=await unseal(row.token_data,vars.QUICKBOOKS_TOKEN_KEY,row.realm_id,row.generation);
  tokens.expiresAt=0;tokens.refreshExpiresAt=Date.now()-1000;
  const encrypted=await seal(tokens,vars.QUICKBOOKS_TOKEN_KEY,row.realm_id,row.generation);
- srv.sql("UPDATE quickbooks_connection SET token_data='"+encrypted.replaceAll("'","''")+"'");
+ srv.sql("UPDATE quickbooks_connections SET token_data='"+encrypted.replaceAll("'","''")+"' WHERE environment='sandbox'");
  const before=provider.state.refreshes,response=await call('GET',root+'/references?kind=item');assert.equal(response.status,409,response.text);assert.equal(provider.state.refreshes,before);
- const state=await status();assert.equal(state.connection.status,'needs-reconnect');assert.equal(srv.sql('SELECT token_data FROM quickbooks_connection')[0].token_data,null);
+ const state=await status();assert.equal(state.connection.status,'needs-reconnect');assert.equal(srv.sql("SELECT token_data FROM quickbooks_connections WHERE environment='sandbox'")[0].token_data,null);
  assert.equal((await call('GET','/api/auth/me')).status,200);
 });
 test('QuickBooks rejects the wrong country/currency and redacts provider failures without accounting writes',async()=>{

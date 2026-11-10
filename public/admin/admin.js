@@ -722,7 +722,7 @@
       $("#meBtn").textContent = ini(S.me.name); $("#meBtn").setAttribute("aria-label", `Signed in as ${S.me.name}`);
       $("#whoInit").textContent = ini(S.me.name); $("#whoName").textContent = S.me.name;
       const h = location.hash.slice(1), quickbooksReview = new URLSearchParams(location.search).get("quickbooks") === "review";
-      if (quickbooksReview) { wholesale.selectSection("invoices"); const clean = new URL(location.href); clean.searchParams.delete("quickbooks"); history.replaceState(null,"",clean); }
+      if (quickbooksReview) { wholesale.selectSection("invoices"); const clean = new URL(location.href); for (const key of ["quickbooks","qbEnvironment","quickbooksError"]) clean.searchParams.delete(key); history.replaceState(null,"",clean); }
       await show(quickbooksReview ? "wholesale" : PAGES.includes(h) ? h : "overview");
       if (quickbooksReview) await wholesale.act("wh-invoice-quickbooks");
       refreshBadge();

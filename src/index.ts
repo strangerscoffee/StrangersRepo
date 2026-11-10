@@ -18,6 +18,8 @@ import { notifyLive, openLive } from "./live";
 import { sendWeeklySummaries } from "./email/weekly";
 import { handleWholesale, handleWholesaleAdmin } from "./wholesale";
 import { handleWholesaleAuth, wholesaleSession } from "./wholesaleAccounts";
+import {handleWebhook} from "./quickbooks/webhooks";
+import {processEvents,runQuickBooksJobs} from "./quickbooks/jobs";
 export { LiveHub } from "./live";
 
 export default {
@@ -68,6 +70,10 @@ export default {
 
   // The daily backup, and the managers' Monday summary (crons in wrangler.jsonc).
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    if(event.cron === "*/5 * * * *"){
+      if(env.QUICKBOOKS_CLIENT_ID||env.QUICKBOOKS_PRODUCTION_CLIENT_ID)ctx.waitUntil(ensureSchema(env).then(()=>runQuickBooksJobs(env)));
+      return;
+    }
     if (event.cron === "30 6,7 * * 1") {
       const domain = env.COOKIE_DOMAIN || "staffstrangerscoffee.com";
       const base = { diary: `https://${domain}/`, rota: env.ROTA_HOST ? `https://${env.ROTA_HOST}/` : `https://${domain}/rota/` };
@@ -161,6 +167,7 @@ const OLD_WHOLESALE_DASHBOARD = new Set(["/wholesale-preview/dashboard", "/whole
 
 async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): Promise<Response> {
   const p = url.pathname;
+  if(p.startsWith("/api/quickbooks/webhook/"))return handleWebhook(req,env,ctx,processEvents);
   const isGet = req.method === "GET" || req.method === "HEAD";
   const app = appForHost(url.hostname, env.ROTA_HOST, env.ADMIN_HOST, env.PREVIEW_HOST);
   const links = appLinks(url, env.ROTA_HOST, env.ADMIN_HOST, env.PREVIEW_HOST);
@@ -331,7 +338,7 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
     let res;
     if (r === "wholesale" || r.startsWith("wholesale/")) {
       if (!isGet) await limitWrites(req, env, ctx, user.id);
-      res = await handleWholesaleAdmin(req, env, r === "wholesale" ? "" : r.slice("wholesale/".length), user, links);
+      res = await handleWholesaleAdmin(req, env, r === "wholesale" ? "" : r.slice("wholesale/".length), user, links, ctx);
     } else res = (await handleAdminView(req, env, r, user, links)) ?? (await handleAdmin(req, env, r, user));
     // Accounts and sites show on the rota too (names, who's switched off, opening hours).
     if (!isGet && res.ok) await bumpChanges(env, "accounts", "rota");

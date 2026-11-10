@@ -4,6 +4,7 @@ import { ApiError, type Env, invalid, json, readJson } from "./http";
 import { get, object, text, version } from "./wholesaleStore";
 import type { OrderingUser } from "./wholesaleAccounts";
 import { invoicePdf } from "./wholesaleInvoicePdf";
+import {withAccounting,accountingSummary} from "./quickbooks/observations";
 
 export interface VatRate { id: string; label: string; basisPoints: number }
 export interface InvoiceSettings {
@@ -30,7 +31,8 @@ export interface InvoiceData {
 }
 export interface InvoiceDocument extends InvoiceData {
   id: number | null; number: string | null; issuedAt: number | null; issuedBy: string | null;
-  payment: { status: "paid" | "unpaid" | "overdue"; paid: boolean; paidDate: string | null; reference: string; version: number; outstandingPence: number };
+  payment: { status: "paid" | "unpaid" | "overdue" | "part-paid" | "review"; paid: boolean; paidDate: string | null; reference: string; version: number; outstandingPence: number;paidPence?:number;source?:"quickbooks";checkedAt?:number|null };
+  accounting?:{status:string;checkedAt:number|null;exportId?:number;reason?:string};
 }
 interface InvoiceRow { seq: number; invoice_number: string; order_id: string; customer_id: string; request_key: string; data: string; issued_at: number; issued_by: string; paid: number; paid_date: string | null; paid_at: number | null; payment_reference: string; payment_version: number }
 interface SourceOrder {
@@ -114,6 +116,7 @@ function document(row: InvoiceRow): InvoiceDocument {
   const data: InvoiceData = JSON.parse(row.data);
   return { ...data, id: row.seq, number: row.invoice_number, issuedAt: row.issued_at, issuedBy: row.issued_by, payment: { status: row.paid ? "paid" : data.dueDate && data.dueDate < today() ? "overdue" : "unpaid", paid: !!row.paid, paidDate: row.paid_date, reference: row.payment_reference, version: row.payment_version, outstandingPence: row.paid ? 0 : data.totals.grossPence } };
 }
+async function presented(env:Env,row:InvoiceRow,admin=true){return (await withAccounting(env,[document(row)],admin))[0];}
 export async function issuedInvoice(env: Env, id: number): Promise<InvoiceDocument> {
   const row = await env.DB.prepare("SELECT * FROM wholesale_invoices WHERE seq=?").bind(integer(id, "invoice ID", 1, Number.MAX_SAFE_INTEGER)).first<InvoiceRow>();
   if (!row) throw missing(); return document(row);
@@ -174,16 +177,16 @@ export async function handleInvoiceAdmin(req: Request, env: Env, route: string, 
       if (!order[1].startsWith("WS-") || saved.preview !== false) throw invalid("Invoices can only be issued for real customer orders.");
     }
     if (order[3]) { if (!row) throw missing(); return invoicePdf(document(row)); }
-    return json({ invoice: row ? document(row) : null });
+    return json({ invoice: row ? await presented(env,row) : null });
   }
   if (order && req.method === "POST") {
     if (order[3] && !order[2]) throw new ApiError(404, "not_found", "Preview a draft PDF before issuing the invoice.");
     const request = requestBody(object(await readJson(req, 16 * 1024))), requestKey = await digest(request);
     const existing = await invoiceByOrder(env, order[1]);
     if (existing) {
-      if (order[2]) return order[3] ? invoicePdf(document(existing)) : json({ invoice: document(existing), issued: true });
+      if (order[2]) return order[3] ? invoicePdf(document(existing)) : json({ invoice: await presented(env,existing), issued: true });
       if (existing.request_key !== requestKey) throw conflict("This order already has an issued invoice. Open that invoice; issued invoices cannot be changed.");
-      return json({ invoice: document(existing) });
+      return json({ invoice: await presented(env,existing) });
     }
     const { data, config } = await build(env, order[1], request);
     if (order[2]) {
@@ -195,14 +198,16 @@ export async function handleInvoiceAdmin(req: Request, env: Env, route: string, 
       .bind(config.invoicePrefix, config.firstInvoiceNumber, order[1], data.customerId, requestKey, JSON.stringify(data), at, actor, order[1], order[1], request.orderVersion, request.settingsVersion).first<InvoiceRow>();
     if (!inserted) {
       const raced = await invoiceByOrder(env, order[1]);
-      if (raced?.request_key === requestKey) return json({ invoice: document(raced) });
+      if (raced?.request_key === requestKey) return json({ invoice: await presented(env,raced) });
       throw conflict("The order, invoice or settings changed. Reload and review before issuing.");
     }
     await audit(env, "wholesale_invoice_issued", actor, `${actor} issued invoice ${inserted.invoice_number} for ${order[1]}.`);
-    return json({ invoice: document(inserted) }, 201);
+    return json({ invoice: await presented(env,inserted) }, 201);
   }
   const payment = /^invoices\/(\d+)\/payment$/.exec(route);
   if (payment && req.method === "PATCH") {
+    const invoiceId=integer(Number(payment[1]),"invoice ID",1,Number.MAX_SAFE_INTEGER);
+    if(await env.DB.prepare("SELECT id FROM quickbooks_exports WHERE environment='production' AND invoice_id=? AND state='linked'").bind(invoiceId).first())throw new ApiError(409,"quickbooks_managed_payment","Record this invoice payment in QuickBooks, then refresh its payment status.");
     const body = object(await readJson(req, 4096)), expected = version(body.ifVersion);
     if (typeof body.paid !== "boolean") throw invalid("Choose paid or unpaid.");
     const paidDate = body.paid ? (body.paidDate ? date(body.paidDate, "payment date") : today()) : null;
@@ -211,13 +216,13 @@ export async function handleInvoiceAdmin(req: Request, env: Env, route: string, 
     const row = await env.DB.prepare("UPDATE wholesale_invoices SET paid=?,paid_date=?,paid_at=?,payment_reference=?,payment_version=payment_version+1 WHERE seq=? AND payment_version=? RETURNING *").bind(body.paid ? 1 : 0, paidDate, body.paid ? Date.now() : null, reference, integer(Number(payment[1]), "invoice ID", 1, Number.MAX_SAFE_INTEGER), expected).first<InvoiceRow>();
     if (!row) { if (!await env.DB.prepare("SELECT seq FROM wholesale_invoices WHERE seq=?").bind(Number(payment[1])).first()) throw missing(); throw conflict("This payment record changed. Reload before saving."); }
     await audit(env, "wholesale_invoice_payment", actor, `${actor} marked invoice ${row.invoice_number} as ${body.paid ? "paid" : "unpaid"}. No bank transaction was performed.`);
-    return json({ invoice: document(row) });
+    return json({ invoice: await presented(env,row) });
   }
   if (route === "invoices" && req.method === "GET") return invoiceList(req, env);
   const match = /^invoices\/(\d+)(\/pdf)?$/.exec(route);
   if (match && req.method === "GET") {
     const row = await env.DB.prepare("SELECT * FROM wholesale_invoices WHERE seq=?").bind(integer(Number(match[1]), "invoice ID", 1, Number.MAX_SAFE_INTEGER)).first<InvoiceRow>();
-    if (!row) throw missing(); return match[2] ? invoicePdf(document(row)) : json({ invoice: document(row) });
+    if (!row) throw missing(); return match[2] ? invoicePdf(document(row)) : json({ invoice: await presented(env,row) });
   }
   return null;
 }
@@ -229,10 +234,10 @@ async function invoiceList(req: Request, env: Env, customerId?: string): Promise
   const values = [...bindings]; if (cursor) values.push(integer(Number(cursor), "invoice page", 1, Number.MAX_SAFE_INTEGER));
   const [rows, summary] = await Promise.all([
     env.DB.prepare(`SELECT * FROM wholesale_invoices WHERE ${where}${after} ORDER BY seq DESC LIMIT 201`).bind(...values).all<InvoiceRow>(),
-    env.DB.prepare(`SELECT COUNT(*) AS count, COALESCE(SUM(CASE WHEN paid=0 THEN json_extract(data,'$.totals.grossPence') ELSE 0 END),0) AS outstandingPence, COALESCE(SUM(CASE WHEN paid=0 AND json_extract(data,'$.dueDate') < ? THEN json_extract(data,'$.totals.grossPence') ELSE 0 END),0) AS overduePence, COALESCE(SUM(CASE WHEN paid=0 AND json_extract(data,'$.dueDate') < ? THEN 1 ELSE 0 END),0) AS overdueCount FROM wholesale_invoices WHERE ${where}`).bind(today(), today(), ...bindings).first<{ count: number; outstandingPence: number; overduePence: number; overdueCount: number }>(),
+    accountingSummary(env,customerId),
   ]);
   const records = rows.results.slice(0, 200);
-  return json({ invoices: records.map(document), count: summary?.count || 0, nextCursor: rows.results.length > 200 ? String(records.at(-1)!.seq) : null, summary: summary || { count: 0, outstandingPence: 0, overduePence: 0, overdueCount: 0 } });
+  return json({ invoices: await withAccounting(env,records.map(document),!customerId), count: summary?.count || 0, nextCursor: rows.results.length > 200 ? String(records.at(-1)!.seq) : null, summary: summary || { count: 0, outstandingPence: 0, overduePence: 0, overdueCount: 0 } });
 }
 export async function handleInvoiceCustomer(req: Request, env: Env, route: string, user: OrderingUser): Promise<Response | null> {
   if (!(route === "invoices" || /^invoices\/\d+(?:\/pdf)?$/.test(route) || /^orders\/WS-[A-F0-9]{32}\/invoice(?:\/pdf)?$/.test(route))) return null;
@@ -241,7 +246,7 @@ export async function handleInvoiceCustomer(req: Request, env: Env, route: strin
   if (route === "invoices") return invoiceList(req, env, user.customerId);
   const id = /^invoices\/(\d+)(\/pdf)?$/.exec(route);
   const row = id ? await env.DB.prepare("SELECT * FROM wholesale_invoices WHERE seq=? AND customer_id=?").bind(integer(Number(id[1]), "invoice ID", 1, Number.MAX_SAFE_INTEGER), user.customerId).first<InvoiceRow>() : await env.DB.prepare("SELECT * FROM wholesale_invoices WHERE order_id=? AND customer_id=?").bind(route.split("/")[1], user.customerId).first<InvoiceRow>();
-  if (!row) throw missing(); return route.endsWith("/pdf") ? invoicePdf(document(row)) : json({ invoice: document(row) });
+  if (!row) throw missing(); return route.endsWith("/pdf") ? invoicePdf(document(row)) : json({ invoice: await presented(env,row,false) });
 }
 
 export async function invoiceLinks<T extends { id: string }>(env: Env, orders: T[]) {
