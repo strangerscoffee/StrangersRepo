@@ -19,7 +19,7 @@ function freePort() {
   });
 }
 
-export async function startServer({ writeLimit, preSql, scheduled, vars = {} } = {}) {
+export async function startServer({ writeLimit, preSql, scheduled, vars = {}, host } = {}) {
   const state = mkdtempSync(join(tmpdir(), "kitchen-diary-test-"));
   // Optional SQL to run on the empty local database before the Worker starts (e.g. an older schema).
   if (preSql) {
@@ -31,6 +31,7 @@ export async function startServer({ writeLimit, preSql, scheduled, vars = {} } =
   // Let the OS allocate the inspector socket too: parallel Workers must not race for 9229.
   const args = ["dev", "--local", "--port", String(port), "--inspector-port", "0", "--ip", "127.0.0.1", "--persist-to", state,
     "--var", `SETUP_CODE:${SETUP_CODE}`, "--show-interactive-dev-session=false"];
+  if (host) args.push("--host", host);
   if (writeLimit) args.push("--var", `WRITE_LIMIT_PER_15_MIN:${writeLimit}`);
   // The admin section's own address is for the real site: here it's at /admin on the diary's (unless a test sets it).
   for (const [k, v] of Object.entries({ ADMIN_HOST: "", PREVIEW_HOST: "", ...(typeof vars === "function" ? vars({ port, base: `http://127.0.0.1:${port}` }) : vars) })) args.push("--var", `${k}:${v}`);
