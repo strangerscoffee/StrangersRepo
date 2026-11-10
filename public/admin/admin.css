@@ -477,3 +477,31 @@ button.stat{cursor:pointer}
   .w-order-toolbar>.toolbar .search{max-width:480px}
   .w-order-toolbar>.w-filters{justify-self:end}
 }
+
+/* The desktop sidebar owns Wholesale sections; the order queue keeps the main pane. */
+.w-sections-host{min-width:0}
+.w-sections-host:empty{display:none}
+.w-stats-orders{grid-template-columns:repeat(2,minmax(0,1fr))}
+.nav-wholesale-heading{display:grid;grid-template-columns:minmax(0,1fr) 44px;align-items:center;border-radius:12px}
+.nav-wholesale-heading:has(>.nav[aria-current="page"]){background:var(--tint)}
+.nav-wholesale-heading>.nav{min-width:0;background:none}
+.nav-wholesale-heading>.nav:hover{background:var(--sunk)}
+.nav-wholesale-toggle{display:grid;place-items:center;width:44px;min-height:44px;padding:0;border:0;border-radius:12px;background:none;color:var(--muted);cursor:pointer}
+.nav-wholesale-toggle:hover{background:var(--sunk)}
+.nav-wholesale-heading:has(>.nav[aria-current="page"])>.nav-wholesale-toggle{color:var(--accent)}
+.nav-wholesale-toggle svg.i{width:16px;height:16px;transition:transform .18s ease}
+.nav-wholesale-toggle[aria-expanded="true"] svg.i{transform:rotate(90deg)}
+.nav-wholesale-subnav{display:grid;gap:2px;margin:4px 0 8px 32px;padding-left:10px;border-left:1px solid var(--line);min-width:0}
+.nav-wholesale-item{display:flex;align-items:center;gap:4px;min-width:0}
+.nav-wholesale-child{flex:1;min-width:0;min-height:44px;padding-inline:12px;font-size:14.5px;color:var(--muted)}
+.nav-wholesale-child[aria-pressed="true"]{background:var(--sunk);color:var(--accent)}
+.nav-wholesale-review{flex:none;min-height:44px;min-width:34px;padding:0 9px;border:0;border-radius:12px;background:var(--warn-bg);color:var(--warn);font-size:12.5px;font-weight:650;cursor:pointer}
+@media(min-width:1024px){
+  .w-sections-host{display:none}
+  .w-workspace:has(>.w-stats-orders){grid-template-columns:minmax(180px,1fr) minmax(400px,580px);align-items:start}
+  .w-workspace:has(>.w-stats-orders)>.w-content{grid-column:1/-1}
+  .w-stats-orders{grid-template-columns:repeat(2,minmax(0,1fr));max-width:580px}
+  .w-stats-orders>.stat{padding:12px 16px}
+  .w-stats-orders .v{font-size:28px}
+}
+@media(prefers-reduced-motion:reduce){.nav-wholesale-toggle svg.i{transition:none}}

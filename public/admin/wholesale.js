@@ -1,5 +1,5 @@
 // Native Admin → Wholesale view. Uses the admin shell, escaped templates and shared D1 wholesale APIs.
-window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, closeSheet, reload, toast }) {
+window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, closeSheet, reload, toast, onNavigationChange = () => {} }) {
   const $ = (selector) => document.querySelector(selector);
   const invoiceUI = window.WholesaleInvoices({ api, html, raw, svg, put, openSheet, closeSheet, reload, toast });
   const money = (pence) => new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(pence / 100);
@@ -8,6 +8,25 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
   const date = (ms) => new Date(ms).toLocaleString("en-GB", { timeZone: "Europe/London", year: "numeric", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
   let tab = "orders", status = "all", approval = "all", query = "", data = null, timer, sequence = 0;
   let orderPages = 1, customerPages = 1, loadingMore = false;
+  const sections = [["orders", "Orders"], ["customers", "Customers"], ["catalogue", "Coffee catalogue"], ["invoices", "Invoicing"]];
+  const pendingReviews = () => data?.stats?.pendingAccounts ?? data?.accounts?.filter((row) => row.approvalStatus === "pending").length ?? 0;
+  function navigation({ sidebar = false, active = true } = {}) {
+    const pending = pendingReviews();
+    return html`${sections.map(([id, label]) => html`<span class="${sidebar ? "nav-wholesale-item" : "w-section-item"}"><button class="${sidebar ? "nav nav-wholesale-child" : ""}" type="button" data-act="wh-tab" data-id="${id}" aria-pressed="${active && tab === id ? "true" : "false"}" ${sidebar ? html`aria-current="${active && tab === id ? "page" : "false"}"` : ""}>${label}</button>${id === "customers" && pending > 0 ? html`<button class="w-review-chip ${sidebar ? "nav-wholesale-review" : ""}" type="button" data-act="wh-pending" aria-label="${pending} ${pending === 1 ? "account awaits" : "accounts await"} review"><span>${pending}</span><span class="w-review-word"> ${pending === 1 ? "review" : "reviews"}</span></button>` : ""}</span>`)}`;
+  }
+  function syncNavigation(desktop) {
+    const host = $("#wSectionsHost");
+    if (!host) return;
+    const key = JSON.stringify([desktop, tab, pendingReviews()]);
+    if (host.dataset.navigation === key) return;
+    host.dataset.navigation = key; host.hidden = desktop;
+    put(host, desktop ? html`` : html`<div class="segwrap w-sections"><div class="seg" role="group" aria-label="Wholesale sections">${navigation()}</div></div>`);
+  }
+  function selectSection(id, { pending = false } = {}) {
+    if (!sections.some(([value]) => value === id)) return false;
+    clearTimeout(timer); tab = id; query = ""; approval = pending && id === "customers" ? "pending" : "all"; orderPages = customerPages = 1;
+    onNavigationChange(); return true;
+  }
   const quickBusy = new Set(), orderErrors = new Map();
   const nextStatus = (row) => row.preview === false ? ({ New: "Preparing", Preparing: "Ready", Ready: "Dispatched" }[row.status] || null) : null;
   const customer = (id) => data.customers.find((row) => row.id === id);
@@ -72,9 +91,12 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     if (current !== sequence) return html``;
     data = snapshot;
     const stats = data.stats || { openOrders: data.orders.filter((row) => row.preview === false && !["Dispatched", "Cancelled"].includes(row.status)).length, gramsToPrepare: data.orders.filter((row) => row.preview === false && ["New", "Preparing"].includes(row.status)).reduce((total, row) => total + row.grams, 0), totalCustomers: data.counts.customer || 0, visibleCoffees: data.products.filter((row) => row.active).length, totalCoffees: data.products.length, pendingAccounts: data.accounts.filter((row) => row.approvalStatus === "pending").length };
+    const metrics = [["Open orders", stats.openOrders, "New, preparing and ready"], ["Coffee to prepare", weight(stats.gramsToPrepare), "Customer orders only"]];
+    if (section !== "orders") metrics.push(["Customers", stats.totalCustomers, "Business accounts"], ["Visible coffees", stats.visibleCoffees, `Of ${stats.totalCoffees} coffees`]);
+    onNavigationChange();
     return html`<div class="w-workspace">${head("Wholesale")}
-      <div class="label w-overview-label">Wholesale at a glance</div><div class="stats w-stats" role="group" aria-label="Wholesale overview">${[["Open orders", stats.openOrders, "New, preparing and ready"], ["Coffee to prepare", weight(stats.gramsToPrepare), "Customer orders only"], ["Customers", stats.totalCustomers, "Business accounts"], ["Visible coffees", stats.visibleCoffees, `Of ${stats.totalCoffees} coffees`]].map(([label, value, sub]) => html`<div class="stat glass"><span class="k">${label}</span><span class="v">${value}</span><span class="s">${sub}</span></div>`)}</div>
-      <div class="segwrap w-sections"><div class="seg" role="group" aria-label="Wholesale sections">${[["orders", "Orders"], ["customers", "Customers"], ["catalogue", "Coffee catalogue"], ["invoices", "Invoicing"]].map(([id, label]) => html`<span class="w-section-item"><button type="button" data-act="wh-tab" data-id="${id}" aria-pressed="${tab === id}">${label}</button>${id === "customers" && stats.pendingAccounts > 0 ? html`<button class="w-review-chip" type="button" data-act="wh-pending" aria-label="${stats.pendingAccounts} ${stats.pendingAccounts === 1 ? "account awaits" : "accounts await"} review"><span>${stats.pendingAccounts}</span><span class="w-review-word"> ${stats.pendingAccounts === 1 ? "review" : "reviews"}</span></button>` : ""}</span>`)}</div></div>
+      ${section === "orders" ? "" : html`<div class="label w-overview-label">Wholesale at a glance</div>`}<div class="stats w-stats ${section === "orders" ? "w-stats-orders" : ""}" role="group" aria-label="${section === "orders" ? "Order preparation overview" : "Wholesale overview"}">${metrics.map(([label, value, sub]) => html`<div class="stat glass"><span class="k">${label}</span><span class="v">${value}</span><span class="s">${sub}</span></div>`)}</div>
+      <div id="wSectionsHost" class="w-sections-host" hidden></div>
       <div class="w-content">${tab === "orders" ? orders() : tab === "customers" ? customers() : tab === "invoices" ? await invoiceUI.view() : catalogue()}</div></div>`;
   }
   function more(kind) {
@@ -516,12 +538,16 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
   }
   return {
     view,
+    navigation,
+    syncNavigation,
+    selectSection,
+    currentSection: () => tab,
     async act(name, id) {
       if (name.startsWith("wh-invoice-")) { await invoiceUI.act(name, id); return; }
-      if (name === "wh-tab" && ["orders", "customers", "catalogue", "invoices"].includes(id)) { clearTimeout(timer); tab = id; query = ""; approval = "all"; orderPages = customerPages = 1; await reload(); }
+      if (name === "wh-tab" && selectSection(id)) await reload();
       if (name === "wh-status" && ["all", ...data.statuses].includes(id)) { clearTimeout(timer); status = id; orderPages = 1; await reload(); }
       if (name === "wh-approval" && ["all", "pending"].includes(id)) { clearTimeout(timer); approval = id; customerPages = 1; await reload(); }
-      if (name === "wh-pending") { clearTimeout(timer); tab = "customers"; approval = "pending"; query = ""; customerPages = 1; await reload(); }
+      if (name === "wh-pending") { selectSection("customers", { pending: true }); await reload(); }
       if (name === "wh-clear") { clearTimeout(timer); query = ""; status = approval = "all"; orderPages = customerPages = 1; await reload(); $("#wq")?.focus({ preventScroll: true }); }
       if (name === "wh-more" && id === tab && data.nextCursor && !loadingMore) { loadingMore = true; const button = $(".w-more button"); if (button) { button.disabled = true; button.setAttribute("aria-busy", "true"); } try { if (id === "orders") orderPages++; else if (id === "customers") customerPages++; await reload(); } finally { loadingMore = false; } }
       if (name === "wh-next") await advanceOrder(id);
