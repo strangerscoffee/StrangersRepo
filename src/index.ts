@@ -169,8 +169,13 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
   const p = url.pathname;
   if(p.startsWith("/api/quickbooks/webhook/"))return handleWebhook(req,env,ctx,processEvents);
   const isGet = req.method === "GET" || req.method === "HEAD";
-  const app = appForHost(url.hostname, env.ROTA_HOST, env.ADMIN_HOST, env.PREVIEW_HOST);
-  const links = appLinks(url, env.ROTA_HOST, env.ADMIN_HOST, env.PREVIEW_HOST);
+  const app = appForHost(url.hostname, env.ROTA_HOST, env.ADMIN_HOST, env.PREVIEW_HOST, env.LEGACY_PREVIEW_HOST);
+  const links = appLinks(url, env.ROTA_HOST, env.ADMIN_HOST, env.PREVIEW_HOST, env.LEGACY_PREVIEW_HOST);
+  // A separate customer domain must not mint staff cookies or accept them for ordering.
+  // Keep the legacy staff-domain preview working for its existing sessions and saved browser work.
+  const staffDomain = (env.COOKIE_DOMAIN || "").toLowerCase().replace(/^\./, "");
+  const customerOnly = app === "preview" && !!staffDomain && url.hostname !== staffDomain && !url.hostname.endsWith("." + staffDomain);
+  if (customerOnly && p.startsWith("/api/") && !p.startsWith("/api/wholesale/") && p !== "/api/errors") throw new ApiError(404, "not_found", "Not available on the ordering address.");
   const wholesaleHost = app === "preview" || app === "diary";
   const wholesaleSignin = app === "preview" ? "/signin" : "/wholesale-preview/signin";
   if (wholesaleHost && isGet && (p === "/wholesale-preview/signin" || p === "/wholesale-preview/signin.html" || (app === "preview" && (p === "/signin" || p === "/signin.html")))) {
@@ -180,7 +185,7 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
   if (wholesaleHost && isGet && p === "/wholesale-preview/staff-signin") {
     if (app === "diary") return redirect("/signin?next=" + encodeURIComponent("/wholesale-preview/"));
     const target = new URL("signin", new URL(links.diary, url));
-    target.searchParams.set("next", new URL(app === "preview" ? "/" : "/wholesale-preview/", url).toString());
+    target.searchParams.set("next", customerOnly ? (env.LEGACY_PREVIEW_HOST ? `https://${env.LEGACY_PREVIEW_HOST}/` : new URL(links.admin, url).toString()) : new URL(app === "preview" ? "/" : "/wholesale-preview/", url).toString());
     return redirect(target.toString());
   }
   if (wholesaleHost && isGet && ["/wholesale-preview/signin.js", "/wholesale-preview/wholesale.css", "/theme.css", "/shared/core.js"].includes(p)) return staticFile(req, env, p);
@@ -245,7 +250,7 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
       if (!isGet && response.ok) await bumpChanges(env, "accounts");
       return response;
     }
-    const user = await wholesaleSession(req, env) || (caller.kind === "user" ? caller.user : null);
+    const user = await wholesaleSession(req, env) || (!customerOnly && caller.kind === "user" ? caller.user : null);
     if (!user) {
       if (p.startsWith("/api/") || p.startsWith("/_blob/")) throw new ApiError(401, "unauthenticated", "Sign in to continue.");
       if (!isGet) return new Response("Method not allowed", { status: 405 });

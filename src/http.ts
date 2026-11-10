@@ -9,7 +9,8 @@ export interface Env {
   COOKIE_DOMAIN?: string; // sign-in cookies are shared across this domain and its subdomains (wrangler.jsonc vars)
   ADMIN_HOST?: string; // the admin section's own hostname, e.g. admin.staffstrangerscoffee.com (wrangler.jsonc vars)
   ROTA_HOST?: string; // the rota app's own hostname, e.g. rota.staffstrangerscoffee.com (wrangler.jsonc vars)
-  PREVIEW_HOST?: string; // signed-in wholesale ordering preview, e.g. preview.staffstrangerscoffee.com
+  PREVIEW_HOST?: string; // canonical customer ordering hostname, strangerscoffee.trade
+  LEGACY_PREVIEW_HOST?: string; // keeps old-origin baskets and pending checkout recovery accessible
   QUICKBOOKS_CLIENT_ID?: string;
   QUICKBOOKS_CLIENT_SECRET?: string;
   QUICKBOOKS_TOKEN_KEY?: string; // base64 32-byte AES key, held outside D1/backups

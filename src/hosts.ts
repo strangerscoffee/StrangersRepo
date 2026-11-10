@@ -1,14 +1,14 @@
-// The three apps on one Worker: the diary on its own address, the rota on ROTA_HOST and the admin section on
+// The apps on one Worker: the diary on its own address, the rota on ROTA_HOST and the admin section on
 // ADMIN_HOST (wrangler.jsonc). Kept free of imports so test/rota.test.mjs can load it directly. Re-exported from access.ts.
 
 export type App = "diary" | "rota" | "admin" | "preview";
 
-/** Which app a hostname serves: the rota on ROTA_HOST, the admin section on ADMIN_HOST, the diary everywhere else. */
-export function appForHost(hostname: string, rotaHost: string | undefined, adminHost?: string, previewHost?: string): App {
+/** Which app a hostname serves: the rota on ROTA_HOST, the admin section on ADMIN_HOST, wholesale on its customer and legacy hosts, and the diary elsewhere. */
+export function appForHost(hostname: string, rotaHost: string | undefined, adminHost?: string, previewHost?: string, legacyPreviewHost?: string): App {
   const h = hostname.toLowerCase();
   if (rotaHost && h === rotaHost.toLowerCase()) return "rota";
   if (adminHost && h === adminHost.toLowerCase()) return "admin";
-  if (previewHost && h === previewHost.toLowerCase()) return "preview";
+  if ((previewHost && h === previewHost.toLowerCase()) || (legacyPreviewHost && h === legacyPreviewHost.toLowerCase())) return "preview";
   return "diary";
 }
 
@@ -50,8 +50,8 @@ export function isAdminSharedFile(path: string): boolean {
 
 /** Links between the apps, as seen from this request. Without a ROTA_HOST or ADMIN_HOST (local dev, tests) the rota
  * is at /rota/ and the admin section at /admin on the diary's address. */
-export function appLinks(url: URL, rotaHost: string | undefined, adminHost?: string, previewHost?: string): { rota: string; diary: string; admin: string; preview?: string } {
-  const app = appForHost(url.hostname, rotaHost, adminHost, previewHost);
+export function appLinks(url: URL, rotaHost: string | undefined, adminHost?: string, previewHost?: string, legacyPreviewHost?: string): { rota: string; diary: string; admin: string; preview?: string } {
+  const app = appForHost(url.hostname, rotaHost, adminHost, previewHost, legacyPreviewHost);
   // The diary is the rota's (or admin section's) host without its first label (rota.example.com -> example.com).
   const other = rotaHost || adminHost || previewHost || "";
   const diaryHost = other.includes(".") ? other.slice(other.indexOf(".") + 1) : url.hostname;

@@ -1,6 +1,6 @@
 # Wholesale: accounts and ordering
 
-Wholesale retains the existing address and data, with no Beta labels in the interface. Ordering: **https://preview.staffstrangerscoffee.com/**. Management: **https://admin.staffstrangerscoffee.com/#wholesale**, in the Admin sidebar or the Wholesale tab on mobile. The independent public Site from the earlier design pass is a separate historical demo.
+Wholesale ordering is at **https://strangerscoffee.trade/**, with no Beta labels in the interface. `www.strangerscoffee.trade` redirects to that address. The existing `preview.staffstrangerscoffee.com` remains a working alias for saved baskets, pending checkout recovery and staff preview. Management: **https://admin.staffstrangerscoffee.com/#wholesale**, in the Admin sidebar or the Wholesale tab on mobile. The independent public Site from the earlier design pass is a separate historical demo.
 
 ## Registration and approval
 
@@ -10,7 +10,7 @@ Admins may also create a customer and use Create sign-in, which generates an app
 
 Wholesale passwords and sessions are separate from staff accounts. Migration 12 adds `wholesale_accounts` and `wholesale_sessions`. The host-only `sf_wholesale_session` cookie is HttpOnly, Secure and SameSite=Lax, valid for 30 days. Only its SHA-256 hash is stored in D1. Sessions check approval, account activity and session version on every request. They never authorize diary, rota or Admin access. Five wrong account passwords lock it for ten minutes; sign-in attempts are also limited per IP, and registration is limited to five requests per IP per hour.
 
-Staff retain their existing Staff Login through the Staff sign-in link. Their ordering page shows a Staff preview banner and creates `PREVIEW-…` test orders. Customer orders use `WS-…` IDs and `preview:false`; the admin list distinguishes them. Staff sessions retain their existing shared-cookie behavior. The preview hostname refuses diary, rota, document and management APIs.
+Staff retain their existing Staff Login through the Staff sign-in link. Their ordering page shows a Staff preview banner and creates `PREVIEW-…` test orders. Customer orders use `WS-…` IDs and `preview:false`; the admin list distinguishes them. Staff sessions retain their existing shared-cookie behavior on the staff domain. The customer domain accepts only wholesale sessions; its Staff sign-in link opens the staff domain and returns to the legacy preview. Both ordering hostnames refuse diary, rota, document and management APIs; the customer domain also refuses staff authentication endpoints. Customers sign in once on the new hostname with their existing wholesale credentials. Accounts, orders and invoices remain shared in D1; host-only sessions and origin-local baskets/pending submissions stay on the address where they were created. Keep the legacy hostname available and never discard its pending submissions.
 
 ## Ordering and business details
 
@@ -48,7 +48,7 @@ For local development: `npm run dev -- --var PREVIEW_HOST:`. Ordering is at `/wh
 
 ## Interface and checkout recovery
 
-Customer ordering and sign-in now use the staff apps’ shared Liquid Glass theme (`/theme.css`): system fonts, translucent cards and chrome, rounded controls, dark mode, safe areas and accessibility preferences. Admin Wholesale follows the existing admin section patterns. The hostname, API paths, storage keys and account/session/data identifiers are retained for compatibility; `preview` flags still distinguish staff test orders from real customer orders. Catalogue/session/bootstrap responses carry `stage:"beta"`.
+Customer ordering and sign-in now use the staff apps’ shared Liquid Glass theme (`/theme.css`): system fonts, translucent cards and chrome, rounded controls, dark mode, safe areas and accessibility preferences. Admin Wholesale follows the existing admin section patterns. The customer hostname is now `strangerscoffee.trade`; the previous hostname remains available. API paths, storage keys and account/session/data identifiers are retained for compatibility; `preview` flags still distinguish staff test orders from real customer orders. Catalogue/session/bootstrap responses carry `stage:"beta"`.
 
 Before sending checkout, the browser keeps the exact submitted payload and review summary under the signed-in identity’s basket key plus `.pending-order`. Unknown outcomes (network failure, malformed response or server error) keep that request frozen across closing/reloading; Check submitted order retrieves the owned receipt, or Retry same order resubmits the original UUID/payload. Successful receipts clear it; confirmed validation rejections permit a fresh review. Browser storage must be available before a new submission can be sent. A lost response cannot silently become a new request ID.
 
