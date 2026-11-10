@@ -31,6 +31,7 @@ export async function makeBackup(env: Env, by: string): Promise<BackupInfo> {
   for (const t of ["rota_shifts", "rota_weeks", "rota_sites", "rota_people", "rota_time_off", "rota_requests"]) {
     rota[t] = (await env.DB.prepare(`SELECT * FROM ${t}`).all()).results;
   }
+  // quickbooks_app_settings is intentionally excluded: even encrypted app secrets are not JSON backup data.
   const body = JSON.stringify({
     kind: "strangers-kitchen-diary-backup",
     version: 1,

@@ -4,6 +4,7 @@ import {connection,configuration,type Connection} from './connection';
 import {mapping,changed} from './mappings';
 import {ADAPTER_VERSION,vatKey} from './payload';
 import {digest} from './crypto';
+import {appCredentials} from './appSettings';
 import type {Environment} from './preview';
 export interface Settings {active_environment:Environment;version:number;live_approval:string|null;updated_at:number}
 export async function settings(env:Env):Promise<Settings>{return (await env.DB.prepare('SELECT * FROM quickbooks_settings WHERE id=1').first<Settings>())!;}
@@ -14,7 +15,7 @@ export async function readiness(req:Request,env:Env){
   const evidence=(await env.DB.prepare('SELECT kind,profile FROM quickbooks_verifications WHERE vat_number=?').bind(vatKey(company.vat_number)).all<{kind:string;profile:string}>()).results;
   const profiles=evidence.filter(e=>e.kind==='profile'&&e.profile.includes(ADAPTER_VERSION)).map(e=>e.profile);
   const checks=[
-    {id:'credentials',label:'Production app credentials configured',ok:!!configuration(req,env,'production').config},
+    {id:'credentials',label:'Production app credentials configured',ok:!!(await configuration(req,env,'production')).config},
     {id:'company',label:'Live UK company confirmed in GBP',ok:company.status==='connected'&&company.country==='GB'&&company.currency==='GBP'},
     {id:'supplier',label:'Supplier VAT matches your confirmed invoice settings',ok:!!supplier?.confirmed&&!!supplier.seller?.vatNumber&&vatKey(supplier.seller.vatNumber)===vatKey(company.vat_number)},
     {id:'mappings',label:'Live sales items and VAT mappings reviewed',ok:!!saved.data.coffeeItemId&&saved.data.taxMappings.length>0},
@@ -25,7 +26,7 @@ export async function readiness(req:Request,env:Env){
   let approval:any=null;try{approval=state.live_approval?JSON.parse(state.live_approval):null;}catch{}
   const reviewer=typeof approval?.by==='string'?await env.DB.prepare("SELECT id FROM users WHERE id=? AND role='admin' AND active=1").bind(approval.by).first():null;
   const approved=!!reviewer&&approval?.fingerprint===fingerprint&&checks.every(c=>c.ok);
-  return{settings:state,connection:company,mappingVersion:saved.version,fingerprint,checks,approved,ready:approved,profiles,webhookConfigured:!!env.QUICKBOOKS_PRODUCTION_WEBHOOK_TOKEN,approvedAt:approved?approval.at:null};
+  return{settings:state,connection:company,mappingVersion:saved.version,fingerprint,checks,approved,ready:approved,profiles,webhookConfigured:!!(await appCredentials(env,'production').catch(()=>null))?.webhookToken,approvedAt:approved?approval.at:null};
 }
 export async function approveLive(req:Request,env:Env,body:Record<string,any>,actor:string){
   const ready=await readiness(req,env),attestations=object(body.attestations),keys=['company','vat','rounding','payments','fees'];

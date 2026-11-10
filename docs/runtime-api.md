@@ -227,6 +227,8 @@ Management routes below are under `/api/admin/wholesale/quickbooks` and require 
 
 | Method and suffix | Behaviour |
 |---|---|
+| `GET /app-settings` | Admin-only client ID, credential-presence/source flags, app/connection versions, encryption readiness and copyable callback/webhook URLs. Never returns a client secret, verifier token, ciphertext or encryption key. |
+| `PUT /app-settings` | `{ifVersion,connectionVersion,reviewed:true,clientId?,clientSecret?,webhookToken?,clearWebhook?,reset?}`. Blank secrets retain values; `clearWebhook:true` disables notifications, `reset:true` removes overrides. Requires hosting encryption key for stored values, atomic CAS, disconnect before auth credential changes, OAuth invalidation and fresh Live review. |
 | `GET /status` | Selected environment/configuration/missing names, safe company/version, active environment/mode version, Live checks, queue/reconciliation health and capabilities. |
 | `POST /connect` | Begins hashed single-use ten-minute OAuth state tied to environment/admin/session/connection version; returns fixed Intuit consent URL. |
 | `GET /callback` | Consumes `state,code,realmId` for its **saved** environment; validates same admin/session/version, UK/GBP, encrypts tokens, pending company confirmation. Redirects native review with `qbEnvironment`; cancelled consent is handled without changing active mode. |

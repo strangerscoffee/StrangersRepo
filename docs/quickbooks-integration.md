@@ -13,20 +13,13 @@ The default is **Sandbox**. Live requires configured Production credentials, con
    https://admin.staffstrangerscoffee.com/api/admin/wholesale/quickbooks/callback
    ```
 
-3. The site owner configures these Worker variables/secrets in Cloudflare. Never paste credentials into chat or commit them:
+3. Complete one-time hosting setup: the owner adds **`QUICKBOOKS_TOKEN_KEY`** as a Cloudflare Worker secret. Generate an independent base64-encoded 32-byte key in a trusted terminal with `openssl rand -base64 32`, store it directly in Cloudflare, and keep a secure recovery copy. Do not reuse the app secret, a password or a session key. Keep this key outside D1, backups and the Admin form; existing configured keys must be retained.
 
-   | Worker setting | Purpose |
-   |---|---|
-   | `QUICKBOOKS_CLIENT_ID` | Development client ID (Sandbox) |
-   | `QUICKBOOKS_CLIENT_SECRET` | Development client secret |
-   | `QUICKBOOKS_PRODUCTION_CLIENT_ID` | Production client ID (Live) |
-   | `QUICKBOOKS_PRODUCTION_CLIENT_SECRET` | Production client secret |
-   | `QUICKBOOKS_TOKEN_KEY` | Independent base64-encoded 32-byte AES key; keep a secure recovery copy |
-   | `QUICKBOOKS_REDIRECT_URI` | Exact callback URI above |
-   | `QUICKBOOKS_SANDBOX_WEBHOOK_TOKEN` | Intuit Development webhook verifier token |
-   | `QUICKBOOKS_PRODUCTION_WEBHOOK_TOKEN` | Intuit Production webhook verifier token |
+   In **Admin → Wholesale → Invoicing → QuickBooks → App credentials and setup**, choose the Sandbox or Live connection and save its Intuit **client ID**, **client secret**, and optional **webhook verifier token**. Sandbox uses Development keys; Live uses Production keys. The window provides copyable redirect/webhook addresses. On the deployed Admin hostname the callback is derived automatically, so `QUICKBOOKS_REDIRECT_URI` is optional unless a hosting override is already used.
 
-   Store client secrets, encryption key and verifier tokens as **secrets**. Generate the independent encryption key in a trusted terminal with `openssl rand -base64 32` and put it directly into Cloudflare. Do not reuse the app secret, a password or a session key. Missing Production settings do not prevent Sandbox testing. Missing webhook tokens disable that webhook; scheduled reconciliation remains available.
+   Saved secrets are encrypted in D1 with environment/purpose-specific AES-GCM and never returned to the browser, audit logs or JSON backups. Blank secret fields retain current values. Disabling notifications explicitly also overrides an existing hosting verifier token; scheduled reconciliation remains available. Credential changes require the company to be disconnected first, invalidate that environment’s unfinished sign-ins and require a fresh Live review. Saving settings never activates Live or grants consent.
+
+   Existing hosting variables remain supported as fallbacks: `QUICKBOOKS_CLIENT_ID`, `QUICKBOOKS_CLIENT_SECRET`, `QUICKBOOKS_PRODUCTION_CLIENT_ID`, `QUICKBOOKS_PRODUCTION_CLIENT_SECRET`, `QUICKBOOKS_SANDBOX_WEBHOOK_TOKEN`, `QUICKBOOKS_PRODUCTION_WEBHOOK_TOKEN`, and the optional `QUICKBOOKS_REDIRECT_URI`. Admin-saved fields override their hosting equivalents. **Remove saved app settings** removes these overrides and falls back to hosting settings, with explicit review and the same disconnect/version protections. Never paste credentials into chat or commit them.
 
 4. In Intuit, subscribe to **Invoice and Payment** notifications with separate environment settings and verifier tokens:
 
@@ -75,6 +68,8 @@ Provider bodies are size/time bounded, redirects refused and errors redacted. Pa
 
 ## Storage and recovery
 
+Migration **17** adds the encrypted `quickbooks_app_settings` table, with a separate versioned record for each environment. App credentials and verifier tokens are omitted entirely from JSON backups; after a JSON restore, re-enter them through Admin or retain the existing hosting fallback. The encryption key stays in Cloudflare.
+
 Migration **16** is additive to shipped migration 15. It moves the existing connection/mappings into the Sandbox namespace, retires old token/nonces and creates scoped connections/mappings, environment settings, durable exports, payment observations, minimal event queue, Sandbox evidence and reconciliation checkpoints. It leaves issued invoices and invoice numbering unchanged. `quickbooks_installation.namespace` remains the stable request-ID namespace.
 
 JSON backups preserve company metadata, original request bodies/hashes/IDs, links, observations, verification evidence and checkpoints, while excluding credentials, OAuth nonces, leases and Live approval. Settings default to Sandbox; unlinked operations are restored in review. There is no automatic restore endpoint. A manual JSON restore must reconnect companies and reapprove Live before any export processing.
@@ -90,6 +85,8 @@ UPDATE quickbooks_connections
 SET status='disconnected', token_data=NULL, generation=lower(hex(randomblob(16))),
     version=version+1, lease_owner=NULL, lease_until=0;
 DELETE FROM quickbooks_auth_states;
+UPDATE quickbooks_app_settings
+SET data=NULL, generation=lower(hex(randomblob(16))), version=version+1;
 UPDATE quickbooks_settings
 SET active_environment='sandbox', live_approval=NULL, version=version+1;
 UPDATE quickbooks_exports
@@ -104,7 +101,7 @@ Preserve the installation namespace, original ledger payloads/request IDs/compan
 
 ## Implementation and verification
 
-`preview.ts` validates the issued snapshot and returns a non-transmitting review candidate (`canTransmit:false`). `payload.ts` builds the international VAT payload and compares complete remote identity. `connection.ts`/`crypto.ts` handle scoped OAuth and bounded transport. `ledger.ts` handles durable create/recovery, `settings.ts` Live gates, `observations.ts` balances, and `webhooks.ts`/`jobs.ts` notification and CDC recovery. `runtimeSchema.ts` defines migration 16. Native Admin sheets and customer invoice UI use existing site themes/accessibility patterns.
+`preview.ts` validates the issued snapshot and returns a non-transmitting review candidate (`canTransmit:false`). `payload.ts` builds the international VAT payload and compares complete remote identity. `connection.ts`/`crypto.ts` handle scoped OAuth and bounded transport. `ledger.ts` handles durable create/recovery, `settings.ts` Live gates, `observations.ts` balances, and `webhooks.ts`/`jobs.ts` notification and CDC recovery. `runtimeSchema.ts` defines migration 16. `appSettings.ts` owns write-only encrypted app configuration and migration 17. Native Admin sheets and customer invoice UI use existing site themes/accessibility patterns.
 
 ```sh
 npm run quickbooks:preview       # deterministic offline example, no network

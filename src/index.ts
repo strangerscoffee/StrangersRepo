@@ -71,7 +71,10 @@ export default {
   // The daily backup, and the managers' Monday summary (crons in wrangler.jsonc).
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     if(event.cron === "*/5 * * * *"){
-      if(env.QUICKBOOKS_CLIENT_ID||env.QUICKBOOKS_PRODUCTION_CLIENT_ID)ctx.waitUntil(ensureSchema(env).then(()=>runQuickBooksJobs(env)));
+      ctx.waitUntil(ensureSchema(env).then(async()=>{
+        // App credentials can be saved in Admin instead of Worker vars. Keep idle cron runs small.
+        if(env.QUICKBOOKS_CLIENT_ID||env.QUICKBOOKS_PRODUCTION_CLIENT_ID||await env.DB.prepare('SELECT 1 FROM quickbooks_app_settings WHERE data IS NOT NULL LIMIT 1').first())await runQuickBooksJobs(env);
+      }));
       return;
     }
     if (event.cron === "30 6,7 * * 1") {

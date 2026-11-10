@@ -32,10 +32,11 @@ window.WholesaleQuickBooks = function ({api,html,raw,svg,show,title,footer,field
       <div class="wi-body"><section class="wi-section"><div class="qb-modes" role="group" aria-label="Accounting environment">${["sandbox","production"].map(mode=>html`<button class="btn ${mode===state.activeEnvironment?"":"soft"}" type="button" data-sheet="qb-mode" data-mode="${mode}" aria-pressed="${String(mode===state.activeEnvironment)}">${modeName(mode)}${mode===state.activeEnvironment?svg("ok"):""}</button>`)}</div><p class="hint">Switching changes where new invoices are sent. Existing Live invoices continue receiving payment updates.</p></section>
       <div class="wi-settings-grid"><section class="wi-section"><div class="wi-section-heading"><h3>${modeName(scope)} connection</h3><span class="pill ${connection.status==="connected"?"ok":"warn"}">${label[connection.status]||"Not connected"}</span></div>
       ${scope!==state.activeEnvironment?html`<div class="wi-draft-banner"><strong>${modeName(scope)} setup</strong><span>${modeName(state.activeEnvironment)} remains active. Reviewing this connection does not switch environments.</span></div>`:""}${companyDetails(state)}
-      ${!state.configured?html`<p>The site owner needs to configure the ${modeName(scope)} app credentials before connecting.</p><a class="btn soft" href="https://github.com/strangerscoffee/StrangersRepo/blob/main/docs/quickbooks-integration.md" target="_blank" rel="noopener">Setup guide ${svg("out")}</a>`:
+      ${!state.configured?html`<p>Add your ${modeName(scope)} app credentials to connect QuickBooks.</p><a class="btn soft" href="https://github.com/strangerscoffee/StrangersRepo/blob/main/docs/quickbooks-integration.md" target="_blank" rel="noopener">Setup guide ${svg("out")}</a>`:
         connection.status==="pending"?html`${field("Company VAT registration",html`<input id="qbVatNumber" maxlength="40" required autocomplete="off">`)}<label class="wi-check"><input id="qbConfirmCompany" type="checkbox" required><span>I’ve checked this is the intended UK ${modeName(scope)} company and its VAT registration.</span></label>`:
         connection.status==="connected"?html`<div class="group">${[["customer","Customers"],["item","Sales items"],["taxcode","Sales VAT codes"],["term","Payment terms"]].map(([kind,name])=>html`<button class="item" type="button" data-sheet="qb-browse" data-kind="${kind}"><span class="tx"><b>${name}</b></span>${svg("chev")}</button>`)}</div><button class="btn soft" type="button" data-sheet="qb-map-invoice">Review invoice mappings</button>`:
         html`<button class="btn" type="button" data-sheet="qb-connect">Connect QuickBooks ${modeName(scope)}</button>`}
+      <button class="btn soft" type="button" data-sheet="qb-app-settings">App credentials and setup</button>
       ${connection.status!=="disconnected"?html`<button class="btn soft" type="button" data-sheet="qb-disconnect">Disconnect ${modeName(scope)}</button>`:""}</section>
       <section class="wi-section"><div class="wi-section-heading"><h3>Accounting activity</h3>${refreshButton("qb-refresh-status","Refresh accounting status")}</div>
       <div class="group"><div class="item"><span class="tx"><b>Pending exports</b></span><strong>${state.health.exports.pending}</strong></div><div class="item"><span class="tx"><b>Exports to review</b></span><strong>${state.health.exports.review}</strong></div><div class="item"><span class="tx"><b>Payment updates queued</b></span><strong>${state.health.events.pending}</strong></div></div>
@@ -49,6 +50,7 @@ window.WholesaleQuickBooks = function ({api,html,raw,svg,show,title,footer,field
       if(action==="qb-disconnect"){disconnect(state,back,scope);return;}
       if(action==="qb-mode"){if(element.dataset.mode!==state.activeEnvironment)await busy(current,()=>selectMode(element.dataset.mode,back,scope));return;}
       await busy(current,async()=>{
+        if(action==="qb-app-settings")await appSettings(scope,()=>open(back,scope));
         if(action==="qb-browse")await references(scope,element.dataset.kind,()=>open(back,scope));
         if(action==="qb-history")await history(scope,()=>open(back,scope));
         if(action==="qb-map-invoice")await invoicePicker(scope,()=>open(back,scope));
@@ -69,6 +71,48 @@ window.WholesaleQuickBooks = function ({api,html,raw,svg,show,title,footer,field
     },back);
     if(cancelled){cancelled=false;notify("QuickBooks sign-in was cancelled. Your active environment has not changed.");}
     return form;
+  }
+  async function appSettings(scope,back){
+    const state=await api("GET",path("/app-settings",scope)),locked=state.connectionStatus!=="disconnected";
+    const form=show(html`<form id="qbAppSettingsForm" class="wi-sheet wi-wide" autocomplete="off">${title(modeName(scope)+" app settings","Client credentials and payment notifications")}
+      <div class="wi-body"><div class="wi-settings-grid"><section class="wi-section"><h3>Intuit app credentials</h3>
+      ${!state.keyReady?html`<div class="wi-draft-banner"><strong>One-time hosting setup needed</strong><span>Add QUICKBOOKS_TOKEN_KEY as a Cloudflare Worker secret to protect your stored credentials. Keep this independent encryption key outside the database.</span></div>`:""}
+      ${!state.readable?html`<p class="err">Saved settings cannot be opened. Check the hosting encryption key or disconnect this environment and enter replacement credentials.</p>`:""}
+      <p class="hint">Use the ${scope==="production"?"Production":"Development"} keys from your Intuit app. Saving these settings does not connect a company or switch environments.</p>
+      ${locked?html`<p class="hint">Disconnect ${modeName(scope)} in the connection window before replacing its client ID or secret. You can update the webhook verifier while connected.</p>`:""}
+      ${field("Client ID",html`<input id="qbAppClientId" value="${state.clientId}" maxlength="256" autocomplete="off" autocapitalize="none" spellcheck="false" required ${locked?raw("readonly"):""}>`)}
+      ${field("Client secret",html`<input id="qbAppClientSecret" type="password" maxlength="2048" autocomplete="off" spellcheck="false" placeholder="${state.clientSecretConfigured?"Saved · leave blank to keep":"Enter client secret"}" ${locked?raw("disabled"):!state.clientSecretConfigured?raw("required"):""}>`)}
+      <p class="hint">${state.clientSecretConfigured?"A client secret is configured. Saved secrets are never displayed.":"No client secret is configured yet."}</p>
+      ${field("Webhook verifier token (optional)",html`<input id="qbAppWebhookToken" type="password" maxlength="2048" autocomplete="off" spellcheck="false" placeholder="${state.webhookConfigured?"Saved · leave blank to keep":"Enter verifier token from Intuit"}">`)}
+      <p class="hint">${state.webhookConfigured?"Signed notifications are configured.":"Without a verifier token, scheduled payment checks remain available."}</p>
+      <label class="wi-check"><input id="qbAppClearWebhook" type="checkbox"><span>Disable signed notifications for ${modeName(scope)}.</span></label>
+      </section><section class="wi-section"><h3>Copy into Intuit</h3><p class="hint">Register these addresses in the ${scope==="production"?"Production":"Development"} settings of your Intuit app. The return address stays on the Admin domain.</p>
+      ${field("OAuth redirect URI",html`<input id="qbAppCallback" value="${state.callbackUrl}" readonly aria-label="OAuth redirect URI">`)}<button class="btn soft" type="button" data-sheet="qb-copy-setup" data-key="qbAppCallback">Copy redirect URI</button>
+      ${field("Webhook endpoint",html`<input id="qbAppWebhookUrl" value="${state.webhookUrl}" readonly aria-label="Webhook endpoint">`)}<button class="btn soft" type="button" data-sheet="qb-copy-setup" data-key="qbAppWebhookUrl">Copy webhook endpoint</button>
+      <p class="hint">Subscribe to Invoice and Payment notifications. Paste Intuit’s verifier token in the field alongside. Company ID is supplied when you sign in to QuickBooks; VAT, sales items and terms are reviewed after connecting.</p>
+      <a class="btn soft" href="https://developer.intuit.com/app/developer/dashboard" target="_blank" rel="noopener">Open Intuit developer dashboard ${svg("out")}</a>
+      ${state.hasOverrides?html`<button class="btn soft" type="button" data-sheet="qb-reset-app">Remove saved app settings</button>`:""}</section></div>
+      <label class="wi-check"><input id="qbAppReview" type="checkbox" required ${!state.keyReady?raw("disabled"):""}><span>I’ve checked these credentials belong to the ${modeName(scope)} app.</span></label></div>${footer(state.keyReady?"Save app settings":null,"Back")}</form>`,async(action,element,current)=>{
+      if(action==="qb-reset-app"){resetAppSettings(scope,state,back);return;}
+      await busy(current,async()=>{
+        if(action==="qb-copy-setup"){
+          const input=current.querySelector("#"+element.dataset.key);try{await navigator.clipboard.writeText(input.value);notify("Address copied.");}catch{input.disabled=false;input.focus();input.select();notify("Select and copy this address.");}
+        }
+        if(action==="submit"){
+          if(!current.querySelector("#qbAppReview").checked)throw new Error("Check the app and environment before saving.");
+          const secret=current.querySelector("#qbAppClientSecret"),webhook=current.querySelector("#qbAppWebhookToken"),clear=current.querySelector("#qbAppClearWebhook").checked;
+          if(clear&&webhook.value.trim())throw new Error("Choose either a verifier token or Disable notifications.");
+          await api("PUT",path("/app-settings",scope),{ifVersion:state.version,connectionVersion:state.connectionVersion,reviewed:true,clientId:current.querySelector("#qbAppClientId").value.trim(),...(secret.value?{clientSecret:secret.value}:{}),...(webhook.value?{webhookToken:webhook.value}:{}),...(clear?{clearWebhook:true}:{})});
+          secret.value="";webhook.value="";await back();notify(modeName(scope)+" app settings saved.");
+        }
+      });
+    },back);
+    return form;
+  }
+  function resetAppSettings(scope,state,back){
+    show(html`<form id="qbResetAppForm" class="wi-sheet wi-choice">${title("Remove saved "+modeName(scope)+" app settings")}<div class="wi-body wi-section"><p>Remove the app credentials and verifier token saved in Admin? If hosting credentials exist, those will be used instead. Existing invoices and export history are kept. Disconnect this environment first if its client credentials will change.</p><label class="wi-check"><input id="qbResetAppReview" type="checkbox" required><span>I’ve checked the effect on this environment.</span></label></div>${footer("Remove saved settings","Keep settings")}</form>`,async(action,element,current)=>{
+      if(action==="submit")await busy(current,async()=>{if(!current.querySelector("#qbResetAppReview").checked)throw new Error("Review the app settings first.");await api("PUT",path("/app-settings",scope),{ifVersion:state.version,connectionVersion:state.connectionVersion,reviewed:true,reset:true});await appSettings(scope,back);notify("Saved app settings removed.");});
+    },()=>appSettings(scope,back));
   }
   function disconnect(state,back,scope){
     show(html`<form id="qbDisconnectForm" class="wi-sheet wi-choice">${title("Disconnect QuickBooks "+modeName(scope))}<div class="wi-body wi-section"><p>Remove this site's access to ${state.connection.name||"this company"}? Saved exports keep their original company and can be checked again after reconnecting it.</p></div>${footer("Disconnect","Keep connected")}</form>`,async(action,element,form)=>{
