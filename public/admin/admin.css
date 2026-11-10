@@ -421,3 +421,59 @@ button.stat{cursor:pointer}
   #wCustomerForm [aria-labelledby="wSigninTitle"]{grid-area:signin}
   #wCustomerForm [aria-labelledby="wInternalNoteTitle"]{grid-area:notes}
 }
+
+/* Wholesale keeps compact controls above a full-width, grouped work list. */
+.w-content{min-width:0}
+.w-list-panel{display:grid;align-content:start;min-width:0;overflow:hidden;border-radius:20px}
+.w-list-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:18px 20px 14px}
+.w-list-header h2{font-size:19px;font-weight:650;letter-spacing:-.02em}
+.w-result-count{font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+.w-panel-tools{display:grid;gap:12px;min-width:0;padding:0 20px 18px;border-bottom:1px solid var(--line)}
+.w-panel-tools .toolbar{min-width:0}
+.w-panel-tools .w-order-toolbar{grid-template-columns:minmax(0,1fr);gap:12px}
+.w-record-list{border-radius:0}
+.w-record-list>.item,.w-record-list .w-order{padding-inline:20px}
+.w-list-panel>.hint{padding:14px 20px;border-top:1px solid var(--line)}
+.w-list-panel>.w-more{padding:14px 20px}
+.w-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;min-height:220px;padding:28px 24px;text-align:center}
+.w-empty>.ic{width:48px;height:48px;border-radius:15px;margin-bottom:4px}
+.w-empty>.ic svg.i{width:24px;height:24px}
+.w-empty h3{font-size:18px;font-weight:650;letter-spacing:-.015em;color:var(--fg)}
+.w-empty p{font-size:14px;line-height:1.5;color:var(--muted);max-width:45ch}
+.w-empty>.btn{margin-top:6px}
+@media(max-width:600px){
+  .w-list-header{padding:16px 16px 12px}
+  .w-panel-tools{padding:0 16px 16px}
+  .w-panel-tools>.toolbar{display:grid;grid-template-columns:minmax(0,1fr)}
+  .w-panel-tools>.toolbar>.btn{justify-self:start}
+  .w-record-list>.item,.w-record-list .w-order{padding-inline:16px}
+  .w-list-panel>.hint{padding:12px 16px}
+  .w-empty{padding:24px 18px;min-height:200px}
+}
+@media(min-width:1024px){
+  .w-workspace{gap:20px}
+  .w-workspace>.pagehead{padding-top:0}
+  .w-overview-label{display:none}
+  .w-stats{max-width:1120px;gap:0;overflow:hidden;border:1px solid var(--glass-edge);border-radius:20px;background:var(--glass);-webkit-backdrop-filter:var(--blur);backdrop-filter:var(--blur);box-shadow:var(--glass-hi),var(--lift)}
+  .w-stats>.stat{padding:16px 20px;gap:3px;border:0;border-right:1px solid var(--line);border-radius:0;background:none;box-shadow:none;-webkit-backdrop-filter:none;backdrop-filter:none}
+  .w-stats>.stat:last-child{border-right:0}
+  .w-stats .v{font-size:30px}
+  .w-stats .s{font-size:12.5px}
+  .w-workspace .w-sections{padding-top:0;width:fit-content;max-width:100%}
+  .w-workspace .w-sections .seg{display:inline-flex;width:auto}
+  .w-workspace .w-sections .w-section-item{flex:0 0 auto}
+  .w-workspace .w-sections button{flex:0 0 auto;padding-inline:20px}
+  .w-workspace .w-sections .w-review-chip{padding-inline:10px}
+  .w-panel-tools>.toolbar .search{max-width:520px}
+  .w-panel-tools>.toolbar>.btn{margin-left:auto}
+  .w-list-header{padding-block:20px 16px}
+  .w-empty{min-height:260px}
+  .w-order-entry>.w-order:only-child{grid-column:1}
+  .w-order-entry:has(.w-order-feedback:not([hidden])){grid-template-columns:minmax(0,1fr) 172px}
+  .w-order-entry:has(.w-order-feedback:not([hidden]))>.w-order-actions{grid-column:1/-1}
+}
+@media(min-width:1280px){
+  .w-panel-tools .w-order-toolbar{grid-template-columns:minmax(300px,1fr) max-content;align-items:center;gap:16px}
+  .w-order-toolbar>.toolbar .search{max-width:480px}
+  .w-order-toolbar>.w-filters{justify-self:end}
+}
