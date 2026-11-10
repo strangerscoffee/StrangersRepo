@@ -15,18 +15,7 @@
   // Never settles when redirecting to sign-in, so the page doesn't start up with no one signed in. With no
   // connection yet (4G dropping as the page opens), it asks again, waiting a little longer each time, rather than
   // failing: the page starts as soon as it's answered.
-  const mePromise = (async () => {
-    for (let wait = 1000; ; wait = Math.min(wait * 2, 15000)) {
-      let me = null;
-      try { me = await fetch("/api/auth/me").then((r) => r.json()); } catch (e) { /* no answer: try again */ }
-      if (me) {
-        if (!me.user) { goSignIn(); return new Promise(() => {}); }
-        if (!(await SC.bindSession(me.user, { clear: clearIdentityData }))) return new Promise(() => {});
-        return me;
-      }
-      await new Promise((r) => setTimeout(r, wait));
-    }
-  })();
+  const mePromise = SC.startSession({ clear: clearIdentityData }).then(me => me || new Promise(() => {}));
 
   // Safari can bring a page back from memory (going back to a tab) after the session has ended: check, and go to
   // sign-in rather than show a page that can't load anything.

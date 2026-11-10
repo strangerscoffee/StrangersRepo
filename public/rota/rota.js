@@ -1607,14 +1607,13 @@
 
   async function start() {
     try {
-      const auth = await fetch("/api/auth/me").then((r) => r.json());
-      if (!auth.user) { goSignIn(); return; }
-      if (!(await SC.bindSession(auth.user, { clear: () => {
+      const auth = await SC.startSession({ clear: () => {
         R.me = null; R.auth = null; R.weekData = null; R.approvers = []; R.everyone = false; weekBody = null;
         for (const key of Object.keys(HUE.id)) delete HUE.id[key]; for (const key of Object.keys(HUE.name)) delete HUE.name[key];
         closeSheets(); for (const id of ["#page", "#sheet", "#peopleList", "#acctMenu", "#snav", "#tabbar", "#meBox"]) $(id)?.replaceChildren();
         $("#pageTitle").textContent = ""; $("#pageSub").textContent = ""; $("#pageAction").replaceChildren();
-      } }))) return;
+      } });
+      if (!auth) return;
       const me = await get("/api/rota/me");
       R.auth = auth; R.me = me; R.links = me.links; R.approvers = me.approvers;
     } catch (e) {

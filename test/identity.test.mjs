@@ -34,6 +34,21 @@ test("GET identity reads never set or restore session/device cookies", async () 
   }
 });
 
+test("compact identity proofs return only current ID/role and never renew cookies", async () => {
+  for (const cookie of [admin, alice.cookie, bob.cookie, ""]) {
+    const full = await request("/api/auth/me", { cookie });
+    const proof = await request("/api/auth/me", { cookie, expected: { "x-sc-session-check": "1" } });
+    assert.equal(proof.status, 200);
+    assert.deepEqual(proof.body.user, full.body.user ? { id: full.body.user.id, role: full.body.user.role } : null);
+    assert.deepEqual(proof.response.headers.getSetCookie(), []);
+    assert.equal(proof.response.headers.get("cache-control"), "no-store");
+    for (const field of ["quickSwitch", "setupNeeded", "links"]) assert.equal(field in proof.body, false);
+    if (proof.body.user) assert.deepEqual(Object.keys(proof.body.user).sort(), ["id", "role"]);
+  }
+  const full = await request("/api/auth/me");
+  assert.ok(full.body.links.admin && full.body.links.diary && full.body.links.rota, "bootstrap carries app links without another API request");
+});
+
 test("expected immutable identity and role reject stale reads and writes before private/conflict data", async () => {
   const expected = { "x-expected-user-id": alice.id, "x-expected-user-role": "staff" };
   for (const [path, body] of [
