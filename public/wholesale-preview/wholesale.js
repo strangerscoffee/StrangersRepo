@@ -12,6 +12,11 @@ const escape = (value) => String(value).replace(/[&<>"']/g, (character) => ({ "&
 let storageAvailable = true;
 let basket = [];
 let currentFilter = "all";
+let currentSort = "catalogue", catalogueLoading = false;
+const sortLabels = { catalogue: "Catalogue order", "price-asc": "Price: low to high", "price-desc": "Price: high to low" };
+function refreshBusy(id, busy) {
+  const button = $(id); button.disabled = busy; button.setAttribute("aria-busy", String(busy));
+}
 let orderVisible = false;
 let toastTimer;
 let history = [];
@@ -152,6 +157,50 @@ function renderProducts() {
   </article>`).join("");
 }
 
+function sortProducts() {
+  const container = $("#products"), focused = document.activeElement;
+  const cards = products.map((product, index) => {
+    const card = container.querySelector(`article[data-product="${product.id}"]`);
+    return { card, index, price: unitPrice(product, card.querySelector("form").elements.pack.value) };
+  });
+  if (currentSort !== "catalogue") cards.sort((a, b) => (currentSort === "price-asc" ? a.price - b.price : b.price - a.price) || a.index - b.index);
+  for (let i = 0; i < cards.length; i++) if (container.children[i] !== cards[i].card) container.insertBefore(cards[i].card, container.children[i] || null);
+  if (focused && container.contains(focused) && document.activeElement !== focused) focused.focus({ preventScroll: true });
+}
+const sortMenu = $("#sort-menu"), sortButton = $("#sort-coffee");
+sortMenu.addEventListener("beforetoggle", event => {
+  sortButton.setAttribute("aria-expanded", String(event.newState === "open"));
+  if (event.newState !== "open") return;
+  positionSortMenu();
+});
+function positionSortMenu() {
+  const rect = sortButton.getBoundingClientRect(), width = Math.min(290, innerWidth - 32);
+  sortMenu.style.width = width + "px";
+  sortMenu.style.left = Math.max(16, Math.min(rect.right - width, innerWidth - width - 16)) + "px";
+  const below = innerHeight - rect.bottom - 16;
+  sortMenu.style.top = (below >= 210 ? rect.bottom + 8 : Math.max(16, rect.top - 210)) + "px";
+  sortMenu.style.maxHeight = Math.max(100, innerHeight - 32) + "px";
+}
+sortMenu.addEventListener("toggle", event => {
+  if (event.newState === "open") sortMenu.querySelector('[aria-checked="true"]')?.focus({ preventScroll: true });
+});
+sortMenu.addEventListener("click", event => {
+  const option = event.target.closest("[data-sort]");
+  if (!option || !Object.hasOwn(sortLabels, option.dataset.sort)) return;
+  currentSort = option.dataset.sort; $("#sort-label").textContent = sortLabels[currentSort];
+  sortButton.setAttribute("aria-label", "Sort coffee: " + sortLabels[currentSort]);
+  for (const button of sortMenu.querySelectorAll("[data-sort]")) button.setAttribute("aria-checked", String(button === option));
+  if (ready) sortProducts();
+  sortMenu.hidePopover(); sortButton.focus({ preventScroll: true });
+});
+sortMenu.addEventListener("keydown", event => {
+  const options = [...sortMenu.querySelectorAll("[data-sort]")], index = options.indexOf(document.activeElement);
+  const next = event.key === "Home" ? 0 : event.key === "End" ? options.length - 1 : event.key === "ArrowDown" ? (index + 1) % options.length : event.key === "ArrowUp" ? (index + options.length - 1) % options.length : null;
+  if (next !== null) { event.preventDefault(); options[next].focus(); }
+});
+function closeSortMenu() { if (sortMenu.matches(":popover-open")) sortMenu.hidePopover(); }
+window.addEventListener("resize", () => { if (sortMenu.matches(":popover-open")) positionSortMenu(); });
+window.addEventListener("scroll", event => { if (!sortMenu.contains(event.target) && sortMenu.matches(":popover-open")) positionSortMenu(); }, true);
 function filterProducts() {
   if (!ready) return;
   const query = $("#coffee-search").value.trim().toLocaleLowerCase("en-GB");
@@ -165,6 +214,7 @@ function filterProducts() {
   }
   $("#product-count").textContent = `${count} ${count === 1 ? "coffee" : "coffees"}`;
   $("#no-results").hidden = count !== 0;
+  sortProducts();
 }
 
 function validateQuantity(input) {
@@ -230,6 +280,7 @@ $("#products").addEventListener("change", (event) => {
     const product = productFor(form.dataset.product);
     form.querySelector("[data-price]").textContent = money(unitPrice(product, pack));
     form.querySelector("[data-price-unit]").textContent = `per ${packs[pack].label}`;
+    if (currentSort !== "catalogue") sortProducts();
   }
   if (event.target.type === "number") validateQuantity(event.target);
 });
@@ -586,7 +637,8 @@ function applyCatalogue(fresh, initial) {
   if (pendingAttempt) toast("An order is awaiting confirmation. Choose Check submitted order.");
 }
 async function start() {
-  $("#refresh-catalogue").disabled = true;
+  if (catalogueLoading) return;
+  catalogueLoading = true; $("#products").setAttribute("aria-busy", "true");
   $("#retry-catalogue").hidden = true;
   $("#catalogue-status").hidden = false;
   $("#catalogue-status").textContent = "Loading the signed-in catalogue…";
@@ -596,7 +648,7 @@ async function start() {
   } catch (error) {
     $("#catalogue-status").textContent = error.message;
     $("#retry-catalogue").hidden = false;
-  } finally { $("#refresh-catalogue").disabled = false; }
+  } finally { catalogueLoading = false; $("#products").setAttribute("aria-busy", "false"); }
 }
 $("#preview-sign-out").addEventListener("click", async () => {
   if (session?.me.role !== "wholesale") return SC.signOut();
@@ -604,11 +656,11 @@ $("#preview-sign-out").addEventListener("click", async () => {
   catch (error) { toast(error.message); }
 });
 $("#retry-catalogue").addEventListener("click", start);
-$("#refresh-catalogue").addEventListener("click", start);
 window.addEventListener("pageshow", (event) => {
   if (!event.persisted) return;
   // Cached dialogs contain private business data; restore against the current session and scoped storage.
   document.querySelectorAll("dialog[open]").forEach(dialog => dialog.close());
+  closeSortMenu();
   location.reload();
 });
 
@@ -760,7 +812,7 @@ async function loadOrders(append = false) {
   if (!append) { history = []; historyCursor = null; historyTotal = 0; $("#order-history").textContent = "Loading your orders…"; $("#history-more").hidden = true; }
   $("#history-count").textContent = append ? "Loading earlier orders…" : "Loading orders…";
   $("#order-history").setAttribute("aria-busy", "true");
-  $("#refresh-orders").disabled = $("#history-more").disabled = true;
+  refreshBusy("#refresh-orders", true); $("#history-more").disabled = true;
   try {
     if (!await confirmIdentity()) return;
     const result = await api("/api/wholesale/orders" + (append && historyCursor ? "?cursor=" + encodeURIComponent(historyCursor) : ""));
@@ -771,7 +823,7 @@ async function loadOrders(append = false) {
     $("#history-count").textContent = `Showing ${history.length} of ${historyTotal} ${historyTotal === 1 ? "order" : "orders"}`;
     $("#history-more").hidden = !historyCursor;
   } catch (error) { if (!append) $("#order-history").textContent = error.message; $("#history-count").textContent = append ? "Couldn’t load earlier orders. Try again." : ""; }
-  finally { historyLoading = false; $("#order-history").setAttribute("aria-busy", "false"); $("#refresh-orders").disabled = $("#history-more").disabled = false; }
+  finally { historyLoading = false; $("#order-history").setAttribute("aria-busy", "false"); refreshBusy("#refresh-orders", false); $("#history-more").disabled = false; }
 }
 function showHistorySection(section) {
   const invoices = section === "invoices" && !!session.customer;
@@ -949,7 +1001,7 @@ async function loadInvoices(append = false) {
   if (!append) { customerInvoices = []; invoiceCursor = null; invoiceTotal = 0; $("#customer-invoices-list").textContent = "Loading your invoices…"; $("#invoice-more").hidden = true; $("#history-invoice-note").hidden = true; }
   $("#invoice-count").textContent = append ? "Loading earlier invoices…" : "Loading invoices…";
   $("#customer-invoices-list").setAttribute("aria-busy", "true");
-  $("#refresh-invoices").disabled = $("#invoice-more").disabled = true;
+  refreshBusy("#refresh-invoices", true); $("#invoice-more").disabled = true;
   try {
     if (!await confirmIdentity()) return;
     const result = await api("/api/wholesale/invoices" + (append && invoiceCursor ? "?cursor=" + encodeURIComponent(invoiceCursor) : ""));
@@ -964,10 +1016,10 @@ async function loadInvoices(append = false) {
     $("#invoice-more").hidden = !invoiceCursor;
   } catch (error) {
     if (!append) $("#customer-invoices-list").textContent = error.message;
-    $("#invoice-count").textContent = append ? "Couldn’t load earlier invoices. Try again." : "Couldn’t load invoices. Use Refresh invoices to try again.";
+    $("#invoice-count").textContent = append ? "Couldn’t load earlier invoices. Try again." : "Couldn’t load invoices. Use the refresh button to try again.";
   } finally {
     invoiceLoading = false; $("#customer-invoices-list").setAttribute("aria-busy", "false");
-    $("#refresh-invoices").disabled = $("#invoice-more").disabled = false;
+    refreshBusy("#refresh-invoices", false); $("#invoice-more").disabled = false;
   }
 }
 $("#refresh-invoices").addEventListener("click", () => loadInvoices());
