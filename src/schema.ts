@@ -5,6 +5,8 @@ import { Env } from "./http";
 import { migrateQuickBooks } from "./quickbooks/schema";
 import { migrateQuickBooksRuntime } from "./quickbooks/runtimeSchema";
 
+import {migrateQuickBooksAppSettings} from "./quickbooks/appSettings";
+
 const SCHEMA = [
   // Every diary document, stored by path (see docs/data-model.md).
   `CREATE TABLE IF NOT EXISTS docs (
@@ -254,6 +256,7 @@ const MIGRATIONS: Migration[] = [
   } },
   { id: 15, name: "QuickBooks sandbox connection", run: migrateQuickBooks },
   { id: 16, name: "QuickBooks environments and durable accounting operations", run: migrateQuickBooksRuntime },
+  { id: 17, name: "Encrypted QuickBooks app settings", run: migrateQuickBooksAppSettings },
 ];
 
 async function migrate(env: Env): Promise<void> {

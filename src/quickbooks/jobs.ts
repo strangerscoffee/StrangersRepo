@@ -65,7 +65,7 @@ async function pollChanges(req:Request,env:Env){
   const companies=(await env.DB.prepare("SELECT environment,realm_id FROM quickbooks_connections WHERE status='connected' ORDER BY environment").all<{environment:Environment;realm_id:string}>()).results;
   const candidates:ReconcileState[]=[];
   for(const company of companies){
-    if(!configuration(req,env,company.environment).config)continue;
+    if(!(await configuration(req,env,company.environment)).config)continue;
     await env.DB.prepare('INSERT OR IGNORE INTO quickbooks_reconciliation(environment,realm_id) VALUES(?,?)').bind(company.environment,company.realm_id).run();
     const row=await env.DB.prepare('SELECT * FROM quickbooks_reconciliation WHERE environment=? AND realm_id=?').bind(company.environment,company.realm_id).first<ReconcileState>();
     if(row&&row.lease_until<=Date.now()&&row.retry_at<=Date.now()&&row.updated_at<Date.now()-240000)candidates.push(row);

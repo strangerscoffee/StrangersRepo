@@ -3,6 +3,7 @@ import {ApiError,type Env,invalid,json} from '../http';
 import {ensureSchema} from '../schema';
 import {connection,environment} from './connection';
 import {digest} from './crypto';
+import {appCredentials} from './appSettings';
 import type {Environment} from './preview';
 export interface Notification {key:string;environment:Environment;realmId:string;entity:'Invoice'|'Payment';entityId:string;operation:string;at:number}
 const numeric=(value:unknown)=>typeof value==='string'&&/^\d{1,32}$/.test(value)?value:typeof value==='number'&&Number.isSafeInteger(value)&&value>=0?String(value):null;
@@ -41,7 +42,9 @@ export async function handleWebhook(req:Request,env:Env,ctx:ExecutionContext,pro
   const url=new URL(req.url),match=/^\/api\/quickbooks\/webhook\/(sandbox|production)$/.exec(url.pathname);
   if(!match||(env.ADMIN_HOST&&url.hostname!==env.ADMIN_HOST))throw new ApiError(404,'not_found','Not found.');
   if(req.method!=='POST')return new Response('Method not allowed',{status:405,headers:{allow:'POST','cache-control':'no-store'}});
-  const mode=environment(match[1]),secret=mode==='sandbox'?env.QUICKBOOKS_SANDBOX_WEBHOOK_TOKEN:env.QUICKBOOKS_PRODUCTION_WEBHOOK_TOKEN;
+  await ensureSchema(env);
+  const mode=environment(match[1]);let secret:string|undefined;
+  try{secret=(await appCredentials(env,mode)).webhookToken;}catch(error){if(!(error instanceof ApiError)||error.code!=='quickbooks_credentials_unavailable')throw error;}
   if(!secret||secret.length<16)throw new ApiError(404,'not_found','Not found.');
   const signature=req.headers.get('intuit-signature')||'';if(!/^[A-Za-z0-9+/]{43}=$/.test(signature))throw new ApiError(401,'invalid_signature','Webhook signature is invalid.');
   const bytes=await rawBody(req),key=await crypto.subtle.importKey('raw',new TextEncoder().encode(secret),{name:'HMAC',hash:'SHA-256'},false,['verify']);
