@@ -19,7 +19,8 @@ export const grinds = {
 export const orderablePacks = Object.entries(packs);
 // Can this line still be ordered as it is (size still sold, grind still offered)? Past orders can hold 500 g bags.
 export const lineOrderable = (line) => Object.hasOwn(packs, line.pack) && isGrindAvailable(productFor(line.productId), line.grind);
-export const MAX_QUANTITY = 99;
+import { MAX_QUANTITY } from "./limits.js";
+export { MAX_QUANTITY };
 export const money = (pence) => new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(pence / 100);
 export const weight = (grams) => `${new Intl.NumberFormat("en-GB", { maximumFractionDigits: 2 }).format(grams / 1000)} kg`;
 export const productFor = (id) => products.find((product) => product.id === id);

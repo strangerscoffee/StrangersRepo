@@ -2,6 +2,7 @@ import { handleQuickBooks } from "./quickbooks/index";
 // Wholesale beta: real customer orders and isolated staff test orders. Payments and fulfilment are managed by the team.
 import { validGrindId } from "../public/wholesale-preview/grinds.js";
 import { shippingFor } from "../public/wholesale-preview/shipping.js";
+import { MAX_QUANTITY } from "../public/wholesale-preview/limits.js";
 import { catalogueRetrievedAt } from "../public/wholesale-preview/catalogue.js";
 import type { User } from "./auth";
 import { object, text, version, decode, get, save, type Row, type Versioned } from "./wholesaleStore";
@@ -56,11 +57,11 @@ function orderBody(value: unknown) {
   for (const value of body.lines) {
     const line = object(value);
     if ((typeof line.productId !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(line.productId)) || typeof line.pack !== "string" || !Object.hasOwn(PACKS, line.pack) || typeof line.grind !== "string" || !validGrindId(line.grind)) throw invalid("Choose a listed coffee, bag size and grind.");
-    if (!Number.isInteger(line.quantity) || line.quantity < 1 || line.quantity > 99) throw invalid("Choose a whole number of bags from 1 to 99.");
+    if (!Number.isInteger(line.quantity) || line.quantity < 1 || line.quantity > MAX_QUANTITY) throw invalid(`Choose a whole number of bags from 1 to ${MAX_QUANTITY}.`);
     if (!Number.isInteger(line.price) || line.price < 1 || line.price > 1000000) throw invalid("Check the quoted coffee price.");
     const previous = lines.find((item) => item.productId === line.productId && item.pack === line.pack && item.grind === line.grind);
     if (previous) {
-      if (previous.price !== line.price || previous.quantity + line.quantity > 99) throw invalid("Each coffee, weight and grind can have at most 99 bags at one price.");
+      if (previous.price !== line.price || previous.quantity + line.quantity > MAX_QUANTITY) throw invalid(`Each coffee, weight and grind can have at most ${MAX_QUANTITY} bags at one price.`);
       previous.quantity += line.quantity;
     } else lines.push({ productId: line.productId, pack: line.pack as Pack, grind: line.grind, quantity: line.quantity, price: line.price });
   }

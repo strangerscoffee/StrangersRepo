@@ -136,10 +136,20 @@ function toast(message) {
   toastTimer = setTimeout(() => { element.classList.remove("visible"); element.textContent = ""; }, 3500);
 }
 
+// Tapping a quantity selects it, so typing a number replaces it. Selected at once (not after a delay, which
+// could swallow the first key), and the release of that same tap mustn't move the caret and undo it.
+let quantityJustFocused = null;
+document.addEventListener("focusin", (event) => {
+  if (!event.target.matches?.(".stepper input")) return;
+  try { event.target.select(); } catch {}
+  quantityJustFocused = event.target;
+});
+document.addEventListener("mouseup", (event) => { if (event.target === quantityJustFocused) event.preventDefault(); quantityJustFocused = null; });
+document.addEventListener("keydown", () => { quantityJustFocused = null; });
 function stepper(id, quantity, label, errorId) {
   return `<div class="stepper">
     <button type="button" data-step="-1" data-for="${id}" aria-label="${escape(`Decrease packs of ${label}`)}" ${quantity <= 1 ? "disabled" : ""}>−</button>
-    <input id="${id}" type="number" min="1" max="${MAX_QUANTITY}" step="1" inputmode="numeric" required value="${quantity}" aria-label="${escape(`Number of packs of ${label}`)}" aria-describedby="${errorId}">
+    <input id="${id}" type="number" min="1" max="${MAX_QUANTITY}" step="1" inputmode="numeric" enterkeyhint="done" required value="${quantity}" title="Type a number of packs" aria-label="${escape(`Number of packs of ${label}`)}" aria-describedby="${errorId}">
     <button type="button" data-step="1" data-for="${id}" aria-label="${escape(`Increase packs of ${label}`)}" ${quantity >= MAX_QUANTITY ? "disabled" : ""}>+</button>
   </div>`;
 }
@@ -154,7 +164,7 @@ function renderProducts() {
       <div class="grind-field"><span class="field-label">Grind</span><select name="grind" hidden aria-label="Grind for ${escape(product.name)}">${availableGrinds(product).map(option => `<option value="${escape(option.id)}">${escape(option.label)}</option>`).join("")}</select><button class="grind-picker" type="button" data-grind-open aria-haspopup="dialog" aria-controls="grind-dialog" aria-label="Choose grind for ${escape(product.name)}"><span class="grind-current"><span data-grind-label>${escape(availableGrinds(product)[0]?.label || "Unavailable")}</span><small data-grind-hint>${escape(availableGrinds(product)[0]?.hint || "")}</small></span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 7 7-7 7"/></svg></button></div>
       <div class="product-price"><strong data-price>${money(product.price)}</strong><span data-price-unit>per 1 kg bag</span></div>
       <div class="add-row">${stepper(`qty-${product.id}`, 1, product.name, `error-${product.id}`)}<button class="button button-dark" type="submit" aria-label="Add ${escape(product.name)} to order" ${isAvailable(product) ? "" : "disabled"}>${product.inStock ? 'Add to order <span aria-hidden="true">+</span>' : "Out of stock"}</button></div>
-      <p class="quantity-error" id="error-${product.id}" hidden role="status">Choose a whole number of packs, from 1 to 99.</p>
+      <p class="quantity-error" id="error-${product.id}" hidden role="status">Choose a whole number of packs, from 1 to ${MAX_QUANTITY}.</p>
     </form>
   </article>`).join("");
 }
@@ -249,7 +259,7 @@ function renderBasket() {
       ${product.imageUrls?.length ? `<img src="${escape(product.imageUrls[0])}" alt="" width="42" height="48">` : '<span class="basket-photo-placeholder" aria-hidden="true">—</span>'}
       <div><h3>${escape(product.name)}</h3><p class="line-variant">${escape(packs[line.pack].label)} · ${escape(grindLabel(productFor(line.productId), line.grind))}<br>${money(unitPrice(product, line.pack))} per pack${!isAvailable(product) || !lineOrderable(line) ? "<br>Unavailable — remove to continue." : ""}</p>
       <div class="line-actions">${stepper(`line-qty-${index}`, line.quantity, `${product.name}, ${packs[line.pack].label}, ${grindLabel(productFor(line.productId), line.grind)}`, `line-error-${index}`)}<strong class="line-price">${money(unitPrice(product, line.pack) * line.quantity)}</strong></div>
-      <p class="quantity-error" id="line-error-${index}" role="status" hidden>Choose a whole number from 1 to 99.</p>
+      <p class="quantity-error" id="line-error-${index}" role="status" hidden>Choose a whole number from 1 to ${MAX_QUANTITY}.</p>
       <button class="remove-button" type="button" data-remove aria-label="Remove ${escape(`${product.name}, ${packs[line.pack].label}, ${grindLabel(productFor(line.productId), line.grind)}`)}">Remove</button></div>
     </div>`;
   }).join("") : `<div class="empty-basket"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 3h3l3 12h11l3-9H6M9 19a1 1 0 1 0 0 .01M18 19a1 1 0 1 0 0 .01"/></svg><h3>Your order is empty</h3><p>Choose a coffee, bag size and grind, then add it to your order.</p></div>`;
@@ -353,8 +363,8 @@ $("#products").addEventListener("submit", (event) => {
   const result = addToBasket(basket, { productId: product.id, pack: form.elements.pack.value, grind: form.elements.grind.value }, quantity.value);
   basket = result.basket;
   changedBasket();
-  if (!result.added) { toast("This pack and grind already has the maximum of 99 packs."); return; }
-  toast(`${result.added} ${result.added === 1 ? "pack" : "packs"} of ${product.name} added${result.added < Number(quantity.value) ? " — maximum 99 per pack and grind" : " to your order"}.`);
+  if (!result.added) { toast(`This pack and grind already has the maximum of ${MAX_QUANTITY} packs.`); return; }
+  toast(`${result.added} ${result.added === 1 ? "pack" : "packs"} of ${product.name} added${result.added < Number(quantity.value) ? ` — maximum ${MAX_QUANTITY} per pack and grind` : " to your order"}.`);
 });
 
 $("#order-items").addEventListener("change", (event) => {
@@ -870,7 +880,7 @@ function buildReorderPlan(order) {
     const result = addToBasket(next, line, line.quantity);
     next = result.basket;
     if (result.added) additions.push({ productId: line.productId, pack: line.pack, grind: line.grind, quantity: result.added, title: product.name, price: unitPrice(product, line.pack) });
-    if (result.added < line.quantity) skipped.push({ title: line.title, quantity: line.quantity - result.added, reason: "basket limit of 99 bags for this size and grind" });
+    if (result.added < line.quantity) skipped.push({ title: line.title, quantity: line.quantity - result.added, reason: `basket limit of ${MAX_QUANTITY} bags for this size and grind` });
   }
   const added = totals(additions), combined = totals(next), existing = totals(basket);
   const signature = JSON.stringify({ identity: session.me.id, additions, skipped, next, combined });

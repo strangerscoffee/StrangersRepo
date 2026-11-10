@@ -1,4 +1,5 @@
 // VAT invoices are issued once from saved real orders. Payment recording never moves money.
+import { MAX_QUANTITY } from "../public/wholesale-preview/limits.js";
 import { audit } from "./audit";
 import { ApiError, type Env, invalid, json, readJson } from "./http";
 import { get, object, text, version } from "./wholesaleStore";
@@ -106,7 +107,7 @@ function requestBody(body: Record<string, any>): InvoiceRequest {
 }
 const digest = async (value: unknown) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(value))))].map((n) => n.toString(16).padStart(2, "0")).join("");
 export function invoiceLine(kind: InvoiceLine["kind"], description: string, quantity: number, price: number, rate: VatRate, priceBasis: "inclusive" | "exclusive"): InvoiceLine {
-  const amount = integer(quantity, "invoice quantity", 1, 99) * integer(price, "saved unit price", 0, 100000000);
+  const amount = integer(quantity, "invoice quantity", 1, MAX_QUANTITY) * integer(price, "saved unit price", 0, 100000000);
   const denominator = priceBasis === "inclusive" ? 10000 + rate.basisPoints : 10000;
   const vatPence = Math.floor((amount * rate.basisPoints + denominator / 2) / denominator);
   const netPence = priceBasis === "inclusive" ? amount - vatPence : amount;

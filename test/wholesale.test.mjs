@@ -24,21 +24,21 @@ test("wholesale preview: bag weights and independently published retail prices t
   assert.equal(totals([{ ...brazil, pack: "quarter", quantity: 1 }]).pence, 500, "250 g uses its own source price, not one quarter of the kilo price");
 });
 
-test("wholesale preview: repeated adds stop at 99 and report how many were actually added", () => {
-  const original = [{ ...brazil, quantity: 98 }];
+test("wholesale preview: repeated adds stop at 999 and report how many were actually added", () => {
+  const original = [{ ...brazil, quantity: 998 }];
   const result = addToBasket(original, brazil, 4);
   assert.equal(result.added, 1);
-  assert.equal(result.basket[0].quantity, 99);
-  assert.equal(original[0].quantity, 98, "the previous basket is not mutated");
+  assert.equal(result.basket[0].quantity, 999);
+  assert.equal(original[0].quantity, 998, "the previous basket is not mutated");
   assert.equal(addToBasket(result.basket, brazil, 1).added, 0);
 });
 
 test("wholesale preview: invalid quantities cannot enter an order", () => {
-  for (const value of ["", " ", 0, -1, 1.5, "2.2", "nope", 100, Infinity, null, undefined]) {
+  for (const value of ["", " ", 0, -1, 1.5, "2.2", "nope", 1000, Infinity, null, undefined]) {
     assert.equal(validQuantity(value), false, String(value));
     assert.deepEqual(addToBasket([], brazil, value), { basket: [], added: 0 });
   }
-  for (const value of [1, "1", 99, "99"]) assert.equal(validQuantity(value), true);
+  for (const value of [1, "1", 99, "99", 100, 250, "500", 999]) assert.equal(validQuantity(value), true, "large orders can be typed in");
 });
 
 test("wholesale preview: stale or malformed storage cannot add unknown products or variants", () => {
