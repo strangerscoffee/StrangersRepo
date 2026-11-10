@@ -86,13 +86,15 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       await page.locator('#grind-choice-form [value="espresso"]').check();
       await page.locator('#confirm-grind').click();
       assert.equal(await card.locator('select[name="grind"]').inputValue(), 'espresso');
-      assert.match(await card.locator('[data-grind-label]').textContent(), /Espresso/);
+      assert.equal(await card.locator('[data-grind-label]').textContent(), 'Fine');
+      assert.equal(await card.locator('[data-grind-hint]').textContent(), 'Commercial espresso machine', 'the card says what the grind is for');
       assert.equal(await otherCard.locator('select[name="grind"]').inputValue(), 'beans', 'confirming grind changes only the chosen coffee card');
       assert.equal(await card.locator('[data-grind-open]').evaluate((button) => document.activeElement === button), true, 'confirmation returns focus to the updated card');
       await card.locator('input[name="pack"][value="quarter"]').check();
       await card.locator('input[type="number"]').fill("2");
       await card.locator('button[type="submit"]').click();
-      assert.equal(await page.locator("#subtotal").textContent(), "£21.00");
+      assert.equal(await page.locator("#subtotal").textContent(), "£10.00");
+      assert.equal(await card.locator('input[name="pack"][value="half"]').count(), 0, "500 g bags are no longer offered");
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "ordering page fits viewport");
       if (process.env.WHOLESALE_SCREENSHOT_DIR) {
         await mkdir(process.env.WHOLESALE_SCREENSHOT_DIR, { recursive: true });
@@ -108,7 +110,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       await page.locator("#preview-complete").waitFor();
       assert.match(await page.locator("#complete-message").textContent(), /was saved as a staff preview order/);
       const order = (await api("GET", "/api/admin/wholesale")).body.orders.find((order) => order.business === business);
-      assert.ok(order, "order is saved on the server"); assert.equal(order.pence, 2100);
+      assert.ok(order, "order is saved on the server"); assert.equal(order.pence, 1000);
       assert.equal(order.lines[0].grind, 'espresso', 'the saved order receives the confirmed picker value');
       await assertDialogCloseClear(page, '#review-dialog');
       await page.locator('#preview-complete [data-close]').click();
@@ -144,7 +146,8 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       assert.ok((await api("GET", "/api/admin/wholesale")).body.customers.some((customer) => customer.business === `${device} ${color} account`));
       await page.locator('[data-act="wh-tab"][data-id="catalogue"]').click();
       await page.locator('[data-act="wh-coffee"][data-id="brazil"]').click();
-      assert.equal(await page.locator("#wPrice-quarter").inputValue(), "10.50");
+      assert.equal(await page.locator("#wPrice-quarter").inputValue(), "5.00");
+      assert.equal(await page.locator("#wPrice-half").count(), 0, "no 500 g price: they are no longer sold");
       await page.locator('[data-sheet="close"]').click();
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "Admin wholesale fits viewport");
       if (process.env.WHOLESALE_SCREENSHOT_DIR) {
@@ -247,7 +250,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       await page.locator('#preview-complete').waitFor();
       assert.match(await page.locator('#complete-message').textContent(), /has been received by Strangers/);
       const order = (await api('GET', '/api/admin/wholesale')).body.orders.find((row) => row.reference === username);
-      assert.ok(order); assert.equal(order.preview, false); assert.equal(order.pence, 7400);
+      assert.ok(order); assert.equal(order.preview, false); assert.equal(order.pence, 3600);
       assert.equal(order.paymentTerms.id, 'net-30', 'reviewing the sign-in preserves the edited customer terms');
       assert.equal(order.customerSnapshot.postcode, 'NR1 1AA');
       assert.equal(await page.locator('#basket-count').textContent(), '0');
@@ -271,7 +274,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       await page.locator('[data-reorder]').click();
       await page.locator('#reorder-dialog').waitFor();
       assert.equal(await page.locator('#basket-count').textContent(), '0', 'repeat confirmation preserves the basket until accepted');
-      assert.match(await page.locator('#reorder-summary').textContent(), /2 bags available to add · £74.00/);
+      assert.match(await page.locator('#reorder-summary').textContent(), /2 bags available to add · £36.00/);
       if (process.env.WHOLESALE_SCREENSHOT_DIR) await page.screenshot({ path: `${process.env.WHOLESALE_SCREENSHOT_DIR}/repeat-${device}-${color}.png` });
       await page.locator('#confirm-reorder').click();
       await page.locator('#reorder-dialog').waitFor({ state: 'hidden' });
@@ -299,7 +302,7 @@ test('repeat order: current availability and prices, basket merge, cancellation 
   const changed = await api('POST', '/api/wholesale/auth/change-password', { username: 'repeat.buyer', password: temporaryPassword, newPassword: 'repeat-buyer-password' }, null);
   const buyerCookie = changed.response.headers.getSetCookie().find(value => /^sf_wholesale_session=[\w-]/.test(value)).split(';')[0];
   const identity = (await api('GET', '/api/wholesale/catalogue', undefined, buyerCookie)).body;
-  let order = (await api('POST', '/api/wholesale/orders', { requestId: crypto.randomUUID(), orderingIdentity: identity.me.id, customerVersion: identity.customer.version, lines: [{ productId: espresso.id, pack: 'kilo', grind: 'beans', quantity: 2, price: 3000 }, { productId: filter.id, pack: 'half', grind: 'filter', quantity: 1, price: 2000 }], delivery: 'Roastery collection' }, buyerCookie)).body.order;
+  let order = (await api('POST', '/api/wholesale/orders', { requestId: crypto.randomUUID(), orderingIdentity: identity.me.id, customerVersion: identity.customer.version, lines: [{ productId: espresso.id, pack: 'kilo', grind: 'beans', quantity: 2, price: 3000 }, { productId: filter.id, pack: 'quarter', grind: 'filter', quantity: 1, price: 1000 }], delivery: 'Roastery collection' }, buyerCookie)).body.order;
   order = (await api('PATCH', `/api/admin/wholesale/orders/${order.id}`, { ifVersion: order.version, status: 'Cancelled', customerId: customer.id, note: 'Internal only' })).body.order;
   const context = await contextFor({ width: 393, height: 852 }, 'light', buyerCookie);
   try {
@@ -332,7 +335,7 @@ test('repeat order: current availability and prices, basket merge, cancellation 
     await page.unroute('**/api/wholesale/orders*');
     await page.locator('#refresh-orders').click(); await page.locator('#history-count', { hasText: 'Showing 1 of 1 order' }).waitFor();
     await page.locator('[data-reorder]').click(); await page.locator('#reorder-dialog').waitFor();
-    assert.match(await page.locator('#reorder-summary').textContent(), /1 bag available to add · £20.00/);
+    assert.match(await page.locator('#reorder-summary').textContent(), /1 bag available to add · £10.00/);
     assert.match(await page.locator('#reorder-skipped').textContent(), /2 bags of Repeat Espresso — out of stock/);
     assert.match(await page.locator('#reorder-existing').textContent(), /current 1 bag will stay/);
     assert.equal(await page.locator('#basket-count').textContent(), '1');
@@ -340,14 +343,14 @@ test('repeat order: current availability and prices, basket merge, cancellation 
     await page.locator('#reorder-dialog [data-close]').last().click();
     espresso = (await api('PUT', `/api/admin/wholesale/catalogue/${espresso.id}`, { ifVersion: espresso.version, prices: { ...espresso.prices, kilo: 3300 }, active: true, inStock: true })).body.product;
     await page.locator('#my-orders').click(); await page.locator('[data-reorder]').click(); await page.locator('#reorder-dialog').waitFor();
-    assert.match(await page.locator('#reorder-summary').textContent(), /3 bags available to add · £86.00/);
+    assert.match(await page.locator('#reorder-summary').textContent(), /3 bags available to add · £76.00/);
     espresso = (await api('PUT', `/api/admin/wholesale/catalogue/${espresso.id}`, { ifVersion: espresso.version, prices: { ...espresso.prices, kilo: 3400 }, active: true, inStock: true })).body.product;
     await page.locator('#confirm-reorder').click(); await page.locator('#reorder-error', { hasText: 'changed' }).waitFor();
-    assert.match(await page.locator('#reorder-summary').textContent(), /3 bags available to add · £88.00/);
+    assert.match(await page.locator('#reorder-summary').textContent(), /3 bags available to add · £78.00/);
     assert.equal(await page.locator('#basket-count').textContent(), '1', 'a price change requires reviewing again before merge');
     if (process.env.WHOLESALE_SCREENSHOT_DIR) await page.screenshot({ path: `${process.env.WHOLESALE_SCREENSHOT_DIR}/repeat-updated-phone-light.png` });
     await page.locator('#confirm-reorder').click(); await page.locator('#reorder-dialog').waitFor({ state: 'hidden' });
-    assert.equal(await page.locator('#basket-count').textContent(), '4'); assert.equal(await page.locator('#subtotal').textContent(), '£98.00');
+    assert.equal(await page.locator('#basket-count').textContent(), '4'); assert.equal(await page.locator('#subtotal').textContent(), '£88.00');
     assert.equal((await api('GET', '/api/wholesale/orders', undefined, buyerCookie)).body.orders.length, 1, 'confirming a repeat only builds the merged basket');
     await page.route('**/api/wholesale/orders', route => route.request().method() === 'POST' ? route.abort() : route.continue());
     await page.locator('#review-order').click(); await page.locator('#review-dialog').waitFor();

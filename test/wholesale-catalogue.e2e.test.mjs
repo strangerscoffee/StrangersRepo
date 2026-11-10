@@ -52,7 +52,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       await admin.locator('#wCoffeeOrigin').fill('Colombia');
       await admin.locator('#wCoffeeProcess').fill('Washed');
       await admin.locator('#wCoffeeNotes').fill('Peach and cocoa');
-      for (const [pack, price] of [['quarter','12.00'],['half','24.00'],['kilo','42.00']]) await admin.locator('#wPrice-' + pack).fill(price);
+      for (const [pack, price] of [['quarter','12.00'],['kilo','42.00']]) await admin.locator('#wPrice-' + pack).fill(price);
       await admin.locator('#wCoffeeForm button[type="submit"]').click();
       await admin.locator('#wPhotoFiles').waitFor();
       let product = (await api('GET', '/api/admin/wholesale')).body.products.find((row) => row.title === title);

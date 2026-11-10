@@ -29,7 +29,7 @@ async function adminEdit(fields, account = A) {
   if (response.status === 200) await refresh(account);
   return response;
 }
-const orderPayload = (fields = {}) => ({ requestId: crypto.randomUUID(), lines: [{ productId: "brazil", pack: "kilo", grind: "beans", quantity: 2, price: 3700 }], delivery: "Delivery", reference: "LOCATIONS-PO", business: "Forged checkout business", customerVersion: A.customer.version, ...fields });
+const orderPayload = (fields = {}) => ({ requestId: crypto.randomUUID(), lines: [{ productId: "brazil", pack: "kilo", grind: "beans", quantity: 2, price: 1800 }], delivery: "Delivery", reference: "LOCATIONS-PO", business: "Forged checkout business", customerVersion: A.customer.version, ...fields });
 const extra = (name = "Riverside café") => ({ name, contact: "Riverside manager", phone: "01603 333333", address: "2 River Street\nNorwich", postcode: "NR2 2AA", deliveryNotes: "Use the riverside entrance" });
 before(async () => {
   srv = await startServer({ writeLimit: 3000 });

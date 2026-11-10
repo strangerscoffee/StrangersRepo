@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { addToBasket, sanitiseBasket, totals, validQuantity, money, weight, setCatalogue, products, isAvailable } from "../public/wholesale-preview/order.js";
+import { addToBasket, sanitiseBasket, totals, validQuantity, money, weight, setCatalogue, products, isAvailable, orderablePacks, lineOrderable } from "../public/wholesale-preview/order.js";
+import { shippingFor } from "../public/wholesale-preview/shipping.js";
+import { defaultGrinds } from "../public/wholesale-preview/grinds.js";
 
 const brazil = { productId: "brazil", pack: "kilo", grind: "beans" };
 
@@ -14,12 +16,12 @@ test("wholesale preview: matching variants merge, different packs and grinds sta
 });
 
 test("wholesale preview: bag weights and independently published retail prices total correctly", () => {
-  const basket = [{ ...brazil, quantity: 3 }, { productId: "colombia", pack: "half", grind: "espresso", quantity: 2 }];
-  assert.deepEqual(totals(basket), { packs: 5, grams: 4000, pence: 16700 });
-  assert.equal(money(totals(basket).pence), "£167.00");
-  assert.equal(weight(totals(basket).grams), "4 kg");
+  const basket = [{ ...brazil, quantity: 3 }, { productId: "colombia", pack: "quarter", grind: "espresso", quantity: 2 }];
+  assert.deepEqual(totals(basket), { packs: 5, grams: 3500, pence: 6650 });
+  assert.equal(money(totals(basket).pence), "£66.50");
+  assert.equal(weight(totals(basket).grams), "3.5 kg");
   assert.equal(weight(750), "0.75 kg");
-  assert.equal(totals([{ ...brazil, pack: "quarter", quantity: 1 }]).pence, 1050, "250 g uses its own source price, not one quarter of the kilo price");
+  assert.equal(totals([{ ...brazil, pack: "quarter", quantity: 1 }]).pence, 500, "250 g uses its own source price, not one quarter of the kilo price");
 });
 
 test("wholesale preview: repeated adds stop at 99 and report how many were actually added", () => {
@@ -62,4 +64,28 @@ test("wholesale basket: added catalogue coffees use server prices, unavailable l
     assert.equal(addToBasket(basket, line, 1).added, 0);
     assert.equal(sanitiseBasket(basket).length, 1, "out-of-stock intent is kept for the customer to remove");
   } finally { setCatalogue(original); }
+});
+
+test("wholesale: 500 g bags are no longer sold, but old basket lines are kept and marked", () => {
+  assert.deepEqual(orderablePacks.map(([id]) => id), ["quarter", "kilo"]);
+  assert.equal(addToBasket([], { ...brazil, pack: "half" }, 1).added, 0, "a 500 g bag can't be added");
+  const old = sanitiseBasket([{ ...brazil, pack: "half", quantity: 2 }]);
+  assert.equal(old.length, 1, "a saved 500 g line stays, so the customer sees it and removes it");
+  assert.equal(lineOrderable(old[0]), false);
+  assert.equal(lineOrderable({ ...brazil, quantity: 1 }), true);
+});
+
+test("wholesale: delivery is £7.44 including VAT under £250 of coffee, free from £250, and never on collection", () => {
+  assert.equal(shippingFor("Delivery", 0), 744);
+  assert.equal(shippingFor("Delivery", 24999), 744);
+  assert.equal(shippingFor("Delivery", 25000), 0, "£250 exactly is free");
+  assert.equal(shippingFor("Delivery", 90000), 0);
+  assert.equal(shippingFor("Roastery collection", 1000), 0);
+  assert.equal(shippingFor("Roastery collection", 30000), 0);
+});
+
+test("wholesale: grinds are Beans (the default), Fine, Medium and Coarse, each saying what it's for", () => {
+  assert.deepEqual(defaultGrinds.map((g) => g.label), ["Beans", "Fine", "Medium", "Coarse"]);
+  assert.equal(defaultGrinds[0].id, "beans");
+  assert.deepEqual(defaultGrinds.slice(1).map((g) => g.hint), ["Commercial espresso machine", "Filter, and a good general grind for most uses", "Cafetiere and batch brewer"]);
 });

@@ -145,7 +145,9 @@ test("payment terms: only admins set terms; checkout checks the reviewed version
 
 test('grind options: legacy defaults, admin-only editing, validation and concurrent versions', async () => {
   const original = (await call('GET','/api/admin/wholesale')).body.products.find(p=>p.id==='brazil');
-  assert.deepEqual(original.grindOptions.map(g=>g.id), ['beans','espresso','moka','filter','cafetiere']);
+  assert.deepEqual(original.grindOptions.map(g=>g.id), ['beans','espresso','filter','cafetiere']);
+  assert.deepEqual(original.grindOptions.map(g=>g.label), ['Beans','Fine','Medium','Coarse']);
+  assert.ok(original.grindOptions.every(g=>g.hint), 'each grind says what it is for');
   const body = { ifVersion: original.version, prices: original.prices, active:true, grindOptions: original.grindOptions };
   for (const cookie of [null, BUYER]) assert.ok([401,403].includes((await call('PUT','/api/admin/wholesale/catalogue/brazil',body,cookie)).status));
   for (const grindOptions of [null,[],[{id:'__proto__',label:'Bad',enabled:true}],[{id:'beans',label:'',enabled:true}],[{id:'beans',label:'x'.repeat(61),enabled:true}],original.grindOptions.map(g=>({...g,enabled:false})),[original.grindOptions[0],original.grindOptions[0]],[{id:'beans',label:'Same',enabled:true},{id:'espresso',label:'same',enabled:true}]]) assert.equal((await call('PUT','/api/admin/wholesale/catalogue/brazil',{...body,grindOptions})).status,400);

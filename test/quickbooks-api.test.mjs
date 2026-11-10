@@ -12,7 +12,7 @@ async function start(cookie=ADMIN){const r=await call('POST',root+'/connect',{},
 async function callback(state,cookie=ADMIN){return call('GET',root+'/callback?code=test-code&realmId=1234567890&state='+state,undefined,cookie);}
 async function connect(){const r=await callback(await start());assert.equal(r.status,303,r.text);return status();}
 async function confirm(){const s=await status(),r=await call('POST',root+'/confirm',{ifVersion:s.connection.version,vatNumber:'GB123456789',confirmed:true});assert.equal(r.status,200,r.text);return status();}
-async function issued(lines=[{productId:'brazil',pack:'kilo',grind:'beans',quantity:2,price:3700}]){
+async function issued(lines=[{productId:'brazil',pack:'kilo',grind:'beans',quantity:2,price:1800}]){
  const config=(await call('GET','/api/admin/wholesale/invoice-settings')).body;
  const value={seller:{legalName:'Example UK Sandbox Ltd',address:'Test business address',vatNumber:'GB123456789',companyNumber:'',email:'',phone:''},priceBasis:'inclusive',vatRates:[{id:'standard',label:'Standard',basisPoints:2000}],defaultCoffeeRateId:'standard',deliveryRateId:'standard',invoicePrefix:'SC-',firstInvoiceNumber:1,paymentInstructions:'Test instructions',confirmed:true,ifVersion:config.version};
  const settings=await call('PUT','/api/admin/wholesale/invoice-settings',value);assert.equal(settings.status,200,settings.text);
@@ -62,8 +62,8 @@ test('QuickBooks mappings validate scope, active sales items and VAT rates befor
 });
 test('A large issued invoice verifies each distinct VAT treatment once before sandbox preview',async()=>{
  const catalogue=(await call('GET','/api/wholesale/catalogue',undefined,BUYER)).body.products;
- const lines=catalogue.filter(p=>p.active&&p.inStock).flatMap(p=>Object.keys(p.prices).flatMap(pack=>p.grindOptions.filter(g=>g.enabled).map(g=>({productId:p.id,pack,grind:g.id,quantity:1,price:p.prices[pack]})))).slice(0,150);
- assert.ok(lines.length>=100,'exercise a supported invoice with many coffee variants');
+ const lines=catalogue.filter(p=>p.active&&p.inStock).flatMap(p=>Object.keys(p.prices).filter(pack=>pack!=='half').flatMap(pack=>p.grindOptions.filter(g=>g.enabled).map(g=>({productId:p.id,pack,grind:g.id,quantity:1,price:p.prices[pack]})))).slice(0,150);
+ assert.ok(lines.length>=80,'exercise a supported invoice with many coffee variants (every coffee in 250 g and 1 kg, in every grind)');
  const large=await issued(lines);assert.equal(large.lines.length,lines.length);
  const before=provider.state.calls.length,result=await call('GET',root+`/invoices/${large.id}/preview`);assert.equal(result.status,200,result.text);assert.equal(result.body.preview.state,'ready-for-sandbox-review');assert.deepEqual(result.body.preview.candidate.totals,large.totals);
  const reads=provider.state.calls.slice(before);assert.equal(reads.filter(c=>c.path.endsWith('/taxcode/3')).length,1);assert.equal(reads.filter(c=>c.path.endsWith('/taxrate/7')).length,1);assert.ok(reads.length<=5,'provider work follows distinct mappings rather than invoice line count');

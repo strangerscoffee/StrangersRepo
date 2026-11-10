@@ -18,7 +18,7 @@ async function customer(username) {
   const session = (await call("GET", "/api/wholesale/session", undefined, login.cookie)).body;
   return { cookie: login.cookie, ...session };
 }
-const payload = (reference = "DELETE-PO") => ({ requestId: crypto.randomUUID(), lines: [{ productId: "brazil", pack: "kilo", grind: "beans", quantity: 2, price: 3700 }], delivery: "Roastery collection", business: "Staff test", reference });
+const payload = (reference = "DELETE-PO") => ({ requestId: crypto.randomUUID(), lines: [{ productId: "brazil", pack: "kilo", grind: "beans", quantity: 2, price: 1800 }], delivery: "Roastery collection", business: "Staff test", reference });
 async function customerOrder(reference) {
   const body = { ...payload(reference), customerVersion: A.customer.version, orderingIdentity: A.me.id };
   const response = await call("POST", "/api/wholesale/orders", body, A.cookie);

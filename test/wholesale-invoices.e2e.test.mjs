@@ -53,7 +53,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["desk
     const previous = (await api("GET", "/api/admin/wholesale/invoice-settings")).body;
     await api("PUT", "/api/admin/wholesale/invoice-settings", { ...previous.settings, seller: { ...previous.settings.seller, legalName: "" }, confirmed: false, ifVersion: previous.version });
     const owner = await buyer(label), stranger = await buyer(`other.${label}`);
-    const order = (await api("POST", "/api/wholesale/orders", { requestId: crypto.randomUUID(), customerVersion: owner.customer.version, locationId: "primary", delivery: "Delivery", reference: `PO-INVOICE-${label}`, lines: [{ productId: "brazil", pack: "kilo", grind: "beans", quantity: 2, price: 3700 }] }, owner.cookie)).body.order;
+    const order = (await api("POST", "/api/wholesale/orders", { requestId: crypto.randomUUID(), customerVersion: owner.customer.version, locationId: "primary", delivery: "Delivery", reference: `PO-INVOICE-${label}`, lines: [{ productId: "brazil", pack: "kilo", grind: "beans", quantity: 2, price: 1800 }] }, owner.cookie)).body.order;
     const options = { viewport, colorScheme: color, hasTouch: device === "phone", isMobile: device === "phone", acceptDownloads: true };
     const adminContext = await browser.newContext(options), customerContext = await browser.newContext(options), strangerContext = await browser.newContext(options);
     for (const [context, cookie] of [[adminContext, ADMIN], [customerContext, owner.cookie], [strangerContext, stranger.cookie]]) {
@@ -111,7 +111,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["desk
       assert.match(await admin.locator("#wiInvoiceForm").textContent(), /14 days from invoice/);
       await admin.locator('#wiInvoiceForm button[type="submit"]').click();
       await admin.locator("#wiPreviewForm").waitFor();
-      assert.deepEqual(await admin.locator("#wiPreviewForm .wi-totals dd").allTextContents(), ["£79.00", "£1.00", "£80.00"]);
+      assert.deepEqual(await admin.locator("#wiPreviewForm .wi-totals dd").allTextContents(), ["£41.00", "£1.00", "£42.00"]);
       assert.match(await admin.locator("#wiPreviewForm").textContent(), /Draft invoice/);
       assert.equal(await admin.locator("#wiPreviewForm tbody tr").count(), 2, "preview includes the saved coffee and delivery lines");
       const invoiceTable = await admin.locator("#wiPreviewForm .wi-table-wrap").evaluate(region => ({ visibleHeight: region.clientHeight, tableHeight: region.querySelector("table").getBoundingClientRect().height }));
@@ -142,9 +142,9 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["desk
       await admin.locator("#wiIssuedInvoice").waitFor();
       const issued = (await api("GET", `/api/admin/wholesale/orders/${order.id}/invoice`)).body.invoice;
       assert.ok(issued.id); assert.ok(issued.number.startsWith(prefix));
-      assert.deepEqual(issued.totals, { netPence: 7900, vatPence: 100, grossPence: 8000 });
+      assert.deepEqual(issued.totals, { netPence: 4100, vatPence: 100, grossPence: 4200 });
       assert.equal(issued.invoiceDate, invoiceDate); assert.equal(issued.dueDate, dueDate); assert.equal(issued.paymentTerms.id, "net-14");
-      assert.equal(issued.payment.status, "overdue"); assert.equal(issued.payment.outstandingPence, 8000);
+      assert.equal(issued.payment.status, "overdue"); assert.equal(issued.payment.outstandingPence, 4200);
       const all = (await api("GET", "/api/admin/wholesale/invoices")).body.invoices;
       assert.equal(all.filter((invoice) => invoice.orderId === order.id).length, 1);
       const adminPdf = await pdfFrom(admin, await admin.locator("#wiDownloadPdf").getAttribute("href")); pdfCheck(adminPdf);
@@ -169,8 +169,8 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["desk
       assert.ok(invoiceTabs.y >= invoiceHeader.y + invoiceHeader.height - 1 && invoiceTabs.y + invoiceTabs.height <= viewport.height, "invoice navigation remains visible below the toolbar after content scrolls");
       assert.match(await card.textContent(), new RegExp(issued.number));
       assert.equal((await card.locator(".invoice-state").textContent()).trim(), "Overdue");
-      assert.match(await card.locator(".invoice-balance").textContent(), /£80\.00/);
-      assert.deepEqual(await customer.locator("#customer-invoice-summary > div strong").allTextContents(), ["£80.00", "£80.00"]);
+      assert.match(await card.locator(".invoice-balance").textContent(), /£42\.00/);
+      assert.deepEqual(await customer.locator("#customer-invoice-summary > div strong").allTextContents(), ["£42.00", "£42.00"]);
       await card.locator(".invoice-details summary").click();
       assert.match(await card.locator(".invoice-details").textContent(), /Use the invoice number|Bank transfer/);
       const customerPdfHref = await card.locator("[data-invoice-pdf]").getAttribute("href");

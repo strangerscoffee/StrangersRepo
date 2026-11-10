@@ -36,9 +36,9 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
     const customer = (await api("GET", "/api/wholesale/session", undefined, customerCookie)).body.customer;
     const reference = `PO-${device}-${color}`;
     const lines = [
-      { productId: "brazil", pack: "kilo", grind: "beans", quantity: 2, price: 3700 },
-      { productId: "brazil", pack: "quarter", grind: "filter", quantity: 1, price: 1050 },
-      { productId: "colombia", pack: "half", grind: "espresso", quantity: 3, price: 2800 },
+      { productId: "brazil", pack: "kilo", grind: "beans", quantity: 2, price: 1800 },
+      { productId: "brazil", pack: "quarter", grind: "filter", quantity: 1, price: 500 },
+      { productId: "colombia", pack: "quarter", grind: "espresso", quantity: 3, price: 625 },
     ];
     let order = (await api("POST", "/api/wholesale/orders", { requestId: crypto.randomUUID(), customerVersion: customer.version, delivery: "Delivery", reference, lines }, customerCookie)).body.order;
     const originalNote = "Keep the customer's requested packing sequence.";
@@ -66,10 +66,10 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       await page.getByRole("heading", { name: "Packing list", exact: true }).waitFor();
       assert.deepEqual(await page.evaluate(() => ({ scrollTop: document.querySelector("#sheet").scrollTop, focused: document.activeElement.id })), { scrollTop: 0, focused: "sheetTitle" }, "order details open at the heading so packing information is read before status controls");
       const sheet = await page.locator("#sheet").textContent();
-      for (const text of [business, reference, "10 Coffee Street", "NR1 1AA", "Ring the side-door bell", "14 days from invoice", "Quote the invoice number.", "1 kg bag", "250 g bag", "500 g bag", "Beans", "Filter / Medium", "Espresso / Fine"]) assert.ok(sheet.includes(text), `packing sheet includes ${text}`);
+      for (const text of [business, reference, "10 Coffee Street", "NR1 1AA", "Ring the side-door bell", "14 days from invoice", "Quote the invoice number.", "1 kg bag", "250 g bag", "Beans", "Medium", "Fine"]) assert.ok(sheet.includes(text), `packing sheet includes ${text}`);
       const packing = await page.locator(".w-packing-line").evaluateAll((rows) => rows.map((row) => ({ quantity: Number(row.querySelector(".w-pack-quantity b").textContent), unit: row.querySelector(".w-pack-quantity span").textContent, description: row.querySelector(".tx").textContent })));
       assert.equal(packing.length, 3);
-      for (const [quantity, unit, pack, grind] of [[2, "bags", "1 kg bag", "Beans"], [1, "bag", "250 g bag", "Filter / Medium"], [3, "bags", "500 g bag", "Espresso / Fine"]]) assert.ok(packing.some((row) => row.quantity === quantity && row.unit === unit && row.description.includes(pack) && row.description.includes(grind)), `packing quantities show ${quantity} ${unit}, ${pack}, ${grind}`);
+      for (const [quantity, unit, pack, grind] of [[2, "bags", "1 kg bag", "Beans"], [1, "bag", "250 g bag", "Medium"], [3, "bags", "250 g bag", "Fine"]]) assert.ok(packing.some((row) => row.quantity === quantity && row.unit === unit && row.description.includes(pack) && row.description.includes(grind)), `packing quantities show ${quantity} ${unit}, ${pack}, ${grind}`);
       assert.equal(await page.locator("#wNote").inputValue(), originalNote);
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "packing sheet fits the screen");
       await screenshot(page, `packing-${device}-${color}`);

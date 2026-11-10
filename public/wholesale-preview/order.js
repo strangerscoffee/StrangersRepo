@@ -10,13 +10,16 @@ export const isAvailable = (product) => !!product && product.active !== false &&
 
 export const packs = {
   quarter: { label: "250 g bag", short: "250 g", grams: 250 },
-  half: { label: "500 g bag", short: "500 g", grams: 500 },
+  half: { label: "500 g bag", short: "500 g", grams: 500, retired: true }, // no longer sold: kept for past orders
   kilo: { label: "1 kg bag", short: "1 kg", grams: 1000 },
 };
 export const grinds = {
   beans: "Beans", espresso: "Espresso / Fine", moka: "Moka Pot / Fine",
   filter: "Filter / Medium", cafetiere: "Cafetiere / Coarse",
 };
+export const orderablePacks = Object.entries(packs).filter(([, pack]) => !pack.retired);
+// Can this basket line still be ordered as it is (size still sold, grind still offered)?
+export const lineOrderable = (line) => !packs[line.pack]?.retired && isGrindAvailable(productFor(line.productId), line.grind);
 export const MAX_QUANTITY = 99;
 export const money = (pence) => new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(pence / 100);
 export const weight = (grams) => `${new Intl.NumberFormat("en-GB", { maximumFractionDigits: 2 }).format(grams / 1000)} kg`;
@@ -43,7 +46,7 @@ export function sanitiseBasket(value) {
 }
 
 export function addToBasket(basket, variant, quantity) {
-  if (!isAvailable(productFor(variant.productId)) || !isGrindAvailable(productFor(variant.productId), variant.grind) || !validQuantity(quantity) || !sanitiseBasket([{ ...variant, quantity }]).length) return { basket, added: 0 };
+  if (!isAvailable(productFor(variant.productId)) || !lineOrderable(variant) || !validQuantity(quantity) || !sanitiseBasket([{ ...variant, quantity }]).length) return { basket, added: 0 };
   const next = sanitiseBasket(basket);
   const existing = next.find((line) => lineKey(line) === lineKey(variant));
   const added = Math.min(Number(quantity), MAX_QUANTITY - (existing?.quantity || 0));

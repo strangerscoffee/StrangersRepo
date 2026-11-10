@@ -54,7 +54,7 @@ test("wholesale history: cursors never change business ownership or reveal staff
 
 test("wholesale tracking: admin dispatch links are customer-readable and preserve immutable order and invoice details", async () => {
   const session = (await api("GET", "/api/wholesale/session", undefined, A)).body;
-  trackingPayload = { requestId: crypto.randomUUID(), customerVersion: session.customer.version, lines: [{ productId: "brazil", pack: "kilo", grind: "beans", quantity: 1, price: 3700 }], delivery: "Roastery collection", reference: "TRACKING-PO", trackingUrl: "https://forged.example/checkout" };
+  trackingPayload = { requestId: crypto.randomUUID(), customerVersion: session.customer.version, lines: [{ productId: "brazil", pack: "kilo", grind: "beans", quantity: 1, price: 1800 }], delivery: "Roastery collection", reference: "TRACKING-PO", trackingUrl: "https://forged.example/checkout" };
   const created = await api("POST", "/api/wholesale/orders", trackingPayload, A);
   assert.equal(created.status, 201); trackingOrder = created.body.order;
   assert.equal(trackingOrder.trackingUrl, "", "checkout cannot set admin dispatch metadata");
