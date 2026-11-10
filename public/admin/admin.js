@@ -141,11 +141,16 @@
   const NAV = [["overview", "Overview", "grid"], ["people", "People", "people"], ["sites", "Sites", "house"], ["wholesale", "Wholesale", "coffee"], ["activity", "Activity", "pulse"], ["security", "Security", "shield"], ["data", "Backups & exports", "db"]];
   const TABS = [["overview", "Overview", "grid"], ["wholesale", "Wholesale", "coffee"], ["people", "People", "people"], ["activity", "Activity", "pulse"], ["more", "More", "more"]];
   const PAGES = ["overview", "people", "sites", "wholesale", "activity", "security", "data", "more"];
+  const desktopNav = matchMedia("(min-width:1024px)");
+  let wholesaleExpanded = false;
   function renderNav() {
+    // Only one set of Wholesale section controls exists: sidebar on desktop, workspace on mobile.
+    if (desktopNav.matches) wholesale.syncNavigation(true);
     const badge = S.locked ? html`<span class="badge" aria-label="${plural(S.locked, "account")} locked">${S.locked}</span>` : "";
-    put($("#sideNav"), html`${NAV.map(([id, t, ic]) => html`<button class="nav" type="button" data-go="${id}" aria-current="${S.page === id ? "page" : "false"}">${svg(ic)}${t}${id === "security" ? badge : ""}</button>`)}`);
+    put($("#sideNav"), html`${NAV.map(([id, t, ic]) => id === "wholesale" && desktopNav.matches ? html`<div class="nav-wholesale ${S.page === id ? "is-current" : ""}"><div class="nav-wholesale-heading"><button class="nav" type="button" data-go="wholesale" aria-current="${S.page === id ? "page" : "false"}">${svg(ic)}${t}</button><button class="nav-wholesale-toggle" type="button" data-act="wh-sidebar-toggle" aria-expanded="${wholesaleExpanded ? "true" : "false"}" aria-controls="wholesaleSubnav" aria-label="${wholesaleExpanded ? "Collapse" : "Expand"} Wholesale sections">${svg("chev")}</button></div><div id="wholesaleSubnav" class="nav-wholesale-subnav" role="group" aria-label="Wholesale sections" ${wholesaleExpanded ? "" : raw("hidden")}>${wholesale.navigation({ sidebar: true, active: S.page === "wholesale" })}</div></div>` : html`<button class="nav" type="button" data-go="${id}" aria-current="${S.page === id ? "page" : "false"}">${svg(ic)}${t}${id === "security" ? badge : ""}</button>`)}`);
     const tab = S.page === "security" || S.page === "data" || S.page === "sites" ? "more" : S.page;
     put($("#tabBar"), html`${TABS.map(([id, t, ic]) => html`<button type="button" data-go="${id}" aria-current="${tab === id ? "page" : "false"}">${svg(ic)}${t}${id === "more" ? badge : ""}</button>`)}`);
+    if (!desktopNav.matches) wholesale.syncNavigation(false);
   }
   async function refreshBadge() {
     try { S.locked = (await api("GET", "/api/admin/security")).locked.length; renderNav(); } catch (e) { /* keep the last count */ }
@@ -153,6 +158,7 @@
 
   let seq = 0;
   async function show(page, { keepScroll } = {}) {
+    if (page === "wholesale" && S.page !== "wholesale") wholesaleExpanded = true;
     S.page = PAGES.includes(page) ? page : "overview";
     if (location.hash !== "#" + S.page) { try { history.replaceState(null, "", "#" + S.page); } catch (e) { /* ignore */ } }
     renderNav();
@@ -163,6 +169,7 @@
       const view = await VIEWS[S.page]();
       if (my !== seq) return;
       put(main, view);
+      if (S.page === "wholesale") wholesale.syncNavigation(desktopNav.matches);
       document.title = "Strangers Coffee - Admin"; // the same tab name on every page
     } catch (e) {
       if (my !== seq) return;
@@ -173,7 +180,7 @@
 
   /* ---------- views ---------- */
   const VIEWS = {};
-  const wholesale = window.WholesaleAdmin({ api, html, raw, svg, put, head, openSheet, closeSheet, reload, toast });
+  const wholesale = window.WholesaleAdmin({ api, html, raw, svg, put, head, openSheet, closeSheet, reload, toast, onNavigationChange: () => { if (S.me) renderNav(); } });
   VIEWS.wholesale = wholesale.view;
   let cache = {};
 
@@ -555,6 +562,16 @@
   }
 
   async function act(name, id, el) {
+    if (name === "wh-sidebar-toggle") {
+      wholesaleExpanded = !wholesaleExpanded; renderNav();
+      $('#sideNav [data-act="wh-sidebar-toggle"]')?.focus({ preventScroll: true });
+      return;
+    }
+    if (name === "wh-tab" || name === "wh-pending") {
+      const section = name === "wh-pending" ? "customers" : id;
+      if (!wholesale.selectSection(section, { pending: name === "wh-pending" })) return;
+      wholesaleExpanded = true; await show("wholesale"); return;
+    }
     if (name.startsWith("wh-")) {
       try { await wholesale.act(name, id); } catch (error) { toast(error.message); }
       return;
@@ -641,7 +658,11 @@
   document.addEventListener("click", (e) => {
     if (e.target.closest("#sheet")) return;
     const g = e.target.closest("[data-go]");
-    if (g) { e.preventDefault(); show(g.dataset.go); return; }
+    if (g) {
+      e.preventDefault();
+      if (g.dataset.go === "wholesale" && g.closest("#sideNav")) { wholesaleExpanded = true; wholesale.selectSection("orders"); }
+      show(g.dataset.go); return;
+    }
     const a = e.target.closest("[data-act]");
     if (a) { e.preventDefault(); act(a.dataset.act, a.dataset.id, a); return; }
     const pr = e.target.closest("[data-person]");
@@ -664,6 +685,16 @@
   $("#meBtn").addEventListener("click", accountMenu);
   $("#whoBtn").addEventListener("click", accountMenu);
   window.addEventListener("hashchange", () => { const h = location.hash.slice(1); if (h !== S.page && PAGES.includes(h)) show(h); });
+  desktopNav.addEventListener("change", () => {
+    if (!S.me) return;
+    const previous = document.activeElement, section = previous?.closest('[data-act="wh-tab"],[data-act="wh-pending"]');
+    renderNav(); // Updates navigation only; the workspace and open sheet drafts stay in place.
+    if (section && !previous.isConnected) {
+      const selector = section.dataset.act === "wh-pending" ? '[data-act="wh-pending"]' : `[data-act="wh-tab"][data-id="${section.dataset.id}"]`;
+      const target = document.querySelector(selector);
+      (target?.getClientRects().length ? target : $('#sideNav [data-act="wh-sidebar-toggle"]'))?.focus({ preventScroll: true });
+    }
+  });
 
   /* ---------- several admins (or devices) at once ----------
      Every 15 seconds while the page is in view, ask whether accounts, the rota or the diary changed elsewhere and,
@@ -680,7 +711,7 @@
       const me = await api("GET", "/api/auth/me");
       if (!me.user) { goSignIn(location.pathname); return; }
       if (!(await SC.bindSession(me.user, { clear: () => {
-        cache = {}; S.me = null; S.open = null; S.q = ""; S.fq = "";
+        cache = {}; S.me = null; S.open = null; S.q = ""; S.fq = ""; wholesaleExpanded = false;
         closeSheet(); for (const id of ["#main", "#sheet", "#sideNav", "#tabBar", "#whoName", "#whoInit"]) $(id)?.replaceChildren();
       } }))) return;
       const links = await api("GET", "/api/rota/links").catch(() => null);
