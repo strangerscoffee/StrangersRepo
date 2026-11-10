@@ -1,3 +1,4 @@
+import { validGrindId, isGrindAvailable } from "./grinds.js";
 // The source snapshot is a fallback; the signed-in API supplies the editable catalogue.
 import { products as sourceProducts } from "./catalogue.js";
 export let products = sourceProducts.map((product) => ({ ...product, prices: { ...product.prices } }));
@@ -33,7 +34,7 @@ export function sanitiseBasket(value) {
   if (!Array.isArray(value)) return [];
   const clean = [];
   for (const line of value.slice(0, 200)) {
-    if (!line || !productFor(line.productId) || typeof line.pack !== "string" || typeof line.grind !== "string" || !Object.hasOwn(packs, line.pack) || !Object.hasOwn(grinds, line.grind) || !validQuantity(line.quantity)) continue;
+    if (!line || !productFor(line.productId) || typeof line.pack !== "string" || typeof line.grind !== "string" || !Object.hasOwn(packs, line.pack) || !validGrindId(line.grind) || !validQuantity(line.quantity)) continue;
     const existing = clean.find((item) => lineKey(item) === lineKey(line));
     if (existing) existing.quantity = Math.min(MAX_QUANTITY, existing.quantity + Number(line.quantity));
     else clean.push({ productId: line.productId, pack: line.pack, grind: line.grind, quantity: Number(line.quantity) });
@@ -42,7 +43,7 @@ export function sanitiseBasket(value) {
 }
 
 export function addToBasket(basket, variant, quantity) {
-  if (!isAvailable(productFor(variant.productId)) || !validQuantity(quantity) || !sanitiseBasket([{ ...variant, quantity }]).length) return { basket, added: 0 };
+  if (!isAvailable(productFor(variant.productId)) || !isGrindAvailable(productFor(variant.productId), variant.grind) || !validQuantity(quantity) || !sanitiseBasket([{ ...variant, quantity }]).length) return { basket, added: 0 };
   const next = sanitiseBasket(basket);
   const existing = next.find((line) => lineKey(line) === lineKey(variant));
   const added = Math.min(Number(quantity), MAX_QUANTITY - (existing?.quantity || 0));

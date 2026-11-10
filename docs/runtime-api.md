@@ -182,7 +182,7 @@ Catalogue administration under `/api/admin/wholesale`:
 
 | Method and route | Input / result |
 |---|---|
-| `POST /catalogue` | Creates a coffee with `title,name,origin,process,notes,badge,categories,prices:{quarter,half,kilo},active,inStock`. Prices are integer GBP pence, £0.01–£10,000 per bag. Categories are `single-origin`, `blend`, `decaf`. Returns 201 `{product}`. Up to 500 coffees. |
+| `POST /catalogue` | Creates a coffee with `title,name,origin,process,notes,badge,categories,prices:{quarter,half,kilo},active,inStock,grindOptions?:[{id,label,enabled}]`. Prices are integer GBP pence, £0.01–£10,000 per bag. Categories are `single-origin`, `blend`, `decaf`. Returns 201 `{product}`. Up to 500 coffees. |
 | `PUT /catalogue/<id>` | Same editable fields plus `ifVersion`; returns `{product}`. Omitted detail/stock fields preserve existing values for older clients. Image references cannot be set through this route. |
 | `POST /catalogue/<id>/images?ifVersion=N` | Raw raster bytes, optional encoded `x-file-name`; up to 5 MB, detected JPEG/PNG/WebP, six images per coffee. Returns 201 `{product}` with its new version. |
 | `PATCH /catalogue/<id>/images` | `{ifVersion,remove:<image reference>}` unlinks/deletes a photo, or `{ifVersion,restore:true}` restores a bundled original. Returns `{product}`. The two operations cannot be combined. |
@@ -217,3 +217,5 @@ All `/api/admin/wholesale/` invoice routes are admin-only with the existing Orig
 `GET invoices?cursor=<seq>` returns `{invoices,nextCursor,count,summary}` with up to 200 records and full-scope outstanding/overdue totals. `GET invoices/<seq>` and `/pdf` return an issued document. `PATCH invoices/<seq>/payment` accepts `{ifVersion,paid,paidDate?,reference?}`, updates payment metadata atomically and audits it; it performs no bank transaction.
 
 Customer `GET /api/wholesale/invoices`, `GET .../invoices/<seq>[/pdf]` and `GET .../orders/<WS-id>/invoice[/pdf]` are read-only and always constrained by the signed-in business. Other businesses receive 404; staff preview identities have no customer-invoice access. Issued invoices remain visible after source-order deletion. Order history also includes issued invoice IDs/numbers.
+
+Catalogue `grindOptions` is optional for backward compatibility; omission preserves current options or the legacy defaults on creation. Validate 1–20 unique IDs/names, labels 1–60 characters, boolean `enabled`, and at least one enabled option. IDs are legacy grind IDs or `grind-<uuid>`. Renamed existing options receive a new server-generated ID. Image updates preserve grind settings. Catalogue/session DTOs expose options for the customer picker; customer writes cannot change them. Checkout validates the selected enabled option for its product and saves the server-controlled label. A retired/disabled/foreign grind returns 409 `grind_unavailable`; an exact successful order retry still returns its immutable original receipt before current catalogue validation.

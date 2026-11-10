@@ -142,3 +142,26 @@ test("payment terms: only admins set terms; checkout checks the reviewed version
   const own = (await call("GET", "/api/wholesale/session", undefined, BUYER)).body.customer;
   assert.equal(own.paymentTerms.id, "custom"); assert.equal(own.paymentTerms.note, "Pay on our agreed monthly invoice run.");
 });
+
+test('grind options: legacy defaults, admin-only editing, validation and concurrent versions', async () => {
+  const original = (await call('GET','/api/admin/wholesale')).body.products.find(p=>p.id==='brazil');
+  assert.deepEqual(original.grindOptions.map(g=>g.id), ['beans','espresso','moka','filter','cafetiere']);
+  const body = { ifVersion: original.version, prices: original.prices, active:true, grindOptions: original.grindOptions };
+  for (const cookie of [null, BUYER]) assert.ok([401,403].includes((await call('PUT','/api/admin/wholesale/catalogue/brazil',body,cookie)).status));
+  for (const grindOptions of [null,[],[{id:'__proto__',label:'Bad',enabled:true}],[{id:'beans',label:'',enabled:true}],[{id:'beans',label:'x'.repeat(61),enabled:true}],original.grindOptions.map(g=>({...g,enabled:false})),[original.grindOptions[0],original.grindOptions[0]],[{id:'beans',label:'Same',enabled:true},{id:'espresso',label:'same',enabled:true}]]) assert.equal((await call('PUT','/api/admin/wholesale/catalogue/brazil',{...body,grindOptions})).status,400);
+  const updated = await call('PUT','/api/admin/wholesale/catalogue/brazil',body); assert.equal(updated.status,200);
+  assert.equal((await call('PUT','/api/admin/wholesale/catalogue/brazil',body)).status,409);
+});
+test('grind options: custom choices are server validated, renamed options retire IDs, exact retries retain immutable labels', async () => {
+  const custom = {id:'grind-'+crypto.randomUUID(),label:'Turkish / Extra fine',enabled:true};
+  let product = (await call('POST','/api/admin/wholesale/catalogue',{title:'Grind Test',name:'Grind Test',categories:['blend'],prices:{quarter:1100,half:2200,kilo:4000},active:true,grindOptions:[custom]})).body.product;
+  const request = await requestFor(product); request.lines[0].grind = custom.id; request.lines[0].grindLabel = 'FORGED';
+  const saved = await call('POST','/api/wholesale/orders',request,BUYER); assert.equal(saved.status,201,saved.text); assert.equal(saved.body.order.lines[0].grindLabel,custom.label);
+  const refused = await call('POST','/api/wholesale/orders',{...request,requestId:crypto.randomUUID(),lines:[{...request.lines[0],grind:'beans'}]},BUYER); assert.equal(refused.status,409);
+  product = (await call('PUT',`/api/admin/wholesale/catalogue/${product.id}`,{...product,ifVersion:product.version,grindOptions:[{...custom,label:'Turkish fine'}]})).body.product;
+  assert.notEqual(product.grindOptions[0].id,custom.id,'renaming cannot silently reinterpret an old reviewed basket');
+  assert.equal((await call('POST','/api/wholesale/orders',{...request,requestId:crypto.randomUUID()},BUYER)).status,409);
+  const retry = await call('POST','/api/wholesale/orders',request,BUYER); assert.equal(retry.status,200); assert.equal(retry.body.order.lines[0].grindLabel,custom.label);
+  const fresh = await requestFor(product); fresh.lines[0].grind=product.grindOptions[0].id;
+  assert.equal((await call('POST','/api/wholesale/orders',fresh,BUYER)).body.order.lines[0].grindLabel,'Turkish fine');
+});

@@ -1,3 +1,4 @@
+import { availableGrinds, grindLabel, isGrindAvailable } from "./grinds.js";
 import { products, setCatalogue, isAvailable, packs, grinds, MAX_QUANTITY, money, weight, productFor, lineKey, unitPrice, validQuantity, sanitiseBasket, addToBasket, totals } from "./order.js";
 
 let STORAGE_KEY = null;
@@ -149,7 +150,7 @@ function renderProducts() {
     <div class="product-info"><p class="product-origin">${escape(product.origin)}</p><h3 class="product-name" id="name-${product.id}">${escape(product.name)}</h3><p class="product-process">${escape(product.process)}</p><p class="tasting-notes">${escape(product.notes)}</p><p class="product-stock ${product.inStock ? "" : "out"}">${product.inStock ? "In stock" : "Out of stock"}</p></div>
     <form class="product-config" data-product="${product.id}">
       <fieldset class="pack-options"><legend>Pack size <span class="sr-only">for ${escape(product.name)}</span></legend>${Object.entries(packs).map(([id, pack]) => `<label class="pack-choice"><input type="radio" name="pack" value="${id}" ${id === "kilo" ? "checked" : ""}><span>${escape(pack.short)} bag</span></label>`).join("")}</fieldset>
-      <div class="grind-field"><span class="field-label">Grind</span><select name="grind" hidden aria-label="Grind for ${escape(product.name)}">${Object.entries(grinds).map(([id, grind]) => `<option value="${id}">${escape(grind)}</option>`).join("")}</select><button class="grind-picker" type="button" data-grind-open aria-haspopup="dialog" aria-controls="grind-dialog" aria-label="Choose grind for ${escape(product.name)}"><span data-grind-label>${escape(grinds.beans)}</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 7 7-7 7"/></svg></button></div>
+      <div class="grind-field"><span class="field-label">Grind</span><select name="grind" hidden aria-label="Grind for ${escape(product.name)}">${availableGrinds(product).map(option => `<option value="${escape(option.id)}">${escape(option.label)}</option>`).join("")}</select><button class="grind-picker" type="button" data-grind-open aria-haspopup="dialog" aria-controls="grind-dialog" aria-label="Choose grind for ${escape(product.name)}"><span data-grind-label>${escape(availableGrinds(product)[0]?.label || "Unavailable")}</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 7 7-7 7"/></svg></button></div>
       <div class="product-price"><strong data-price>${money(product.price)}</strong><span data-price-unit>per 1 kg bag</span></div>
       <div class="add-row">${stepper(`qty-${product.id}`, 1, product.name, `error-${product.id}`)}<button class="button button-dark" type="submit" aria-label="Add ${escape(product.name)} to order" ${isAvailable(product) ? "" : "disabled"}>${product.inStock ? 'Add to order <span aria-hidden="true">+</span>' : "Out of stock"}</button></div>
       <p class="quantity-error" id="error-${product.id}" hidden role="status">Choose a whole number of packs, from 1 to 99.</p>
@@ -245,16 +246,16 @@ function renderBasket() {
     const product = productFor(line.productId);
     return `<div class="order-item" data-line="${lineKey(line)}">
       ${product.imageUrls?.length ? `<img src="${escape(product.imageUrls[0])}" alt="" width="42" height="48">` : '<span class="basket-photo-placeholder" aria-hidden="true">—</span>'}
-      <div><h3>${escape(product.name)}</h3><p class="line-variant">${escape(packs[line.pack].label)} · ${escape(grinds[line.grind])}<br>${money(unitPrice(product, line.pack))} per pack${!isAvailable(product) ? "<br>Unavailable — remove to continue." : ""}</p>
-      <div class="line-actions">${stepper(`line-qty-${index}`, line.quantity, `${product.name}, ${packs[line.pack].label}, ${grinds[line.grind]}`, `line-error-${index}`)}<strong class="line-price">${money(unitPrice(product, line.pack) * line.quantity)}</strong></div>
+      <div><h3>${escape(product.name)}</h3><p class="line-variant">${escape(packs[line.pack].label)} · ${escape(grindLabel(productFor(line.productId), line.grind))}<br>${money(unitPrice(product, line.pack))} per pack${!isAvailable(product) || !isGrindAvailable(product, line.grind) ? "<br>Unavailable — remove to continue." : ""}</p>
+      <div class="line-actions">${stepper(`line-qty-${index}`, line.quantity, `${product.name}, ${packs[line.pack].label}, ${grindLabel(productFor(line.productId), line.grind)}`, `line-error-${index}`)}<strong class="line-price">${money(unitPrice(product, line.pack) * line.quantity)}</strong></div>
       <p class="quantity-error" id="line-error-${index}" role="status" hidden>Choose a whole number from 1 to 99.</p>
-      <button class="remove-button" type="button" data-remove aria-label="Remove ${escape(`${product.name}, ${packs[line.pack].label}, ${grinds[line.grind]}`)}">Remove</button></div>
+      <button class="remove-button" type="button" data-remove aria-label="Remove ${escape(`${product.name}, ${packs[line.pack].label}, ${grindLabel(productFor(line.productId), line.grind)}`)}">Remove</button></div>
     </div>`;
   }).join("") : `<div class="empty-basket"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 3h3l3 12h11l3-9H6M9 19a1 1 0 1 0 0 .01M18 19a1 1 0 1 0 0 .01"/></svg><h3>Your order is empty</h3><p>Choose a coffee, bag size and grind, then add it to your order.</p></div>`;
   $("#order-totals").hidden = !basket.length;
   $("#total-weight").textContent = weight(sum.grams);
   $("#subtotal").textContent = money(sum.pence);
-  $("#review-order").disabled = !pendingAttempt && (!canOrder() || !basket.length || basket.some((line) => !isAvailable(productFor(line.productId))));
+  $("#review-order").disabled = !pendingAttempt && (!canOrder() || !basket.length || basket.some((line) => (!isAvailable(productFor(line.productId)) || !isGrindAvailable(productFor(line.productId), line.grind))));
   $("#review-order").textContent = pendingAttempt ? "Check submitted order" : "Review order";
   lockPendingUi();
   $("#basket-storage-note").textContent = storageAvailable ? "Your basket stays on this browser." : "Basket is temporary: browser storage is unavailable.";
@@ -305,7 +306,7 @@ $("#products").addEventListener("click", event => {
   if (!product) return;
   grindProductId = product.id;
   $("#grind-product-name").textContent = product.name;
-  for (const radio of $("#grind-choice-form").elements["grind-choice"]) radio.checked = radio.value === form.elements.grind.value;
+  $("#grind-choice-form .grind-choices").innerHTML = `<legend class="sr-only">Grind options</legend>${availableGrinds(product).map(option => `<label><input type="radio" name="grind-choice" value="${escape(option.id)}" ${option.id === form.elements.grind.value ? "checked" : ""}><span><strong>${escape(option.label)}</strong></span></label>`).join("")}`;
   $("#grind-dialog").showModal();
 });
 $("#grind-choice-form").addEventListener("submit", event => {
@@ -313,9 +314,9 @@ $("#grind-choice-form").addEventListener("submit", event => {
   if (!ready || pendingAttempt) return;
   const form = document.querySelector(`.product-config[data-product="${grindProductId}"]`);
   const selected = $("#grind-choice-form").elements["grind-choice"].value;
-  if (!form || !Object.hasOwn(grinds, selected)) { $("#grind-dialog").close(); return; }
+  if (!form || !isGrindAvailable(productFor(grindProductId), selected)) { $("#grind-dialog").close(); return; }
   form.elements.grind.value = selected;
-  form.querySelector("[data-grind-label]").textContent = grinds[selected];
+  form.querySelector("[data-grind-label]").textContent = grindLabel(productFor(grindProductId), selected);
   form.elements.grind.dispatchEvent(new Event("change", { bubbles: true }));
   $("#grind-dialog").close();
   form.querySelector("[data-grind-open]").focus({ preventScroll: true });
@@ -325,7 +326,7 @@ document.addEventListener("input", (event) => {
   if (event.target.matches(".stepper input")) {
     validateQuantity(event.target);
     // Do not let the review include a different quantity from an invalid basket field on screen.
-    if (event.target.closest("#order-items")) $("#review-order").disabled = !canOrder() || !!$("#order-items input[aria-invalid='true']") || basket.some((line) => !isAvailable(productFor(line.productId)));
+    if (event.target.closest("#order-items")) $("#review-order").disabled = !canOrder() || !!$("#order-items input[aria-invalid='true']") || basket.some((line) => (!isAvailable(productFor(line.productId)) || !isGrindAvailable(productFor(line.productId), line.grind)));
   }
 });
 
@@ -417,17 +418,17 @@ $("#review-order").addEventListener("click", async () => {
   if (pendingAttempt) { await resumeAttempt(); return; }
   reviewNeedsRefresh = false;
   lockReview(false);
-  if (!canOrder() || !basket.length || $("#order-items input[aria-invalid='true']") || basket.some((line) => !isAvailable(productFor(line.productId)))) return;
+  if (!canOrder() || !basket.length || $("#order-items input[aria-invalid='true']") || basket.some((line) => (!isAvailable(productFor(line.productId)) || !isGrindAvailable(productFor(line.productId), line.grind)))) return;
   $("#review-order").disabled = true;
   try {
     const fresh = await api("/api/wholesale/catalogue");
     if (fresh.me.id !== session.me.id) { location.reload(); return; }
     applyCatalogue(fresh, false);
-    if (!canOrder() || !basket.length || basket.some((line) => !isAvailable(productFor(line.productId)))) { toast("Check the updated basket before ordering."); return; }
+    if (!canOrder() || !basket.length || basket.some((line) => (!isAvailable(productFor(line.productId)) || !isGrindAvailable(productFor(line.productId), line.grind)))) { toast("Check the updated basket before ordering."); return; }
   } catch (error) { toast(error.message); renderBasket(); return; }
   $("#review-items").innerHTML = basket.map((line) => {
     const product = productFor(line.productId);
-    return `<div class="review-line"><div><h3>${escape(product.name)}</h3><p>${line.quantity} × ${escape(packs[line.pack].label)} · ${escape(grinds[line.grind])}</p></div><strong>${money(unitPrice(product, line.pack) * line.quantity)}</strong></div>`;
+    return `<div class="review-line"><div><h3>${escape(product.name)}</h3><p>${line.quantity} × ${escape(packs[line.pack].label)} · ${escape(grindLabel(productFor(line.productId), line.grind))}</p></div><strong>${money(unitPrice(product, line.pack) * line.quantity)}</strong></div>`;
   }).join("");
   $("#review-total").textContent = money(totals(basket).pence);
   $("#review-form").reset();
@@ -570,7 +571,7 @@ $("#review-form").addEventListener("submit", async (event) => {
     delivery: form.elements.delivery.value === "collection" ? "Roastery collection" : "Delivery",
     reference: form.elements.reference.value, business: form.elements.business.value,
     ...(session.customer ? { customerVersion: session.customer.version, locationId: form.elements.locationId.value } : {}),
-  }, summary: basket.map(line => ({ title: productFor(line.productId).name, description: `${line.quantity} × ${packs[line.pack].label} · ${grinds[line.grind]}`, pence: unitPrice(productFor(line.productId),line.pack) * line.quantity })),
+  }, summary: basket.map(line => ({ title: productFor(line.productId).name, description: `${line.quantity} × ${packs[line.pack].label} · ${grindLabel(productFor(line.productId), line.grind)}`, pence: unitPrice(productFor(line.productId),line.pack) * line.quantity })),
     deliverySummary: $("#delivery-summary").textContent, locationLabel: session.customer ? $("#review-location-name").textContent : "", terms: $("#review-payment-terms").textContent });
   if (!pendingAttempt) { saving = false; button.disabled = false; $("#preview-submit-error").textContent = "Allow browser storage before placing an order so an interrupted submission can be recovered safely."; $("#preview-submit-error").hidden = false; return; }
   lockReview(true); lockPendingUi();
@@ -846,6 +847,7 @@ function buildReorderPlan(order) {
   const additions = [], skipped = [];
   for (const line of order.lines) {
     const product = productFor(line.productId);
+    if (!isGrindAvailable(product, line.grind)) { skipped.push({ title: line.title, quantity: line.quantity, reason: "grind no longer offered" }); continue; }
     if (!isAvailable(product)) { skipped.push({ title: line.title, quantity: line.quantity, reason: product?.active === false || !product ? "no longer offered" : "out of stock" }); continue; }
     const result = addToBasket(next, line, line.quantity);
     next = result.basket;
@@ -859,7 +861,7 @@ function buildReorderPlan(order) {
 function renderReorderPlan(plan) {
   reorderPlan = plan;
   $("#reorder-summary").textContent = `${bagCount(plan.added.packs)} available to add · ${money(plan.added.pence)} at current prices.`;
-  $("#reorder-items").innerHTML = plan.additions.map(line => `<div class="review-line"><div><h3>${escape(line.title)}</h3><p>${line.quantity} × ${escape(packs[line.pack].label)} · ${escape(grinds[line.grind])}</p></div><strong>${money(line.price * line.quantity)}</strong></div>`).join("");
+  $("#reorder-items").innerHTML = plan.additions.map(line => `<div class="review-line"><div><h3>${escape(line.title)}</h3><p>${line.quantity} × ${escape(packs[line.pack].label)} · ${escape(grindLabel(productFor(line.productId), line.grind))}</p></div><strong>${money(line.price * line.quantity)}</strong></div>`).join("");
   $("#reorder-skipped").hidden = !plan.skipped.length;
   $("#reorder-skipped-items").innerHTML = plan.skipped.map(line => `<li>${bagCount(line.quantity)} of ${escape(line.title)} — ${escape(line.reason)}.</li>`).join("");
   $("#reorder-existing").textContent = plan.existing.packs ? `Your current ${bagCount(plan.existing.packs)} will stay in the basket. Matching sizes and grinds merge. After adding: ${bagCount(plan.combined.packs)} · ${money(plan.combined.pence)} coffee subtotal.` : `This builds a basket for you to review. Coffee subtotal: ${money(plan.added.pence)}. It does not place an order.`;

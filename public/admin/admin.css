@@ -505,3 +505,7 @@ button.stat{cursor:pointer}
   .w-stats-orders .v{font-size:28px}
 }
 @media(prefers-reduced-motion:reduce){.nav-wholesale-toggle svg.i{transition:none}}
+
+.w-grind-row{display:grid;grid-template-columns:minmax(0,1fr) auto 44px;gap:10px;align-items:center;padding-block:8px;border-bottom:1px solid var(--line)}
+.w-grind-row .field{margin:0;min-width:0}.w-grind-row .btn{padding:0;min-height:44px}.w-grind-enabled{display:flex;align-items:center;gap:7px;min-height:44px;font-size:13px}.w-grind-enabled input{width:20px;height:20px;accent-color:var(--accent)}
+#wGrindOptions{margin-bottom:12px}
