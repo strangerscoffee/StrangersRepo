@@ -41,7 +41,7 @@ test("a device that already has a list gets only what changed since its copy", a
   assert.deepEqual(d2.docs.map((d) => d.id), ["d4", "d3", "d2"]);
   // From an unlimited list a deletion is sent as one.
   const all = "sites/cafe/contacts";
-  await db("set", { path: `${all}/c1`, data: { name: "A" } });
+  await db("set", { path: `${all}/c1`, data: { name: "Business helpline", visibility: "shared-business", ownerUserId: null } });
   const c0 = (await db("poll", { queries: [{ key: "k", kind: "col", path: all }] })).body.results.k;
   await db("delete", { path: `${all}/c1` });
   const c1 = (await db("poll", { queries: [{ key: "k", kind: "col", path: all, ver: c0.ver, delta: true }] })).body.results.k;

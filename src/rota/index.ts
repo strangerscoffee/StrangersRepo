@@ -6,7 +6,7 @@
 // shift's hours and overtime), load.ts (reading from D1), problems.ts (the checks), validate.ts (checking what's
 // sent), views.ts (the week view and summaries), requests.ts (request lists), and routes/ (the router's handlers,
 // by area). This file is the router.
-import { isRotaManager, limitWrites } from "../access";
+import { limitWrites } from "../access";
 import { User } from "../auth";
 import { ApiError, Env, invalid, json, readJson } from "../http";
 import { computeProblems } from "./problems";
@@ -32,11 +32,13 @@ export async function handleRota(req: Request, env: Env, ctx: ExecutionContext, 
   const url = new URL(req.url);
   const q = (k: string) => url.searchParams.get(k);
   const m = req.method;
-  const mgr = isRotaManager(user);
-  const needMgr = () => { if (!mgr) throw denied(); };
-  // Which days and sites people can work: admins only, for everyone including themselves.
   const admin = user.role === "admin";
-  const needAdmin = () => { if (!admin) throw denied("Only an admin can change which days and sites people can work."); };
+  // Employee administration is admin-only, including for accounts with the manager role. The old `mgr`
+  // name remains the rota page's capability flag; business site settings have a separate permission.
+  const mgr = admin;
+  const needAdmin = () => { if (!admin) throw denied("Only an admin can manage other employees' rota information."); };
+  const needMgr = needAdmin;
+  const needSiteManager = () => { if (user.role !== "manager" && !admin) throw denied(); };
   if (m !== "GET" && m !== "HEAD") await limitWrites(req, env, ctx, user.id);
   const body = async () => {
     if (m === "GET") return {} as any;
@@ -52,7 +54,7 @@ export async function handleRota(req: Request, env: Env, ctx: ExecutionContext, 
   if (route === "links" && m === "GET") return json(links);
 
   const mailLinks = { rota: new URL(links.rota, url.origin).href, diary: new URL(links.diary, url.origin).href };
-  const r: RotaRequest = { mailLinks, env, exec: ctx, user, route, seg, m, q, mgr, admin, needMgr, needAdmin, body, withProblems, links };
+  const r: RotaRequest = { mailLinks, env, exec: ctx, user, route, seg, m, q, mgr, admin, needMgr, needAdmin, needSiteManager, body, withProblems, links };
   for (const handle of [weekRoutes, shiftRoutes, meRoutes, peopleRoutes, timeOffRoutes, requestRoutes]) {
     const res = await handle(r);
     if (res) return res;

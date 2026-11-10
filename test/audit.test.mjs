@@ -21,7 +21,7 @@ async function req(method, path, body, cookie = ADMIN, headers = {}) {
   let json = null; try { json = JSON.parse(text); } catch {}
   return { status: r.status, body: json, text, headers: r.headers, res: r };
 }
-const rota = (m, route, body, cookie = MGR) => req(m, "/api/rota/" + route, body, cookie);
+const rota = (m, route, body, cookie = ADMIN) => req(m, "/api/rota/" + route, body, cookie);
 const db = (op, body, cookie) => req("POST", "/api/db/" + op, body, cookie);
 async function signUp(name, username, role) {
   const r = await req("POST", "/api/admin/users", { name, username, role, password: "temp-pass-1" });
@@ -74,8 +74,10 @@ test("diary: staff can't empty or rewrite signed records", async () => {
 
 test("training: staff record their own training dates in their own name only", async () => {
   const path = "sites/cafe/staff/alex";
-  assert.equal((await db("set", { path, data: { name: "Alex Brown", topics: { hygiene: { date: "2026-10-01", by: "web:George Farrow" } } } }, MGR)).status, 200);
-  // Re-saving with the manager's entry unchanged is fine; a new entry in the manager's name isn't.
+  const data = { name: "Alex Brown", ownerUserId: ids.Alex, topics: { hygiene: { date: "2026-10-01", by: "web:George Farrow" } } };
+  assert.equal((await db("set", { path, data }, MGR)).status, 403, "a manager cannot create another employee's private training record");
+  assert.equal((await db("set", { path, data }, ADMIN)).status, 200, "admin binds the training record to its stable employee owner");
+  // Re-saving existing training attribution unchanged is fine; a new entry in someone else's name isn't.
   assert.equal((await db("update", { path, patch: { topics: { hygiene: { date: "2026-10-01", by: "web:George Farrow" }, diary: { date: "2026-10-02", by: "web:Alex Brown" } } } }, ALEX)).status, 200);
   assert.equal((await db("update", { path, patch: { topics: { allergens: { date: "2026-10-03", by: "web:George Farrow" } } } }, ALEX)).status, 403);
 });
@@ -112,7 +114,8 @@ test("rota: a pickup or cover is cancelled when the shift moves, changes or its 
   // Times changed after someone agreed to cover: approval is refused.
   const b = await shift({ day: day(2), userId: ids.Alex });
   const cover = await rota("POST", "requests", { kind: "cover", shiftId: b.id }, ALEX);
-  assert.equal((await rota("PATCH", "requests/" + cover.body.request.id, { action: "accept" }, SAM)).status, 200);
+  assert.equal((await rota("PATCH", "requests/" + cover.body.request.id, { action: "accept" }, SAM)).status, 403, "cross-person cover acceptance is admin-only");
+  assert.equal((await rota("PATCH", "requests/" + cover.body.request.id, { action: "accept" }, ADMIN)).status, 200);
   assert.equal((await rota("PATCH", "shifts/" + b.id, { start: "06:00", end: "18:00" })).status, 200);
   assert.equal((await rota("PATCH", "requests/" + cover.body.request.id, { action: "approve" })).status, 409);
 
@@ -132,14 +135,15 @@ test("rota: two people claiming the same shift at once get one request between t
   assert.deepEqual([x.status, y.status].sort(), [200, 409]);
 });
 
-test("rota: time off is decided once, can't overlap, and started leave is a manager's to change", async () => {
+test("rota: time off is decided once, can't overlap, and started leave is an admin's to change", async () => {
   const t = await rota("POST", "time-off", { from: "2030-02-10", to: "2030-02-12" }, ALEX);
   assert.equal(t.status, 200);
   assert.equal((await rota("POST", "time-off", { from: "2030-02-11", to: "2030-02-11" }, ALEX)).status, 409, "overlap");
   assert.equal((await rota("PATCH", "time-off/" + t.body.id, { status: "cancelled" }, ALEX)).status, 200);
   assert.equal((await rota("PATCH", "time-off/" + t.body.id, { status: "approved" })).status, 409, "a cancelled request can't be approved");
   const own = await rota("POST", "time-off", { from: "2030-03-01", to: "2030-03-01" }, MGR);
-  assert.equal((await rota("PATCH", "time-off/" + own.body.id, { status: "approved" })).status, 403, "managers don't approve their own");
+  assert.equal((await rota("PATCH", "time-off/" + own.body.id, { status: "approved" }, MGR)).status, 403, "managers don't approve their own");
+  assert.equal((await rota("PATCH", "time-off/" + own.body.id, { status: "approved" }, ADMIN)).status, 200, "an admin decides the manager's private request");
   const past = await rota("POST", "time-off", { from: "2025-06-01", to: "2025-06-03", userId: ids.Alex });
   assert.equal(past.body.status, "approved");
   assert.equal((await rota("PATCH", "time-off/" + past.body.id, { status: "cancelled" }, ALEX)).status, 403);
@@ -152,7 +156,7 @@ test("rota: copying over a week never touches days that have gone by", async () 
 
 test("rota: a handover at half past isn't a gap in cover", async () => {
   const w = "2030-04-01";
-  await rota("PUT", "sites/cafe", { opensAt: "07:00", closesAt: "17:00", minPeople: 1 });
+  await rota("PUT", "sites/cafe", { opensAt: "07:00", closesAt: "17:00", minPeople: 1 }, MGR);
   await shift({ day: w, start: "07:00", end: "12:30", userId: ids.Alex });
   await shift({ day: w, start: "12:30", end: "17:00", userId: ids.George });
   const v = await rota("GET", "week?start=" + w);

@@ -87,7 +87,7 @@ export async function linksFor(env: Env, base: { rota: string; diary: string }, 
 }
 export const readUnsubscribe = (env: Env, t: unknown) => readToken(env, "unsub:", t) as Promise<{ u: string; k: string } | null>;
 
-export interface Outgoing { to: Recipient & { email: string }; kind: EmailKind | "test"; mail: Built; links: Links; about: string; replyTo?: string | null; calendar?: string }
+export interface Outgoing { to: Recipient & { email: string }; kind: EmailKind | "test"; mail: Built; links: Links; about: string; calendar?: string }
 
 /** Sends one email (never throws): "sent", "off" (no API key), "limit" (the day's allowance is used) or "failed". */
 export async function send(env: Env, o: Outgoing): Promise<"sent" | "off" | "limit" | "failed"> {
@@ -104,7 +104,7 @@ export async function send(env: Env, o: Outgoing): Promise<"sent" | "off" | "lim
       headers: { authorization: `Bearer ${env.RESEND_API_KEY}`, "content-type": "application/json" },
       body: JSON.stringify({
         from: FROM(env), to: [o.to.email], subject: o.mail.subject, html: o.mail.html, text: o.mail.text,
-        ...(o.replyTo ? { reply_to: o.replyTo } : {}),
+        // Replies use the configured business From address. Account email addresses stay private to their owner.
         // One-tap unsubscribe in Gmail and Apple Mail (RFC 8058).
         headers: { "List-Unsubscribe": `<${o.links.unsubscribe}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" },
         ...(o.calendar ? { attachments: [{ filename: "shifts.ics", content: btoa(unescape(encodeURIComponent(o.calendar))), content_type: "text/calendar; charset=utf-8" }] } : {}),

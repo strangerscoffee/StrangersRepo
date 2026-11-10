@@ -1,4 +1,4 @@
-// Rota emails in the browser: an admin adds someone's email address; a manager publishes with "Email everyone on
+// Rota emails in the browser: an admin adds someone's email address and publishes with "Email everyone on
 // this week's rota" and the email goes out (to a stand-in for Resend); the person sees their address and switches an
 // email off in the rota. Run with `npm run test:e2e` (needs Playwright). SHOTS=<dir> saves screenshots, including the
 // email itself as it arrives.
@@ -76,21 +76,26 @@ test("admin adds an address; publishing emails it; the person switches an email 
   assert.match(await a.p.locator("section[aria-labelledby=rem]").innerText(), /1 of 3 people have an email address/);
   await a.ctx.close();
 
-  // Shifts for Alex next week, then the manager publishes with emails.
+  // Shifts for Alex next week, then an admin publishes with emails.
   for (const [i, site, start, end] of [[0, "roastery", "07:30", "15:30"], [1, "roastery", "07:30", "15:30"], [3, "cafe", "09:00", "17:00"], [5, "roastery", "08:00", "14:00"]])
-    await call("POST", "/api/rota/shifts", { site, day: addDays(WEEK, i), start, end, breakMins: 30, job: i === 3 ? "closes" : i < 2 ? "opens" : "", userId: alexId }, MGR);
-  const m = await page(MGR, { width: 1180, height: 820 });
+    await call("POST", "/api/rota/shifts", { site, day: addDays(WEEK, i), start, end, breakMins: 30, job: i === 3 ? "closes" : i < 2 ? "opens" : "", userId: alexId }, ADMIN);
+  const colleague = people.find((p) => p.username === "giles");
+  await call("POST", "/api/rota/shifts", { site: "roastery", day: WEEK, start: "09:05", end: "13:15", breakMins: 0, userId: colleague.id, note: "PRIVATE_COLLEAGUE_NOTE" });
+  const m = await page(ADMIN, { width: 1180, height: 820 });
   await m.p.goto(srv.base + `/rota/#week/${WEEK}`);
   await m.p.locator(".pubbtn").click();
   await m.p.locator(".pubemail", { hasText: "Email everyone on this week's rota" }).waitFor();
-  await m.p.locator(".pubemail", { hasText: "1 person to email" }).waitFor();
+  await m.p.locator(".pubemail", { hasText: "2 people to email" }).waitFor();
   assert.equal(await m.p.locator("#pubEmail").isChecked(), true, "ticked by default");
   if (process.env.SHOTS) await m.p.screenshot({ path: process.env.SHOTS + "/publish-ipad.png" });
   await m.p.locator(".sfoot button", { hasText: /^Publish$/ }).click();
   await m.p.locator("#toast", { hasText: "Emailing 1 person" }).waitFor();
   for (let i = 0; i < 40 && !sent.length; i++) await new Promise((r) => setTimeout(r, 100));
   assert.equal(sent.length, 1);
-  assert.equal(sent[0].to[0], "alex@example.com");
+  assert.deepEqual(sent[0].to, ["alex@example.com"]);
+  assert.equal(sent[0].reply_to, undefined);
+  const attachmentText = (sent[0].attachments || []).map((x) => Buffer.from(x.content, "base64").toString()).join("\n");
+  assert.doesNotMatch(JSON.stringify(sent[0]) + attachmentText, /Giles|Armstrong|PRIVATE_COLLEAGUE_NOTE|09:05|13:15/, "the delivered email and calendar contain only the recipient's shift information");
   assert.deepEqual([...a.errors, ...m.errors], []);
   await m.ctx.close();
 

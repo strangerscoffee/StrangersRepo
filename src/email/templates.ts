@@ -148,7 +148,7 @@ const notice = (ok: boolean, html: string) =>
 const shiftText = (s: MailShift) => `${longDay(s.day)}, ${s.start}–${s.end} at the ${s.siteName}`;
 
 /** A cover or pick-up request decided, for the person who asked or the person taking the shift. */
-export function requestEmail(o: { name: string; role: "asker" | "taker"; kind: "cover" | "claim"; approved: boolean; shift: MailShift; other: string; by: string; links: Links }): Built {
+export function requestEmail(o: { name: string; role: "asker" | "taker"; kind: "cover" | "claim"; approved: boolean; shift: MailShift; by: string; links: Links }): Built {
   const first = o.name.split(" ")[0], when = shiftText(o.shift);
   let subject: string, heading: string, say: string;
   if (o.kind === "claim") {
@@ -156,13 +156,13 @@ export function requestEmail(o: { name: string; role: "asker" | "taker"; kind: "
     heading = o.approved ? "You've got the shift" : "Your pick-up wasn't approved";
     say = o.approved ? `It's yours: <b>${esc(when)}</b>.` : `${esc(o.by)} didn't approve your pick-up of ${esc(when)}.`;
   } else if (o.role === "asker") {
-    subject = o.approved ? `${o.other} is covering your shift on ${longDay(o.shift.day)}` : `Your cover request for ${longDay(o.shift.day)} was declined`;
+    subject = o.approved ? `Your cover is approved for ${longDay(o.shift.day)}` : `Your cover request for ${longDay(o.shift.day)} was declined`;
     heading = o.approved ? "Your cover is approved" : "Your cover request was declined";
-    say = o.approved ? `<b>${esc(o.other)}</b> is now working your shift on <b>${esc(when)}</b>. You're off.` : `You're still on ${esc(when)}.`;
+    say = o.approved ? `Your shift on <b>${esc(when)}</b> is covered. You're off.` : `You're still on ${esc(when)}.`;
   } else {
-    subject = o.approved ? `You're covering ${o.other}'s shift on ${longDay(o.shift.day)}` : `Cover for ${o.other} on ${longDay(o.shift.day)}: not needed`;
+    subject = o.approved ? `Your cover shift on ${longDay(o.shift.day)} is approved` : "Your cover request was not approved";
     heading = o.approved ? "You're covering a shift" : "Your cover wasn't approved";
-    say = o.approved ? `You're now working <b>${esc(when)}</b>, covering ${esc(o.other)}.` : `${esc(o.other)} stays on ${esc(when)}.`;
+    say = o.approved ? `You're now working <b>${esc(when)}</b>.` : "Your offer to cover was not approved. Your own shifts are unchanged.";
   }
   const html = layout({ preheader: subject, heading: `Hi ${first}: ${heading.toLowerCase()}`, links: o.links,
     body: notice(o.approved, say) + row(`<span style="color:${MUTED};font-size:14px;">${o.approved ? "Approved" : "Decided"} by ${esc(o.by)}.</span>`) + row(button(o.links.rota, "Open the rota"), "14px 22px 22px") });

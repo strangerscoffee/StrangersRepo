@@ -202,6 +202,13 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
 
   await ensureSchema(env);
   const caller = await authorize(req, env);
+  // A page/queued write belongs to the identity that opened it. Shared cookies may change in another tab
+  // between its session check and this request; reject before reading any private data or returning a CAS body.
+  const expectedId = req.headers.get("x-expected-user-id"), expectedRole = req.headers.get("x-expected-user-role");
+  const identityBound = /^\/api\/(?:db\/|admin\/|rota\/|assets(?:\/|$))/.test(p) || p === "/api/auth/logout" || p === "/api/auth/pin" || p === "/api/auth/notifications/seen";
+  if (identityBound && (expectedId || expectedRole) && (caller.kind !== "user" || (expectedId && caller.user.id !== expectedId) || (expectedRole && caller.user.role !== expectedRole))) {
+    throw new ApiError(409, "session_changed", "The signed-in account changed. Reload to continue.");
+  }
 
   // The unsubscribe link at the foot of rota emails (src/email/unsubscribe.ts): signed in or not, by its signed token.
   if (p === "/email/unsubscribe" && (req.method === "GET" || req.method === "POST")) {

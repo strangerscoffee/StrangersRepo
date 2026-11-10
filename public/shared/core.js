@@ -25,10 +25,29 @@
   window.fetch = async (input, init) => {
     const url = typeof input === "string" ? input : (input && input.url) || "";
     const own = url.startsWith("/") || url.startsWith(location.origin);
+    const path = own ? new URL(url, location.origin).pathname : "";
+    const protectedCall = /^\/api\/(?:db\/|admin\/|rota\/|assets(?:\/|$))/.test(path) || /^\/api\/auth\/(?:pin|notifications\/seen)$/.test(path);
+    if (protectedCall && sessionIdentity) {
+      if (!(await ensureSession())) throw sessionError();
+      init = Object.assign({}, init);
+      const headers = new Headers(init.headers || (typeof input !== "string" && input.headers) || {});
+      for (const [key, value] of Object.entries(sessionHeaders())) if (!headers.has(key)) headers.set(key, value);
+      init.headers = headers;
+    }
+    const generation = sessionGeneration;
     // The device's own clock goes with requests to the site, so the server can flag a device that's far out.
     if (own) { init = Object.assign({}, init); const h = new Headers(init.headers || (typeof input !== "string" && input.headers) || {}); h.set("x-device-time", String(RealDate.now())); init.headers = h; }
     const t0 = RealDate.now();
-    const res = await realFetch(input, init);
+    const res = await (/^\/api\/auth\/(?:me|logout)$/.test(path) ? authRequest(input, init) : realFetch(input, init));
+    if (path === "/api/auth/me" && res.ok) {
+      const me = await res.clone().json().catch(() => null);
+      rememberCookieDomain(me && me.cookieDomain);
+    }
+    if (protectedCall && sessionIdentity) {
+      if (res.status === 409 && (await res.clone().json().catch(() => null))?.code === "session_changed") invalidateSession();
+      if (sessionInvalid || ((sessionLocked || generation !== sessionGeneration) && !(await ensureSession({ force: true })))) throw sessionError();
+    }
+    if (/^\/api\/auth\/(?:login|switch|change|setup|recover|logout)$/.test(path) && res.ok) notifyAuthChange();
     const t1 = RealDate.now(), server = own ? Number(res.headers.get("x-now")) : NaN;
     if (Number.isFinite(server) && server > 0) {
       // The quickest round trips give the best reading; take a new one at least every 10 minutes regardless.
@@ -41,7 +60,7 @@
         if (Math.abs(offset - was) > 60000) dispatchEvent(new Event("sc-clock"));
       }
     }
-    return res;
+    return protectedCall && sessionIdentity ? guardResponse(res, generation) : res;
   };
   /** How far this device's own clock is from the server's, in ms (positive: the device is slow). */
   const clockOffset = () => offset;
@@ -101,15 +120,154 @@
   function goSignIn(next = location.pathname + location.search + location.hash) {
     location.replace("/signin?next=" + encodeURIComponent(next));
   }
-  // Signs out on the server too (src/auth.ts), then goes to sign-in.
-  async function signOut() { try { await fetch("/api/auth/logout", { method: "POST" }); } catch (e) { /* signing out here anyway */ } location.replace("/signin"); }
-  // Safari can bring a page back from memory (going back to a tab) after the session has ended: check, and call
-  // signedOut (go to sign-in) rather than show a page that can't load anything.
-  function recheckOnPageshow(signedOut) {
-    window.addEventListener("pageshow", (e) => {
-      if (e.persisted) fetch("/api/auth/me").then((r) => r.json()).then((me) => { if (!me.user) signedOut(); }).catch(() => {});
-    });
+  // Identity is immutable account ID + current role, never the display name used for diary attribution.
+  const SESSION_EVENT = "sc.session.event", LOGOUT_KEY = "sc.logout.pending", LOGOUT_COOKIE = "sfbb_logout_pending";
+  let sessionIdentity = null, sessionLocked = false, sessionInvalid = false, sessionGeneration = 0;
+  let sessionCheck = null, sessionCheckedAt = 0, sessionEnabled = false, sessionSignedOut = goSignIn, logoutTask = null, cookieDomain = "";
+  const sessionClearers = new Set();
+  async function authRequest(input, init = {}) {
+    const controller = new AbortController(), outer = init.signal;
+    const abort = () => controller.abort();
+    if (outer?.aborted) abort(); else outer?.addEventListener("abort", abort, { once: true });
+    const timeout = setTimeout(abort, 10000);
+    try {
+      const response = await realFetch(input, { ...init, signal: controller.signal });
+      await response.clone().arrayBuffer(); // Bound the whole reply, including a stalled response body.
+      return response;
+    } finally { clearTimeout(timeout); outer?.removeEventListener("abort", abort); }
   }
+  function guardResponse(response, generation) {
+    for (const method of ["json", "text", "blob", "arrayBuffer", "formData"]) {
+      if (typeof response[method] !== "function") continue;
+      const read = response[method].bind(response);
+      Object.defineProperty(response, method, { value: async (...args) => {
+        const result = await read(...args);
+        if (sessionInvalid || ((sessionLocked || generation !== sessionGeneration) && !(await ensureSession({ force: true })))) throw sessionError();
+        return result;
+      } });
+    }
+    const clone = response.clone.bind(response);
+    Object.defineProperty(response, "clone", { value: () => guardResponse(clone(), generation) });
+    return response;
+  }
+  function rememberCookieDomain(domain) {
+    if (typeof domain === "string" && (domain === "" || location.hostname === domain || location.hostname.endsWith("." + domain))) cookieDomain = domain;
+  }
+  function logoutIntent() {
+    const cookie = document.cookie.match(/(?:^|;\s*)sfbb_logout_pending=([^;]*)/);
+    if (cookie) { try { return decodeURIComponent(cookie[1]) || "1"; } catch (_) { return "1"; } }
+    try { return localStorage.getItem(LOGOUT_KEY) || ""; } catch (_) { return ""; }
+  }
+  function setLogoutIntent(value) {
+    try { if (value) localStorage.setItem(LOGOUT_KEY, value); else localStorage.removeItem(LOGOUT_KEY); } catch (_) {}
+    const attrs = "; Path=/; SameSite=Lax" + (location.protocol === "https:" ? "; Secure" : "");
+    if (cookieDomain) document.cookie = LOGOUT_COOKIE + "=; Max-Age=0" + attrs;
+    document.cookie = LOGOUT_COOKIE + "=" + encodeURIComponent(value) + attrs + (cookieDomain ? "; Domain=" + cookieDomain : "") + "; Max-Age=" + (value ? "2592000" : "0");
+  }
+  const sessionError = () => Object.assign(new Error(sessionInvalid ? "The signed-in account changed. Reload to continue." : "Verify your sign-in before continuing."), { code: sessionInvalid ? "session_changed" : "session_unverified" });
+  function sessionShield(message = "Checking your sign-in…") {
+    if (!sessionEnabled) return;
+    sessionLocked = true; sessionGeneration++;
+    document.documentElement.setAttribute("data-sc-session-locked", "");
+    let box = document.getElementById("sc-session-shield");
+    if (!box && document.body) {
+      const style = document.createElement("style");
+      style.textContent = 'html[data-sc-session-locked] body>:not(#sc-session-shield),html[data-sc-session-locked] body>:not(#sc-session-shield) *{visibility:hidden!important;pointer-events:none!important}#sc-session-shield{position:fixed;inset:0;z-index:2147483647;display:grid;place-content:center;gap:16px;padding:32px;text-align:center;background:var(--bg,#edf1f6);color:var(--fg,#17212f);font:16px system-ui}#sc-session-shield[hidden]{display:none}#sc-session-shield button{min-height:44px;padding:12px 20px;border:1px solid currentColor;border-radius:14px;background:var(--glass,transparent);color:inherit;font:inherit}';
+      document.head.append(style);
+      box = el("section", { id: "sc-session-shield", role: "status", "aria-live": "polite" }, el("p", { "data-session-message": "" }), el("button", { type: "button", onclick: () => logoutIntent() ? finishLogout() : ensureSession({ force: true }) }, "Try again"));
+      document.body.append(box);
+    }
+    if (box) { box.hidden = false; box.querySelector("[data-session-message]").textContent = message; }
+  }
+  function unlockSession() {
+    if (sessionInvalid || logoutIntent()) return;
+    sessionLocked = false; document.documentElement.removeAttribute("data-sc-session-locked");
+    const box = document.getElementById("sc-session-shield"); if (box) box.hidden = true;
+  }
+  function invalidateSession(signedOut = false, navigate = true) {
+    if (sessionInvalid) return false;
+    sessionShield(signedOut ? "Signed out. Opening sign-in…" : "Your sign-in changed. Reloading…"); sessionInvalid = true;
+    for (const dialog of document.querySelectorAll("dialog[open]")) try { dialog.close(); } catch (_) {}
+    for (const clear of sessionClearers) try { clear(); } catch (_) {}
+    dispatchEvent(new CustomEvent("sc:session-invalid"));
+    if (navigate) { if (signedOut) sessionSignedOut(); else location.reload(); }
+    return true;
+  }
+  async function bindSession(user, { clear } = {}) {
+    sessionEnabled = true;
+    if (typeof clear === "function") sessionClearers.add(clear);
+    if (!user || typeof user.id !== "string" || typeof user.role !== "string") { invalidateSession(true); return false; }
+    if (sessionIdentity && (sessionIdentity.id !== user.id || sessionIdentity.role !== user.role)) { invalidateSession(); return false; }
+    if (sessionInvalid) return false;
+    sessionIdentity = { id: user.id, role: user.role }; sessionCheckedAt = 0;
+    sessionShield();
+    if (logoutIntent()) { sessionShield("Finishing sign out…"); finishLogout(); return false; }
+    return ensureSession({ force: true }); // The startup reply may predate a switch; prove identity again before any render/queue load.
+  }
+  function sessionHeaders() { return sessionIdentity ? { "x-expected-user-id": sessionIdentity.id, "x-expected-user-role": sessionIdentity.role } : {}; }
+  async function ensureSession({ force = false } = {}) {
+    if (!sessionEnabled || !sessionIdentity) return !sessionInvalid && !logoutIntent();
+    if (sessionInvalid || logoutIntent()) return false;
+    if (!force && !sessionLocked && RealDate.now() - sessionCheckedAt < 15000) return true;
+    if (sessionCheck) return sessionCheck;
+    sessionCheck = (async () => {
+      try {
+        for (;;) {
+          if (sessionInvalid || logoutIntent()) return false;
+          const generation = sessionGeneration;
+          const response = await authRequest("/api/auth/me", { cache: "no-store" });
+          if (!response.ok) throw new Error();
+          const me = await response.json(); rememberCookieDomain(me.cookieDomain);
+          // A switch/focus event during this request means its cookie snapshot is already obsolete.
+          if (generation !== sessionGeneration) continue;
+          if (!me.user) { invalidateSession(true); return false; }
+          if (me.user.id !== sessionIdentity.id || me.user.role !== sessionIdentity.role) { invalidateSession(); return false; }
+          sessionCheckedAt = RealDate.now(); unlockSession(); return !sessionInvalid && !logoutIntent();
+        }
+      } catch (_) { if (!sessionInvalid) sessionShield("Couldn't verify your sign-in. Reconnect, then try again."); return false; }
+      finally { sessionCheck = null; }
+    })();
+    return sessionCheck;
+  }
+  function notifyAuthChange() {
+    try { localStorage.setItem(SESSION_EVENT, JSON.stringify({ nonce: Math.random().toString(36).slice(2), at: RealDate.now() })); } catch (_) {}
+    if (sessionIdentity && !sessionInvalid) { sessionShield(); if (!logoutIntent()) ensureSession({ force: true }); }
+  }
+  async function finishLogout() {
+    if (logoutTask) return logoutTask;
+    sessionEnabled = true; sessionShield("Finishing sign out…");
+    logoutTask = (async () => {
+      try {
+        const owner = logoutIntent();
+        const response = await authRequest("/api/auth/logout", { method: "POST", headers: owner && owner !== "1" ? { "x-expected-user-id": owner } : {} });
+        const changed = response.status === 409 && (await response.clone().json().catch(() => null))?.code === "session_changed";
+        if (!response.ok && !changed) throw new Error();
+        setLogoutIntent("");
+        const leaving = invalidateSession(true, false); // Clear locally before broadcasting; never start another local /me check.
+        notifyAuthChange();
+        if (leaving) location.replace("/signin");
+        return true;
+      } catch (_) { sessionShield("Sign out hasn't finished. Reconnect, then try again. Your screen is protected."); return false; }
+      finally { logoutTask = null; }
+    })();
+    return logoutTask;
+  }
+  async function signOut() {
+    setLogoutIntent(sessionIdentity?.id || "1"); notifyAuthChange(); return finishLogout();
+  }
+  // Shield before a browser saves/restores an old page; no private cache is shown until ID and role are verified.
+  function recheckOnPageshow(signedOut) {
+    sessionEnabled = true; sessionSignedOut = signedOut || goSignIn; sessionShield();
+  }
+  const resumeSession = () => { if (!sessionEnabled || !sessionIdentity || sessionInvalid) return; sessionShield(); if (logoutIntent()) finishLogout(); else ensureSession({ force: true }); };
+  addEventListener("pagehide", () => { if (sessionIdentity) sessionShield(); });
+  addEventListener("blur", () => { if (sessionIdentity) sessionShield(); });
+  addEventListener("focus", resumeSession);
+  addEventListener("pageshow", (event) => { if (event.persisted) resumeSession(); });
+  document.addEventListener("visibilitychange", () => { if (!sessionIdentity) return; if (document.hidden) sessionShield(); else resumeSession(); });
+  addEventListener("online", resumeSession);
+  addEventListener("storage", (event) => { if (event.key === SESSION_EVENT || event.key === LOGOUT_KEY) resumeSession(); });
+  setInterval(() => { if (sessionIdentity && !document.hidden && !sessionInvalid) { if (logoutIntent()) finishLogout(); else ensureSession({ force: true }); } }, 15000);
 
   /* ---------- several devices at once ---------- */
 
@@ -188,6 +346,6 @@
   window.SC = Object.freeze({
     $, el, kids, svgi, initials, makeToast,
     dOf, isoOf, addDays, dow, monday, londonToday, londonNow,
-    goSignIn, signOut, recheckOnPageshow, watchChanges, live, clockOffset,
+    goSignIn, signOut, recheckOnPageshow, bindSession, ensureSession, sessionHeaders, notifyAuthChange, watchChanges, live, clockOffset,
   });
 })();

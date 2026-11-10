@@ -1,5 +1,5 @@
 // Two devices at once, in the browser (docs/runtime-api.md, "Changes from several devices"):
-// - the rota redraws by itself when another manager changes it;
+// - an admin's rota redraws by itself when another admin device changes it;
 // - two people editing the same supplier: the second save, made from the older copy, is stopped with a message
 //   (not silently overwriting the first), and goes through once they save again having seen the change.
 // Run with `npm run test:e2e` (needs Playwright).
@@ -46,8 +46,8 @@ before(async () => {
 });
 after(async () => { await browser?.close(); await srv?.stop(); });
 
-test("the rota redraws by itself when another manager adds a shift", async () => {
-  const a = await device(MGR);
+test("the admin rota redraws by itself when another admin device adds a shift", async () => {
+  const a = await device(ADMIN);
   await a.page.goto(srv.base + "/rota/#week");
   await a.page.locator("#pageTitle", { hasText: /^Week of / }).waitFor();
   // Another device adds a shift today.

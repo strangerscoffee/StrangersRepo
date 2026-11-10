@@ -4,6 +4,53 @@
   "use strict";
   const $ = (s) => document.querySelector(s);
   const FORMS = ["signin", "newpw", "change", "setup", "recover"];
+  const LOGOUT_KEY = "sc.logout.pending", SESSION_EVENT = "sc.session.event";
+  let cookieDomain = "", finishingLogout = null;
+  async function authRequest(url, init = {}) {
+    const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 10000);
+    try { const response = await fetch(url, { ...init, signal: controller.signal }); await response.clone().arrayBuffer(); return response; }
+    finally { clearTimeout(timeout); }
+  }
+  function pendingLogout() {
+    const match = document.cookie.match(/(?:^|;\s*)sfbb_logout_pending=([^;]*)/);
+    if (match) { try { return decodeURIComponent(match[1]) || "1"; } catch (_) { return "1"; } }
+    try { return localStorage.getItem(LOGOUT_KEY) || ""; } catch (_) { return ""; }
+  }
+  function rememberDomain(domain) {
+    if (typeof domain === "string" && (!domain || location.hostname === domain || location.hostname.endsWith("." + domain))) cookieDomain = domain;
+  }
+  function notifySession() {
+    try { localStorage.setItem(SESSION_EVENT, JSON.stringify({ nonce: Math.random().toString(36).slice(2), at: Date.now() })); } catch (_) {}
+  }
+  function clearPendingLogout() {
+    try { localStorage.removeItem(LOGOUT_KEY); } catch (_) {}
+    const cookie = "sfbb_logout_pending=; Path=/; SameSite=Lax; Max-Age=0" + (location.protocol === "https:" ? "; Secure" : "");
+    document.cookie = cookie;
+    if (cookieDomain) document.cookie = cookie + "; Domain=" + cookieDomain;
+    notifySession();
+  }
+  async function finishPendingLogout() {
+    if (finishingLogout) return finishingLogout;
+    const owner = pendingLogout();
+    if (!owner) return true;
+    show("signin"); $("#quick").hidden = true;
+    document.querySelectorAll("button[type=submit]").forEach((button) => { button.disabled = true; });
+    $("#err").textContent = "Finishing sign out. Reconnect to continue.";
+    finishingLogout = (async () => {
+      try {
+        const me = await (await authRequest("/api/auth/me", { cache: "no-store" })).json(); rememberDomain(me.cookieDomain);
+        const response = await authRequest("/api/auth/logout", { method: "POST", headers: owner !== "1" ? { "x-expected-user-id": owner } : {} });
+        const changed = response.status === 409 && (await response.clone().json().catch(() => null))?.code === "session_changed";
+        if (!response.ok && !changed) throw new Error();
+        clearPendingLogout();
+        document.querySelectorAll("button[type=submit]").forEach((button) => { button.disabled = false; });
+        show("signin"); $("#err").textContent = "Signed out. Sign in to continue."; quickSignIn();
+        return true;
+      } catch (_) { $("#err").textContent = "Sign out hasn't finished. Reconnect, then reload. The previous account won't resume here."; return false; }
+      finally { finishingLogout = null; }
+    })();
+    return finishingLogout;
+  }
 
   // Only paths on this site, or https links to its own subdomains (the rota sends people here to sign in and
   // back again), so the next= link can't send people anywhere else.
@@ -29,6 +76,7 @@
   }
 
   async function post(url, body) {
+    if (pendingLogout() && !(await finishPendingLogout())) throw new Error("Finish signing out before signing in.");
     let res;
     try {
       res = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -37,6 +85,7 @@
     }
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.message || "Something went wrong. Try again.");
+    if (data.user) notifySession();
     return data;
   }
 
@@ -48,7 +97,7 @@
       err.textContent = "";
       btn.disabled = true;
       try { await fn(err); } catch (x) { err.textContent = x.message; }
-      btn.disabled = false;
+      btn.disabled = !!pendingLogout();
     });
   }
 
@@ -180,7 +229,11 @@
 
   /* ---------- start ---------- */
 
-  fetch("/api/auth/me").then((r) => r.json()).then(({ user, setupNeeded }) => {
+  const hadPendingLogout = !!pendingLogout();
+  if (hadPendingLogout) finishPendingLogout();
+  else authRequest("/api/auth/me").then((r) => r.json()).then(({ user, setupNeeded, cookieDomain: domain }) => {
+    rememberDomain(domain);
+    if (pendingLogout()) { finishPendingLogout(); return; }
     if (user && location.hash === "#change") { show("change"); return; } // from the diary's account menu
     if (user) { location.replace(next); return; }
     show(setupNeeded ? "setup" : "signin");
@@ -189,4 +242,7 @@
     show("signin");
     $("#err").textContent = "Couldn't reach the site. Check your connection and reload.";
   });
+  addEventListener("online", () => { if (pendingLogout()) finishPendingLogout(); });
+  addEventListener("focus", () => { if (pendingLogout()) finishPendingLogout(); });
+  addEventListener("storage", (event) => { if (event.key === LOGOUT_KEY && pendingLogout()) finishPendingLogout(); });
 })();

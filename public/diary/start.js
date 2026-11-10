@@ -105,7 +105,7 @@ function subscribeSite(){
   list("plans","plans",()=>{onPlansSnapshot();renderReview()});
   list("onboarding","onboarding",onOnbSnapshot);
   list("inspections","inspections",()=>{onInspSnapshot();renderReview()});
-  list("staff","staff",()=>{renderStaff();renderReview()});
+  list("staff","staff",()=>{renderStaff();renderReview();inspStale()});
 }
 // Every site at a glance (the site switcher, Today's needs-attention, the maintenance bell, Setup's publish preview):
 // one live summary of all four (src/summary.ts) rather than each site's lists. This site's own lists, already
@@ -161,6 +161,16 @@ $("#revSave").addEventListener("click",async()=>{
 document.querySelectorAll(".note.intro").forEach(n=>{n.setAttribute("title","Tap to read more");n.addEventListener("click",()=>n.classList.toggle("full"))});
 
 /* ---------- boot ---------- */
+// The shared session guard shields first, then clears the old person's private page before reloading.
+window.addEventListener("sc:session-invalid",()=>{
+  Object.assign(S,{staff:[],contacts:[],onboarding:[],team:[],days:{},weeks:{},reviews:[],plans:[],inspections:[],sum:{},names:{},plan:null,onb:null,insp:null,rota:null,editStaff:null,myUserId:"",myName:"",role:"",me:null,db:null,canWrite:false});
+  contactPrivacy={};editCon=null;IN.data=null;IN.loading=null;IN.key="";
+  for(const key of Object.keys(BASE))delete BASE[key];
+  closeSheets();
+  for(const field of document.querySelectorAll("[data-panel] input,[data-panel] textarea,[data-panel] select")){field.value="";if("checked"in field)field.checked=false;field.disabled=true}
+  for(const id of ["#tList","#tMatrix","#cList","#cPrivacy","#obList","#obEditView","#inReport","#inJump","#onShift","#peopleList","#acctMenu","#snav","#tabbar","#meBox"])$(id)?.replaceChildren();
+  for(const panel of document.querySelectorAll("[data-panel]"))panel.hidden=true;
+});
 for(const x of["#dv_chilled","#dv_frozen","#pReading"])minusIn(x);
 inspectForm();tempLogForm();closureForm();buildAlgChecks();buildTaskForm("extras");buildTaskForm("cleaning");proveForm();delivForm();maintForm();supForm();conForm();staffForm();editStaff(null);
 applyTabs();renderAll();
@@ -172,7 +182,7 @@ applyTabs();renderAll();
     const me=await S.user.me();S.me=me.id;
     const w=await S.user.can("data.write");if(w===false){S.canWrite=false;$("#readonly").hidden=false}
     S.notifSeen=me.notifSeen||0;
-    S.myName=me.name||"";S.role=me.role||"staff";S.quickPin=!!me.quickPin;S.quickSwitch=!!me.quickSwitch;renderMe();
+    S.myUserId=me.userId||"";S.myName=me.name||"";S.role=me.role||"staff";S.quickPin=!!me.quickPin;S.quickSwitch=!!me.quickSwitch;renderMe();
     if(!canTab(S.tab))show("day",{quiet:true});else renderNav();
     loadTeam();
   }

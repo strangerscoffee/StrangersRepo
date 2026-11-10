@@ -119,6 +119,6 @@ export async function getShift(env: Env, id: string): Promise<Shift> {
 }
 
 export async function approvers(env: Env): Promise<string[]> {
-  const r = await env.DB.prepare("SELECT name FROM users WHERE active = 1 AND role IN ('manager', 'admin') ORDER BY name_key").all<{ name: string }>();
+  const r = await env.DB.prepare("SELECT name FROM users WHERE active = 1 AND role = 'admin' ORDER BY name_key").all<{ name: string }>();
   return r.results.map((x) => x.name);
 }

@@ -3,12 +3,14 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { startServer, SETUP_CODE } from "./harness.mjs";
 
-let srv, ADMIN, STAFF;
+let srv, ADMIN, STAFF, ADMIN_ID, STAFF_ID;
 before(async () => {
   srv = await startServer({ writeLimit: 80, scheduled: true });
   ADMIN = await setupAdmin("Sam Patel", "sam.patel", "admin-pass-1");
+  ADMIN_ID = (await (await fetch(srv.base + "/api/auth/me", { headers: { cookie: ADMIN } })).json()).user.id;
   const r = await admin("POST", "users", { name: "Alex Brown", username: "alex", role: "staff", password: "temp-pass-1" });
   assert.equal(r.status, 200);
+  STAFF_ID = r.body.user.id;
   STAFF = await firstSignIn("alex", "temp-pass-1", "alex-own-pass");
 });
 after(async () => { await srv?.stop(); });
@@ -64,7 +66,7 @@ test("signed out: only the sign-in page and the site's code are reachable, no pa
   assert.equal(r.body.code, "unauthenticated");
   assert.equal((await fetch(srv.base + "/_blob/" + "0".repeat(32))).status, 401);
   const me = await (await fetch(srv.base + "/api/auth/me")).json();
-  assert.deepEqual(me, { user: null, setupNeeded: false, quickSwitch: false });
+  assert.deepEqual(me, { user: null, setupNeeded: false, quickSwitch: false, cookieDomain: "staffstrangerscoffee.com" });
 });
 
 test("page is served with the shim and noindex once signed in", async () => {
@@ -132,7 +134,7 @@ test("roles: staff record entries but can't change manager sections or use admin
     assert.equal(r.body.code, "permission_denied");
   }
   // Staff training: staff fill in and sign their own record only, and never remove one.
-  assert.equal((await db("set", { path: "sites/asg/staff/own", data: { name: "alex  brown", topics: {} } }, STAFF)).status, 200, "own record");
+  assert.equal((await db("set", { path: "sites/asg/staff/own", data: { name: "alex  brown", ownerUserId: STAFF_ID, topics: {} } }, STAFF)).status, 200, "own record is bound to the stable employee account");
   assert.equal((await db("update", { path: "sites/asg/staff/own", patch: { signed: { by: "web:Alex Brown", name: "Alex Brown" } } }, STAFF)).status, 200, "sign own record");
   assert.equal((await db("update", { path: "sites/asg/staff/own", patch: { signed: { by: "web:Alex Brown", name: "Sam Patel" } } }, STAFF)).status, 403, "a signature's name must be their own too");
   for (const [op, body] of [
@@ -140,7 +142,7 @@ test("roles: staff record entries but can't change manager sections or use admin
     ["delete", { path: "sites/asg/staff/own" }],
     ["set", { path: "sites/asg/staff/other", data: { name: "Sam Patel" } }],
   ]) assert.equal((await db(op, body, STAFF)).body.code, "permission_denied", op + " " + JSON.stringify(body));
-  assert.equal((await db("set", { path: "sites/asg/staff/other", data: { name: "Sam Patel" } })).status, 200, "managers write anyone's");
+  assert.equal((await db("set", { path: "sites/asg/staff/other", data: { name: "Sam Patel", ownerUserId: ADMIN_ID } })).status, 200, "admins manage another employee's training");
   for (const [op, body] of [["set", { path: "sites/asg/staff/other", data: { name: "Alex Brown" } }], ["update", { path: "sites/asg/staff/other", patch: { topics: {} } }]])
     assert.equal((await db(op, body, STAFF)).body.code, "permission_denied", "can't take over someone else's record: " + op);
   assert.equal((await db("get", { path: "sites/cafe/settings/main" }, STAFF)).status, 200, "staff can still read");

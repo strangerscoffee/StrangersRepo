@@ -36,7 +36,7 @@ const settings = (site, closedDays) => req("POST", "/api/db/set", {
   path: (site === "roastery" ? "" : `sites/${site}/`) + "settings/main",
   data: { closedDays, units: [], opening: [], closing: [], weekly: [], hide: {}, info: {} },
 });
-const addShift = async (s, cookie = MGR) => {
+const addShift = async (s, cookie = ADMIN) => {
   const r = await rota("POST", "shifts?with=problems", { breakMins: 30, job: "", ...s }, cookie);
   assert.equal(r.status, 200, r.text);
   return r.body;
@@ -55,7 +55,7 @@ before(async () => {
   await settings("cafe", [0]); // closed Sundays
   await settings("asg", []);
   // Factory has no settings: not in use.
-  const w = await rota("GET", "week?start=" + WEEK, undefined, MGR);
+  const w = await rota("GET", "week?start=" + WEEK, undefined, ADMIN);
   for (const p of w.body.people) ids[p.name.split(" ")[0]] = p.id;
 });
 after(async () => { await srv?.stop(); });
@@ -115,21 +115,24 @@ test("the diary host: the diary as before, plus the rota app at /rota/ and its A
   assert.equal((await rota("GET", "week", undefined, null)).body.code, "unauthenticated");
 });
 
-test("only managers plan: staff can't change shifts, publish, or read hours and suggestions", async () => {
+test("only admins plan: staff and managers cannot change assigned shifts, publish, or read private hours and suggestions", async () => {
   const s = (await addShift({ site: "asg", day: MON, start: "09:00", end: "12:00" })).shift;
-  const refused = [
-    await rota("POST", "shifts", { site: "asg", day: MON, start: "09:00", end: "12:00" }, ALEX),
-    await rota("PATCH", "shifts/" + s.id, { start: "08:00" }, ALEX),
-    await rota("DELETE", "shifts/" + s.id, undefined, ALEX),
-    await rota("POST", "week/publish", { week: WEEK }, ALEX),
-    await rota("POST", "week/copy", { from: WEEK, to: day(7) }, ALEX),
-    await rota("GET", "hours?start=" + WEEK, undefined, ALEX),
-    await rota("GET", "suggest?shift=" + s.id, undefined, ALEX),
-    await rota("PUT", "people/" + ids.Alex, { contractHours: 40 }, ALEX),
-    await rota("PUT", "sites/cafe", { opensAt: "07:00", closesAt: "17:00", minPeople: 2 }, ALEX),
-  ];
-  for (const r of refused) { assert.equal(r.status, 403, r.text); assert.equal(r.body.code, "permission_denied"); }
-  assert.equal((await rota("PATCH", "shifts/" + s.id, { start: "08:00" }, MGR)).status, 200, "managers can");
+  for (const cookie of [ALEX, MGR]) {
+    const refused = [
+      await rota("POST", "shifts", { site: "asg", day: MON, start: "09:00", end: "12:00" }, cookie),
+      await rota("PATCH", "shifts/" + s.id, { start: "08:00" }, cookie),
+      await rota("DELETE", "shifts/" + s.id, undefined, cookie),
+      await rota("POST", "week/publish", { week: WEEK }, cookie),
+      await rota("POST", "week/copy", { from: WEEK, to: day(7) }, cookie),
+      await rota("GET", "hours?start=" + WEEK, undefined, cookie),
+      await rota("GET", `hours?start=${WEEK}&format=csv`, undefined, cookie),
+      await rota("GET", "suggest?shift=" + s.id, undefined, cookie),
+      await rota("PUT", "people/" + ids.Alex, { contractHours: 40 }, cookie),
+    ];
+    for (const r of refused) { assert.equal(r.status, 403, r.text); assert.equal(r.body.code, "permission_denied"); }
+  }
+  assert.equal((await rota("PUT", "sites/cafe", { opensAt: "07:00", closesAt: "17:00", minPeople: 2 }, ALEX)).status, 403);
+  assert.equal((await rota("PATCH", "shifts/" + s.id, { start: "08:00" }, ADMIN)).status, 200, "admins can");
   assert.equal((await rota("DELETE", "shifts/" + s.id, undefined, ADMIN)).status, 200, "admins can");
 });
 
@@ -146,23 +149,23 @@ test("validation: bad site, date, times, closed day, unknown person", async () =
     { site: "cafe", day: MON, start: "09:00", end: "12:00", job: "sweeps" },
   ];
   for (const b of bad) {
-    const r = await rota("POST", "shifts", b, MGR);
+    const r = await rota("POST", "shifts", b, ADMIN);
     assert.equal(r.status, 400, JSON.stringify(b));
     assert.equal(r.body.code, "invalid_argument");
   }
-  assert.match((await rota("POST", "shifts", bad[4], MGR)).body.message, /closed on Sundays/);
+  assert.match((await rota("POST", "shifts", bad[4], ADMIN)).body.message, /closed on Sundays/);
   // A save doesn't work out the week's problems unless asked (?with=problems): the page redraws the week anyway.
-  const plain = await rota("POST", "shifts", { site: "cafe", day: MON, start: "09:00", end: "12:00" }, MGR);
+  const plain = await rota("POST", "shifts", { site: "cafe", day: MON, start: "09:00", end: "12:00" }, ADMIN);
   assert.equal(plain.status, 200, plain.text);
   assert.equal(plain.body.problems, undefined);
   assert.equal(plain.body.week, WEEK);
-  await rota("DELETE", "shifts/" + plain.body.shift.id, undefined, MGR);
+  await rota("DELETE", "shifts/" + plain.body.shift.id, undefined, ADMIN);
   // A day closed in the diary (Today → closed, or a planned closure) is closed on the rota too.
   await req("POST", "/api/db/set", { path: `sites/cafe/days/${TUE}`, data: { date: TUE, closed: { reason: "Boiler repair", by: "web:Will Owner", at: 1 } } });
-  const r = await rota("POST", "shifts", { site: "cafe", day: TUE, start: "09:00", end: "12:00" }, MGR);
+  const r = await rota("POST", "shifts", { site: "cafe", day: TUE, start: "09:00", end: "12:00" }, ADMIN);
   assert.equal(r.status, 400);
   assert.match(r.body.message, /Boiler repair/);
-  const w = await rota("GET", "week?start=" + WEEK, undefined, MGR);
+  const w = await rota("GET", "week?start=" + WEEK, undefined, ADMIN);
   const cafe = w.body.sites.find((x) => x.id === "cafe");
   assert.equal(cafe.open[1], false);
   assert.equal(cafe.closedWhy[1], "Boiler repair");
@@ -174,9 +177,9 @@ test("checks: every kind of problem", async () => {
   const W = "2030-02-04"; // a clean week
   const d = (i) => { const x = new Date(W + "T12:00:00Z"); x.setUTCDate(x.getUTCDate() + i); return x.toISOString().slice(0, 10); };
   await rota("PUT", "sites/asg", { opensAt: "08:00", closesAt: "12:00", minPeople: 2 }, MGR);
-  await rota("PUT", "people/" + ids.Sam, { contractHours: 10 }, MGR);
-  await rota("PUT", "people/" + ids.Priya, { contractMin: 16, contractMax: 30 }, MGR);
-  await rota("POST", "time-off", { userId: ids.Priya, from: d(2), to: d(2), reason: "Holiday" }, MGR);
+  await rota("PUT", "people/" + ids.Sam, { contractHours: 10 }, ADMIN);
+  await rota("PUT", "people/" + ids.Priya, { contractMin: 16, contractMax: 30 }, ADMIN);
+  await rota("POST", "time-off", { userId: ids.Priya, from: d(2), to: d(2), reason: "Holiday" }, ADMIN);
   await addShift({ site: "asg", day: d(0), start: "08:00", end: "12:00", job: "opens", userId: null }); // open shift
   await addShift({ site: "asg", day: d(1), start: "08:00", end: "16:00", job: "opens", userId: ids.Sam, breakMins: 0 }); // 8h, no break
   await addShift({ site: "cafe", day: d(1), start: "10:00", end: "14:00", job: "closes", userId: ids.Sam }); // clash across sites
@@ -203,23 +206,23 @@ test("publishing: staff see a week only once it's published; later changes are c
   assert.equal(staff.body.published, false);
   assert.deepEqual(staff.body.shifts, []);
   assert.deepEqual(staff.body.problems, []);
-  assert.equal(staff.body.people[0].contractHours, undefined, "staff don't see contracts");
+  assert.deepEqual(staff.body.people.map((p) => p.id), [ids.Alex], "the people list contains only the signed-in employee");
   assert.deepEqual((await rota("GET", `mine?from=${W}&to=${W}`, undefined, ALEX)).body.shifts, []);
   assert.equal((await rota("GET", `today?site=cafe&day=${W}`, undefined, ALEX)).body.published, false);
-  await rota("POST", "week/publish", { week: W }, MGR);
+  await rota("POST", "week/publish", { week: W }, ADMIN);
   staff = await rota("GET", "week?start=" + W, undefined, ALEX);
   assert.equal(staff.body.published, true);
   assert.equal(staff.body.shifts.length, 1);
   assert.equal((await rota("GET", `mine?from=${W}&to=${W}`, undefined, ALEX)).body.shifts.length, 1);
   const today = await rota("GET", `today?site=cafe&day=${W}`, undefined, ALEX);
   assert.deepEqual(today.body.shifts.map((x) => [x.name, x.me, x.job]), [["Alex Brown", true, "opens"]]);
-  await rota("PATCH", "shifts/" + s.id, { end: "14:00" }, MGR);
+  await rota("PATCH", "shifts/" + s.id, { end: "14:00" }, ADMIN);
   await addShift({ site: "cafe", day: W, start: "11:00", end: "18:00", job: "closes" });
-  const mgr = await rota("GET", "week?start=" + W, undefined, MGR);
+  const mgr = await rota("GET", "week?start=" + W, undefined, ADMIN);
   assert.equal(mgr.body.changesSincePublish, 2);
   assert.equal((await rota("GET", "week?start=" + W, undefined, ALEX)).body.shifts.length, 2, "staff see live shifts of a published week");
-  await rota("POST", "week/publish", { week: W }, MGR);
-  assert.equal((await rota("GET", "week?start=" + W, undefined, MGR)).body.changesSincePublish, 0);
+  await rota("POST", "week/publish", { week: W }, ADMIN);
+  assert.equal((await rota("GET", "week?start=" + W, undefined, ADMIN)).body.changesSincePublish, 0);
 });
 
 test("copy last week: closed days skipped, and it won't overwrite without replace", async () => {
@@ -228,57 +231,61 @@ test("copy last week: closed days skipped, and it won't overwrite without replac
   await addShift({ site: "asg", day: "2030-04-07", start: "08:00", end: "12:00", userId: ids.Sam }); // a Sunday
   // The Cafe's Monday the next week is a planned closure.
   await req("POST", "/api/db/set", { path: "sites/cafe/days/2030-04-08", data: { date: "2030-04-08", closed: { reason: "Easter Monday", by: "x", at: 1 } } });
-  const r = await rota("POST", "week/copy", { from: A, to: B }, MGR);
+  const r = await rota("POST", "week/copy", { from: A, to: B }, ADMIN);
   assert.equal(r.status, 200, r.text);
   assert.equal(r.body.copied, 1);
   assert.equal(r.body.skipped.length, 1);
   assert.match(r.body.skipped[0].reason, /Easter Monday/);
-  const again = await rota("POST", "week/copy", { from: A, to: B }, MGR);
+  const again = await rota("POST", "week/copy", { from: A, to: B }, ADMIN);
   assert.equal(again.status, 409);
   assert.equal(again.body.code, "conflict");
-  assert.equal((await rota("POST", "week/copy", { from: A, to: B, replace: true }, MGR)).body.replaced, 1);
+  assert.equal((await rota("POST", "week/copy", { from: A, to: B, replace: true }, ADMIN)).body.replaced, 1);
 });
 
-test("claims and covers: asked, accepted and approved; clashes refused", async () => {
+test("claims and covers: employees request for themselves; admins handle cross-person decisions", async () => {
   // Two weeks from now: open shifts are listed for the next six weeks.
   const t = new Date(); t.setUTCDate(t.getUTCDate() + 14 - ((t.getUTCDay() + 6) % 7));
   const W = t.toISOString().slice(0, 10);
   const open = (await addShift({ site: "cafe", day: W, start: "11:00", end: "18:00", job: "closes" })).shift;
   const unpublished = await rota("POST", "requests", { kind: "claim", shiftId: open.id }, ALEX);
-  assert.equal(unpublished.status, 400, "can't claim from an unpublished week");
-  await rota("POST", "week/publish", { week: W }, MGR);
+  assert.equal(unpublished.status, 400, "cannot claim from an unpublished week");
+  await rota("POST", "week/publish", { week: W }, ADMIN);
   const offered = (await rota("GET", "open", undefined, ALEX)).body.shifts.map((s) => s.id);
-  assert.ok(offered.includes(open.id), "Alex sees the open shift");
+  assert.ok(offered.includes(open.id), "Alex sees the unassigned opportunity");
   const claim = await rota("POST", "requests", { kind: "claim", shiftId: open.id }, ALEX);
   assert.equal(claim.status, 200, claim.text);
   assert.equal((await rota("POST", "requests", { kind: "claim", shiftId: open.id }, SAM)).body.code, "conflict", "a second claim is refused");
-  assert.equal((await rota("PATCH", "requests/" + claim.body.request.id, { action: "approve" }, ALEX)).status, 403, "staff can't approve");
-  const ok = await rota("PATCH", "requests/" + claim.body.request.id, { action: "approve" }, MGR);
+  for (const cookie of [ALEX, MGR]) assert.equal((await rota("PATCH", "requests/" + claim.body.request.id, { action: "approve" }, cookie)).status, 403);
+  const ok = await rota("PATCH", "requests/" + claim.body.request.id, { action: "approve" }, ADMIN);
   assert.equal(ok.body.request.status, "approved");
-  let w = await rota("GET", "week?start=" + W, undefined, MGR);
-  assert.equal(w.body.shifts.find((s) => s.id === open.id).userId, ids.Alex);
-  assert.equal((await rota("POST", "requests", { kind: "claim", shiftId: open.id }, SAM)).body.code, "conflict", "no longer open");
+  assert.equal((await rota("GET", "week?start=" + W, undefined, ADMIN)).body.shifts.find((s) => s.id === open.id).userId, ids.Alex);
+  assert.equal((await rota("POST", "requests", { kind: "claim", shiftId: open.id }, SAM)).status, 403, "an assigned colleague shift is private before conflict checks");
 
-  // Cover to a named person.
-  const c1 = await rota("POST", "requests", { kind: "cover", shiftId: open.id, toUserId: ids.Priya, message: "Wedding" }, ALEX);
-  assert.equal(c1.status, 200, c1.text);
-  assert.equal((await rota("PATCH", "requests/" + c1.body.request.id, { action: "accept" }, SAM)).status, 403, "only the person asked");
-  assert.equal((await rota("PATCH", "requests/" + c1.body.request.id, { action: "approve" }, MGR)).body.code, "conflict", "not accepted yet");
-  const priya = await signInAgain("priya");
-  assert.equal((await rota("PATCH", "requests/" + c1.body.request.id, { action: "accept" }, priya)).body.request.status, "accepted");
-  assert.equal((await rota("PATCH", "requests/" + c1.body.request.id, { action: "approve" }, MGR)).body.request.status, "approved");
-  w = await rota("GET", "week?start=" + W, undefined, MGR);
-  assert.equal(w.body.shifts.find((s) => s.id === open.id).userId, ids.Priya);
+  assert.equal((await rota("POST", "requests", { kind: "cover", shiftId: open.id, toUserId: ids.Priya, message: "Wedding" }, ALEX)).status, 403, "employees cannot target another employee");
+  const cancelled = await rota("POST", "requests", { kind: "cover", shiftId: open.id, message: "Own cover request" }, ALEX);
+  assert.equal(cancelled.status, 200, cancelled.text);
+  assert.equal((await rota("PATCH", "requests/" + cancelled.body.request.id, { action: "cancel" }, ALEX)).body.request.status, "cancelled");
+  const cover = await rota("POST", "requests", { kind: "cover", shiftId: open.id }, ALEX);
+  assert.equal(cover.status, 200, cover.text);
+  assert.equal(cover.body.request.toUser, null);
+  for (const cookie of [SAM, MGR]) {
+    assert.equal((await rota("PATCH", "requests/" + cover.body.request.id, { action: "accept" }, cookie)).status, 403, "cross-person acceptance requires an admin");
+    assert.equal((await rota("PATCH", "requests/" + cover.body.request.id, { action: "decline" }, cookie)).status, 403);
+  }
+  assert.equal((await rota("PATCH", "requests/" + cover.body.request.id, { action: "approve" }, ADMIN)).body.code, "conflict", "not accepted yet");
+  assert.equal((await rota("PATCH", "requests/" + cover.body.request.id, { action: "accept" }, ADMIN)).body.request.status, "accepted");
+  assert.equal((await rota("PATCH", "requests/" + cover.body.request.id, { action: "approve" }, ADMIN)).body.request.status, "approved");
+  assert.equal((await rota("GET", "week?start=" + W, undefined, ADMIN)).body.shifts.find((s) => s.id === open.id).userId, ids.Will);
 
-  // Cover to anyone; approval refused when it would clash.
-  const c2 = await rota("POST", "requests", { kind: "cover", shiftId: open.id }, priya);
-  assert.equal(c2.body.request.toUser, null);
-  assert.equal((await rota("PATCH", "requests/" + c2.body.request.id, { action: "accept" }, SAM)).body.request.taker, ids.Sam);
-  await addShift({ site: "asg", day: W, start: "12:00", end: "16:00", userId: ids.Sam }); // Sam is now busy then
-  const refused = await rota("PATCH", "requests/" + c2.body.request.id, { action: "approve" }, MGR);
+  // An employee can claim an unassigned shift; approval still checks their own clashes.
+  const second = (await addShift({ site: "cafe", day: W, start: "09:00", end: "13:00" })).shift;
+  const samClaim = await rota("POST", "requests", { kind: "claim", shiftId: second.id }, SAM);
+  assert.equal(samClaim.status, 200, samClaim.text);
+  await addShift({ site: "asg", day: W, start: "12:00", end: "16:00", userId: ids.Sam });
+  const refused = await rota("PATCH", "requests/" + samClaim.body.request.id, { action: "approve" }, ADMIN);
   assert.equal(refused.status, 409);
   assert.equal(refused.body.code, "conflict");
-  assert.equal((await rota("PATCH", "requests/" + c2.body.request.id, { action: "cancel" }, priya)).body.request.status, "cancelled");
+  assert.equal((await rota("PATCH", "requests/" + samClaim.body.request.id, { action: "cancel" }, SAM)).body.request.status, "cancelled");
   assert.equal((await rota("POST", "requests", { kind: "cover", shiftId: open.id }, SAM)).status, 403, "only your own shifts");
 });
 async function signInAgain(username) {
@@ -289,13 +296,13 @@ async function signInAgain(username) {
 
 test("suggestions: clashing and on-leave people can't be picked; best fit first; overtime flagged; no training check", async () => {
   const W = "2030-06-03";
-  await rota("PUT", "people/" + ids.Alex, { contractHours: 40 }, MGR);
-  await rota("PUT", "people/" + ids.Sam, { contractHours: 4 }, MGR);
-  await rota("PUT", "people/" + ids.Priya, { contractHours: 30 }, MGR);
+  await rota("PUT", "people/" + ids.Alex, { contractHours: 40 }, ADMIN);
+  await rota("PUT", "people/" + ids.Sam, { contractHours: 4 }, ADMIN);
+  await rota("PUT", "people/" + ids.Priya, { contractHours: 30 }, ADMIN);
   await addShift({ site: "asg", day: W, start: "08:00", end: "12:00", userId: ids.Alex });
-  await rota("POST", "time-off", { userId: ids.George, from: W, to: W, reason: "Holiday" }, MGR);
+  await rota("POST", "time-off", { userId: ids.George, from: W, to: W, reason: "Holiday" }, ADMIN);
   const s = (await addShift({ site: "cafe", day: W, start: "09:00", end: "15:00", job: "closes" })).shift;
-  const r = await rota("GET", "suggest?shift=" + s.id, undefined, MGR);
+  const r = await rota("GET", "suggest?shift=" + s.id, undefined, ADMIN);
   assert.equal(r.status, 200, r.text);
   const by = Object.fromEntries(r.body.candidates.map((c) => [c.name.split(" ")[0], c]));
   assert.equal(by.Alex.selectable, false, "Alex clashes");
@@ -313,11 +320,11 @@ test("suggestions: clashing and on-leave people can't be picked; best fit first;
 
 test("hours and the CSV", async () => {
   const W = "2030-07-01";
-  await rota("PUT", "people/" + ids.Alex, { contractHours: 10 }, MGR);
+  await rota("PUT", "people/" + ids.Alex, { contractHours: 10 }, ADMIN);
   await addShift({ site: "cafe", day: W, start: "07:00", end: "15:00", userId: ids.Alex, breakMins: 30 }); // 7.5h
   await addShift({ site: "asg", day: "2030-07-02", start: "09:00", end: "13:00", userId: ids.Alex, breakMins: 0 }); // 4h
   await addShift({ site: "asg", day: "2030-07-02", start: "13:00", end: "17:00", breakMins: 0 }); // open: not counted
-  const r = await rota("GET", "hours?start=" + W, undefined, MGR);
+  const r = await rota("GET", "hours?start=" + W, undefined, ADMIN);
   const alex = r.body.people.find((p) => p.name === "Alex Brown");
   assert.equal(alex.rotaHours, 11.5);
   assert.equal(alex.overtime, 1.5);
@@ -326,7 +333,7 @@ test("hours and the CSV", async () => {
   assert.deepEqual(alex.sites, { roastery: 0, cafe: 7.5, asg: 4, factory: 0 });
   assert.equal(r.body.siteTotals.asg, 4);
   assert.equal(r.body.openHours, 4);
-  const csv = await rota("GET", `hours?start=${W}&format=csv`, undefined, MGR);
+  const csv = await rota("GET", `hours?start=${W}&format=csv`, undefined, ADMIN);
   assert.match(csv.headers.get("content-type"), /text\/csv/);
   const lines = csv.text.trim().split(/\r\n/);
   assert.equal(lines[0], "name,role,contract_min,contract_max,planned_hours,rota_hours,overtime,short_of_min,roastery,cafe,asg,factory");
@@ -350,7 +357,7 @@ test("opening hours by day: Sundays and Saturdays can differ, and cover is check
   const short = r.problems.filter((p) => p.kind === "short_cover" && p.site === "asg").map((p) => p.message);
   assert.ok(short.includes("ASG has fewer than 1 person on Saturday 08:00–09:00"), short.join(" | "));
   assert.ok(!short.some((m) => /Sunday/.test(m)), "Sunday is covered for its own hours: " + short.join(" | "));
-  const w = await rota("GET", "week?start=" + W, undefined, MGR);
+  const w = await rota("GET", "week?start=" + W, undefined, ADMIN);
   const asg = w.body.sites.find((x) => x.id === "asg");
   assert.deepEqual(asg.hours[0], { opensAt: "07:00", closesAt: "18:00" });
   assert.deepEqual(asg.hours[5], { opensAt: "08:00", closesAt: "16:00" });
@@ -363,35 +370,35 @@ test("opening hours by day: Sundays and Saturdays can differ, and cover is check
 test("contracted hours as a range: overtime over the maximum, marked shift by shift", async () => {
   const W = "2030-10-07"; // Monday
   const d = (i) => { const x = new Date(W + "T12:00:00Z"); x.setUTCDate(x.getUTCDate() + i); return x.toISOString().slice(0, 10); };
-  assert.equal((await rota("PUT", "people/" + ids.Priya, { contractMin: 30, contractMax: 20 }, MGR)).body.code, "invalid_argument");
-  let p = await rota("PUT", "people/" + ids.Priya, { contractMin: 8, contractMax: 12 }, MGR);
+  assert.equal((await rota("PUT", "people/" + ids.Priya, { contractMin: 30, contractMax: 20 }, ADMIN)).body.code, "invalid_argument");
+  let p = await rota("PUT", "people/" + ids.Priya, { contractMin: 8, contractMax: 12 }, ADMIN);
   assert.deepEqual([p.body.contractMin, p.body.contractMax, p.body.contractHours], [8, 12, 12]);
   p = await rota("PUT", "people/" + ids.Priya, { sites: [] }, ADMIN);
   assert.deepEqual([p.body.contractMin, p.body.contractMax], [8, 12], "left out, the contract is kept");
   await addShift({ site: "asg", day: d(0), start: "08:00", end: "16:00", userId: ids.Priya, job: "opens", breakMins: 30 }); // 7.5h
   await addShift({ site: "asg", day: d(1), start: "08:00", end: "16:00", userId: ids.Priya, job: "opens", breakMins: 30 }); // 7.5h: 3h over 12
   await addShift({ site: "asg", day: d(2), start: "08:00", end: "12:00", userId: ids.Priya, job: "opens", breakMins: 0 }); // 4h: all overtime
-  const w = await rota("GET", "week?start=" + W, undefined, MGR);
+  const w = await rota("GET", "week?start=" + W, undefined, ADMIN);
   const mine = w.body.shifts.filter((s) => s.userId === ids.Priya).sort((a, b) => a.day.localeCompare(b.day));
   assert.deepEqual(mine.map((s) => s.overtime), [0, 3, 4]);
   const ot = w.body.problems.find((x) => x.kind === "overtime" && x.userId === ids.Priya);
   assert.match(ot.message, /Priya has 7h overtime \(19h, contract 8–12h\)/);
   const person = w.body.people.find((x) => x.id === ids.Priya);
   assert.deepEqual([person.contractMin, person.contractMax], [8, 12]);
-  const h = (await rota("GET", "hours?start=" + W, undefined, MGR)).body.people.find((x) => x.userId === ids.Priya);
+  const h = (await rota("GET", "hours?start=" + W, undefined, ADMIN)).body.people.find((x) => x.userId === ids.Priya);
   assert.deepEqual([h.rotaHours, h.overtime, h.shortOfMin], [19, 7, 0]);
   // Priya sees her own overtime once the week is published, in the week and in My shifts.
-  await rota("POST", "week/publish", { week: W }, MGR);
+  await rota("POST", "week/publish", { week: W }, ADMIN);
   const priya = await signInAgain("priya");
   const m = (await rota("GET", `mine?from=${d(1)}&to=${d(6)}`, undefined, priya)).body;
   assert.deepEqual(m.shifts.map((s) => s.overtime), [3, 4], "counted from the Monday, though the list starts Tuesday");
   assert.deepEqual(m.weeks, [{ week: W, hours: 19, overtime: 7 }]);
   assert.deepEqual([m.contractMin, m.contractMax], [8, 12]);
-  // Others see the shifts, not her overtime.
+  // Other employees cannot see her assigned shifts or hours.
   const sam = await signInAgain("sam");
-  assert.ok((await rota("GET", "week?start=" + W, undefined, sam)).body.shifts.every((s) => !s.overtime));
+  assert.ok(!(await rota("GET", "week?start=" + W, undefined, sam)).body.shifts.some((s) => s.userId === ids.Priya));
   // The older single figure still sets both ends.
-  p = await rota("PUT", "people/" + ids.Priya, { contractHours: 30 }, MGR);
+  p = await rota("PUT", "people/" + ids.Priya, { contractHours: 30 }, ADMIN);
   assert.deepEqual([p.body.contractMin, p.body.contractMax], [30, 30]);
 });
 
@@ -399,45 +406,69 @@ test("amending a shift on the day: start and finish as worked, with a reason; th
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
   const tomorrow = (() => { const x = new Date(today + "T12:00:00Z"); x.setUTCDate(x.getUTCDate() + 1); return x.toISOString().slice(0, 10); })();
   await rota("PUT", "sites/asg", { opensAt: "08:00", closesAt: "16:00", minPeople: 1, dayHours: null }, MGR);
-  await rota("PUT", "people/" + ids.Alex, { contractMin: 0, contractMax: 40 }, MGR);
-  for (const s of (await rota("GET", "week?start=" + today, undefined, MGR)).body.shifts.filter((s) => s.site === "asg" && s.day === today)) await rota("DELETE", "shifts/" + s.id, undefined, MGR);
+  await rota("PUT", "people/" + ids.Alex, { contractMin: 0, contractMax: 40 }, ADMIN);
+  for (const s of (await rota("GET", "week?start=" + today, undefined, ADMIN)).body.shifts.filter((s) => s.site === "asg" && s.day === today)) await rota("DELETE", "shifts/" + s.id, undefined, ADMIN);
   const s = (await addShift({ site: "asg", day: today, start: "08:00", end: "16:00", userId: ids.Alex, job: "opens", breakMins: 30 })).shift;
   assert.equal(s.hours, 7.5);
   assert.equal(s.adjusted, false);
 
   assert.equal((await rota("PUT", `shifts/${s.id}/actual`, { start: "08:00", end: "11:00" }, ALEX)).status, 403, "staff can't amend hours");
-  assert.equal((await rota("PUT", `shifts/${s.id}/actual`, { start: "11:00", end: "08:00" }, MGR)).status, 400);
+  assert.equal((await rota("PUT", `shifts/${s.id}/actual`, { start: "11:00", end: "08:00" }, ADMIN)).status, 400);
   const later = (await addShift({ site: "asg", day: tomorrow, start: "08:00", end: "16:00", userId: ids.Alex })).shift;
-  assert.equal((await rota("PUT", `shifts/${later.id}/actual`, { start: "08:00", end: "11:00" }, MGR)).status, 400, "not before the day");
-  await rota("DELETE", "shifts/" + later.id, undefined, MGR);
+  assert.equal((await rota("PUT", `shifts/${later.id}/actual`, { start: "08:00", end: "11:00" }, ADMIN)).status, 400, "not before the day");
+  await rota("DELETE", "shifts/" + later.id, undefined, ADMIN);
 
-  const r = await rota("PUT", `shifts/${s.id}/actual?with=problems`, { start: "08:00", end: "11:00", breakMins: 0, note: "Went home sick" }, MGR);
+  const r = await rota("PUT", `shifts/${s.id}/actual?with=problems`, { start: "08:00", end: "11:00", breakMins: 0, note: "Went home sick" }, ADMIN);
   assert.equal(r.status, 200, r.text);
   assert.deepEqual([r.body.shift.start, r.body.shift.end, r.body.shift.actualStart, r.body.shift.actualEnd], ["08:00", "16:00", "08:00", "11:00"]);
   assert.deepEqual([r.body.shift.hours, r.body.shift.plannedHours, r.body.shift.adjustNote], [3, 7.5, "Went home sick"]);
   assert.ok(r.body.problems.some((p) => p.kind === "short_cover" && p.site === "asg" && p.day === today && /11:00–16:00/.test(p.message)), "cover counts who's actually there");
   // The break defaults to the planned one, cut to fit.
-  const r2 = await rota("PUT", `shifts/${s.id}/actual`, { start: "08:00", end: "17:30" }, MGR);
+  const r2 = await rota("PUT", `shifts/${s.id}/actual`, { start: "08:00", end: "17:30" }, ADMIN);
   assert.deepEqual([r2.body.shift.actualBreakMins, r2.body.shift.hours], [30, 9]);
-  const h = (await rota("GET", "hours?start=" + today, undefined, MGR)).body.people.find((x) => x.userId === ids.Alex);
+  const h = (await rota("GET", "hours?start=" + today, undefined, ADMIN)).body.people.find((x) => x.userId === ids.Alex);
   assert.ok(h.amended >= 1);
   assert.equal(r2 && h.rotaHours - h.plannedHours, 1.5);
-  // Others see the amended times but not the reason.
-  await rota("PUT", `shifts/${s.id}/actual`, { start: "08:00", end: "11:00", breakMins: 0, note: "Went home sick" }, MGR);
-  await rota("POST", "week/publish", { week: today }, MGR);
+  // Other employees cannot see either the shift or its actual hours/reason.
+  await rota("PUT", `shifts/${s.id}/actual`, { start: "08:00", end: "11:00", breakMins: 0, note: "Went home sick" }, ADMIN);
+  await rota("POST", "week/publish", { week: today }, ADMIN);
   const sam = await signInAgain("sam");
   const seen = (await rota("GET", "week?start=" + today, undefined, sam)).body.shifts.find((x) => x.id === s.id);
-  assert.deepEqual([seen.actualEnd, seen.adjustNote], ["11:00", ""]);
+  assert.equal(seen, undefined);
   assert.equal((await rota("GET", "week?start=" + today, undefined, ALEX)).body.shifts.find((x) => x.id === s.id).adjustNote, "Went home sick");
   const td = (await rota("GET", `today?site=asg&day=${today}`, undefined, sam)).body.shifts.find((x) => x.name === "Alex Brown");
-  assert.equal(td.actualEnd, "11:00");
+  assert.equal(td, undefined);
   // Back to the plan.
-  const back = await rota("PUT", `shifts/${s.id}/actual`, { clear: true }, MGR);
+  const back = await rota("PUT", `shifts/${s.id}/actual`, { clear: true }, ADMIN);
   assert.deepEqual([back.body.shift.adjusted, back.body.shift.hours, back.body.shift.actualEnd], [false, 7.5, null]);
-  await rota("DELETE", "shifts/" + s.id, undefined, MGR);
+  await rota("DELETE", "shifts/" + s.id, undefined, ADMIN);
 });
 
-test("availability: which days and sites people work is set by admins only; managers set contracts", async () => {
+test("rest after amended hours uses the actual finishing shift and keeps the employee's week readable", async () => {
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const yesterday = (() => { const d = new Date(today + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() - 1); return d.toISOString().slice(0, 10); })();
+  const employee = await signUp("Rest Worker", "rest.worker", "staff");
+  const identity = await (await fetch(srv.base + "/api/auth/me", { headers: { cookie: employee } })).json();
+  const uid = identity.user.id;
+  const late = (await addShift({ site: "asg", day: yesterday, start: "08:00", end: "16:00", userId: uid, breakMins: 0 })).shift;
+  const early = (await addShift({ site: "asg", day: today, start: "03:00", end: "07:00", userId: uid, breakMins: 0 })).shift;
+  const amended = await rota("PUT", "shifts/" + late.id + "/actual", { start: "08:00", end: "18:00", breakMins: 0, note: "Late finish" }, ADMIN);
+  assert.equal(amended.status, 200, amended.text);
+  const adminWeek = await rota("GET", "week?start=" + today, undefined, ADMIN);
+  assert.equal(adminWeek.status, 200, adminWeek.text);
+  const warning = adminWeek.body.problems.find((p) => p.kind === "rest" && p.userId === uid);
+  assert.ok(warning, "actual 18:00 finish to 03:00 start produces a rest warning");
+  assert.deepEqual(warning.shiftIds, [late.id, early.id]);
+  assert.match(warning.message, /9h between shifts .*18:00/);
+  assert.equal((await rota("POST", "week/publish", { week: today }, ADMIN)).status, 200);
+  const ownWeek = await rota("GET", "week?start=" + today, undefined, employee);
+  assert.equal(ownWeek.status, 200, ownWeek.text);
+  assert.ok(ownWeek.body.problems.some((p) => p.kind === "rest" && p.userId === uid));
+  assert.ok(ownWeek.body.shifts.some((s) => s.id === early.id));
+  for (const s of [late, early]) assert.equal((await rota("DELETE", "shifts/" + s.id, undefined, ADMIN)).status, 200);
+});
+
+test("availability and contracts are administered only by admins; employees retain their own details", async () => {
   const pat = { pattern: { mon: "off", wed: { to: "15:00" } }, sites: ["cafe", "asg"] };
   const staff = await rota("PUT", "me/availability", pat, ALEX);
   assert.equal(staff.status, 403, "staff can't change their own days or sites");
@@ -445,7 +476,8 @@ test("availability: which days and sites people work is set by admins only; mana
   assert.equal((await rota("PUT", "me/availability", pat, MGR)).status, 403, "nor can managers");
   assert.equal((await rota("PUT", "people/" + ids.Alex, pat, MGR)).status, 403, "managers can't set anyone's days or sites");
   assert.equal((await rota("PUT", "people/" + ids.Alex, { sites: [] }, MGR)).status, 403);
-  assert.equal((await rota("PUT", "people/" + ids.Alex, { contractMin: 10, contractMax: 20 }, MGR)).status, 200, "managers still set contracts");
+  assert.equal((await rota("PUT", "people/" + ids.Alex, { contractMin: 10, contractMax: 20 }, MGR)).status, 403, "managers cannot set another employee's contract");
+  assert.equal((await rota("PUT", "people/" + ids.Alex, { contractMin: 10, contractMax: 20 }, ADMIN)).status, 200);
   assert.equal((await rota("PUT", "people/" + ids.Sam, { contractHours: 20, pattern: {} }, ALEX)).status, 403);
   const r = await rota("PUT", "people/" + ids.Alex, pat, ADMIN);
   assert.equal(r.status, 200, r.text);
@@ -456,16 +488,147 @@ test("availability: which days and sites people work is set by admins only; mana
   assert.equal(me.body.user.admin, false);
   assert.equal((await rota("PUT", "me/availability", { pattern: { tue: "off" }, sites: [] }, ADMIN)).status, 200, "admins set their own");
   assert.equal((await rota("PUT", "people/" + ids.Alex, { pattern: { mon: { from: "15:00", to: "09:00" } } }, ADMIN)).body.code, "invalid_argument");
-  // Time off: asked for yourself, approved by a manager, cancelled by you.
+  // Time off: asked for yourself, approved by an admin, cancelled by you.
   const t = await rota("POST", "time-off", { from: "2030-08-01", to: "2030-08-03", reason: "Holiday" }, ALEX);
   assert.equal(t.body.status, "requested");
   assert.equal((await rota("POST", "time-off", { userId: ids.Sam, from: "2030-08-01", to: "2030-08-01" }, ALEX)).status, 403);
   assert.equal((await rota("PATCH", "time-off/" + t.body.id, { status: "approved" }, ALEX)).status, 403);
-  assert.equal((await rota("PATCH", "time-off/" + t.body.id, { status: "approved" }, MGR)).body.status, "approved");
+  assert.equal((await rota("PATCH", "time-off/" + t.body.id, { status: "approved" }, ADMIN)).body.status, "approved");
   assert.equal((await rota("PATCH", "time-off/" + t.body.id, { status: "cancelled" }, ALEX)).body.status, "cancelled");
   // Shifts outside someone's pattern are noted.
   const s = await addShift({ site: "cafe", day: "2030-09-02", start: "09:00", end: "12:00", userId: ids.Alex }); // a Monday
   assert.ok(s.problems.some((p) => p.kind === "availability" && p.userId === ids.Alex));
+});
+
+test("privacy: staff and managers receive only their own personal rota data across week, mine, today and me", async () => {
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const own = new Map();
+  const cases = [
+    { cookie: ALEX, id: ids.Alex, label: "ALEX", contract: [17, 19], start: "08:00", end: "11:00" },
+    { cookie: MGR, id: ids.George, label: "GEORGE", contract: [23, 27], start: "12:00", end: "15:00" },
+    { cookie: SAM, id: ids.Sam, label: "SAM", contract: [31, 37], start: "16:00", end: "19:00" },
+  ];
+  for (const p of cases) {
+    assert.equal((await rota("PUT", "people/" + p.id, { contractMin: p.contract[0], contractMax: p.contract[1], sites: ["asg"], pattern: {} }, ADMIN)).status, 200);
+    const s = (await addShift({ site: "asg", day: today, start: p.start, end: p.end, breakMins: 0, userId: p.id, note: p.label + "_PRIVATE_SHIFT" })).shift;
+    assert.equal((await rota("PUT", "shifts/" + s.id + "/actual", { start: p.start, end: p.end, breakMins: 0, note: p.label + "_PRIVATE_ACTUAL" }, ADMIN)).status, 200);
+    const off = await rota("POST", "time-off", { userId: p.id, from: today, to: today, reason: p.label + "_PRIVATE_LEAVE" }, ADMIN);
+    assert.equal(off.status, 200, off.text);
+    own.set(p.id, s.id);
+  }
+  const open = (await addShift({ site: "asg", day: today, start: "20:00", end: "21:00", breakMins: 0, note: "FORMER_PRIVATE_OPEN_NOTE" })).shift;
+  await rota("POST", "week/publish", { week: today }, ADMIN);
+  const adminWeek = await rota("GET", "week?start=" + today, undefined, ADMIN);
+  for (const p of cases) assert.match(adminWeek.text, new RegExp(p.label + "_PRIVATE_ACTUAL"), "admin retains all private records");
+
+  for (const p of cases.slice(0, 2)) {
+    const week = await rota("GET", "week?start=" + today + "&userId=" + ids.Sam, undefined, p.cookie);
+    assert.equal(week.status, 200, week.text);
+    assert.deepEqual(week.body.people.map((x) => x.id), [p.id]);
+    assert.deepEqual([week.body.people[0].contractMin, week.body.people[0].contractMax], p.contract);
+    assert.ok(week.body.shifts.every((x) => x.userId === p.id || x.userId === null));
+    assert.equal(week.body.shifts.find((x) => x.id === own.get(p.id)).adjustNote, p.label + "_PRIVATE_ACTUAL");
+    assert.equal(week.body.shifts.find((x) => x.id === open.id).note, "", "unassigned opportunities never publish former private notes");
+    assert.ok(week.body.timeOff.every((x) => x.userId === p.id));
+    assert.ok(week.body.timeOff.some((x) => x.reason === p.label + "_PRIVATE_LEAVE"));
+    assert.ok(week.body.problems.every((x) => x.userId === p.id && x.shiftIds.every((id) => week.body.shifts.some((s) => s.id === id && s.userId === p.id))));
+    const mine = await rota("GET", "mine?from=" + today + "&to=" + today + "&userId=" + ids.Sam, undefined, p.cookie);
+    assert.ok(mine.body.shifts.every((x) => x.userId === p.id && x.others.length === 0));
+    assert.ok(mine.body.shifts.some((x) => x.id === own.get(p.id) && x.adjustNote === p.label + "_PRIVATE_ACTUAL"));
+    const current = await rota("GET", "today?site=asg&day=" + today, undefined, p.cookie);
+    assert.ok(current.body.shifts.every((x) => x.me || x.open));
+    assert.ok(current.body.shifts.some((x) => x.me && x.actualStart === p.start));
+    const me = await rota("GET", "me", undefined, p.cookie);
+    assert.deepEqual([me.body.contractMin, me.body.contractMax], p.contract);
+    assert.ok(me.body.timeOff.some((x) => x.reason === p.label + "_PRIVATE_LEAVE"));
+    assert.equal(me.body.user.manager, false);
+    assert.equal(me.body.user.admin, false);
+    assert.equal(me.body.user.siteManager, p.cookie === MGR);
+    const received = JSON.stringify([week.body, mine.body, current.body, me.body]);
+    for (const other of cases.filter((x) => x.id !== p.id)) {
+      assert.ok(!received.includes(other.id), "another employee ID is not returned alongside private rota data");
+      for (const suffix of ["_PRIVATE_SHIFT", "_PRIVATE_ACTUAL", "_PRIVATE_LEAVE"]) assert.ok(!received.includes(other.label + suffix));
+    }
+    assert.ok(!received.includes("FORMER_PRIVATE_OPEN_NOTE"));
+  }
+});
+
+test("privacy: requests retain own state without colleague identities, messages or reassigned snapshots", async () => {
+  const W = "2031-02-03";
+  const adminShift = (await addShift({ site: "asg", day: W, start: "08:00", end: "10:00", userId: ids.Will, note: "ADMIN_PRIVATE_SHIFT_SNAPSHOT" })).shift;
+  const alexShift = (await addShift({ site: "asg", day: W, start: "11:00", end: "13:00", userId: ids.Alex, note: "ALEX_PRIVATE_COVER_SHIFT" })).shift;
+  await rota("POST", "week/publish", { week: W }, ADMIN);
+  const targeted = await rota("POST", "requests", { kind: "cover", shiftId: adminShift.id, toUserId: ids.Alex, message: "ADMIN_PRIVATE_REQUEST_MESSAGE" }, ADMIN);
+  assert.equal(targeted.status, 200, targeted.text);
+  assert.equal(targeted.body.request.shift.note, "ADMIN_PRIVATE_SHIFT_SNAPSHOT");
+  const targetId = targeted.body.request.id;
+  for (const route of ["requests", "me"]) {
+    const r = await rota("GET", route, undefined, ALEX);
+    const recipient = r.body.requests.find((x) => x.id === targetId);
+    assert.ok(recipient, "the recipient can follow their own request state");
+    assert.equal(recipient.shift, null);
+    assert.equal(recipient.message, "");
+    assert.deepEqual([recipient.fromUser, recipient.fromName, recipient.toUser, recipient.toName, recipient.taker, recipient.takerName, recipient.decidedByName], [null, null, ids.Alex, "Alex Brown", null, null, null]);
+    assert.ok(!r.text.includes("ADMIN_PRIVATE_"));
+    for (const cookie of [SAM, MGR]) assert.ok(!(await rota("GET", route, undefined, cookie)).body.requests.some((x) => x.id === targetId));
+  }
+  for (const action of ["accept", "decline", "cancel", "approve"]) assert.equal((await rota("PATCH", "requests/" + targetId, { action }, ALEX)).status, 403);
+  const ownCover = await rota("POST", "requests", { kind: "cover", shiftId: alexShift.id, message: "ALEX_OWN_REQUEST_MESSAGE" }, ALEX);
+  assert.equal(ownCover.status, 200, ownCover.text);
+  assert.equal(ownCover.body.request.shift.note, "ALEX_PRIVATE_COVER_SHIFT");
+  assert.equal(ownCover.body.request.message, "ALEX_OWN_REQUEST_MESSAGE");
+  for (const cookie of [SAM, MGR]) {
+    assert.ok(!(await rota("GET", "requests", undefined, cookie)).body.requests.some((x) => x.id === ownCover.body.request.id), "general cover requests do not expose assigned colleague shifts");
+    assert.equal((await rota("PATCH", "requests/" + ownCover.body.request.id, { action: "cancel" }, cookie)).status, 403);
+  }
+  assert.equal((await rota("PATCH", "requests/" + ownCover.body.request.id, { action: "accept" }, ADMIN)).status, 200);
+  const approved = await rota("PATCH", "requests/" + ownCover.body.request.id, { action: "approve" }, ADMIN);
+  assert.equal(approved.status, 200, approved.text);
+  assert.equal(approved.body.request.shift.note, "", "private notes do not transfer to a new assignee");
+  const history = (await rota("GET", "me", undefined, ALEX)).body.requests.find((x) => x.id === ownCover.body.request.id);
+  assert.equal(history.status, "approved");
+  assert.equal(history.message, "ALEX_OWN_REQUEST_MESSAGE");
+  assert.equal(history.shift, null);
+  assert.deepEqual([history.taker, history.takerName, history.decidedByName], [null, null, null]);
+  // Permission precedes the settled-state error for a guessed unrelated request ID.
+  assert.equal((await rota("PATCH", "requests/" + ownCover.body.request.id, { action: "cancel" }, SAM)).status, 403);
+});
+
+test("privacy: direct IDs and stale writes cannot reveal private records; reassignment clears predecessor details", async () => {
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const s = (await addShift({ site: "asg", day: today, start: "22:00", end: "23:00", breakMins: 0, userId: ids.Sam, note: "SAM_TRANSFER_PRIVATE_NOTE" })).shift;
+  const amended = await rota("PUT", "shifts/" + s.id + "/actual", { start: "22:00", end: "22:30", breakMins: 0, note: "SAM_TRANSFER_PRIVATE_ACTUAL" }, ADMIN);
+  assert.equal(amended.status, 200, amended.text);
+  const ownOff = await rota("POST", "time-off", { from: "2032-03-01", to: "2032-03-02", reason: "SAM_DIRECT_PRIVATE_LEAVE" }, SAM);
+  assert.equal(ownOff.status, 200, ownOff.text);
+  for (const cookie of [ALEX, MGR]) {
+    const denied = [
+      await rota("PUT", "people/" + ids.Sam, {}, cookie),
+      await rota("PATCH", "shifts/" + s.id + "?with=problems", { ifUpdatedAt: -1, day: "2032-03-01" }, cookie),
+      await rota("DELETE", "shifts/" + s.id + "?with=problems", undefined, cookie),
+      await rota("PUT", "shifts/" + s.id + "/actual?with=problems", { clear: true }, cookie),
+      await rota("POST", "time-off", { userId: ids.Sam, from: "invalid", to: "invalid" }, cookie),
+      await rota("PATCH", "time-off/" + ownOff.body.id, { status: "approved" }, cookie),
+      await rota("PATCH", "time-off/" + ownOff.body.id, { status: "cancelled" }, cookie),
+      await rota("POST", "requests", { kind: "claim", shiftId: s.id }, cookie),
+    ];
+    for (const r of denied) {
+      assert.equal(r.status, 403, r.text);
+      assert.ok(!/SAM_TRANSFER_PRIVATE|SAM_DIRECT_PRIVATE|contractMin|actualStart|shiftIds|fromWeek/.test(r.text));
+      assert.equal(r.body.details?.shift, undefined);
+    }
+  }
+  const adminConflict = await rota("PATCH", "shifts/" + s.id, { ifUpdatedAt: -1 }, ADMIN);
+  assert.equal(adminConflict.status, 409);
+  assert.match(adminConflict.text, /SAM_TRANSFER_PRIVATE_ACTUAL/, "admin conflict details remain usable");
+  const reassigned = await rota("PATCH", "shifts/" + s.id + "?with=problems", { userId: ids.George }, ADMIN);
+  assert.equal(reassigned.status, 200, reassigned.text);
+  assert.deepEqual([reassigned.body.shift.note, reassigned.body.shift.actualStart, reassigned.body.shift.actualEnd, reassigned.body.shift.actualBreakMins, reassigned.body.shift.adjustNote, reassigned.body.shift.adjustedBy, reassigned.body.shift.adjustedAt], ["", null, null, null, "", null, null]);
+  await rota("POST", "week/publish", { week: today }, ADMIN);
+  const newOwner = await rota("GET", "week?start=" + today, undefined, MGR);
+  assert.ok(newOwner.body.shifts.some((x) => x.id === s.id));
+  assert.ok(!newOwner.text.includes("SAM_TRANSFER_PRIVATE"));
+  assert.ok(newOwner.body.problems.every((x) => x.userId === ids.George));
 });
 
 test("backups include the rota's tables", async () => {
@@ -511,9 +674,9 @@ test("the rota host: / is the rota, diary pages go there, diary APIs are refused
 });
 
 // One sign-in for the diary and the rota: with COOKIE_DOMAIN (wrangler.jsonc), sign-in cookies are
-// shared across the domain, and older host-only ones are moved over. Under `wrangler dev` the Worker sees the
+// shared across the domain. Identity reads never issue cookies. Under `wrangler dev` the Worker sees the
 // diary's hostname, which is on that domain, and rewrites the Domain in Set-Cookie to the address the client used.
-test("shared sign-in: cookies are set on COOKIE_DOMAIN, old ones move over, sign out clears both", async () => {
+test("shared sign-in: login sets COOKIE_DOMAIN, identity reads are side-effect-free, sign out clears both", async () => {
   const host = await startServer();
   const D = "Domain=(?:staffstrangerscoffee\\.com|127\\.0\\.0\\.1)";
   try {
@@ -532,27 +695,26 @@ test("shared sign-in: cookies are set on COOKIE_DOMAIN, old ones move over, sign
     const session = sc.find((c) => /^sfbb_session=[\w-]/.test(c)).split(";")[0];
     const device = sc.find((c) => /^sfbb_device=[\w-]/.test(c)).split(";")[0];
 
-    // An older host-only session (as everyone has before this change) is moved to the shared domain unchanged.
+    // A delayed identity read must not restore an old cookie after another person signs in.
     const me = await fetch(host.base + "/api/auth/me", { headers: { cookie: `${session}; ${device}` } });
     assert.equal((await me.json()).user.name, "Shared Admin");
-    const moved = setCookies(me);
-    assert.ok(moved.some((c) => new RegExp(`^${session}; Path=/; ${D};`).test(c)), "same session, now shared");
-    assert.ok(moved.some((c) => new RegExp(`^${device}; Path=/; ${D};`).test(c)), "same device, now shared");
-    const age = Number(/Max-Age=(\d+)/.exec(moved.find((c) => c.startsWith(session)))[1]);
-    assert.ok(age > 29 * 86400 && age <= 30 * 86400, "keeps its expiry");
+    assert.deepEqual(setCookies(me), [], "GET /me never mutates session or trusted-device cookies");
 
-    // Signed out: nothing to move.
+    // Signed out reads are side-effect-free too.
     assert.deepEqual(setCookies(await fetch(host.base + "/api/auth/me")), []);
     // A stale cookie sent alongside the live one doesn't get in the way.
     const both = await fetch(host.base + "/api/auth/me", { headers: { cookie: `sfbb_session=eyJ1IjoieCJ9.bad; ${session}` } });
     assert.equal((await both.json()).user.name, "Shared Admin");
 
-    // Two people (an old host-only cookie, then a shared one): the newer, listed last by browsers, wins and is kept.
+    // Duplicate cookies: the newer shared one, listed last by browsers, wins without reissuing either.
     const b = await post("/api/auth/login", { username: "shared", password: "admin-pass-1" });
     const later = b.headers.getSetCookie().find((c) => /^sfbb_session=[\w-]/.test(c)).split(";")[0];
     const two = await fetch(host.base + "/api/auth/me", { headers: { cookie: `${session}; ${later}` } });
     assert.equal(two.status, 200);
-    assert.ok(two.headers.getSetCookie().some((c) => c.startsWith(later + ";")), "the newer session is the one kept");
+    assert.deepEqual(setCookies(two), []);
+    await post("/api/auth/logout", {}, `${session}; ${later}`);
+    assert.equal((await (await fetch(host.base + "/api/auth/me", { headers: { cookie: later } })).json()).user, null, "the newer session was selected for sign-out");
+    assert.equal((await (await fetch(host.base + "/api/auth/me", { headers: { cookie: session } })).json()).user.name, "Shared Admin", "the older independent session is unchanged");
 
     // Signing out removes both copies, so it signs out of the diary and the rota.
     const out = setCookies(await post("/api/auth/logout", {}, session)).filter((c) => c.startsWith("sfbb_session="));

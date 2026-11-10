@@ -504,7 +504,7 @@
     const pat = p.rota.pattern || {};
     const mode = (v) => (v === "off" ? "off" : v && typeof v === "object" ? "times" : "any");
     openSheet(html`<form novalidate><h2 id="sheetTitle">When ${p.name} can work</h2>
-      <p>Managers see this when they plan the rota. ${p.name} sees it read-only and still asks for time off themselves.</p>
+      <p>Only admins and ${p.name} can see this information. ${p.name} sees it read-only and still asks for time off themselves.</p>
       <div class="avail">${DAYS.map(([k, , full]) => { const v = pat[k], m = mode(v); return html`
         <div class="arow" data-day="${k}"><b>${full.slice(0, 3)}</b>
           <div class="seg" role="group" aria-label="${full}">${[["any", "Any time"], ["times", "Times"], ["off", "Can't work"]].map(([mk, t]) => html`<button type="button" data-sheet="mode" data-mode="${mk}" aria-pressed="${m === mk}">${t}</button>`)}</div>
@@ -677,8 +677,13 @@
   /* ---------- start ---------- */
   (async () => {
     try {
-      const [me, links] = await Promise.all([api("GET", "/api/auth/me"), api("GET", "/api/rota/links").catch(() => null)]);
+      const me = await api("GET", "/api/auth/me");
       if (!me.user) { goSignIn(location.pathname); return; }
+      if (!(await SC.bindSession(me.user, { clear: () => {
+        cache = {}; S.me = null; S.open = null; S.q = ""; S.fq = "";
+        closeSheet(); for (const id of ["#main", "#sheet", "#sideNav", "#tabBar", "#whoName", "#whoInit"]) $(id)?.replaceChildren();
+      } }))) return;
+      const links = await api("GET", "/api/rota/links").catch(() => null);
       if (me.user.role !== "admin") { location.replace((links && links.diary) || "/"); return; }
       S.me = me.user;
       if (links) S.links = links;

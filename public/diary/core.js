@@ -351,26 +351,26 @@ const FORMS={
   allergens:{panel:"#algFormPanel",add:"Add item",reset:()=>{algNewKind="drink";editAlg(null)}},
   suppliers:{panel:"#sFormPanel",add:"Add supplier",reset:()=>editSupplier(null)},
   contacts:{panel:"#cFormPanel",add:"Add contact",reset:()=>editContact(null)},
-  // Staff fill in and sign their own training record; managers add and edit anyone's.
-  staff:{panel:"#tFormPanel",get add(){return S.role==="staff"?"My training record":"Add person"},reset:()=>editStaff(S.role==="staff"?myStaff():null)},
+  // Staff and managers fill in their own linked training record; admins manage the team's records.
+  staff:{panel:"#tFormPanel",get add(){return S.role!=="admin"?"My training record":"Add person"},reset:()=>editStaff(S.role!=="admin"?myStaff():null)},
   maintenance:{panel:"#mFormPanel",add:"Report a job",reset:()=>editMaint(null)}};
 const formOpen={};
 function setForm(tab,open){
   const f=FORMS[tab],p=$(f.panel);formOpen[tab]=!!open;p.hidden=ro()||(MANAGER_DATA.has(tab)&&mro())||!open;
   if(!p._x){p._x=el("button",{class:"closex",type:"button","aria-label":"Close",onclick:()=>{f.reset();setForm(tab,false)}},"Cancel");p.prepend(p._x)}
-  if(tab==="staff"&&S.role==="staff"&&$("#tMine"))renderStaff();
+  if(tab==="staff"&&S.role!=="admin"&&$("#tMine"))renderStaff();
   if(open&&!p.hidden){p.scrollIntoView({behavior:"smooth",block:"start"});const i=p.querySelector("input[type=text],input:not([type])");if(i)i.focus({preventScroll:true})}
   renderAddBtn();
 }
 // Things the Add button can start in sections without an add form: one action, or a short menu.
 const ADD_ACTIONS={
   plans:()=>S.plan?null:["Add",[["New HACCP plan","plans",()=>newPlan("haccp")],["New risk assessment","review",()=>newPlan("risk")]]],
-  onboarding:()=>S.onb?null:["Add",[["New induction checklist","onboarding",()=>newOnb(true)],["New blank document","doc",()=>newOnb(false)]]],
+  onboarding:()=>S.onb||S.role!=="admin"?null:["Add",[["New induction checklist","onboarding",()=>newOnb(true)],["New blank document","doc",()=>newOnb(false)]]],
   eho:()=>S.insp||!inspSorted().length?null:["Add",[["Add inspection","eho",manualInsp]]]};
 function renderAddBtn(){
   const b=$("#addBtn");if(!b)return;
   const f=FORMS[S.tab],a=ADD_ACTIONS[S.tab]&&ADD_ACTIONS[S.tab]();
-  b.hidden=ro()||(MANAGER_DATA.has(S.tab)&&mro())||(f?!!formOpen[S.tab]:!a);if(b.hidden)return;
+  b.hidden=ro()||(MANAGER_DATA.has(S.tab)&&mro())||(S.tab==="contacts"&&S.role!=="admin")||(f?!!formOpen[S.tab]:!a);if(b.hidden)return;
   b.replaceChildren(svgi(ICON.plus),el("span",{text:f?f.add:a[0]}));
   b.onclick=f?()=>{f.reset();setForm(S.tab,true)}:a[1].length===1?a[1][0][2]:()=>openMenu(b,a[1]);
 }

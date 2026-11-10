@@ -188,7 +188,11 @@ function inspectSections(R){
   const taskRows=kind=>S[kind].slice().sort((a,b)=>(a.name||"").localeCompare(b.name||"")).map(t=>{const ts=taskState(t),n=(t.log||[]).filter(e=>atIn(e.at)).length;
     return[t.name,t.how||"",(t.freq||"").replace(/^./,c=>c.toUpperCase()),t.who||"",t.lastAt?lastWhen(t.lastAt,t.lastSet)+", "+fullName(t.lastBy):{t:"Never",cls:"bad"},String(n),{t:ts.overdue?ts.text:"Up to date",cls:ts.overdue?"bad":"ok"}]});
   const overdue=["cleaning","extras"].reduce((k,kind)=>k+S[kind].filter(t=>taskState(t).overdue).length,0);
-  const topics=siteTopics(),trained=S.staff.filter(p=>topics.every(([k])=>p.topics&&p.topics[k])).length;
+  // The server scopes training reads by stable account ownership. Filter again for cached data on shared
+  // devices, and never describe one person's private records as the full workforce's training status.
+  const fullTraining=S.role==="admin",training=S.staff.filter(p=>fullTraining||(S.myUserId&&p.ownerUserId===S.myUserId));
+  const onboarding=S.onboarding.filter(p=>fullTraining||p.visibility==="shared-business"||(p.visibility==="employee"&&S.myUserId&&p.ownerUserId===S.myUserId));
+  const topics=siteTopics(),trained=training.filter(p=>topics.every(([k])=>p.topics&&p.topics[k])).length;
   const openM=maintAll.filter(m=>m.status!=="done"),urgent=openM.filter(m=>m.priority==="urgent").length;
   const rej=R.deliveries.filter(r=>r.outcome==="rejected").length,pf=R.prove.filter(r=>r.pass===false).length;
   const plansDue=S.plans.filter(d=>reviewState(d).overdue).length;
@@ -196,7 +200,7 @@ function inspectSections(R){
 
   out.push({id:"summary",title:"At a glance",
     stats:[[`${complete}/${open}`,"days fully recorded",missing?"bad":partial?"warn":"ok"],[String(outOfRange),"temperatures out of range",outOfRange?"warn":"ok"],[String(actions.length),"corrective actions"],
-      [`${trained}/${S.staff.length}`,"staff fully trained",trained<S.staff.length?"warn":"ok"],[String(R.deliveries.length),`deliveries checked${rej?`, ${rej} rejected`:""}`],[String(overdue),"cleaning & checks overdue now",overdue?"bad":"ok"]],
+      ...(fullTraining?[[`${trained}/${training.length}`,"staff fully trained",trained<training.length?"warn":"ok"]]:[]),[String(R.deliveries.length),`deliveries checked${rej?`, ${rej} rejected`:""}`],[String(overdue),"cleaning & checks overdue now",overdue?"bad":"ok"]],
     facts:[["Site",`Strangers Coffee ${site.name}`],["Address",siteAddr(S.site,s)],["Manager",(s.info&&s.info.manager)||""],["Period",period],
       ["Opening days",WEEKDAYS.filter(([k])=>!s.closedDays.includes(k)).map(([,l])=>l).join(", ")],
       ["Daily diary",`${open} open days: ${complete} complete, ${partial} partly recorded, ${missing} not recorded`],
@@ -205,6 +209,7 @@ function inspectSections(R){
       ["Maintenance",`${openM.length} open${urgent?`, ${urgent} urgent`:""}`],
       ["HACCP & risk",`${S.plans.length} document${S.plans.length===1?"":"s"}${plansDue?`, ${plansDue} due for review`:""}`],
       ["Last EHO inspection",insp?`${pdfDate(insp.inspectionDate)}${insp.rating!=null&&insp.rating!==""?" · rating "+insp.rating:""}`:"None recorded"],
+      ...(!fullTraining?[["Training scope","Your own training records only. Admins can access the complete staff training record."]]:[]),
       ["Prepared",`${longNow()} by ${S.myName||"a team member"}`]]});
   out.push({id:"documents",title:"Food safety documents",
     cols:[{l:"Document",flex:2,bold:true},{l:"Type",w:110},{l:"Dated",w:80},{l:"Next review",w:80},{l:"Status",w:110}],
@@ -212,8 +217,8 @@ function inspectSections(R){
       ["Allergen matrix","Allergens","","",{t:`${S.allergens.length} menu items`,cls:S.allergens.length?"ok":"bad"}],
       ["Cleaning schedule","Cleaning","","",{t:`${S.cleaning.length} jobs`,cls:S.cleaning.length?"ok":"bad"}],
       ["Supplier list","Suppliers","","",{t:`${S.suppliers.length} suppliers`,cls:S.suppliers.length?"ok":"warn"}],
-      ["Staff training records","Training","","",{t:`${S.staff.length} people`,cls:S.staff.length?"ok":"warn"}],
-      ...S.onboarding.map(d=>[d.title||"Onboarding document",d.category||"Onboarding",pdfDate(d.date),pdfDate(d.reviewDate),""])],
+      [fullTraining?"Staff training records":"Your training records","Training","","",{t:fullTraining?`${training.length} people`:"Your own records only",cls:training.length?"ok":"warn"}],
+      ...onboarding.map(d=>[d.title||"Onboarding document",d.category||"Onboarding",pdfDate(d.date),pdfDate(d.reviewDate),""])],
     empty:""});
   out.push({id:"daily",title:"Daily diary",intro:`Opening checks, temperatures, closing checks and sign-off for each day the ${site.name} was open.`,
     cols:[{l:"Date",w:80},{l:"Opening checks",w:120},{l:"Temperatures",flex:1.2},{l:"Closing checks",w:120},{l:"Signed off by",w:100},{l:"Problems & changes",flex:1.5}],rows:dayRows,empty:"No days in this period."});
@@ -238,10 +243,10 @@ function inspectSections(R){
     rows:R.deliveries.slice().sort((a,b)=>(b.at||0)-(a.at||0)).map(r=>{const tc=(k,v)=>{const x=dlvTempState(k,v);return x?{t:v+"°C",cls:x.cls==="ok"?"":x.cls}:r.noTemp?{t:"n/a",cls:"muted"}:""};
       return[pdfDate(r.date)+(r.at?" "+time(r.at):""),r.supplier,r.items||"",tc("chilled",r.chilled),tc("frozen",r.frozen),{t:r.packaging==="ok"?"OK":"Damaged",cls:r.packaging==="ok"?"":"bad"},{t:r.order==="ok"?"OK":"Wrong",cls:r.order==="ok"?"":"bad"},{t:r.outcome==="rejected"?"Rejected":"Accepted",cls:r.outcome==="rejected"?"bad":"ok"},r.note||"",fullName(r.by)]}),
     empty:"No deliveries recorded in this period."});
-  out.push({id:"training",title:"Staff training",intro:"The date each person was trained on each safe method.",
+  out.push({id:"training",title:fullTraining?"Staff training":"Your training",intro:fullTraining?"The date each person was trained on each safe method.":"Your own training records only. Admins can access the complete staff training record.",
     cols:[{l:"Name",w:110,bold:true},{l:"Role",w:75},{l:"Started",w:65},...topics.map(([,l])=>({l,flex:1,align:"center"}))],
-    rows:S.staff.slice().sort((a,b)=>(a.name||"").localeCompare(b.name||"")).map(p=>[p.name,p.role||"",pdfDate(p.start),...topics.map(([k])=>{const t=p.topics&&p.topics[k];return t?{t:pdfDate(t.date),cls:"ok"}:{t:"Not yet",cls:"bad"}})]),
-    empty:"No staff training records."});
+    rows:training.slice().sort((a,b)=>(a.name||"").localeCompare(b.name||"")).map(p=>[p.name,p.role||"",pdfDate(p.start),...topics.map(([k])=>{const t=p.topics&&p.topics[k];return t?{t:pdfDate(t.date),cls:"ok"}:{t:"Not yet",cls:"bad"}})]),
+    empty:fullTraining?"No staff training records.":"No training records are linked to your account at this site."});
   out.push({id:"maintenance",title:"Maintenance",intro:"Equipment problems and maintenance jobs: everything still open, and anything reported or finished in the period.",
     cols:[{l:"Reported",w:72},{l:"Job",flex:1.2,bold:true},{l:"Equipment or area",w:95},{l:"Urgency",w:70},{l:"Status",w:110},{l:"What was done",flex:1.2}],
     rows:maintAll.filter(m=>m.status!=="done"||atIn(m.reportedAt)||atIn(m.doneAt)).sort((a,b)=>(b.reportedAt||0)-(a.reportedAt||0)).map(m=>{const pr=mtPri(m.priority);

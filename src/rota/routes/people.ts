@@ -6,10 +6,10 @@ import { checkContract, checkPattern, checkSites } from "../validate";
 import { isTime, mins, nowMs, parseJson } from "../util";
 
 export async function peopleRoutes(r: RotaRequest): Promise<Response | null> {
-  const { env, route, seg, m, needMgr, needAdmin, body } = r;
+  const { env, route, seg, m, needAdmin, needSiteManager, body } = r;
 
   if (seg[0] === "people" && seg.length === 2 && m === "PUT") {
-    needMgr();
+    needAdmin();
     const uid = await activeUser(env, seg[1]);
     const b = await body();
     if ("sites" in b || "pattern" in b) needAdmin();
@@ -37,7 +37,7 @@ export async function peopleRoutes(r: RotaRequest): Promise<Response | null> {
   }
 
   if (seg[0] === "sites" && seg.length === 2 && m === "PUT") {
-    needMgr();
+    needSiteManager();
     if (!SITE_IDS.has(seg[1])) throw invalid("Choose one of the four sites.");
     const b = await body();
     const t = (v: unknown, label: string) => { if (v == null || v === "") return null; if (!isTime(v)) throw invalid(`${label} is HH:MM, for example 07:00.`); return v; };

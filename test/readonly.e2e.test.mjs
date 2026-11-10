@@ -30,7 +30,7 @@ test("read-only views: no stray null, and Undo sign-off only for managers and ad
   await post("/api/db/set", { path: `days/${today}`, data: { date: today, opening: { items: { o1: true } }, signed: { by: "web:William Maddocks", name: "William Maddocks", at: Date.now() } } }, A);
   await post("/api/db/set", { path: `weeks/${mon}`, data: { week: mon, items: { w1: true }, signed: { by: "web:William Maddocks", name: "William Maddocks", at: Date.now() } } }, A);
   await post("/api/db/set", { path: "plans/h1", data: { type: "haccp", title: "HACCP plan", scope: "Coffee", steps: [], notes: "", history: [] } }, A);
-  await post("/api/db/set", { path: "onboarding/o1", data: { category: "Induction", title: "Barista induction", sections: [{ heading: "Hi", body: "Welcome" }], history: [] } }, A);
+  await post("/api/db/set", { path: "onboarding/o1", data: { category: "Induction", title: "Barista induction", visibility: "shared-business", ownerUserId: null, sections: [{ heading: "Hi", body: "Welcome" }], history: [] } }, A);
   const bad = [];
   for (const [who, c] of [["staff", T], ["admin", A]]) {
     const ctx = await b.newContext({ viewport: { width: 1366, height: 1000 } });
