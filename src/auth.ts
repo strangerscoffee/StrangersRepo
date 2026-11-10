@@ -214,18 +214,6 @@ async function signedIn(req: Request, env: Env, user: { id: string; session_ver:
   return [...(await sessionCookie(req, env, user)), ...(await deviceCookie(req, env, user))];
 }
 
-/** Sessions and trusted devices from before cookies were shared are host-only: moves them to the shared domain,
- * unchanged (same value and expiry), so someone signed in on the diary is signed in on the rota too. */
-async function shareCookies(req: Request, env: Env): Promise<[string, string][]> {
-  if (!cookieDomain(req, env)) return [];
-  const out: [string, string][] = [];
-  const session = await currentSession(req, env);
-  if (session) out.push(...cookieHeaders(req, env, COOKIE, session.value, session.leftSec));
-  const device = await verifiedCookie(req, env, DEVICE_COOKIE, "device.");
-  if (device) out.push(...cookieHeaders(req, env, DEVICE_COOKIE, device.value, device.leftSec));
-  return out;
-}
-
 /** The signed-in person, or null. Checks the signature, expiry, and that the account is still active and
  * hasn't been signed out everywhere since (session_ver). */
 export async function sessionUser(req: Request, env: Env): Promise<User | null> {
@@ -364,7 +352,8 @@ export async function handleAuth(req: Request, env: Env, route: string, current:
       user: current ? { ...publicUser(current), quickPin: !!quick?.has, notifSeen: quick?.notif_seen ?? 0 } : null,
       setupNeeded: (await userCount(env)) === 0,
       quickSwitch: await trustedDevice(req, env), // this device can switch person with a quick PIN
-    }, 200, await shareCookies(req, env));
+      ...(cookieDomain(req, env) ? { cookieDomain: cookieDomain(req, env) } : {}), // non-secret pending sign-out across apps
+    }); // Reads must never restore a previous identity through a delayed Set-Cookie response.
   }
 
   if (route === "logout" && req.method === "POST") {
@@ -480,6 +469,10 @@ export async function handleAuth(req: Request, env: Env, route: string, current:
   }
   if (route === "team" && req.method === "GET") {
     if (!current) throw new ApiError(401, "unauthenticated", "Sign in to continue.");
+    if (current.role === "admin") {
+      const { results } = await env.DB.prepare("SELECT id, name, role, active FROM users ORDER BY active DESC, name_key").all<{ id: string; name: string; role: string; active: number }>();
+      return json({ team: results.map((r) => ({ id: "web:" + r.name, userId: r.id, name: r.name, role: r.role, active: !!r.active })) });
+    }
     const { results } = await env.DB.prepare("SELECT name, role FROM users WHERE active = 1 ORDER BY name_key").all<{ name: string; role: string }>();
     return json({ team: results.map((r) => ({ id: "web:" + r.name, name: r.name, role: r.role })) });
   }

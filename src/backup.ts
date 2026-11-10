@@ -23,8 +23,8 @@ async function gzip(text: string): Promise<ArrayBuffer> {
 
 export async function makeBackup(env: Env, by: string): Promise<BackupInfo> {
   const at = Date.now();
-  const docs = await env.DB.prepare("SELECT path, data, updated_at, updated_by FROM docs WHERE deleted = 0 ORDER BY path")
-    .all<{ path: string; data: string; updated_at: number; updated_by: string | null }>();
+  const docs = await env.DB.prepare("SELECT path, data, seq, employee_privacy_version, updated_at, updated_by FROM docs WHERE deleted = 0 ORDER BY path")
+    .all<{ path: string; data: string; seq: number; employee_privacy_version: number | null; updated_at: number; updated_by: string | null }>();
   const users = await env.DB.prepare("SELECT id, name, username, role, active, created_at, last_login_at, email, email_prefs FROM users ORDER BY name_key").all();
   // The rota's tables (src/rota.ts). People are users.id, listed (without any password or PIN) under users.
   const rota: Record<string, unknown[]> = {};
@@ -36,7 +36,8 @@ export async function makeBackup(env: Env, by: string): Promise<BackupInfo> {
     version: 1,
     at,
     by,
-    docs: docs.results.map((d) => ({ path: d.path, data: JSON.parse(d.data), updatedAt: d.updated_at, updatedBy: d.updated_by })),
+    documentSequence: (await env.DB.prepare("SELECT v FROM meta WHERE k = 'seq'").first<{ v: number }>())?.v || 0,
+    docs: docs.results.map((d) => ({ path: d.path, data: JSON.parse(d.data), seq: d.seq, employee_privacy_version: d.employee_privacy_version, updatedAt: d.updated_at, updatedBy: d.updated_by })),
     users: users.results,
     rota,
     wholesalePreview: (await env.DB.prepare("SELECT kind, id, data, version, updated_at FROM wholesale_preview ORDER BY kind, id").all()).results,

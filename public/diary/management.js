@@ -1,6 +1,32 @@
 // Management sections: suppliers, HACCP plans & risk assessments, EHO inspections, onboarding, contacts, staff
 // training and the 4-weekly review.
 
+// Ownership uses the account's stable id. Display names and legacy personId values never grant access.
+const employeeAdmin=()=>S.role==="admin";
+const ownsEmployeeRecord=p=>!!S.myUserId&&p?.ownerUserId===S.myUserId;
+function employeePicker(select,value=select.value){
+  const people=employeeAdmin()?(S.team||[]).filter(p=>p.userId):[];
+  select.replaceChildren(el("option",{value:""},"Unreviewed / not linked — admins only"),...people.map(p=>el("option",{value:p.userId},p.name+(p.active===false?" (switched off)":""))));
+  if(value&&!people.some(p=>p.userId===value))select.append(el("option",{value},"Linked employee account"));
+  select.value=value||"";
+}
+const privateRecordEditable=d=>!mro()&&(employeeAdmin()||d?.visibility==="shared-business"||d?.visibility==="employee"&&ownsEmployeeRecord(d));
+const privacyLabel=d=>d?.visibility==="shared-business"?"Shared business information":d?.visibility==="employee"?"Private employee record":"Admin review needed";
+function recordPrivacyFields(prefix,data,onChange=()=>{}){
+  const visibility=el("select",{id:prefix+"_visibility"},el("option",{value:""},"Unreviewed — admins only"),el("option",{value:"shared-business"},"Shared business information"),el("option",{value:"employee"},"Private employee record"));
+  visibility.value=data.visibility||"";
+  const owner=el("select",{id:prefix+"_ownerUserId"});employeePicker(owner,data.ownerUserId);
+  const ownerField=el("div",{class:"field",hidden:visibility.value!=="employee"},el("label",{class:"label",for:owner.id,text:"Employee account"}),owner);
+  visibility.addEventListener("change",()=>{data.visibility=visibility.value;if(visibility.value==="shared-business")data.ownerUserId=null;else data.ownerUserId=owner.value||null;ownerField.hidden=visibility.value!=="employee";onChange()});
+  owner.addEventListener("change",()=>{data.ownerUserId=owner.value||null;onChange()});
+  return el("section",{class:"panel"},el("h3",{text:"Who can see this"}),el("div",{class:"fields"},el("div",{class:"field"},el("label",{class:"label",for:visibility.id,text:"Visibility"}),visibility),ownerField),el("p",{class:"note",text:"Shared business information is visible to the team. Private employee records are visible only to the chosen employee and admins. Review the content before sharing."}));
+}
+function validateRecordPrivacy(data){
+  if(!["shared-business","employee"].includes(data.visibility))return "Choose shared business information or a private employee record.";
+  if(data.visibility==="employee"&&!data.ownerUserId)return "Choose the employee account for this private record.";
+  return "";
+}
+
 /* ---------- suppliers ---------- */
 const SUP_FIELDS=[["name","Supplier name","text","e.g. Green Valley Dairy"],["supplies","What they supply","text","e.g. Milk, cream, butter"],["contact","Contact name","text",""],["phone","Phone","tel",""],["email","Email","email",""],["address","Address","text",""],["rating","Food hygiene rating","text","e.g. 5 (checked Oct 2026)"],["notes","Notes","text","e.g. Delivers Tue & Fri, order by 2pm"]];
 let editSup=null;
@@ -469,7 +495,7 @@ function renderBody(text){
   return frag;
 }
 async function newOnb(template){
-  if(mro())return;
+  if(mro()||!employeeAdmin())return;
   const now=Date.now();
   const d={category:template?"Induction checklist":"Other",title:template?"New starter induction":"Untitled document",audience:template?"All new staff":"",owner:"",date:today(),reviewDate:"",
     summary:template?"What every new member of staff needs to be shown, told and signed off on before and during their first weeks.":"",
@@ -481,37 +507,38 @@ async function newOnb(template){
       {heading:"Sign-off",body:"Signed by the new starter and their manager once everything above is complete."}]
       :[{heading:"",body:""}],
     notes:"",source:"",createdBy:S.me,createdAt:now,updatedBy:S.me,updatedAt:now,history:[{by:S.me,at:now,what:template?"Created from induction template":"Created"}]};
-  try{const ref=await C("onboarding").add(d);openOnb(ref.id,d,"edit")}catch(e){fail(e)}
+  // Choose visibility before creating a document; unreviewed content never becomes shared by default.
+  openOnb(null,d,"edit");S.onb.dirty=true;obSaveBar();
 }
 function renderOnbList(){
   const box=$("#obList");box.replaceChildren();const ids=[];
   const list=[...S.onboarding].sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0));
-  if(!list.length)box.append(el("div",{class:"empty",text:`No onboarding documents yet.${mro()?"":" Tap Add to start an induction checklist or a blank document."}`}));
+  if(!list.length)box.append(el("div",{class:"empty",text:employeeAdmin()?"No onboarding documents yet. Tap Add to start a document and choose its visibility.":"No shared business documents or private documents linked to your account."}));
   for(const d of list){
     ids.push(d.updatedBy);const rs=reviewState(d);
     box.append(el("button",{class:"lrow",type:"button",onclick:()=>openOnb(d.id,null,"view")},el("span",{class:"tile indigo"},svgi(ICON.onboarding)),
-      el("span",{class:"t"},el("b",{text:d.title||"Untitled document"}),el("span",{class:"s",text:[d.category,d.audience?"for "+d.audience:"",d.updatedAt?`updated ${when(d.updatedAt)}, ${nameOf(d.updatedBy)}`:""].filter(Boolean).join(" · ")})),
+      el("span",{class:"t"},el("b",{text:d.title||"Untitled document"}),el("span",{class:"s",text:[d.category,privacyLabel(d),d.audience?"for "+d.audience:"",d.updatedAt?`updated ${when(d.updatedAt)}, ${nameOf(d.updatedBy)}`:""].filter(Boolean).join(" · ")})),
       d.reviewDate?el("span",{class:"pill "+rs.cls,text:rs.text}):null,el("span",{class:"chev"},svgi(ICON.chevR))));
   }
   renderAddBtn();resolveNames(ids);
 }
 function openOnb(id,data,mode){
   const p=data||S.onboarding.find(x=>x.id===id);if(!p)return;
-  S.onb={id,doc:clone(p),baseAt:p.updatedAt,dirty:false,remote:false,mode:mro()?"view":(mode||"view")};
+  beginEdit("onboarding",id);S.onb={id,doc:clone(p),baseAt:p.updatedAt,dirty:false,remote:false,mode:!privateRecordEditable(p)?"view":(mode||"view")};
   $("#obListView").hidden=true;$("#obEditView").hidden=false;renderOnbEditor();window.scrollTo({top:0});renderAddBtn();
 }
-function closeOnb(){S.onb=null;$("#obEditView").hidden=true;$("#obEditView").replaceChildren();$("#obListView").hidden=false;renderOnbList()}
+function closeOnb(){S.onb=null;BASE.onboarding=null;$("#obEditView").hidden=true;$("#obEditView").replaceChildren();$("#obListView").hidden=false;renderOnbList()}
 function obDirty(){if(S.onb&&!S.onb.dirty){S.onb.dirty=true;obSaveBar()}}
 function obSaveBar(){
   const P=S.onb;if(!P)return;
   const st=$("#obSaveState"),btn=$("#obSaveBtn"),back=$("#obBack");
   if(st){st.textContent=P.dirty?"Unsaved changes":`Saved ${when(P.doc.updatedAt)}`;st.className="pill "+(P.dirty?"warn":"ok")}
-  if(btn)btn.disabled=!P.dirty||mro();
+  if(btn)btn.disabled=!P.dirty||!privateRecordEditable(P.doc);
   if(back&&back.dataset.armed!=="1")back.textContent="← All documents";
   const rb=$("#obRemote");if(rb)rb.hidden=!P.remote;
 }
 function renderOnbEditor(){
-  const P=S.onb,d=P.doc,R=mro(),edit=P.mode==="edit"&&!R,box=$("#obEditView");
+  const P=S.onb,d=P.doc,R=!privateRecordEditable(d),edit=P.mode==="edit"&&!R,box=$("#obEditView");
   d.sections=d.sections||[];
   const back=el("button",{class:"btn ghost sm",id:"obBack"},"← All documents");
   back.addEventListener("click",()=>{
@@ -555,6 +582,7 @@ function renderOnbEditor(){
     const notes=el("textarea",{id:"ob_notes",value:d.notes||"",style:"min-height:80px"});
     notes.addEventListener("input",()=>{d.notes=notes.value;obDirty()});
     main=[
+      ...(employeeAdmin()?[recordPrivacyFields("ob",d,obDirty)]:[]),
       el("section",{class:"panel"},title,d.source?el("div",{class:"by",text:"Converted from "+d.source}):null,meta,
         el("div",{class:"field"},el("label",{class:"label",for:"ob_summary",text:"Summary"}),summary)),
       el("section",{class:"panel"},el("div",{class:"row spread"},el("h2",{text:"Sections"}),el("button",{class:"btn ghost sm",onclick:()=>{d.sections.push({heading:"",body:""});obDirty();renderOnbEditor()}},"Add section")),
@@ -563,7 +591,7 @@ function renderOnbEditor(){
     requestAnimationFrame(()=>secs.querySelectorAll("textarea").forEach(grow));
   }else{
     const view=el("div",{class:"docview"});
-    view.append(el("div",{class:"label",text:d.category||"Document"}),el("h2",{text:d.title||"Untitled document"}));
+    view.append(el("div",{class:"label",text:[d.category||"Document",privacyLabel(d)].join(" · ")}),el("h2",{text:d.title||"Untitled document"}));
     const ml=[d.audience?"For: "+d.audience:"",d.owner?"Owner: "+d.owner:"",d.date?"Dated "+short(d.date):"",d.reviewDate?"Review "+short(d.reviewDate):""].filter(Boolean);
     if(ml.length)view.append(el("div",{class:"metaline"},...ml.map(t=>el("span",{text:t}))));
     if(d.summary)view.append(el("p",{class:"lead",text:d.summary}));
@@ -575,13 +603,14 @@ function renderOnbEditor(){
     main=[el("section",{class:"panel"},d.source?el("div",{class:"by",text:"Converted from "+d.source}):null,view)];
   }
   const del=el("button",{class:"btn ghost danger"},"Delete document");
+  del.hidden=!employeeAdmin()&&d.visibility!=="shared-business";
   armDelete(del,"Delete document",async()=>{if(await save(()=>D("onboarding",P.id).delete())){closeOnb();toast("Document deleted")}});
   const hist=(d.history||[]).slice(0,10);
   const pick=sitePicker("ob_sites");pick.set(d.sites);pick.onChange=()=>{d.sites=pick.get();obDirty()};P.pick=pick;
   box.replaceChildren(...kids(
     el("div",{class:"row spread"},back,el("div",{class:"row",style:"gap:8px"},el("span",{class:"pill",text:d.category||"Document"}),toggle)),
     remote,...main,
-    R?null:el("section",{class:"panel"},pick.el),
+    R||!employeeAdmin()?null:el("section",{class:"panel"},pick.el),
     el("section",{class:"panel"},el("h3",{text:"History"}),
       hist.length?el("div",{},...hist.map(h=>el("div",{class:"by",text:`${when(h.at)} · ${h.what} · ${nameOf(h.by)}`}))):el("div",{class:"by",text:"No history yet."})),
     R?el("div",{class:"note",text:"You can read this document but not edit it."})
@@ -590,8 +619,9 @@ function renderOnbEditor(){
   resolveNames(hist.map(h=>h.by));
 }
 async function saveOnb(){
-  const P=S.onb;if(!P||!P.dirty||mro())return;
+  const P=S.onb;if(!P||!P.dirty||!privateRecordEditable(P.doc))return;
   const d=P.doc,now=Date.now();
+  if(employeeAdmin()){const error=validateRecordPrivacy(d);if(error){toast(error);return}}
   d.sections=(d.sections||[]).filter(s=>(s.heading||"").trim()||(s.body||"").trim());
   d.updatedBy=S.me;d.updatedAt=now;
   d.history=[{by:S.me,at:now,what:"Edited"},...(d.history||[])].slice(0,20);
@@ -599,14 +629,15 @@ async function saveOnb(){
   const body=clone(d);
   if(JSON.stringify(body).length>250000){toast("This document is too large to save. Split it into two documents.");return}
   P.baseAt=now;
-  const r=await multiSave("onboarding",d.sites,body,{editId:P.id,old:S.onboarding.find(x=>x.id===P.id),match:false});
-  if(r){P.dirty=false;P.remote=false;obSaveBar();toast(`Saved${r.where}.${r.warn}`)}
+  const r=employeeAdmin()?await multiSave("onboarding",d.sites,body,{editId:P.id,old:S.onboarding.find(x=>x.id===P.id),match:false}):await save(()=>saveEdited("onboarding",D("onboarding",P.id),body));
+  if(r){const isNew=!P.id;P.dirty=false;P.remote=false;obSaveBar();toast(employeeAdmin()?`Saved${r.where}.${r.warn}`:"Saved");if(isNew)closeOnb()}
 }
 function onOnbSnapshot(){
   renderOnbList();
   const P=S.onb;if(!P)return;
+  if(!P.id)return;
   const p=S.onboarding.find(x=>x.id===P.id);
-  if(!p){if(!P.dirty){closeOnb();toast("That document was deleted.")}return}
+  if(!p){if(!P.dirty||!employeeAdmin()){closeOnb();toast(employeeAdmin()?"That document was deleted.":"This document is no longer available to your account.")}return}
   if(p.updatedAt!==P.baseAt){
     if(!P.dirty){S.onb={id:P.id,doc:clone(p),baseAt:p.updatedAt,dirty:false,remote:false,mode:P.mode};renderOnbEditor()}
     else{P.remote=true;obSaveBar()}
@@ -617,9 +648,10 @@ window.addEventListener("beforeunload",e=>{if(S.onb&&S.onb.dirty){e.preventDefau
 /* ---------- contacts ---------- */
 const CON_TYPES=["Local council / environmental health","Pest control","Fridge & freezer engineer","Coffee machine technician","Equipment repairs","Gas engineer","Electrician","Plumber","Water supplier","Electricity supplier","Waste collection","Landlord / building manager","Insurance","Doctor / NHS 111","Key holder / manager","Other"];
 const CON_FIELDS=[["type","Type","select"],["name","Name or company","text","e.g. City council food safety team"],["person","Contact person","text",""],["phone","Phone","tel",""],["outOfHours","Out-of-hours / emergency number","tel",""],["email","Email","email",""],["account","Account or reference number","text","e.g. contract no. for pest control"],["notes","Notes","text","e.g. Visits monthly; call for any sighting"]];
-let editCon=null;
+let editCon=null,contactPrivacy={};
 function conForm(){
   const box=$("#cForm");const f=el("div",{class:"fields"});
+  const privacy=el("div",{id:"cPrivacy"});
   for(const[k,lbl,type,ph]of CON_FIELDS){
     let inp;
     if(type==="select"){inp=el("select",{id:"c_"+k});for(const t of CON_TYPES)inp.append(el("option",{value:t},t))}
@@ -631,20 +663,27 @@ function conForm(){
   const del=el("button",{class:"btn ghost danger",hidden:true},"Remove contact");
   armDelete(del,"Remove contact",async()=>{if(await save(()=>D("contacts",editCon).delete())){editContact(null);toast("Contact removed")}});
   const saveBtn=el("button",{class:"btn",onclick:async()=>{
+    const old=editCon?S.contacts.find(x=>x.id===editCon):null;
+    if(!employeeAdmin()&&!privateRecordEditable(old))return;
     const v={};for(const[k]of CON_FIELDS)v[k]=$("#c_"+k).value.trim();
     if(!v.name){msg.textContent="Add a name or company first.";return}
     if(!v.phone&&!v.email&&!v.outOfHours){msg.textContent="Add a phone number or email so people can reach them.";return}
     v.by=S.me;v.at=Date.now();
-    const r=await multiSave("contacts",pick.get(),v,{editId:editCon,old:editCon?S.contacts.find(x=>x.id===editCon):null});
-    if(r){msg.textContent="";toast(`Saved ${v.name}${r.where}.${r.warn}`);editContact(null)}
+    if(employeeAdmin()){const error=validateRecordPrivacy(contactPrivacy);if(error){msg.textContent=error;return}Object.assign(v,contactPrivacy)}
+    const r=employeeAdmin()?await multiSave("contacts",pick.get(),v,{editId:editCon,old,match:false}):await save(()=>saveEdited("contacts",D("contacts",editCon),v,"update"));
+    if(r){msg.textContent="";toast(employeeAdmin()?`Saved ${v.name}${r.where}.${r.warn}`:`Saved ${v.name}`);editContact(null)}
   }},"Save contact");
   const pick=sitePicker("c_sites");
-  box.append(f,pick.el,el("div",{class:"row"},saveBtn,cancel,del,msg));box._cancel=cancel;box._del=del;box._msg=msg;box._pick=pick;
+  box.append(privacy,f,pick.el,el("div",{class:"row"},saveBtn,cancel,del,msg));box._cancel=cancel;box._del=del;box._msg=msg;box._pick=pick;
 }
 function editContact(c,typeOnly){
+  if(S.role&&S.role!=="admin"&&(!c||!privateRecordEditable(c))){editCon=null;contactPrivacy={};BASE.contacts=null;setForm("contacts",false);return}
   editCon=c?c.id:null;beginEdit("contacts",editCon);$("#cFormTitle").textContent=c?"Edit "+c.name:"Add a contact";
+  contactPrivacy={visibility:c?.visibility||"",ownerUserId:c?.ownerUserId||null};
+  $("#cPrivacy").replaceChildren(...(employeeAdmin()?[recordPrivacyFields("c",contactPrivacy)]:[]));
   for(const[k]of CON_FIELDS)$("#c_"+k).value=c?(c[k]||(k==="type"?"Other":"")):(k==="type"?(typeOnly||CON_TYPES[0]):"");
-  $("#cForm")._cancel.hidden=true;$("#cForm")._del.hidden=!c;$("#cForm")._pick.set(c&&c.sites);
+  $("#cForm")._cancel.hidden=true;$("#cForm")._del.hidden=!c||!employeeAdmin()&&c.visibility!=="shared-business";$("#cForm")._pick.set(c&&c.sites);
+  $("#cForm")._pick.el.hidden=!employeeAdmin();
   setForm("contacts",!!(c||typeOnly));
 }
 function copyBtn(text){
@@ -654,15 +693,19 @@ function copyBtn(text){
   }},"Copy");
 }
 function renderContacts(){
+  if(!employeeAdmin()&&editCon&&!S.contacts.some(c=>c.id===editCon&&privateRecordEditable(c))){
+    editContact(null);for(const[k]of CON_FIELDS)$("#c_"+k).value="";
+    toast("This contact is no longer available to your account.");
+  }
   const box=$("#cList");box.replaceChildren();
   const order=t=>{const i=CON_TYPES.indexOf(t);return i<0?99:i};
   const list=[...S.contacts].sort((a,b)=>order(a.type)-order(b.type)||(a.name||"").localeCompare(b.name||""));
-  if(!list.length)box.append(el("div",{class:"empty glass",text:"No contacts yet. Start with your council's food safety team, pest control and your fridge engineer."}));
+  if(!list.length)box.append(el("div",{class:"empty glass",text:employeeAdmin()?"No contacts yet. Add a contact and choose who can see it.":"No shared business contacts or private contacts linked to your account."}));
   const row=c=>xrow("c"+c.id,{
-    title:c.name,sub:[c.person,c.type].filter(Boolean).join(" · "),
+    title:c.name,sub:[c.person,c.type,privacyLabel(c)].filter(Boolean).join(" · "),
     right:[callBtn(c.outOfHours||c.phone,"Call "+c.name)],
     details:[xfacts([["Phone",c.phone?telLink(c.phone):""],["Out of hours",c.outOfHours?telLink(c.outOfHours):""],["Email",c.email?el("a",{href:"mailto:"+c.email,text:c.email}):""],["Reference",c.account],["Notes",c.notes]]),
-      mro()?null:el("div",{class:"row"},el("button",{class:"btn ghost sm",type:"button",onclick:()=>editContact(c)},"Edit contact"))]});
+      !privateRecordEditable(c)?null:el("div",{class:"row"},el("button",{class:"btn ghost sm",type:"button",onclick:()=>editContact(c)},"Edit contact"))]});
   // Anyone with an out-of-hours number goes first: that's who you need in a hurry.
   const urgent=list.filter(c=>c.outOfHours);
   if(urgent.length)box.append(el("div",{class:"label bad",text:"Emergency and out of hours"}),el("div",{class:"list glass"},...urgent.map(row)));
@@ -675,7 +718,7 @@ function renderContacts(){
   const sug=$("#cSuggest");sug.replaceChildren();
   const missing=["Local council / environmental health","Pest control","Fridge & freezer engineer","Coffee machine technician","Gas engineer","Electrician","Plumber","Water supplier","Doctor / NHS 111","Key holder / manager"].filter(t=>!have.has(t));
   for(const t of missing)sug.append(el("button",{class:"btn ghost sm",type:"button",onclick:()=>editContact(null,t)},"+ "+t));
-  $("#cSuggestPanel").hidden=mro()||!missing.length;
+  $("#cSuggestPanel").hidden=mro()||!employeeAdmin()||!missing.length;
   $("#cFormPanel").hidden=mro()||!formOpen.contacts;
 }
 
@@ -683,10 +726,10 @@ function renderContacts(){
 // The training topics this site uses: Setup's trainingOff lists the ones it doesn't need.
 // Dates already recorded for a switched-off topic are kept, just not shown or counted.
 const siteTopics=()=>TOPICS.filter(([k])=>!S.settings.trainingOff.includes(k));
-// Staff can fill in and sign only their own record (matched by name, as the Worker checks); managers and admins any.
-const isMine=p=>!!p&&normT(p.name)===normT(S.myName);
+// Staff and managers fill in their own account-linked record; admins manage all records.
+const isMine=ownsEmployeeRecord;
 const myStaff=()=>S.staff.find(isMine)||null;
-const canEditStaff=p=>!ro()&&(S.role!=="staff"||isMine(p));
+const canEditStaff=p=>!ro()&&(employeeAdmin()||isMine(p));
 // The topics a signature covers: those with a date, with the date, so changing any date needs a new signature.
 const signKey=topics=>Object.keys(topics||{}).filter(k=>topics[k]&&topics[k].date).sort().map(k=>k+"="+topics[k].date).join(",");
 function staffForm(){
@@ -706,41 +749,53 @@ function staffForm(){
   all.addEventListener("change",()=>boxes().forEach(b=>b.checked=all.checked));
   sb.addEventListener("change",e=>{if(e.target!==all)all.checked=boxes().every(b=>b.checked)});
   $("#tSave").addEventListener("click",async()=>{
-    const name=S.role==="staff"?S.myName:$("#tName").value.trim();if(!name){$("#tMsg").textContent="Add the person's name first.";return}
+    const old=S.editStaff?S.staff.find(x=>x.id===S.editStaff):null;
+    const name=!employeeAdmin()?(old?.name||S.myName):$("#tName").value.trim();if(!name){$("#tMsg").textContent="Add the person's name first.";return}
+    if(!employeeAdmin()&&!S.myUserId)return;
     const sites=boxes().filter(b=>b.checked).map(b=>b.dataset.site);
     if(!sites.length){$("#tMsg").textContent="Tick at least one site to save to.";return}
-    const old=S.editStaff?S.staff.find(x=>x.id===S.editStaff):null;
+    if(old&&!canEditStaff(old))return;
+    const ownerUserId=employeeAdmin()?$("#tOwnerUserId").value||null:S.myUserId;
     const topics={};
     for(const[k]of TOPICS){const d=$("#tt_"+k).value;if(d){const prev=old&&old.topics&&old.topics[k];topics[k]=prev&&prev.date===d?prev:{date:d,by:S.me}}}
     const personId=(old&&old.personId)||("p"+Date.now().toString(36)+Math.random().toString(36).slice(2,6));
     // Signing: the person confirms the dates on their own record. A signature stays only while those dates are unchanged.
-    const own=normT(name)===normT(S.myName),sign=own&&$("#tSign").checked;
-    if(S.role==="staff"&&Object.keys(topics).length&&!sign){$("#tMsg").textContent="Tick the box to sign your training record.";$("#tSign").focus();return}
+    const own=!!ownerUserId&&ownerUserId===S.myUserId,sign=own&&$("#tSign").checked;
+    if(!employeeAdmin()&&Object.keys(topics).length&&!sign){$("#tMsg").textContent="Tick the box to sign your training record.";$("#tSign").focus();return}
     const signed=sign?{by:S.me,name:S.myName,at:Date.now(),topics:signKey(topics)}:(old&&old.signed&&old.signed.topics===signKey(topics)?old.signed:null);
-    const v={name,role:$("#tRole").value.trim(),start:$("#tStart").value,topics,notes:$("#tNotes").value.trim(),personId,sites,signed,at:Date.now()};
-    const key=normT(old?old.name:name),editId=S.editStaff,here=S.site;
+    const v={name,role:$("#tRole").value.trim(),start:$("#tStart").value,topics,notes:$("#tNotes").value.trim(),personId,sites,signed,ownerUserId,at:Date.now()};
+    const editId=S.editStaff,here=S.site;
     $("#tSave").disabled=true;$("#tMsg").textContent="Saving…";
     const done=[];
     for(const site of sites){
       const ok=await save(async()=>{
         if(site===here&&editId)return saveEdited("staff",D("staff",editId,site),v);
         const snap=await C("staff",site).get();
-        const m=snap.docs.find(d=>{const x=d.data()||{};return x.personId===personId||normT(x.name)===key});
-        return m?D("staff",m.id,site).set(v):C("staff",site).add(v);
+        const m=snap.docs.find(d=>{const x=d.data()||{};return ownerUserId?x.ownerUserId===ownerUserId:!x.ownerUserId&&x.personId===personId});
+        if(m)return D("staff",m.id,site).set(v);
+        return ownerUserId?D("staff","employee-"+ownerUserId,site).set(v,{ifVersion:0}):C("staff",site).add(v);
       });
       if(ok)done.push(siteOf(site).name);
     }
     $("#tSave").disabled=ro();
     if(done.length){editStaff(null);$("#tMsg").textContent="";toast(`Saved ${name} to ${done.join(", ")}`+(done.length<sites.length?". Some sites couldn't be saved; try again.":""))}
+    else $("#tMsg").textContent="Couldn't save the training record. Check your connection and try again. Your changes are still here.";
   });
   $("#tCancel").addEventListener("click",()=>editStaff(null));
   $("#tMineGo").addEventListener("click",()=>{editStaff(myStaff());setForm("staff",true)});
-  armDelete($("#tDelete"),"Remove person",async()=>{if(await save(()=>D("staff",S.editStaff).delete())){editStaff(null);toast("Removed")}});
+  armDelete($("#tDelete"),"Remove person",async()=>{if(employeeAdmin()&&await save(()=>D("staff",S.editStaff).delete())){editStaff(null);toast("Removed")}});
+  $("#tOwnerUserId").addEventListener("change",()=>{
+    if(!employeeAdmin())return;
+    const selected=(S.team||[]).find(p=>p.userId===$("#tOwnerUserId").value);
+    if(!S.editStaff&&!$("#tName").value&&selected)$("#tName").value=selected.name;
+    const own=$("#tOwnerUserId").value===S.myUserId;$("#tSignBox").hidden=!own;if(!own)$("#tSign").checked=false;
+  });
 }
 function editStaff(p){
-  const staff=S.role==="staff";
+  const staff=!employeeAdmin();
   S.editStaff=p?p.id:null;beginEdit("staff",S.editStaff);$("#tFormTitle").textContent=staff?"My training record":p?"Edit "+p.name:"Add a staff member";
   $("#tName").value=p?p.name:staff?S.myName:"";$("#tName").readOnly=staff;$("#tRole").value=p?(p.role||""):"";$("#tStart").value=p?(p.start||""):"";$("#tNotes").value=p?(p.notes||""):"";
+  employeePicker($("#tOwnerUserId"),p?.ownerUserId||"");$("#tOwnerField").hidden=!employeeAdmin();
   for(const[k]of TOPICS)$("#tt_"+k).value=p&&p.topics&&p.topics[k]?p.topics[k].date:"";
   $("#tAllDate").value="";
   const on=p&&Array.isArray(p.sites)&&p.sites.length?p.sites:[S.site];
@@ -754,12 +809,14 @@ function editStaff(p){
 }
 // Record that someone was trained on one topic today.
 async function trainedToday(p,k){
+  if(!canEditStaff(p))return;
   const topics={...(p.topics||{}),[k]:{date:today(),by:S.me}};
   // A new date isn't covered by the person's signature: they sign again from their record.
   if(await save(()=>D("staff",p.id).update({topics,signed:null})))toast(`${p.name}: ${TOPICS.find(t=>t[0]===k)[1]} recorded`);
 }
 // Untick a topic and it's no longer shown or counted at this site. Saved straight to the site's settings.
 async function setTopicOff(k,on){
+  if(!employeeAdmin())return;
   const off=S.settings.trainingOff.filter(x=>x!==k);if(!on)off.push(k);
   if(off.length>=TOPICS.length){toast("Keep at least one topic");renderStaff();return}
   const patch={trainingOff:off,updatedBy:S.me,updatedAt:Date.now()};
@@ -771,9 +828,10 @@ async function setTopicOff(k,on){
 const impSkip=new Set();
 function renderStaffImport(){
   const panel=$("#tImport");if(!panel)return;
-  const have=new Set(S.staff.map(x=>normT(x.name)));
-  const missing=S.team.filter(p=>!have.has(normT(p.name)));
-  panel.hidden=mro()||!S.db||!missing.length||S.role==="staff";
+  const have=new Set(S.staff.map(x=>x.ownerUserId).filter(Boolean));
+  const unlinkedNames=new Set(S.staff.filter(x=>!x.ownerUserId).map(x=>normT(x.name)));
+  const missing=S.team.filter(p=>p.userId&&p.active!==false&&!have.has(p.userId)&&!unlinkedNames.has(normT(p.name)));
+  panel.hidden=ro()||!S.db||!missing.length||!employeeAdmin();
   if(panel.hidden)return;
   const box=$("#tImpList");box.replaceChildren();
   for(const p of missing){const id="ti_"+normT(p.name).replace(/[^a-z0-9]+/g,"_");
@@ -791,11 +849,11 @@ function renderStaffImport(){
     for(const site of sites){
       let existing=[];
       try{existing=site===S.site?S.staff:(await C("staff",site).get()).docs.map(d=>d.data()||{})}catch(e){fails.push(siteOf(site).name);continue}
-      const there=new Set(existing.map(x=>normT(x.name)));
+      const there=new Set(existing.map(x=>x.ownerUserId).filter(Boolean));
       for(const p of people){
-        if(there.has(normT(p.name)))continue;
-        const rec={name:p.name,role:"",start:"",topics:{},notes:"",personId:"p"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),sites,at:Date.now()};
-        try{await C("staff",site).add(rec);if(site===S.site)added++}catch(e){if(!fails.includes(siteOf(site).name))fails.push(siteOf(site).name)}
+        if(there.has(p.userId))continue;
+        const rec={name:p.name,role:"",start:"",topics:{},notes:"",personId:"p"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),ownerUserId:p.userId,sites,at:Date.now()};
+        try{await D("staff","employee-"+p.userId,site).set(rec,{ifVersion:0});if(site===S.site)added++}catch(e){if(!fails.includes(siteOf(site).name))fails.push(siteOf(site).name)}
       }
     }
     $("#tImpMsg").textContent=fails.length?`Couldn't add everyone at the ${fails.join(", ")}. Try again.`:"";
@@ -803,39 +861,42 @@ function renderStaffImport(){
   };
 }
 function renderStaff(){
+  if(!employeeAdmin()&&S.editStaff&&!S.staff.some(p=>p.id===S.editStaff&&isMine(p))){editStaff(null);toast("This training record is no longer available to your account.")}
   renderStaffImport();
+  $("#tOwnerField").hidden=!employeeAdmin();
+  for(const id of ["#tOwnerUserId","#c_ownerUserId","#ob_ownerUserId"]){const select=$(id);if(select)employeePicker(select)}
   const TOPICS=siteTopics();
   for(const n of document.querySelectorAll("#tTopics [data-topic]"))n.hidden=!TOPICS.some(([k])=>k===n.dataset.topic);
   const tb0=$("#tTopicToggles");tb0.replaceChildren();
   for(const[k,lbl]of ALL_TOPICS){
-    const id="tto_"+k,cb=el("input",{type:"checkbox",id,disabled:mro()});cb.checked=TOPICS.some(t=>t[0]===k);
+    const id="tto_"+k,cb=el("input",{type:"checkbox",id,disabled:!employeeAdmin()||ro()});cb.checked=TOPICS.some(t=>t[0]===k);
     cb.addEventListener("change",()=>setTopicOff(k,cb.checked));
     tb0.append(el("label",{for:id},cb,lbl));
   }
-  $("#tTopicsPanel").hidden=mro();
-  const list=[...S.staff].sort((a,b)=>(a.name||"").localeCompare(b.name||""));
+  $("#tTopicsPanel").hidden=!employeeAdmin()||ro();
+  const list=S.staff.filter(p=>employeeAdmin()||isMine(p)).sort((a,b)=>(a.name||"").localeCompare(b.name||""));
   const todo=p=>TOPICS.filter(([k])=>!(p.topics&&p.topics[k]));
   const full=list.filter(p=>!todo(p).length).length,gaps=list.length-full;
   const stat=(n,l,c)=>el("div",{class:"stat glass"},el("b",{class:c||"",text:n}),el("span",{text:l}));
   $("#tStats").replaceChildren(stat(String(list.length),list.length===1?"person":"people"),stat(String(full),"fully trained","ok"),stat(String(gaps),"training to do",gaps?"warn":"ok"));
-  $("#tStats").hidden=!list.length;
+  $("#tStats").hidden=!list.length||!employeeAdmin();
   const box=$("#tList");box.replaceChildren();
-  if(!list.length)box.append(el("div",{class:"empty",text:S.role==="staff"?"No one listed yet. Tap My training record to add yours.":"No one listed yet. Add each member of staff with the dates they were trained."}));
+  if(!list.length)box.append(el("div",{class:"empty",text:!employeeAdmin()?"No training record is linked to your account at this site. If you already have a record, ask an admin to link it before creating another.":"No training records yet. Add and link each employee's record."}));
   const mine=myStaff(),mp=$("#tMine");
-  mp.hidden=S.role!=="staff"||ro()||formOpen.staff||!!(mine&&mine.signed&&mine.signed.topics===signKey(mine.topics)&&!siteTopics().some(([k])=>!(mine.topics&&mine.topics[k])));
+  mp.hidden=employeeAdmin()||ro()||formOpen.staff||!!(mine&&mine.signed&&mine.signed.topics===signKey(mine.topics)&&!siteTopics().some(([k])=>!(mine.topics&&mine.topics[k])));
   if(!mp.hidden)$("#tMineText").textContent=mine?"Fill in any training dates still missing, choose the sites you work at, and sign your record.":"Add your training record: the dates you were trained, the sites you work at, and your signature.";
   for(const p of list){
     const left=todo(p),done=TOPICS.length-left.length;
     box.append(xrow("t"+p.id,{
       lead:ringEl(done,TOPICS.length),title:p.name,
-      sub:[p.role,left.length?`${left.length} to do`:"All training done",Object.keys(p.topics||{}).length?(p.signed&&p.signed.topics===signKey(p.topics)?"Signed":"Not signed"):""].filter(Boolean).join(" · "),
+      sub:[p.role,!p.ownerUserId?"Unlinked — admins only":"",left.length?`${left.length} to do`:"All training done",Object.keys(p.topics||{}).length?(p.signed&&p.signed.topics===signKey(p.topics)?"Signed":"Not signed"):""].filter(Boolean).join(" · "),
       right:[left.length?el("span",{class:"pill warn",text:`${done}/${TOPICS.length}`}):el("span",{class:"pill ok",text:"Trained"})],
       details:[el("ul",{class:"topics"},...TOPICS.map(([k,l])=>{const t=p.topics&&p.topics[k];
           return el("li",{class:t?"on":""},el("span",{class:"badge "+(t?"done":"")},t?svgi(ICON.check):""),el("span",{class:"t"},el("b",{text:l}),el("span",{class:"s",text:t?"Trained "+short(t.date):"Not yet"})),
             t||!canEditStaff(p)?null:el("button",{class:"btn ghost sm",type:"button",onclick:()=>trainedToday(p,k)},"Trained today"))})),
         xfacts([["Started",p.start?short(p.start):""],["Sites",Array.isArray(p.sites)&&p.sites.length?p.sites.map(x=>siteOf(x).name).join(", "):""],
           ["Signed",p.signed&&p.signed.topics===signKey(p.topics)?`${p.signed.name||nameOf(p.signed.by)}, ${short(dayOf(p.signed.at))}`:(Object.keys(p.topics||{}).length?"Not signed yet":"")],["Notes",p.notes]]),
-        canEditStaff(p)?el("div",{class:"row"},el("button",{class:"btn ghost sm",type:"button",onclick:()=>editStaff(p)},isMine(p)&&S.role==="staff"?"Fill in and sign":"Edit record")):null]}));
+        canEditStaff(p)?el("div",{class:"row"},el("button",{class:"btn ghost sm",type:"button",onclick:()=>editStaff(p)},isMine(p)&&!employeeAdmin()?"Fill in and sign":"Edit record")):null]}));
   }
   const mx=$("#tMatrix");mx.replaceChildren();
   if(list.length){
@@ -845,7 +906,7 @@ function renderStaff(){
       ...TOPICS.map(([k])=>{const t=p.topics&&p.topics[k];return el("td",{class:"dt"+(t?"":" no"),text:t?short(t.date):"–"})})));
     mx.append(el("div",{class:"scroll"},el("table",{class:"matrix"},el("thead",{},head),tb)));
   }
-  mx.closest("section").hidden=!list.length;
+  mx.closest("section").hidden=!list.length||!employeeAdmin();
   $("#tFormPanel").hidden=ro()||!formOpen.staff;
 }
 

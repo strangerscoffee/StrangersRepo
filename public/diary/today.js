@@ -18,7 +18,7 @@ async function loadRota(){
   if(r){S.rota=r;if(r.rotaUrl)S.rotaUrl=r.rotaUrl}
   renderOnShift();if(S.tab==="day")renderDay();
 }
-const rotaToday=()=>S.rota&&S.rota.site===S.site&&S.rota.day===today()&&S.date===today()&&S.rota.published?S.rota:null;
+const rotaToday=()=>S.rota&&S.rota.site===S.site&&S.rota.day===today()&&S.date===today()&&S.rota.published?{...S.rota,shifts:S.rota.shifts.filter(x=>S.role==="admin"||x.me||x.open)}:null;
 // "You're opening", "Priya closes", "Alex and Priya open".
 function rotaWho(job){
   const r=rotaToday();if(!r)return "";
@@ -31,10 +31,10 @@ function renderOnShift(){
   const box=$("#onShift"),r=rotaToday();
   box.hidden=!r||!r.shifts.length;if(box.hidden)return;
   const jobText={opens:"opening checks",closes:"closing checks and sign-off"};
-  box.replaceChildren(el("div",{class:"row spread"},el("h3",{id:"onShiftTitle",text:"On shift today"}),el("a",{class:"linkbtn",href:S.rotaUrl},"Rota")),
+  box.replaceChildren(el("div",{class:"row spread"},el("h3",{id:"onShiftTitle",text:S.role==="admin"?"On shift today":"Your rota today"}),el("a",{class:"linkbtn",href:S.rotaUrl},"Rota")),
     el("div",{class:"list"},...[...r.shifts].sort((a,b)=>a.start.localeCompare(b.start)).map(x=>el("div",{class:"lrow"},
       el("span",{class:"avatar sm",text:x.open?"?":initials(x.name),"aria-hidden":"true"}),
-      el("span",{class:"t"},el("b",{text:x.open?"Open shift":x.me?"You":x.name}),el("span",{class:"s",text:[x.actualEnd?`${x.actualStart}–${x.actualEnd} (was ${x.start}–${x.end})`:`${x.start}–${x.end}`,jobText[x.job]].filter(Boolean).join(" · ")})),
+      el("span",{class:"t"},el("b",{text:x.open?"Open shift":x.me?"You":x.name}),el("span",{class:"s",text:[(S.role==="admin"||x.me)&&x.actualEnd?`${x.actualStart}–${x.actualEnd} (was ${x.start}–${x.end})`:`${x.start}–${x.end}`,jobText[x.job]].filter(Boolean).join(" · ")})),
       x.job?el("span",{class:"pill "+(x.job==="opens"?"acc":""),text:x.job==="opens"?"Opens":"Closes"}):null))));
 }
 setInterval(()=>{if(!document.hidden)loadRota()},5*60*1000);

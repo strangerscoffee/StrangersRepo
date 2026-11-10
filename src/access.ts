@@ -35,9 +35,10 @@ export function requireUser(caller: Caller): User {
 /** The id written into records ("by" fields): web:<name>, as before accounts existed. */
 export const recordId = (u: User) => "web:" + u.name;
 
-/* ---------- the rota (src/rota.ts) ---------- */
+/* ---------- business files ---------- */
 
-// Plans the week, publishes it and approves pickups, covers and time off.
+// Legacy helper name used for stored business files. Employee rota administration is admin-only;
+// keep its separate checks in src/rota/index.ts rather than granting this capability to personnel routes.
 export const isRotaManager = (u: User) => u.role === "manager" || u.role === "admin";
 
 // Which app each hostname serves, and links between them: src/hosts.ts (no imports, so tests can load it directly).
@@ -72,7 +73,7 @@ export function requireDelete(u: User, path: unknown): void {
 /* Signatures. A staff member's sign-off is in their own name: a signed block they write (signed:{by,name} on a day,
    a week or their training record, and by on a 4-weekly review) must be theirs, unless it's the one already there. */
 export function requireOwnSignature(u: User, collection: string, data: unknown, current: Record<string, unknown> | undefined, canon: (v: unknown) => string): void {
-  if (u.role !== "staff" || !data || typeof data !== "object") return;
+  if ((u.role !== "staff" && !(u.role === "manager" && collection.split("/").pop() === "staff")) || !data || typeof data !== "object") return;
   const d = data as Record<string, any>;
   // A signature carries both the record id and the name, and both must be the person's own (a patch with only
   // `by` would leave someone else's name on it).
@@ -125,18 +126,16 @@ export function requireWrite(u: User, path: unknown): void {
   }
 }
 
-/* Staff training: staff fill in and sign their own record. A staff member may create or change a staff/<id>
-   document only when it is in their own name (before and after the change), and may never delete one. Managers and
-   admins are unaffected. Everything else in MANAGER_COLLECTIONS stays manager-only. */
+/* Private training belongs to an immutable account, not a reusable display name. */
 export const isStaffRecordPath = (path: unknown) => typeof path === "string" && path.split("/").slice(-2, -1)[0] === "staff";
 const sameName = (a: unknown, b: string) =>
   typeof a === "string" && a.trim().toLowerCase().replace(/\s+/g, " ") === b.trim().toLowerCase().replace(/\s+/g, " ");
-export function requireOwnStaffRecord(u: User, op: "set" | "update" | "delete", existingName: unknown, exists: boolean, nextName: unknown): void {
+export function requireOwnStaffRecord(u: User, op: "set" | "update" | "delete", current: Record<string, any> | undefined, next: Record<string, any> | undefined): void {
   const ok =
     op !== "delete" &&
-    (!exists || sameName(existingName, u.name)) &&
-    (op === "set" ? sameName(nextName, u.name) : nextName === undefined || sameName(nextName, u.name));
-  if (!ok) throw new ApiError(403, "permission_denied", "Staff can only fill in their own training record.");
+    (!current || current.ownerUserId === u.id) &&
+    (next?.name === undefined ? op !== "set" : sameName(next.name, u.name) || (!!current && next.name === current.name));
+  if (!ok) throw new ApiError(403, "permission_denied", "Only admins can change another employee's training record.");
 }
 
 const WINDOW_MS = 15 * 60 * 1000;

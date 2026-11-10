@@ -32,6 +32,7 @@ type Cell = "ok" | "miss" | "warn" | "closed";
 export interface Item { tag: string; title: string; detail: string; action: string; href: string }
 export interface Weekly {
   name: string; week: string; sites: string[];
+  employeeDetails: boolean;
   urgent: Item[]; thisWeek: Item[]; toPlan: Item[];
   grid: { name: string; inUse: boolean; cells: Cell[] }[];
   stats: { signed: number; open: number; signedPrev: number; openPrev: number; out: number; outPrev: number; deliveries: number; rejected: number; rejectedNote: string };
@@ -39,7 +40,9 @@ export interface Weekly {
 }
 
 /** Last week (Mon–Sun before `today`'s week) at these sites, and what needs a manager now. */
-export async function weeklyData(env: Env, siteIds: string[], today: string, base: { rota: string; diary: string }, name: string): Promise<Weekly> {
+export async function weeklyData(env: Env, siteIds: string[], today: string, base: { rota: string; diary: string }, name: string, options: { admin?: boolean } = {}): Promise<Weekly> {
+  // Managers receive business summaries, never another employee's private records or identifying aggregates.
+  const admin = options.admin === true;
   const thisMon = mondayOf(today), week = addDays(thisMon, -7), prev = addDays(week, -7), nextMon = addDays(thisMon, 7);
   const days = Array.from({ length: 7 }, (_, i) => addDays(week, i));
   const sites = SITES.filter((s) => siteIds.includes(s.id));
@@ -52,12 +55,12 @@ export async function weeklyData(env: Env, siteIds: string[], today: string, bas
     env.DB.prepare("SELECT collection, doc_id, data FROM docs WHERE deleted = 0 AND collection IN (SELECT value FROM json_each(?)) AND json_extract(data, '$.status') IS NOT 'done'").bind(cols("maintenance")),
     env.DB.prepare("SELECT collection, doc_id, data FROM docs WHERE deleted = 0 AND collection IN (SELECT value FROM json_each(?)) AND json_extract(data, '$.date') BETWEEN ? AND ?").bind(cols("deliveries"), week, addDays(week, 6)),
     env.DB.prepare("SELECT collection, MAX(json_extract(data, '$.date')) AS data, '' AS doc_id FROM docs WHERE deleted = 0 AND collection IN (SELECT value FROM json_each(?)) GROUP BY collection").bind(cols("reviews")),
-    env.DB.prepare("SELECT collection, doc_id, data FROM docs WHERE deleted = 0 AND collection IN (SELECT value FROM json_each(?))").bind(cols("staff")),
-    env.DB.prepare("SELECT week, published_at FROM rota_weeks WHERE week IN (?, ?)").bind(thisMon, nextMon),
-    env.DB.prepare("SELECT site, day, start, end, break_mins, user_id FROM rota_shifts WHERE day BETWEEN ? AND ? AND site IN (SELECT value FROM json_each(?))").bind(thisMon, addDays(nextMon, 6), JSON.stringify(siteIds)),
+    env.DB.prepare("SELECT collection, doc_id, data FROM docs WHERE deleted = 0 AND collection IN (SELECT value FROM json_each(?)) AND ?").bind(cols("staff"), admin ? 1 : 0),
+    env.DB.prepare("SELECT week, published_at FROM rota_weeks WHERE week IN (?, ?) AND ?").bind(thisMon, nextMon, admin ? 1 : 0),
+    env.DB.prepare("SELECT site, day, start, end, break_mins, user_id FROM rota_shifts WHERE day BETWEEN ? AND ? AND site IN (SELECT value FROM json_each(?)) AND ?").bind(thisMon, addDays(nextMon, 6), JSON.stringify(siteIds), admin ? 1 : 0),
     env.DB.prepare(`SELECT r.kind, r.status, s.site, s.day, (SELECT name FROM users WHERE id = r.from_user) AS asker, (SELECT name FROM users WHERE id = r.taker) AS taker
-      FROM rota_requests r JOIN rota_shifts s ON s.id = r.shift_id WHERE ((r.kind = 'cover' AND r.status = 'accepted') OR (r.kind = 'claim' AND r.status = 'open')) AND s.site IN (SELECT value FROM json_each(?))`).bind(JSON.stringify(siteIds)),
-    env.DB.prepare("SELECT t.from_day, t.to_day, u.name FROM rota_time_off t JOIN users u ON u.id = t.user_id WHERE t.status = 'requested' ORDER BY t.from_day"),
+      FROM rota_requests r JOIN rota_shifts s ON s.id = r.shift_id WHERE ((r.kind = 'cover' AND r.status = 'accepted') OR (r.kind = 'claim' AND r.status = 'open')) AND s.site IN (SELECT value FROM json_each(?)) AND ?`).bind(JSON.stringify(siteIds), admin ? 1 : 0),
+    env.DB.prepare("SELECT t.from_day, t.to_day, u.name FROM rota_time_off t JOIN users u ON u.id = t.user_id WHERE t.status = 'requested' AND ? ORDER BY t.from_day").bind(admin ? 1 : 0),
   ]);
   const of = (collection: string) => sites.find((s) => collection === s.prefix + collection.slice(s.prefix.length) && collection.startsWith(s.prefix) && !collection.slice(s.prefix.length).includes("/"))!;
   const bySite = <T>(rows: Row[], f: (r: Row) => T) => { const m = new Map<string, T[]>(); for (const r of rows) { const s = of(r.collection); if (s) (m.get(s.id) || m.set(s.id, []).get(s.id)!).push(f(r)); } return m; };
@@ -119,7 +122,7 @@ export async function weeklyData(env: Env, siteIds: string[], today: string, bas
     for (const r of (maint.results as Row[]).filter((r) => of(r.collection)?.id === s.id)) {
       const m = parse(r.data, {});
       const opened = m.reportedAt || m.at || 0, age = opened ? Math.floor((Date.now() - opened) / DAY) : 0;
-      if (m.priority === "urgent") urgent.push({ tag: "Urgent", title: m.title || "A maintenance job", detail: `${s.name} · open ${plural(age, "day")} · ${m.assignee ? `with ${m.assigneeName || "someone"}` : "nobody assigned"}`, action: m.assignee ? "See the job" : "Assign someone", href: diary("#maintenance") });
+      if (m.priority === "urgent") urgent.push({ tag: "Urgent", title: m.title || "A maintenance job", detail: `${s.name} · open ${plural(age, "day")} · ${m.assignee ? admin ? `with ${m.assigneeName || "someone"}` : "assigned" : "nobody assigned"}`, action: m.assignee ? "See the job" : "Assign someone", href: diary("#maintenance") });
     }
     const openJobs = (maint.results as Row[]).filter((r) => of(r.collection)?.id === s.id && parse(r.data, {}).priority !== "urgent").length;
     if (openJobs) also.push([`Maintenance · ${s.name}`, `${plural(openJobs, "job")} open`]);
@@ -136,9 +139,11 @@ export async function weeklyData(env: Env, siteIds: string[], today: string, bas
       if (due < today) reviewsLate.push({ site: s.name, due });
       else if (due <= addDays(today, 6)) also.push([`4-weekly review · ${s.name}`, `due ${short(due)}`]);
     }
-    const topics = TOPICS.filter((t) => !(Array.isArray(cfg.trainingOff) && cfg.trainingOff.includes(t)));
-    const untrained = (staff.results as Row[]).filter((r) => of(r.collection)?.id === s.id).map((r) => parse(r.data, {})).filter((p) => topics.some((t) => !p.topics?.[t]?.date)).length;
-    if (untrained) also.push([`Training to do · ${s.name}`, plural(untrained, "person", "people")]);
+    if (admin) {
+      const topics = TOPICS.filter((t) => !(Array.isArray(cfg.trainingOff) && cfg.trainingOff.includes(t)));
+      const untrained = (staff.results as Row[]).filter((r) => of(r.collection)?.id === s.id).map((r) => parse(r.data, {})).filter((p) => topics.some((t) => !p.topics?.[t]?.date)).length;
+      if (untrained) also.push([`Training to do · ${s.name}`, plural(untrained, "person", "people")]);
+    }
   }
 
   // Overdue 4-weekly reviews, as one item (with the date only when it's recent).
@@ -147,26 +152,28 @@ export async function weeklyData(env: Env, siteIds: string[], today: string, bas
     thisWeek.push({ tag: "Review", title: "4-weekly review overdue", detail: `${listNames(reviewsLate.map((r) => r.site))}${recent ? ` · due ${short(reviewsLate[0].due)}` : ""}`, action: "Do the review", href: diary("#review") });
   }
 
-  // The rota: requests waiting for a manager, this week and next published, open shifts.
-  const rq = reqs.results as { kind: string; site: string; day: string; asker: string; taker: string | null }[];
-  const to = offs.results as { from_day: string; to_day: string; name: string }[];
-  if (rq.length || to.length) {
-    const bits = [...to.slice(0, 2).map((t) => `${t.name.split(" ")[0]}: time off ${short(t.from_day)}`),
-      ...rq.slice(0, 2).map((r) => r.kind === "cover" ? `${(r.taker || "Someone").split(" ")[0]} covering ${(r.asker || "").split(" ")[0]}, ${short(r.day)}` : `${(r.asker || "Someone").split(" ")[0]} picking up ${short(r.day)}`)];
-    thisWeek.push({ tag: "Rota", title: `${plural(rq.length + to.length, "request")} to decide`, detail: bits.join(" · "), action: "Decide in the rota", href: rota("#requests") });
+  // Private employee planning and requests are for admins only.
+  if (admin) {
+    const rq = reqs.results as { kind: string; site: string; day: string; asker: string; taker: string | null }[];
+    const to = offs.results as { from_day: string; to_day: string; name: string }[];
+    if (rq.length || to.length) {
+      const bits = [...to.slice(0, 2).map((t) => `${t.name.split(" ")[0]}: time off ${short(t.from_day)}`),
+        ...rq.slice(0, 2).map((r) => r.kind === "cover" ? `${(r.taker || "Someone").split(" ")[0]} covering ${(r.asker || "").split(" ")[0]}, ${short(r.day)}` : `${(r.asker || "Someone").split(" ")[0]} picking up ${short(r.day)}`)];
+      thisWeek.push({ tag: "Rota", title: `${plural(rq.length + to.length, "request")} to decide`, detail: bits.join(" · "), action: "Decide in the rota", href: rota("#requests") });
+    }
+    const pub = new Map((weeks.results as { week: string; published_at: number | null }[]).map((w) => [w.week, !!w.published_at]));
+    const sh = shifts.results as { site: string; day: string; start: string; end: string; break_mins: number; user_id: string | null }[];
+    const hours = (from: string) => Math.round(sh.filter((x) => x.day >= from && x.day <= addDays(from, 6) && x.user_id).reduce((h, x) => h + Math.max(0, (hm(x.end) - hm(x.start) + (hm(x.end) <= hm(x.start) ? 1440 : 0) - (x.break_mins || 0)) / 60), 0));
+    const planned = (from: string) => (hours(from) ? `${hours(from)} hours planned` : "Nothing planned yet");
+    const openIn = (from: string) => sh.filter((x) => x.day >= from && x.day <= addDays(from, 6) && !x.user_id && x.day >= today);
+    const openText = (xs: typeof sh) => xs.length === 1 ? `1 open shift: ${SITES.find((s) => s.id === xs[0].site)?.name}, ${short(xs[0].day)} ${xs[0].start}–${xs[0].end}` : `${xs.length} open shifts`;
+    if (sh.some((x) => x.day <= addDays(thisMon, 6)) && !pub.get(thisMon)) thisWeek.push({ tag: "Rota", title: "This week's rota isn't published", detail: `${planned(thisMon)}${openIn(thisMon).length ? ` · ${openText(openIn(thisMon))}` : ""}`, action: "Publish it", href: rota(`#week/${thisMon}`) });
+    else if (openIn(thisMon).length) thisWeek.push({ tag: "Rota", title: plural(openIn(thisMon).length, "open shift") + " this week", detail: openText(openIn(thisMon)), action: "Fill them", href: rota(`#week/${thisMon}`) });
+    if (!pub.get(nextMon)) toPlan.push({ tag: "Rota", title: "Next week's rota isn't published", detail: `${planned(nextMon)}${openIn(nextMon).length ? ` · ${openText(openIn(nextMon))}` : ""}`, action: "Finish and publish", href: rota(`#week/${nextMon}`) });
+    else also.unshift(["Next week's rota", `Published · ${hours(nextMon)} hours`]);
   }
-  const pub = new Map((weeks.results as { week: string; published_at: number | null }[]).map((w) => [w.week, !!w.published_at]));
-  const sh = shifts.results as { site: string; day: string; start: string; end: string; break_mins: number; user_id: string | null }[];
-  const hours = (from: string) => Math.round(sh.filter((x) => x.day >= from && x.day <= addDays(from, 6) && x.user_id).reduce((h, x) => h + Math.max(0, (hm(x.end) - hm(x.start) + (hm(x.end) <= hm(x.start) ? 1440 : 0) - (x.break_mins || 0)) / 60), 0));
-  const planned = (from: string) => (hours(from) ? `${hours(from)} hours planned` : "Nothing planned yet");
-  const openIn = (from: string) => sh.filter((x) => x.day >= from && x.day <= addDays(from, 6) && !x.user_id && x.day >= today);
-  const openText = (xs: typeof sh) => xs.length === 1 ? `1 open shift: ${SITES.find((s) => s.id === xs[0].site)?.name}, ${short(xs[0].day)} ${xs[0].start}–${xs[0].end}` : `${xs.length} open shifts`;
-  if (sh.some((x) => x.day <= addDays(thisMon, 6)) && !pub.get(thisMon)) thisWeek.push({ tag: "Rota", title: "This week's rota isn't published", detail: `${planned(thisMon)}${openIn(thisMon).length ? ` · ${openText(openIn(thisMon))}` : ""}`, action: "Publish it", href: rota(`#week/${thisMon}`) });
-  else if (openIn(thisMon).length) thisWeek.push({ tag: "Rota", title: plural(openIn(thisMon).length, "open shift") + " this week", detail: openText(openIn(thisMon)), action: "Fill them", href: rota(`#week/${thisMon}`) });
-  if (!pub.get(nextMon)) toPlan.push({ tag: "Rota", title: "Next week's rota isn't published", detail: `${planned(nextMon)}${openIn(nextMon).length ? ` · ${openText(openIn(nextMon))}` : ""}`, action: "Finish and publish", href: rota(`#week/${nextMon}`) });
-  else also.unshift(["Next week's rota", `Published · ${hours(nextMon)} hours`]);
 
-  return { name, week, sites: sites.map((s) => s.name), urgent, thisWeek, toPlan, grid, stats: st, also };
+  return { name, week, sites: sites.map((s) => s.name), employeeDetails: admin, urgent, thisWeek, toPlan, grid, stats: st, also };
 }
 
 /* ---------- the email ---------- */
@@ -214,7 +221,7 @@ export function weeklyEmail(w: Weekly, links: Links, diaryUrl: string): Built {
 <p style="margin:6px 0 12px;font-size:15px;line-height:1.45;color:#39404d;">Morning ${esc(first)}. Here's last week at ${esc(where)}, and what to sort first.</p>${chips}`
     : `<table role="presentation" cellpadding="0" cellspacing="0"><tr><td width="64" valign="middle"><div style="width:52px;height:52px;border-radius:26px;background:#1f7a45;color:#ffffff;font:800 26px/52px ${FONT};text-align:center;">✓</div></td>
 <td valign="middle"><h1 style="margin:0;font-size:28px;line-height:1.15;letter-spacing:-0.02em;">All clear</h1><p style="margin:4px 0 0;font-size:15px;color:#39404d;">Nothing needs you this week, ${esc(first)}.</p></td></tr></table>
-<p style="margin:12px 0 0;font-size:14.5px;line-height:1.5;color:#39404d;">Every open day was signed off, every reading was in range, no cleaning is overdue and there are no requests waiting.</p>`;
+<p style="margin:12px 0 0;font-size:14.5px;line-height:1.5;color:#39404d;">${w.employeeDetails ? "Every open day was signed off, every reading was in range, no cleaning is overdue and there are no requests waiting." : "Every open day was signed off, every reading was in range and no cleaning is overdue. This summary covers business safety; private employee records are excluded."}</p>`;
   const head = `<tr><td style="padding:6px 0;font:700 10.5px ${FONT};color:${MUTED};"></td>${Array.from({ length: 7 }, (_, i) => { const d = addDays(w.week, i); return `<td align="center" style="padding:0 2px 4px;font:10.5px/1.25 ${FONT};color:${MUTED};"><b>${fmt(d, { weekday: "narrow" })}</b><br>${fmt(d, { day: "numeric" })}</td>`; }).join("")}</tr>`;
   const rows = w.grid.map((g) => `<tr><td style="padding:2px 6px 2px 0;font:700 13px ${FONT};color:${g.inUse ? "#14181f" : MUTED};white-space:nowrap;">${esc(g.name)}</td>${g.inUse
     ? g.cells.map((c) => `<td style="padding:2px;"><div style="height:28px;border-radius:7px;background:${CELL[c][0]};color:${CELL[c][1]};font:800 13px/28px ${FONT};text-align:center;">${CELL[c][2]}</div></td>`).join("")
@@ -295,7 +302,7 @@ export async function sendWeeklySummaries(env: Env, base: { rota: string; diary:
 export async function sendSummary(env: Env, base: { rota: string; diary: string }, m: Manager, today = londonToday()) {
   const kind: EmailKind = "weekly";
   const links = await linksFor(env, base, m.id, kind);
-  const data = await weeklyData(env, weeklySitesOf(m.email_prefs), today, base, m.name);
+  const data = await weeklyData(env, weeklySitesOf(m.email_prefs), today, base, m.name, { admin: m.role === "admin" });
   const o: Outgoing = { to: { ...m, email: m.email! }, kind, links, mail: weeklyEmail(data, links, base.diary), about: "the Monday summary" };
   return send(env, o);
 }

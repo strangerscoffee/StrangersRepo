@@ -3,6 +3,7 @@ import { newId } from "../../auth";
 import { invalid, json } from "../../http";
 import { activeUser, getShift, loadCtx, loadShifts, loadTimeOff, publishedWeeks, touchWeek, weekRow } from "../load";
 import { blocking, effectsFor, onTimeOff, overlaps } from "../problems";
+import { visibleShift } from "../privacy";
 import { describeRequests, visibleRequests } from "../requests";
 import { ReqRow, RotaRequest, Shift } from "../types";
 import { addDays, conflict, denied, londonToday, mondayOf, notFound, nowMs, siteName, text } from "../util";
@@ -12,17 +13,17 @@ export async function requestRoutes(r: RotaRequest): Promise<Response | null> {
   const { env, exec, user, route, seg, m, mgr, needMgr, body, mailLinks } = r;
 
   if (route === "requests" && m === "GET") {
-    // Managers: everything waiting for a decision; everyone: what involves them.
+    // Admins: everything waiting for a decision; everyone else: only what involves them.
     const pending = mgr
       ? await env.DB.prepare("SELECT r.* FROM rota_requests r JOIN rota_shifts s ON s.id = r.shift_id WHERE r.status IN ('open', 'accepted') AND s.day >= ? ORDER BY r.created_at LIMIT 300").bind(londonToday()).all<ReqRow>()
       : await env.DB.prepare(`SELECT r.* FROM rota_requests r JOIN rota_shifts s ON s.id = r.shift_id
-          WHERE r.status IN ('open', 'accepted') AND s.day >= ? AND (r.from_user = ? OR r.to_user = ? OR r.taker = ? OR (r.to_user IS NULL AND r.kind = 'cover')) ORDER BY r.created_at LIMIT 300`)
+          WHERE r.status IN ('open', 'accepted') AND s.day >= ? AND (r.from_user = ? OR r.to_user = ? OR r.taker = ?) ORDER BY r.created_at LIMIT 300`)
         .bind(londonToday(), user.id, user.id, user.id).all<ReqRow>();
     const offs = mgr
       ? await env.DB.prepare("SELECT t.*, u.name FROM rota_time_off t JOIN users u ON u.id = t.user_id WHERE t.status = 'requested' ORDER BY t.from_day").all<any>()
       : { results: [] as any[] };
     return json({
-      requests: await visibleRequests(env, pending.results, mgr),
+      requests: await visibleRequests(env, pending.results, user),
       timeOff: offs.results.map((t) => ({ id: t.id, userId: t.user_id, name: t.name, from: t.from_day, to: t.to_day, reason: t.reason, status: t.status, createdAt: t.created_at })),
     });
   }
@@ -39,7 +40,7 @@ export async function requestRoutes(r: RotaRequest): Promise<Response | null> {
     const list = all.filter((s) => !s.userId && weeks.has(mondayOf(s.day)))
       .filter((s) => !myShifts.some((x) => overlaps(x, s)) && !onTimeOff(offs, user.id, s.day))
       .map((s) => ({
-        ...s, siteName: siteName(s.site),
+        ...visibleShift(s, user)!, siteName: siteName(s.site),
         asked: mine.results.some((r) => r.shift_id === s.id),
         takenBySomeone: !mine.results.some((r) => r.shift_id === s.id) && pendingAny.results.some((r) => r.shift_id === s.id),
       }));
@@ -49,6 +50,9 @@ export async function requestRoutes(r: RotaRequest): Promise<Response | null> {
   if (route === "requests" && m === "POST") {
     const b = await body();
     const shift = await getShift(env, typeof b.shiftId === "string" ? b.shiftId : "");
+    // Authorize before date, publication or conflict checks, which otherwise disclose another person's rota.
+    if (!mgr && shift.userId && shift.userId !== user.id) throw denied("You can only request changes to your own shifts or claim an open shift.");
+    if (!mgr && b.kind === "cover" && b.toUserId != null && b.toUserId !== "") throw denied("An admin arranges cover with another employee.");
     const today = londonToday();
     if (shift.day < today) throw invalid("That shift has already happened.");
     const row = await weekRow(env, mondayOf(shift.day));
@@ -78,13 +82,18 @@ export async function requestRoutes(r: RotaRequest): Promise<Response | null> {
       if (!ins.meta.changes) throw conflict("You've already asked for cover for this shift.");
     } else throw invalid("Choose claim or cover.");
     const out = await env.DB.prepare("SELECT * FROM rota_requests WHERE id = ?").bind(id).all<ReqRow>();
-    return json({ request: (await describeRequests(env, out.results))[0] });
+    return json({ request: (await describeRequests(env, out.results, user))[0] });
   }
 
   if (seg[0] === "requests" && seg.length === 2 && m === "PATCH") {
     const r = await env.DB.prepare("SELECT * FROM rota_requests WHERE id = ?").bind(seg[1]).first<ReqRow>();
     if (!r) throw notFound("That request has gone. Refresh and try again.");
+    if (!mgr && r.from_user !== user.id && r.to_user !== user.id && r.taker !== user.id) throw denied("That request is private to the employee and admins.");
     const b = await body();
+    // Cover acceptance/decisions administer a different employee's assigned shift. Do not reveal its state
+    // through settled/conflict errors before checking the administrative permission.
+    if (!mgr && b.action !== "cancel") throw denied("An admin arranges cover and decides shift requests.");
+    if (!mgr && r.from_user !== user.id) throw denied("Only the person who asked can cancel it.");
     const settled = () => { if (!["open", "accepted"].includes(r.status)) throw conflict("That request is already settled."); };
     // A shift only changes hands while it's still ahead, in a published week.
     const stillTakeable = async (shift: Shift) => {
@@ -109,9 +118,9 @@ export async function requestRoutes(r: RotaRequest): Promise<Response | null> {
       }
       case "decline":
         settled();
-        if (!(mgr || (r.kind === "cover" && r.to_user === user.id))) throw denied("Only the person asked, or a manager, can decline it.");
+        needMgr();
         await set("declined", { decided: true }).run();
-        // A manager's decision is emailed; someone turning down a cover they were asked for isn't.
+        // An admin's decision is emailed to the employees involved.
         if (mgr && r.to_user !== user.id) await requestDecided(env, exec, mailLinks, r, false, await getShift(env, r.shift_id).catch(() => null) as Shift, await actor(env, user)).catch(() => {});
         break;
       case "cancel":
@@ -129,11 +138,12 @@ export async function requestRoutes(r: RotaRequest): Promise<Response | null> {
         if (r.kind === "cover" && shift.userId !== r.from_user) throw conflict("That shift has changed since the request. Check the rota.");
         await stillTakeable(shift);
         const taker = await env.DB.prepare("SELECT id FROM users WHERE id = ? AND active = 1").bind(r.taker).first();
-        if (!taker) throw conflict(`${(await describeRequests(env, [r]))[0]?.takerName || "That person"}'s account is switched off, so they can't take it.`);
+        if (!taker) throw conflict(`${(await describeRequests(env, [r], user))[0]?.takerName || "That person"}'s account is switched off, so they can't take it.`);
         const stop = blocking(effectsFor(await loadCtx(env, mondayOf(shift.day)), shift, r.taker).problems);
         if (stop) throw conflict(stop.message);
         await env.DB.batch([
-          env.DB.prepare("UPDATE rota_shifts SET user_id = ?, updated_at = ?, updated_by = ? WHERE id = ?").bind(r.taker, nowMs(), user.id, shift.id),
+          // Notes, worked hours and amendment attribution belong to the previous assignee, not the new one.
+          env.DB.prepare("UPDATE rota_shifts SET user_id = ?, note = '', actual_start = NULL, actual_end = NULL, actual_break = NULL, adjust_note = '', adjusted_by = NULL, adjusted_at = NULL, updated_at = ?, updated_by = ? WHERE id = ?").bind(r.taker, nowMs(), user.id, shift.id),
           set("approved", { decided: true }),
           env.DB.prepare("UPDATE rota_requests SET status = 'cancelled', decided_by = ?, decided_at = ? WHERE shift_id = ? AND id <> ? AND status IN ('open', 'accepted')").bind(user.id, nowMs(), shift.id, r.id),
           touchWeek(env, mondayOf(shift.day)),
@@ -145,7 +155,7 @@ export async function requestRoutes(r: RotaRequest): Promise<Response | null> {
         throw invalid("Choose accept, decline, cancel or approve.");
     }
     const out = await env.DB.prepare("SELECT * FROM rota_requests WHERE id = ?").bind(r.id).all<ReqRow>();
-    return json({ request: (await describeRequests(env, out.results))[0] });
+    return json({ request: (await describeRequests(env, out.results, user))[0] });
   }
 
   return null;

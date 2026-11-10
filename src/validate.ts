@@ -21,11 +21,11 @@ const SHAPES: Record<string, Shape> = {
   allergens: { name: "string", contains: "array", notes: "string", by: "string", at: "number", sites: "array" },
   allergenDocs: { title: "string", fileName: "string", assetId: "string", size: "number", at: "number" },
   suppliers: { name: "string", supplies: "string", phone: "string", email: "string", notes: "string", at: "number", sites: "array" },
-  contacts: { type: "string", name: "string", phone: "string", email: "string", notes: "string", at: "number", sites: "array" },
-  staff: { name: "string", role: "string", topics: "object", sites: "array", signed: "object", at: "number" },
+  contacts: { type: "string", name: "string", phone: "string", email: "string", notes: "string", at: "number", sites: "array", visibility: "string", ownerUserId: "string" },
+  staff: { name: "string", role: "string", topics: "object", sites: "array", signed: "object", at: "number", ownerUserId: "string" },
   reviews: { date: "date", answers: "object", notes: "string", by: "string", at: "number" },
   plans: { type: "string", title: "string", history: "array", updatedAt: "number" },
-  onboarding: { title: "string", sections: "array", history: "array", updatedAt: "number" },
+  onboarding: { title: "string", sections: "array", history: "array", updatedAt: "number", visibility: "string", ownerUserId: "string" },
   inspections: { inspectionDate: "date", issues: "array", goodPoints: "array", scores: "object", updatedAt: "number" },
 };
 

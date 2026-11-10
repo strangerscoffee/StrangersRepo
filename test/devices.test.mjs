@@ -98,7 +98,7 @@ test("list operations can't replace something that isn't a list", async () => {
 test("a change on one device moves the change counters other devices watch", async () => {
   const c0 = (await req("GET", "/api/changes", undefined, ALEX)).body;
   assert.equal(typeof c0.rota, "number");
-  const shift = await req("POST", "/api/rota/shifts", { site: "cafe", day: "2030-01-08", start: "09:00", end: "13:00", breakMins: 0, job: "", userId: null }, MGR);
+  const shift = await req("POST", "/api/rota/shifts", { site: "cafe", day: "2030-01-08", start: "09:00", end: "13:00", breakMins: 0, job: "", userId: null }, ADMIN);
   assert.equal(shift.status, 200, shift.text);
   const c1 = (await req("GET", "/api/changes", undefined, ALEX)).body;
   assert.ok(c1.rota > c0.rota, "a rota write");
@@ -112,10 +112,10 @@ test("a change on one device moves the change counters other devices watch", asy
   assert.equal((await req("GET", "/api/changes", undefined, null)).status, 401, "signed in only");
 });
 
-test("two managers changing the same shift: the second, from an older copy, is refused", async () => {
-  const s = (await req("POST", "/api/rota/shifts", { site: "cafe", day: "2030-01-09", start: "09:00", end: "13:00", breakMins: 0, job: "", userId: null }, MGR)).body.shift;
+test("two admin devices changing the same shift: the second, from an older copy, is refused", async () => {
+  const s = (await req("POST", "/api/rota/shifts", { site: "cafe", day: "2030-01-09", start: "09:00", end: "13:00", breakMins: 0, job: "", userId: null }, ADMIN)).body.shift;
   assert.ok(s.updatedAt);
-  const a = await req("PATCH", "/api/rota/shifts/" + s.id, { start: "08:00", ifUpdatedAt: s.updatedAt }, MGR);
+  const a = await req("PATCH", "/api/rota/shifts/" + s.id, { start: "08:00", ifUpdatedAt: s.updatedAt }, ADMIN);
   assert.equal(a.status, 200, a.text);
   await new Promise((r) => setTimeout(r, 5));
   const b = await req("PATCH", "/api/rota/shifts/" + s.id, { end: "17:00", ifUpdatedAt: s.updatedAt }, ADMIN);

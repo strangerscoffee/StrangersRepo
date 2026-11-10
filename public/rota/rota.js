@@ -1,5 +1,5 @@
 // The staff rota (rota.staffstrangerscoffee.com): who works where and when across the four sites.
-// Managers plan and publish each week; everyone sees their shifts, picks up open shifts, asks for cover and
+// Admins plan and publish each week; everyone sees their own shifts, picks up open shifts, asks for cover and
 // says when they can work. Talks to /api/rota/* (src/rota.ts) and /api/auth/* with fetch, like admin.js.
 // Shares the diary's look: /app.css, /theme.css, /ui.css, plus rota.css.
 (() => {
@@ -82,8 +82,10 @@
     view: (() => { try { return localStorage.getItem("rota.view") || "site"; } catch (e) { return "site"; } })(),
     pday: dow(londonToday()), weekData: null, everyone: false, offline: false, badge: 0,
   };
-  const mgr = () => !!R.me?.user?.manager;
-  const isAdmin = () => !!R.me?.user?.admin;
+  // Employee planning and private records are for admins; site operations are a separate capability.
+  const isAdmin = () => R.me?.user?.role === "admin";
+  const mgr = isAdmin;
+  const siteManager = () => isAdmin() || R.me?.user?.role === "manager";
 
   function setOffline(v) {
     if (R.offline === v) return;
@@ -116,7 +118,7 @@
 
   /* ---------- navigation ---------- */
 
-  // Every page. mgr: managers and admins only. parent: where its back link goes.
+  // mgr: employee administration (admins only). site: business site settings. parent: its back link.
   const PAGES = {
     week: { t: "Rota", nav: "Week", ic: "week", mgr: true },
     day: { t: "Day", ic: "week", mgr: true, parent: "week" },
@@ -124,12 +126,12 @@
     swaps: { t: "Open shifts & cover", nav: "Open shifts & cover", ic: "swap" },
     avail: { t: "When I can work", ic: "avail" },
     requests: { t: "Requests", ic: "requests", mgr: true },
-    more: { t: "More", ic: "more", mgr: true },
+    more: { t: "More", ic: "more", site: true },
     hours: { t: "Hours", ic: "hours", mgr: true, parent: "more" },
-    settings: { t: "Rota settings", ic: "setup", mgr: true, parent: "more" },
+    settings: { t: "Rota settings", ic: "setup", site: true, parent: "more" },
   };
-  const TABS = () => (mgr() ? ["week", "mine", "requests", "more"] : ["mine", "swaps", "avail"]);
-  const allowed = (p) => PAGES[p] && (!PAGES[p].mgr || mgr());
+  const TABS = () => (mgr() ? ["week", "mine", "requests", "more"] : siteManager() ? ["mine", "swaps", "avail", "more"] : ["mine", "swaps", "avail"]);
+  const allowed = (p) => PAGES[p] && (!PAGES[p].mgr || mgr()) && (!PAGES[p].site || siteManager());
   const tabOf = (p) => (TABS().includes(p) ? p : PAGES[p]?.parent && TABS().includes(PAGES[p].parent) ? PAGES[p].parent : mgr() ? "more" : p);
 
   function parseHash() {
@@ -149,6 +151,7 @@
         el("div", { class: "h", text: "Manage" }), link("hours", "Hours", "hours"), link("settings", "Rota settings", "setup"));
     } else {
       sn.append(link("mine", "My shifts", "mine"), link("swaps", "Open shifts & cover", "swap"), link("avail", "When I can work", "avail"));
+      if (siteManager()) sn.append(el("div", { class: "h", text: "Manage" }), link("settings", "Site rota settings", "setup"));
     }
     sn.append(el("div", { class: "h", text: "Kitchen Diary" }), el("a", { href: R.links.diary }, svgi(ICON.diary), el("span", { text: "Open the diary" })));
     const tb = $("#tabbar"); tb.replaceChildren();
@@ -287,7 +290,7 @@
     downloadText(`shift-${s.day}-${s.site}.ics`, "text/calendar", lines.join("\r\n") + "\r\n");
   }
 
-  const approverText = () => (R.approvers.length === 1 ? first(R.approvers[0]) : "A manager");
+  const approverText = () => (R.approvers.length === 1 ? first(R.approvers[0]) : "An admin");
 
   /* ---------- sheets and the account menu ---------- */
 
@@ -359,7 +362,7 @@
     $("#sheetVeil").hidden = false; m.hidden = false; m.querySelector("button").focus();
   }
 
-  /* ---------- week planner (managers) ---------- */
+  /* ---------- week planner (admins) ---------- */
 
   async function loadWeek(week, force) {
     if (!force && R.weekData && R.weekData.week === week && Date.now() - R.weekData._at < 15000) return R.weekData;
@@ -893,7 +896,7 @@
   const mondayOfDay = (day) => monday(day);
   const rerenderSoon = () => setTimeout(render, 50);
 
-  /* ---------- day view (managers) ---------- */
+  /* ---------- day view (admins) ---------- */
 
   async function renderDay([site, day]) {
     if (!site || !/^\d{4}-\d{2}-\d{2}$/.test(day || "")) { go("week"); return []; }
@@ -1035,8 +1038,8 @@
 
   async function renderMine() {
     const u = R.me.user;
-    const toggle = seg([["mine", "Mine"], ["all", "Everyone"]], R.everyone ? "all" : "mine", (v) => { R.everyone = v === "all"; render(); }, "Whose shifts");
-    if (R.everyone) {
+    const toggle = isAdmin() ? seg([["mine", "Mine"], ["all", "Everyone"]], R.everyone ? "all" : "mine", (v) => { R.everyone = v === "all"; render(); }, "Whose shifts") : null;
+    if (R.everyone && isAdmin()) {
       const d = await loadWeek(R.everyoneWeek || (R.everyoneWeek = monday(londonToday())), true);
       setHead("mine", "My shifts", `${weekLabel(d.week)} · ${d.published ? "published" : mgr() ? "draft (staff can't see it yet)" : "not published yet"}`, {
         actions: [el("button", { type: "button", class: "iconbtn", "aria-label": "Previous week", onclick: () => { R.everyoneWeek = addDays(d.week, -7); render(); } }, svgi(ICON.chevL)),
@@ -1058,7 +1061,7 @@
     const from = wk < today ? wk : today, to = addDays(wk, 6) > addDays(today, 27) ? addDays(wk, 6) : addDays(today, 27);
     const [r, me, open] = await Promise.all([get(`/api/rota/mine?from=${from}&to=${to}`), get("/api/rota/me"), get("/api/rota/open").catch(() => ({ shifts: [] }))]);
     R.approvers = me.approvers;
-    const ap = approverText(), apWord = ap === "A manager" ? "a manager" : ap;
+    const ap = approverText(), apWord = ap === "An admin" ? "an admin" : ap;
     setHead("mine", "My shifts", u.name, { actions: weekNav(wk, (w) => { R.mineWeek = w; render(); }, { min: lo, max: hi }) });
     const coverOf = (s) => me.requests.find((q) => q.kind === "cover" && q.fromUser === u.id && q.shift?.id === s.id && ["open", "accepted"].includes(q.status));
     const upcoming = r.shifts.filter((s) => s.day > today || (s.day === today && s.end > now));
@@ -1079,7 +1082,7 @@
         nx.adjusted ? el("div", { class: "with", text: `Amended from ${nx.start}–${nx.end}${nx.adjustNote ? ": " + nx.adjustNote : ""}` }) : null,
         nx.overtime > 0 ? el("div", { class: "with", text: `Includes ${hrs(nx.overtime)}h overtime` }) : null,
         el("div", { text: `${nx.siteName}${nx.job ? ` · you ${nx.job === "opens" ? "open" : "close"}` : ""}${nx.breakMins ? ` · ${nx.breakMins} min break` : ""}` }),
-        others.length ? el("div", { class: "with", text: "With " + others.map((o) => first(o.name) + (o.start !== nx.start ? ` from ${o.start}` : "")).join(", ") }) : el("div", { class: "with", text: "On your own" }),
+        isAdmin() ? others.length ? el("div", { class: "with", text: "With " + others.map((o) => first(o.name) + (o.start !== nx.start ? ` from ${o.start}` : "")).join(", ") }) : el("div", { class: "with", text: "On your own" }) : null,
         nx.note ? el("div", { class: "with", text: nx.note }) : null,
         el("div", { class: "row" }, el("button", { type: "button", class: "hbtn", onclick: () => calendarFile(nx) }, svgi(ICON.cal), "Add to calendar"),
           coverOf(nx) ? el("span", { class: "hbtn on", text: "Cover asked" }) : el("button", { type: "button", class: "hbtn", "data-w": "", onclick: () => askCover(nx) }, "Ask for cover"))));
@@ -1089,9 +1092,9 @@
       const patText = availText(me.pattern);
       left.push(el("section", { class: "panel mempty" },
         el("h2", { text: anyAhead ? "No shifts for you yet" : "The rota isn't out yet" }),
-        el("p", { class: "note", text: (anyAhead ? "You're not on the published weeks ahead. New shifts appear here as soon as a manager adds you." : "Your shifts appear here as soon as a manager publishes the week.") + (last ? ` Your last shift was ${shortM(last.day)} at ${last.siteName}.` : "") }),
+        el("p", { class: "note", text: (anyAhead ? "You're not on the published weeks ahead. New shifts appear here as soon as an admin adds you." : "Your shifts appear here as soon as an admin publishes the week.") + (last ? ` Your last shift was ${shortM(last.day)} at ${last.siteName}.` : "") }),
         el("div", { class: "msteps" },
-          step("avail", "acc", "Check when you can work", patText ? `Managers plan around it. ${patText}.` : "Managers plan around it.", "Check", () => go("avail")),
+          step("avail", "acc", "Check when you can work", patText ? `Admins plan around it. ${patText}.` : "Admins plan around it.", "Check", () => go("avail")),
           step("plane", "ok", "Need time off?", "Ask now so it's in before they plan.", "Ask", askTimeOff))));
     }
     left.push(el("div", { class: "label mlabel" }, el("span", { text: wk === monday(today) ? "Your week" : `Week of ${fmt(wk, { day: "numeric", month: "long" })}` }),
@@ -1201,7 +1204,7 @@
     return el("button", { type: "button", class: "lrow mrow", onclick: () => shiftActions(s, cov) },
       el("span", { class: "dbadge" }, el("span", { text: fmt(s.day, { weekday: "short" }).toUpperCase() }), el("b", { text: fmt(s.day, { day: "numeric" }) })),
       el("span", { class: "t" }, el("b", { text: `${span(s)}${s.job ? " · " + jobWord(s.job) : ""}` }),
-        el("span", { class: "s", text: (s.adjusted ? `Amended from ${s.start}–${s.end} · ` : "") + (o.length ? "With " + o.map((x) => first(x.name)).join(", ") : "On your own") + (cov ? " · cover asked" : "") }),
+        el("span", { class: "s", text: [s.adjusted ? `Amended from ${s.start}–${s.end}` : "", isAdmin() ? o.length ? "With " + o.map((x) => first(x.name)).join(", ") : "On your own" : "", cov ? "Cover asked" : ""].filter(Boolean).join(" · ") }),
         s.overtime > 0 ? el("span", { class: "otag", text: `${hrs(s.overtime)}h overtime` }) : null),
       sitePill(s.site, s.siteName));
   }
@@ -1219,14 +1222,14 @@
   async function askCover(s) {
     // Everyone on the rota (names and account ids) comes with the week.
     let people = [];
-    try { people = (await get("/api/rota/week?start=" + monday(s.day))).people || []; } catch (e) {}
+    if (isAdmin()) try { people = (await get("/api/rota/week?start=" + monday(s.day))).people || []; } catch (e) {}
     const u = R.me.user;
     const sel = el("select", { id: "c_to" }, el("option", { value: "" }, "Anyone who can"), ...people.filter((p) => p.id !== u.id).map((p) => el("option", { value: p.id }, p.name)));
     const note = el("input", { type: "text", id: "c_msg", maxlength: 300, placeholder: "e.g. Family wedding, could you take my shift?" });
     const msg = el("p", { class: "smsg", role: "alert" });
     openSheet("Ask for cover", el("div", { class: "sbody" },
       el("p", { class: "note", text: `${shortM(s.day)} · ${s.start}–${s.end} at ${s.siteName}` }),
-      el("div", { class: "field" }, el("label", { class: "label", for: "c_to", text: "Ask" }), sel),
+      isAdmin() ? el("div", { class: "field" }, el("label", { class: "label", for: "c_to", text: "Ask" }), sel) : el("p", { class: "note", text: "An admin reviews your request and arranges cover." }),
       el("div", { class: "field" }, el("label", { class: "label", for: "c_msg", text: "Message (optional)" }), note), msg,
       el("p", { class: "note", text: `${approverText()} approves it before it changes hands. It stays your shift until then.` }),
       el("div", { class: "sfoot" }, btn("Send request", async () => {
@@ -1244,8 +1247,8 @@
     if (q.status === "approved") return ["Approved", "ok"];
     if (q.status === "declined") return ["Declined", "bad"];
     if (q.status === "cancelled") return ["Cancelled", ""];
-    if (q.kind === "claim") return [`Waiting for ${ap === "A manager" ? "a manager" : ap} to approve`, "warn"];
-    if (q.status === "accepted") return [`${q.takerId === u ? "You" : first(q.takerName)} offered · ${ap === "A manager" ? "a manager" : ap} to approve`, "warn"];
+    if (q.kind === "claim") return [`Waiting for ${ap === "An admin" ? "an admin" : ap} to approve`, "warn"];
+    if (q.status === "accepted") return [`${!isAdmin() ? "Cover" : q.takerId === u ? "You" : first(q.takerName)} offered · ${ap === "An admin" ? "an admin" : ap} to approve`, "warn"];
     return [q.toUser ? `Waiting for ${first(q.toName)}` : "Offered to anyone", "warn"];
   };
 
@@ -1270,7 +1273,7 @@
         el("div", { class: "row spread" }, el("b", { class: "big", text: `${short(s.day)} · ${s.start}–${s.end}` }), sitePill(s.site, s.siteName)),
         el("p", { class: "note", text: [jobWord(s.job) && (s.job === "opens" ? "Opening" : "Closing"), `${hrs(s.hours)} hours`, `you'd be on ${hrs(after)}h that week`].filter(Boolean).join(" · ") }),
         s.asked
-          ? el("div", { class: "row" }, el("span", { class: "pill warn", text: `Asked · waiting for ${ap === "A manager" ? "a manager" : ap}` }), myClaim ? ghost("Cancel", async () => { if (await act(() => api("PATCH", "/api/rota/requests/" + myClaim.id, { action: "cancel" }), "Cancelled")) render(); }, { class: "btn ghost sm" }) : null)
+          ? el("div", { class: "row" }, el("span", { class: "pill warn", text: `Asked · waiting for ${ap === "An admin" ? "an admin" : ap}` }), myClaim ? ghost("Cancel", async () => { if (await act(() => api("PATCH", "/api/rota/requests/" + myClaim.id, { action: "cancel" }), "Cancelled")) render(); }, { class: "btn ghost sm" }) : null)
           : s.takenBySomeone ? el("p", { class: "note", text: "Someone has already asked for this one." })
           : el("div", { class: "row two" },
             ghost("Not for me", () => { hidden.push(s.id); try { localStorage.setItem("rota.notForMe", JSON.stringify(hidden.slice(-200))); } catch (e) {} render(); }),
@@ -1301,7 +1304,7 @@
     else out.push(el("div", { class: "list glass" }, ...own.map((q) => {
       const s = q.shift;
       const [txt, cls] = statusText({ ...q, takerId: q.taker }, u.id);
-      const what = q.kind === "claim" ? "You asked to pick this up" : q.fromUser === u.id ? (q.toUser ? `Asked ${first(q.toName)} to cover` : `Offered to anyone at ${s.siteName}`) : `You offered to cover ${first(q.fromName)}'s shift`;
+      const what = q.kind === "claim" ? "You asked to pick this up" : !isAdmin() ? "Your cover request" : q.fromUser === u.id ? (q.toUser ? `Asked ${first(q.toName)} to cover` : `Offered to anyone at ${s.siteName}`) : `You offered to cover ${first(q.fromName)}'s shift`;
       return el("div", { class: "lrow" }, el("span", { class: "t" }, el("b", { text: `${short(s.day)} · ${s.start}–${s.end}` }), el("span", { class: "s", text: what }),
         el("span", { class: "stat " + cls }, el("span", { class: "sdot " + (cls === "ok" ? "ok" : cls === "bad" ? "bad" : cls ? "warn" : ""), "aria-hidden": "true" }), txt)),
         sitePill(s.site, s.siteName),
@@ -1324,7 +1327,7 @@
       if (!person) { go("settings"); return []; }
     }
     const canEdit = isAdmin();
-    setHead("avail", other ? person.name : "When I can work", other ? "When they can work" : canEdit ? "Managers see this when they plan the rota" : "Set by an admin. Managers see this when they plan the rota",
+    setHead("avail", other ? person.name : "When I can work", other ? "When they can work" : canEdit ? "Private to you and admins" : "Private to you and admins. Set by an admin",
       other ? { back: ["Rota settings", "settings"] } : {});
     let pattern = JSON.parse(JSON.stringify((other ? person.pattern : me.pattern) || {}));
     let sites = [...((other ? person.sites : me.sites) || [])];
@@ -1430,10 +1433,10 @@
       const days = Math.round((dOf(o.to) - dOf(o.from)) / 864e5) + 1;
       const range = o.from === o.to ? fmt(o.from, { weekday: "short", day: "numeric", month: "long" }) : `${fmt(o.from, { day: "numeric", month: "short" })}–${fmt(o.to, { day: "numeric", month: "short" })}`;
       const ap = approverText();
-      const st = { approved: ["Approved", "ok"], requested: [`Waiting for ${ap === "A manager" ? "a manager" : ap}`, "warn"], declined: ["Declined", "bad"], cancelled: ["Cancelled", ""] }[o.status] || [o.status, ""];
+      const st = { approved: ["Approved", "ok"], requested: [`Waiting for ${ap === "An admin" ? "an admin" : ap}`, "warn"], declined: ["Declined", "bad"], cancelled: ["Cancelled", ""] }[o.status] || [o.status, ""];
       return el("div", { class: "lrow" }, el("span", { class: "t" }, el("b", { text: range }), el("span", { class: "s", text: [o.reason, plural(days, "day")].filter(Boolean).join(" · ") })),
         el("span", { class: "pill " + st[1], text: st[0] }),
-        // Time off that has started is a manager's to change.
+        // Only an admin can change time off that has already started.
         ["requested", "approved"].includes(o.status) && o.to >= londonToday() && (mgr() || o.status === "requested" || o.from >= londonToday()) ? ghost("Cancel", async () => { if (await act(() => api("PATCH", "/api/rota/time-off/" + o.id, { status: "cancelled" }), "Cancelled")) render(); }, { class: "btn ghost sm" }) : null);
     }) : [el("div", { class: "empty", text: "No time off booked." })]));
   }
@@ -1456,7 +1459,7 @@
       }))), { left: cancelLink() });
   }
 
-  /* ---------- requests (managers) ---------- */
+  /* ---------- requests (admins) ---------- */
 
   async function renderRequests() {
     const r = await get("/api/rota/requests");
@@ -1489,15 +1492,15 @@
     return out;
   }
 
-  /* ---------- more, hours and settings (managers) ---------- */
+  /* ---------- more, private hours and business site settings ---------- */
 
   function renderMore() {
     setHead("more", "More", "");
     const row = (t, sub, ic, tile, fn) => el("button", { class: "lrow", type: "button", onclick: fn }, el("span", { class: "tile " + tile }, svgi(ICON[ic])),
       el("span", { class: "t" }, el("b", { text: t }), sub ? el("span", { class: "s", text: sub }) : null), el("span", { class: "chev" }, svgi(ICON.chevR)));
     return [el("div", { class: "list glass" },
-        row("Hours", "Rota hours against contracts, CSV download", "hours", "blue", () => go("hours")),
-        row("Rota settings", "Opening times, minimum cover and contract hours", "setup", "grey", () => go("settings"))),
+        isAdmin() ? row("Hours", "Rota hours against contracts, CSV download", "hours", "blue", () => go("hours")) : null,
+        row(isAdmin() ? "Rota settings" : "Site rota settings", isAdmin() ? "Opening times, minimum cover and contract hours" : "Opening times and minimum cover", "setup", "grey", () => go("settings"))),
       label("Your own shifts"),
       el("div", { class: "list glass" }, row("Open shifts & cover", "Pick up shifts, ask for cover", "swap", "teal", () => go("swaps")),
         row("When I can work", "Your weekly pattern and time off", "avail", "indigo", () => go("avail"))),
@@ -1531,8 +1534,8 @@
   }
 
   async function renderSettings() {
-    setHead("settings", "Rota settings", "Opening times, minimum cover and contracted hours", { back: ["More", "more"] });
-    const [sites, wk] = await Promise.all([get("/api/rota/sites"), loadWeek(R.week, true)]);
+    setHead("settings", isAdmin() ? "Rota settings" : "Site rota settings", isAdmin() ? "Opening times, minimum cover and contracted hours" : "Opening times and minimum cover", { back: ["More", "more"] });
+    const [sites, wk] = await Promise.all([get("/api/rota/sites"), isAdmin() ? loadWeek(R.week, true) : Promise.resolve(null)]);
     const out = [label("Sites")];
     const dayAb = (n) => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][n];
     out.push(el("div", { class: "list glass" }, ...sites.sites.map((s) => {
@@ -1567,6 +1570,7 @@
         dayGrid);
     })));
     out.push(el("p", { class: "note", text: "Cover is checked hour by hour between opening and closing, using each day's own hours where it has them. Which days each site opens comes from the diary's Setup, and planned closures from Closures & holidays." }));
+    if (isAdmin()) {
     out.push(label("Contracted hours a week"));
     out.push(el("div", { class: "list glass" }, ...wk.people.map((p) => {
       const opts = { type: "number", min: 0, max: 80, step: 0.5, inputmode: "decimal", placeholder: "–" };
@@ -1590,6 +1594,7 @@
     }
     out.push(el("p", { class: "note", text: "Hours over someone's maximum show as overtime on the rota, in Hours and in their own shifts. Under the minimum shows as a note while planning." }));
     out.push(el("p", { class: "note", text: "Everyone with an active account can be on the rota. Add people and change roles on the diary's Admin page." }));
+    }
     return out;
   }
 
@@ -1602,8 +1607,15 @@
 
   async function start() {
     try {
-      const [auth, me] = await Promise.all([fetch("/api/auth/me").then((r) => r.json()), get("/api/rota/me")]);
+      const auth = await fetch("/api/auth/me").then((r) => r.json());
       if (!auth.user) { goSignIn(); return; }
+      if (!(await SC.bindSession(auth.user, { clear: () => {
+        R.me = null; R.auth = null; R.weekData = null; R.approvers = []; R.everyone = false; weekBody = null;
+        for (const key of Object.keys(HUE.id)) delete HUE.id[key]; for (const key of Object.keys(HUE.name)) delete HUE.name[key];
+        closeSheets(); for (const id of ["#page", "#sheet", "#peopleList", "#acctMenu", "#snav", "#tabbar", "#meBox"]) $(id)?.replaceChildren();
+        $("#pageTitle").textContent = ""; $("#pageSub").textContent = ""; $("#pageAction").replaceChildren();
+      } }))) return;
+      const me = await get("/api/rota/me");
       R.auth = auth; R.me = me; R.links = me.links; R.approvers = me.approvers;
     } catch (e) {
       $("#page").replaceChildren(el("div", { class: "empty", text: e.message || "Couldn't load the rota." }));

@@ -236,6 +236,20 @@ const MIGRATIONS: Migration[] = [
       "CREATE INDEX IF NOT EXISTS wholesale_invoices_customer ON wholesale_invoices(customer_id, seq DESC)",
     ]);
   } },
+  { id: 14, name: "verified employee privacy metadata", async run(env) {
+    // Existing JSON fields were client-writable. Only a validated new write can verify them.
+    if (!(await columns(env, "docs")).has("employee_privacy_version")) {
+      try { await env.DB.prepare("ALTER TABLE docs ADD COLUMN employee_privacy_version INTEGER").run(); }
+      catch (error) { if (!(await columns(env, "docs")).has("employee_privacy_version")) throw error; }
+    }
+    // Claim this cutover in the same transaction as its one-time counters. Concurrent isolates must not
+    // invalidate sessions created after another isolate has already completed the migration.
+    await env.DB.batch([
+      env.DB.prepare("UPDATE meta SET v=v+1 WHERE k='seq' AND NOT EXISTS(SELECT 1 FROM schema_migrations WHERE id=14)"),
+      env.DB.prepare("UPDATE users SET session_ver=session_ver+1 WHERE NOT EXISTS(SELECT 1 FROM schema_migrations WHERE id=14)"),
+      env.DB.prepare("INSERT OR IGNORE INTO schema_migrations(id,name,applied_at) VALUES(14,?,?)").bind("verified employee privacy metadata", Date.now()),
+    ]);
+  } },
 ];
 
 async function migrate(env: Env): Promise<void> {

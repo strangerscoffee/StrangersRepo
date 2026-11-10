@@ -16,12 +16,10 @@ type Snap = { id: string; day: string; start: string; end: string; site: string;
 interface Emailed { people: Record<string, Snap[]>; open: string[] }
 
 const siteName = (id: string) => ROTA_SITES.find((s) => s.id === id)?.name || id;
-const overlaps = (a: { start: string; end: string }, b: { start: string; end: string }) => a.start < b.end && b.start < a.end;
-
-function mailShift(s: Shift | Snap, ctx: Ctx | null, userId: string | null): MailShift {
-  const others = ctx ? ctx.shifts.filter((o) => o.id !== s.id && o.day === s.day && o.site === s.site && o.userId && o.userId !== userId && overlaps(o, s)) : [];
-  const names = [...new Set(others.map((o) => ctx!.people.get(o.userId!)?.name.split(" ")[0]).filter((n): n is string => !!n))];
-  return { id: s.id, day: s.day, start: s.start, end: s.end, site: s.site, siteName: siteName(s.site), job: s.job || "", hours: s.hours, with: names };
+function mailShift(s: Shift | Snap): MailShift {
+  // The addressee sees their own assignment only. Co-worker names also expose another employee's rota through
+  // HTML, plain text and calendar attachments, even when the interactive app hides that person's shift.
+  return { id: s.id, day: s.day, start: s.start, end: s.end, site: s.site, siteName: siteName(s.site), job: s.job || "", hours: s.hours, with: [] };
 }
 const snap = (s: Shift): Snap => ({ id: s.id, day: s.day, start: s.start, end: s.end, site: s.site, job: s.job || "", hours: s.hours });
 const same = (a: Snap, b: Snap) => a.day === b.day && a.start === b.start && a.end === b.end && a.site === b.site && a.job === b.job;
@@ -53,10 +51,10 @@ export async function planWeek(env: Env, week: string): Promise<WeekPlan> {
     const changes: Change[] = [];
     for (const s of cur) {
       const old = was.find((w) => w.id === s.id);
-      if (!old) changes.push({ kind: "added", shift: mailShift(s, ctx, uid) });
-      else if (!same(old, snap(s))) changes.push({ kind: "moved", shift: mailShift(s, ctx, uid), was: old.day === s.day ? `${old.start}–${old.end}` : `${shortDay(old.day)} ${old.start}–${old.end}` });
+      if (!old) changes.push({ kind: "added", shift: mailShift(s) });
+      else if (!same(old, snap(s))) changes.push({ kind: "moved", shift: mailShift(s), was: old.day === s.day ? `${old.start}–${old.end}` : `${shortDay(old.day)} ${old.start}–${old.end}` });
     }
-    for (const w of was) if (!cur.some((s) => s.id === w.id)) changes.push({ kind: "removed", shift: mailShift(w, null, uid) });
+    for (const w of was) if (!cur.some((s) => s.id === w.id)) changes.push({ kind: "removed", shift: mailShift(w) });
     if (changes.length) people.push({ userId: uid, kind: "changed", shifts: cur, changes: changes.sort((a, b) => (a.shift.day + a.shift.start).localeCompare(b.shift.day + b.shift.start)) });
   }
   // Open shifts still ahead that nobody has been told about, for each person free to take them.
@@ -80,25 +78,25 @@ export async function planWeek(env: Env, week: string): Promise<WeekPlan> {
 }
 
 /** Sends the week's emails (in the background) and records what was sent. Returns how many go out. */
-export async function sendWeek(env: Env, exec: ExecutionContext | undefined, plan: WeekPlan, week: string, base: Base, by: { name: string; email?: string | null }): Promise<number> {
+export async function sendWeek(env: Env, exec: ExecutionContext | undefined, plan: WeekPlan, week: string, base: Base, by: { name: string }): Promise<number> {
   const who = await recipients(env, [...plan.people.map((p) => p.userId), ...plan.open.map((o) => o.userId)]);
   const out: Outgoing[] = [];
   for (const p of plan.people) {
     const r = who.get(p.userId), kind: EmailKind = p.kind;
     if (!wants(r, kind)) continue;
     const person = plan.ctx.people.get(p.userId);
-    const shifts = p.shifts.map((s) => mailShift(s, plan.ctx, p.userId));
+    const shifts = p.shifts.filter((s) => s.userId === p.userId).map(mailShift);
     const links = await linksFor(env, base, p.userId, kind);
     const common = { name: r.name, week, shifts, contractMin: person?.contractMin ?? null, contractMax: person?.contractMax ?? null, links };
     const mail = p.kind === "published" ? publishedEmail(common) : changedEmail({ ...common, changes: p.changes, by: by.name });
-    out.push({ to: r, kind, mail, links, replyTo: by.email, about: p.kind === "published" ? `the week of ${week} published` : `changes to the week of ${week}`,
+    out.push({ to: r, kind, mail, links, about: p.kind === "published" ? `the week of ${week} published` : `changes to the week of ${week}`,
       calendar: shifts.length ? shiftsCalendar(shifts, base.rota) : undefined });
   }
   for (const o of plan.open) {
     const r = who.get(o.userId);
     if (!wants(r, "open")) continue;
     const links = await linksFor(env, base, o.userId, "open");
-    out.push({ to: r, kind: "open", mail: openShiftsEmail({ name: r.name, shifts: o.shifts.map((s) => mailShift(s, plan.ctx, null)), links }), links, replyTo: by.email, about: `open shifts in the week of ${week}` });
+    out.push({ to: r, kind: "open", mail: openShiftsEmail({ name: r.name, shifts: o.shifts.filter((s) => !s.userId).map(mailShift), links }), links, about: `open shifts in the week of ${week}` });
   }
   await env.DB.prepare("UPDATE rota_weeks SET emailed = ? WHERE week = ?").bind(JSON.stringify(plan.snapshot), week).run();
   sendAll(env, exec, out);
@@ -106,40 +104,38 @@ export async function sendWeek(env: Env, exec: ExecutionContext | undefined, pla
 }
 
 /** A cover or pick-up request approved or declined: emails the person who asked and the person taking it. */
-export async function requestDecided(env: Env, exec: ExecutionContext | undefined, base: Base, r: ReqRow, approved: boolean, shift: Shift, by: { name: string; email?: string | null }) {
-  if (!emailReady(env)) return;
+export async function requestDecided(env: Env, exec: ExecutionContext | undefined, base: Base, r: ReqRow, approved: boolean, shift: Shift, by: { name: string }) {
+  if (!emailReady(env) || !shift) return;
   const kind = r.kind === "claim" ? "claim" : "cover";
   const ids = [r.from_user, ...(r.taker && r.taker !== r.from_user ? [r.taker] : [])];
   const who = await recipients(env, ids);
-  const ctx = await loadCtx(env, mondayOf(shift.day)).catch(() => null);
   const asker = who.get(r.from_user), taker = r.taker ? who.get(r.taker) : undefined;
-  const ms = mailShift(shift, ctx, null);
+  // A taker must never inherit the previous employee's amended hours or notes. Decision mail uses only the
+  // planned assignment; the template omits assignment details altogether when a cover taker is declined.
+  const ms = mailShift({ ...shift, hours: shift.plannedHours });
   const out: Outgoing[] = [];
-  const add = async (to: Recipient | undefined, role: "asker" | "taker", other: string) => {
+  const add = async (to: Recipient | undefined, role: "asker" | "taker") => {
     if (!wants(to, "requests")) return;
     const links = await linksFor(env, base, to.id, "requests");
-    out.push({ to, kind: "requests", links, replyTo: by.email, about: `${kind === "claim" ? "pick-up" : "cover"} on ${shift.day} ${approved ? "approved" : "declined"}`,
-      mail: requestEmail({ name: to.name, role, kind, approved, shift: ms, other, by: by.name, links }) });
+    out.push({ to, kind: "requests", links, about: `${kind === "claim" ? "pick-up" : "cover"} ${approved ? "approved" : "declined"}`,
+      mail: requestEmail({ name: to.name, role, kind, approved, shift: ms, by: by.name, links }) });
   };
-  await add(asker, "asker", taker?.name || "Someone");
-  if (kind === "cover" && taker) await add(taker, "taker", asker?.name || "a colleague");
+  await add(asker, "asker");
+  if (kind === "cover" && taker) await add(taker, "taker");
   sendAll(env, exec, out);
 }
 
 /** Time off approved or declined: emails the person who asked. */
-export async function timeOffDecided(env: Env, exec: ExecutionContext | undefined, base: Base, t: { user_id: string; from_day: string; to_day: string }, approved: boolean, by: { name: string; email?: string | null }) {
+export async function timeOffDecided(env: Env, exec: ExecutionContext | undefined, base: Base, t: { user_id: string; from_day: string; to_day: string }, approved: boolean, by: { name: string }) {
   if (!emailReady(env)) return;
   const r = (await recipients(env, [t.user_id])).get(t.user_id);
   if (!wants(r, "requests")) return;
   const links = await linksFor(env, base, r.id, "requests");
-  sendAll(env, exec, [{ to: r, kind: "requests", links, replyTo: by.email, about: `time off from ${t.from_day} ${approved ? "approved" : "declined"}`,
+  sendAll(env, exec, [{ to: r, kind: "requests", links, about: `time off from ${t.from_day} ${approved ? "approved" : "declined"}`,
     mail: timeOffEmail({ name: r.name, from: t.from_day, to: t.to_day, approved, by: by.name, links }) }]);
 }
 
-const mondayOf = (d: string) => { const x = new Date(d + "T12:00:00Z"); x.setUTCDate(x.getUTCDate() - ((x.getUTCDay() + 6) % 7)); return x.toISOString().slice(0, 10); };
-
-/** The person acting, as a sender: their name, and their address for replies. */
-export async function actor(env: Env, user: { id: string; name: string }) {
-  const r = await env.DB.prepare("SELECT email FROM users WHERE id = ?").bind(user.id).first<{ email: string | null }>();
-  return { name: user.name, email: r?.email || null };
+/** The person acting, for attribution only. A private account email is never a shared reply address. */
+export async function actor(_env: Env, user: { id: string; name: string }) {
+  return { name: user.name };
 }

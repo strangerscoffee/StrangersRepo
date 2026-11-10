@@ -5,7 +5,7 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { startServer, SETUP_CODE } from "./harness.mjs";
 
-let srv, ADMIN;
+let srv, ADMIN, ADMIN_ID;
 const cookieOf = (res) => (res.headers.getSetCookie().find((c) => /^sfbb_session=[\w-]/.test(c)) || "").split(";")[0];
 async function db(op, body) {
   const r = await fetch(srv.base + "/api/db/" + op, { method: "POST", headers: { "content-type": "application/json", cookie: ADMIN }, body: JSON.stringify(body) });
@@ -16,6 +16,7 @@ before(async () => {
   srv = await startServer();
   const r = await fetch(srv.base + "/api/auth/setup", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Will Owner", username: "will", password: "admin-pass-1", code: SETUP_CODE }) });
   ADMIN = cookieOf(r);
+  ADMIN_ID = (await (await fetch(srv.base + "/api/auth/me", { headers: { cookie: ADMIN } })).json()).user.id;
 });
 after(() => srv?.stop());
 
@@ -26,7 +27,7 @@ test("good records save, including unknown fields, nulls and readings typed as t
     ["sites/cafe/cleaning/c1", { name: "Floors", freq: "daily", createdAt: 1, log: [], lastAt: null }],
     ["maintenance/m1", { title: "Tap", status: "open", log: [] }],
     ["proveit/p1", { date: "2026-11-05", reading: 75, pass: true }],
-    ["staff/s1", { name: "Alex", topics: { hygiene: { date: "2026-01-01", by: "web:Will Owner" } }, sites: ["cafe"] }],
+    ["staff/s1", { name: "Will Owner", ownerUserId: ADMIN_ID, topics: { hygiene: { date: "2026-01-01", by: "web:Will Owner" } }, sites: ["cafe"] }],
   ]) {
     const r = await db("set", { path, data });
     assert.equal(r.status, 200, `${path}: ${JSON.stringify(r.body)}`);
@@ -39,7 +40,7 @@ test("the wrong kind of value is refused with invalid_data and a message", async
     ["deliveries/d3", { chilled: "warm" }],
     ["sites/cafe/cleaning/c2", { name: "Floors", log: "done" }],
     ["maintenance/m2", { title: ["Tap"] }],
-    ["staff/s2", { name: "Sam", sites: "cafe" }],
+    ["staff/s2", { name: "Will Owner", ownerUserId: ADMIN_ID, sites: "cafe" }],
     ["settings/main", { closedDays: "Sunday" }],
   ]) {
     const r = await db("set", { path, data });

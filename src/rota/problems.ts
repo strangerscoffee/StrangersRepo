@@ -109,7 +109,7 @@ export function computeProblems(ctx: Ctx): Problem[] {
       const clockChange = dow(b.day) === 6 && addDays(b.day, 7).slice(5, 7) !== b.day.slice(5, 7) ? (b.day.slice(5, 7) === "03" ? -60 : b.day.slice(5, 7) === "10" ? 60 : 0) : 0;
       const gap = 24 * 60 - lastToday + mins(effStart(b)) + clockChange;
       if (gap < REST_MINS) {
-        const ends = sorted.find((x) => x.day === a.day && mins(x.end) === lastToday)!;
+        const ends = sorted.find((x) => x.day === a.day && mins(effEnd(x)) === lastToday)!;
         out.push({ kind: "rest", severity: "warn", day: b.day, site: b.site, userId: uid, shiftIds: [ends.id, b.id],
           message: `${nm(uid)} has ${fmtH(gap / 60)} between shifts (${shortDay(a.day)} ${hhmm(lastToday)} to ${shortDay(b.day)} ${b.start})` });
       }

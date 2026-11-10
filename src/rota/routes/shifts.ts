@@ -3,6 +3,7 @@ import { newId } from "../../auth";
 import { ApiError, invalid, json } from "../../http";
 import { getShift, loadCtx, touchWeek } from "../load";
 import { effectsFor } from "../problems";
+import { visibleShift } from "../privacy";
 import { ROTA_SITES, RotaRequest } from "../types";
 import { checkShift } from "../validate";
 import { afterWrite, weekProblems } from "../views";
@@ -25,7 +26,7 @@ export async function shiftRoutes(r: RotaRequest): Promise<Response | null> {
       ).bind(id, v.site, v.day, v.start, v.end, v.breakMins, v.job, v.userId, v.note, nowMs(), user.id),
       touchWeek(env, mondayOf(v.day)),
     ]);
-    return json({ shift: await getShift(env, id), ...(await afterWrite(env, v.day, withProblems)) });
+    return json({ shift: visibleShift(await getShift(env, id), user), ...(await afterWrite(env, v.day, withProblems, user)) });
   }
 
   // Amending a shift on the day: when someone actually started and finished (going home sick, staying late).
@@ -49,7 +50,7 @@ export async function shiftRoutes(r: RotaRequest): Promise<Response | null> {
       await env.DB.prepare("UPDATE rota_shifts SET actual_start = ?, actual_end = ?, actual_break = ?, adjust_note = ?, adjusted_by = ?, adjusted_at = ? WHERE id = ?")
         .bind(b.start, b.end, brk, note, user.id, nowMs(), cur.id).run();
     }
-    return json({ shift: await getShift(env, cur.id), ...(await afterWrite(env, cur.day, withProblems)) });
+    return json({ shift: visibleShift(await getShift(env, cur.id), user), ...(await afterWrite(env, cur.day, withProblems, user)) });
   }
 
   if (seg[0] === "shifts" && seg.length === 2 && (m === "PATCH" || m === "DELETE")) {
@@ -61,18 +62,19 @@ export async function shiftRoutes(r: RotaRequest): Promise<Response | null> {
         env.DB.prepare("UPDATE rota_requests SET status = 'cancelled', decided_by = ?, decided_at = ? WHERE shift_id = ? AND status IN ('open', 'accepted')").bind(user.id, nowMs(), cur.id),
         touchWeek(env, mondayOf(cur.day)),
       ]);
-      return json({ ok: true, ...(await afterWrite(env, cur.day, withProblems)) });
+      return json({ ok: true, ...(await afterWrite(env, cur.day, withProblems, user)) });
     }
     const b = await body();
     // Several managers can plan at once: a change made from an older copy of the shift is refused, not applied.
     if (b.ifUpdatedAt != null && b.ifUpdatedAt !== cur.updatedAt) {
-      throw new ApiError(409, "conflict", "Someone else changed this shift just now. Check how it is now and try again.", { shift: cur });
+      throw new ApiError(409, "conflict", "Someone else changed this shift just now. Check how it is now and try again.", { shift: visibleShift(cur, user) });
     }
     const has = (k: string) => Object.prototype.hasOwnProperty.call(b, k);
     const v = await checkShift(env, {
       site: has("site") ? b.site : cur.site, day: has("day") ? b.day : cur.day, start: has("start") ? b.start : cur.start,
       end: has("end") ? b.end : cur.end, breakMins: has("breakMins") ? b.breakMins : cur.breakMins, job: has("job") ? b.job : cur.job,
-      userId: has("userId") ? b.userId : cur.userId, note: has("note") ? b.note : cur.note,
+      userId: has("userId") ? b.userId : cur.userId,
+      note: has("note") ? b.note : has("userId") && b.userId !== cur.userId ? "" : cur.note,
     });
     const stmts = [
       env.DB.prepare("UPDATE rota_shifts SET site = ?, day = ?, start = ?, end = ?, break_mins = ?, job = ?, user_id = ?, note = ?, updated_at = ?, updated_by = ? WHERE id = ?")
@@ -82,15 +84,15 @@ export async function shiftRoutes(r: RotaRequest): Promise<Response | null> {
     if (mondayOf(v.day) !== mondayOf(cur.day)) stmts.push(touchWeek(env, mondayOf(v.day)));
     // A manager giving the shift to someone settles any pickups or covers still waiting on it.
     // Amended hours belong to the person who worked them.
-    if (v.userId !== cur.userId && cur.adjusted) stmts.push(env.DB.prepare("UPDATE rota_shifts SET actual_start = NULL, actual_end = NULL, actual_break = NULL, adjust_note = '' WHERE id = ?").bind(cur.id));
+    if (v.userId !== cur.userId) stmts.push(env.DB.prepare("UPDATE rota_shifts SET actual_start = NULL, actual_end = NULL, actual_break = NULL, adjust_note = '', adjusted_by = NULL, adjusted_at = NULL WHERE id = ?").bind(cur.id));
     // So does changing when or where it is: a pickup or cover was agreed for the shift as it was.
     if (v.userId !== cur.userId || v.site !== cur.site || v.day !== cur.day || v.start !== cur.start || v.end !== cur.end) {
       stmts.push(env.DB.prepare("UPDATE rota_requests SET status = 'cancelled', decided_by = ?, decided_at = ? WHERE shift_id = ? AND status IN ('open', 'accepted')").bind(user.id, nowMs(), cur.id));
     }
     await env.DB.batch(stmts);
-    const out = await afterWrite(env, v.day, withProblems);
-    if (withProblems && out.week !== mondayOf(cur.day)) (out as any).fromWeek = await weekProblems(env, cur.day);
-    return json({ shift: await getShift(env, cur.id), ...out });
+    const out = await afterWrite(env, v.day, withProblems, user);
+    if (withProblems && out.week !== mondayOf(cur.day)) (out as any).fromWeek = await weekProblems(env, cur.day, user);
+    return json({ shift: visibleShift(await getShift(env, cur.id), user), ...out });
   }
 
   if (route === "suggest" && m === "GET") {

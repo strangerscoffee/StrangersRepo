@@ -2,6 +2,7 @@
 import { invalid, json } from "../../http";
 import { approvers, loadPeople, loadShifts, publishedWeeks, weekRow } from "../load";
 import { visibleRequests } from "../requests";
+import { visibleShift } from "../privacy";
 import { markOvertime } from "../shift";
 import { ReqRow, RotaRequest, SITE_IDS } from "../types";
 import { checkPattern, checkSites } from "../validate";
@@ -10,7 +11,8 @@ import { addDays, dateOf, denied, isDay, londonToday, mondayOf, nowMs, parseJson
 import { emailReady, prefsOf, savePrefs, weeklySitesOf } from "../../email/send";
 
 export async function meRoutes(r: RotaRequest): Promise<Response | null> {
-  const { env, user, route, m, q, mgr, needAdmin, body, links } = r;
+  const { env, user, route, m, q, mgr, admin, needAdmin, body, links } = r;
+  const siteManager = user.role === "manager" || admin;
 
   if (route === "mine" && m === "GET") {
     const from = q("from") || londonToday();
@@ -36,7 +38,7 @@ export async function meRoutes(r: RotaRequest): Promise<Response | null> {
       contractMin: me?.contractMin ?? null, contractMax: me?.contractMax ?? null, weeks: weekTotals,
       shifts: live.filter((s) => s.userId === user.id).map((s) => ({
         ...s, siteName: siteName(s.site),
-        others: live.filter((o) => o.site === s.site && o.day === s.day && o.id !== s.id)
+        others: (admin ? live.filter((o) => o.site === s.site && o.day === s.day && o.id !== s.id) : [])
           .map((o) => ({ name: nameOf(o.userId) || "Open shift", start: o.start, end: o.end, job: o.job, open: !o.userId, actualStart: o.actualStart, actualEnd: o.actualEnd })),
       })),
     });
@@ -51,7 +53,7 @@ export async function meRoutes(r: RotaRequest): Promise<Response | null> {
     const [shifts, people] = await Promise.all([loadShifts(env, day, day), loadPeople(env)]);
     return json({
       site, day, published: true, rotaUrl: links.rota,
-      shifts: shifts.filter((s) => s.site === site).map((s) => ({
+      shifts: shifts.filter((s) => s.site === site).map((s) => visibleShift(s, user)).filter((s): s is NonNullable<typeof s> => s !== null).map((s) => ({
         name: s.userId ? people.get(s.userId)?.name || "Someone" : null, me: s.userId === user.id, open: !s.userId,
         start: s.start, end: s.end, job: s.job, actualStart: s.actualStart, actualEnd: s.actualEnd,
       })),
@@ -63,26 +65,26 @@ export async function meRoutes(r: RotaRequest): Promise<Response | null> {
       env.DB.prepare("SELECT * FROM rota_people WHERE user_id = ?").bind(user.id).first<{ contract_min: number | null; contract_max: number | null; sites: string; pattern: string }>(),
       env.DB.prepare("SELECT id, user_id, from_day, to_day, reason, status, decided_at FROM rota_time_off WHERE user_id = ? AND to_day >= ? ORDER BY from_day")
         .bind(user.id, addDays(londonToday(), -30)).all<any>(),
-      env.DB.prepare("SELECT * FROM rota_requests WHERE (from_user = ? OR to_user = ? OR taker = ? OR (to_user IS NULL AND kind = 'cover' AND status = 'open')) AND created_at > ? ORDER BY created_at DESC LIMIT 100")
+      env.DB.prepare("SELECT * FROM rota_requests WHERE (from_user = ? OR to_user = ? OR taker = ?) AND created_at > ? ORDER BY created_at DESC LIMIT 100")
         .bind(user.id, user.id, user.id, nowMs() - 60 * 864e5).all<ReqRow>(),
       approvers(env),
       env.DB.prepare("SELECT email, email_prefs FROM users WHERE id = ?").bind(user.id).first<{ email: string | null; email_prefs: string }>(),
     ]);
     return json({
-      user: { id: user.id, name: user.name, role: user.role, manager: mgr, admin: user.role === "admin" }, links, today: londonToday(), approvers: appr,
+      user: { id: user.id, name: user.name, role: user.role, manager: mgr, admin, siteManager }, links, today: londonToday(), approvers: appr,
       contractMin: p?.contract_min ?? null, contractMax: p?.contract_max ?? null, contractHours: p?.contract_max ?? null, sites: parseJson(p?.sites, []), pattern: parseJson(p?.pattern, {}),
       timeOff: offs.results.map((t) => ({ id: t.id, from: t.from_day, to: t.to_day, reason: t.reason, status: t.status, decidedAt: t.decided_at })),
-      requests: await visibleRequests(env, reqs.results, mgr),
+      requests: await visibleRequests(env, reqs.results, user),
       // Rota emails: their address (set by an admin) and which emails they get, which they choose themselves.
-      email: { address: mail?.email || null, prefs: prefsOf(mail?.email_prefs), ready: emailReady(env), ...(mgr ? { weeklySites: weeklySitesOf(mail?.email_prefs) } : {}) },
+      email: { address: mail?.email || null, prefs: prefsOf(mail?.email_prefs), ready: emailReady(env), ...(siteManager ? { weeklySites: weeklySitesOf(mail?.email_prefs) } : {}) },
     });
   }
 
-  // {prefs?: {published?, changed?, requests?, open?, weekly?}, weeklySites?: [siteIds]}. The Monday summary is for
-  // managers and admins only.
+  // {prefs?: {published?, changed?, requests?, open?, weekly?}, weeklySites?: [siteIds]}. Managers may choose
+  // their own business-summary preferences; the sender separately restricts employee-private content.
   if (route === "me/emails" && m === "PUT") {
     const b = await body();
-    if (!mgr && (b.weeklySites !== undefined || (b.prefs && Object.hasOwn(b.prefs, "weekly")))) throw denied("The Monday summary is for managers.");
+    if (!siteManager && (b.weeklySites !== undefined || (b.prefs && Object.hasOwn(b.prefs, "weekly")))) throw denied("The Monday summary is for managers and admins.");
     return json(await savePrefs(env, user.id, { prefs: b.prefs ?? {}, weeklySites: b.weeklySites }));
   }
 

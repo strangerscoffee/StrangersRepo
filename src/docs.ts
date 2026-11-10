@@ -5,6 +5,7 @@ import { checkSummary, siteSummary, summaryCollections } from "./summary";
 import { parseCollectionPath, parseWebDocPath, encodeDoc, deepMerge, canonical, resolveOps } from "./paths";
 import { User } from "./auth";
 import { isStaffRecordPath, recordId, requireDelete, requireOwnSignature, requireOwnStaffRecord, requireStaffDayRules, requireWrite } from "./access";
+import { canReadEmployeeDoc, docCollection, employeeCollection, employeeData, employeeReadFilter, protectEmployeeWrite } from "./employeePrivacy";
 
 const BUMP_SEQ = "UPDATE meta SET v = v + 1 WHERE k = 'seq'";
 const CUR_SEQ = "(SELECT v FROM meta WHERE k = 'seq')";
@@ -13,12 +14,24 @@ interface Row {
   data: string | null;
   deleted: number;
   seq: number;
+  employee_privacy_version: number | null;
+}
+
+async function storedDoc(env: Env, path: string) {
+  const row = await env.DB.prepare("SELECT data, deleted, seq, employee_privacy_version FROM docs WHERE path = ?").bind(path).first<Row>();
+  const live = row && !row.deleted && row.data != null;
+  return { exists: !!live, data: live ? JSON.parse(row!.data!) : undefined, ver: row ? row.seq : 0, verified: !!live && row.employee_privacy_version === row.seq };
 }
 
 export async function getDoc(env: Env, path: string) {
-  const row = await env.DB.prepare("SELECT data, deleted, seq FROM docs WHERE path = ?").bind(path).first<Row>();
-  const live = row && !row.deleted && row.data != null;
-  return { exists: !!live, data: live ? JSON.parse(row!.data!) : undefined, ver: row ? row.seq : 0 };
+  const { verified, ...result } = await storedDoc(env, path);
+  return result;
+}
+
+async function getVisibleDoc(env: Env, path: string, user: User) {
+  const { verified, ...result } = await storedDoc(env, path), collection = docCollection(path);
+  return canReadEmployeeDoc(user, collection, result.data, verified)
+    ? { ...result, data: result.data && employeeData(collection, result.data, verified) } : { exists: false, ver: 0 };
 }
 
 /*
@@ -28,7 +41,7 @@ export async function getDoc(env: Env, path: string) {
  * silently overwrites a change it hasn't seen. ifVersion 0 means "only if it doesn't exist yet".
  */
 const SEQ_NOW = "SELECT v FROM meta WHERE k = 'seq'";
-export interface WriteOpts { ifVersion?: number; guardVer?: number }
+export interface WriteOpts { ifVersion?: number; guardVer?: number; employeePrivacyVerified?: boolean }
 
 function conflict(path: string, cur: { exists: boolean; data?: unknown; ver: number }) {
   return new ApiError(409, "conflict", "Someone else changed this on another device just now. It's been updated here: check it and save again.",
@@ -50,10 +63,10 @@ export async function setDoc(env: Env, path: string, data: unknown, by: string, 
   // Without a version: create or replace. With one: replace only that version (0: only create).
   const guard = base === undefined ? "" : base === 0 ? "WHERE docs.deleted = 1 OR docs.data IS NULL" : "WHERE docs.seq = ?";
   const stmt = env.DB.prepare(
-    `INSERT INTO docs (path, collection, doc_id, data, updated_at, source, deleted, seq, updated_by)
-     VALUES (?, ?, ?, ?, ${SQL_NOW_MS}, 'web', 0, ${CUR_SEQ}, ?)
+    `INSERT INTO docs (path, collection, doc_id, data, updated_at, source, deleted, seq, updated_by, employee_privacy_version)
+     VALUES (?, ?, ?, ?, ${SQL_NOW_MS}, 'web', 0, ${CUR_SEQ}, ?, ${o.employeePrivacyVerified ? CUR_SEQ : "NULL"})
      ON CONFLICT (path) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at, source = 'web',
-       deleted = 0, seq = excluded.seq, updated_by = excluded.updated_by ${guard}`,
+       deleted = 0, seq = excluded.seq, updated_by = excluded.updated_by, employee_privacy_version = excluded.employee_privacy_version ${guard}`,
   );
   const [, res, seq] = await env.DB.batch([
     env.DB.prepare(BUMP_SEQ),
@@ -109,7 +122,7 @@ export async function updateDoc(env: Env, path: string, patch: unknown, by: stri
     const [, res, seq] = await env.DB.batch([
       env.DB.prepare(BUMP_SEQ),
       env.DB.prepare(
-        `UPDATE docs SET data = ?, updated_at = ${SQL_NOW_MS}, source = 'web', seq = ${CUR_SEQ}, updated_by = ?
+        `UPDATE docs SET data = ?, updated_at = ${SQL_NOW_MS}, source = 'web', seq = ${CUR_SEQ}, updated_by = ?, employee_privacy_version = ${o.employeePrivacyVerified ? CUR_SEQ : "NULL"}
          WHERE path = ? AND seq = ? AND deleted = 0`,
       ).bind(text, by, p.path, row.seq),
       env.DB.prepare(SEQ_NOW),
@@ -125,7 +138,7 @@ export async function deleteDoc(env: Env, path: string, by: string, o: WriteOpts
   const p = parseWebDocPath(path, "write");
   const base = o.ifVersion ?? o.guardVer;
   const stmt = env.DB.prepare(
-    `UPDATE docs SET data = NULL, deleted = 1, updated_at = ${SQL_NOW_MS}, source = 'web', seq = ${CUR_SEQ}, updated_by = ?
+    `UPDATE docs SET data = NULL, deleted = 1, updated_at = ${SQL_NOW_MS}, source = 'web', seq = ${CUR_SEQ}, updated_by = ?, employee_privacy_version = NULL
      WHERE path = ? AND deleted = 0${base ? " AND seq = ?" : ""}`,
   );
   const [, res, seq] = await env.DB.batch([env.DB.prepare(BUMP_SEQ), base ? stmt.bind(by, p.path, base) : stmt.bind(by, p.path), env.DB.prepare(SEQ_NOW)]);
@@ -180,24 +193,26 @@ type Doc = { id: string; data: Record<string, unknown>; ver?: number };
  * SQLite's own (missing/null first, then numbers, then text; as the page has always had it), with the id breaking ties.
  * The fields pages sort by (date, week, at) have indexes (migration 8), so this reads only the rows it returns.
  */
-function queryStatement(env: Env, collection: string, q: QuerySpec): D1PreparedStatement {
+function queryStatement(env: Env, collection: string, q: QuerySpec, user?: User): D1PreparedStatement {
   const limit = Math.min(q.limit ?? MAX_LIMIT, MAX_LIMIT);
+  const scope = employeeReadFilter(user, collection);
   if (!q.orderBy) {
-    return env.DB.prepare("SELECT doc_id, data, seq FROM docs WHERE collection = ? AND deleted = 0 LIMIT ?").bind(collection, limit);
+    return env.DB.prepare(`SELECT doc_id, data, seq, employee_privacy_version FROM docs WHERE collection = ? AND deleted = 0${scope.sql} LIMIT ?`).bind(collection, ...scope.values, limit);
   }
   const dir = q.dir === "desc" ? "DESC" : "ASC";
   // orderBy has been checked against FIELD_RE (letters, digits, _), so it is safe in the SQL; written out like this
   // (not bound) so the query matches the expression indexes.
   return env.DB.prepare(
-    `SELECT doc_id, data, seq FROM docs WHERE collection = ? AND deleted = 0
+    `SELECT doc_id, data, seq, employee_privacy_version FROM docs WHERE collection = ? AND deleted = 0${scope.sql}
      ORDER BY json_extract(data, '$.${q.orderBy}') ${dir}, doc_id ${dir} LIMIT ?`,
-  ).bind(collection, limit);
+  ).bind(collection, ...scope.values, limit);
 }
-const toDocs = (rows: { doc_id: string; data: string | null; seq: number }[]): Doc[] => rows.map((r) => ({ id: r.doc_id, data: JSON.parse(r.data as string), ver: r.seq }));
+type DocRow = { doc_id: string; data: string | null; seq: number; employee_privacy_version: number | null };
+const toDocs = (rows: DocRow[], collection: string): Doc[] => rows.map((r) => ({ id: r.doc_id, data: employeeData(collection, JSON.parse(r.data as string), r.employee_privacy_version === r.seq), ver: r.seq }));
 
-export async function queryCollection(env: Env, q: QuerySpec) {
+export async function queryCollection(env: Env, q: QuerySpec, user?: User) {
   const spec = checkQuery(q);
-  return { docs: toDocs((await queryStatement(env, spec.path, spec).all<{ doc_id: string; data: string; seq: number }>()).results) };
+  return { docs: toDocs((await queryStatement(env, spec.path, spec, user).all<DocRow>()).results, spec.path) };
 }
 
 interface PollQuery extends QuerySpec {
@@ -216,13 +231,13 @@ const MAX_POLL_QUERIES = 200;
  * The client sends the global seq it last saw and each query's version (the highest seq among its rows,
  * tombstones included, so deletes count as changes); only results that changed are sent back.
  */
-export async function poll(env: Env, body: { since?: number; queries?: PollQuery[] }) {
+export async function poll(env: Env, body: { since?: number; queries?: PollQuery[] }, user?: User) {
   const raw = Array.isArray(body.queries) ? body.queries : [];
   if (raw.length > MAX_POLL_QUERIES) throw invalid("Too many queries in one poll.");
   const seqRow = await env.DB.prepare("SELECT v FROM meta WHERE k = 'seq'").first<{ v: number }>();
   const seq = seqRow?.v ?? 0;
   const results: Record<string, unknown> = {};
-  if (!raw.length || (body.since === seq && raw.every((q) => typeof q.ver === "number"))) return { seq, results };
+  if (!raw.length) return { seq, results };
 
   const queries = raw.map((q) => ({
     key: String(q.key),
@@ -231,7 +246,10 @@ export async function poll(env: Env, body: { since?: number; queries?: PollQuery
     spec: q.kind === "doc" || q.kind === "summary" ? null : checkQuery(q),
     sum: q.kind === "summary" ? checkSummary(q as { from?: unknown; to?: unknown }) : null,
     path: q.kind === "doc" ? parseWebDocPath(q.path, "read").path : q.kind === "summary" ? "" : parseCollectionPath(q.path),
+    scoped: !!user && user.role !== "admin" && employeeCollection(q.kind === "doc" ? docCollection(String(q.path)) : String(q.path)),
   }));
+  // Private snapshots are refreshed even at the same version, purging copies cached under older permissions.
+  if (body.since === seq && queries.every(q => typeof q.ver === "number" && !q.scoped)) return { seq, results };
 
   // One statement; each subquery is a single lookup on the (collection, seq) index or the primary key.
   const verRows = await env.DB.prepare(
@@ -244,7 +262,7 @@ export async function poll(env: Env, body: { since?: number; queries?: PollQuery
      FROM json_each(?) j`,
   ).bind(JSON.stringify(queries.map((q) => ({ k: q.kind, p: q.kind === "sum" ? summaryCollections() : q.path })))).all<{ i: number; v: number }>();
   const vers = new Map(verRows.results.map((r) => [r.i, r.v]));
-  const changed = queries.map((q, i) => ({ q, v: vers.get(i) ?? 0 })).filter(({ q, v }) => q.ver !== v);
+  const changed = queries.map((q, i) => ({ q, v: vers.get(i) ?? 0 })).filter(({ q, v }) => q.scoped || q.ver !== v);
   if (!changed.length) return { seq, results };
 
   // Every changed query in one round trip, and the changed single documents together. A collection the device
@@ -252,29 +270,34 @@ export async function poll(env: Env, body: { since?: number; queries?: PollQuery
   // as {id, deleted}: one reading at a site is a few hundred bytes for each device, not that site's whole history.
   // Otherwise (or when a delta wouldn't be safe: too many changes, or a deletion in a limited list, which leaves a
   // gap only the full list can fill) the whole query, sorted and limited by the database.
-  type Row = { doc_id: string; data: string | null; seq: number; deleted: number };
+  type Row = DocRow & { deleted: number };
   const colQs = changed.filter(({ q }) => q.kind === "col");
-  const wantsDelta = (q: (typeof queries)[number]) => raw[queries.indexOf(q)]?.delta === true && typeof q.ver === "number" && q.ver > 0;
+  const wantsDelta = (q: (typeof queries)[number]) => !q.scoped && raw[queries.indexOf(q)]?.delta === true && typeof q.ver === "number" && q.ver > 0;
   const paths = [...new Set(changed.filter(({ q }) => q.kind === "doc").map(({ q }) => q.path))];
   const stmts = colQs.map(({ q }) => wantsDelta(q)
-    ? env.DB.prepare("SELECT doc_id, data, seq, deleted FROM docs WHERE collection = ? AND seq > ? ORDER BY seq LIMIT ?").bind(q.path, q.ver, MAX_DELTA + 1)
-    : queryStatement(env, q.path, q.spec!));
-  if (paths.length) stmts.push(env.DB.prepare("SELECT path, data FROM docs WHERE deleted = 0 AND path IN (SELECT value FROM json_each(?))").bind(JSON.stringify(paths)));
+    ? env.DB.prepare("SELECT doc_id, data, seq, deleted, employee_privacy_version FROM docs WHERE collection = ? AND seq > ? ORDER BY seq LIMIT ?").bind(q.path, q.ver, MAX_DELTA + 1)
+    : queryStatement(env, q.path, q.spec!, user));
+  if (paths.length) stmts.push(env.DB.prepare("SELECT path, data, seq, employee_privacy_version FROM docs WHERE deleted = 0 AND path IN (SELECT value FROM json_each(?))").bind(JSON.stringify(paths)));
   const out = stmts.length ? await env.DB.batch(stmts) : [];
-  const byPath = new Map<string, Record<string, unknown>>();
-  if (paths.length) for (const r of out[out.length - 1].results as { path: string; data: string }[]) byPath.set(r.path, JSON.parse(r.data));
+  const byPath = new Map<string, { data: Record<string, unknown>; verified: boolean }>();
+  if (paths.length) for (const r of out[out.length - 1].results as { path: string; data: string; seq: number; employee_privacy_version: number | null }[])
+    byPath.set(r.path, { data: JSON.parse(r.data), verified: r.employee_privacy_version === r.seq });
   const again: { q: (typeof queries)[number]; v: number }[] = [];
   colQs.forEach(({ q, v }, i) => {
     const rows = out[i].results as Row[];
-    if (!wantsDelta(q)) { results[q.key] = { ver: v, docs: toDocs(rows) }; return; }
+    if (!wantsDelta(q)) { results[q.key] = { ver: v, docs: toDocs(rows, q.path) }; return; }
     if (rows.length > MAX_DELTA || (q.spec!.limit != null && rows.some((r) => r.deleted))) { again.push({ q, v }); return; }
-    results[q.key] = { ver: v, delta: rows.map((r) => (r.deleted ? { id: r.doc_id, ver: r.seq, deleted: true } : { id: r.doc_id, ver: r.seq, data: JSON.parse(r.data!) })) };
+    results[q.key] = { ver: v, delta: rows.map((r) => (r.deleted ? { id: r.doc_id, ver: r.seq, deleted: true } : { id: r.doc_id, ver: r.seq, data: employeeData(q.path, JSON.parse(r.data!), r.employee_privacy_version === r.seq) })) };
   });
   if (again.length) {
-    const full = await env.DB.batch(again.map(({ q }) => queryStatement(env, q.path, q.spec!)));
-    again.forEach(({ q, v }, i) => { results[q.key] = { ver: v, docs: toDocs(full[i].results as Row[]) }; });
+    const full = await env.DB.batch(again.map(({ q }) => queryStatement(env, q.path, q.spec!, user)));
+    again.forEach(({ q, v }, i) => { results[q.key] = { ver: v, docs: toDocs(full[i].results as Row[], q.path) }; });
   }
-  for (const { q, v } of changed) if (q.kind === "doc") results[q.key] = { ver: v, exists: byPath.has(q.path), data: byPath.get(q.path), docVer: v };
+  for (const { q, v } of changed) if (q.kind === "doc") {
+    const record = byPath.get(q.path), collection = docCollection(q.path);
+    const visible = !user || canReadEmployeeDoc(user, collection, record?.data, record?.verified);
+    results[q.key] = visible ? { ver: v, exists: !!record, data: record && employeeData(collection, record.data, record.verified), docVer: v } : { ver: 0, exists: false, docVer: 0 };
+  }
   for (const { q, v } of changed) if (q.kind === "sum") results[q.key] = { ver: v, summary: await siteSummary(env, q.sum!) };
   return { seq, results };
 }
@@ -303,8 +326,12 @@ const MAX_BODY = 300 * 1024;
 /** Write check: the role rules in access.ts, plus staff writing their own Staff training record. */
 async function requireWriteDoc(env: Env, user: User, op: "set" | "update" | "delete", path: unknown, data: any): Promise<number | undefined> {
   if (op === "delete") requireDelete(user, path);
-  const cur = user.role === "staff" ? await getDoc(env, parseWebDocPath(path, "write").path) : null;
-  if (cur && isStaffRecordPath(path)) requireOwnStaffRecord(user, op, cur.data?.name, cur.exists, data?.name);
+  const parsed = parseWebDocPath(path, "write"), privateRecord = employeeCollection(parsed.collection);
+  const cur = user.role === "staff" || privateRecord ? await storedDoc(env, parsed.path) : null;
+  if (user.role !== "admin" && isStaffRecordPath(path) && parsed.id.startsWith("employee-") && parsed.id !== "employee-" + user.id && !cur?.exists)
+    throw new ApiError(403, "permission_denied", "Create a training record for your own employee account.");
+  if (privateRecord) await protectEmployeeWrite(env, user, parsed.collection, op, cur?.data, data, cur?.verified);
+  if (user.role !== "admin" && cur && isStaffRecordPath(path)) requireOwnStaffRecord(user, op, cur.data, data);
   else requireWrite(user, path);
   if (cur && op !== "delete") {
     const p = parseWebDocPath(path, "write");
@@ -322,33 +349,41 @@ export async function handleDb(req: Request, env: Env, op: string, user: User): 
   const body = await readJson<any>(req, op === "poll" ? 64 * 1024 : MAX_BODY);
   switch (op) {
     case "get":
-      return json(await getDoc(env, parseWebDocPath(body.path, "read").path));
+      return json(await getVisibleDoc(env, parseWebDocPath(body.path, "read").path, user));
     case "query":
-      return json(await queryCollection(env, body));
+      return json(await queryCollection(env, body, user));
     case "poll":
-      return json(await poll(env, body));
+      return json(await poll(env, body, user));
     case "profiles":
       return json(await profiles(env, body.ids));
     case "set":
     case "update":
     case "delete": {
       const o: WriteOpts = { ifVersion: checkVersion(body.ifVersion) };
-      const data = op === "set" ? body.data : op === "update" ? body.patch : undefined;
-      if (data) clampFuture(data, Date.now());
+      const originalData = op === "set" ? body.data : op === "update" ? body.patch : undefined;
+      if (originalData) clampFuture(originalData, Date.now());
       // A staff member's write is checked against the document as it is; if it changes before the write lands,
       // it's checked again against the new one (so a sign-off made meanwhile can't be undone by a stale check).
       for (let attempt = 0; ; attempt++) {
+        // Preserved metadata is a default, never explicit admin intent on a later retry.
+        const data = originalData === undefined ? undefined : JSON.parse(JSON.stringify(originalData));
         const checked = await requireWriteDoc(env, user, op, body.path, data);
         // After the permission check (so staff still get permission_denied). Day and week pages merge on set, so
         // their set is checked like an update (only what it sends).
         if (attempt === 0 && op !== "delete") checkShape(parseWebDocPath(body.path, "write").collection, data, op === "set" && !isPagePath(body.path) ? "whole" : "patch");
         try {
-          const g = { ...o, guardVer: checked };
+          const g = { ...o, guardVer: checked, employeePrivacyVerified: employeeCollection(docCollection(body.path)) };
           const ver = op === "set" ? await (isPagePath(body.path) ? setOrMergeDoc : setDoc)(env, body.path, data, recordId(user), g)
             : op === "update" ? await updateDoc(env, body.path, data, recordId(user), g)
             : await deleteDoc(env, body.path, recordId(user), g);
           return json({ ok: true, ver });
         } catch (e) {
+          if (e instanceof ApiError && e.code === "conflict" && employeeCollection(docCollection(body.path))) {
+            // Ownership can change after the initial check. Never leak the new owner's data in a CAS error.
+            const latest = await getVisibleDoc(env, body.path, user);
+            if (!latest.exists && user.role !== "admin") throw new ApiError(403, "permission_denied", "This private record is no longer available to this account.");
+            throw conflict(body.path, latest);
+          }
           if (!(e instanceof Recheck) || attempt >= 5) {
             if (e instanceof Recheck) throw new ApiError(409, "aborted", "The document is being changed by someone else. Try again.");
             throw e;

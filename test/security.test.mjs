@@ -55,17 +55,20 @@ test("security: staff can't use manager or admin features, managers can't use ad
     assert.equal((await res.json()).code, "permission_denied", what);
   };
 
-  // Diary: manager-only collections at every site, and the shared setup, for every kind of write.
+  // Diary: manager-only business collections at every site. Admins explicitly classify contacts and
+  // onboarding as shared business information before a manager may edit the existing document.
   const prefixes = ["", "sites/cafe/", "sites/asg/", "sites/factory/"];
   for (const pre of prefixes) for (const col of ["settings", "plans", "inspections", "suppliers", "contacts", "onboarding"]) {
     const path = `${pre}${col}/sec1`;
-    assert.equal((await db("set", { path, data: { name: "seed" } })).status, 200, "admin seeds " + path);
+    const classified = col === "contacts" || col === "onboarding";
+    assert.equal((await db("set", { path, data: { name: "seed", ...(classified ? { visibility: "shared-business", ownerUserId: null } : {}) } })).status, 200, "admin seeds " + path);
     for (const [op, body] of [["set", { path, data: { a: 1 } }], ["update", { path, patch: { a: 1 } }], ["delete", { path }]]) {
       const r = await db(op, body, STAFF);
       assert.equal(r.status, 403, `staff ${op} ${path}`);
       assert.equal(r.body.code, "permission_denied");
       assert.equal((await db(op, body, MANAGER)).status, 200, `manager ${op} ${path}`);
     }
+    if (classified) assert.equal((await db("set", { path, data: { name: "new", visibility: "shared-business" } }, MANAGER)).status, 403, "managers cannot recreate or classify a shared business record");
   }
   for (const [op, body] of [["set", { path: "config/shared", data: { a: 1 } }], ["update", { path: "config/shared", patch: { a: 1 } }], ["delete", { path: "config/shared" }]])
     assert.equal((await db(op, body, STAFF)).body.code, "permission_denied", "staff " + op + " config/shared");
@@ -143,14 +146,15 @@ test("security: staff can't use manager or admin features, managers can't use ad
   }
   assert.equal((await admin("GET", "users")).body.users.find((u) => u.username === "alex").role, "staff", "still staff");
 
-  // Rota: planning, publishing, settings, hours and suggestions are for managers.
-  for (const [method, route, body] of [
+  // Rota: other employees' planning, private hours, contracts and actuals are admin-only.
+  for (const cookie of [STAFF, MANAGER]) for (const [method, route, body] of [
     ["POST", "shifts", { site: "cafe", day: "2026-12-01", start: "09:00", end: "17:00" }], ["PATCH", "shifts/x", { start: "08:00" }],
     ["DELETE", "shifts/x"], ["PUT", "shifts/x/actual", { start: "09:00", end: "12:00" }], ["POST", "week/copy", { from: "2026-11-23", to: "2026-11-30" }],
     ["POST", "week/publish", { week: "2026-11-30" }], ["POST", "week/publish", { week: "2026-11-30", email: true }], ["GET", "week/emails?week=2026-11-30"], ["GET", "suggest?shift=x"], ["GET", "hours?start=2026-11-30"],
-    ["PUT", `people/${someone.id}`, { contractMax: 60 }], ["PUT", "sites/cafe", { minPeople: 0 }], ["PUT", "me/availability", { sites: ["cafe"] }],
+    ["GET", "hours?start=2026-11-30&format=csv"], ["PUT", `people/${someone.id}`, {}], ["PUT", `people/${someone.id}`, { contractMax: 60 }], ["PUT", "me/availability", { sites: ["cafe"] }],
     ["POST", "time-off", { userId: other.id, from: "2026-12-01", to: "2026-12-02", reason: "x" }],
-  ]) await denied(await send(method, "/api/rota/" + route, STAFF, body), `staff ${method} /api/rota/${route}`);
+  ]) await denied(await send(method, "/api/rota/" + route, cookie, body), `${cookie === STAFF ? "staff" : "manager"} ${method} /api/rota/${route}`);
+  await denied(await send("PUT", "/api/rota/sites/cafe", STAFF, { minPeople: 0 }), "staff cannot change business site settings");
 
   // Stored files (allergen PDFs from before the matrix was generated) are added and removed by managers.
   await denied(await send("DELETE", "/api/assets/0123456789abcdef0123456789abcdef", STAFF), "staff DELETE /api/assets/<id>");

@@ -19,7 +19,11 @@
     for (let wait = 1000; ; wait = Math.min(wait * 2, 15000)) {
       let me = null;
       try { me = await fetch("/api/auth/me").then((r) => r.json()); } catch (e) { /* no answer: try again */ }
-      if (me) return me.user ? me : (goSignIn(), new Promise(() => {}));
+      if (me) {
+        if (!me.user) { goSignIn(); return new Promise(() => {}); }
+        if (!(await SC.bindSession(me.user, { clear: clearIdentityData }))) return new Promise(() => {});
+        return me;
+      }
       await new Promise((r) => setTimeout(r, wait));
     }
   })();
@@ -37,8 +41,21 @@
   /* ---------- API calls ---------- */
 
   const OFFLINE = "unavailable";
+  let identityInvalid = false;
+  function clearIdentityData() {
+    identityInvalid = true;
+    for (const subscription of subs.values()) { subscription.raw = undefined; subscription.last = undefined; }
+    subs.clear(); vers.clear(); clearTimeout(timer); clearTimeout(retryTimer);
+    // Keep the owner's unsent queue in its existing key; never replay it as the replacement account.
+  }
 
   async function call(url, init) {
+    const me = await mePromise;
+    if (identityInvalid || !(await SC.ensureSession())) throw { code: OFFLINE, message: "Verify your sign-in before continuing." };
+    init = Object.assign({}, init);
+    const headers = new Headers(init.headers || {});
+    headers.set("x-expected-user-id", me.user.id); headers.set("x-expected-user-role", me.user.role);
+    init.headers = headers;
     let res;
     try {
       res = await fetch(url, init);
@@ -47,6 +64,7 @@
     }
     let body = null;
     try { body = await res.json(); } catch (e) { /* not JSON */ }
+    if (body && body.code === "session_changed") throw { code: "session_changed", message: body.message };
     if (res.status === 401) goSignIn();
     // A gateway error means the request didn't get through: treat it like no connection.
     if (res.status === 502 || res.status === 503 || res.status === 504) throw { code: OFFLINE, message: "The diary didn't respond. Try again." };
@@ -96,6 +114,7 @@
   let flushing = null;
 
   mePromise.then((me) => {
+    if (identityInvalid) return;
     queueKey = "sfbb.queue." + me.user.id;
     try { queue = JSON.parse(localStorage.getItem(queueKey) || "[]"); } catch (e) { queue = []; }
     if (queue.length) { announce(); flush(); }
@@ -131,7 +150,7 @@
   function flush() {
     if (flushing) return flushing;
     flushing = (async () => {
-      while (queue.length) {
+      while (queue.length && !identityInvalid) {
         const w = queue[0];
         const ifVersion = w.after ? vers.get(w.path) : w.ifVersion;
         try {
@@ -149,7 +168,7 @@
           if (e && e.code === OFFLINE) { setOffline(true); break; }
           // Signed out, busy or a fault on the server: keep everything and try again later (after signing in,
           // for a session that ended). Only a change that's refused for good is dropped.
-          if (e && (e.code === "unauthenticated" || e.code === "rate_limited" || e.code === "internal" || e.code === "quota_exceeded" || e.retry)) {
+          if (e && (e.code === "unauthenticated" || e.code === "session_changed" || e.code === "session_unverified" || e.code === "rate_limited" || e.code === "internal" || e.code === "quota_exceeded" || e.retry)) {
             retryLater();
             break;
           }
@@ -157,6 +176,7 @@
           const msg = e && e.code === "conflict" ? "It was changed on another device while this one was offline, so this device's change wasn't saved. Check it and do it again." : e && e.message;
           window.dispatchEvent(new CustomEvent("diary:dropped", { detail: { path: w.path, message: msg, conflict: e && e.code === "conflict" } }));
         }
+        if (identityInvalid) return;
         queue.shift();
         saveQueue();
         announce();
@@ -172,8 +192,23 @@
 
   /** A write: straight to the server, or into the queue when there's no connection (or a queue already). */
   async function write(op, body, opts) {
+    await mePromise;
+    if (identityInvalid) throw { code: "session_changed", message: "The signed-in account changed. Reload to continue." };
     const ifVersion = baseFor(op, body, opts);
     if (ifVersion !== undefined) body = Object.assign({}, body, { ifVersion });
+    // Personal drafts never enter shared-profile localStorage or optimistic overlays. Preserve already queued
+    // legacy work, but require an authenticated online reply for every new private-collection write.
+    if (/(^|\/)(staff|contacts|onboarding)\/[^/]+$/.test(body.path)) {
+      if (!(await SC.ensureSession({ force: true }))) throw { code: OFFLINE, message: "Private records need a connection to save. Your draft is still here; reconnect and try again." };
+      if (queue.some((entry) => entry.path === body.path)) {
+        await flush();
+        if (queue.some((entry) => entry.path === body.path)) throw { code: OFFLINE, message: "An earlier change to this record is waiting. Reconnect and save it before retrying this draft." };
+      }
+      try { await send(op, body); }
+      catch (error) { refresh(); throw error?.code === OFFLINE ? { code: OFFLINE, message: "The private save wasn't confirmed. Your draft is still here; reconnect and try again." } : error; }
+      if (!queue.length) setOffline(false);
+      refresh(); return;
+    }
     if (!queue.length) {
       try {
         await send(op, body);
@@ -218,7 +253,7 @@
   const idOf = (path) => path.slice(path.lastIndexOf("/") + 1);
 
   function overlay(spec, res) {
-    if (!queue.length || !res || spec.kind === "summary") return res;
+    if (identityInvalid || !queue.length || !res || spec.kind === "summary") return res;
     if (spec.kind === "doc") {
       let exists = res.exists, data = res.data;
       for (const w of queue) {
@@ -319,6 +354,7 @@
   }
 
   async function pollNow() {
+    if (identityInvalid) return;
     if (inflight) { again = true; return; }
     if (!subs.size) return;
     inflight = true;
@@ -464,7 +500,7 @@
   const user = {
     async me() {
       const { user: u, quickSwitch } = await mePromise;
-      return { id: u.recordId, name: u.name, avatarUrl: "", role: u.role, quickPin: !!u.quickPin, quickSwitch: !!quickSwitch, notifSeen: u.notifSeen || 0 };
+      return { id: u.recordId, userId: u.id, name: u.name, avatarUrl: "", role: u.role, quickPin: !!u.quickPin, quickSwitch: !!quickSwitch, notifSeen: u.notifSeen || 0 };
     },
     async can(perm) { return perm === "data.write"; }, // every role records entries; section limits are separate
     async profiles(ids) {

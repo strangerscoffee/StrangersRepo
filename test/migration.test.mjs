@@ -8,12 +8,23 @@ import { startServer } from "./harness.mjs";
 const salt = "0123456789abcdef0123456789abcdef";
 const pinHash = "p3000:" + pbkdf2Sync("1234", salt, 3000, 32, "sha256").toString("hex");
 const OLD = `
+CREATE TABLE docs (path TEXT PRIMARY KEY, collection TEXT NOT NULL, doc_id TEXT NOT NULL, data TEXT,
+  updated_at INTEGER NOT NULL, source TEXT NOT NULL, deleted INTEGER NOT NULL DEFAULT 0, claude_data TEXT,
+  seq INTEGER NOT NULL DEFAULT 0, updated_by TEXT);
+CREATE TABLE meta (k TEXT PRIMARY KEY, v INTEGER NOT NULL);
+INSERT INTO meta VALUES ('seq',8);
+INSERT INTO docs (path,collection,doc_id,data,updated_at,source,seq) VALUES
+  ('staff/legacy-claimed','staff','legacy-claimed','{"name":"Sam Patel","ownerUserId":"aaaaaaaaaaaaaaaaaaaaaaaa","notes":"retained historical training"}',1,'web',7),
+  ('contacts/legacy-shared','contacts','legacy-shared','{"name":"Legacy personal contact","visibility":"shared-business","phone":"07000 000000"}',1,'web',8);
 CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT NOT NULL, name_key TEXT NOT NULL UNIQUE, role TEXT NOT NULL,
   pin_hash TEXT NOT NULL, pin_salt TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, session_ver INTEGER NOT NULL DEFAULT 1,
   failed INTEGER NOT NULL DEFAULT 0, locked_until INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, created_by TEXT,
   updated_at INTEGER NOT NULL, last_login_at INTEGER);
 INSERT INTO users (id, name, name_key, role, pin_hash, pin_salt, created_at, updated_at)
   VALUES ('aaaaaaaaaaaaaaaaaaaaaaaa', 'Sam Patel', 'sam patel', 'admin', '${pinHash}', '${salt}', 1, 1);
+INSERT INTO users (id, name, name_key, role, pin_hash, pin_salt, created_at, updated_at, active) VALUES
+  ('bbbbbbbbbbbbbbbbbbbbbbbb','Historical Staff','historical staff','staff','${pinHash}','${salt}',1,1,1),
+  ('cccccccccccccccccccccccc','Historical Manager','historical manager','manager','${pinHash}','${salt}',1,1,0);
 CREATE TABLE rota_shifts (id TEXT PRIMARY KEY, site TEXT NOT NULL, day TEXT NOT NULL, start TEXT NOT NULL, end TEXT NOT NULL,
   break_mins INTEGER NOT NULL DEFAULT 0, job TEXT NOT NULL DEFAULT '', user_id TEXT, note TEXT NOT NULL DEFAULT '',
   updated_at INTEGER NOT NULL, updated_by TEXT NOT NULL);
@@ -34,6 +45,7 @@ test("PIN accounts get a username from their name and choose a password at next 
   assert.equal(first.status, 200);
   assert.deepEqual(await first.json(), { mustChange: true, name: "Sam Patel" });
   assert.equal(first.headers.get("set-cookie"), null, "not signed in until a password is chosen");
+  assert.ok(srv.sql("SELECT session_ver,pin_hash FROM users").every(row => row.session_ver === 2 && row.pin_hash === pinHash), "privacy cutover invalidates every old session/device, including admin and inactive accounts, without changing credentials");
 
   const change = await post("/api/auth/change", { username: "sam.patel", password: "1234", newPassword: "a-real-password" });
   assert.equal(change.status, 200);
@@ -61,7 +73,13 @@ test("rota tables from before day-by-day hours, amended shifts and contract rang
 test("migrations run once each, in order, and are recorded; the list indexes are used", async () => {
   await post("/api/auth/login", { username: "nobody", password: "x" }); // any API call sets the schema up
   const done = srv.sql("SELECT id, name FROM schema_migrations ORDER BY id");
-  assert.deepEqual(done.map((r) => r.id), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
+  assert.deepEqual(done.map((r) => r.id), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
+  const legacy = srv.sql("SELECT path,data,employee_privacy_version FROM docs ORDER BY path");
+  assert.equal(legacy.length, 2);
+  assert.ok(legacy.every(row => row.employee_privacy_version === null), "migration never trusts historical owner/shared JSON claims");
+  assert.equal(JSON.parse(legacy.find(row => row.path === "staff/legacy-claimed").data).notes, "retained historical training", "the privacy cutover retains the original private content");
+  assert.equal(srv.sql("SELECT v FROM meta WHERE k='seq'")[0].v, 9, "privacy cutover moves the change counter once so older live pages fetch filtered snapshots");
+  assert.deepEqual(srv.sql("SELECT session_ver FROM users ORDER BY id").map(row => row.session_ver), [3, 2, 2], "cutover runs once; only the admin's subsequent password change increments their version again");
   assert.deepEqual(srv.sql("SELECT kind, id FROM wholesale_preview"), [], "the new preview table starts empty");
   assert.deepEqual(srv.sql("SELECT seq FROM wholesale_invoices"), [], "invoice migration does not issue documents");
   assert.deepEqual(srv.sql("SELECT id FROM wholesale_invoice_settings"), [], "seller and VAT details are not invented by migration");

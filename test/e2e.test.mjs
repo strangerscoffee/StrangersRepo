@@ -41,7 +41,7 @@ test("staff journey on the real page", async () => {
 
   // Signed out, the diary sends you to sign-in. With no accounts yet, that's the first-admin setup.
   await page.goto(srv.base + "/");
-  await page.waitForURL(/\/signin$/);
+  await page.waitForURL(/\/signin(?:\?[^#]*)?$/);
   await page.locator("#setup").waitFor();
   await page.fill("#sname", "Sam Patel");
   assert.equal(await page.inputValue("#suser"), "sam.patel", "username suggested from the name");
@@ -462,7 +462,7 @@ test("staff journey on the real page", async () => {
 
   // Sign out, then sign in as the new member of staff: username + temporary password, then their own.
   await accountMenu(page, "Sign out");
-  await page.waitForURL(/\/signin$/);
+  await page.waitForURL(/\/signin(?:\?[^#]*)?$/);
   await page.fill("#username", "alex.brown");
   await page.fill("#password", "wrong-password");
   await page.click("#signin button[type=submit]");
@@ -585,7 +585,7 @@ test("staff journey on the real page", async () => {
   assert.match(inDl.suggestedFilename(), /^EHO inspection records - Strangers Roastery - 2026-10-01 to 2026-10-01\.pdf$/);
   const inPdf = (await fs.readFile(await inDl.path())).toString("latin1");
   assert.ok(inPdf.startsWith("%PDF-1.4"));
-  for (const t of ["Food safety records", "Daily diary", "Corrective actions", "Staff training", "Allergen matrix"])
+  for (const t of ["Food safety records", "Daily diary", "Corrective actions", "Your training", "Allergen matrix"])
     assert.ok(inPdf.includes(Buffer.from(t, "latin1").toString("hex")), "PDF has " + t);
   await page.locator("#tabbar .tab", { hasText: "More" }).click();
   assert.deepEqual(await page.locator("#moreHub .lrow b").allTextContents(), ["Last 4 weeks", "EHO inspection mode", "Last EHO inspection report", "HACCP & risk", "Suppliers", "Contacts", "Onboarding", "Rota", "Switch person", "Set a quick PIN", "Change password", "Sign out"]);
@@ -606,8 +606,7 @@ test("staff journey on the real page", async () => {
   assert.equal(await page.locator("#tTopicsPanel").isHidden(), true);
   assert.equal(await page.locator("#tImport").isHidden(), true);
   // Staff training is a record staff fill in and sign themselves, choosing the sites they work at.
-  await page.locator("#tList .xrow", { hasText: "Jo Smith" }).locator(".xmain").click();
-  assert.equal(await page.locator("#tList .xrow", { hasText: "Jo Smith" }).locator(".btn", { hasText: /Edit record|Trained today/ }).count(), 0, "can't change someone else's record");
+  assert.equal(await page.locator("#tList .xrow", { hasText: "Jo Smith" }).count(), 0, "another employee's private training is absent, including read-only details");
   await page.locator("#tMine").waitFor();
   await page.click("#tMineGo");
   assert.equal(await page.inputValue("#tName"), "Alex Brown");
@@ -654,7 +653,7 @@ test("staff journey on the real page", async () => {
 
   // Signing out leaves a plain sign-in form; the new password works.
   await accountMenu(page, "Sign out");
-  await page.waitForURL(/\/signin$/);
+  await page.waitForURL(/\/signin(?:\?[^#]*)?$/);
   assert.equal(await page.inputValue("#username"), "");
   await page.fill("#username", "alex.brown");
   await page.fill("#password", "alex-own-pass");
@@ -669,7 +668,7 @@ test("staff journey on the real page", async () => {
   await page.locator("#conn", { hasText: "Offline · 1 change waiting" }).waitFor();
   assert.equal(await page.locator("#openList label", { hasText: "Hands washed" }).locator("input").isChecked(), true, "the tick shows while offline");
   await ctx.setOffline(false);
-  await page.locator("#conn").waitFor({ state: "hidden", timeout: 15000 });
+  await page.waitForFunction(() => document.querySelector("#conn").hidden, null, { timeout: 15000 });
   await page.locator("#toast", { hasText: "Back online" }).waitFor();
   const saved = await api("get", { path: `days/${t1}` });
   assert.equal(saved.data.opening.items.o1, true);
@@ -684,7 +683,7 @@ test("staff journey on the real page", async () => {
   await page.route(/\/api\/db\/(set|update)$/, (r) => (busy-- > 0 ? r.fulfill({ status: 429, contentType: "application/json", body: JSON.stringify({ code: "rate_limited", message: "Slow down" }) }) : r.continue()));
   await ctx.setOffline(false);
   // (Before the fix, the first 429 dropped the change for good and the page said "All changes saved".)
-  await page.locator("#conn").waitFor({ state: "hidden", timeout: 30000 });
+  await page.waitForFunction(() => document.querySelector("#conn").hidden, null, { timeout: 30000 });
   await page.unroute(/\/api\/db\/(set|update)$/);
   assert.equal((await api("get", { path: `days/${t1}` })).data.opening.items.o2, true, "saved once the server answered");
 
@@ -698,7 +697,7 @@ test("staff journey on the real page", async () => {
   await page.locator("#toast", { hasText: "Quick PIN set" }).waitFor();
   assert.ok((await accountMenu(page)).includes("Switch person"), "this device can switch person");
   await accountMenu(page, "Sign out");
-  await page.waitForURL(/\/signin$/);
+  await page.waitForURL(/\/signin(?:\?[^#]*)?$/);
   await page.locator("#quick .person", { hasText: "Alex Brown" }).click();
   for (const d of "1357") await page.locator(".pp-key", { hasText: d }).first().click();
   await page.locator(".pp-msg", { hasText: "Wrong PIN" }).waitFor();

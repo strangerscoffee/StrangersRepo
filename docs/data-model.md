@@ -38,6 +38,7 @@ CREATE TABLE docs (
   deleted     INTEGER NOT NULL DEFAULT 0, -- deletes are kept as rows so live polling sees them
   claude_data TEXT,                       -- unused (left from the Claude sync)
   seq         INTEGER NOT NULL DEFAULT 0, -- change counter for live polling
+  employee_privacy_version INTEGER,       -- trusted only when equal to this row’s seq
   updated_by  TEXT                        -- 'web:<name>'
 );
 ```
@@ -46,7 +47,7 @@ Queries the page makes: one document by path; a whole collection; a collection o
 
 ## Documents
 
-Timestamps (`at`, `lastAt`, `createdAt`, `updatedAt`) are ms since epoch. Dates are `YYYY-MM-DD` strings. `by` fields are user ids: `web:<name>` (the signed-in person's display name), or `u_…` on older records made in the Claude version of the diary, whose names are in `config/people`.
+Timestamps (`at`, `lastAt`, `createdAt`, `updatedAt`) are ms since epoch. Dates are `YYYY-MM-DD` strings. `by` fields are user ids: `web:<name>` (the signed-in person's display name), or `u_…` on older records made in the Claude version of the diary, whose names are in `config/people`. These historical attribution IDs are never employee ownership or authorization keys; private records use stable `users.id` values.
 
 **`settings/main`**, one per site: the site's setup.
 ```
@@ -93,13 +94,13 @@ The page writes these with nested `update`s such as `{temps:{u1:{am:{v:3.2,by,at
 
 **`suppliers/<id>`**: `name, supplies, contact, phone, email, address, rating, notes, by, at`
 
-**`contacts/<id>`**: `type, name, person, phone, outOfHours, email, account, notes, by, at`
+**`contacts/<id>`**: `type, name, person, phone, outOfHours, email, account, notes, by, at, visibility ("shared-business"|"employee"), ownerUserId?`. An admin must explicitly classify a shared business contact or select the stable employee account for a private contact. Classification is not inferred from its text/type/name.
 
-**Saved to several sites.** Documents in `extras`, `cleaning`, `plans`, `suppliers`, `contacts`, `onboarding`, `allergens` and `allergenDocs` may also carry `linkId` (the same on every copy) and `sites:[siteIds]` (where it was last sent). Saving with sites ticked writes a copy at each one: the copy with the same `linkId` is replaced (for `extras` and `cleaning` only the item's own fields are updated, so each site keeps its own `lastAt`, `lastBy` and `log`); otherwise a new one is added. Suppliers, contacts, allergen items and tasks saved before linking are matched by name; HACCP & risk, onboarding documents and allergen PDFs only by `linkId`. Removing deletes the copy at the current site only. Allergen PDF copies share one `assetId`; the stored file is deleted once no site's `allergenDocs` refers to it.
+**Saved to several sites.** Documents in `extras`, `cleaning`, `plans`, `suppliers`, `contacts`, `onboarding`, `allergens` and `allergenDocs` may also carry `linkId` (the same on every copy) and `sites:[siteIds]` (where it was last sent). Saving with sites ticked writes a copy at each one: the copy with the same `linkId` is replaced (for `extras` and `cleaning` only the item's own fields are updated, so each site keeps its own `lastAt`, `lastBy` and `log`); otherwise a new one is added. Suppliers, contacts, allergen items and tasks saved before linking are matched by name; HACCP & risk, onboarding documents and allergen PDFs only by `linkId`. Protected contact/onboarding copies must preserve their validated classification and stable owner; name matching is not ownership proof and must not link private records to a different employee. Removing deletes the copy at the current site only. Allergen PDF copies share one `assetId`; the stored file is deleted once no site's `allergenDocs` refers to it.
 
-**`staff/<id>`**: `name, role, start, topics:{<topic>:{date,by}}, notes, personId, sites:[siteIds], signed?:{by,name,at,topics}, at`
+**`staff/<id>`**: `name, role, start, topics:{<topic>:{date,by}}, notes, personId, ownerUserId, sites:[siteIds], signed?:{by,name,at,topics}, at`. `ownerUserId` is a stable `users.id`; `personId`, display name and signatures do not grant access.
 
-Records → Staff training. Managers and admins write anyone's record; staff only the one in their own name (matched case-insensitively against their account name, before and after the change) and never delete one. `sites` is where the person works: saving writes a copy at each ticked site. `signed` is the person confirming their own dates; its `topics` is the dated topics as `key=YYYY-MM-DD` joined by commas, sorted, so a signature counts only while those dates are unchanged (the page shows "Not signed" otherwise, and "Trained today" clears it).
+Records → Staff training. Admins manage all records and link ownership. Staff and managers can read or maintain only their own verified record; they cannot transfer ownership. Nonadmins cannot delete their training record. `sites` copies the record to the ticked sites, preserving stable ownership. `signed` confirms the employee’s own dates; its `topics` is the dated topics as sorted `key=YYYY-MM-DD` pairs, so it becomes invalid when those dates change. Admin inspection packs include all training; other employees’ screens/PDFs contain only their own linked records and no workforce training counts.
 
 Training topics (`<topic>`): `hygiene`, `cross`, `cleaning`, `chilling`, `cooking`, `allergens`, `diary`, `l2`. A site's `trainingOff` (set from Staff training → Topics for this site) lists the topics it doesn't use: they're hidden there and not counted as training to do, and any dates already in `topics` are kept.
 
@@ -107,7 +108,7 @@ Training topics (`<topic>`): `hygiene`, `cross`, `cleaning`, `chilling`, `cookin
 
 **`plans/<id>`** (HACCP plans and risk assessments): `type:"haccp"|"risk", title, …metadata, steps[] or rows[], notes, source, createdBy, createdAt, updatedBy, updatedAt, history[]`
 
-**`onboarding/<id>`**: `category, title, audience, owner, date, reviewDate, summary, sections:[{heading,body}], notes, source, created…/updated…, history[]`
+**`onboarding/<id>`**: `category, title, audience, owner, date, reviewDate, summary, sections:[{heading,body}], notes, source, created…/updated…, history[], visibility ("shared-business"|"employee"), ownerUserId?`. `owner` is descriptive text, not authorization; private onboarding requires a stable `ownerUserId`. Admins explicitly classify shared business guidance or employee-private records.
 
 **`inspections/<id>`** (EHO): `inspectionDate, inspector, authority, visitType, rating, scores:{hygiene,structure,management}, revisitDate, summary, goodPoints[], issues:[{id,issue,area,priority,action,deadline,ref,done,doneBy,doneAt,fixNote}], notes, source, created…/updated…, history[]`
 
@@ -115,9 +116,19 @@ Training topics (`<topic>`): `hygiene`, `cross`, `cleaning`, `chilling`, `cookin
 
 **`config/people`**: `{ "u_…": "<name>" }`, names for the `u_…` ids on older records. Read-only.
 
+## Employee ownership and verification
+
+Only admins or the individual employee may access employee-private data. The manager role grants business management, never access to another employee’s hours, contracts, availability, leave, reasons, private contact/training/onboarding or request details. Full rota planning, assignments, actual-hour amendments and employee exports are admin-only.
+
+Protected collections are `staff`, `contacts` and `onboarding` under every site prefix. A nonadmin read requires server-verified metadata: `employee_privacy_version === seq`. Verified training additionally requires `data.ownerUserId === user.id`. Contacts/onboarding allow either `visibility: "shared-business"` or `visibility: "employee"` with matching `ownerUserId`. Unclassified or unverified legacy rows remain admin-only, even if their old JSON contains plausible ownership/classification fields. Admin responses clear unverified claims so the editor requests an explicit review/link; names never establish ownership.
+
+Only validated writes stamp `employee_privacy_version` to the new row version. Filtering occurs before query ordering/limits and applies to get, query, poll, delta requests and conflict responses. Nonadmin protected polls return complete authorized snapshots, including when the change counter is unchanged, so reassignment removes stale rows. A denied direct read is a nonrevealing missing document; unauthorized writes cannot disclose a current record in a conflict.
+
+Migration 14 adds the verification column, increments `meta.seq` and every `users.session_ver` once, in the same atomic migration claim. This invalidates all old staff sessions/trusted quick-switch devices and requires password sign-in. It does not delete password/PIN hashes, diary/rota data or client queues. `GET /api/auth/me` is read-only.
+
 ## The rota's tables
 
-The staff rota (`src/rota.ts`, at `ROTA_HOST`) keeps its data in its own D1 tables rather than as documents, because it needs per-row rules (only admins set which days and sites people work; staff ask for their own time off). `src/schema.ts` creates them. People are `users.id` (not `web:<name>`); names come from `users.name`. Days are `YYYY-MM-DD`, times `HH:MM` UK local time, weeks are identified by their Monday.
+The staff rota (`src/rota/`, at `ROTA_HOST`) uses separate D1 tables. Only admins administer employee planning/private records; staff and managers see their own assigned published shifts and their own employee information. Managers may manage business site opening hours/minimum cover. People are stable `users.id` values; names are labels. Days are `YYYY-MM-DD`, times `HH:MM` UK local time and weeks begin on Monday.
 
 | Table | Columns |
 |---|---|
@@ -136,41 +147,40 @@ The rota also reads two things from the diary's documents: a site is in use only
 
 `admin_dismissed` (`src/schema.ts`, migration 10; `POST /api/admin/overview/dismiss {key}` in `src/adminView.ts`): `key, at (ms), by (a name)`, the Overview notices an admin has dismissed, for every admin. Keys: `errors` and `email_failed` (hidden until there's one newer than `at`), `clock:<audit_log id>` and `closed:<site>:<date>` (gone for good). Things still to do (an unpublished rota, a locked account, requests waiting) can't be dismissed. Rows older than 30 days are removed.
 
-Backups (`src/backup.ts`) include every rota table under `rota`.
+Admin-only backups (`src/backup.ts`) include every rota table under `rota`, stable account IDs, top-level `documentSequence` (`meta.seq`) and each document’s `seq` plus `employee_privacy_version`. Restore those fields together with the exact document data and account identities. Do not manufacture verification for old/missing metadata or restore a global counter below row sequences; legacy records remain admin-only until reviewed.
 
 ### The rota API (`/api/rota/…`)
 
-Signed out gets 401 `unauthenticated`; writes count towards the per-IP write limit. "Managers" are the `manager` and `admin` roles (`isRotaManager` in `src/access.ts`). Errors are `{code, message}`: `invalid_argument` (400), `permission_denied` (403), `not_found` (404), `conflict` (409, a change the checks refuse).
+Signed out gets 401 `unauthenticated`; writes count towards rate limits. Private employee administration requires `role: "admin"` (the rota’s historical `manager` capability flag now denotes this admin permission). Managers retain the separate `siteManager` business capability. Errors are `{code, message}`: `invalid_argument` (400), `permission_denied` (403), `not_found` (404) and `conflict` (409).
 
 | Route | Who | What |
 |---|---|---|
-| `GET week?start=` | all | The week: `{week, days, published, changesSincePublish, sites:[{id,name,inUse,open[7],closedWhy[7],opensAt,closesAt,minPeople}], people, shifts, timeOff, problems}`. Staff get names (and each person's `hue`, their colour on the rota) only for `people`, no `timeOff` or `problems`, and no shifts until the week is published. |
-| `POST shifts`, `PATCH shifts/:id`, `DELETE shifts/:id` | manager | Create, change or delete a shift; each returns the shift and its `week`, and the week's new `problems` only when asked (`?with=problems`: the rota page redraws the week instead). A change sent with `ifUpdatedAt` (the shift's `updatedAt` when it was opened) is refused with 409 `conflict` if someone changed it since. Shifts on a closed day are refused. Shift objects carry `start`/`end`/`breakMins` as planned, `actualStart`/`actualEnd`/`actualBreakMins`/`adjustNote` once amended (`adjusted`), `hours` (as worked), `plannedHours`, and in the week and My shifts views `overtime` (the part of `hours` over the person's max that week, marked in time order). Staff don't see other people's `overtime` or `adjustNote`. |
-| `PUT shifts/:id/actual` | manager | Amend a shift on the day (from its day on): `{start, end, breakMins?, note?}` as worked, or `{clear: true}` to go back to the plan (`?with=problems` as above). The plan is kept; hours, overtime and cover use the amended times. Giving the shift to someone else clears it. |
-| `POST week/copy` | manager | `{from, to, replace?}`: copies a week's shifts, skipping days a site is now closed; refuses (409) to overwrite unless `replace`. |
-| `POST week/publish` | manager | `{week, email?}`: publishes or republishes. With `email: true`, emails the people on it (`src/email/rota.ts`): the first time, everyone with shifts; after that, only those whose shifts changed since their last email, with what changed; plus open shifts to people who turned those emails on and are free. Answers with `emailed` (how many are being sent). |
-| `GET week/emails?week=` | manager | What publishing would email: `{ready, first, people, noAddress:[names], open}`, for the publish sheet. |
-| `GET mine?from=&to=` | all | My shifts in published weeks, each with who else is on at that site, plus `contractMin`, `contractMax` and `weeks: [{week, hours, overtime}]` (whole weeks). |
-| `GET today?site=` | all | Today's (UK) shifts at a site when its week is published; for the diary's Today (with `actualStart`/`actualEnd` when amended). |
-| `GET suggest?shift=` | manager | Everyone who could take a shift, best fit first, with flags: clash, time off, overtime, short rest, availability. |
-| `GET hours?start=` (`&format=csv`) | manager | Paid hours per person and site against contract; CSV columns `name,role,contract_hours,rota_hours,difference,roastery,cafe,asg,factory`. |
-| `PUT me/emails` | all | `{prefs:{published?, changed?, requests?, open?}}`: which rota emails I get. My address is set by an admin; `GET me` returns `email: {address, prefs, ready}`. |
-| `GET me`, `PUT me/availability` | all / admin | My pattern, sites, contract, time off and requests (`user.admin` says whether I'm an admin); only admins set their own pattern and sites (`permission_denied` for anyone else). |
-| `PUT people/:userId` | manager (sites and pattern: admin) | `{contractMin?, contractMax?, sites?, pattern?}` for anyone; `sites` and `pattern` are admin-only (min ≤ max; a field left out is kept). The older `{contractHours}` sets both. |
-| `POST time-off`, `PATCH time-off/:id` | all / manager / owner | Ask for time off (managers can add it for anyone, approved); approve or decline (manager); cancel (owner). |
-| `GET requests`, `POST requests`, `PATCH requests/:id` | all | Pickups (`claim`) and covers (`cover`); `{action: accept\|decline\|cancel\|approve}`. Approving re-checks the taker and refuses a clash or time off with 409. |
-| `GET open` | all | Open shifts in published weeks I could take. |
-| `GET sites`, `PUT sites/:site` | all / manager | Usual opening and closing time, minimum people and `dayHours` (weekdays with their own hours, for example Sundays) per site. `PUT` without `dayHours` keeps them; `dayHours: null` clears them. The week view gives each site `hours[7]`, that week's hours day by day. |
-| `GET links` | all | `{rota, diary}`: where each app lives, as seen from this address. |
+| `GET week?start=` | signed in | Admins receive the full planner. Staff/managers receive only their own person/assigned shifts in published weeks and scrubbed unassigned opportunities; never other employees’ contracts, leave, actual hours, notes or staffing aggregates. |
+| `POST shifts`, `PATCH shifts/:id`, `DELETE shifts/:id` | admin | Assign/create/change/delete shifts, with optional `ifUpdatedAt` and `?with=problems`. Giving a shift to another employee clears predecessor notes and actual-hour metadata. |
+| `PUT shifts/:id/actual` | admin | Amend actual times/break/reason or `{clear:true}`, retaining the plan. |
+| `POST week/copy`, `POST week/publish` | admin | Copy `{from,to,replace?}` or publish `{week,email?}`. Publishing emails only permitted personal content and safe unassigned opportunities. |
+| `GET week/emails?week=` | admin | Preview recipient counts/missing addresses for publication. |
+| `GET mine?from=&to=` | signed in | Own published assignments, contract and weekly hours/overtime. `others` is empty for nonadmins. |
+| `GET today?site=` | signed in | Admins receive the full published site day; staff/managers receive own shifts plus scrubbed unassigned opportunities. |
+| `GET suggest?shift=`, `GET hours?start=` (`&format=csv`) | admin | Full candidate eligibility, private paid hours/contracts and employee/site aggregates. |
+| `GET me` | signed in | Own contract, availability, leave, requests and email settings. `user.manager`/`admin` indicate private admin capability; `siteManager` indicates business settings permission. |
+| `PUT me/emails` | signed in | Own subscriptions; managers/admins may also change their own business-summary `weekly` preference and `weeklySites`. |
+| `PUT me/availability`, `PUT people/:userId` | admin | Set employee contracts, sites and availability. The older `contractHours` sets both min/max. |
+| `POST time-off`, `PATCH time-off/:id` | owner/admin | Anyone asks for their own leave or cancels their own pending request; only admins create/manage another employee’s leave or approve/decline. |
+| `GET requests` | signed in | Admins receive pending requests; others receive only their own involvement, without counterpart identities/messages or assigned-other shift snapshots. |
+| `POST requests`, `PATCH requests/:id` | owner/admin | Nonadmins can create/cancel own general cover or claim an unassigned opportunity. Targeted/cross-person acceptance, decline and approval are admin-only; checked before conflict details are returned. |
+| `GET open` | signed in | Suitable published unassigned opportunities, with former employee notes, actual data and identities removed. |
+| `GET sites`, `PUT sites/:site` | signed in / manager or admin | Business opening hours, minimum cover and weekday `dayHours`. No employee fields. |
+| `GET links` | signed in | App links `{rota,diary}`. |
 
-The checks (`computeProblems` in `src/rota/problems.ts`): `open_shift`, `clash`, `time_off` and `closed` are errors; `short_cover` (against each day's own hours, counting who's actually there), `overtime` (over the max contracted hours) and `rest` (under 11 hours) are warnings; `break` (over 6 hours with under 20 minutes), `availability`, `seven_days` and `under_contract` (under the min contracted hours) are notes. They're prompts for the manager: publishing is allowed with problems. There's no check for who opens or closes a site: a shift's job (`opens`/`closes`) is optional, and only labels the shift and the diary's "who opens / who closes".
+The checks (`computeProblems` in `src/rota/problems.ts`): `open_shift`, `clash`, `time_off` and `closed` are errors; `short_cover` (against each day's own hours, counting who's actually there), `overtime` (over the max contracted hours) and `rest` (under 11 hours) are warnings; `break` (over 6 hours with under 20 minutes), `availability`, `seven_days` and `under_contract` (under the min contracted hours) are notes. They are private planning prompts for admins; publishing is allowed with problems. There's no check for who opens or closes a site: a shift's job (`opens`/`closes`) is optional, and only labels the shift and the diary's "who opens / who closes".
 
 
 ## Rota emails
 
 Sent through Resend (`src/email/`) when the `RESEND_API_KEY` secret is set; without it nothing is sent. `users.email` is the address (admins set it: `PATCH /api/admin/users/<id> {email}`, `""` removes it) and `users.email_prefs` a JSON object of which emails the person gets: `published` (their week when it's published, on by default), `changed` (their shifts changed after publishing, on), `requests` (cover, pick-up and time-off decisions, on) and `open` (open shifts they're free for, off), and for managers and admins `weekly` (the Monday summary, on) with `weeklySites` (the sites it covers; all four when not set). Each email has a calendar file of the shifts (for a week), a link to the rota, and a signed one-tap unsubscribe link (`/email/unsubscribe?t=…`, no sign-in; opening it only asks). At most `EMAIL_DAILY_LIMIT` (100) a day. Each one sent or refused is logged in `audit_log` (Admin → Activity, "Rota emails"); failures in the last day are flagged on the Overview.
 
-**The managers' Monday summary** (`src/email/weekly.ts`): at 07:30 UK time every Monday (cron `30 6,7 * * 1`, sending only at 07:xx in London, once a week: `meta.weekly_sent`), each active manager and admin with an address and `weekly` on gets last week at their `weeklySites`: what needs them (urgent: an out-of-range reading with nothing in Problems & changes, urgent maintenance; this week: days not signed off, overdue cleaning and extra checks, overdue 4-weekly reviews, rota requests waiting, this week's rota unpublished; to plan: next week's rota unpublished), a Mon–Sun grid per site (✓ signed off, ✕ missed, ! a reading out of range, – closed) with totals against the week before, and what's coming up. They change it in Rota → When I can work → Emails (`PUT /api/rota/me/emails {prefs: {weekly}, weeklySites}`); admins change anyone's in Admin → People (`PATCH /api/admin/users/<id> {emailPrefs: {weekly}, weeklySites}`), and send themselves this week's from the Overview (`POST /api/admin/email/weekly-test`).
+**The Monday summary** (`src/email/weekly.ts`): at 07:30 UK time on Mondays, each active manager/admin with an address and `weekly` enabled receives the selected sites’ business diary summary. Manager output excludes employee training counts, assigned rota hours/aggregates, leave and request names/dates/messages; admin output retains full planning/HR items. Personal emails and attached calendars contain only the recipient’s permitted assignments and contract; no co-worker names or personal account Reply-To are shared. Declined cover-taker notices omit another employee’s shift details. Own preferences/sites are changed through `PUT /api/rota/me/emails`; admins can change anyone’s preferences or send themselves a summary preview. Sending remains once weekly through `meta.weekly_sent`.
 
 ## Wholesale (legacy storage names retained)
 

@@ -75,7 +75,7 @@ export interface ShiftInput { site: string; day: string; start: string; end: str
 /** One rota API request, as the router's handlers by area see it (src/rota/index.ts). */
 export interface RotaRequest {
   env: Env; exec: ExecutionContext; user: User; route: string; seg: string[]; m: string; q: (k: string) => string | null;
-  mgr: boolean; admin: boolean; needMgr: () => void; needAdmin: () => void; body: () => Promise<any>;
+  mgr: boolean; admin: boolean; needMgr: () => void; needAdmin: () => void; needSiteManager: () => void; body: () => Promise<any>;
   withProblems: boolean; links: { rota: string; diary: string; admin?: string };
   mailLinks: { rota: string; diary: string }; // the same as full addresses, for emails
 }
