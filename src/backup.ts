@@ -42,6 +42,13 @@ export async function makeBackup(env: Env, by: string): Promise<BackupInfo> {
     rota,
     wholesalePreview: (await env.DB.prepare("SELECT kind, id, data, version, updated_at FROM wholesale_preview ORDER BY kind, id").all()).results,
     wholesaleAccounts: await env.DB.prepare("SELECT id, customer_id, username, active, approval_status, created_at, last_login_at FROM wholesale_accounts ORDER BY username").all().then((rows) => rows.results),
+    quickbooks: {
+      mode: "sandbox-disconnected-on-restore",
+      installation: (await env.DB.prepare("SELECT id,namespace FROM quickbooks_installation").all()).results,
+      mappings: (await env.DB.prepare("SELECT realm_id,data,version,updated_at FROM quickbooks_mappings").all()).results,
+      // No tokens, OAuth states, leases or active-connection flags are backed up.
+      company: await env.DB.prepare("SELECT realm_id,company_name,country,currency,vat_number FROM quickbooks_connection WHERE id=1").first(),
+    },
     wholesaleInvoices: {
       settings: (await env.DB.prepare("SELECT * FROM wholesale_invoice_settings ORDER BY id").all()).results,
       sequence: (await env.DB.prepare("SELECT seq FROM sqlite_sequence WHERE name = 'wholesale_invoices'").first<{ seq: number }>())?.seq || 0,

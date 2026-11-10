@@ -1,8 +1,61 @@
-# QuickBooks Online integration research and first development
+# QuickBooks Online integration
 
-Research date: 10 November 2026. The host confirmed **QuickBooks Online**. UK/GBP is assumed from the existing Norwich wholesale business and invoices; verify the actual QuickBooks company before connecting.
+Updated 10 November 2026. The first runtime milestone connects **Admin → Wholesale → Invoicing** to a **UK QuickBooks Online sandbox**. It supports OAuth connection/disconnection, company confirmation, browsing existing accounting references, reviewed mappings and previews of issued Strangers invoices.
 
-The first implementation is an **offline foundation** on `feature/quickbooks-research`. It is not routed into the Worker, connected to Intuit, deployed, or capable of transmitting an invoice. No credentials, company records, accounting transactions, employee data or payments were accessed. Existing catalogue deployment is a separate release.
+**Accounting writes remain disabled.** There is no QuickBooks invoice creation, email, payment collection or payment-status synchronisation in this milestone. `canTransmit` is always false. The current tests use a loopback Intuit simulator and synthetic records; a real UK sandbox has not yet been validated. Existing local invoices, PDFs and customer payment status remain authoritative.
+
+## Configure a sandbox connection
+
+1. In the [Intuit developer portal](https://developer.intuit.com/app/developer/homepage), create a QuickBooks Online app and a UK sandbox company using GBP. Use its **development** credentials. A production company cannot be used with this adapter.
+2. Register this exact redirect URI in the app's development settings:
+
+   ```text
+   https://admin.staffstrangerscoffee.com/api/admin/wholesale/quickbooks/callback
+   ```
+
+3. The site owner adds the following Worker configuration in Cloudflare → Worker → Settings → Variables and Secrets. Never paste secrets into chat or commit them to the repository.
+
+   | Name | Value |
+   |---|---|
+   | `QUICKBOOKS_CLIENT_ID` | Intuit app's development client ID |
+   | `QUICKBOOKS_CLIENT_SECRET` | Development client secret; store as a secret |
+   | `QUICKBOOKS_TOKEN_KEY` | Independently generated, base64-encoded 32-byte AES key; store as a secret |
+   | `QUICKBOOKS_REDIRECT_URI` | Exact HTTPS URI above |
+
+   Generate the encryption key in a trusted local terminal with `openssl rand -base64 32`, then put it straight into Cloudflare's secret configuration. Keep an independent secure recovery copy. Do not reuse a password, session signing key or Intuit client secret.
+
+4. In **Admin → Wholesale → Invoicing → QuickBooks**, choose **Connect QuickBooks sandbox**, complete Intuit's company consent, then review the returned company name, ID, country and currency. Enter the sandbox supplier's VAT registration and explicitly confirm it. This VAT entry is an admin review, not an assertion that Intuit verified the registration. Invoice preview compares it with the supplier registration saved on the issued invoice.
+5. Open an **issued invoice**, choose **QuickBooks sandbox preview**, and link its existing business/customer, coffee sales item, optional delivery sales item and VAT codes. Service or non-inventory items need an income-account reference. VAT percentages are checked against current active sales codes/rates. Review zero-rated versus exempt treatment explicitly; compound VAT is not supported.
+6. **Save and preview** rechecks the references and shows saved net/VAT/gross amounts or blockers. It does not create an accounting transaction. The site owner and bookkeeping owner must still verify real UK VAT payloads, dates and penny rounding before the export stage can be enabled.
+
+Without valid configuration, the native connection window shows a setup guide and cannot start OAuth. No new domain, queue, external SDK or paid service is provisioned. Review Intuit's actual app tier and fees before production use.
+
+The Worker fixes all provider destinations to Intuit OAuth and the sandbox Accounting API. `QUICKBOOKS_TEST_ORIGIN` is a loopback-only test-harness override, ignored on the deployed admin host; never configure it on a deployed Worker. Local browser tests use fake keys and an ephemeral callback port, not a real Intuit app.
+
+## Connection and privacy safeguards
+
+- Every endpoint is admin-only under the existing staff-session, identity, Origin and write-limit guards. Wholesale customers, managers and staff cannot access connection metadata, references or mappings. Nothing reads employee hours, payroll, private contacts or onboarding data.
+- OAuth requests use the Accounting scope only. State is random, hashed in D1, single-use, expires after ten minutes and is tied to the initiating admin's exact session and connection version. The callback rechecks the current role/session, validates its configured URI, and reads CompanyInfo/Preferences before accepting UK/GBP. Tokens never go to the browser.
+- Access and rotating refresh tokens are encrypted with AES-GCM using the separate Worker key and authenticated company/connection-generation binding. A D1 lease serialises refresh; version checks prevent an old refresh or read response restoring a disconnected connection. Provider authorisation failures require reconnecting QuickBooks without signing the admin out of the staff site.
+- Reference queries are fixed, paged and bounded. Each mapping/preview request caches repeated reference reads and allows at most 45 distinct provider reads, keeping large invoices within the Worker request budget. Browser responses contain IDs, names and minimal type/currency fields; provider addresses, notes and emails are omitted. Mapping saves and previews revalidate active references rather than trusting browser selections. Mappings use compare-and-swap versions and are scoped to the sandbox company.
+- Provider responses are bounded, redirects are refused, errors are redacted and network timeouts are finite. Disconnect removes local credentials first and attempts Intuit revocation. If revocation cannot be confirmed, the UI advises checking the app's access in Intuit.
+
+Changing the encryption key invalidates existing encrypted tokens and requires reconnecting. Disconnect before intentionally rotating it. Never switch this adapter to production by merely replacing a hostname or credential; environment-scoped storage and the remaining export safeguards must be implemented first.
+
+## Storage and recovery
+
+Migration 15 creates `quickbooks_connection`, `quickbooks_oauth_states`, `quickbooks_mappings` and `quickbooks_installation` in existing D1. It is additive and leaves issued invoices unchanged. JSON backups include the stable installation namespace, company metadata and reviewed mappings, but omit credentials, OAuth states, refresh leases and active-connection state. A manual JSON restore must keep the integration disconnected and require fresh consent. There is no automatic restore endpoint.
+
+A **raw D1 export or point-in-time restore can contain encrypted credentials and active state**. Before serving a restored database, remove those credentials and pending states:
+
+```sql
+UPDATE quickbooks_connection
+SET status='disconnected', token_data=NULL, generation=lower(hex(randomblob(16))),
+    version=version+1, lease_owner=NULL, lease_until=0;
+DELETE FROM quickbooks_oauth_states;
+```
+
+Preserve `quickbooks_installation.namespace`, mappings and all invoice snapshots/sequences. Keep the encryption key outside database backups. Revoke the old app grant in Intuit if restoring after an incident, then connect again normally. Schema rollback must not drop issued invoices; removing the optional app credentials disables new connections and previews.
 
 ## Recommended first integration
 
@@ -32,38 +85,28 @@ Use ordinary service/non-inventory item mappings for the first export. The curre
 
 Some developer URLs return a JavaScript sign-in shell. The indexed official references above support the findings; they are not evidence that a UK sandbox API request has succeeded. Neither SDK behaviour nor a successful live connection is claimed.
 
-## What is developed
+## Development and verification
 
-`src/quickbooks/preview.ts` consumes the existing `InvoiceDocument` type and reviewed, company-scoped mappings. It has no runtime imports, endpoints, persistence or HTTP calls.
+`src/quickbooks/index.ts` provides the admin adapter; `connection.ts` owns fixed provider reads, OAuth and refresh; `crypto.ts` owns token encryption; `schema.ts` contains migration 15. `public/admin/quickbooks.js` uses the existing Admin sheets, materials, escaping, keyboard handling and pinned actions on phone, iPad and desktop.
 
-- Checks issuance, dates, the document-number limit, supplier VAT/UK/GBP identity, customer/item/VAT mappings and inclusive/exclusive source arithmetic.
-- Retains integer pence, mixed VAT, delivery, due date, pack/grind descriptions and payment instructions. It blocks inconsistent line totals or VAT breakdowns instead of rounding away a discrepancy.
-- Generates a stable company/environment/installation/invoice request ID, with a separate export fingerprint. Changing payment metadata does not change either; changing mappings changes the fingerprint but cannot silently generate a fresh create identity.
-- Detects an existing link or conflicting linkage. This is a planning decision, not a persisted duplicate-prevention ledger.
-- Compares a supplied QuickBooks response against an exact link and source totals. Returns unpaid, part-paid, paid or review without mutating the local invoice. Wrong company/customer/currency/number, missing records, void-like zero totals, changed VAT, excess balances or sub-penny values require review.
-- Omits employee issuance identity and the site's manual payment metadata from the export candidate. The prototype has no access to rota, hours, payroll, training, private contacts or onboarding.
+`src/quickbooks/preview.ts` is a pure planning module using the existing `InvoiceDocument`. It checks issuance, document-number limits, dates, supplier/company identity, explicit mappings and exact inclusive/exclusive pence arithmetic. It preserves due dates, terms, delivery and pack/grind descriptions. Employee issuance identity and manual payment metadata are omitted from its candidate.
 
-`canTransmit` is always false. A complete sandbox mapping produces `ready-for-sandbox-review`, not production readiness. References in the demo are **synthetic**, not verified Intuit company IDs. A future server adapter must obtain mappings from authorised server storage and verified company reads, never trust a browser to provide company approval or references.
-
-Run the deterministic demo and tests:
+A stable company/environment/installation/invoice request ID and separate content fingerprint are generated. Existing-link decisions and read-only balance reconciliation are tested as pure functions; there is **no persisted operation ledger or live balance reader yet**. A ready preview means `ready-for-sandbox-review`, not export readiness.
 
 ```sh
-npm run quickbooks:preview
-npm run test:quickbooks
-npm run typecheck
+npm run quickbooks:preview       # deterministic offline JSON example, no server or network
+npm run test:quickbooks         # planning and loopback API/security/concurrency tests
+npm test                       # complete typecheck and API/PDF suite
+npm run test:e2e                # complete browser suite, including six sandbox viewport/theme cases
 ```
 
-The demo uses `test/fixtures/quickbooks.mjs`. It reads no database, makes no network requests and shows a mixed-VAT invoice, missing-VAT blocker, duplicate-link decision, partial-payment observation and total-mismatch review. The test is also included in the normal API test command for future CI. There are no new front-end controls or customer-facing claims of connectivity.
+The test provider is `test/quickbooks-provider.mjs`; it receives only fake credentials and synthetic local records. Tests cover role denial, session-bound OAuth/replay, encrypted storage, company validation, bounded reference paging, mapping conflicts, VAT checks, token rotation, disconnect races during refresh and reference reads, 150-variant invoices, shared historic VAT mappings, redacted failures and backups. Browser cases exercise the native OAuth → company review → mapping → preview flow without accounting writes. Tests are not evidence of a successful connection to a real Intuit company.
 
-## Next development stages
+## Remaining development stages
 
-1. **Sandbox connection.** Register an Intuit app and UK sandbox company, then implement admin-only connection/disconnection with server-side OAuth and company confirmation. Client secrets and encryption keys go into Cloudflare secrets through the host's secure configuration; never paste them into chat or store them in source. OAuth state must be random, single-use, short-lived and bound to the initiating admin/session. Recheck the current admin at callback, validate the fixed callback URI and verify the selected company before accepting it.
-2. **Credential storage.** Append a migration for integration metadata and encrypted token records. Use AES-GCM with a separately managed encryption key, company/environment binding, key versioning and a refresh concurrency guard. Store the newest rotating refresh token atomically. Never return tokens to the browser, write them into logs, include them in ordinary JSON backups, or revive a connection automatically after restore. Reconnection/expiry must fail closed.
-3. **Discovery and mapping.** Read CompanyInfo, active customers, items and sales VAT codes. Confirm the intended legal company/VAT registration and GBP. Let an admin link existing records; don't create duplicates by fuzzy name matching. Validate tax treatments and income accounts with the bookkeeping owner. Keep customer-level and delivery-location data separate.
-4. **Review and sandbox export.** Add an Admin → Wholesale → Invoicing accounting section with connection state, mappings, preview and explicit export. Verify inclusive/exclusive, zero-rated, mixed-rate, delivery, short payment terms, custom terms, long invoice numbers and rounding-edge examples against real sandbox responses. Confirm the supply-date field and exact tax payload before producing requests.
-5. **Durable operation ledger.** Before an external create, persist the target realm/environment, local invoice ID, stable request ID, complete frozen body, fingerprint, mapping revision and pending state. Enforce one successful remote invoice per local invoice/company. A timeout keeps the same operation; reconcile by stable number plus exact customer/financial identity, handle conflicting matches explicitly, and never create again merely because the first response was lost. A local link alone cannot prevent duplicates after a crash between remote creation and local recording. Preserve links, pending operations, mappings and installation IDs in backup/restore while excluding credentials.
-6. **Payment observations.** Persist authenticated reads with company-bound invoice links, observed revision/time and compare-and-swap. The current local payment model is a full-paid boolean; it cannot represent partial payments safely. Add a separate accounting balance model and customer-safe status before exposing partial/overdue balances. Show manual/accounting discrepancies for admin review. Do not create a QuickBooks Payment, debit a bank account or mark local records automatically from an unverified webhook.
-7. **Notifications and reconciliation.** Verify raw-body HMAC signatures and the selected realm; use a durable, idempotent outbox/queue and acknowledge promptly. Fetch authoritative invoice data asynchronously. Deduplicate events, prevent older observations replacing newer ones, handle deleted/voided records as review, and recover missed events using scheduled CDC/reconciliation. Respect rate limits and Retry-After, redact provider errors, and bound retries.
-8. **Production pilot.** After company consent, approved credentials, confirmed costs/mappings and successful sandbox reconciliation, review one real issued invoice before export. Keep automatic exports off initially. Intuit's email/send and Payments operations are outside the first integration. Deleting an order never deletes its issued invoice or accounting entry; credits, voids and refunds require a separate deliberate workflow.
-
-No production credentials, new migration, DNS change, queue binding, paid service, live company connection, invoice upload, email or payment action is part of this research branch. The next external dependency is the host creating the Intuit app/sandbox and granting its normal company consent when the connection flow is ready; implementation can continue with synthetic fixtures meanwhile.
+1. **Real sandbox acceptance.** The site owner configures the development app and grants consent. Verify company reads, service/non-inventory income accounts, zero-rated versus exempt VAT codes, inclusive/exclusive and mixed-rate invoices, delivery, explicit/custom due dates, supply-date representation, long invoice numbers and penny-rounding edges against real UK sandbox responses. The reviewed candidate is deliberately not an API request body.
+2. **Durable export ledger.** Before any external create, persist the realm/environment, local invoice ID, stable request ID, complete frozen operation body, fingerprint, mapping revision and pending state. Enforce one successful remote invoice per local invoice/company. After a timeout, retry the same operation or reconcile exact financial identity; never create a fresh operation because a response was lost. Preserve this ledger and links in backup/restore.
+3. **Explicit sandbox export.** Add an admin review/confirm action only after the UK payload has been proven. Keep local issued invoices and PDF snapshots immutable. Existing document-number/customer/financial conflicts must require review rather than silently overwriting QuickBooks records.
+4. **Payment observations.** Add persisted authenticated invoice reads, exact local/remote links, observed revisions/times, compare-and-swap and a separate balance model for unpaid/part-paid/paid/overdue states. The current local full-paid boolean cannot safely represent partial payments. Surface manual/accounting discrepancies for admin review before adding customer-visible accounting balances.
+5. **Notifications and reconciliation.** Verify webhook raw-body HMAC and realm, acknowledge promptly, then process authoritative reads through a durable idempotent queue/outbox. Deduplicate events, prevent old observations replacing new ones, handle voided/deleted invoices as review and recover missed changes with scheduled CDC. Respect Retry-After and bound retries.
+6. **Production pilot.** After approved production credentials, company consent, confirmed app costs/mappings and successful sandbox reconciliation, review one real issued invoice before export. Automatic export stays off initially. Intuit email/send, Payments, refunds, credits and invoice voiding need separate deliberate workflows. Deleting a local order never deletes its issued invoice or accounting entry.

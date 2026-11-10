@@ -2,6 +2,7 @@
 // migration step: first the tables (every statement idempotent), then any migrations not yet recorded in
 // schema_migrations (MIGRATIONS below). To change the schema, add a migration.
 import { Env } from "./http";
+import { migrateQuickBooks } from "./quickbooks/schema";
 
 const SCHEMA = [
   // Every diary document, stored by path (see docs/data-model.md).
@@ -250,6 +251,7 @@ const MIGRATIONS: Migration[] = [
       env.DB.prepare("INSERT OR IGNORE INTO schema_migrations(id,name,applied_at) VALUES(14,?,?)").bind("verified employee privacy metadata", Date.now()),
     ]);
   } },
+  { id: 15, name: "QuickBooks sandbox connection", run: migrateQuickBooks },
 ];
 
 async function migrate(env: Env): Promise<void> {

@@ -1,3 +1,4 @@
+import { handleQuickBooks } from "./quickbooks/index";
 // Wholesale beta: real customer orders and isolated staff test orders. Payments and fulfilment are managed by the team.
 import { validGrindId } from "../public/wholesale-preview/grinds.js";
 import { catalogueRetrievedAt } from "../public/wholesale-preview/catalogue.js";
@@ -185,6 +186,7 @@ export async function handleWholesale(req: Request, env: Env, route: string, use
 
 /** Management is part of the existing admin app and uses its admin-only API boundary. */
 export async function handleWholesaleAdmin(req: Request, env: Env, route: string, user: User, links: Links): Promise<Response> {
+  const quickbooks = await handleQuickBooks(req, env, route, user); if (quickbooks) return quickbooks;
   if (user.role !== "admin") throw denied();
   const invoiceResponse = await handleInvoiceAdmin(req, env, route, user.name);
   if (invoiceResponse) return invoiceResponse;

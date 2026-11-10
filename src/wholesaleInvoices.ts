@@ -114,6 +114,10 @@ function document(row: InvoiceRow): InvoiceDocument {
   const data: InvoiceData = JSON.parse(row.data);
   return { ...data, id: row.seq, number: row.invoice_number, issuedAt: row.issued_at, issuedBy: row.issued_by, payment: { status: row.paid ? "paid" : data.dueDate && data.dueDate < today() ? "overdue" : "unpaid", paid: !!row.paid, paidDate: row.paid_date, reference: row.payment_reference, version: row.payment_version, outstandingPence: row.paid ? 0 : data.totals.grossPence } };
 }
+export async function issuedInvoice(env: Env, id: number): Promise<InvoiceDocument> {
+  const row = await env.DB.prepare("SELECT * FROM wholesale_invoices WHERE seq=?").bind(integer(id, "invoice ID", 1, Number.MAX_SAFE_INTEGER)).first<InvoiceRow>();
+  if (!row) throw missing(); return document(row);
+}
 async function invoiceByOrder(env: Env, orderId: string) { return env.DB.prepare("SELECT * FROM wholesale_invoices WHERE order_id = ?").bind(orderId).first<InvoiceRow>(); }
 async function build(env: Env, orderId: string, request: InvoiceRequest): Promise<{ data: InvoiceData; config: InvoiceSettings }> {
   const config = await settings(env);

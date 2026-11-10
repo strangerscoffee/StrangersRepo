@@ -219,3 +219,22 @@ All `/api/admin/wholesale/` invoice routes are admin-only with the existing Orig
 Customer `GET /api/wholesale/invoices`, `GET .../invoices/<seq>[/pdf]` and `GET .../orders/<WS-id>/invoice[/pdf]` are read-only and always constrained by the signed-in business. Other businesses receive 404; staff preview identities have no customer-invoice access. Issued invoices remain visible after source-order deletion. Order history also includes issued invoice IDs/numbers.
 
 Catalogue `grindOptions` is optional for backward compatibility; omission preserves current options or the legacy defaults on creation. Validate 1–20 unique IDs/names, labels 1–60 characters, boolean `enabled`, and at least one enabled option. IDs are legacy grind IDs or `grind-<uuid>`. Renamed existing options receive a new server-generated ID. Image updates preserve grind settings. Catalogue/session DTOs expose options for the customer picker; customer writes cannot change them. Checkout validates the selected enabled option for its product and saves the server-controlled label. A retired/disabled/foreign grind returns 409 `grind_unavailable`; an exact successful order retry still returns its immutable original receipt before current catalogue validation.
+
+
+## QuickBooks Online sandbox
+
+Every route below is under `/api/admin/wholesale/quickbooks` and requires a current admin staff session. Existing Origin/write limits and optional expected-identity headers apply. Wholesale sessions and nonadmins receive no integration data. Provider authorisation failures return 409 for reconnect, preserving staff sign-in. No generic query, arbitrary provider URL or accounting-write proxy exists.
+
+| Method and suffix | Behaviour |
+|---|---|
+| `GET /status` | Configuration readiness/missing variable names, safe company metadata/public version and read/preview capabilities. Export/payment-write capabilities are always false. |
+| `POST /connect` | Starts session-bound, hashed, ten-minute OAuth state; returns the fixed Intuit sandbox app authorisation URL. |
+| `GET /callback` | Single-use `state,code,realmId`; validates the same admin/session/version, reads company/GBP settings, encrypts tokens and sets pending confirmation. Redirects to native company review without credentials in the URL. |
+| `POST /confirm` | `{ifVersion,vatNumber,confirmed:true}` confirms the returned UK/GBP sandbox company and reviewed supplier VAT registration. |
+| `POST /disconnect` | `{ifVersion}` removes local credentials and pending states, then attempts provider revocation. Returns `disconnected,revoked`. |
+| `GET /references?kind=customer / item / taxcode&cursor=` | Active allowlisted entities, at most 100 minimal references/page, with `nextCursor`. No provider addresses, notes or emails. |
+| `GET /mappings` | Company-scoped mapping data, mapping version and connection version. |
+| `PUT /mappings` | `{ifVersion,connectionVersion,customer?:{localId,quickbooksId},coffeeItemId,deliveryItemId,taxMappings:[{rateId,basisPoints,taxCodeId}],reviewed:true}`. Rechecks active customer/GBP, service/non-inventory items/income references and simple sales VAT rates; saves with atomic mapping/connection version guards. |
+| `GET /invoices/<seq>/preview` | Reads an immutable issued invoice and rechecks stored mappings against the sandbox. Returns blockers or an exact-pence review candidate; `canTransmit:false` in every case. |
+
+Accounting references and previews are not returned by customer APIs. No endpoint creates invoices, sends emails, records a QuickBooks payment, reads live payment balances or changes local invoice financial snapshots. Setup, encryption, restore precautions and remaining milestones are documented in [QuickBooks integration](quickbooks-integration.md).
