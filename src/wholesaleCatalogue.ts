@@ -19,7 +19,8 @@ const CATEGORIES = ["single-origin", "blend", "decaf"];
 const missing = () => new ApiError(404, "not_found", "Coffee or photo not found.");
 
 function decorate(product: SourceCoffee, settings: Settings | null, version: number, admin: boolean): Coffee {
-  const prices = settings?.prices || product.prices;
+  const saved = settings?.prices || product.prices;
+  const prices = { quarter: saved.quarter, kilo: saved.kilo }; // a saved 500 g price (no longer sold) is dropped
   const images = settings?.images ?? (product.image ? ["source:" + product.image] : []);
   return {
     ...product, grindOptions: (settings?.grindOptions ?? defaultGrinds).map(option => ({ ...option })), prices: { ...prices }, price: prices.kilo,
@@ -47,8 +48,9 @@ async function write(env: Env, coffee: Coffee, expected: number): Promise<Coffee
 }
 function pricesFor(value: unknown): Prices {
   const prices = object(value);
-  if (Object.keys(prices).length !== 3 || ["quarter", "half", "kilo"].some((pack) => !Number.isInteger(prices[pack]) || prices[pack] < 1 || prices[pack] > 1000000)) throw invalid("Send all three bag prices in pence, from £0.01 to £10,000.00.");
-  return { quarter: prices.quarter, half: prices.half, kilo: prices.kilo };
+  // 250 g and 1 kg. A 500 g price from an older page is ignored: 500 g bags are no longer sold.
+  if (Object.keys(prices).some((pack) => !["quarter", "half", "kilo"].includes(pack)) || ["quarter", "kilo"].some((pack) => !Number.isInteger(prices[pack]) || prices[pack] < 1 || prices[pack] > 1000000)) throw invalid("Send the 250 g and 1 kg bag prices in pence, from £0.01 to £10,000.00.");
+  return { quarter: prices.quarter, kilo: prices.kilo };
 }
 function editedGrinds(value: unknown, previous: GrindOption[] = []): GrindOption[] {
   if (!Array.isArray(value) || value.length < 1 || value.length > 20) throw invalid("Choose between 1 and 20 grind options.");

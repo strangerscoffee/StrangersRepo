@@ -5,8 +5,8 @@
 export const defaultGrinds = [
   { id: 'beans', label: 'Beans', hint: 'Whole beans, for your own grinder', enabled: true },
   { id: 'espresso', label: 'Fine', hint: 'Commercial espresso machine', enabled: true },
-  { id: 'filter', label: 'Medium', hint: 'Filter, and a good general grind for most uses', enabled: true },
-  { id: 'cafetiere', label: 'Coarse', hint: 'Cafetiere and batch brewer', enabled: true },
+  { id: 'filter', label: 'Medium', hint: 'Filter', enabled: true },
+  { id: 'cafetiere', label: 'Coarse', hint: 'Cafetiere and batch brewers', enabled: true },
 ];
 // No longer offered, but still recognised so old baskets and orders read as "no longer offered", not as invalid.
 const RETIRED_GRINDS = { moka: 'Moka Pot / Fine' };

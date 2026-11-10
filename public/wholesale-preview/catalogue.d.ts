@@ -8,7 +8,7 @@ export interface SourceCoffee {
   badge: string;
   categories: string[];
   price: number;
-  prices: { quarter: number; half: number; kilo: number };
+  prices: { quarter: number; kilo: number };
   image: string;
   sourceUrl: string;
   sourceImage: string;
