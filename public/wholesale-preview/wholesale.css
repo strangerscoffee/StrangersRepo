@@ -102,6 +102,9 @@ input::placeholder { color: var(--muted); opacity: .8; }
 .grind-field { margin-top: 16px; }
 .grind-picker { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-height: 48px; padding: 12px 13px; border: 1px solid transparent; border-radius: var(--r); background: var(--sunk); color: var(--fg); font-size: 16px; text-align: left; }
 .grind-picker:hover { background: var(--tint); }
+.grind-current { display: grid; gap: 2px; min-width: 0; }
+.grind-current small { color: var(--muted); font-size: 13px; line-height: 1.3; }
+.grind-current small:empty { display: none; }
 .grind-picker svg { width: 18px; height: 18px; color: var(--muted); }
 .product-price { display: flex; flex-wrap: wrap; align-items: baseline; gap: 7px; padding-top: 18px; margin-bottom: 14px; }
 .product-price strong { font-size: 24px; font-weight: 700; letter-spacing: -.025em; }
@@ -281,6 +284,7 @@ dialog::backdrop { background: rgba(0,0,0,.3); -webkit-backdrop-filter: blur(6px
 .grind-choices label:has(input:focus-visible) { outline: 3px solid var(--accent); outline-offset: 3px; }
 .grind-choices label > span { display: grid; gap: 4px; }
 .grind-choices strong { font-size: 15px; font-weight: 650; }
+.grind-choices span { display: grid; gap: 3px; }
 .grind-choices small { color: var(--muted); font-size: 13px; }
 .grind-actions { display: grid; gap: 10px; margin-top: 22px; }
 .grind-actions .button { width: 100%; }
@@ -435,3 +439,7 @@ dialog::backdrop { background: rgba(0,0,0,.3); -webkit-backdrop-filter: blur(6px
 .sort-menu button[aria-checked="false"] .sort-check { visibility: hidden; }
 @media(prefers-reduced-motion:reduce) { .sort-menu { transition: none; } }
 @media(prefers-reduced-transparency:reduce), (prefers-contrast:more) { .sort-menu { background: var(--surface); } }
+/* Delivery and order total in the review: the total is the big figure. */
+.review-subtotal:not(.review-grand) strong { font-size: 18px; }
+.review-delivery { margin-top: 8px; }
+.review-grand { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line, rgba(127,127,127,.25)); }

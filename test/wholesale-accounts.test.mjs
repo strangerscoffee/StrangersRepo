@@ -62,14 +62,14 @@ test("wholesale accounts: host-only cookies never grant staff, diary or admin ac
 
 let order;
 test("wholesale ordering: customer identity and delivery snapshots are server-owned, orders are private and retries safe", async () => {
-  const body = { requestId: crypto.randomUUID(), lines: [{ productId: "brazil", pack: "kilo", grind: "beans", quantity: 2, price: 3700 }], delivery: "Delivery", business: "Forged business", customerId: customerB.id, reference: "PO 123" };
+  const body = { requestId: crypto.randomUUID(), lines: [{ productId: "brazil", pack: "kilo", grind: "beans", quantity: 2, price: 1800 }], delivery: "Delivery", business: "Forged business", customerId: customerB.id, reference: "PO 123" };
   assert.equal((await call("POST", "/api/wholesale/orders", body, A)).status, 400, "delivery needs an address");
   customerA = (await call("PUT", "/api/wholesale/account", { ...customerA, locations: undefined, ifVersion: customerA.version, address: "10 Coffee Street\nNorwich", postcode: "NR1 1AA", deliveryNotes: "Side door", note: "cannot write private notes", status: "On hold" }, A)).body.customer;
   body.customerVersion = customerA.version;
   assert.equal(customerA.status, "Active"); assert.equal(customerA.note, undefined);
   const created = await call("POST", "/api/wholesale/orders", body, A);
   assert.equal(created.status, 201, created.text); order = created.body.order;
-  assert.match(order.id, /^WS-/); assert.equal(created.body.preview, false); assert.equal(order.customerId, customerA.id); assert.equal(order.business, "buyer.a café"); assert.equal(order.customerSnapshot.postcode, "NR1 1AA"); assert.equal(order.pence, 7400);
+  assert.match(order.id, /^WS-/); assert.equal(created.body.preview, false); assert.equal(order.customerId, customerA.id); assert.equal(order.business, "buyer.a café"); assert.equal(order.customerSnapshot.postcode, "NR1 1AA"); assert.equal(order.pence, 3600);
   assert.equal((await call("POST", "/api/wholesale/orders", body, A)).body.order.id, order.id);
   assert.equal((await call("GET", `/api/wholesale/orders/${order.id}`, undefined, B)).status, 404);
   assert.deepEqual((await call("GET", "/api/wholesale/orders", undefined, B)).body.orders, []);
@@ -89,7 +89,7 @@ test("wholesale account holds prevent new orders; reset, disabling and logout re
   let customer = current.customers.find((row) => row.id === customerA.id);
   const held = await call("PUT", `/api/admin/wholesale/customers/${customer.id}`, { ...customer, ifVersion: customer.version, status: "On hold" });
   assert.equal(held.status, 200);
-  const payload = { requestId: crypto.randomUUID(), lines: [{ productId: "brazil", pack: "kilo", grind: "beans", quantity: 1, price: 3700 }], delivery: "Roastery collection" };
+  const payload = { requestId: crypto.randomUUID(), lines: [{ productId: "brazil", pack: "kilo", grind: "beans", quantity: 1, price: 1800 }], delivery: "Roastery collection" };
   assert.equal((await call("POST", "/api/wholesale/orders", payload, A)).body.code, "account_on_hold");
   assert.equal((await call("GET", "/api/wholesale/orders", undefined, A)).status, 200);
   let account = current.accounts.find((row) => row.customerId === customer.id);

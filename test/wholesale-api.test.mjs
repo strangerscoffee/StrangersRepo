@@ -20,7 +20,7 @@ async function person(name, username, role) {
   const response = await fetch(srv.base + "/api/auth/change", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ username, password: "temporary-pass", newPassword: username + "-own-password" }) });
   assert.equal(response.status, 200); return cookieOf(response);
 }
-const payload = (values = {}) => ({ requestId: crypto.randomUUID(), lines: [{ productId: "brazil", pack: "quarter", grind: "beans", quantity: 2, price: 1050 }], business: "Preview café", delivery: "Delivery", reference: "PO preview", ...values });
+const payload = (values = {}) => ({ requestId: crypto.randomUUID(), lines: [{ productId: "brazil", pack: "quarter", grind: "beans", quantity: 2, price: 500 }], business: "Preview café", delivery: "Delivery", reference: "PO preview", ...values });
 
 before(async () => {
   srv = await startServer({ writeLimit: 2000 });
@@ -72,7 +72,7 @@ test("wholesale: catalogue, ordering pages and every management route require th
   assert.equal((await call("GET", "/api/wholesale/catalogue", undefined, null)).status, 401);
   assert.equal((await call("POST", "/api/wholesale/orders", payload(), null)).status, 401);
   const data = (await call("GET", "/api/wholesale/catalogue", undefined, STAFF)).body;
-  assert.equal(data.products.length, 10); assert.equal(data.products[0].prices.quarter, 1050); assert.equal(data.preview, true); assert.equal(data.stage, "beta");
+  assert.equal(data.products.length, 10); assert.equal(data.products[0].prices.quarter, 500); assert.equal(data.preview, true); assert.equal(data.stage, "beta");
   for (const cookie of [STAFF, MANAGER]) for (const [method, path, body] of [
     ["GET", "/api/admin/wholesale"], ["POST", "/api/admin/wholesale/customers", {}],
     ["PUT", "/api/admin/wholesale/catalogue/brazil", {}], ["PATCH", "/api/admin/wholesale/orders/PREVIEW-" + "A".repeat(32), {}],
@@ -93,7 +93,7 @@ test("wholesale: checkout saves shared, server-priced orders once, with owner-on
   const first = await call("POST", "/api/wholesale/orders", body, STAFF);
   assert.equal(first.status, 201, first.text);
   const order = first.body.order;
-  assert.equal(order.pence, 2100); assert.equal(order.grams, 500); assert.equal(order.status, "New"); assert.equal(order.createdName, "Preview Staff");
+  assert.equal(order.pence, 1000); assert.equal(order.grams, 500); assert.equal(order.status, "New"); assert.equal(order.createdName, "Preview Staff");
   assert.equal(order.lines[0].title, "Brazil Fazenda Bom Jesus Natural"); assert.ok(order.createdAt > Date.now() - 10000);
   assert.equal(order.requestKey, undefined, "idempotency hash stays server-side");
   assert.equal((await call("POST", "/api/wholesale/orders", body, STAFF)).body.order.id, order.id);
@@ -131,13 +131,13 @@ test("wholesale: catalogue overrides are shared, checked at checkout and keep hi
   assert.equal((await call("PUT", "/api/admin/wholesale/catalogue/brazil", edit)).status, 409, "stale edits are refused");
   assert.equal((await call("GET", "/api/wholesale/catalogue", undefined, OTHER)).body.products[0].prices.quarter, 1250);
   assert.equal((await call("POST", "/api/wholesale/orders", payload(), STAFF)).status, 409, "old quoted price cannot be submitted");
-  assert.equal((await call("GET", "/api/wholesale/orders/" + before.id, undefined, STAFF)).body.order.pence, 2100);
+  assert.equal((await call("GET", "/api/wholesale/orders/" + before.id, undefined, STAFF)).body.order.pence, 1000);
   const updated = (await call("GET", "/api/admin/wholesale")).body.products[0];
   assert.equal((await call("PUT", "/api/admin/wholesale/catalogue/brazil", { ifVersion: updated.version, prices: updated.prices, active: false })).status, 200);
   const hidden = payload(); hidden.lines[0].price = 1250;
   assert.equal((await call("POST", "/api/wholesale/orders", hidden, STAFF)).status, 409);
   const current = (await call("GET", "/api/admin/wholesale")).body.products[0];
-  await call("PUT", "/api/admin/wholesale/catalogue/brazil", { ifVersion: current.version, prices: { quarter: 1050, half: 2100, kilo: 3700 }, active: true });
+  await call("PUT", "/api/admin/wholesale/catalogue/brazil", { ifVersion: current.version, prices: { quarter: 500, half: 2100, kilo: 1800 }, active: true });
 });
 
 test("wholesale: admin customers and statuses persist and reject concurrent stale edits", async () => {
@@ -159,4 +159,25 @@ test("wholesale: admin customers and statuses persist and reject concurrent stal
   assert.ok(restored.wholesalePreview.some((record) => record.kind === "customer" && record.id === customer.id));
   const activity = await call("GET", "/api/admin/activity");
   assert.equal(activity.status, 200);
+});
+
+test("wholesale: delivery is charged by the server (£7.44 inc VAT under £250, free from £250, none on collection) and 500 g bags are refused", async () => {
+  const place = async (values) => { const r = await call("POST", "/api/wholesale/orders", payload(values), STAFF); assert.equal(r.status, 201, r.text); return r.body.order; };
+  const small = await place({});
+  assert.deepEqual([small.pence, small.deliveryPence, small.totalPence], [1000, 744, 1744]);
+  const collect = await place({ delivery: "Roastery collection" });
+  assert.deepEqual([collect.deliveryPence, collect.totalPence], [0, 1000]);
+  const big = await place({ lines: [{ productId: "ethiopia", pack: "kilo", grind: "beans", quantity: 7, price: 3600 }] }); // £252
+  assert.deepEqual([big.pence, big.deliveryPence, big.totalPence], [25200, 0, 25200]);
+  const exact = await place({ lines: [{ productId: "brazil", pack: "quarter", grind: "beans", quantity: 50, price: 500 }] }); // £250 exactly
+  assert.equal(exact.deliveryPence, 0);
+  // The charge is the server's: a client can't send its own.
+  const forged = await place({ deliveryPence: 0, totalPence: 1 });
+  assert.deepEqual([forged.deliveryPence, forged.totalPence], [744, 1744]);
+  // An exact retry returns the original order, charge included.
+  const body = payload(); const first = await call("POST", "/api/wholesale/orders", body, STAFF), again = await call("POST", "/api/wholesale/orders", body, STAFF);
+  assert.equal(again.status, 200); assert.equal(again.body.order.deliveryPence, first.body.order.deliveryPence);
+  // 500 g bags are no longer sold.
+  const half = await call("POST", "/api/wholesale/orders", payload({ lines: [{ productId: "brazil", pack: "half", grind: "beans", quantity: 1, price: 2100 }] }), STAFF);
+  assert.equal(half.status, 409); assert.equal(half.body.code, "pack_unavailable"); assert.match(half.body.message, /500 g bags are no longer available/);
 });

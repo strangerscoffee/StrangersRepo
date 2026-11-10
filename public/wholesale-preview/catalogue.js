@@ -1,5 +1,6 @@
 // Public Strangers Coffee catalogue snapshot, retrieved 9 November 2026.
-// One-off RETAIL prices in integer GBP pence. These are not wholesale rates or a live inventory feed.
+// Wholesale prices in integer GBP pence (the owner's wholesale list, 10 November 2026: 1 kg and 250 g; 500 g bags are
+// no longer sold, their old price is kept only so past orders read). Half Caff Blend wasn't on the list: unchanged.
 export const catalogueRetrievedAt = "2026-11-09";
 export const products = [
   {
@@ -13,11 +14,11 @@ export const products = [
     "categories": [
       "single-origin"
     ],
-    "price": 3700,
+    "price": 1800,
     "prices": {
-      "quarter": 1050,
+      "quarter": 500,
       "half": 2100,
-      "kilo": 3700
+      "kilo": 1800
     },
     "image": "brazil.webp",
     "sourceUrl": "https://strangerscoffee.com/coffee/p/brazil-fazenda-bom-jesus-natural",
@@ -35,11 +36,11 @@ export const products = [
     "categories": [
       "single-origin"
     ],
-    "price": 5000,
+    "price": 2400,
     "prices": {
-      "quarter": 1400,
+      "quarter": 625,
       "half": 2800,
-      "kilo": 5000
+      "kilo": 2400
     },
     "image": "colombia.webp",
     "sourceUrl": "https://strangerscoffee.com/coffee/p/colombia-anserma-natural",
@@ -57,11 +58,11 @@ export const products = [
     "categories": [
       "single-origin"
     ],
-    "price": 6000,
+    "price": 3600,
     "prices": {
-      "quarter": 1600,
+      "quarter": 950,
       "half": 3200,
-      "kilo": 6000
+      "kilo": 3600
     },
     "image": "ethiopia.webp",
     "sourceUrl": "https://strangerscoffee.com/coffee/p/ethiopia-idido-anaerobic-natural",
@@ -79,11 +80,11 @@ export const products = [
     "categories": [
       "blend"
     ],
-    "price": 5000,
+    "price": 2400,
     "prices": {
-      "quarter": 1400,
+      "quarter": 625,
       "half": 2800,
-      "kilo": 5000
+      "kilo": 2400
     },
     "image": "christmas.webp",
     "sourceUrl": "https://strangerscoffee.com/coffee/p/christmas-blend",
@@ -102,11 +103,11 @@ export const products = [
       "single-origin",
       "decaf"
     ],
-    "price": 4000,
+    "price": 2000,
     "prices": {
-      "quarter": 1100,
+      "quarter": 550,
       "half": 2200,
-      "kilo": 4000
+      "kilo": 2000
     },
     "image": "decaf.webp",
     "sourceUrl": "https://strangerscoffee.com/coffee/p/decaf-colombia-san-lorenzo",
@@ -124,11 +125,11 @@ export const products = [
     "categories": [
       "single-origin"
     ],
-    "price": 4400,
+    "price": 2400,
     "prices": {
-      "quarter": 1200,
+      "quarter": 625,
       "half": 2400,
-      "kilo": 4400
+      "kilo": 2400
     },
     "image": "rocko.webp",
     "sourceUrl": "https://strangerscoffee.com/coffee/p/ethiopia-rocko-mountain-natural",
@@ -146,11 +147,11 @@ export const products = [
     "categories": [
       "single-origin"
     ],
-    "price": 4400,
+    "price": 2400,
     "prices": {
-      "quarter": 1200,
+      "quarter": 625,
       "half": 2400,
-      "kilo": 4400
+      "kilo": 2400
     },
     "image": "rosalina.webp",
     "sourceUrl": "https://strangerscoffee.com/coffee/p/honduras-rosalina-ramos-natural",
@@ -168,11 +169,11 @@ export const products = [
     "categories": [
       "single-origin"
     ],
-    "price": 3700,
+    "price": 1800,
     "prices": {
-      "quarter": 1050,
+      "quarter": 500,
       "half": 2100,
-      "kilo": 3700
+      "kilo": 1800
     },
     "image": "campo.webp",
     "sourceUrl": "https://strangerscoffee.com/coffee/p/colombia-campo-santo-washed",
@@ -212,11 +213,11 @@ export const products = [
     "categories": [
       "blend"
     ],
-    "price": 3700,
+    "price": 1800,
     "prices": {
-      "quarter": 1050,
+      "quarter": 500,
       "half": 2100,
-      "kilo": 3700
+      "kilo": 1800
     },
     "image": "house.jpg",
     "sourceUrl": "https://strangerscoffee.com/coffee/p/house-blend",

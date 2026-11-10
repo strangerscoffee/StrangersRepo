@@ -65,7 +65,7 @@
           <div class="order-totals" id="order-totals" hidden>
             <div class="weight-total"><span>Total coffee</span><span id="total-weight">0 kg</span></div>
             <div class="subtotal"><span>Coffee subtotal</span><strong id="subtotal">£0.00</strong></div>
-            <p class="terms-note">Coffee subtotal. Delivery charges are confirmed by Strangers.</p>
+            <p class="terms-note" id="delivery-note">Delivery £7.44 including VAT, free on orders of £250 or more. No charge for roastery collection.</p>
           </div>
           <button class="button button-dark review-button" id="review-order" type="button" disabled>Review order <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></button>
           <div class="basket-meta"><span class="small-dot" aria-hidden="true"></span><span id="basket-storage-note">Your basket stays on this browser.</span></div>
@@ -86,7 +86,9 @@
         <p class="eyebrow">YOUR WHOLESALE ORDER</p><h2 id="review-title">Review your order</h2>
         <div id="review-items" class="review-items"></div>
         <div class="review-subtotal"><span>Coffee subtotal</span><strong id="review-total">£0.00</strong></div>
-        <p class="terms-note">Coffee subtotal. Delivery charges are confirmed by Strangers.</p>
+        <div class="review-subtotal review-delivery"><span id="review-delivery-label">Delivery</span><strong id="review-delivery">£0.00</strong></div>
+        <div class="review-subtotal review-grand"><span>Order total</span><strong id="review-grand">£0.00</strong></div>
+        <p class="terms-note" id="review-delivery-note"></p>
         <form id="review-form">
           <fieldset class="delivery-options"><legend>Delivery preference</legend><label><input type="radio" name="delivery" value="dispatch" checked><span>Send it to me</span></label><label><input type="radio" name="delivery" value="collection"><span>Roastery collection</span></label></fieldset>
           <div class="business-summary" id="review-business-block" hidden><span>Business</span><strong id="review-business"></strong></div>
@@ -99,7 +101,7 @@
           <button class="button button-outline" type="button" data-close>Keep choosing coffee</button>
         </form>
       </div>
-      <div class="preview-complete" id="preview-complete" hidden><p class="eyebrow">ORDER RECEIVED</p><h2 id="complete-title">Thank you.</h2><p>Coffee subtotal <strong id="complete-total">£0.00</strong></p><p id="complete-message"></p><p class="receipt-location" id="complete-location" hidden></p><p class="payment-terms" id="complete-payment-terms"></p><a class="button button-dark" id="complete-dashboard-link" href="/admin#wholesale" hidden>Open Admin · Wholesale</a><button class="button button-outline" type="button" data-close>Back to the coffee</button></div>
+      <div class="preview-complete" id="preview-complete" hidden><p class="eyebrow">ORDER RECEIVED</p><h2 id="complete-title">Thank you.</h2><p>Order total <strong id="complete-total">£0.00</strong></p><p id="complete-message"></p><p class="receipt-location" id="complete-location" hidden></p><p class="payment-terms" id="complete-payment-terms"></p><a class="button button-dark" id="complete-dashboard-link" href="/admin#wholesale" hidden>Open Admin · Wholesale</a><button class="button button-outline" type="button" data-close>Back to the coffee</button></div>
     </div>
   </dialog>
 
@@ -153,7 +155,7 @@
     <p class="quantity-error" id="reorder-error" role="alert" hidden></p>
     <div class="reorder-actions"><button class="button button-dark" id="confirm-reorder" type="button">Add to basket</button><button class="button button-outline" type="button" data-close>Keep current basket</button></div>
   </div></dialog>
-  <dialog id="grind-dialog" aria-labelledby="grind-title"><div class="dialog-inner"><div class="dialog-chrome"><button class="close-button" type="button" data-close aria-label="Close grind choices">×</button></div><p class="eyebrow">COFFEE PREPARATION</p><h2 id="grind-title">Choose your grind</h2><p class="dialog-intro" id="grind-product-name"></p><form id="grind-choice-form"><fieldset class="grind-choices"><legend class="sr-only">Grind options</legend><label><input type="radio" name="grind-choice" value="beans" checked><span><strong>Whole beans</strong><small>Grind at home or in your business.</small></span></label><label><input type="radio" name="grind-choice" value="espresso"><span><strong>Espresso / Fine</strong><small>For espresso machines.</small></span></label><label><input type="radio" name="grind-choice" value="moka"><span><strong>Moka pot / Fine</strong><small>For stovetop coffee makers.</small></span></label><label><input type="radio" name="grind-choice" value="filter"><span><strong>Filter / Medium</strong><small>For pour-over and filter brewers.</small></span></label><label><input type="radio" name="grind-choice" value="cafetiere"><span><strong>Cafetiere / Coarse</strong><small>For cafetieres and French presses.</small></span></label></fieldset><div class="grind-actions"><button class="button button-dark" id="confirm-grind" type="submit">Use this grind</button><button class="button button-outline" type="button" data-close>Keep current grind</button></div></form></div></dialog>
+  <dialog id="grind-dialog" aria-labelledby="grind-title"><div class="dialog-inner"><div class="dialog-chrome"><button class="close-button" type="button" data-close aria-label="Close grind choices">×</button></div><p class="eyebrow">COFFEE PREPARATION</p><h2 id="grind-title">Choose your grind</h2><p class="dialog-intro" id="grind-product-name"></p><form id="grind-choice-form"><fieldset class="grind-choices"><legend class="sr-only">Grind options</legend><label><input type="radio" name="grind-choice" value="beans" checked><span><strong>Beans</strong><small>Whole beans, for your own grinder</small></span></label><label><input type="radio" name="grind-choice" value="espresso"><span><strong>Fine</strong><small>Commercial espresso machine</small></span></label><label><input type="radio" name="grind-choice" value="filter"><span><strong>Medium</strong><small>Filter, and a good general grind for most uses</small></span></label><label><input type="radio" name="grind-choice" value="cafetiere"><span><strong>Coarse</strong><small>Cafetiere and batch brewer</small></span></label></fieldset><div class="grind-actions"><button class="button button-dark" id="confirm-grind" type="submit">Use this grind</button><button class="button button-outline" type="button" data-close>Keep current grind</button></div></form></div></dialog>
   <dialog id="location-dialog" aria-labelledby="location-title"><div class="dialog-inner">
     <div class="dialog-chrome"><button class="close-button" type="button" data-close aria-label="Close location editor">×</button></div>
     <p class="eyebrow">DELIVERY LOCATION</p><h2 id="location-title">Add location</h2><p class="dialog-intro">Save this location with your account details, then choose it when ordering.</p>

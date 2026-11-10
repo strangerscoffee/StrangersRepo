@@ -35,7 +35,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
     const customerCookie = (await api("POST", "/api/wholesale/auth/change-password", { username, password: account.temporaryPassword, newPassword: username + "-password" }, null)).cookie;
     const profile = (await api("GET", "/api/wholesale/session", undefined, customerCookie)).body.customer;
     const makeOrder = async (pack, quantity, price, cookie = customerCookie) => (await api("POST", "/api/wholesale/orders", { requestId: crypto.randomUUID(), customerVersion: profile.version, business, reference: `Delete-${pack}-${device}-${color}`, delivery: "Roastery collection", lines: [{ productId: "brazil", pack, grind: "beans", quantity, price }] }, cookie)).body.order;
-    const first = await makeOrder("kilo", 2, 3700), stale = await makeOrder("quarter", 1, 1050), preview = await makeOrder("half", 1, 2100, ADMIN);
+    const first = await makeOrder("kilo", 2, 1800), stale = await makeOrder("quarter", 1, 500), preview = await makeOrder("quarter", 3, 500, ADMIN);
     const context = await browser.newContext({ viewport, colorScheme: color, hasTouch: true, isMobile: device === "phone" });
     const [name, value] = ADMIN.split("=");
     await context.addCookies([{ name, value, url: srv.base }]);
@@ -80,7 +80,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       await page.locator("#wNote").fill(draft);
       await openConfirmation();
       const copy = await confirmation.textContent();
-      for (const value of [business, first.id, "£74.00"]) assert.ok(copy.includes(value), `confirmation identifies ${value}`);
+      for (const value of [business, first.id, "£36.00"]) assert.ok(copy.includes(value), `confirmation identifies ${value}`);
       assert.match(copy, /history/i); assert.match(copy, /payment/i); assert.match(copy, /refund/i);
       assert.equal(deletes.length, 0, "opening confirmation sends no delete request");
       await confirmation.locator('[data-sheet="cancel-delete"]').click();

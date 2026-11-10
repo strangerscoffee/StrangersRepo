@@ -1,5 +1,6 @@
-import { availableGrinds, grindLabel, isGrindAvailable } from "./grinds.js";
-import { products, setCatalogue, isAvailable, packs, grinds, MAX_QUANTITY, money, weight, productFor, lineKey, unitPrice, validQuantity, sanitiseBasket, addToBasket, totals } from "./order.js";
+import { availableGrinds, grindLabel, grindHint, isGrindAvailable } from "./grinds.js";
+import { shippingFor, SHIPPING_PENCE, FREE_SHIPPING_FROM_PENCE } from "./shipping.js";
+import { products, setCatalogue, isAvailable, packs, orderablePacks, lineOrderable, grinds, MAX_QUANTITY, money, weight, productFor, lineKey, unitPrice, validQuantity, sanitiseBasket, addToBasket, totals } from "./order.js";
 
 let STORAGE_KEY = null;
 let session = null;
@@ -149,8 +150,8 @@ function renderProducts() {
     ${product.imageUrls.length > 1 ? `<div class="photo-controls"><button type="button" data-photo-step="-1" aria-label="Previous photo of ${escape(product.name)}">Previous</button><span data-photo-count>${Math.min(photoIndexes.get(product.id) || 0, product.imageUrls.length - 1) + 1} / ${product.imageUrls.length}</span><button type="button" data-photo-step="1" aria-label="Next photo of ${escape(product.name)}">Next</button></div>` : ""}
     <div class="product-info"><p class="product-origin">${escape(product.origin)}</p><h3 class="product-name" id="name-${product.id}">${escape(product.name)}</h3><p class="product-process">${escape(product.process)}</p><p class="tasting-notes">${escape(product.notes)}</p><p class="product-stock ${product.inStock ? "" : "out"}">${product.inStock ? "In stock" : "Out of stock"}</p></div>
     <form class="product-config" data-product="${product.id}">
-      <fieldset class="pack-options"><legend>Pack size <span class="sr-only">for ${escape(product.name)}</span></legend>${Object.entries(packs).map(([id, pack]) => `<label class="pack-choice"><input type="radio" name="pack" value="${id}" ${id === "kilo" ? "checked" : ""}><span>${escape(pack.short)} bag</span></label>`).join("")}</fieldset>
-      <div class="grind-field"><span class="field-label">Grind</span><select name="grind" hidden aria-label="Grind for ${escape(product.name)}">${availableGrinds(product).map(option => `<option value="${escape(option.id)}">${escape(option.label)}</option>`).join("")}</select><button class="grind-picker" type="button" data-grind-open aria-haspopup="dialog" aria-controls="grind-dialog" aria-label="Choose grind for ${escape(product.name)}"><span data-grind-label>${escape(availableGrinds(product)[0]?.label || "Unavailable")}</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 7 7-7 7"/></svg></button></div>
+      <fieldset class="pack-options"><legend>Pack size <span class="sr-only">for ${escape(product.name)}</span></legend>${orderablePacks.map(([id, pack]) => `<label class="pack-choice"><input type="radio" name="pack" value="${id}" ${id === "kilo" ? "checked" : ""}><span>${escape(pack.short)} bag</span></label>`).join("")}</fieldset>
+      <div class="grind-field"><span class="field-label">Grind</span><select name="grind" hidden aria-label="Grind for ${escape(product.name)}">${availableGrinds(product).map(option => `<option value="${escape(option.id)}">${escape(option.label)}</option>`).join("")}</select><button class="grind-picker" type="button" data-grind-open aria-haspopup="dialog" aria-controls="grind-dialog" aria-label="Choose grind for ${escape(product.name)}"><span class="grind-current"><span data-grind-label>${escape(availableGrinds(product)[0]?.label || "Unavailable")}</span><small data-grind-hint>${escape(availableGrinds(product)[0]?.hint || "")}</small></span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 7 7-7 7"/></svg></button></div>
       <div class="product-price"><strong data-price>${money(product.price)}</strong><span data-price-unit>per 1 kg bag</span></div>
       <div class="add-row">${stepper(`qty-${product.id}`, 1, product.name, `error-${product.id}`)}<button class="button button-dark" type="submit" aria-label="Add ${escape(product.name)} to order" ${isAvailable(product) ? "" : "disabled"}>${product.inStock ? 'Add to order <span aria-hidden="true">+</span>' : "Out of stock"}</button></div>
       <p class="quantity-error" id="error-${product.id}" hidden role="status">Choose a whole number of packs, from 1 to 99.</p>
@@ -246,7 +247,7 @@ function renderBasket() {
     const product = productFor(line.productId);
     return `<div class="order-item" data-line="${lineKey(line)}">
       ${product.imageUrls?.length ? `<img src="${escape(product.imageUrls[0])}" alt="" width="42" height="48">` : '<span class="basket-photo-placeholder" aria-hidden="true">—</span>'}
-      <div><h3>${escape(product.name)}</h3><p class="line-variant">${escape(packs[line.pack].label)} · ${escape(grindLabel(productFor(line.productId), line.grind))}<br>${money(unitPrice(product, line.pack))} per pack${!isAvailable(product) || !isGrindAvailable(product, line.grind) ? "<br>Unavailable — remove to continue." : ""}</p>
+      <div><h3>${escape(product.name)}</h3><p class="line-variant">${escape(packs[line.pack].label)} · ${escape(grindLabel(productFor(line.productId), line.grind))}<br>${money(unitPrice(product, line.pack))} per pack${!isAvailable(product) || !lineOrderable(line) ? `<br>${packs[line.pack]?.retired ? `${escape(packs[line.pack].label)}s are no longer sold` : "Unavailable"} — remove to continue.` : ""}</p>
       <div class="line-actions">${stepper(`line-qty-${index}`, line.quantity, `${product.name}, ${packs[line.pack].label}, ${grindLabel(productFor(line.productId), line.grind)}`, `line-error-${index}`)}<strong class="line-price">${money(unitPrice(product, line.pack) * line.quantity)}</strong></div>
       <p class="quantity-error" id="line-error-${index}" role="status" hidden>Choose a whole number from 1 to 99.</p>
       <button class="remove-button" type="button" data-remove aria-label="Remove ${escape(`${product.name}, ${packs[line.pack].label}, ${grindLabel(productFor(line.productId), line.grind)}`)}">Remove</button></div>
@@ -255,7 +256,9 @@ function renderBasket() {
   $("#order-totals").hidden = !basket.length;
   $("#total-weight").textContent = weight(sum.grams);
   $("#subtotal").textContent = money(sum.pence);
-  $("#review-order").disabled = !pendingAttempt && (!canOrder() || !basket.length || basket.some((line) => (!isAvailable(productFor(line.productId)) || !isGrindAvailable(productFor(line.productId), line.grind))));
+  $("#delivery-note").textContent = sum.pence >= FREE_SHIPPING_FROM_PENCE ? "Free delivery on this order (£250 or more). No charge for roastery collection."
+    : `Delivery ${money(SHIPPING_PENCE)} including VAT, free on orders of ${money(FREE_SHIPPING_FROM_PENCE)} or more: add ${money(FREE_SHIPPING_FROM_PENCE - sum.pence)} more for free delivery. No charge for roastery collection.`;
+  $("#review-order").disabled = !pendingAttempt && (!canOrder() || !basket.length || basket.some((line) => (!isAvailable(productFor(line.productId)) || !lineOrderable(line))));
   $("#review-order").textContent = pendingAttempt ? "Check submitted order" : "Review order";
   lockPendingUi();
   $("#basket-storage-note").textContent = storageAvailable ? "Your basket stays on this browser." : "Basket is temporary: browser storage is unavailable.";
@@ -306,7 +309,7 @@ $("#products").addEventListener("click", event => {
   if (!product) return;
   grindProductId = product.id;
   $("#grind-product-name").textContent = product.name;
-  $("#grind-choice-form .grind-choices").innerHTML = `<legend class="sr-only">Grind options</legend>${availableGrinds(product).map(option => `<label><input type="radio" name="grind-choice" value="${escape(option.id)}" ${option.id === form.elements.grind.value ? "checked" : ""}><span><strong>${escape(option.label)}</strong></span></label>`).join("")}`;
+  $("#grind-choice-form .grind-choices").innerHTML = `<legend class="sr-only">Grind options</legend>${availableGrinds(product).map(option => `<label><input type="radio" name="grind-choice" value="${escape(option.id)}" ${option.id === form.elements.grind.value ? "checked" : ""}><span><strong>${escape(option.label)}</strong>${option.hint ? `<small>${escape(option.hint)}</small>` : ""}</span></label>`).join("")}`;
   $("#grind-dialog").showModal();
 });
 $("#grind-choice-form").addEventListener("submit", event => {
@@ -317,6 +320,7 @@ $("#grind-choice-form").addEventListener("submit", event => {
   if (!form || !isGrindAvailable(productFor(grindProductId), selected)) { $("#grind-dialog").close(); return; }
   form.elements.grind.value = selected;
   form.querySelector("[data-grind-label]").textContent = grindLabel(productFor(grindProductId), selected);
+  form.querySelector("[data-grind-hint]").textContent = grindHint(productFor(grindProductId), selected);
   form.elements.grind.dispatchEvent(new Event("change", { bubbles: true }));
   $("#grind-dialog").close();
   form.querySelector("[data-grind-open]").focus({ preventScroll: true });
@@ -326,7 +330,7 @@ document.addEventListener("input", (event) => {
   if (event.target.matches(".stepper input")) {
     validateQuantity(event.target);
     // Do not let the review include a different quantity from an invalid basket field on screen.
-    if (event.target.closest("#order-items")) $("#review-order").disabled = !canOrder() || !!$("#order-items input[aria-invalid='true']") || basket.some((line) => (!isAvailable(productFor(line.productId)) || !isGrindAvailable(productFor(line.productId), line.grind)));
+    if (event.target.closest("#order-items")) $("#review-order").disabled = !canOrder() || !!$("#order-items input[aria-invalid='true']") || basket.some((line) => (!isAvailable(productFor(line.productId)) || !lineOrderable(line)));
   }
 });
 
@@ -395,7 +399,7 @@ document.querySelectorAll("[data-basket]").forEach((button) => button.addEventLi
 }));
 
 $("#review-form").addEventListener("change", event => {
-  if (event.target.name === "delivery" && !saving && !pendingAttempt) renderReviewLocation();
+  if (event.target.name === "delivery" && !saving && !pendingAttempt) { renderReviewLocation(); renderReviewDelivery(); }
 });
 $("#review-location").addEventListener("click", () => {
   if (!session.customer || saving || pendingAttempt) return;
@@ -418,19 +422,20 @@ $("#review-order").addEventListener("click", async () => {
   if (pendingAttempt) { await resumeAttempt(); return; }
   reviewNeedsRefresh = false;
   lockReview(false);
-  if (!canOrder() || !basket.length || $("#order-items input[aria-invalid='true']") || basket.some((line) => (!isAvailable(productFor(line.productId)) || !isGrindAvailable(productFor(line.productId), line.grind)))) return;
+  if (!canOrder() || !basket.length || $("#order-items input[aria-invalid='true']") || basket.some((line) => (!isAvailable(productFor(line.productId)) || !lineOrderable(line)))) return;
   $("#review-order").disabled = true;
   try {
     const fresh = await api("/api/wholesale/catalogue");
     if (fresh.me.id !== session.me.id) { location.reload(); return; }
     applyCatalogue(fresh, false);
-    if (!canOrder() || !basket.length || basket.some((line) => (!isAvailable(productFor(line.productId)) || !isGrindAvailable(productFor(line.productId), line.grind)))) { toast("Check the updated basket before ordering."); return; }
+    if (!canOrder() || !basket.length || basket.some((line) => (!isAvailable(productFor(line.productId)) || !lineOrderable(line)))) { toast("Check the updated basket before ordering."); return; }
   } catch (error) { toast(error.message); renderBasket(); return; }
   $("#review-items").innerHTML = basket.map((line) => {
     const product = productFor(line.productId);
     return `<div class="review-line"><div><h3>${escape(product.name)}</h3><p>${line.quantity} × ${escape(packs[line.pack].label)} · ${escape(grindLabel(productFor(line.productId), line.grind))}</p></div><strong>${money(unitPrice(product, line.pack) * line.quantity)}</strong></div>`;
   }).join("");
   $("#review-total").textContent = money(totals(basket).pence);
+  renderReviewDelivery();
   $("#review-form").reset();
   reviewBusiness(session.customer?.business || "");
   $("#review-form").elements.locationId.value = session.customer?.defaultLocationId || "primary";
@@ -515,7 +520,7 @@ function showReceipt(result) {
   if (newerBasketKept) $("#complete-message").textContent += " A newer basket from another tab has been kept for your next order.";
   $("#complete-dashboard-link").hidden = session.me.role !== "admin";
   if (session.me.role === "admin") $("#complete-dashboard-link").href = session.links.admin + "#wholesale";
-  $("#complete-total").textContent = money(result.order.pence);
+  $("#complete-total").textContent = money(orderTotal(result.order)) + (result.order.deliveryPence ? ` (including ${money(result.order.deliveryPence)} delivery)` : "");
   $("#complete-location").hidden = !result.order.locationSnapshot;
   $("#complete-location").textContent = result.order.locationSnapshot ? `${result.order.delivery === "Delivery" ? "Delivery to" : "Ordered for"}: ${result.order.locationSnapshot.name}` : "";
   $("#complete-payment-terms").textContent = result.order.paymentTerms ? `Payment terms: ${result.order.paymentTerms.label}${result.order.paymentTerms.note ? " · " + result.order.paymentTerms.note : ""}` : "";
@@ -542,6 +547,7 @@ async function resumeAttempt() {
   $("#review-items").innerHTML = attempt.summary.map(line => `<div class="review-line"><div><h3>${escape(line.title)}</h3><p>${escape(line.description)}</p></div><strong>${money(line.pence)}</strong></div>`).join("");
   $("#review-total").textContent = money(attempt.payload.lines.reduce((sum,line) => sum + line.price * line.quantity, 0));
   form.elements.delivery.value = attempt.payload.delivery === "Roastery collection" ? "collection" : "dispatch";
+  renderReviewDelivery(attempt.summary.reduce((sum, line) => sum + line.pence, 0));
   form.elements.reference.value = attempt.payload.reference;
   reviewBusiness(attempt.payload.business);
   form.elements.locationId.value = attempt.payload.locationId || "";
@@ -794,13 +800,25 @@ function historyTrackingUrl(order) {
     return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password ? url.href : "";
   } catch { return ""; }
 }
+// The delivery line in the review: worked out exactly as the server will charge it (shipping.js).
+function renderReviewDelivery(coffeePence = totals(basket).pence) {
+  const delivery = $("#review-form").elements.delivery.value === "collection" ? "Roastery collection" : "Delivery";
+  const charge = shippingFor(delivery, coffeePence);
+  $("#review-delivery-label").textContent = delivery === "Delivery" ? "Delivery" : "Roastery collection";
+  $("#review-delivery").textContent = charge ? money(charge) : "Free";
+  $("#review-grand").textContent = money(coffeePence + charge);
+  $("#review-delivery-note").textContent = delivery !== "Delivery" ? "No delivery charge when you collect from the roastery."
+    : charge ? `Delivery is ${money(SHIPPING_PENCE)} including VAT. Orders of ${money(FREE_SHIPPING_FROM_PENCE)} or more of coffee are delivered free: add ${money(FREE_SHIPPING_FROM_PENCE - coffeePence)} more.`
+    : `Free delivery on orders of ${money(FREE_SHIPPING_FROM_PENCE)} or more of coffee.`;
+}
+const orderTotal = (order) => Number.isSafeInteger(order.totalPence) ? order.totalPence : order.pence;
 function historyCard(order, expanded) {
   const date = new Date(order.createdAt).toLocaleDateString("en-GB", { timeZone: "Europe/London", day: "numeric", month: "short", year: "numeric" });
   const snapshot = order.customerSnapshot;
   const trackingUrl = historyTrackingUrl(order);
-  return `<article class="history-card" data-history-order="${escape(order.id)}"><div class="history-card-head"><h3>${date}</h3><strong>${money(order.pence)}</strong></div><p class="history-summary">${bagCount(order.packs)} · ${escape(order.delivery)}</p>${order.reference ? `<p class="history-summary">Reference: ${escape(order.reference)}</p>` : ""}${historyStatus(order)}
+  return `<article class="history-card" data-history-order="${escape(order.id)}"><div class="history-card-head"><h3>${date}</h3><strong>${money(orderTotal(order))}</strong></div><p class="history-summary">${bagCount(order.packs)} · ${escape(order.delivery)}</p>${order.reference ? `<p class="history-summary">Reference: ${escape(order.reference)}</p>` : ""}${historyStatus(order)}
     ${trackingUrl ? `<a class="button button-outline history-tracking" data-order-tracking="${escape(order.id)}" href="${escape(trackingUrl)}" target="_blank" rel="noopener noreferrer">Track delivery <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg><span class="sr-only">(opens in a new tab)</span></a>` : ""}
-    <details class="history-details" ${expanded.has(order.id) ? "open" : ""}><summary>Order details · ${bagCount(order.packs)}</summary><p class="history-id">${escape(order.id)}</p><ul class="history-lines">${order.lines.map(line => `<li><span>${line.quantity} × ${escape(line.title)}</span><small>${escape(line.packLabel)} · ${escape(line.grindLabel)}</small><strong>${money(line.price * line.quantity)}</strong></li>`).join("")}</ul>${order.locationSnapshot ? `<p class="history-address"><b>Location at order</b><br>${escape(order.locationSnapshot.name)}</p>` : ""}${snapshot?.address && order.delivery === "Delivery" ? `<p class="history-address"><b>Delivery address at order</b><br>${escape(snapshot.address)}<br>${escape(snapshot.postcode || "")}</p>` : ""}${order.deliveryNotes ? `<p class="history-address">${escape(order.deliveryNotes)}</p>` : ""}${order.paymentTerms ? `<p class="payment-terms">Payment terms: ${escape(order.paymentTerms.label)}${order.paymentTerms.note ? `<br>${escape(order.paymentTerms.note)}` : ""}</p>` : ""}</details>
+    <details class="history-details" ${expanded.has(order.id) ? "open" : ""}><summary>Order details · ${bagCount(order.packs)}</summary><p class="history-id">${escape(order.id)}</p><ul class="history-lines">${order.lines.map(line => `<li><span>${line.quantity} × ${escape(line.title)}</span><small>${escape(line.packLabel)} · ${escape(line.grindLabel)}</small><strong>${money(line.price * line.quantity)}</strong></li>`).join("")}${Number.isSafeInteger(order.deliveryPence) ? `<li><span>${order.delivery === "Delivery" ? "Delivery" : "Roastery collection"}</span><small>${order.deliveryPence ? "Including VAT" : order.delivery === "Delivery" ? "Free on orders of £250 or more" : "No delivery charge"}</small><strong>${order.deliveryPence ? money(order.deliveryPence) : "Free"}</strong></li>` : ""}</ul>${order.locationSnapshot ? `<p class="history-address"><b>Location at order</b><br>${escape(order.locationSnapshot.name)}</p>` : ""}${snapshot?.address && order.delivery === "Delivery" ? `<p class="history-address"><b>Delivery address at order</b><br>${escape(snapshot.address)}<br>${escape(snapshot.postcode || "")}</p>` : ""}${order.deliveryNotes ? `<p class="history-address">${escape(order.deliveryNotes)}</p>` : ""}${order.paymentTerms ? `<p class="payment-terms">Payment terms: ${escape(order.paymentTerms.label)}${order.paymentTerms.note ? `<br>${escape(order.paymentTerms.note)}` : ""}</p>` : ""}</details>
     <button class="button button-outline history-reorder" type="button" data-reorder="${escape(order.id)}" ${pendingAttempt ? "disabled" : ""}>Order again</button></article>`;
 }
 let historyCursor = null;
@@ -847,7 +865,7 @@ function buildReorderPlan(order) {
   const additions = [], skipped = [];
   for (const line of order.lines) {
     const product = productFor(line.productId);
-    if (!isGrindAvailable(product, line.grind)) { skipped.push({ title: line.title, quantity: line.quantity, reason: "grind no longer offered" }); continue; }
+    if (!lineOrderable(line)) { skipped.push({ title: line.title, quantity: line.quantity, reason: packs[line.pack]?.retired ? `${packs[line.pack].label}s no longer sold` : "grind no longer offered" }); continue; }
     if (!isAvailable(product)) { skipped.push({ title: line.title, quantity: line.quantity, reason: product?.active === false || !product ? "no longer offered" : "out of stock" }); continue; }
     const result = addToBasket(next, line, line.quantity);
     next = result.basket;

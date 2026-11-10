@@ -20,7 +20,7 @@ async function customer(username) {
 }
 async function newOrder(reference = "INV-PO") {
   const session = (await call("GET", "/api/wholesale/session", undefined, A.cookie)).body;
-  const result = await call("POST", "/api/wholesale/orders", { requestId: crypto.randomUUID(), customerVersion: session.customer.version, orderingIdentity: session.me.id, locationId: "primary", lines: [{ productId: "brazil", pack: "quarter", grind: "beans", quantity: 3, price: 1050 }, { productId: "brazil", pack: "kilo", grind: "filter", quantity: 1, price: 3700 }], delivery: "Roastery collection", reference }, A.cookie);
+  const result = await call("POST", "/api/wholesale/orders", { requestId: crypto.randomUUID(), customerVersion: session.customer.version, orderingIdentity: session.me.id, locationId: "primary", lines: [{ productId: "brazil", pack: "quarter", grind: "beans", quantity: 3, price: 500 }, { productId: "brazil", pack: "kilo", grind: "filter", quantity: 1, price: 1800 }], delivery: "Roastery collection", reference }, A.cookie);
   assert.equal(result.status, 201); return result.body.order;
 }
 async function saveSettings(fields = {}) {
@@ -64,16 +64,16 @@ test("wholesale invoices: supplier/VAT settings remain draft until explicitly co
 test("wholesale invoices: preview uses fixed saved lines, exact inclusive/exclusive/mixed VAT and net-term calendar dates without allocating numbers", async () => {
   const path = `/api/admin/wholesale/orders/${sourceOrder.id}/invoice/preview`;
   const exclusive = (await call("POST", path, invoiceRequest(sourceOrder, { deliveryCharge: { pence: 555, vatRateId: "standard" }, lineVatRateIds: ["standard", "zero"] }))).body.invoice;
-  // Order lines are canonically sorted: kilo first (3700), then three quarter bags (3150).
-  assert.deepEqual(exclusive.totals, { netPence: 7405, vatPence: 851, grossPence: 8256 });
+  // Order lines are canonically sorted: kilo first (1800), then three quarter bags (1500).
+  assert.deepEqual(exclusive.totals, { netPence: 3855, vatPence: 471, grossPence: 4326 });
   assert.equal(exclusive.id, null); assert.equal(exclusive.number, null); assert.equal(exclusive.dueDate, "2020-01-15"); assert.equal(exclusive.orderReference, "INV-PO");
   assert.equal(exclusive.billTo.name, A.customer.business); assert.equal(exclusive.billTo.address, "10 Buyer Street"); assert.equal(exclusive.lines[0].quantity, sourceOrder.lines[0].quantity); assert.equal(exclusive.lines[0].unitPricePence, sourceOrder.lines[0].price);
   assert.equal((await saveSettings({ priceBasis: "inclusive" })).status, 200);
   const inclusive = (await call("POST", path, invoiceRequest(sourceOrder, { deliveryCharge: { pence: 555, vatRateId: "standard" } }))).body.invoice;
-  assert.deepEqual(inclusive.totals, { netPence: 6170, vatPence: 1235, grossPence: 7405 });
+  assert.deepEqual(inclusive.totals, { netPence: 3212, vatPence: 643, grossPence: 3855 });
   assert.equal((await saveSettings({ priceBasis: "exclusive", defaultCoffeeRateId: "reduced" })).status, 200);
   const reduced = (await call("POST", path, invoiceRequest(sourceOrder, { deliveryCharge: { pence: 555, vatRateId: "standard" } }))).body.invoice;
-  assert.deepEqual(reduced.totals, { netPence: 7405, vatPence: 454, grossPence: 7859 });
+  assert.deepEqual(reduced.totals, { netPence: 3855, vatPence: 276, grossPence: 4131 });
   const leap = (await call("POST", path, invoiceRequest(sourceOrder, { invoiceDate: "2024-02-29", supplyDate: "2024-02-29" }))).body.invoice;
   assert.equal(leap.dueDate, "2024-03-14");
   for (const fields of [{ invoiceDate: "2026-02-30" }, { supplyDate: "2026-02-29" }, { dueDate: "2020-01-20" }, { lineVatRateIds: ["standard"] }, { deliveryCharge: { pence: -1 } }]) assert.equal((await call("POST", path, invoiceRequest(sourceOrder, fields))).status, 400);
@@ -117,7 +117,7 @@ test("wholesale invoices: stale reviews, cancelled/deleted/test orders, missing 
   assert.equal((await call("POST", `/api/admin/wholesale/orders/${cancelled.id}/invoice`, invoiceRequest(cancelled))).status, 400);
   const deleted = await newOrder("Deleted before invoice"); await call("DELETE", `/api/admin/wholesale/orders/${deleted.id}`, { ifVersion: deleted.version });
   assert.equal((await call("POST", `/api/admin/wholesale/orders/${deleted.id}/invoice`, invoiceRequest(deleted))).status, 404);
-  const staffOrder = (await call("POST", "/api/wholesale/orders", { requestId: crypto.randomUUID(), lines: [{ productId: "brazil", pack: "kilo", grind: "beans", quantity: 1, price: 3700 }], business: "Staff test", delivery: "Roastery collection" }, STAFF)).body.order;
+  const staffOrder = (await call("POST", "/api/wholesale/orders", { requestId: crypto.randomUUID(), lines: [{ productId: "brazil", pack: "kilo", grind: "beans", quantity: 1, price: 1800 }], business: "Staff test", delivery: "Roastery collection" }, STAFF)).body.order;
   assert.equal((await call("POST", `/api/admin/wholesale/orders/${staffOrder.id}/invoice`, invoiceRequest(staffOrder))).status, 400);
   const noBilling = { ...updated.customerSnapshot, address: "", postcode: "" };
   srv.sql(`UPDATE wholesale_preview SET data=json_set(data,'$.customerSnapshot',json('${JSON.stringify(noBilling).replaceAll("'", "''")}')) WHERE kind='order' AND id='${updated.id}'`);

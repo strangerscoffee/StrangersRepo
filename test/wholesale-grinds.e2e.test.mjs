@@ -35,7 +35,7 @@ for (const [device, viewport] of [['phone',{width:393,height:852}],['ipad',{widt
       await edit();
       await admin.locator('[data-grind-id="beans"] [data-grind-label]').fill('Whole beans');
       await admin.locator('[data-grind-id="espresso"] [data-grind-enabled]').uncheck();
-      await admin.locator('[data-grind-id="moka"] [data-sheet="grind-remove"]').click();
+      await admin.locator('[data-grind-id="filter"] [data-sheet="grind-remove"]').click();
       await admin.locator('[data-sheet="grind-add"]').click();
       const added=admin.locator('#wGrindOptions [data-grind-id]').last(), customId=await added.getAttribute('data-grind-id');
       await added.locator('[data-grind-label]').fill('Turkish / Extra fine');
@@ -44,7 +44,7 @@ for (const [device, viewport] of [['phone',{width:393,height:852}],['ipad',{widt
       await buyer.goto(srv.base+'/wholesale-preview/');
       const card=buyer.locator(`article[data-product="${product.id}"]`);
       await card.locator('[data-grind-open]').click();
-      assert.deepEqual(await buyer.locator('#grind-choice-form strong').allTextContents(),['Whole beans','Filter / Medium','Cafetiere / Coarse','Turkish / Extra fine']);
+      assert.deepEqual(await buyer.locator('#grind-choice-form strong').allTextContents(),['Whole beans','Coarse','Turkish / Extra fine']);
       await buyer.locator(`#grind-choice-form input[value="${customId}"]`).check(); await buyer.locator('#confirm-grind').click();
       await card.locator('button[type="submit"]').click();
       assert.match(await buyer.locator('#order-items').textContent(),/Turkish \/ Extra fine/);

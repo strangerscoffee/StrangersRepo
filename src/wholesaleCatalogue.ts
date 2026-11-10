@@ -55,11 +55,14 @@ function editedGrinds(value: unknown, previous: GrindOption[] = []): GrindOption
   const options = value.map(entry => {
     const option = object(entry);
     if (!validGrindId(option.id) || typeof option.enabled !== "boolean") throw invalid("Choose a valid grind option and availability.");
-    return { id: option.id as string, label: text(option.label, "grind label", 60, true), enabled: option.enabled };
+    const hint = option.hint == null ? "" : text(option.hint, "grind description", 120);
+    return { id: option.id as string, label: text(option.label, "grind label", 60, true), ...(hint ? { hint } : {}), enabled: option.enabled };
   });
   if (new Set(options.map(option => option.id)).size !== options.length || new Set(options.map(option => option.label.toLocaleLowerCase("en-GB"))).size !== options.length) throw invalid("Each grind needs a unique ID and name.");
   if (!options.some(option => option.enabled)) throw invalid("Keep at least one grind available for ordering.");
-  return options.map(option => previous.some(old => old.id === option.id && old.label !== option.label) ? { ...option, id: "grind-" + crypto.randomUUID() } : option);
+  // A renamed option gets a new id (it's a different grind), except a built-in one moving to its new name.
+  const builtIn = (option: GrindOption) => defaultGrinds.some(d => d.id === option.id && d.label === option.label);
+  return options.map(option => !builtIn(option) && previous.some(old => old.id === option.id && old.label !== option.label) ? { ...option, id: "grind-" + crypto.randomUUID() } : option);
 }
 function edited(body: Record<string, any>, current: Coffee | null): Coffee {
   const field = (key: "name" | "title" | "origin" | "process" | "notes" | "badge", max: number, required = false) => body[key] === undefined && current ? current[key] : text(body[key], key, max, required);

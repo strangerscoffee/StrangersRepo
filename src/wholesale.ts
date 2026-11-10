@@ -1,6 +1,7 @@
 import { handleQuickBooks } from "./quickbooks/index";
 // Wholesale beta: real customer orders and isolated staff test orders. Payments and fulfilment are managed by the team.
 import { validGrindId } from "../public/wholesale-preview/grinds.js";
+import { shippingFor } from "../public/wholesale-preview/shipping.js";
 import { catalogueRetrievedAt } from "../public/wholesale-preview/catalogue.js";
 import type { User } from "./auth";
 import { object, text, version, decode, get, save, type Row, type Versioned } from "./wholesaleStore";
@@ -14,12 +15,16 @@ import { handleInvoiceAdmin, handleInvoiceCustomer, invoiceLinks } from "./whole
 
 type Pack = "quarter" | "half" | "kilo";
 const PACKS: Record<Pack, { label: string; grams: number }> = { quarter: { label: "250 g bag", grams: 250 }, half: { label: "500 g bag", grams: 500 }, kilo: { label: "1 kg bag", grams: 1000 } };
+// 500 g bags are no longer sold: kept above so past orders, invoices and retries still read, refused for new orders.
+const ORDERABLE_PACKS: Pack[] = ["quarter", "kilo"];
 const STATUSES = ["New", "Preparing", "Ready", "Dispatched", "Cancelled"];
 interface Line { productId: string; title: string; pack: Pack; packLabel: string; grind: string; grindLabel: string; quantity: number; price: number; grams: number }
 interface Order {
   createdBy: string; createdName: string; business: string; reference: string; delivery: string;
   customerId: string | null; status: string; note: string; date: string; createdAt: number;
   requestKey: string; lines: Line[]; pence: number; grams: number; packs: number;
+  /** Delivery charge in pence including VAT, fixed when the order was placed (absent on orders from before it was automatic). */
+  deliveryPence?: number; totalPence?: number;
   preview?: boolean; customerSnapshot?: Omit<ReturnType<typeof publicCustomer>, "locations" | "defaultLocationId">; deliveryNotes?: string;
   paymentTerms?: ReturnType<typeof paymentTermsFor>;
   locationId?: string; locationSnapshot?: CustomerLocation;
@@ -100,6 +105,7 @@ async function createOrder(req: Request, env: Env, user: OrderingUser): Promise<
     const product = coffees.find((product) => product.id === line.productId);
     if (!product) throw invalid("Choose a listed coffee.");
     if (!product.inStock) throw new ApiError(409, "out_of_stock", `${product.name} is out of stock. Remove it from your basket to continue.`);
+    if (!ORDERABLE_PACKS.includes(line.pack)) throw new ApiError(409, "pack_unavailable", `${PACKS[line.pack].label}s are no longer available. Remove the ${PACKS[line.pack].label} of ${product.name} from your basket and choose 250 g or 1 kg.`);
     if (!product.active) throw new ApiError(409, "conflict", `${product.name} is no longer in the catalogue. Reload your basket.`);
     if (line.price !== product.prices[line.pack]) throw new ApiError(409, "conflict", "The prices have changed. Reload and review your order again.");
     const grind = product.grindOptions.find(option => option.id === line.grind && option.enabled);
@@ -117,6 +123,8 @@ async function createOrder(req: Request, env: Env, user: OrderingUser): Promise<
     createdAt: at, requestKey, lines,
     pence: lines.reduce((sum, line) => sum + line.price * line.quantity, 0), grams: lines.reduce((sum, line) => sum + line.grams * line.quantity, 0), packs: lines.reduce((sum, line) => sum + line.quantity, 0),
   };
+  order.deliveryPence = shippingFor(order.delivery, order.pence);
+  order.totalPence = order.pence + order.deliveryPence;
   let saved;
   try { saved = await save(env, "order", body.id, order, 0); }
   catch (error) {

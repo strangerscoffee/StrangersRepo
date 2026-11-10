@@ -194,7 +194,7 @@ test("beta checkout: a saved order with a lost response is recovered after reloa
     await page.locator("#review-order").click();
     await page.locator("#preview-complete").waitFor();
     assert.match(await page.locator("#complete-message").textContent(), new RegExp(saved.body.order.id));
-    assert.equal(await page.locator("#complete-total").textContent(), "£37.00");
+    assert.equal(await page.locator("#complete-total").textContent(), "£18.00");
     assert.match(await page.locator("#complete-payment-terms").textContent(), /30 days from invoice/);
     assert.equal((await ownOrders(customer.id)).length, 1, "recovering a receipt cannot submit a duplicate order");
     assert.equal(saved.body.order.reference, submitted.reference);
