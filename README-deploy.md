@@ -161,3 +161,10 @@ Open a real customer order and choose **Open invoice**. Review billing/supply da
 
 
 Wholesale dispatch can save an optional tracking link in the existing order JSON. In Admin, Mark dispatched opens a review window; the order editor can change or remove its link later. Customers open tracking from their own dispatched delivery orders. This uses existing authentication/storage and requires no migration, courier service, secret or hostname change. Mobile Admin now has a direct Wholesale tab and Sites under More. Confirmed checkout clears the submitted basket while preserving uncertain recovery and newer different baskets.
+
+
+## QuickBooks Online sandbox
+
+The first integration adds **Wholesale → Invoicing → QuickBooks** for a UK/GBP sandbox connection, company confirmation, reference mapping and issued-invoice preview. Migration 15 adds integration tables in existing D1. It does not create QuickBooks invoices, synchronise payment status or collect payments. Missing app credentials leave connection disabled; a real UK sandbox has not yet been validated.
+
+The site owner configures Intuit development credentials and a separate token-encryption key as described in [QuickBooks setup and recovery](docs/quickbooks-integration.md). No new DNS, queue binding or SDK is needed. Never put secrets in source or chat. JSON backups omit credentials and active state; raw D1 restores must explicitly clear the integration credentials and OAuth states before serving traffic, following that guide.

@@ -10,6 +10,11 @@ export interface Env {
   ADMIN_HOST?: string; // the admin section's own hostname, e.g. admin.staffstrangerscoffee.com (wrangler.jsonc vars)
   ROTA_HOST?: string; // the rota app's own hostname, e.g. rota.staffstrangerscoffee.com (wrangler.jsonc vars)
   PREVIEW_HOST?: string; // signed-in wholesale ordering preview, e.g. preview.staffstrangerscoffee.com
+  QUICKBOOKS_CLIENT_ID?: string;
+  QUICKBOOKS_CLIENT_SECRET?: string;
+  QUICKBOOKS_TOKEN_KEY?: string; // base64 32-byte AES key, held outside D1/backups
+  QUICKBOOKS_REDIRECT_URI?: string;
+  QUICKBOOKS_TEST_ORIGIN?: string; // local harness only; ignored on deployed hosts
   RESEND_API_KEY?: string; // rota emails (src/email/): a secret the host adds in Cloudflare; without it nothing is sent
   RESEND_API_URL?: string; // for tests only: where to send instead of Resend
   EMAIL_FROM?: string; // default "Strangers Rota <rota@staffstrangerscoffee.com>"
