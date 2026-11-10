@@ -61,7 +61,7 @@
   // A backup of the diary every day at 03:17 UTC (src/backup.ts). Free on every plan.
   // The nightly backup; and the managers' Monday summary at 07:30 UK time (06:30 UTC in summer, 07:30 in winter: it
   // runs at both and sends only at 07:xx in London, once a week).
-  "triggers": { "crons": ["17 3 * * *", "30 6,7 * * 1"] },
+  "triggers": { "crons": ["17 3 * * *", "30 6,7 * * 1", "*/5 * * * *"] },
 
   "observability": { "enabled": true }
 }

@@ -7,14 +7,14 @@ export function keyBytes(value: string): Uint8Array {
   if (bytes.length !== 32) throw new Error("Invalid encryption key configuration.");
   return bytes;
 }
-const aad = (realm: string, generation: string) => enc.encode(JSON.stringify(["quickbooks-sandbox-v1",realm,generation]));
-export async function seal(value: unknown, secret: string, realm: string, generation: string): Promise<string> {
+const aad = (realm:string,generation:string,environment:string,legacy=false) => enc.encode(JSON.stringify(legacy?["quickbooks-sandbox-v1",realm,generation]:["quickbooks-v2",environment,realm,generation]));
+export async function seal(value: unknown, secret: string, realm: string, generation: string, environment="sandbox"): Promise<string> {
   const key = await crypto.subtle.importKey("raw",keyBytes(secret),"AES-GCM",false,["encrypt"]), iv = crypto.getRandomValues(new Uint8Array(12));
-  const cipher = await crypto.subtle.encrypt({name:"AES-GCM",iv,additionalData:aad(realm,generation)},key,enc.encode(JSON.stringify(value)));
-  return JSON.stringify({v:1,iv:base64(iv),cipher:base64(new Uint8Array(cipher))});
+  const cipher = await crypto.subtle.encrypt({name:"AES-GCM",iv,additionalData:aad(realm,generation,environment)},key,enc.encode(JSON.stringify(value)));
+  return JSON.stringify({v:2,iv:base64(iv),cipher:base64(new Uint8Array(cipher))});
 }
-export async function unseal<T>(value: string, secret: string, realm: string, generation: string): Promise<T> {
-  const data=JSON.parse(value); if(data.v!==1) throw new Error("Unsupported credential version.");
+export async function unseal<T>(value: string, secret: string, realm: string, generation: string, environment="sandbox"): Promise<T> {
+  const data=JSON.parse(value); if((data.v!==1&&data.v!==2)||(data.v===1&&environment!=="sandbox")) throw new Error("Unsupported credential version.");
   const bytes=(s:string)=>Uint8Array.from(atob(s),char=>char.charCodeAt(0)), key=await crypto.subtle.importKey("raw",keyBytes(secret),"AES-GCM",false,["decrypt"]);
-  return JSON.parse(dec.decode(await crypto.subtle.decrypt({name:"AES-GCM",iv:bytes(data.iv),additionalData:aad(realm,generation)},key,bytes(data.cipher))));
+  return JSON.parse(dec.decode(await crypto.subtle.decrypt({name:"AES-GCM",iv:bytes(data.iv),additionalData:aad(realm,generation,environment,data.v===1)},key,bytes(data.cipher))));
 }

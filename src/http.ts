@@ -14,6 +14,10 @@ export interface Env {
   QUICKBOOKS_CLIENT_SECRET?: string;
   QUICKBOOKS_TOKEN_KEY?: string; // base64 32-byte AES key, held outside D1/backups
   QUICKBOOKS_REDIRECT_URI?: string;
+  QUICKBOOKS_PRODUCTION_CLIENT_ID?: string;
+  QUICKBOOKS_PRODUCTION_CLIENT_SECRET?: string;
+  QUICKBOOKS_SANDBOX_WEBHOOK_TOKEN?: string;
+  QUICKBOOKS_PRODUCTION_WEBHOOK_TOKEN?: string;
   QUICKBOOKS_TEST_ORIGIN?: string; // local harness only; ignored on deployed hosts
   RESEND_API_KEY?: string; // rota emails (src/email/): a secret the host adds in Cloudflare; without it nothing is sent
   RESEND_API_URL?: string; // for tests only: where to send instead of Resend

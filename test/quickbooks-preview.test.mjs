@@ -21,11 +21,16 @@ test('QuickBooks preparation honours an exclusive VAT invoice without floating p
   invoice.totals={netPence:11050,vatPence:1580,grossPence:12630}; Object.assign(invoice.vatBreakdown[0],{netPence:7900,vatPence:1580,grossPence:9480});
   const result=await preview(invoice); assert.equal(result.state,'ready-for-sandbox-review'); assert.deepEqual(result.candidate.totals,invoice.totals);
 });
-test('QuickBooks preparation blocks drafts, missing due dates, invalid days, long numbers and production use',async()=>{
+test('QuickBooks preparation blocks drafts, missing due dates, invalid days and long numbers',async()=>{
   for(const [patch,code] of [[{id:null},'issued_invoice'],[{number:'X'.repeat(22)},'invoice_number'],[{dueDate:null},'invoice_dates'],[{supplyDate:'2026-02-30'},'invoice_dates'],[{dueDate:'2026-11-09'},'due_date']]) {
     const result=await preview({...exampleInvoice(),...patch}); assert.equal(result.candidate,null); assert.ok(has(result,code));
   }
-  const result=await preview(exampleInvoice(),{...exampleMappings(),environment:'production'}); assert.ok(has(result,'sandbox_only')); assert.equal(creationDecision(result),'blocked');
+});
+test('Production preparation is a side-effect-free review with environment-matching references',async()=>{
+  const mappings=exampleMappings();mappings.environment='production';mappings.customer.environment='production';
+  for(const value of Object.values(mappings.items))value.environment='production';
+  for(const value of Object.values(mappings.taxCodes))value.environment='production';
+  const result=await preview(exampleInvoice(),mappings);assert.equal(result.state,'ready-for-live-review');assert.equal(result.canTransmit,false);assert.equal(creationDecision(result),'review-create');
 });
 test('QuickBooks preparation requires matching UK GBP supplier and exact business mapping',async()=>{
   for(const change of [m=>m.company.country='US',m=>m.company.currency='EUR',m=>m.company.reviewed=false,m=>m.company.vatNumber='GB999999999',m=>m.customer.localCustomerId='another-business',m=>m.customer.active=false]) {

@@ -221,20 +221,34 @@ Customer `GET /api/wholesale/invoices`, `GET .../invoices/<seq>[/pdf]` and `GET 
 Catalogue `grindOptions` is optional for backward compatibility; omission preserves current options or the legacy defaults on creation. Validate 1–20 unique IDs/names, labels 1–60 characters, boolean `enabled`, and at least one enabled option. IDs are legacy grind IDs or `grind-<uuid>`. Renamed existing options receive a new server-generated ID. Image updates preserve grind settings. Catalogue/session DTOs expose options for the customer picker; customer writes cannot change them. Checkout validates the selected enabled option for its product and saves the server-controlled label. A retired/disabled/foreign grind returns 409 `grind_unavailable`; an exact successful order retry still returns its immutable original receipt before current catalogue validation.
 
 
-## QuickBooks Online sandbox
+## QuickBooks Online
 
-Every route below is under `/api/admin/wholesale/quickbooks` and requires a current admin staff session. Existing Origin/write limits and optional expected-identity headers apply. Wholesale sessions and nonadmins receive no integration data. Provider authorisation failures return 409 for reconnect, preserving staff sign-in. No generic query, arbitrary provider URL or accounting-write proxy exists.
+Management routes below are under `/api/admin/wholesale/quickbooks` and require a current admin staff session with existing identity, Origin and write-limit guards. `?environment=sandbox|production` scopes connections/mappings/exports and defaults to **sandbox** for old clients. Provider authorization failures return 409 for reconnect without ending staff sign-in. No arbitrary provider URL/query/write proxy exists.
 
 | Method and suffix | Behaviour |
 |---|---|
-| `GET /status` | Configuration readiness/missing variable names, safe company metadata/public version and read/preview capabilities. Export/payment-write capabilities are always false. |
-| `POST /connect` | Starts session-bound, hashed, ten-minute OAuth state; returns the fixed Intuit sandbox app authorisation URL. |
-| `GET /callback` | Single-use `state,code,realmId`; validates the same admin/session/version, reads company/GBP settings, encrypts tokens and sets pending confirmation. Redirects to native company review without credentials in the URL. |
-| `POST /confirm` | `{ifVersion,vatNumber,confirmed:true}` confirms the returned UK/GBP sandbox company and reviewed supplier VAT registration. |
-| `POST /disconnect` | `{ifVersion}` removes local credentials and pending states, then attempts provider revocation. Returns `disconnected,revoked`. |
-| `GET /references?kind=customer / item / taxcode&cursor=` | Active allowlisted entities, at most 100 minimal references/page, with `nextCursor`. No provider addresses, notes or emails. |
-| `GET /mappings` | Company-scoped mapping data, mapping version and connection version. |
-| `PUT /mappings` | `{ifVersion,connectionVersion,customer?:{localId,quickbooksId},coffeeItemId,deliveryItemId,taxMappings:[{rateId,basisPoints,taxCodeId}],reviewed:true}`. Rechecks active customer/GBP, service/non-inventory items/income references and simple sales VAT rates; saves with atomic mapping/connection version guards. |
-| `GET /invoices/<seq>/preview` | Reads an immutable issued invoice and rechecks stored mappings against the sandbox. Returns blockers or an exact-pence review candidate; `canTransmit:false` in every case. |
+| `GET /status` | Selected environment/configuration/missing names, safe company/version, active environment/mode version, Live checks, queue/reconciliation health and capabilities. |
+| `POST /connect` | Begins hashed single-use ten-minute OAuth state tied to environment/admin/session/connection version; returns fixed Intuit consent URL. |
+| `GET /callback` | Consumes `state,code,realmId` for its **saved** environment; validates same admin/session/version, UK/GBP, encrypts tokens, pending company confirmation. Redirects native review with `qbEnvironment`; cancelled consent is handled without changing active mode. |
+| `POST /confirm` | `{ifVersion,vatNumber,confirmed:true}` confirms the returned UK/GBP company and admin-reviewed supplier VAT number. |
+| `POST /disconnect` | `{ifVersion}` clears local credentials/nonces, attempts provider revocation; returns `disconnected,revoked`. |
+| `GET /references?kind=customer|item|taxcode|term&cursor=` | At most 100 active minimal references/page with `nextCursor`; no provider addresses/notes/emails. |
+| `GET /mappings` | Scoped data, mapping/connection versions, environment/realm. |
+| `PUT /mappings` | `{ifVersion,connectionVersion,customer?:{localId,quickbooksId},coffeeItemId,deliveryItemId,taxMappings:[{rateId,basisPoints,taxCodeId}],term?:{localId,quickbooksId},reviewed:true}`. Revalidates active GBP customer, Service/NonInventory items and Income/OtherIncome accounts, VAT treatment and net-period terms; CAS update. Empty term ref clears it. |
+| `GET /invoices/<seq>/preview` | Revalidates issued snapshot/references and returns `{preview,exportReady,exportReasons,connectionVersion,mappingVersion,modeVersion}`. Preview always has `canTransmit:false`; separate readiness includes active-mode/Live-profile gates. |
+| `POST /invoices/<seq>/export` | `{fingerprint,connectionVersion,mappingVersion,modeVersion,reviewed:true,paidInvoiceConfirmed?:true}`. Atomically stores/reuses frozen operation, then acknowledges durably before processing in a separate invocation. 202 pending or 200 existing linked; `{export}`. No payment/email side effect. |
+| `GET /exports?invoiceId=&cursor=` | Up to 50 saved operations in selected environment, including original previous companies; stable descending ID cursor and `nextCursor`. |
+| `GET /exports/<id>` | Scoped safe operation metadata and balance observation. |
+| `GET /exports/<id>/review` | Operation plus immutable original preview for review. |
+| `POST /exports/<id>/process` | `{}` starts a previously reviewed queued operation in a separate bounded invocation. Scheduled recovery handles a missed browser follow-up; no new request/body is created. |
+| `POST /exports/<id>/retry` | `{ifVersion,modeVersion,reviewed:true}` reauthorizes original company/request/body; requires active mode/current admin. |
+| `POST /exports/<id>/link-existing` | `{ifVersion,modeVersion,remoteId,reviewed:true}` explicitly adopts an exactly matching existing invoice. Does not establish successful Sandbox create evidence. |
+| `POST /exports/<id>/refresh` | `{}` reads linked original-company Invoice and persists a revision-guarded payment observation; works for existing Live links while Sandbox is active. |
+| `GET /readiness` | Live checklist/fingerprint/connection+mode versions, webhook configuration and approved/ready state. |
+| `POST /approve-live` | `{ifVersion,connectionVersion,fingerprint,reviewed:true,attestations:{company:true,vat:true,rounding:true,payments:true,fees:true}}`. Requires successful Sandbox evidence and complete Production setup; approval does not activate Live. |
+| `PUT /mode` | `{ifVersion,environment,reviewed:true}` chooses new-export environment. Live requires valid approval; active sends block switching. |
+| `POST /refresh-payments` | `{}` coalesces an environment/company reconciliation request; returns 202. |
 
-Accounting references and previews are not returned by customer APIs. No endpoint creates invoices, sends emails, records a QuickBooks payment, reads live payment balances or changes local invoice financial snapshots. Setup, encryption, restore precautions and remaining milestones are documented in [QuickBooks integration](quickbooks-integration.md).
+The service route `POST /api/quickbooks/webhook/sandbox|production` is public on the configured Admin host, outside staff authentication. It requires the corresponding verifier secret and valid `intuit-signature` HMAC-SHA256 of exact raw bytes. Size-bounded current CloudEvents arrays/legacy notifications are filtered to known environment/realm and Invoice/Payment entities, deduplicated and durably queued before acknowledgement. No raw financial/employee notification body is retained. Five-minute scheduled work reads authoritative records and uses CDC/owned-link sweeps to recover missed changes.
+
+Live-linked invoice JSON keeps financial snapshots intact and adds `payment.source:'quickbooks'`, `status:'unpaid'|'overdue'|'part-paid'|'paid'|'review'`, `paidPence`, `outstandingPence` and `checkedAt`, plus `accounting.status/checkedAt`. Admin-only fields include `accounting.exportId/reason`. Manual/accounting disagreements require review; customer summaries include `reviewCount` when needed. Owner scoping applies to lists, single invoices and PDFs; Sandbox observations never appear to customers. Local payment PATCH returns 409 after a Live link. Setup, real Sandbox acceptance and restore instructions: [QuickBooks integration](quickbooks-integration.md).
