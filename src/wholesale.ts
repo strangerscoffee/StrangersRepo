@@ -31,6 +31,8 @@ interface Order {
   locationId?: string; locationSnapshot?: CustomerLocation;
   deletedAt?: number; deletedBy?: string;
   trackingUrl?: string;
+  /** The customer's own optional note at checkout ("Use our own custom labels"); shown back to them, unlike the internal `note`. */
+  customerNote?: string;
 }
 type Links = { admin: string; diary: string; preview?: string };
 const denied = () => new ApiError(403, "permission_denied", "Only admins can manage wholesale ordering.");
@@ -68,11 +70,14 @@ function orderBody(value: unknown) {
   if (body.delivery !== "Delivery" && body.delivery !== "Roastery collection") throw invalid("Choose delivery or roastery collection.");
   const locationId = body.locationId === undefined ? undefined : text(body.locationId, "location", 36, true);
   if (locationId !== undefined && !validLocationId(locationId)) throw invalid("Choose a saved business location.");
+  const customerNote = text(body.customerNote, "order comments", 1000);
   return {
     id: `PREVIEW-${body.requestId.replaceAll("-", "").toUpperCase()}`,
     lines: lines.sort((a, b) => `${a.productId}:${a.pack}:${a.grind}`.localeCompare(`${b.productId}:${b.pack}:${b.grind}`)),
     delivery: body.delivery as string, reference: text(body.reference, "purchase reference", 80), business: text(body.business, "business name", 120),
     ...(locationId === undefined ? {} : { locationId }),
+    // Only present when written, so requests from before the comments box keep their original requestKey.
+    ...(customerNote ? { customerNote } : {}),
   };
 }
 async function createOrder(req: Request, env: Env, user: OrderingUser): Promise<Response> {
@@ -121,7 +126,7 @@ async function createOrder(req: Request, env: Env, user: OrderingUser): Promise<
   const order: Order = {
     createdBy: user.id, createdName: user.name, business: body.business, reference: body.reference, delivery: body.delivery,
     customerId: customer?.id || null, status: "New", note: "", trackingUrl: "", preview: !customer, ...(customer && location ? { customerSnapshot, deliveryNotes: location.deliveryNotes, paymentTerms: paymentTermsFor(customer), locationId: location.id, locationSnapshot: { ...location } } : {}), date: new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone: "Europe/London" }).format(new Date(at)),
-    createdAt: at, requestKey, lines,
+    createdAt: at, requestKey, lines, ...(body.customerNote ? { customerNote: body.customerNote } : {}),
     pence: lines.reduce((sum, line) => sum + line.price * line.quantity, 0), grams: lines.reduce((sum, line) => sum + line.grams * line.quantity, 0), packs: lines.reduce((sum, line) => sum + line.quantity, 0),
   };
   order.deliveryPence = shippingFor(order.delivery, order.pence);

@@ -531,6 +531,8 @@ function showReceipt(result) {
   $("#complete-dashboard-link").hidden = session.me.role !== "admin";
   if (session.me.role === "admin") $("#complete-dashboard-link").href = session.links.admin + "#wholesale";
   $("#complete-total").textContent = money(orderTotal(result.order)) + (result.order.deliveryPence ? ` (including ${money(result.order.deliveryPence)} delivery)` : "");
+  $("#complete-note").hidden = !result.order.customerNote;
+  $("#complete-note").textContent = result.order.customerNote ? `Your comments: ${result.order.customerNote}` : "";
   $("#complete-location").hidden = !result.order.locationSnapshot;
   $("#complete-location").textContent = result.order.locationSnapshot ? `${result.order.delivery === "Delivery" ? "Delivery to" : "Ordered for"}: ${result.order.locationSnapshot.name}` : "";
   $("#complete-payment-terms").textContent = result.order.paymentTerms ? `Payment terms: ${result.order.paymentTerms.label}${result.order.paymentTerms.note ? " · " + result.order.paymentTerms.note : ""}` : "";
@@ -559,6 +561,7 @@ async function resumeAttempt() {
   form.elements.delivery.value = attempt.payload.delivery === "Roastery collection" ? "collection" : "dispatch";
   renderReviewDelivery(attempt.summary.reduce((sum, line) => sum + line.pence, 0));
   form.elements.reference.value = attempt.payload.reference;
+  form.elements.customerNote.value = attempt.payload.customerNote || "";
   reviewBusiness(attempt.payload.business);
   form.elements.locationId.value = attempt.payload.locationId || "";
   $("#review-location-block").hidden = !session.customer;
@@ -586,6 +589,7 @@ $("#review-form").addEventListener("submit", async (event) => {
     requestId, orderingIdentity: session.me.id, lines: basket.map(line => ({ ...line, price: unitPrice(productFor(line.productId), line.pack) })),
     delivery: form.elements.delivery.value === "collection" ? "Roastery collection" : "Delivery",
     reference: form.elements.reference.value, business: form.elements.business.value,
+    ...(form.elements.customerNote.value.trim() ? { customerNote: form.elements.customerNote.value.trim() } : {}),
     ...(session.customer ? { customerVersion: session.customer.version, locationId: form.elements.locationId.value } : {}),
   }, summary: basket.map(line => ({ title: productFor(line.productId).name, description: `${line.quantity} × ${packs[line.pack].label} · ${grindLabel(productFor(line.productId), line.grind)}`, pence: unitPrice(productFor(line.productId),line.pack) * line.quantity })),
     deliverySummary: $("#delivery-summary").textContent, locationLabel: session.customer ? $("#review-location-name").textContent : "", terms: $("#review-payment-terms").textContent });
@@ -828,7 +832,7 @@ function historyCard(order, expanded) {
   const trackingUrl = historyTrackingUrl(order);
   return `<article class="history-card" data-history-order="${escape(order.id)}"><div class="history-card-head"><h3>${date}</h3><strong>${money(orderTotal(order))}</strong></div><p class="history-summary">${bagCount(order.packs)} · ${escape(order.delivery)}</p>${order.reference ? `<p class="history-summary">Reference: ${escape(order.reference)}</p>` : ""}${historyStatus(order)}
     ${trackingUrl ? `<a class="button button-outline history-tracking" data-order-tracking="${escape(order.id)}" href="${escape(trackingUrl)}" target="_blank" rel="noopener noreferrer">Track delivery <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg><span class="sr-only">(opens in a new tab)</span></a>` : ""}
-    <details class="history-details" ${expanded.has(order.id) ? "open" : ""}><summary>Order details · ${bagCount(order.packs)}</summary><p class="history-id">${escape(order.id)}</p><ul class="history-lines">${order.lines.map(line => `<li><span>${line.quantity} × ${escape(line.title)}</span><small>${escape(line.packLabel)} · ${escape(line.grindLabel)}</small><strong>${money(line.price * line.quantity)}</strong></li>`).join("")}${Number.isSafeInteger(order.deliveryPence) ? `<li><span>${order.delivery === "Delivery" ? "Delivery" : "Roastery collection"}</span><small>${order.deliveryPence ? "Including VAT" : order.delivery === "Delivery" ? "Free on orders of £250 or more" : "No delivery charge"}</small><strong>${order.deliveryPence ? money(order.deliveryPence) : "Free"}</strong></li>` : ""}</ul>${order.locationSnapshot ? `<p class="history-address"><b>Location at order</b><br>${escape(order.locationSnapshot.name)}</p>` : ""}${snapshot?.address && order.delivery === "Delivery" ? `<p class="history-address"><b>Delivery address at order</b><br>${escape(snapshot.address)}<br>${escape(snapshot.postcode || "")}</p>` : ""}${order.deliveryNotes ? `<p class="history-address">${escape(order.deliveryNotes)}</p>` : ""}${order.paymentTerms ? `<p class="payment-terms">Payment terms: ${escape(order.paymentTerms.label)}${order.paymentTerms.note ? `<br>${escape(order.paymentTerms.note)}` : ""}</p>` : ""}</details>
+    <details class="history-details" ${expanded.has(order.id) ? "open" : ""}><summary>Order details · ${bagCount(order.packs)}</summary><p class="history-id">${escape(order.id)}</p><ul class="history-lines">${order.lines.map(line => `<li><span>${line.quantity} × ${escape(line.title)}</span><small>${escape(line.packLabel)} · ${escape(line.grindLabel)}</small><strong>${money(line.price * line.quantity)}</strong></li>`).join("")}${Number.isSafeInteger(order.deliveryPence) ? `<li><span>${order.delivery === "Delivery" ? "Delivery" : "Roastery collection"}</span><small>${order.deliveryPence ? "Including VAT" : order.delivery === "Delivery" ? "Free on orders of £250 or more" : "No delivery charge"}</small><strong>${order.deliveryPence ? money(order.deliveryPence) : "Free"}</strong></li>` : ""}</ul>${order.customerNote ? `<p class="history-address"><b>Your comments</b><br>${escape(order.customerNote)}</p>` : ""}${order.locationSnapshot ? `<p class="history-address"><b>Location at order</b><br>${escape(order.locationSnapshot.name)}</p>` : ""}${snapshot?.address && order.delivery === "Delivery" ? `<p class="history-address"><b>Delivery address at order</b><br>${escape(snapshot.address)}<br>${escape(snapshot.postcode || "")}</p>` : ""}${order.deliveryNotes ? `<p class="history-address">${escape(order.deliveryNotes)}</p>` : ""}${order.paymentTerms ? `<p class="payment-terms">Payment terms: ${escape(order.paymentTerms.label)}${order.paymentTerms.note ? `<br>${escape(order.paymentTerms.note)}` : ""}</p>` : ""}</details>
     <button class="button button-outline history-reorder" type="button" data-reorder="${escape(order.id)}" ${pendingAttempt ? "disabled" : ""}>Order again</button></article>`;
 }
 let historyCursor = null;
