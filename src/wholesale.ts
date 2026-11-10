@@ -15,8 +15,8 @@ import { handleInvoiceAdmin, handleInvoiceCustomer, invoiceLinks } from "./whole
 
 type Pack = "quarter" | "half" | "kilo";
 const PACKS: Record<Pack, { label: string; grams: number }> = { quarter: { label: "250 g bag", grams: 250 }, half: { label: "500 g bag", grams: 500 }, kilo: { label: "1 kg bag", grams: 1000 } };
-// 500 g bags are no longer sold: kept above so past orders, invoices and retries still read, refused for new orders.
-const ORDERABLE_PACKS: Pack[] = ["quarter", "kilo"];
+// 500 g bags are no longer sold or priced: kept above only so past orders and their exact retries still read; refused for new orders.
+const ORDERABLE_PACKS: Pack[] = ["quarter", "kilo"]; // checked before any price is read (the catalogue has none for 500 g)
 const STATUSES = ["New", "Preparing", "Ready", "Dispatched", "Cancelled"];
 interface Line { productId: string; title: string; pack: Pack; packLabel: string; grind: string; grindLabel: string; quantity: number; price: number; grams: number }
 interface Order {
@@ -107,10 +107,10 @@ async function createOrder(req: Request, env: Env, user: OrderingUser): Promise<
     if (!product.inStock) throw new ApiError(409, "out_of_stock", `${product.name} is out of stock. Remove it from your basket to continue.`);
     if (!ORDERABLE_PACKS.includes(line.pack)) throw new ApiError(409, "pack_unavailable", `${PACKS[line.pack].label}s are no longer available. Remove the ${PACKS[line.pack].label} of ${product.name} from your basket and choose 250 g or 1 kg.`);
     if (!product.active) throw new ApiError(409, "conflict", `${product.name} is no longer in the catalogue. Reload your basket.`);
-    if (line.price !== product.prices[line.pack]) throw new ApiError(409, "conflict", "The prices have changed. Reload and review your order again.");
+    if (line.price !== product.prices[line.pack as "quarter" | "kilo"]) throw new ApiError(409, "conflict", "The prices have changed. Reload and review your order again.");
     const grind = product.grindOptions.find(option => option.id === line.grind && option.enabled);
     if (!grind) throw new ApiError(409, "grind_unavailable", `${product.name} no longer offers this grind. Remove it from your basket and choose an available option.`);
-    return { ...line, title: product.title, packLabel: PACKS[line.pack].label, grindLabel: grind.label, price: product.prices[line.pack], grams: PACKS[line.pack].grams };
+    return { ...line, title: product.title, packLabel: PACKS[line.pack].label, grindLabel: grind.label, price: product.prices[line.pack as "quarter" | "kilo"], grams: PACKS[line.pack].grams };
   });
   const at = Date.now();
   const customerSnapshot = customer && location ? (() => {

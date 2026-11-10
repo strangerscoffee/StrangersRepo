@@ -182,7 +182,7 @@ Catalogue administration under `/api/admin/wholesale`:
 
 | Method and route | Input / result |
 |---|---|
-| `POST /catalogue` | Creates a coffee with `title,name,origin,process,notes,badge,categories,prices:{quarter,half,kilo},active,inStock,grindOptions?:[{id,label,enabled}]`. Prices are integer GBP pence, £0.01–£10,000 per bag. Categories are `single-origin`, `blend`, `decaf`. Returns 201 `{product}`. Up to 500 coffees. |
+| `POST /catalogue` | Creates a coffee with `title,name,origin,process,notes,badge,categories,prices:{quarter,kilo},active,inStock,grindOptions?:[{id,label,enabled}]`. Prices are integer GBP pence, £0.01–£10,000 per bag. Categories are `single-origin`, `blend`, `decaf`. Returns 201 `{product}`. Up to 500 coffees. |
 | `PUT /catalogue/<id>` | Same editable fields plus `ifVersion`; returns `{product}`. Omitted detail/stock fields preserve existing values for older clients. Image references cannot be set through this route. |
 | `POST /catalogue/<id>/images?ifVersion=N` | Raw raster bytes, optional encoded `x-file-name`; up to 5 MB, detected JPEG/PNG/WebP, six images per coffee. Returns 201 `{product}` with its new version. |
 | `PATCH /catalogue/<id>/images` | `{ifVersion,remove:<image reference>}` unlinks/deletes a photo, or `{ifVersion,restore:true}` restores a bundled original. Returns `{product}`. The two operations cannot be combined. |

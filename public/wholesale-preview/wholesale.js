@@ -247,7 +247,7 @@ function renderBasket() {
     const product = productFor(line.productId);
     return `<div class="order-item" data-line="${lineKey(line)}">
       ${product.imageUrls?.length ? `<img src="${escape(product.imageUrls[0])}" alt="" width="42" height="48">` : '<span class="basket-photo-placeholder" aria-hidden="true">—</span>'}
-      <div><h3>${escape(product.name)}</h3><p class="line-variant">${escape(packs[line.pack].label)} · ${escape(grindLabel(productFor(line.productId), line.grind))}<br>${money(unitPrice(product, line.pack))} per pack${!isAvailable(product) || !lineOrderable(line) ? `<br>${packs[line.pack]?.retired ? `${escape(packs[line.pack].label)}s are no longer sold` : "Unavailable"} — remove to continue.` : ""}</p>
+      <div><h3>${escape(product.name)}</h3><p class="line-variant">${escape(packs[line.pack].label)} · ${escape(grindLabel(productFor(line.productId), line.grind))}<br>${money(unitPrice(product, line.pack))} per pack${!isAvailable(product) || !lineOrderable(line) ? "<br>Unavailable — remove to continue." : ""}</p>
       <div class="line-actions">${stepper(`line-qty-${index}`, line.quantity, `${product.name}, ${packs[line.pack].label}, ${grindLabel(productFor(line.productId), line.grind)}`, `line-error-${index}`)}<strong class="line-price">${money(unitPrice(product, line.pack) * line.quantity)}</strong></div>
       <p class="quantity-error" id="line-error-${index}" role="status" hidden>Choose a whole number from 1 to 99.</p>
       <button class="remove-button" type="button" data-remove aria-label="Remove ${escape(`${product.name}, ${packs[line.pack].label}, ${grindLabel(productFor(line.productId), line.grind)}`)}">Remove</button></div>
@@ -865,7 +865,7 @@ function buildReorderPlan(order) {
   const additions = [], skipped = [];
   for (const line of order.lines) {
     const product = productFor(line.productId);
-    if (!lineOrderable(line)) { skipped.push({ title: line.title, quantity: line.quantity, reason: packs[line.pack]?.retired ? `${packs[line.pack].label}s no longer sold` : "grind no longer offered" }); continue; }
+    if (!lineOrderable(line)) { skipped.push({ title: line.title, quantity: line.quantity, reason: !Object.hasOwn(packs, line.pack) ? `${line.packLabel || "this size"}s are no longer sold` : "grind no longer offered" }); continue; }
     if (!isAvailable(product)) { skipped.push({ title: line.title, quantity: line.quantity, reason: product?.active === false || !product ? "no longer offered" : "out of stock" }); continue; }
     const result = addToBasket(next, line, line.quantity);
     next = result.basket;

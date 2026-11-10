@@ -1,6 +1,6 @@
 // Public Strangers Coffee catalogue snapshot, retrieved 9 November 2026.
-// Wholesale prices in integer GBP pence (the owner's wholesale list, 10 November 2026: 1 kg and 250 g; 500 g bags are
-// no longer sold, their old price is kept only so past orders read). Half Caff Blend wasn't on the list: unchanged.
+// Wholesale prices in integer GBP pence: 250 g and 1 kg bags (the owner's wholesale list, 10 November 2026; Half Caff
+// Blend is priced the same as the decaf). 500 g bags are no longer sold; past orders keep their own saved prices.
 export const catalogueRetrievedAt = "2026-11-09";
 export const products = [
   {
@@ -17,7 +17,6 @@ export const products = [
     "price": 1800,
     "prices": {
       "quarter": 500,
-      "half": 2100,
       "kilo": 1800
     },
     "image": "brazil.webp",
@@ -39,7 +38,6 @@ export const products = [
     "price": 2400,
     "prices": {
       "quarter": 625,
-      "half": 2800,
       "kilo": 2400
     },
     "image": "colombia.webp",
@@ -61,7 +59,6 @@ export const products = [
     "price": 3600,
     "prices": {
       "quarter": 950,
-      "half": 3200,
       "kilo": 3600
     },
     "image": "ethiopia.webp",
@@ -83,7 +80,6 @@ export const products = [
     "price": 2400,
     "prices": {
       "quarter": 625,
-      "half": 2800,
       "kilo": 2400
     },
     "image": "christmas.webp",
@@ -106,7 +102,6 @@ export const products = [
     "price": 2000,
     "prices": {
       "quarter": 550,
-      "half": 2200,
       "kilo": 2000
     },
     "image": "decaf.webp",
@@ -128,7 +123,6 @@ export const products = [
     "price": 2400,
     "prices": {
       "quarter": 625,
-      "half": 2400,
       "kilo": 2400
     },
     "image": "rocko.webp",
@@ -150,7 +144,6 @@ export const products = [
     "price": 2400,
     "prices": {
       "quarter": 625,
-      "half": 2400,
       "kilo": 2400
     },
     "image": "rosalina.webp",
@@ -172,7 +165,6 @@ export const products = [
     "price": 1800,
     "prices": {
       "quarter": 500,
-      "half": 2100,
       "kilo": 1800
     },
     "image": "campo.webp",
@@ -191,11 +183,10 @@ export const products = [
     "categories": [
       "blend"
     ],
-    "price": 4000,
+    "price": 2000,
     "prices": {
-      "quarter": 1100,
-      "half": 2200,
-      "kilo": 4000
+      "quarter": 550,
+      "kilo": 2000
     },
     "image": "half-caff.jpg",
     "sourceUrl": "https://strangerscoffee.com/coffee/p/half-caff-blend",
@@ -216,7 +207,6 @@ export const products = [
     "price": 1800,
     "prices": {
       "quarter": 500,
-      "half": 2100,
       "kilo": 1800
     },
     "image": "house.jpg",

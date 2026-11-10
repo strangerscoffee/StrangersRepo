@@ -10,16 +10,15 @@ export const isAvailable = (product) => !!product && product.active !== false &&
 
 export const packs = {
   quarter: { label: "250 g bag", short: "250 g", grams: 250 },
-  half: { label: "500 g bag", short: "500 g", grams: 500, retired: true }, // no longer sold: kept for past orders
   kilo: { label: "1 kg bag", short: "1 kg", grams: 1000 },
 };
 export const grinds = {
   beans: "Beans", espresso: "Espresso / Fine", moka: "Moka Pot / Fine",
   filter: "Filter / Medium", cafetiere: "Cafetiere / Coarse",
 };
-export const orderablePacks = Object.entries(packs).filter(([, pack]) => !pack.retired);
-// Can this basket line still be ordered as it is (size still sold, grind still offered)?
-export const lineOrderable = (line) => !packs[line.pack]?.retired && isGrindAvailable(productFor(line.productId), line.grind);
+export const orderablePacks = Object.entries(packs);
+// Can this line still be ordered as it is (size still sold, grind still offered)? Past orders can hold 500 g bags.
+export const lineOrderable = (line) => Object.hasOwn(packs, line.pack) && isGrindAvailable(productFor(line.productId), line.grind);
 export const MAX_QUANTITY = 99;
 export const money = (pence) => new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(pence / 100);
 export const weight = (grams) => `${new Intl.NumberFormat("en-GB", { maximumFractionDigits: 2 }).format(grams / 1000)} kg`;

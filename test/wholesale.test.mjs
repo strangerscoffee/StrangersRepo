@@ -66,13 +66,15 @@ test("wholesale basket: added catalogue coffees use server prices, unavailable l
   } finally { setCatalogue(original); }
 });
 
-test("wholesale: 500 g bags are no longer sold, but old basket lines are kept and marked", () => {
+test("wholesale: 500 g bags are gone: not offered, not priced, and dropped from saved baskets", () => {
   assert.deepEqual(orderablePacks.map(([id]) => id), ["quarter", "kilo"]);
+  assert.ok(products.every((p) => Object.keys(p.prices).sort().join() === "kilo,quarter"), "the catalogue has 250 g and 1 kg prices only");
   assert.equal(addToBasket([], { ...brazil, pack: "half" }, 1).added, 0, "a 500 g bag can't be added");
-  const old = sanitiseBasket([{ ...brazil, pack: "half", quantity: 2 }]);
-  assert.equal(old.length, 1, "a saved 500 g line stays, so the customer sees it and removes it");
-  assert.equal(lineOrderable(old[0]), false);
+  assert.deepEqual(sanitiseBasket([{ ...brazil, pack: "half", quantity: 2 }, { ...brazil, quantity: 1 }]), [{ ...brazil, quantity: 1 }]);
+  assert.equal(lineOrderable({ ...brazil, pack: "half", quantity: 1 }), false);
   assert.equal(lineOrderable({ ...brazil, quantity: 1 }), true);
+  const halfCaff = products.find((p) => p.id === "half-caff"), decaf = products.find((p) => p.id === "decaf");
+  assert.deepEqual(halfCaff.prices, decaf.prices, "Half Caff is priced as the decaf");
 });
 
 test("wholesale: delivery is £7.44 including VAT under £250 of coffee, free from £250, and never on collection", () => {
@@ -87,5 +89,5 @@ test("wholesale: delivery is £7.44 including VAT under £250 of coffee, free fr
 test("wholesale: grinds are Beans (the default), Fine, Medium and Coarse, each saying what it's for", () => {
   assert.deepEqual(defaultGrinds.map((g) => g.label), ["Beans", "Fine", "Medium", "Coarse"]);
   assert.equal(defaultGrinds[0].id, "beans");
-  assert.deepEqual(defaultGrinds.slice(1).map((g) => g.hint), ["Commercial espresso machine", "Filter, and a good general grind for most uses", "Cafetiere and batch brewer"]);
+  assert.deepEqual(defaultGrinds.slice(1).map((g) => g.hint), ["Commercial espresso machine", "Filter", "Cafetiere and batch brewers"]);
 });
