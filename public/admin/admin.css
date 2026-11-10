@@ -302,6 +302,7 @@ button.stat{cursor:pointer}
 .w-order-entry .w-order:disabled{cursor:wait;opacity:.75}
 .w-order-entry .w-order .tx{gap:3px}
 .w-order-entry .w-order .w-test-label{font-weight:650}
+.w-order-entry .w-order .w-has-note{font-weight:650;color:var(--accent,inherit)}
 .w-order-actions{display:flex;justify-content:flex-end;align-items:center;gap:10px;flex-wrap:wrap;padding:0 14px 12px 62px}
 .w-order-actions>.btn{min-width:142px}
 .w-order-feedback{flex:1 1 100%;display:grid;justify-items:start;gap:8px;padding:10px 12px;border-radius:12px;background:var(--warn-bg);font-size:13.5px;color:var(--fg);overflow-wrap:anywhere}

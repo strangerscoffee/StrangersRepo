@@ -84,6 +84,29 @@ test("wholesale ordering: customer identity and delivery snapshots are server-ow
   assert.equal((await call("POST", "/api/wholesale/orders", body, A)).body.order.id, order.id, "a retry retains the original snapshot after a profile edit");
 });
 
+test("wholesale order comments: optional, kept with the order, shown to its business and admins, and part of the retry check", async () => {
+  const base = { lines: [{ productId: "brazil", pack: "quarter", grind: "beans", quantity: 3, price: 500 }], delivery: "Roastery collection", reference: "", customerVersion: customerA.version };
+  const withNote = { ...base, requestId: crypto.randomUUID(), customerNote: "  Use our own custom labels\nThanks  " };
+  const created = await call("POST", "/api/wholesale/orders", withNote, A);
+  assert.equal(created.status, 201, created.text);
+  assert.equal(created.body.order.customerNote, "Use our own custom labels\nThanks");
+  assert.equal((await call("GET", `/api/wholesale/orders/${created.body.order.id}`, undefined, A)).body.order.customerNote, "Use our own custom labels\nThanks");
+  assert.equal((await call("GET", `/api/wholesale/orders/${created.body.order.id}`, undefined, B)).status, 404);
+  assert.equal((await call("POST", "/api/wholesale/orders", withNote, A)).status, 200, "an identical retry returns the order");
+  assert.equal((await call("POST", "/api/wholesale/orders", { ...withNote, customerNote: "Different" }, A)).status, 409, "changed comments are a different order");
+  const updated = await call("PATCH", `/api/admin/wholesale/orders/${created.body.order.id}`, { ifVersion: created.body.order.version, status: "Preparing", customerId: customerA.id, note: "Internal only" });
+  assert.equal(updated.status, 200, updated.text);
+  assert.equal(updated.body.order.customerNote, "Use our own custom labels\nThanks", "admin updates keep the customer's comments");
+  const own = (await call("GET", "/api/wholesale/orders", undefined, A)).body.orders.find((row) => row.id === created.body.order.id);
+  assert.equal(own.customerNote, "Use our own custom labels\nThanks"); assert.equal(own.note, undefined);
+  const plain = { ...base, requestId: crypto.randomUUID() };
+  const first = await call("POST", "/api/wholesale/orders", plain, A);
+  assert.equal(first.status, 201, first.text); assert.equal(Object.hasOwn(first.body.order, "customerNote"), false);
+  assert.equal((await call("POST", "/api/wholesale/orders", { ...plain, customerNote: "   " }, A)).status, 200, "blank comments match a request without them");
+  assert.equal((await call("POST", "/api/wholesale/orders", { ...base, requestId: crypto.randomUUID(), customerNote: "x".repeat(1001) }, A)).status, 400);
+  assert.equal((await call("POST", "/api/wholesale/orders", { ...base, requestId: crypto.randomUUID(), customerNote: 12 }, A)).status, 400);
+});
+
 test("wholesale account holds prevent new orders; reset, disabling and logout revoke existing sessions", async () => {
   const current = (await call("GET", "/api/admin/wholesale")).body;
   let customer = current.customers.find((row) => row.id === customerA.id);

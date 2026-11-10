@@ -246,9 +246,11 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       assert.equal(await page.locator('#review-business').textContent(), business);
       assert.match(await page.locator('#delivery-summary').textContent(), /10 Coffee Street/);
       await page.locator('#review-form [name="reference"]').fill(username);
+      await page.locator('#review-form [name="customerNote"]').fill('Use our own custom labels');
       await page.locator('#submit-preview-order').click();
       await page.locator('#preview-complete').waitFor();
       assert.match(await page.locator('#complete-message').textContent(), /has been received by Strangers/);
+      assert.equal(await page.locator('#complete-note').textContent(), 'Your comments: Use our own custom labels');
       const order = (await api('GET', '/api/admin/wholesale')).body.orders.find((row) => row.reference === username);
       assert.ok(order); assert.equal(order.preview, false); assert.equal(order.pence, 3600);
       assert.equal(order.paymentTerms.id, 'net-30', 'reviewing the sign-in preserves the edited customer terms');
@@ -258,6 +260,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       await admin.locator('[data-act="wh-tab"][data-id="orders"]').click();
       await admin.locator('[data-act="wh-order"]', { hasText: business }).click();
       assert.match(await admin.locator('#sheet').textContent(), /10 Coffee Street/);
+      assert.match(await admin.locator('#sheet .w-customer-note').textContent(), /Customer comments\s*Use our own custom labels/);
       await admin.locator('#wStatus').selectOption('Ready');
       await admin.locator('#wNote').fill('Private admin note');
       await admin.locator('#sheet button[type="submit"]').click();
