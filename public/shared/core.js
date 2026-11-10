@@ -45,7 +45,7 @@
     }
     if (protectedCall && sessionIdentity) {
       if (res.status === 409 && (await res.clone().json().catch(() => null))?.code === "session_changed") invalidateSession();
-      if (sessionInvalid || ((sessionLocked || generation !== sessionGeneration) && !(await ensureSession({ force: true })))) throw sessionError();
+      if (sessionInvalid || ((sessionLocked || generation !== sessionGeneration) && !(await ensureSession()))) throw sessionError();
     }
     if (/^\/api\/auth\/(?:login|switch|change|setup|recover|logout)$/.test(path) && res.ok) notifyAuthChange();
     const t1 = RealDate.now(), server = own ? Number(res.headers.get("x-now")) : NaN;
@@ -124,7 +124,8 @@
   const SESSION_EVENT = "sc.session.event", LOGOUT_KEY = "sc.logout.pending", LOGOUT_COOKIE = "sfbb_logout_pending";
   let sessionIdentity = null, sessionLocked = false, sessionInvalid = false, sessionGeneration = 0;
   let sessionCheck = null, sessionCheckedAt = 0, sessionEnabled = false, sessionSignedOut = goSignIn, logoutTask = null, cookieDomain = "";
-  const sessionClearers = new Set();
+  const sessionClearers = new Set(), sessionWaiters = new Set();
+  let startupTask = null, wakeStartup = null, retryTimer = null, retryAttempt = 0, resumeTimer = null;
   async function authRequest(input, init = {}) {
     const controller = new AbortController(), outer = init.signal;
     const abort = () => controller.abort();
@@ -142,7 +143,7 @@
       const read = response[method].bind(response);
       Object.defineProperty(response, method, { value: async (...args) => {
         const result = await read(...args);
-        if (sessionInvalid || ((sessionLocked || generation !== sessionGeneration) && !(await ensureSession({ force: true })))) throw sessionError();
+        if (sessionInvalid || ((sessionLocked || generation !== sessionGeneration) && !(await ensureSession()))) throw sessionError();
         return result;
       } });
     }
@@ -165,28 +166,52 @@
     document.cookie = LOGOUT_COOKIE + "=" + encodeURIComponent(value) + attrs + (cookieDomain ? "; Domain=" + cookieDomain : "") + "; Max-Age=" + (value ? "2592000" : "0");
   }
   const sessionError = () => Object.assign(new Error(sessionInvalid ? "The signed-in account changed. Reload to continue." : "Verify your sign-in before continuing."), { code: sessionInvalid ? "session_changed" : "session_unverified" });
-  function sessionShield(message = "Checking your sign-in…") {
+  function loadingView(message = "Loading…") {
+    if (!document.getElementById("sc-loader-style")) {
+      const style = el("style", { id: "sc-loader-style" });
+      style.textContent = 'html[data-sc-session-locked] body>:not(#sc-session-shield),html[data-sc-session-locked] body>:not(#sc-session-shield) *{visibility:hidden!important;pointer-events:none!important}#sc-session-shield{position:fixed;inset:0;z-index:2147483647;display:grid;place-content:center;justify-items:center;gap:20px;padding:32px;text-align:center;background:var(--bg,#edf1f6);color:var(--fg,#17212f);font:16px system-ui}#sc-session-shield[hidden],#sc-session-shield button[hidden]{display:none}@media(prefers-color-scheme:dark){#sc-session-shield{background:var(--bg,#05070b);color:var(--fg,#f0f3f8)}}';
+      document.head.append(style);
+    }
+    return el("div", { class: "sc-loading" }, el("span", { class: "sc-loading-logo", role: "img", "aria-label": "Strangers Coffee" }), el("span", { class: "sc-loading-track", "aria-hidden": "true" }), el("p", { "data-loading-message": "" }, message));
+  }
+  function retrySession() {
+    if (!sessionIdentity && wakeStartup) { wakeStartup(); return; }
+    if (logoutIntent()) return finishLogout();
+    return ensureSession({ force: true });
+  }
+  function sessionShield(message = "Checking your sign-in…", error = false) {
     if (!sessionEnabled) return;
     sessionLocked = true; sessionGeneration++;
     document.documentElement.setAttribute("data-sc-session-locked", "");
     let box = document.getElementById("sc-session-shield");
     if (!box && document.body) {
-      const style = document.createElement("style");
-      style.textContent = 'html[data-sc-session-locked] body>:not(#sc-session-shield),html[data-sc-session-locked] body>:not(#sc-session-shield) *{visibility:hidden!important;pointer-events:none!important}#sc-session-shield{position:fixed;inset:0;z-index:2147483647;display:grid;place-content:center;gap:16px;padding:32px;text-align:center;background:var(--bg,#edf1f6);color:var(--fg,#17212f);font:16px system-ui}#sc-session-shield[hidden]{display:none}#sc-session-shield button{min-height:44px;padding:12px 20px;border:1px solid currentColor;border-radius:14px;background:var(--glass,transparent);color:inherit;font:inherit}';
-      document.head.append(style);
-      box = el("section", { id: "sc-session-shield", role: "status", "aria-live": "polite" }, el("p", { "data-session-message": "" }), el("button", { type: "button", onclick: () => logoutIntent() ? finishLogout() : ensureSession({ force: true }) }, "Try again"));
+      box = el("section", { id: "sc-session-shield", role: "status", "aria-live": "polite" }, loadingView(message), el("button", { type: "button", onclick: retrySession, hidden: true }, "Try again"));
       document.body.append(box);
     }
-    if (box) { box.hidden = false; box.querySelector("[data-session-message]").textContent = message; }
+    if (box) {
+      box.hidden = false; box.dataset.phase = error ? "error" : "checking";
+      box.setAttribute("aria-busy", String(!error));
+      box.querySelector("[data-loading-message]").textContent = message;
+      box.querySelector("button").hidden = !error;
+    }
+  }
+  function settleSessionWaiters(value) { for (const resolve of sessionWaiters) resolve(value); sessionWaiters.clear(); }
+  function scheduleSessionRetry() {
+    clearTimeout(retryTimer);
+    if (sessionInvalid || !sessionLocked || document.hidden || navigator.onLine === false || logoutIntent()) return;
+    retryTimer = setTimeout(() => { retryTimer = null; if (!document.hidden) ensureSession({ force: true }); }, Math.min(1000 * 2 ** retryAttempt++, 15000));
   }
   function unlockSession() {
     if (sessionInvalid || logoutIntent()) return;
+    clearTimeout(retryTimer); retryTimer = null; retryAttempt = 0;
     sessionLocked = false; document.documentElement.removeAttribute("data-sc-session-locked");
     const box = document.getElementById("sc-session-shield"); if (box) box.hidden = true;
+    settleSessionWaiters(true);
   }
   function invalidateSession(signedOut = false, navigate = true) {
     if (sessionInvalid) return false;
     sessionShield(signedOut ? "Signed out. Opening sign-in…" : "Your sign-in changed. Reloading…"); sessionInvalid = true;
+    clearTimeout(retryTimer); clearTimeout(resumeTimer); settleSessionWaiters(false); wakeStartup?.();
     for (const dialog of document.querySelectorAll("dialog[open]")) try { dialog.close(); } catch (_) {}
     for (const clear of sessionClearers) try { clear(); } catch (_) {}
     dispatchEvent(new CustomEvent("sc:session-invalid"));
@@ -202,7 +227,40 @@
     sessionIdentity = { id: user.id, role: user.role }; sessionCheckedAt = 0;
     sessionShield();
     if (logoutIntent()) { sessionShield("Finishing sign out…"); finishLogout(); return false; }
-    return ensureSession({ force: true }); // The startup reply may predate a switch; prove identity again before any render/queue load.
+    // A transient proof failure keeps startup pending. A successful retry resumes this same bootstrap.
+    const verified = new Promise(resolve => sessionWaiters.add(resolve));
+    ensureSession({ force: true });
+    return verified; // The startup reply may predate a switch; no render or queue load before fresh proof.
+  }
+  async function startSession({ clear } = {}) {
+    if (sessionInvalid) return null;
+    if (typeof clear === "function") sessionClearers.add(clear);
+    sessionEnabled = true;
+    if (!startupTask) startupTask = (async () => {
+      for (let attempt = 0; !sessionInvalid; attempt++) {
+        sessionShield();
+        try {
+          const response = await fetch("/api/auth/me", { cache: "no-store" });
+          if (!response.ok) throw new Error();
+          const me = await response.json();
+          if (!me || !("user" in me)) throw new Error();
+          if (me.user === null) { invalidateSession(true); return null; }
+          if (!me.user || typeof me.user.id !== "string" || typeof me.user.role !== "string") throw new Error();
+          return await bindSession(me.user, { clear }) ? me : null;
+        } catch (_) {
+          if (sessionInvalid) return null;
+          sessionShield("Couldn't verify your sign-in. Reconnect, then try again.", true);
+          await new Promise(resolve => {
+            const timer = setTimeout(finish, Math.min(1000 * 2 ** attempt, 15000));
+            function finish() { clearTimeout(timer); if (wakeStartup === finish) wakeStartup = null; resolve(); }
+            wakeStartup = finish;
+          });
+        }
+      }
+      return null;
+    })();
+    const me = await startupTask;
+    return me && await ensureSession() ? me : null; // Never release cached bootstrap metadata after a switch or failed logout.
   }
   function sessionHeaders() { return sessionIdentity ? { "x-expected-user-id": sessionIdentity.id, "x-expected-user-role": sessionIdentity.role } : {}; }
   async function ensureSession({ force = false } = {}) {
@@ -210,12 +268,14 @@
     if (sessionInvalid || logoutIntent()) return false;
     if (!force && !sessionLocked && RealDate.now() - sessionCheckedAt < 15000) return true;
     if (sessionCheck) return sessionCheck;
+    clearTimeout(retryTimer); retryTimer = null;
+    if (sessionLocked) sessionShield();
     sessionCheck = (async () => {
       try {
         for (;;) {
           if (sessionInvalid || logoutIntent()) return false;
           const generation = sessionGeneration;
-          const response = await authRequest("/api/auth/me", { cache: "no-store" });
+          const response = await authRequest("/api/auth/me", { cache: "no-store", headers: { "x-sc-session-check": "1" } });
           if (!response.ok) throw new Error();
           const me = await response.json(); rememberCookieDomain(me.cookieDomain);
           // A switch/focus event during this request means its cookie snapshot is already obsolete.
@@ -224,7 +284,7 @@
           if (me.user.id !== sessionIdentity.id || me.user.role !== sessionIdentity.role) { invalidateSession(); return false; }
           sessionCheckedAt = RealDate.now(); unlockSession(); return !sessionInvalid && !logoutIntent();
         }
-      } catch (_) { if (!sessionInvalid) sessionShield("Couldn't verify your sign-in. Reconnect, then try again."); return false; }
+      } catch (_) { if (!sessionInvalid) { sessionShield("Couldn't verify your sign-in. Reconnect, then try again.", true); scheduleSessionRetry(); } return false; }
       finally { sessionCheck = null; }
     })();
     return sessionCheck;
@@ -247,7 +307,7 @@
         notifyAuthChange();
         if (leaving) location.replace("/signin");
         return true;
-      } catch (_) { sessionShield("Sign out hasn't finished. Reconnect, then try again. Your screen is protected."); return false; }
+      } catch (_) { sessionShield("Sign out hasn't finished. Reconnect, then try again. Your screen is protected.", true); return false; }
       finally { logoutTask = null; }
     })();
     return logoutTask;
@@ -259,14 +319,22 @@
   function recheckOnPageshow(signedOut) {
     sessionEnabled = true; sessionSignedOut = signedOut || goSignIn; sessionShield();
   }
-  const resumeSession = () => { if (!sessionEnabled || !sessionIdentity || sessionInvalid) return; sessionShield(); if (logoutIntent()) finishLogout(); else ensureSession({ force: true }); };
+  const resumeSession = () => {
+    if (!sessionEnabled || sessionInvalid) return;
+    if (!sessionIdentity) { wakeStartup?.(); return; }
+    // Invalidate every activation immediately, even if an earlier proof is still in flight.
+    // Start the request after a burst of focus/pageshow/visibility events has settled.
+    sessionShield(); clearTimeout(resumeTimer);
+    if (document.hidden) return;
+    resumeTimer = setTimeout(() => { resumeTimer = null; if (logoutIntent()) finishLogout(); else ensureSession({ force: true }); }, 0);
+  };
   addEventListener("pagehide", () => { if (sessionIdentity) sessionShield(); });
   addEventListener("blur", () => { if (sessionIdentity) sessionShield(); });
-  addEventListener("focus", resumeSession);
+  addEventListener("focus", () => resumeSession());
   addEventListener("pageshow", (event) => { if (event.persisted) resumeSession(); });
   document.addEventListener("visibilitychange", () => { if (!sessionIdentity) return; if (document.hidden) sessionShield(); else resumeSession(); });
-  addEventListener("online", resumeSession);
-  addEventListener("storage", (event) => { if (event.key === SESSION_EVENT || event.key === LOGOUT_KEY) resumeSession(); });
+  addEventListener("online", () => resumeSession(true));
+  addEventListener("storage", (event) => { if (event.key === SESSION_EVENT || event.key === LOGOUT_KEY) resumeSession(true); });
   setInterval(() => { if (sessionIdentity && !document.hidden && !sessionInvalid) { if (logoutIntent()) finishLogout(); else ensureSession({ force: true }); } }, 15000);
 
   /* ---------- several devices at once ---------- */
@@ -346,6 +414,6 @@
   window.SC = Object.freeze({
     $, el, kids, svgi, initials, makeToast,
     dOf, isoOf, addDays, dow, monday, londonToday, londonNow,
-    goSignIn, signOut, recheckOnPageshow, bindSession, ensureSession, sessionHeaders, notifyAuthChange, watchChanges, live, clockOffset,
+    goSignIn, signOut, recheckOnPageshow, bindSession, startSession, loadingView, ensureSession, sessionHeaders, notifyAuthChange, watchChanges, live, clockOffset,
   });
 })();

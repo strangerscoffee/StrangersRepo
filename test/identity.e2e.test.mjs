@@ -211,6 +211,7 @@ test("a protected JSON body resolving after an identity clear cannot repopulate 
     await page.evaluate(() => window.releasePrivateBody());
     await page.waitForFunction(() => window.privateBodyResult);
     assert.deepEqual(await page.evaluate(() => window.privateBodyResult), { code: "session_changed" }, "parsed old data is rejected after invalidation");
+    assert.equal(await page.evaluate(() => SC.startSession()), null, "startup metadata cannot be read again after invalidation");
   } finally { await page.evaluate(() => window.releasePrivateBody?.()).catch(() => {}); await context.close(); }
 });
 
@@ -223,6 +224,7 @@ test("failed sign-out stays protected across navigation and reconnect, never aut
     await page.evaluate((key) => localStorage.setItem(key, JSON.stringify([{ op: "update", path: "staff/deferred", patch: { notes: "owner-only unsent draft" } }])), queueKey);
     await page.route("**/api/auth/logout", (route) => blockLogout ? route.abort("internetdisconnected") : route.continue());
     await page.evaluate(() => SC.signOut());
+    assert.equal(await page.evaluate(() => SC.startSession()), null, "a failed sign-out never releases cached bootstrap metadata");
     await page.locator("#sc-session-shield").waitFor();
     assert.ok(!new URL(page.url()).pathname.startsWith("/signin"));
     assert.equal(await page.evaluate(() => localStorage.getItem("sc.logout.pending")), alice.id);

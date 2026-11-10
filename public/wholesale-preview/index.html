@@ -3,7 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="robots" content="noindex, nofollow">
+  <link rel="preload" href="/logo.svg" as="image" type="image/svg+xml" crossorigin="anonymous">
+<meta name="robots" content="noindex, nofollow">
   <meta name="theme-color" content="#edf1f6" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#05070b" media="(prefers-color-scheme: dark)">
   <meta name="description" content="Order Strangers Coffee for your business.">
@@ -53,7 +54,7 @@
           </div>
           <label class="search-field"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><span class="sr-only">Search coffees, origins or tasting notes</span><input id="coffee-search" type="search" placeholder="Find your coffee" autocomplete="off"></label>
         </div>
-        <p class="catalogue-status" id="catalogue-status" role="status">Loading the signed-in catalogue…</p><button class="text-button" id="retry-catalogue" type="button" hidden>Try loading again</button><div class="product-grid" id="products"></div>
+        <div class="catalogue-status" id="catalogue-status" role="status"><div class="sc-loading"><span class="sc-loading-logo" role="img" aria-label="Strangers Coffee"></span><span class="sc-loading-track" aria-hidden="true"></span><p>Loading your coffee…</p></div></div><button class="text-button" id="retry-catalogue" type="button" hidden>Try loading again</button><div class="product-grid" id="products"></div>
         <div class="no-results" id="no-results" hidden><h3>No coffees found.</h3><p>Try another origin, name or tasting note.</p><button class="text-button" type="button" id="reset-filters">Show all coffee <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></button></div>
         <noscript><p class="no-results">Please enable JavaScript to browse coffee and place your order.</p></noscript>
       </section>

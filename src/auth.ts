@@ -1,5 +1,6 @@
 // Accounts: sign in with username + password, signed session cookies, first-admin setup and recovery.
 import { audit } from "./audit";
+import { appLinks } from "./hosts";
 import { ApiError, Env, SQL_NOW_MS, invalid, json, readJson, safeEqual } from "./http";
 
 export type Role = "admin" | "manager" | "staff";
@@ -347,9 +348,15 @@ export async function handleAuth(req: Request, env: Env, route: string, current:
   const ip = req.headers.get("cf-connecting-ip") || "local";
 
   if (route === "me" && req.method === "GET") {
+    // Fresh identity proof needs no setup, PIN-device or notification queries. Never renew cookies here.
+    if (req.headers.get("x-sc-session-check") === "1") return json({
+      user: current ? { id: current.id, role: current.role } : null,
+      ...(cookieDomain(req, env) ? { cookieDomain: cookieDomain(req, env) } : {}),
+    });
     const quick = current ? await env.DB.prepare("SELECT quick_hash IS NOT NULL AS has, notif_seen FROM users WHERE id = ?").bind(current.id).first<{ has: number; notif_seen: number }>() : null;
     return json({
       user: current ? { ...publicUser(current), quickPin: !!quick?.has, notifSeen: quick?.notif_seen ?? 0 } : null,
+      ...(current ? { links: appLinks(new URL(req.url), env.ROTA_HOST, env.ADMIN_HOST, env.PREVIEW_HOST, env.LEGACY_PREVIEW_HOST) } : {}),
       setupNeeded: (await userCount(env)) === 0,
       quickSwitch: await trustedDevice(req, env), // this device can switch person with a quick PIN
       ...(cookieDomain(req, env) ? { cookieDomain: cookieDomain(req, env) } : {}), // non-secret pending sign-out across apps

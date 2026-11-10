@@ -708,13 +708,12 @@
   /* ---------- start ---------- */
   (async () => {
     try {
-      const me = await api("GET", "/api/auth/me");
-      if (!me.user) { goSignIn(location.pathname); return; }
-      if (!(await SC.bindSession(me.user, { clear: () => {
+      const me = await SC.startSession({ clear: () => {
         cache = {}; S.me = null; S.open = null; S.q = ""; S.fq = ""; wholesaleExpanded = false;
         closeSheet(); for (const id of ["#main", "#sheet", "#sideNav", "#tabBar", "#whoName", "#whoInit"]) $(id)?.replaceChildren();
-      } }))) return;
-      const links = await api("GET", "/api/rota/links").catch(() => null);
+      } });
+      if (!me) return;
+      const links = me.links || await api("GET", "/api/rota/links").catch(() => null);
       if (me.user.role !== "admin") { location.replace((links && links.diary) || "/"); return; }
       S.me = me.user;
       if (links) S.links = links;

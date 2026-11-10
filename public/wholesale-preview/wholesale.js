@@ -662,7 +662,7 @@ async function start() {
   catalogueLoading = true; $("#products").setAttribute("aria-busy", "true");
   $("#retry-catalogue").hidden = true;
   $("#catalogue-status").hidden = false;
-  $("#catalogue-status").textContent = "Loading the signed-in catalogue…";
+  $("#catalogue-status").replaceChildren(SC.loadingView("Loading your coffee…"));
   try {
     applyCatalogue(await api("/api/wholesale/catalogue"), true);
     $("#catalogue-status").hidden = true;
