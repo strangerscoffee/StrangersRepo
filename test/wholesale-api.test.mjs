@@ -112,14 +112,14 @@ test("wholesale: checkout saves shared, server-priced orders once, with owner-on
 test("wholesale: quantities, unknown variants and forged prices cannot enter a preview order", async () => {
   for (const line of [
     { productId: "unknown", quantity: 1 }, { pack: "case", quantity: 1 }, { grind: "__proto__", quantity: 1 },
-    { quantity: -2 }, { quantity: 1.5 }, { quantity: 100 }, { price: 1 },
+    { quantity: -2 }, { quantity: 1.5 }, { quantity: 1000 }, { price: 1 },
   ]) {
     const normal = payload(); normal.lines[0] = { ...normal.lines[0], ...line };
     const result = await call("POST", "/api/wholesale/orders", normal, STAFF);
     assert.ok(result.status === 400 || result.status === 409, result.text);
   }
   assert.equal((await call("POST", "/api/wholesale/orders", payload({ lines: [], createdName: "Forged Admin" }), STAFF)).status, 400);
-  const normal = payload(); normal.lines = [{ ...normal.lines[0], quantity: 99 }, normal.lines[0]];
+  const normal = payload(); normal.lines = [{ ...normal.lines[0], quantity: 999 }, normal.lines[0]];
   assert.equal((await call("POST", "/api/wholesale/orders", normal, STAFF)).status, 400);
 });
 
@@ -180,4 +180,14 @@ test("wholesale: delivery is charged by the server (£7.44 inc VAT under £250, 
   // 500 g bags are no longer sold.
   const half = await call("POST", "/api/wholesale/orders", payload({ lines: [{ productId: "brazil", pack: "half", grind: "beans", quantity: 1, price: 2100 }] }), STAFF);
   assert.equal(half.status, 409); assert.equal(half.body.code, "pack_unavailable"); assert.match(half.body.message, /500 g bags are no longer available/);
+});
+
+test("wholesale: large orders: up to 999 bags of one coffee, size and grind, and they invoice", async () => {
+  const big = await call("POST", "/api/wholesale/orders", payload({ lines: [{ productId: "brazil", pack: "kilo", grind: "beans", quantity: 250, price: 1800 }] }), STAFF);
+  assert.equal(big.status, 201, big.text);
+  assert.deepEqual([big.body.order.packs, big.body.order.grams, big.body.order.pence, big.body.order.deliveryPence], [250, 250000, 450000, 0]);
+  const most = await call("POST", "/api/wholesale/orders", payload({ lines: [{ productId: "brazil", pack: "quarter", grind: "beans", quantity: 999, price: 500 }] }), STAFF);
+  assert.equal(most.status, 201, most.text);
+  const tooMany = await call("POST", "/api/wholesale/orders", payload({ lines: [{ productId: "brazil", pack: "quarter", grind: "beans", quantity: 1000, price: 500 }] }), STAFF);
+  assert.equal(tooMany.status, 400); assert.match(tooMany.body.message, /1 to 999/);
 });

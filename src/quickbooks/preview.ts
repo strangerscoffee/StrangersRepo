@@ -1,4 +1,5 @@
 // Pure invoice review and reconciliation. No network, writes or accounting side effects.
+import { MAX_QUANTITY } from "../../public/wholesale-preview/limits.js";
 import type { InvoiceDocument, InvoiceLine } from "../wholesaleInvoices";
 
 export type Environment = "sandbox" | "production";
@@ -61,7 +62,7 @@ export async function previewInvoice(invoice: InvoiceDocument, mappings: QuickBo
     const taxCodeRef = tax?.reviewed === true && tax.sales === true && tax.basisPoints === line.vatBasisPoints ? reference(tax, scope) : null;
     if (!itemRef) add("item_mapping", `Line ${index + 1} needs an active ${line.kind} item mapping for this company.`);
     if (!taxCodeRef) add("vat_mapping", `Line ${index + 1} needs a reviewed sales VAT code for ${line.rateId} at ${line.vatBasisPoints / 100}%. Zero-rated and exempt codes must be reviewed separately.`);
-    const valid = [line.unitPricePence, line.netPence, line.vatPence, line.grossPence].every(money) && Number.isSafeInteger(line.quantity) && line.quantity > 0 && line.quantity <= 99 && Number.isSafeInteger(line.vatBasisPoints) && line.vatBasisPoints >= 0 && line.vatBasisPoints <= 10000;
+    const valid = [line.unitPricePence, line.netPence, line.vatPence, line.grossPence].every(money) && Number.isSafeInteger(line.quantity) && line.quantity > 0 && line.quantity <= MAX_QUANTITY && Number.isSafeInteger(line.vatBasisPoints) && line.vatBasisPoints >= 0 && line.vatBasisPoints <= 10000;
     const base = line.quantity * line.unitPricePence;
     const denominator = invoice.priceBasis === "inclusive" ? 10000 + line.vatBasisPoints : 10000;
     const expectedVat = Math.floor((base * line.vatBasisPoints + denominator / 2) / denominator);
