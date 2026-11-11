@@ -29,8 +29,12 @@ jobs:
         run: |
           set -o pipefail
           npm test 2>&1 | tee test.log || { node .github/annotate.mjs "API tests failed" test.log; exit 1; }
+      # If the runner can't reach Ubuntu's package servers (it happens), use the system libraries the runner image
+      # already has: the browser tests below still have to pass, so a missing library still fails the run.
       - name: Install a browser for the site test
-        run: npm install --no-save playwright@1.63.0 && npx playwright install --with-deps chromium
+        run: |
+          npm install --no-save playwright@1.63.0
+          npx playwright install --with-deps chromium || { echo "::warning::Couldn't install system packages; using the runner's own"; npx playwright install chromium; }
       - name: Site test in a browser
         run: |
           set -o pipefail
