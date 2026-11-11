@@ -33,8 +33,9 @@ export async function startServer({ writeLimit, preSql, scheduled, vars = {}, ho
     "--var", `SETUP_CODE:${SETUP_CODE}`, "--show-interactive-dev-session=false"];
   if (host) args.push("--host", host);
   if (writeLimit) args.push("--var", `WRITE_LIMIT_PER_15_MIN:${writeLimit}`);
+  // Wholesale tests place small orders: the 6 kg minimum is off unless a test sets WHOLESALE_MINIMUM_ORDER_GRAMS.
   // The admin section's own address is for the real site: here it's at /admin on the diary's (unless a test sets it).
-  for (const [k, v] of Object.entries({ ADMIN_HOST: "", PREVIEW_HOST: "", ...(typeof vars === "function" ? vars({ port, base: `http://127.0.0.1:${port}` }) : vars) })) args.push("--var", `${k}:${v}`);
+  for (const [k, v] of Object.entries({ ADMIN_HOST: "", PREVIEW_HOST: "", WHOLESALE_MINIMUM_ORDER_GRAMS: "0", ...(typeof vars === "function" ? vars({ port, base: `http://127.0.0.1:${port}` }) : vars) })) args.push("--var", `${k}:${v}`);
   if (scheduled) args.push("--test-scheduled"); // GET /__scheduled runs the Worker's scheduled() handler
   const proc = spawn(WRANGLER, args, { cwd: ROOT, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, CI: "1" } });
   let log = "";

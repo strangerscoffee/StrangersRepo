@@ -6,6 +6,8 @@ export interface Env {
   SETUP_CODE?: string; // creates the first admin and resets an admin password
   SYNC_TOKEN?: string; // older name for SETUP_CODE, still accepted
   WRITE_LIMIT_PER_15_MIN?: string;
+  /** Tests only: overrides the 6 kg wholesale minimum order (grams); unset in production. */
+  WHOLESALE_MINIMUM_ORDER_GRAMS?: string;
   COOKIE_DOMAIN?: string; // sign-in cookies are shared across this domain and its subdomains (wrangler.jsonc vars)
   ADMIN_HOST?: string; // the admin section's own hostname, e.g. admin.staffstrangerscoffee.com (wrangler.jsonc vars)
   ROTA_HOST?: string; // the rota app's own hostname, e.g. rota.staffstrangerscoffee.com (wrangler.jsonc vars)

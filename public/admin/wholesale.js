@@ -37,6 +37,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
   const note = html`<p class="hint">Manage payment and invoicing according to the customer’s agreed terms.</p>`;
   const {grindFor,decafLine,coffeeColour,coffeeFill,coffeeStyle} = window.SCWholesalePreparation;
   const matches = (value) => value.toLowerCase().includes(query.toLowerCase().trim());
+  const minimumKg = () => `${(data?.minimumOrderGrams || 6000) / 1000} kg`;
   const termsFor = (row) => data.paymentTermChoices.find((term) => term.id === row.paymentTerms)?.label || "To be agreed";
   const search = (label, placeholder) => html`<label class="search">${svg("search")}<input id="wq" type="search" maxlength="120" aria-label="${label}" placeholder="${placeholder}" value="${query}"></label>`;
   const resultCount = (loaded, total, noun) => `${loaded < total ? loaded + " of " + total : total} ${total === 1 ? noun : noun + "s"}`;
@@ -227,7 +228,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     const tools = html`<div class="toolbar">${search("Search wholesale customers", "Search business, contact or email")}<button class="btn" type="button" data-act="wh-customer">${svg("plus")}Add customer</button></div>
       <div class="segwrap w-filters"><div class="seg" role="group" aria-label="Customer access">${[["all", "All customers"], ["pending", "Awaiting review"]].map(([id, label]) => html`<button type="button" data-act="wh-approval" data-id="${id}" aria-pressed="${approval === id}">${label}</button>`)}</div></div>`;
     return listing("wCustomersTitle", "Customers", resultCount(rows.length, data.matchingCount, "customer"), tools,
-      rows.length ? rows.map((row) => html`<button class="item w-customer" type="button" data-act="wh-customer" data-id="${row.id}"><span class="ic ${accountFor(row.id)?.approvalStatus === "pending" ? "warn" : "ok"}">${svg("people")}</span><span class="tx"><b>${row.business}</b><span>${[row.contact, row.email].filter(Boolean).join(" · ") || "No contact details"}</span><span>${accountFor(row.id)?.approvalStatus === "pending" ? "Awaiting account approval" : accountFor(row.id) ? accountFor(row.id).active ? "Sign-in enabled" : "Sign-in disabled" : "No sign-in yet"} · ${termsFor(row)}</span></span><span class="end">${pill(row.status)}<span class="chev">${svg("chev")}</span></span></button>`) : emptyState(filtered ? "search" : "people", filtered ? "No matching customers" : "No customers yet", filtered ? "Try another search or clear your filters to see all customers." : "Add a business, or review new registrations as they arrive.", filtered),
+      rows.length ? rows.map((row) => html`<button class="item w-customer" type="button" data-act="wh-customer" data-id="${row.id}"><span class="ic ${accountFor(row.id)?.approvalStatus === "pending" ? "warn" : "ok"}">${svg("people")}</span><span class="tx"><b>${row.business}</b><span>${[row.contact, row.email].filter(Boolean).join(" · ") || "No contact details"}</span><span>${accountFor(row.id)?.approvalStatus === "pending" ? "Awaiting account approval" : accountFor(row.id) ? accountFor(row.id).active ? "Sign-in enabled" : "Sign-in disabled" : "No sign-in yet"} · ${termsFor(row)}${row.noMinimumOrder ? " · No minimum order" : ""}</span></span><span class="end">${pill(row.status)}<span class="chev">${svg("chev")}</span></span></button>`) : emptyState(filtered ? "search" : "people", filtered ? "No matching customers" : "No customers yet", filtered ? "Try another search or clear your filters to see all customers." : "Add a business, or review new registrations as they arrive.", filtered),
       html`${more("customers")}<p class="hint">Customers can access ordering after an admin approves their registration.</p>`);
   }
   function catalogue() {
@@ -352,6 +353,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
       draft.locations = locations.map((location) => ({ ...location }));
       draft.locations[0] = { ...draft.locations[0], ...Object.fromEntries(locationKeys.map((key) => [key, draft[key]])) };
       draft.defaultLocationId = form.querySelector("#wDefaultLocation").value;
+      draft.noMinimumOrder = form.querySelector("#wNoMinimum").checked;
       draft.scrollTop = $("#sheet").scrollTop;
       return draft;
     };
@@ -370,7 +372,8 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
       <div class="w-customer-column"><section class="w-customer-card" aria-labelledby="wOrderingTitle"><h3 id="wOrderingTitle">Ordering and payment</h3>
       ${customerChoiceField("Payment terms", "wPaymentTerms", state.paymentTerms || "to-agree", data.paymentTermChoices.map((term) => ({ value: term.id, label: term.label })))}
       ${field("Payment instructions (shown to the customer)", html`<textarea id="wPaymentNote" maxlength="500">${state.paymentNote || ""}</textarea>`)}
-      ${customerChoiceField("Status", "wStatus", state.status, [{ value: "Active", label: "Active" }, { value: "On hold", label: "On hold" }])}</section>
+      ${customerChoiceField("Status", "wStatus", state.status, [{ value: "Active", label: "Active" }, { value: "On hold", label: "On hold" }])}
+      <div class="checks w-minimum-check"><label><input id="wNoMinimum" type="checkbox" ${state.noMinimumOrder ? raw("checked") : ""}>No minimum order (invoice as they go)</label></div><p class="hint">Only Strangers sees this setting. Without it, orders must be at least ${minimumKg()} of coffee. The customer just won’t see a minimum.</p></section>
       ${id ? html`<section class="w-customer-card" aria-labelledby="wSigninTitle"><h3 id="wSigninTitle">Wholesale sign-in</h3><div class="kv"><span>Username</span><span>${accountFor(id)?.username || "Not created"}</span></div><button class="btn soft" type="button" data-sheet="account">${accountFor(id)?.approvalStatus === "pending" ? "Save and review sign-in" : accountFor(id) ? "Save and manage sign-in" : "Save and create sign-in"}</button></section>` : ""}
       <section class="w-customer-card" aria-labelledby="wInternalNoteTitle"><h3 id="wInternalNoteTitle">Internal notes</h3>${field("Internal account note", html`<textarea id="wNote" maxlength="1000">${state.note || ""}</textarea>`)}${note}</section></div></div>
       <footer id="wCustomerFooter" class="w-customer-footer"><p class="err" id="wErr" role="alert"></p><div class="row w-actions"><button class="btn soft" type="button" data-sheet="close">Cancel</button><button class="btn" type="submit">Save customer</button></div></footer></form>`, async (action, element) => {
