@@ -9,6 +9,8 @@ export interface Customer {
   phone?: string; address?: string; postcode?: string; deliveryNotes?: string;
   paymentTerms?: string; paymentNote?: string;
   locations?: CustomerLocation[]; defaultLocationId?: string;
+  /** Admin-only: no minimum order for this business (invoiced as they go). Never in publicCustomer. */
+  noMinimumOrder?: boolean;
 }
 export const PAYMENT_TERMS = [
   { id: "to-agree", label: "To be agreed" },

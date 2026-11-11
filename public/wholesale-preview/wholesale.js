@@ -268,7 +268,12 @@ function renderBasket() {
   $("#subtotal").textContent = money(sum.pence);
   $("#delivery-note").textContent = sum.pence >= FREE_SHIPPING_FROM_PENCE ? "Free delivery on this order (£250 or more). No charge for roastery collection."
     : `Delivery ${money(SHIPPING_PENCE)} including VAT, free on orders of ${money(FREE_SHIPPING_FROM_PENCE)} or more: add ${money(FREE_SHIPPING_FROM_PENCE - sum.pence)} more for free delivery. No charge for roastery collection.`;
-  $("#review-order").disabled = !pendingAttempt && (!canOrder() || !basket.length || basket.some((line) => (!isAvailable(productFor(line.productId)) || !lineOrderable(line))));
+  // The minimum order (6 kg of any coffees and bag sizes) unless Strangers has exempted this business.
+  const minimum = minimumGrams(), short = Math.max(0, minimum - sum.grams);
+  $("#minimum-note").hidden = !minimum || (basket.length && !short);
+  $("#minimum-note").classList.toggle("short", !!(basket.length && short));
+  $("#minimum-note").textContent = !minimum ? "" : !basket.length ? `Minimum order ${weight(minimum)} of coffee: any mix of coffees and bag sizes.` : `Add ${weight(short)} more to reach the ${weight(minimum)} minimum order.`;
+  $("#review-order").disabled = !pendingAttempt && (!canOrder() || !basket.length || short > 0 || basket.some((line) => (!isAvailable(productFor(line.productId)) || !lineOrderable(line))));
   $("#review-order").textContent = pendingAttempt ? "Check submitted order" : "Review order";
   lockPendingUi();
   $("#basket-storage-note").textContent = storageAvailable ? "Your basket stays on this browser." : "Basket is temporary: browser storage is unavailable.";
@@ -432,13 +437,13 @@ $("#review-order").addEventListener("click", async () => {
   if (pendingAttempt) { await resumeAttempt(); return; }
   reviewNeedsRefresh = false;
   lockReview(false);
-  if (!canOrder() || !basket.length || $("#order-items input[aria-invalid='true']") || basket.some((line) => (!isAvailable(productFor(line.productId)) || !lineOrderable(line)))) return;
+  if (!canOrder() || !basket.length || totals(basket).grams < minimumGrams() || $("#order-items input[aria-invalid='true']") || basket.some((line) => (!isAvailable(productFor(line.productId)) || !lineOrderable(line)))) return;
   $("#review-order").disabled = true;
   try {
     const fresh = await api("/api/wholesale/catalogue");
     if (fresh.me.id !== session.me.id) { location.reload(); return; }
     applyCatalogue(fresh, false);
-    if (!canOrder() || !basket.length || basket.some((line) => (!isAvailable(productFor(line.productId)) || !lineOrderable(line)))) { toast("Check the updated basket before ordering."); return; }
+    if (!canOrder() || !basket.length || totals(basket).grams < minimumGrams() || basket.some((line) => (!isAvailable(productFor(line.productId)) || !lineOrderable(line)))) { renderBasket(); toast("Check the updated basket before ordering."); return; }
   } catch (error) { toast(error.message); renderBasket(); return; }
   $("#review-items").innerHTML = basket.map((line) => {
     const product = productFor(line.productId);
@@ -629,6 +634,7 @@ async function api(path, body, method) {
   if (!response.ok) throw Object.assign(new Error(data.message || "Couldn’t save. Try again."), { status: response.status, code: data.code });
   return data;
 }
+const minimumGrams = () => Number.isSafeInteger(session?.minimumOrderGrams) ? session.minimumOrderGrams : 0;
 function showPaymentTerms() {
   $("#account-payment-terms").textContent = session.customer?.paymentTerms.label || "";
   $("#account-payment-note").textContent = session.customer?.paymentTerms.note || "";
