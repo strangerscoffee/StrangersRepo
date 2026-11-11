@@ -220,6 +220,20 @@ export async function handleWholesaleAdmin(req: Request, env: Env, route: string
     ]);
     return json({ minimumOrderGrams: standardMinimum(env), orders: orderPage.records.map((order) => visibleOrder(order, true)), customers: customerPage.records.map(locationDefaults), orderCursor: orderPage.nextCursor, customerCursor: customerPage.nextCursor, stats: { ...stats, totalCustomers: customerPage.count, visibleCoffees: products.filter((product) => product.active).length, totalCoffees: products.length }, accounts: await wholesaleAccounts(env), products, paymentTermChoices: PAYMENT_TERMS, statuses: STATUSES, sourceDate: catalogueRetrievedAt, counts: Object.fromEntries(counts.results.map((row) => [row.kind, row.n])), links: { ...links, preview: links.preview || "/wholesale-preview/" }, preview: true, stage: "beta" });
   }
+  // Orders to print (packing sheets and bag totals): customer orders by status, or the orders an admin picked.
+  if (route === "orders/print" && req.method === "GET") {
+    const query = new URL(req.url).searchParams;
+    const ids = (query.get("ids") || "").split(",").filter(Boolean), statuses = (query.get("status") || "").split(",").filter(Boolean);
+    if (ids.length > 200 || ids.some((id) => !/^(?:PREVIEW|WS)-[A-F0-9]{32}$/.test(id))) throw invalid("Choose up to 200 orders to print.");
+    if (!ids.length && (!statuses.length || statuses.some((value) => !STATUSES.includes(value)))) throw invalid("Choose which orders to print.");
+    const rows = ids.length
+      ? await env.DB.prepare(`SELECT id, data, version, updated_at FROM wholesale_preview WHERE kind = 'order' AND id IN (${ids.map(() => "?").join(",")}) AND json_extract(data, '$.deletedAt') IS NULL`).bind(...ids).all<Row>()
+      : await env.DB.prepare(`SELECT id, data, version, updated_at FROM wholesale_preview WHERE kind = 'order' AND json_extract(data, '$.preview') = 0 AND json_extract(data, '$.deletedAt') IS NULL AND json_extract(data, '$.status') IN (${statuses.map(() => "?").join(",")}) ORDER BY json_extract(data, '$.createdAt') LIMIT 501`).bind(...statuses).all<Row>();
+    if (rows.results.length > 500) throw invalid("There are more than 500 orders to print. Choose fewer.");
+    const orders = rows.results.map((row) => visibleOrder(decode<Order>(row), true));
+    if (ids.length) orders.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+    return json({ orders, printedAt: Date.now() });
+  }
   if ((route === "orders" || route === "customers") && req.method === "GET") {
     const query = new URL(req.url).searchParams;
     if (route === "orders") {

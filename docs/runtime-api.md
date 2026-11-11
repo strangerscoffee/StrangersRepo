@@ -208,6 +208,8 @@ Customer profiles expose `locations` and `defaultLocationId`. Customer profile P
 
 Checkout location IDs must belong to the signed-in business. New clients send the reviewed selected ID and customer version, including collection orders; legacy omitted IDs use primary. A saved order snapshots the chosen location and retains its original result on an exact retry after location changes/removal. An altered location ID with the same request UUID remains a conflict.
 
+`GET /api/admin/wholesale/orders/print?status=<New|Preparing|…>[,…]` returns `{orders, printedAt}`: full admin views of customer orders (no staff previews, no removed orders) with those statuses, oldest first, up to 500; `?ids=<id>,…` (up to 200) returns exactly those orders, previews included, in the order given. Admin-only; used for packing sheets and bag totals.
+
 ## Wholesale invoices
 
 All `/api/admin/wholesale/` invoice routes are admin-only with the existing Origin/write-rate guards. `GET/PUT invoice-settings` reads/saves `{ifVersion,...settings}` and returns `{settings,version,updatedAt,ready,reasons}`. `PUT invoice-settings/customers` `{ifVersion,enabled}` switches invoices on or off for customers (`settings.customersSeeInvoices`, absent = on; a full settings save keeps it): while off, every customer invoice route answers 403 `invoices_unavailable`, customer order lists omit `invoice` links and the customer session/catalogue carry `invoices:false`. Settings include `seller`, `priceBasis`, `vatRates:[{id,label,basisPoints}]`, defaults, `invoicePrefix`, `firstInvoiceNumber`, `paymentInstructions` and `confirmed`. Incomplete drafts are allowed; issuing requires ready settings.
