@@ -260,6 +260,9 @@ const MIGRATIONS: Migration[] = [
   { id: 18, name: "Read-only staff wholesale order access", run: async env => {
     await env.DB.prepare("CREATE TABLE IF NOT EXISTS staff_order_access (user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0,1)), version INTEGER NOT NULL DEFAULT 1, updated_at INTEGER NOT NULL, updated_by TEXT NOT NULL)").run();
   } },
+  { id: 19, name: "Wholesale new-order emails", run: async env => {
+    await env.DB.prepare("CREATE TABLE IF NOT EXISTS wholesale_order_emails (id INTEGER PRIMARY KEY CHECK(id = 1), data TEXT NOT NULL, version INTEGER NOT NULL, updated_at INTEGER NOT NULL)").run();
+  } },
 ];
 
 async function migrate(env: Env): Promise<void> {

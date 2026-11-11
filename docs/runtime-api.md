@@ -210,6 +210,8 @@ Checkout location IDs must belong to the signed-in business. New clients send th
 
 `GET /api/admin/wholesale/orders/print?status=<New|Preparing|…>[,…]` returns `{orders, printedAt}`: full admin views of customer orders (no staff previews, no removed orders) with those statuses, oldest first, up to 500; `?ids=<id>,…` (up to 200) returns exactly those orders, previews included, in the order given. Admin-only; used for packing sheets and bag totals.
 
+`GET /api/admin/wholesale/order-emails` returns `{enabled,to,version,updatedAt,sending,from}`; `PUT` takes `{ifVersion,enabled,to:[up to 5 emails]}` (409 `conflict` on a stale version); `POST order-emails/test` sends a sample to each address (409 `email_off` without a Resend key). Admin-only. A new customer order emails those addresses after it's saved.
+
 ## Wholesale invoices
 
 All `/api/admin/wholesale/` invoice routes are admin-only with the existing Origin/write-rate guards. `GET/PUT invoice-settings` reads/saves `{ifVersion,...settings}` and returns `{settings,version,updatedAt,ready,reasons}`. `PUT invoice-settings/customers` `{ifVersion,enabled}` switches invoices on or off for customers (`settings.customersSeeInvoices`, absent = on; a full settings save keeps it): while off, every customer invoice route answers 403 `invoices_unavailable`, customer order lists omit `invoice` links and the customer session/catalogue carry `invoices:false`. Settings include `seller`, `priceBasis`, `vatRates:[{id,label,basisPoints}]`, defaults, `invoicePrefix`, `firstInvoiceNumber`, `paymentInstructions` and `confirmed`. Incomplete drafts are allowed; issuing requires ready settings.

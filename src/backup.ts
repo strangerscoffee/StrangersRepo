@@ -62,6 +62,7 @@ export async function makeBackup(env: Env, by: string): Promise<BackupInfo> {
       sequence: (await env.DB.prepare("SELECT seq FROM sqlite_sequence WHERE name = 'wholesale_invoices'").first<{ seq: number }>())?.seq || 0,
       invoices: (await env.DB.prepare("SELECT * FROM wholesale_invoices ORDER BY seq").all()).results,
     },
+    wholesaleOrderEmails: (await env.DB.prepare("SELECT * FROM wholesale_order_emails").all()).results,
   });
   const gz = await gzip(body);
   const id = new Date(at).toISOString().replace(/\.\d+Z$/, "Z").replace(/:/g, "-");

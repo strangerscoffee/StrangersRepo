@@ -112,7 +112,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     const tools = html`<div class="w-order-toolbar"><div class="toolbar">${search("Search wholesale orders", "Search order, reference or customer")}</div>
       <div class="segwrap w-filters"><div class="seg" role="group" aria-label="Order status">${["all", ...data.statuses].map((value) => html`<button type="button" data-act="wh-status" data-id="${value}" aria-pressed="${status === value}">${value === "all" ? "All orders" : value}</button>`)}</div></div>
       ${picking ? html`<div class="w-print-bar w-picking" role="region" aria-label="Choose orders to print"><span class="w-picked-count" aria-live="polite">${picked.size ? `${picked.size} selected` : "Tap orders to select them"}</span><button class="btn sm soft" type="button" data-act="wh-pick-all">Select all shown</button><button class="btn sm soft" type="button" data-act="wh-totals" ${picked.size ? "" : raw("disabled")}>Bag totals</button><button class="btn sm" type="button" data-act="wh-print-picked" ${picked.size ? "" : raw("disabled")}>${svg("doc")}Print selected</button><button class="btn sm soft" type="button" data-act="wh-pick-done">Done</button></div>`
-        : html`<div class="w-print-bar"><button class="btn sm" type="button" data-act="wh-print-new">${svg("doc")}Print new orders</button><button class="btn sm soft" type="button" data-act="wh-pick-start">Select to print</button><button class="btn sm soft" type="button" data-act="wh-totals">Bags to process</button></div>`}</div>`;
+        : html`<div class="w-print-bar"><button class="btn sm" type="button" data-act="wh-print-new">${svg("doc")}Print new orders</button><button class="btn sm soft" type="button" data-act="wh-pick-start">Select to print</button><button class="btn sm soft" type="button" data-act="wh-totals">Bags to process</button><button class="btn sm soft" type="button" data-act="wh-order-emails">Order emails</button></div>`}</div>`;
     return listing("wOrdersTitle", "Orders", resultCount(rows.length, data.matchingCount, "order"), tools,
       rows.length ? rows.map(orderRow) : emptyState(filtered ? "search" : "coffee", filtered ? "No matching orders" : "No orders yet", filtered ? "Try another search or status, or clear your filters to see all orders." : "Customer orders will appear here when they’re placed.", filtered),
       html`${more("orders")}<p class="hint">Coffee subtotals are saved with each order. Delivery and invoicing are managed separately.</p>`);
@@ -122,6 +122,30 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     const chosen = picked.has(row.id);
     return html`<div class="w-order-entry ${picking ? "is-picking" : ""}" data-order-entry="${row.id}" aria-busy="${busy}"><button class="item w-order" type="button" data-act="${picking ? "wh-pick" : "wh-order"}" data-id="${row.id}" ${picking ? html`aria-pressed="${chosen}"` : ""} ${busy ? raw("disabled") : ""}><span class="ic ${picking ? chosen ? "ok w-pick-on" : "mut w-pick-off" : row.preview === false ? "acc" : "mut"}">${picking ? chosen ? svg("ok") : html`<span class="w-pick-ring" aria-hidden="true"></span>` : svg("coffee")}</span><span class="tx"><b>${row.business || customer(row.customerId)?.business || row.createdName}</b><span>${shortId(row.id)}… · ${date(row.createdAt)}</span><span>${row.locationSnapshot?.name ? row.locationSnapshot.name + " · " : ""}${row.delivery} · ${row.packs} ${row.packs === 1 ? "bag" : "bags"} · ${weight(row.grams)}</span>${row.reference ? html`<span>Reference: ${row.reference}</span>` : ""}${row.customerNote ? html`<span class="w-has-note">Customer comments</span>` : ""}${row.preview === false ? "" : html`<span class="w-test-label">Staff preview · ${row.createdName}</span>`}</span><span class="end"><strong class="num">${money(Number.isSafeInteger(row.totalPence) ? row.totalPence : row.pence)}</strong>${pill(row.status)}<span class="chev">${svg("chev")}</span></span></button>
       ${!picking && (next || problem) ? html`<div class="w-order-actions"><div class="w-order-feedback" data-order-error="${row.id}" role="alert" ${problem ? "" : raw("hidden")}>${problem ? html`<p>${problem.message}</p><button class="btn sm soft" type="button" data-act="wh-refresh-orders" data-id="${row.id}">Reload orders</button>` : ""}</div>${next ? html`<button class="btn sm soft" type="button" data-act="wh-next" data-id="${row.id}" aria-label="Mark ${row.business || "order"} ${next.toLowerCase()}" ${busy || problem ? raw("disabled") : ""}>${busy ? "Saving…" : "Mark " + next.toLowerCase()}</button>` : ""}</div>` : ""}</div>`;
+  }
+  // Who gets an email for each new customer order (sent from orders@staffstrangerscoffee.com).
+  async function openOrderEmails() {
+    let settings = await api("GET", "/api/admin/wholesale/order-emails");
+    const view = () => html`<div class="w-sheet wp-sheet"><div class="wp-sheet-head"><div><h2 id="sheetTitle" tabindex="-1">Order emails</h2><p class="hint">An email for every new customer order, from ${settings.from}. Replies go to the customer.</p></div><button class="btn soft" type="button" data-sheet="close" aria-label="Close">${svg("x")}</button></div>
+      ${settings.sending ? "" : html`<p class="err">Email isn’t set up on this site yet, so nothing will be sent.</p>`}
+      <form id="wOrderEmailsForm" class="w-order-emails" novalidate><div class="checks"><label><input id="wOrderEmailsOn" type="checkbox" ${settings.enabled ? raw("checked") : ""}>Email new orders</label></div>
+      <label class="field"><span class="fl">Send to</span><textarea id="wOrderEmailsTo" rows="3" autocapitalize="none" spellcheck="false" aria-describedby="wOrderEmailsHint">${settings.to.join("\n")}</textarea></label><p class="hint" id="wOrderEmailsHint">One address per line, up to 5.</p>
+      <p class="err" id="wOrderEmailsErr" role="alert" hidden></p></form>
+      <div class="row w-actions"><button class="btn soft" type="button" data-sheet="test" ${settings.sending ? "" : raw("disabled")}>Send a test email</button><button class="btn" type="button" data-sheet="save">Save</button></div></div>`;
+    const fail = (error) => { const box = $("#wOrderEmailsErr"); if (box) { box.textContent = error.message; box.hidden = false; } };
+    openSheet(view(), async (action) => {
+      if (action === "close") { closeSheet(); return; }
+      $("#wOrderEmailsErr").hidden = true;
+      if (action === "save") {
+        const to = $("#wOrderEmailsTo").value.split(/[\s,;]+/).map((value) => value.trim()).filter(Boolean);
+        try { settings = await api("PUT", "/api/admin/wholesale/order-emails", { ifVersion: settings.version, enabled: $("#wOrderEmailsOn").checked, to }); closeSheet(); toast(settings.enabled ? "Order emails saved" : "Order emails switched off"); }
+        catch (error) { if (error.code === "conflict") { settings = await api("GET", "/api/admin/wholesale/order-emails"); } fail(error); }
+      }
+      if (action === "test") {
+        try { const result = await api("POST", "/api/admin/wholesale/order-emails/test", {}); toast(`Test email sent to ${result.sent.join(", ")}`); }
+        catch (error) { fail(error); }
+      }
+    });
   }
   function refreshPicks() {
     document.querySelectorAll('[data-act="wh-pick"]').forEach((button) => {
@@ -611,6 +635,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     currentSection: () => tab,
     async act(name, id) {
       if (name.startsWith("wh-invoice-")) { await invoiceUI.act(name, id); return; }
+      if (name === "wh-order-emails") { await openOrderEmails(); return; }
       if (name === "wh-print-new") { await printUI.printOrders(printUI.scopes.New); return; }
       if (name === "wh-totals") { await printUI.openTotals(picking ? [...picked] : []); return; }
       if (name === "wh-pick-start" || name === "wh-pick-done") { picking = name === "wh-pick-start"; picked.clear(); await reload(); return; }
