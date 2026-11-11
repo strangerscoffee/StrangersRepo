@@ -187,6 +187,8 @@ setInterval(rollDay,60000);
 addEventListener("sc-clock",()=>{rollDay();if(S.db)renderAll()});
 rollDay();
 document.addEventListener("visibilitychange",()=>{if(!document.hidden)rollDay()});
+// Safari brings a tab back from memory without always saying it became visible.
+addEventListener("pageshow",rollDay);addEventListener("focus",rollDay);
 
 /* ---------- connection: changes made offline wait on this device (claude-shim.js) ---------- */
 window.addEventListener("diary:connection",e=>{

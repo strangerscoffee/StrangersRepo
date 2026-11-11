@@ -411,8 +411,10 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
 function withSecurityHeaders(res: Response, local: boolean): Response {
   const out = new Response(res.body, res);
   const h = out.headers;
-  // The server's time on every response: pages run on it, not the device's clock (public/shared/core.js).
-  h.set("x-now", String(Date.now()));
+  // The server's time: pages run on it, not the device's clock (public/shared/core.js). Only on responses the
+  // browser never keeps (no-store): a kept copy (the logo, for a day) would come back instantly with the time it was
+  // first fetched and wind the page's clock back to it.
+  if (/no-store/i.test(h.get("cache-control") || "")) h.set("x-now", String(Date.now())); else h.delete("x-now");
   h.set("x-robots-tag", "noindex, nofollow");
   h.set("x-content-type-options", "nosniff");
   h.set("referrer-policy", "same-origin");

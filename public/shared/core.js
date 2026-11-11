@@ -48,7 +48,10 @@
       if (sessionInvalid || ((sessionLocked || generation !== sessionGeneration) && !(await ensureSession()))) throw sessionError();
     }
     if (/^\/api\/auth\/(?:login|switch|change|setup|recover|logout)$/.test(path) && res.ok) notifyAuthChange();
-    const t1 = RealDate.now(), server = own ? Number(res.headers.get("x-now")) : NaN;
+    // Only from answers the browser never keeps (no-store, the API): a kept file comes back instantly with the time
+    // it was first fetched, which would win as the quickest reading and put the page on an earlier day.
+    const fresh = own && /no-store/i.test(res.headers.get("cache-control") || "");
+    const t1 = RealDate.now(), server = fresh ? Number(res.headers.get("x-now")) : NaN;
     if (Number.isFinite(server) && server > 0) {
       // The quickest round trips give the best reading; take a new one at least every 10 minutes regardless.
       const rtt = t1 - t0;
