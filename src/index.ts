@@ -272,7 +272,7 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
     }
     if (p.startsWith("/api/wholesale/")) {
       if (!isGet) await limitWrites(req, env, ctx, user.id);
-      const response = await handleWholesale(req, env, p.slice("/api/wholesale/".length), user, links);
+      const response = await handleWholesale(req, env, p.slice("/api/wholesale/".length), user, links, ctx);
       if (!isGet && response.ok) await bumpChanges(env, "accounts");
       return response;
     }
@@ -375,7 +375,7 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
 
   if (p.startsWith("/api/wholesale/")) {
     if (!isGet) await limitWrites(req, env, ctx, user.id);
-    const response = await handleWholesale(req, env, p.slice("/api/wholesale/".length), user, links);
+    const response = await handleWholesale(req, env, p.slice("/api/wholesale/".length), user, links, ctx);
     if (!isGet && response.ok) await bumpChanges(env, "accounts");
     return response;
   }

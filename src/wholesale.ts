@@ -12,6 +12,7 @@ import { audit } from "./audit";
 import { ApiError, type Env, invalid, json, readJson } from "./http";
 import { manageWholesaleAccount, publicCustomer, wholesaleAccounts, wholesaleCustomer, paymentTermsFor, PAYMENT_TERMS, type Customer, type OrderingUser } from "./wholesaleAccounts";
 import { customerLocations, editedCustomerLocations, locationDefaults, validLocationId, type CustomerLocation } from "./wholesaleCustomers";
+import { handleOrderEmailsAdmin, notifyNewOrder } from "./email/orders";
 import { customersSeeInvoices, handleInvoiceAdmin, handleInvoiceCustomer, invoiceLinks } from "./wholesaleInvoices";
 
 type Pack = "quarter" | "half" | "kilo";
@@ -84,7 +85,7 @@ function orderBody(value: unknown) {
     ...(customerNote ? { customerNote } : {}),
   };
 }
-async function createOrder(req: Request, env: Env, user: OrderingUser): Promise<Response> {
+async function createOrder(req: Request, env: Env, user: OrderingUser, links: Links, ctx?: ExecutionContext): Promise<Response> {
   const submitted = object(await readJson(req, 32 * 1024));
   if (submitted.orderingIdentity !== undefined && submitted.orderingIdentity !== user.id) throw new ApiError(409, "account_changed", "The signed-in account changed. Reload ordering before placing an order.");
   const body = orderBody(submitted);
@@ -148,11 +149,13 @@ async function createOrder(req: Request, env: Env, user: OrderingUser): Promise<
     return json({ order: visibleOrder(raced), preview: raced.preview !== false });
   }
   await audit(env, customer ? "wholesale_order" : "wholesale_preview_order", user.name, `${user.name} placed ${customer ? "wholesale" : "staff preview"} order ${body.id}.`);
+  // A new customer order (never a staff preview or a retry, which returned above) is emailed to Strangers.
+  if (customer) await notifyNewOrder(env, ctx, saved, links.admin);
   return json({ order: visibleOrder(saved), preview: !customer }, 201);
 }
 
 /** All staff can browse the signed-in catalogue and save preview orders. They cannot read others' records. */
-export async function handleWholesale(req: Request, env: Env, route: string, user: OrderingUser, links: Links): Promise<Response> {
+export async function handleWholesale(req: Request, env: Env, route: string, user: OrderingUser, links: Links, ctx?: ExecutionContext): Promise<Response> {
   const invoiceResponse = await handleInvoiceCustomer(req, env, route, user);
   if (invoiceResponse) return invoiceResponse;
   const customer = user.role === "wholesale" ? await wholesaleCustomer(env, user.customerId) : null;
@@ -195,7 +198,7 @@ export async function handleWholesale(req: Request, env: Env, route: string, use
     return json({ orders: await customersSeeInvoices(env) ? await invoiceLinks(env, visible) : visible, count: total?.n || 0, nextCursor: rows.results.length > 200 && last ? `${last.updated_at}:${last.id}` : null });
   }
   if (/^images\/[a-f0-9]{32}$/.test(route) && req.method === "GET") return serveCatalogueImage(env, route.slice("images/".length));
-  if (route === "orders" && req.method === "POST") return createOrder(req, env, user);
+  if (route === "orders" && req.method === "POST") return createOrder(req, env, user, links, ctx);
   const match = /^orders\/((?:PREVIEW|WS)-[A-F0-9]{32})$/.exec(route);
   if (match && req.method === "GET") {
     const order = await get<Order>(env, "order", match[1]);
@@ -212,6 +215,8 @@ export async function handleWholesaleAdmin(req: Request, env: Env, route: string
   if (user.role !== "admin") throw denied();
   const invoiceResponse = await handleInvoiceAdmin(req, env, route, user.name);
   if (invoiceResponse) return invoiceResponse;
+  const orderEmails = await handleOrderEmailsAdmin(req, env, route, user.name, links.admin);
+  if (orderEmails) return orderEmails;
   if (route === "" && req.method === "GET") {
     const [orderPage, customerPage, products, counts, stats] = await Promise.all([
       adminWholesalePage<Order>(env, "order"), adminWholesalePage<Customer>(env, "customer"), catalogue(env, true),

@@ -247,3 +247,7 @@ Migration 17 adds `quickbooks_app_settings`: environment primary key (`sandbox`/
 `staff_order_access` contains `user_id` (primary key referencing stable `users.id`, cascading deletion), `enabled` (0/1, default 0), CAS `version` (starting at 1), `updated_at` and `updated_by` (admin ID). Absence is denied. Admin-role access is inherited and cannot be changed through this table. This grants only the read-only wholesale projection; it never changes employee privacy or Admin permissions. Metadata is included in admin-only JSON backups under `staffOrderAccess`; it contains no credentials. Existing shipped migrations remain unchanged.
 
 No order or invoice snapshots change for the staff view. Its account signal aggregates issued invoices by customer: due date before today's server-side Europe/London date plus unpaid positive balance. Unlinked invoices use manual payment metadata. Live-linked invoices use authoritative unpaid/part-paid observations; missing/review observations produce a separate review flag. Sandbox observations never affect staff warnings. Neither financial amounts nor invoice records are returned.
+
+### wholesale_order_emails (migration 19)
+
+One row (`id = 1`): `data` JSON `{enabled, to: [emails]}`, `version`, `updated_at`. No row means on, to sales@strangerscoffee.com.

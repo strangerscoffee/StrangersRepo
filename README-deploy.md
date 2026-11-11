@@ -77,6 +77,8 @@ The rota emails people their shifts when a week is published, when their shifts 
 
 Managers and admins with an address can receive a summary every Monday at 07:30 for their chosen sites. Managers receive business food-safety information only; employee planning, requests, leave and training aggregates are admin-only. Personal shift/decision emails and calendar files contain only the recipient’s permitted information, without co-worker assignments. Emails come from `Strangers Rota <rota@staffstrangerscoffee.com>` (`EMAIL_FROM` changes the business sender); no employee account address is used as a shared Reply-To. At most 100 are sent a day (`EMAIL_DAILY_LIMIT`). Delete the sending secret to stop emails.
 
+**New wholesale order emails.** With the same Resend key, every new customer order is emailed to sales@strangerscoffee.com from orders@staffstrangerscoffee.com (no mailbox needed: Resend sends for any address on the verified domain). Change who gets them, switch them off or send a test in Admin → Wholesale → Orders → **Order emails**. Replies go to the customer.
+
 ## Change the setup code
 
 In the Worker: **Settings → Variables and Secrets**, edit `SETUP_CODE`. It takes effect immediately and only affects creating the first admin and the "Admin? Forgotten password" recovery. Existing accounts and sessions are unaffected. (`SYNC_TOKEN`, the secret's name before the Claude sync was removed, is still accepted if `SETUP_CODE` isn't set.)
