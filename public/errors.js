@@ -83,13 +83,24 @@
   // between here and the phone added, like Cloudflare's analytics beacon, which the site's security rules block on
   // purpose) says nothing about the site and isn't reported.
   const ours = (u) => { try { return new URL(u, location.href).origin === location.origin; } catch (e) { return false; } };
+  const retriedBranding = new WeakSet();
   addEventListener("error", (e) => {
     const t = e.target;
     if (t && t !== window && (t.src || t.href)) {
       const u = String(t.src || t.href);
       if (!ours(u)) return;
+      const imageLink = t.tagName === "LINK" && (t.relList?.contains("icon") || t.relList?.contains("apple-touch-icon") || (t.relList?.contains("preload") && t.as === "image"));
+      const image = t.tagName === "IMG" || imageLink;
+      // A dropped logo request must not interrupt sign-in. Retry the original element once at a fresh URL;
+      // retain a quiet report if that retry also fails. Scripts/styles keep their existing visible errors.
+      if (image && /^\/(?:logo|mark)\.svg$/.test(new URL(u).pathname) && !t.srcset && t.isConnected && navigator.onLine !== false && !retriedBranding.has(t)) {
+        retriedBranding.add(t);
+        const retry = new URL(u); retry.searchParams.set("sc-asset-retry", "1");
+        queueMicrotask(() => { if (t.isConnected) { if (t.tagName === "IMG") t.src = retry.href; else t.href = retry.href; } });
+        return;
+      }
       // A picture that didn't load is reported but doesn't interrupt anyone; a script or stylesheet breaks the page.
-      report("Couldn't load " + u.replace(location.origin, "").split("?")[0], "", { quiet: t.tagName === "IMG" });
+      report("Couldn't load " + u.replace(location.origin, "").split("?")[0], "", { quiet: image });
       return;
     }
     const msg = e.message || "Script error";

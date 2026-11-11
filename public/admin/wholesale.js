@@ -35,6 +35,24 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
   const field = (label, input) => html`<label class="field"><span class="fl">${label}</span>${input}</label>`;
   const buttons = (label) => html`<p class="err" id="wErr" role="alert"></p><div class="row w-actions"><button class="btn soft" type="button" data-sheet="close">Cancel</button><button class="btn" type="submit">${label}</button></div>`;
   const note = html`<p class="hint">Manage payment and invoicing according to the customer’s agreed terms.</p>`;
+  const grindStyles = {
+    beans: { hue: 212, icon: "grind-beans", hint: "Your own grinder" },
+    espresso: { hue: 276, icon: "grind-fine", hint: "Espresso" },
+    filter: { hue: 170, icon: "grind-medium", hint: "Filter" },
+    cafetiere: { hue: 32, icon: "grind-coarse", hint: "Cafetiere / batch brew" },
+    moka: { hue: 276, icon: "grind-fine", hint: "Moka pot" },
+  };
+  function grindFor(line) {
+    const savedLabel = line.grindLabel || "Unspecified grind", normal = savedLabel.trim().toLowerCase();
+    const aliases = { "whole bean": "beans", "whole beans": "beans", beans: "beans", fine: "espresso", medium: "filter", coarse: "cafetiere" };
+    const alias = Object.hasOwn(aliases, normal) ? aliases[normal] : null;
+    const known = Object.hasOwn(grindStyles, line.grind) ? grindStyles[line.grind] : alias ? grindStyles[alias] : null;
+    let hash = 0; for (const char of String(line.grind || savedLabel)) hash = (Math.imul(hash, 31) + char.charCodeAt(0)) >>> 0;
+    return { key: JSON.stringify([line.grind || "", savedLabel]), label: line.grind === "beans" && normal === "beans" ? "Whole bean" : savedLabel,
+      hue: known?.hue ?? [212, 276, 170, 32, 340, 230][hash % 6], icon: known?.icon || "coffee",
+      hint: typeof line.grindHint === "string" ? line.grindHint : known?.hint || "" };
+  }
+  const decafLine = line => typeof line.decaf === "boolean" ? line.decaf : line.productId === "decaf" || /\bdecaf(?:feinated)?\b/i.test(line.title);
   const matches = (value) => value.toLowerCase().includes(query.toLowerCase().trim());
   const termsFor = (row) => data.paymentTermChoices.find((term) => term.id === row.paymentTerms)?.label || "To be agreed";
   const search = (label, placeholder) => html`<label class="search">${svg("search")}<input id="wq" type="search" maxlength="120" aria-label="${label}" placeholder="${placeholder}" value="${query}"></label>`;
@@ -240,10 +258,11 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     const row = displayed || data.orders.find((row) => row.id === id);
     if (!row || quickBusy.has(id)) return;
     const snapshot = row.customerSnapshot, selectedCustomer = draft && Object.hasOwn(draft, "customerId") ? draft.customerId : row.customerId;
+    const grinds = row.lines.map(grindFor), choices = [...new Map(grinds.map(grind => [grind.key, grind])).values()];
     openSheet(html`<form class="w-sheet w-order-sheet"><h2 id="sheetTitle" tabindex="-1">Order details</h2><div class="w-order-heading"><h3>${row.business || row.createdName}</h3>${pill(row.status)}${row.preview === false ? "" : html`<span class="pill">Staff preview</span>`}</div><p class="w-id">${row.id}</p>
       <div class="kvs">${row.locationSnapshot?.name ? html`<div class="kv"><span>Location</span><span>${row.locationSnapshot.name}</span></div>` : ""}<div class="kv"><span>Received</span><span>${date(row.createdAt)}</span></div><div class="kv"><span>Reference</span><span>${row.reference || "None supplied"}</span></div><div class="kv"><span>Ordered by</span><span>${row.createdName}</span></div></div>
       ${row.customerNote ? html`<section class="w-order-section w-customer-note" aria-labelledby="wCustomerNoteTitle"><h3 id="wCustomerNoteTitle">Customer comments</h3><p class="w-address">${row.customerNote}</p></section>` : ""}
-      <section class="w-order-section" aria-labelledby="wPackingTitle"><h3 id="wPackingTitle">Packing list</h3><div class="group w-packing-list">${row.lines.map((line) => html`<div class="item w-packing-line"><span class="w-pack-quantity"><b>${line.quantity}</b><span>${line.quantity === 1 ? "bag" : "bags"}</span></span><span class="tx"><b>${line.title}</b><span>${line.packLabel}</span><span>${line.grindLabel}</span></span><span class="end num">${money(line.price * line.quantity)}</span></div>`)}</div><div class="kv"><span>${row.packs} ${row.packs === 1 ? "bag" : "bags"} · ${weight(row.grams)} total</span><strong>${money(row.pence)}</strong></div>${Number.isSafeInteger(row.deliveryPence) ? html`<div class="kv"><span>${row.delivery === "Delivery" ? "Delivery (including VAT)" : "Roastery collection"}</span><strong>${row.deliveryPence ? money(row.deliveryPence) : "Free"}</strong></div><div class="kv"><span>Order total</span><strong>${money(row.totalPence ?? row.pence + row.deliveryPence)}</strong></div>` : ""}</section>
+      <section class="w-order-section" aria-labelledby="wPackingTitle"><h3 id="wPackingTitle">Packing list</h3>${choices.length > 1 ? html`<div class="w-grind-filters" role="group" aria-label="Filter packing list by grind"><button type="button" data-sheet="grind-filter" data-grind-key="" aria-pressed="true">All grinds</button>${choices.map(grind => html`<button type="button" class="w-grind-tone" style="--w-grind-h:${grind.hue}" data-sheet="grind-filter" data-grind-key="${grind.key}" aria-pressed="false">${svg(grind.icon)}${grind.label}</button>`)}</div><p id="wGrindCount" class="hint" role="status">${row.lines.length} packing lines · Order totals include all lines.</p>` : ""}<div class="group w-packing-list">${row.lines.map((line, index) => { const grind = grinds[index]; return html`<div class="item w-packing-line w-grind-tone" style="--w-grind-h:${grind.hue}" data-grind-line="${grind.key}"><span class="w-pack-quantity"><b>${line.quantity}</b><span>${line.quantity === 1 ? "bag" : "bags"}</span></span><span class="tx"><b class="w-pack-coffee">${line.title}${decafLine(line) ? html`<span class="w-decaf-label">Decaf</span>` : ""}</b><span class="w-pack-size">${line.packLabel}</span><span class="w-grind-details"><span class="w-grind-badge">${svg(grind.icon)}${grind.label}</span>${grind.hint ? html`<span class="w-grind-hint">${grind.hint}</span>` : ""}</span></span><span class="end num">${money(line.price * line.quantity)}</span></div>`; })}</div><div class="kv"><span>${row.packs} ${row.packs === 1 ? "bag" : "bags"} · ${weight(row.grams)} total</span><strong>${money(row.pence)}</strong></div>${Number.isSafeInteger(row.deliveryPence) ? html`<div class="kv"><span>${row.delivery === "Delivery" ? "Delivery (including VAT)" : "Roastery collection"}</span><strong>${row.deliveryPence ? money(row.deliveryPence) : "Free"}</strong></div><div class="kv"><span>Order total</span><strong>${money(row.totalPence ?? row.pence + row.deliveryPence)}</strong></div>` : ""}</section>
       <section class="w-order-section" aria-labelledby="wDeliveryTitle"><h3 id="wDeliveryTitle">${row.delivery}</h3>${snapshot ? html`<p class="w-address">${[snapshot.contact, snapshot.email, snapshot.phone].filter(Boolean).join(" · ") || "No contact details recorded"}</p>${row.delivery === "Delivery" ? html`<div class="kvs"><div class="kv"><span>Delivery address at checkout</span><span class="w-address">${[snapshot.address, snapshot.postcode].filter(Boolean).join("\n") || "Not recorded"}</span></div><div class="kv"><span>Delivery instructions</span><span class="w-address">${row.deliveryNotes || "None supplied"}</span></div></div>` : ""}` : html`<p class="hint">Staff preview order.</p>`}</section>
       ${row.preview === false ? html`<section class="w-order-section" aria-labelledby="wTermsTitle"><h3 id="wTermsTitle">Payment terms at order</h3><p>${row.paymentTerms?.label || "Not recorded on this order"}</p>${row.paymentTerms?.note ? html`<p class="w-address">${row.paymentTerms.note}</p>` : ""}</section>` : ""}
       ${invoiceUI.orderPanel(row)}
@@ -252,6 +271,14 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
       ${field("Tracking link (optional)", html`<input id="wTrackingUrl" type="url" inputmode="url" maxlength="2000" placeholder="https://" autocapitalize="none" spellcheck="false" autocomplete="off" value="${draft?.trackingUrl ?? row.trackingUrl ?? ""}">`)}<p class="hint">Add, edit or clear the link. Customers see it on dispatched delivery orders.</p>
       ${field("Internal note", html`<textarea id="wNote" maxlength="1000">${draft?.note ?? row.note}</textarea>`)}</section>${note}${buttons("Save order")}<div class="w-order-danger"><button class="btn bad" type="button" data-sheet="delete-order">Delete order</button></div></form>`, async (action, element) => {
       const form = element.closest("form");
+      if (action === "grind-filter") {
+        const key = element.dataset.grindKey;
+        for (const button of form.querySelectorAll('[data-sheet="grind-filter"]')) button.setAttribute("aria-pressed", String(button.dataset.grindKey === key));
+        let shown = 0;
+        for (const line of form.querySelectorAll("[data-grind-line]")) { line.hidden = !!key && line.dataset.grindLine !== key; if (!line.hidden) shown++; }
+        form.querySelector("#wGrindCount").textContent = `${shown} of ${row.lines.length} packing lines · Order totals include all lines.`;
+        return;
+      }
       if (action === "invoice-open") {
         const draft = { status: form.querySelector("#wStatus").value, customerId: row.preview === false ? row.customerId : form.querySelector("#wCustomer").value || null, note: form.querySelector("#wNote").value, trackingUrl: form.querySelector("#wTrackingUrl").value };
         await invoiceUI.openOrder(row, () => editOrder(row.id, draft, row));

@@ -66,10 +66,10 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       await page.getByRole("heading", { name: "Packing list", exact: true }).waitFor();
       assert.deepEqual(await page.evaluate(() => ({ scrollTop: document.querySelector("#sheet").scrollTop, focused: document.activeElement.id })), { scrollTop: 0, focused: "sheetTitle" }, "order details open at the heading so packing information is read before status controls");
       const sheet = await page.locator("#sheet").textContent();
-      for (const text of [business, reference, "10 Coffee Street", "NR1 1AA", "Ring the side-door bell", "14 days from invoice", "Quote the invoice number.", "1 kg bag", "250 g bag", "Beans", "Medium", "Fine"]) assert.ok(sheet.includes(text), `packing sheet includes ${text}`);
+      for (const text of [business, reference, "10 Coffee Street", "NR1 1AA", "Ring the side-door bell", "14 days from invoice", "Quote the invoice number.", "1 kg bag", "250 g bag", "Whole bean", "Medium", "Fine"]) assert.ok(sheet.includes(text), `packing sheet includes ${text}`);
       const packing = await page.locator(".w-packing-line").evaluateAll((rows) => rows.map((row) => ({ quantity: Number(row.querySelector(".w-pack-quantity b").textContent), unit: row.querySelector(".w-pack-quantity span").textContent, description: row.querySelector(".tx").textContent })));
       assert.equal(packing.length, 3);
-      for (const [quantity, unit, pack, grind] of [[2, "bags", "1 kg bag", "Beans"], [1, "bag", "250 g bag", "Medium"], [3, "bags", "250 g bag", "Fine"]]) assert.ok(packing.some((row) => row.quantity === quantity && row.unit === unit && row.description.includes(pack) && row.description.includes(grind)), `packing quantities show ${quantity} ${unit}, ${pack}, ${grind}`);
+      for (const [quantity, unit, pack, grind] of [[2, "bags", "1 kg bag", "Whole bean"], [1, "bag", "250 g bag", "Medium"], [3, "bags", "250 g bag", "Fine"]]) assert.ok(packing.some((row) => row.quantity === quantity && row.unit === unit && row.description.includes(pack) && row.description.includes(grind)), `packing quantities show ${quantity} ${unit}, ${pack}, ${grind}`);
       assert.equal(await page.locator("#wNote").inputValue(), originalNote);
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "packing sheet fits the screen");
       await screenshot(page, `packing-${device}-${color}`);

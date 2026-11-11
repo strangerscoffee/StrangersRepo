@@ -125,3 +125,6 @@ QuickBooks → App credentials and setup uses the existing native wide sheet: cl
 ## Branded loading
 
 The shared sign-in shield uses the full Strangers logo and a small indeterminate progress line, with light/dark and reduced-motion support. Retry is shown only after a verification failure. Its critical privacy-hide CSS remains inline so a missing stylesheet cannot expose private content. The same branded component appears immediately in the wholesale catalogue while it loads. Staff pages preload the logo.
+
+
+Wholesale order packing lines use the approved rota-style hue stripe and soft labelled pill: blue Whole bean, purple Fine, teal Medium and orange Coarse. Custom/retired saved labels remain escaped and receive a deterministic hue. Decaf is a separate neutral label. Multiple-grind filters hide only rows, keep all order totals and form drafts, and reset to All grinds on reopening. Small screens put prices beneath preparation details. New orders snapshot grind hints and Decaf classification; old orders use only saved labels/IDs for safe fallbacks.

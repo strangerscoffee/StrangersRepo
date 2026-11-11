@@ -21,6 +21,30 @@ before(async () => {
 });
 after(async () => { await browser?.close(); await srv?.stop(); });
 
+test('sign-in branding retries once; a persistent logo or favicon failure stays non-blocking and is reported', {timeout:45000}, async()=>{
+  for(const kind of ['image','icon']) for(const recover of [true,false]){
+    const context=await browser.newContext(),page=await context.newPage();let requests=0;const reports=[];
+    await page.route('**/mark.svg*',async route=>{requests++;if(recover&&requests>1)await route.continue();else await route.fulfill({status:503,body:'temporarily unavailable'});});
+    await page.route('**/api/errors',async route=>{reports.push(route.request().postDataJSON());await route.fulfill({status:200,contentType:'application/json',body:'{}'});});
+    try{
+      await page.goto(srv.base+'/signin');await page.locator('#signin').waitFor();
+      await page.evaluate(kind=>{const node=document.createElement(kind==='image'?'img':'link');node.id='brand-retry-test';if(kind==='image'){node.alt='Strangers';node.src='/mark.svg';document.body.append(node)}else{node.rel='icon';let href=location.origin+'/mark.svg';Object.defineProperty(node,'href',{get:()=>href,set:value=>{href=value}});document.head.append(node)}},kind);
+      if(kind==='icon')await page.evaluate(()=>document.getElementById('brand-retry-test').dispatchEvent(new Event('error'))); // favicon error delivery varies across engines
+      await page.waitForFunction(()=>(document.getElementById('brand-retry-test')?.tagName==='IMG'?document.getElementById('brand-retry-test').src:document.getElementById('brand-retry-test')?.href)?.includes('sc-asset-retry=1'));
+      if(recover&&kind==='image')await page.waitForFunction(()=>document.getElementById('brand-retry-test').naturalWidth>0);
+      if(!recover){
+        if(kind==='icon')await page.evaluate(()=>document.getElementById('brand-retry-test').dispatchEvent(new Event('error')));
+        for(let attempt=0;attempt<40&&!reports.some(r=>r.message==="Couldn't load /mark.svg");attempt++)await page.waitForTimeout(25);
+      }
+      assert.equal(await page.locator('#sc-error').count(),0,'image errors never cover the sign-in form');
+      assert.equal(await page.locator('#signin').isVisible(),true);
+      if(kind==='image')assert.equal(requests,2,'only one fresh retry');
+      if(recover)assert.deepEqual(reports,[],'a recovered logo does not leave an unresolved error');
+      else assert.equal(reports.filter(r=>r.message==="Couldn't load /mark.svg").length,1,'one persistent failure is retained for admins');
+    }finally{await context.close()}
+  }
+});
+
 test("an ordinary visit reports nothing; a page that throws reports it, and admins see where", async () => {
   const ctx = await browser.newContext({ ...devices["iPhone 15 Pro"] });
   const [name, value] = ADMIN.split("=");

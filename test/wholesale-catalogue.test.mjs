@@ -34,6 +34,22 @@ before(async () => {
 });
 after(async () => { await srv?.stop(); });
 
+test('order preparation metadata is server-snapshotted, retained after catalogue edits and protected from client overrides', async () => {
+  const option={id:'grind-'+crypto.randomUUID(),label:'Evening filter',hint:'Paper filter, medium grind',enabled:true};
+  let product=(await call('POST','/api/admin/wholesale/catalogue',{title:'Evening Coffee',name:'Evening Coffee',origin:'Colombia',process:'Washed',notes:'Chocolate',badge:'',categories:['decaf'],prices:{quarter:900,kilo:3000},active:true,inStock:true,grindOptions:[option]})).body.product;
+  const request=await requestFor(product,{lines:[{productId:product.id,pack:'kilo',grind:option.id,quantity:2,price:product.prices.kilo,decaf:false,grindHint:'Client replacement'}]});
+  const created=await call('POST','/api/wholesale/orders',request,BUYER);
+  assert.equal(created.status,201,created.text);
+  assert.equal(created.body.order.lines[0].decaf,true);
+  assert.equal(created.body.order.lines[0].grindHint,option.hint);
+  const changed=await call('PUT','/api/admin/wholesale/catalogue/'+product.id,{ifVersion:product.version,prices:product.prices,active:true,categories:['single-origin'],grindOptions:[{...option,hint:'Changed later'}]});
+  assert.equal(changed.status,200,changed.text);
+  const read=await call('GET','/api/wholesale/orders/'+created.body.order.id,undefined,BUYER);
+  assert.equal(read.body.order.lines[0].decaf,true);assert.equal(read.body.order.lines[0].grindHint,option.hint);
+  const retried=await call('POST','/api/wholesale/orders',request,BUYER);
+  assert.equal(retried.status,200,retried.text);assert.deepEqual(retried.body.order.lines,created.body.order.lines);
+});
+
 test("catalogue: admin-created coffees can be ordered, edited and versioned without rewriting old prices or descriptions", async () => {
   const created = await call("POST", "/api/admin/wholesale/catalogue", { title: "New Norwich Coffee", name: "Norwich Coffee", origin: "Brazil", process: "Natural", notes: "Chocolate and orange", badge: "Seasonal", categories: ["single-origin"], prices: { quarter: 1200, half: 2300, kilo: 4200 }, active: true, inStock: true });
   assert.equal(created.status, 201, created.text); coffee = created.body.product;
