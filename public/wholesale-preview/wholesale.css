@@ -391,6 +391,7 @@ dialog::backdrop { background: rgba(0,0,0,.3); -webkit-backdrop-filter: blur(6px
 }
 
 /* Issued invoices are part of the owned order-history window. */
+.history-sections[hidden]{display:none}
 .history-sections{display:flex;gap:8px;margin-top:18px;padding:4px;border-radius:99px;background:var(--sunk)}
 .history-sections>.button{flex:1;border:0;background:transparent;color:var(--muted);min-height:44px}
 .history-sections>.button[aria-pressed=true]{background:var(--tint);color:var(--accent)}
