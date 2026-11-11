@@ -147,6 +147,35 @@ test("wholesale invoices: only admins configure/issue/record payment; customers 
   assert.deepEqual(history.invoice, { id: issued.id, number: issued.number });
 });
 
+test("wholesale invoices: admins can switch invoices off for customers; the customer side follows and admin invoicing keeps working", async () => {
+  const path = "/api/admin/wholesale/invoice-settings/customers";
+  const current = (await call("GET", "/api/admin/wholesale/invoice-settings")).body;
+  assert.equal(current.settings.customersSeeInvoices, undefined, "on unless switched off");
+  assert.equal((await call("GET", "/api/wholesale/session", undefined, A.cookie)).body.invoices, true);
+  for (const cookie of [null, A.cookie]) assert.equal((await call("PUT", path, { ifVersion: current.version, enabled: false }, cookie)).status, 401);
+  for (const cookie of [STAFF, MANAGER]) assert.equal((await call("PUT", path, { ifVersion: current.version, enabled: false }, cookie)).status, 403);
+  assert.equal((await call("PUT", path, { ifVersion: current.version, enabled: "no" })).status, 400);
+  assert.equal((await call("PUT", path, { ifVersion: current.version + 5, enabled: false })).status, 409);
+  const off = await call("PUT", path, { ifVersion: current.version, enabled: false });
+  assert.equal(off.status, 200, JSON.stringify(off.body)); assert.equal(off.body.settings.customersSeeInvoices, false);
+  config = off.body;
+  assert.equal((await call("GET", "/api/wholesale/session", undefined, A.cookie)).body.invoices, false);
+  assert.equal((await call("GET", "/api/wholesale/catalogue", undefined, A.cookie)).body.invoices, false);
+  for (const route of ["/api/wholesale/invoices", `/api/wholesale/invoices/${issued.id}`, `/api/wholesale/invoices/${issued.id}/pdf`, `/api/wholesale/orders/${sourceOrder.id}/invoice`]) {
+    const refused = await call("GET", route, undefined, A.cookie);
+    assert.equal(refused.status, 403, route); assert.equal(refused.body.code, "invoices_unavailable", route);
+  }
+  const history = (await call("GET", "/api/wholesale/orders", undefined, A.cookie)).body.orders.find((order) => order.id === sourceOrder.id);
+  assert.equal(history.invoice, undefined, "orders don't link to hidden invoices");
+  assert.equal((await call("GET", "/api/admin/wholesale/invoices")).status, 200, "admins still see invoices");
+  assert.equal((await call("GET", `/api/admin/wholesale/invoices/${issued.id}/pdf`)).status, 200);
+  const saved = await saveSettings({ paymentInstructions: "Pay by bank transfer." });
+  assert.equal(saved.status, 200); assert.equal(saved.body.settings.customersSeeInvoices, false, "saving invoice details keeps the switch");
+  const on = await call("PUT", path, { ifVersion: config.version, enabled: true });
+  assert.equal(on.status, 200); assert.equal(on.body.settings.customersSeeInvoices, true); config = on.body;
+  assert.equal((await call("GET", "/api/wholesale/invoices", undefined, A.cookie)).status, 200);
+  assert.equal((await call("GET", "/api/wholesale/session", undefined, A.cookie)).body.invoices, true);
+});
 test("wholesale invoices: manual paid/unpaid records use CAS, update outstanding/overdue totals and preserve all financial data/PDF bytes", async () => {
   const before = (await call("GET", "/api/wholesale/invoices", undefined, A.cookie)).body.summary;
   const paid = await call("PATCH", `/api/admin/wholesale/invoices/${issued.id}/payment`, { ifVersion: issued.payment.version, paid: true, paidDate: "2020-02-01", reference: "TEST manual bank record" });

@@ -12,7 +12,7 @@ import { audit } from "./audit";
 import { ApiError, type Env, invalid, json, readJson } from "./http";
 import { manageWholesaleAccount, publicCustomer, wholesaleAccounts, wholesaleCustomer, paymentTermsFor, PAYMENT_TERMS, type Customer, type OrderingUser } from "./wholesaleAccounts";
 import { customerLocations, editedCustomerLocations, locationDefaults, validLocationId, type CustomerLocation } from "./wholesaleCustomers";
-import { handleInvoiceAdmin, handleInvoiceCustomer, invoiceLinks } from "./wholesaleInvoices";
+import { customersSeeInvoices, handleInvoiceAdmin, handleInvoiceCustomer, invoiceLinks } from "./wholesaleInvoices";
 
 type Pack = "quarter" | "half" | "kilo";
 const PACKS: Record<Pack, { label: string; grams: number }> = { quarter: { label: "250 g bag", grams: 250 }, half: { label: "500 g bag", grams: 500 }, kilo: { label: "1 kg bag", grams: 1000 } };
@@ -149,7 +149,7 @@ export async function handleWholesale(req: Request, env: Env, route: string, use
   const invoiceResponse = await handleInvoiceCustomer(req, env, route, user);
   if (invoiceResponse) return invoiceResponse;
   const customer = user.role === "wholesale" ? await wholesaleCustomer(env, user.customerId) : null;
-  if ((route === "catalogue" || route === "session") && req.method === "GET") return json({ ...(route === "catalogue" ? { products: await catalogue(env), sourceDate: catalogueRetrievedAt } : {}), stage: "beta", me: user, customer: customer ? publicCustomer(customer) : null, links: { ...(user.role === "wholesale" ? {} : links), preview: links.preview || "/wholesale-preview/" }, preview: user.role !== "wholesale" });
+  if ((route === "catalogue" || route === "session") && req.method === "GET") return json({ ...(route === "catalogue" ? { products: await catalogue(env), sourceDate: catalogueRetrievedAt } : {}), stage: "beta", invoices: await customersSeeInvoices(env), me: user, customer: customer ? publicCustomer(customer) : null, links: { ...(user.role === "wholesale" ? {} : links), preview: links.preview || "/wholesale-preview/" }, preview: user.role !== "wholesale" });
   if (route === "account" && req.method === "PUT" && customer) {
     const body = object(await readJson(req, 64 * 1024));
     if (body.orderingIdentity !== undefined && body.orderingIdentity !== user.id) throw new ApiError(409, "account_changed", "The signed-in account changed. Reload ordering before saving business details.");
@@ -184,7 +184,8 @@ export async function handleWholesale(req: Request, env: Env, route: string, use
     ]);
     const page = rows.results.slice(0, 200);
     const last = page.at(-1);
-    return json({ orders: await invoiceLinks(env, page.map((row) => visibleOrder(decode<Order>(row)))), count: total?.n || 0, nextCursor: rows.results.length > 200 && last ? `${last.updated_at}:${last.id}` : null });
+    const visible = page.map((row) => visibleOrder(decode<Order>(row)));
+    return json({ orders: await customersSeeInvoices(env) ? await invoiceLinks(env, visible) : visible, count: total?.n || 0, nextCursor: rows.results.length > 200 && last ? `${last.updated_at}:${last.id}` : null });
   }
   if (/^images\/[a-f0-9]{32}$/.test(route) && req.method === "GET") return serveCatalogueImage(env, route.slice("images/".length));
   if (route === "orders" && req.method === "POST") return createOrder(req, env, user);

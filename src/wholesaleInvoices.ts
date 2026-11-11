@@ -13,6 +13,8 @@ export interface InvoiceSettings {
   priceBasis: "inclusive" | "exclusive" | null; vatRates: VatRate[];
   defaultCoffeeRateId: string; deliveryRateId: string; invoicePrefix: string;
   firstInvoiceNumber: number; paymentInstructions: string; confirmed: boolean;
+  /** Whether customers see their invoices (My orders → Invoices, invoice PDFs, balances). Absent means on. */
+  customersSeeInvoices?: boolean;
 }
 interface SettingsRow { data: string; version: number; updated_at: number }
 export interface InvoiceLine {
@@ -98,6 +100,12 @@ async function settings(env: Env) {
   const value: InvoiceSettings = row ? JSON.parse(row.data) : defaults();
   return { settings: value, version: row?.version || 0, updatedAt: row?.updated_at || null, ...readiness(value) };
 }
+/** Admin's switch for the customer side of invoicing; issuing and payment records in Admin are unaffected. */
+export async function customersSeeInvoices(env: Env) {
+  const row = await env.DB.prepare("SELECT json_extract(data,'$.customersSeeInvoices') AS v FROM wholesale_invoice_settings WHERE id = 1").first<{ v: number | null }>();
+  return row?.v !== 0;
+}
+const invoicesOff = () => new ApiError(403, "invoices_unavailable", "Invoices aren’t shown here at the moment. Contact Strangers if you need a copy.");
 function requestBody(body: Record<string, any>): InvoiceRequest {
   const delivery = body.deliveryCharge === undefined ? {} : object(body.deliveryCharge);
   const billTo = body.billTo === undefined ? null : object(body.billTo);
@@ -156,10 +164,24 @@ async function build(env: Env, orderId: string, request: InvoiceRequest): Promis
 
 export async function handleInvoiceAdmin(req: Request, env: Env, route: string, actor: string): Promise<Response | null> {
   if (route === "invoice-settings" && req.method === "GET") return json(await settings(env));
+  if (route === "invoice-settings/customers" && req.method === "PUT") {
+    const body = object(await readJson(req, 1024)), expected = version(body.ifVersion), at = Date.now();
+    if (typeof body.enabled !== "boolean") throw invalid("Choose whether customers see their invoices.");
+    const old = await settings(env);
+    if (old.version !== expected) throw conflict("Invoice settings changed on another device. Reload and try again.");
+    const value = { ...old.settings, customersSeeInvoices: body.enabled };
+    const result = expected === 0
+      ? await env.DB.prepare("INSERT INTO wholesale_invoice_settings(id,data,version,updated_at) SELECT 1,?,1,? WHERE NOT EXISTS(SELECT 1 FROM wholesale_invoice_settings WHERE id=1)").bind(JSON.stringify(value), at).run()
+      : await env.DB.prepare("UPDATE wholesale_invoice_settings SET data=json_set(data,'$.customersSeeInvoices',json(?)),version=version+1,updated_at=? WHERE id=1 AND version=?").bind(String(body.enabled), at, expected).run();
+    if (!result.meta.changes) throw conflict("Invoice settings changed on another device. Reload and try again.");
+    await audit(env, "wholesale_invoice_settings", actor, `${actor} turned customer invoices ${body.enabled ? "on" : "off"}.`);
+    return json(await settings(env));
+  }
   if (route === "invoice-settings" && req.method === "PUT") {
     const body = object(await readJson(req, 16 * 1024)), expected = version(body.ifVersion), value = settingsBody(body), at = Date.now();
     const old = await settings(env);
     if (old.version !== expected) throw conflict("Invoice settings changed on another device. Reload before saving.");
+    if (old.settings.customersSeeInvoices === false) value.customersSeeInvoices = false;
     const issued = await env.DB.prepare("SELECT COUNT(*) AS n FROM wholesale_invoices").first<{ n: number }>();
     if (issued?.n && value.firstInvoiceNumber !== old.settings.firstInvoiceNumber) throw invalid("The first invoice number cannot change after an invoice has been issued.");
     const result = expected === 0
@@ -244,6 +266,7 @@ export async function handleInvoiceCustomer(req: Request, env: Env, route: strin
   if (!(route === "invoices" || /^invoices\/\d+(?:\/pdf)?$/.test(route) || /^orders\/WS-[A-F0-9]{32}\/invoice(?:\/pdf)?$/.test(route))) return null;
   if (user.role !== "wholesale") throw new ApiError(403, "permission_denied", "Customer invoices are available only to their wholesale business account.");
   if (req.method !== "GET") throw new ApiError(403, "permission_denied", "Customers can only read their own invoices.");
+  if (!(await customersSeeInvoices(env))) throw invoicesOff();
   if (route === "invoices") return invoiceList(req, env, user.customerId);
   const id = /^invoices\/(\d+)(\/pdf)?$/.exec(route);
   const row = id ? await env.DB.prepare("SELECT * FROM wholesale_invoices WHERE seq=? AND customer_id=?").bind(integer(Number(id[1]), "invoice ID", 1, Number.MAX_SAFE_INTEGER), user.customerId).first<InvoiceRow>() : await env.DB.prepare("SELECT * FROM wholesale_invoices WHERE order_id=? AND customer_id=?").bind(route.split("/")[1], user.customerId).first<InvoiceRow>();

@@ -648,7 +648,7 @@ function applyCatalogue(fresh, initial) {
   $("#admin-wholesale-link").hidden = session.me.role !== "admin";
   if (session.me.role === "admin") $("#admin-wholesale-link").href = session.links.admin + "#wholesale";
   $("#my-account").hidden = !session.customer;
-  $("#history-invoices").hidden = !session.customer;
+  applyInvoiceSwitch();
   $("#staff-preview-notice").hidden = !session.preview;
   $("#submit-preview-order").textContent = session.preview ? "Save preview order" : "Place order";
   $("#account-hold").hidden = canOrder();
@@ -858,8 +858,24 @@ async function loadOrders(append = false) {
   } catch (error) { if (!append) $("#order-history").textContent = error.message; $("#history-count").textContent = append ? "Couldn’t load earlier orders. Try again." : ""; }
   finally { historyLoading = false; $("#order-history").setAttribute("aria-busy", "false"); refreshBusy("#refresh-orders", false); $("#history-more").disabled = false; }
 }
+// Admin can switch invoices off for customers: then My orders has no Invoices tab, balance note or invoice loading.
+const invoicesShown = () => !!session?.customer && session.invoices !== false;
+function applyInvoiceSwitch() {
+  const shown = invoicesShown();
+  $("#history-invoices").hidden = !shown;
+  document.querySelector(".history-sections").hidden = !shown;
+  if (!shown) { $("#history-invoice-note").hidden = true; if (!$("#invoices-panel").hidden) showHistorySection("orders"); }
+}
+async function refreshInvoiceSwitch() {
+  try {
+    const current = await api("/api/wholesale/session");
+    if (current.me.id !== session.me.id) { location.reload(); return; }
+    session.invoices = current.invoices; applyInvoiceSwitch();
+  } catch {}
+  if (invoicesShown()) loadInvoices();
+}
 function showHistorySection(section) {
-  const invoices = section === "invoices" && !!session.customer;
+  const invoices = section === "invoices" && invoicesShown();
   $("#orders-panel").hidden = invoices; $("#invoices-panel").hidden = !invoices;
   $("#history-orders").setAttribute("aria-pressed", String(!invoices)); $("#history-invoices").setAttribute("aria-pressed", String(invoices));
   $("#orders-title").textContent = invoices ? "Invoices" : "Order history";
@@ -867,7 +883,7 @@ function showHistorySection(section) {
 }
 document.querySelectorAll("#my-orders,[data-order-history]").forEach(button => button.addEventListener("click", () => {
   showHistorySection("orders"); $("#orders-dialog").showModal(); loadOrders();
-  if (session.customer) loadInvoices();
+  if (session.customer) refreshInvoiceSwitch();
 }));
 $("#history-orders").addEventListener("click", () => showHistorySection("orders"));
 $("#history-invoices").addEventListener("click", () => showHistorySection("invoices"));
@@ -1044,7 +1060,7 @@ function customerInvoiceCard(invoice, expanded) {
   </article>`;
 }
 async function loadInvoices(append = false) {
-  if (invoiceLoading || !session?.customer) return;
+  if (invoiceLoading || !invoicesShown()) return;
   invoiceLoading = true;
   const expanded = new Set([...document.querySelectorAll('[data-customer-invoice]:has(details[open])')].map(node => node.dataset.customerInvoice));
   if (!append) { customerInvoices = []; invoiceCursor = null; invoiceTotal = 0; $("#customer-invoices-list").textContent = "Loading your invoices…"; $("#invoice-more").hidden = true; $("#history-invoice-note").hidden = true; }
@@ -1064,6 +1080,7 @@ async function loadInvoices(append = false) {
     $("#invoice-count").textContent = `Showing ${customerInvoices.length} of ${invoiceTotal} ${invoiceTotal === 1 ? "invoice" : "invoices"}`;
     $("#invoice-more").hidden = !invoiceCursor;
   } catch (error) {
+    if (error.code === "invoices_unavailable") { session.invoices = false; applyInvoiceSwitch(); return; }
     if (!append) $("#customer-invoices-list").textContent = error.message;
     $("#invoice-count").textContent = append ? "Couldn’t load earlier invoices. Try again." : "Couldn’t load invoices. Use the refresh button to try again.";
   } finally {

@@ -75,7 +75,12 @@ window.WholesaleInvoices = function ({ api, html, raw, svg, put, openSheet, clos
       const next = await api("GET", root + "/invoices?cursor=" + encodeURIComponent(cursor));
       invoices = [...new Map([...invoices, ...next.invoices].map((invoice) => [invoice.id, invoice])).values()]; cursor = next.nextCursor; count = next.count;
     }
-    return html`<section class="wi-workspace" aria-labelledby="wiTitle"><div class="toolbar"><div><h2 id="wiTitle">Invoices</h2><p class="hint">VAT invoices and payment records.</p></div><div class="row"><button class="btn soft" type="button" data-act="wh-invoice-quickbooks">QuickBooks</button><button class="btn soft" type="button" data-act="wh-invoice-settings">Invoice settings</button></div></div>${summary(first.summary)}${!config.ready ? html`<div class="wi-setup group"><h3>Complete your invoice settings</h3><p>Add your legal business details, VAT rates and invoice numbering before issuing an invoice.</p><button class="btn soft" type="button" data-act="wh-invoice-settings">Set up invoicing</button></div>` : ""}<section class="wi-records" aria-labelledby="wiListTitle"><div class="label" id="wiListTitle">Issued invoices <span class="count">${invoices.length} of ${count}</span></div><div class="group glass">${invoices.length ? invoices.map(invoiceRow) : html`<div class="w-empty"><span class="ic mut">${svg("dl")}</span><h3>No invoices yet</h3><p>Open a customer order to review and issue its invoice.</p></div>`}</div>${cursor ? html`<div class="w-more"><button class="btn soft" type="button" data-act="wh-invoice-more">Load earlier invoices</button></div>` : ""}<p class="hint">Recording payment updates the invoice status. It does not transfer money.</p></section></section>`;
+    return html`<section class="wi-workspace" aria-labelledby="wiTitle"><div class="toolbar"><div><h2 id="wiTitle">Invoices</h2><p class="hint">VAT invoices and payment records.</p></div><div class="row"><button class="btn soft" type="button" data-act="wh-invoice-quickbooks">QuickBooks</button><button class="btn soft" type="button" data-act="wh-invoice-settings">Invoice settings</button></div></div>${customerSwitch(config)}${summary(first.summary)}${!config.ready ? html`<div class="wi-setup group"><h3>Complete your invoice settings</h3><p>Add your legal business details, VAT rates and invoice numbering before issuing an invoice.</p><button class="btn soft" type="button" data-act="wh-invoice-settings">Set up invoicing</button></div>` : ""}<section class="wi-records" aria-labelledby="wiListTitle"><div class="label" id="wiListTitle">Issued invoices <span class="count">${invoices.length} of ${count}</span></div><div class="group glass">${invoices.length ? invoices.map(invoiceRow) : html`<div class="w-empty"><span class="ic mut">${svg("dl")}</span><h3>No invoices yet</h3><p>Open a customer order to review and issue its invoice.</p></div>`}</div>${cursor ? html`<div class="w-more"><button class="btn soft" type="button" data-act="wh-invoice-more">Load earlier invoices</button></div>` : ""}<p class="hint">Recording payment updates the invoice status. It does not transfer money.</p></section></section>`;
+  }
+  // Admin's switch for what customers see: My orders → Invoices, invoice PDFs and balances. Issuing here is unaffected.
+  function customerSwitch(config) {
+    const on = config.settings.customersSeeInvoices !== false;
+    return html`<div class="wi-customer-switch group glass"><div><h3 id="wiCustomersTitle">Invoices for customers</h3><p class="hint">${on ? "Customers can see their invoices, balances and invoice PDFs in My orders." : "Hidden from customers: no Invoices tab, balances or invoice PDFs in My orders. You can still issue and record invoices here."}</p></div><button class="wi-switch" type="button" role="switch" aria-checked="${on ? "true" : "false"}" aria-labelledby="wiCustomersTitle" data-act="wh-invoice-customers"><span class="wi-switch-track" aria-hidden="true"><span class="wi-switch-thumb"></span></span><span class="wi-switch-label">${on ? "On" : "Off"}</span></button></div>`;
   }
   function settingsDraft(form, state) {
     const value = (id) => form.querySelector("#" + id).value.trim();
@@ -240,6 +245,12 @@ window.WholesaleInvoices = function ({ api, html, raw, svg, put, openSheet, clos
     async act(name, id) {
       if (name === "wh-invoice-quickbooks") { await quickbooks.open(); return true; }
       if (name === "wh-invoice-settings") { await openSettings(); return true; }
+      if (name === "wh-invoice-customers" && configCache) {
+        const on = configCache.settings.customersSeeInvoices !== false;
+        try { configCache = await api("PUT", root + "/invoice-settings/customers", { ifVersion: configCache.version, enabled: !on }); toast(on ? "Invoices hidden from customers" : "Invoices shown to customers"); }
+        finally { await reload(); }
+        return true;
+      }
       if (name === "wh-invoice-open") { const result = await api("GET", root + "/invoices/" + encodeURIComponent(id)); showIssued(result.invoice); return true; }
       if (name === "wh-invoice-more" && cursor && !loadingMore) { loadingMore = true; try { listPages++; await reload(); } finally { loadingMore = false; } return true; }
       return false;
