@@ -42,7 +42,9 @@ Data lives in a D1 database (`kitchen-diary`); allergen PDFs and uploaded catalo
 
 ## Changing the site
 
-Edit the files in `public/` (or `src/` for the API), run the tests, and open a pull request. Once Tests passes, squash-merge it into `main`; Cloudflare deploys that commit. The deploy takes about a minute. If a deploy fails, the build log is in the Cloudflare dashboard under the Worker → **Deployments**, and GitHub shows a red cross next to the commit.
+Edit the files in `public/` (or `src/` for the API), run the tests, and open a pull request. Once Tests passes, squash-merge it into `main`; Cloudflare deploys that commit. The deploy takes about a minute. If a deploy fails, the build log is in the Cloudflare dashboard under the Worker → **Deployments**, and GitHub shows a red cross next to the commit. If a deploy sits as "queued" for more than a few minutes, press **Retry build** on it in the Worker's **Deployments** (or **Builds**) tab; any later merge to `main` also starts a fresh build that includes every earlier change.
+
+**Browser install on GitHub.** The Tests check installs Chromium with its system packages; if GitHub's runner can't reach Ubuntu's package servers, it gives up after 3 minutes and uses the libraries the runner already has (a warning on the check says so). The browser tests still have to pass.
 
 **Tests on GitHub.** Every pull request, and every merge to `main`, runs the typecheck, the API tests and the browser test (the "Tests" check). If one fails, its error message is shown as an annotation on the check. Cloudflare deploys whatever reaches `main`, so the safe way to change the site is a branch and a pull request, merged once Tests is green. That's a rule on `main` (GitHub → the repo → **Settings → Rules → Rulesets**: "Tests must pass", requiring the **test** status check).
 
