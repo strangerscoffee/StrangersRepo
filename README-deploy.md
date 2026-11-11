@@ -181,3 +181,11 @@ The shared page loader uses the Strangers logo and lightweight, uncached identit
 
 
 Admin wholesale preparation labels use saved order metadata and the shared light/dark theme. New line snapshots add optional grind-purpose and Decaf fields without a migration. Branding image/icon failures retry once with a fresh URL; a persistent failure is quietly recorded, while script and stylesheet failures retain their visible error cards.
+
+## Staff order dashboard
+
+`/orders` is served on the existing staff domain; no new domain, credentials or service is required. Migration 18 creates `staff_order_access` automatically, with no grants for existing nonadmin accounts. Admins already have access. After deployment, use **Admin → People → employee → Wholesale orders access** to enable or revoke it, and refresh the employee's diary to update navigation. The read-only API checks current access on every request; revocation takes effect without ending the employee's ordinary diary session. The staff page rechecks on focus and refreshes while visible.
+
+JSON backups include grant metadata as `staffOrderAccess`, keyed by stable `users.id`. Restore only reviewed grants to the same stable employee IDs; omitting an old backup's missing grant table leaves nonadmins denied. Do not infer grants from names or roles. Existing private employee-data restrictions remain independent.
+
+HTML responses, including Staff Login, are private/no-store and omit conditional validators because the Worker transforms asset fingerprints. Returning browsers receive current script URLs; fingerprinted scripts/styles keep their one-year cache.

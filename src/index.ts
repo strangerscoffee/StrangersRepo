@@ -3,6 +3,8 @@
 // hostname (ROTA_HOST), the staff rota (public/rota/, src/rota.ts). One Worker, one database, one set of accounts.
 import { appForHost, appLinks, authorize, isAdminSharedFile, isPreviewFile, isPublicAsset, isPublicCode, isRotaManager, isRotaSharedFile, limitWrites, recordId, requireUser, unifiedSignin } from "./access";
 import { handleAdmin } from "./admin";
+import { handleStaffOrders } from "./staffOrders";
+import { requireStaffOrders } from "./staffOrdersAccess";
 import { handleAdminView } from "./adminView";
 import { handleAuth } from "./auth";
 import { handleBackups, makeBackup } from "./backup";
@@ -156,14 +158,16 @@ async function staticFile(req: Request, env: Env, p: string): Promise<Response> 
 const noStore = (res: Response) => {
   const out = new Response(res.body, res);
   out.headers.set("cache-control", "private, no-store");
+  out.headers.delete("etag"); out.headers.delete("last-modified");
   return out;
 };
 const redirect = (location: string) => new Response(null, { status: 302, headers: { location, "cache-control": "no-store" } });
+const pageRequest=(req:Request,target:URL|string=req.url)=>{const fresh=new Request(target,req);fresh.headers.delete("if-none-match");fresh.headers.delete("if-modified-since");return fresh;};
 // The rota app's page. Served at /rota/ on any host (local dev and tests) and at / on the rota's own host.
-const rotaPage = (req: Request, env: Env, url: URL) => env.ASSETS.fetch(new Request(new URL("/rota/", url), req)).then(noStore).then((r) => withFingerprints(r, env, url));
+const rotaPage = (req: Request, env: Env, url: URL) => env.ASSETS.fetch(pageRequest(req,new URL("/rota/", url))).then(noStore).then((r) => withFingerprints(r, env, url));
 // The admin section's page. Served at / on its own host (ADMIN_HOST), and at /admin on the diary's when there's none.
-const adminPage = (req: Request, env: Env, url: URL) => env.ASSETS.fetch(new Request(new URL("/admin/", url), req)).then(noStore).then((r) => withFingerprints(r, env, url));
-const wholesalePage = (req: Request, env: Env, url: URL) => env.ASSETS.fetch(new Request(new URL("/wholesale-preview/", url), req)).then(noStore).then((r) => withFingerprints(r, env, url));
+const adminPage = (req: Request, env: Env, url: URL) => env.ASSETS.fetch(pageRequest(req,new URL("/admin/", url))).then(noStore).then((r) => withFingerprints(r, env, url));
+const wholesalePage = (req: Request, env: Env, url: URL) => env.ASSETS.fetch(pageRequest(req,new URL("/wholesale-preview/", url))).then(noStore).then((r) => withFingerprints(r, env, url));
 const ADMIN_PAGES = new Set(["/admin", "/admin/", "/admin.html", "/admin/index.html"]);
 const WHOLESALE_PAGES = new Set(["/wholesale-preview", "/wholesale-preview/", "/wholesale-preview/index.html"]);
 const OLD_WHOLESALE_DASHBOARD = new Set(["/wholesale-preview/dashboard", "/wholesale-preview/dashboard/", "/wholesale-preview/dashboard/index.html"]);
@@ -182,7 +186,7 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
   const wholesaleHost = app === "preview" || app === "diary";
   const wholesaleSignin = app === "preview" ? "/signin" : "/wholesale-preview/signin";
   if (wholesaleHost && isGet && (p === "/wholesale-preview/signin" || p === "/wholesale-preview/signin.html" || (app === "preview" && (p === "/signin" || p === "/signin.html")))) {
-    const response = await env.ASSETS.fetch(new Request(new URL("/wholesale-preview/signin", url), req));
+    const response = await env.ASSETS.fetch(pageRequest(req,new URL("/wholesale-preview/signin", url)));
     return withFingerprints(noStore(response), env, url);
   }
   if (wholesaleHost && isGet && p === "/wholesale-preview/staff-signin") {
@@ -210,7 +214,14 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
   }
   // The sign-in page and its files need no session (and no database); nor do the diary's and the rota's
   // scripts, styles and images (code, no data: see isPublicCode in src/hosts.ts).
-  if (isGet && isPublicAsset(p)) return p === "/signin" || p === "/signin.html" ? withFingerprints(await env.ASSETS.fetch(req), env, url) : staticFile(req, env, p);
+  if (isGet && isPublicAsset(p)) {
+    if(p==="/signin"||p==="/signin.html"){
+      // The HTML contains asset fingerprints that change even when the HTML source itself did not.
+      // An old conditional HTML request must not pin a previous deploy's immutable scripts forever.
+      return withFingerprints(noStore(await env.ASSETS.fetch(pageRequest(req))),env,url);
+    }
+    return staticFile(req,env,p);
+  }
   if (isGet && isPublicCode(app, p)) return staticFile(req, env, p);
   // On its own host the rota lives at /, so /rota/ (the address used in local dev) goes there.
   if (app === "rota" && isGet && (p === "/rota" || p === "/rota/" || p === "/rota/index.html")) return redirect("/" + url.search);
@@ -220,7 +231,7 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
   // A page/queued write belongs to the identity that opened it. Shared cookies may change in another tab
   // between its session check and this request; reject before reading any private data or returning a CAS body.
   const expectedId = req.headers.get("x-expected-user-id"), expectedRole = req.headers.get("x-expected-user-role");
-  const identityBound = /^\/api\/(?:db\/|admin\/|rota\/|assets(?:\/|$))/.test(p) || p === "/api/auth/logout" || p === "/api/auth/pin" || p === "/api/auth/notifications/seen";
+  const identityBound = /^\/api\/(?:db\/|admin\/|rota\/|staff-orders\/|assets(?:\/|$))/.test(p) || p === "/api/auth/logout" || p === "/api/auth/pin" || p === "/api/auth/notifications/seen";
   if (identityBound && (expectedId || expectedRole) && (caller.kind !== "user" || (expectedId && caller.user.id !== expectedId) || (expectedRole && caller.user.role !== expectedRole))) {
     throw new ApiError(409, "session_changed", "The signed-in account changed. Reload to continue.");
   }
@@ -284,6 +295,15 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
     return new Response(null, { status: 302, headers: { location: "/signin" + next, "cache-control": "no-store" } });
   }
   const user = caller.user;
+  if(p.startsWith("/api/staff-orders/")){
+    if(app!=="diary")throw new ApiError(404,"not_found","Not available on this address.");
+    return handleStaffOrders(req,env,p.slice("/api/staff-orders/".length),user);
+  }
+  if(app==="diary"&&isGet&&(p==="/orders"||p.startsWith("/orders/"))){
+    await requireStaffOrders(env,user);
+    if(["/orders","/orders/","/orders/index","/orders/index.html"].includes(p))return withFingerprints(noStore(await env.ASSETS.fetch(pageRequest(req,new URL("/orders/",url)))),env,url);
+    return staticFile(req,env,p);
+  }
   // A device whose own clock is well out (public/shared/core.js sends it): the page corrects for it, but someone
   // should fix the device's settings, so the admin section says so (once a day per person).
   const deviceTime = Number(req.headers.get("x-device-time"));
@@ -404,7 +424,7 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
     return p === "/wholesale-preview" ? redirect("/wholesale-preview/" + url.search) : wholesalePage(req, env, url);
   }
   // Pages behind sign-in must not be cached by shared devices' browsers or proxies.
-  if (p === "/" || p === "/index.html") return withFingerprints(noStore(await env.ASSETS.fetch(req)), env, url);
+  if (p === "/" || p === "/index.html") return withFingerprints(noStore(await env.ASSETS.fetch(pageRequest(req))), env, url);
   return staticFile(req, env, p);
 }
 

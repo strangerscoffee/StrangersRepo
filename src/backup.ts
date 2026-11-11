@@ -43,6 +43,7 @@ export async function makeBackup(env: Env, by: string): Promise<BackupInfo> {
     rota,
     wholesalePreview: (await env.DB.prepare("SELECT kind, id, data, version, updated_at FROM wholesale_preview ORDER BY kind, id").all()).results,
     wholesaleAccounts: await env.DB.prepare("SELECT id, customer_id, username, active, approval_status, created_at, last_login_at FROM wholesale_accounts ORDER BY username").all().then((rows) => rows.results),
+    staffOrderAccess: (await env.DB.prepare("SELECT user_id,enabled,version,updated_at,updated_by FROM staff_order_access ORDER BY user_id").all()).results,
     quickbooks: {
       mode: "disconnected-on-restore",
       installation: (await env.DB.prepare("SELECT id,namespace FROM quickbooks_installation").all()).results,
