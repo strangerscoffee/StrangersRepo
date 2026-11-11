@@ -33,7 +33,8 @@ test('staff order projection excludes previews, personal/internal and financial 
  const r=await ok('GET','/api/staff-orders/orders',undefined,STAFF);assert.equal(r.body.count,2);assert.equal(r.body.orders.length,2);
  assert.match(r.headers.get('cache-control'),/no-store/);
  const a=r.body.orders.find(o=>o.id===A.order.id);assert.equal(a.address,'10 Example Street');assert.equal(a.customerNote,'Keep these bags together.');assert.equal(a.lines[0].grindLabel,'Beans');
- for(const forbidden of ['PRIVATE_ACCOUNT_NOTE','PRIVATE_ORDER_NOTE','Private customer contact','STAFF_PREVIEW_MUST_NOT_LEAK','@example.test','issuedBy','customerSnapshot','paymentInstructions','createdBy','"price"','"pence"'])assert.ok(!r.text.includes(forbidden),forbidden);
+ assert.equal(a.note,'PRIVATE_ORDER_NOTE','granted staff read and edit the internal order note');
+ for(const forbidden of ['PRIVATE_ACCOUNT_NOTE','Private customer contact','STAFF_PREVIEW_MUST_NOT_LEAK','@example.test','issuedBy','customerSnapshot','paymentInstructions','createdBy','"price"','"pence"'])assert.ok(!r.text.includes(forbidden),forbidden);
  assert.equal((await call('GET','/orders',undefined,MANAGER)).status,403);assert.equal((await call('GET','/orders',undefined,STAFF)).status,200);
  await grant(false);assert.equal((await call('GET','/api/staff-orders/orders',undefined,STAFF)).status,403);assert.equal((await ok('GET','/api/auth/me',undefined,STAFF)).body.capabilities.staffOrders,false);await grant(true);
 });

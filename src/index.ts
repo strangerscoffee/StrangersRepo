@@ -297,7 +297,10 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
   const user = caller.user;
   if(p.startsWith("/api/staff-orders/")){
     if(app!=="diary")throw new ApiError(404,"not_found","Not available on this address.");
-    return handleStaffOrders(req,env,p.slice("/api/staff-orders/".length),user);
+    if(!isGet)await limitWrites(req,env,ctx,user.id);
+    const response=await handleStaffOrders(req,env,p.slice("/api/staff-orders/".length),user);
+    if(!isGet&&response.ok)await bumpChanges(env,"accounts");
+    return response;
   }
   if(app==="diary"&&isGet&&(p==="/orders"||p.startsWith("/orders/"))){
     await requireStaffOrders(env,user);

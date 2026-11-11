@@ -77,7 +77,7 @@ The rota emails people their shifts when a week is published, when their shifts 
 
 Managers and admins with an address can receive a summary every Monday at 07:30 for their chosen sites. Managers receive business food-safety information only; employee planning, requests, leave and training aggregates are admin-only. Personal shift/decision emails and calendar files contain only the recipient’s permitted information, without co-worker assignments. Emails come from `Strangers Rota <rota@staffstrangerscoffee.com>` (`EMAIL_FROM` changes the business sender); no employee account address is used as a shared Reply-To. At most 100 are sent a day (`EMAIL_DAILY_LIMIT`). Delete the sending secret to stop emails.
 
-**New wholesale order emails.** With the same Resend key, every new customer order is emailed to sales@strangerscoffee.com from orders@staffstrangerscoffee.com (no mailbox needed: Resend sends for any address on the verified domain). Change who gets them, switch them off or send a test in Admin → Wholesale → Orders → **Order emails**. Replies go to the customer.
+**New wholesale order emails.** With the same Resend key, every new customer order is emailed to sales@strangerscoffee.com from orders@staffstrangerscoffee.com (no mailbox needed: Resend sends for any address on the verified domain). Change who gets them, switch them off or send a test in Admin → Wholesale → Orders → **Order emails**. Replies go to the customer. The email's **Open the order** button opens it on the staff Wholesale orders page, so anyone with wholesale orders access can use it.
 
 ## Change the setup code
 
@@ -188,7 +188,9 @@ Admin wholesale preparation labels use saved order metadata and the shared light
 
 ## Staff order dashboard
 
-`/orders` is served on the existing staff domain; no new domain, credentials or service is required. Migration 18 creates `staff_order_access` automatically, with no grants for existing nonadmin accounts. Admins already have access. After deployment, use **Admin → People → employee → Wholesale orders access** to enable or revoke it, and refresh the employee's diary to update navigation. The read-only API checks current access on every request; revocation takes effect without ending the employee's ordinary diary session. The staff page rechecks on focus and refreshes while visible.
+`/orders` is served on the existing staff domain; no new domain, credentials or service is required. Migration 18 creates `staff_order_access` automatically, with no grants for existing nonadmin accounts. Admins already have access. After deployment, use **Admin → People → employee → Wholesale orders access** to enable or revoke it, and refresh the employee's diary to update navigation. The staff orders API checks current access on every request; revocation takes effect without ending the employee's ordinary diary session. The staff page rechecks on focus and refreshes while visible.
+
+Staff with that access can now also change an order's status (the quick **Mark preparing / ready / dispatched** button, or the status in the order), edit its internal note and tracking link, **Print new orders**, **Select to print**, see **Bags to process**, and open a read-only **Customers** tab (contact and delivery details only). They never see prices, invoices, payment terms or the minimum-order setting, and can't delete orders or change customers.
 
 JSON backups include grant metadata as `staffOrderAccess`, keyed by stable `users.id`. Restore only reviewed grants to the same stable employee IDs; omitting an old backup's missing grant table leaves nonadmins denied. Do not infer grants from names or roles. Existing private employee-data restrictions remain independent.
 

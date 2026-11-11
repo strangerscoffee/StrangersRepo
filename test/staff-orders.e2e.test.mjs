@@ -32,8 +32,9 @@ for(const[screen,viewport]of[['phone',{width:393,height:852}],['iPad',{width:118
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
    await page.locator('[data-order-id]').first().click();await page.locator('#orderDialog[open]').waitFor();
    assert.match(await page.locator('#orderDetail').innerText(),/Account|overdue invoices/);assert.equal(await page.locator('.w-grind-badge').filter({hasText:'Whole bean'}).count(),1);assert.equal(await page.locator('.w-decaf-label').count(),1);
-   const details=await page.locator('#orderDetail').innerText();for(const hidden of ['PRIVATE_ORDER_NOTE','PRIVATE_CUSTOMER_NOTE','PRIVATE_INVOICE_ACTOR','hidden@example.test','£'])assert.ok(!details.includes(hidden),hidden);
-   assert.equal(await page.locator('#orderDetail input,#orderDetail select,#orderDetail textarea').count(),0);
+   const details=await page.locator('#orderDetail').innerText();for(const hidden of ['PRIVATE_CUSTOMER_NOTE','PRIVATE_INVOICE_ACTOR','hidden@example.test','£'])assert.ok(!details.includes(hidden),hidden);
+   assert.equal(await page.locator('#editNote').inputValue(),'PRIVATE_ORDER_NOTE','granted staff read and edit the internal note');assert.ok(await page.locator('#editStatus').isVisible());
+   assert.ok(!(await page.locator('#orderDialog').innerText()).includes('£'),'no prices anywhere in the order');
    const close=await page.locator('#closeOrder').boundingBox(),footer=await page.locator('#doneOrder').boundingBox();assert.ok(close.y>=0&&footer.y+footer.height<=viewport.height,'close and Done remain reachable');
    if(process.env.STAFF_ORDERS_SCREENSHOT_DIR){await mkdir(process.env.STAFF_ORDERS_SCREENSHOT_DIR,{recursive:true});await page.screenshot({path:`${process.env.STAFF_ORDERS_SCREENSHOT_DIR}/staff-order-${screen}-${colour}.png`,animations:'disabled'});}
    await page.locator('#doneOrder').click();await page.locator('#search').fill('no-match');await page.waitForFunction(()=>document.getElementById('orderCount').textContent==='0 orders');

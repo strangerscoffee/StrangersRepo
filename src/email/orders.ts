@@ -36,7 +36,7 @@ const kg = (grams: number) => `${new Intl.NumberFormat("en-GB", { maximumFractio
 const packName: Record<string, string> = { quarter: "250 g", kilo: "1 kg", half: "500 g" };
 const when = (at: number) => new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "Europe/London" }).format(new Date(at));
 
-export function buildOrderEmail(order: MailOrder, adminUrl: string) {
+export function buildOrderEmail(order: MailOrder, orderUrl: string) {
   const place = order.locationSnapshot || order.customerSnapshot || {};
   const customer = order.customerSnapshot || {};
   const bags = { quarter: 0, kilo: 0, all: 0 };
@@ -54,7 +54,7 @@ export function buildOrderEmail(order: MailOrder, adminUrl: string) {
     `Coffee ${money(order.pence)} · Delivery ${order.deliveryPence ? money(order.deliveryPence) : "free"} · Total ${money(total)}`, "",
     `${order.delivery === "Delivery" ? "Deliver to" : "Collection"}: ${where}`, ...(place.deliveryNotes ? [`Delivery notes: ${place.deliveryNotes}`] : []),
     ...(contact ? [`Contact: ${contact}`] : []), ...(order.reference ? [`Reference: ${order.reference}`] : []),
-    ...(order.customerNote ? ["", "Customer comments:", order.customerNote] : []), "", `Open in Admin: ${adminUrl}`,
+    ...(order.customerNote ? ["", "Customer comments:", order.customerNote] : []), "", `Open the order: ${orderUrl}`,
   ].join("\n");
   const cell = "padding:8px 10px;border-bottom:1px solid #e3e6eb;text-align:left;vertical-align:top;font-size:14px;";
   const kv = (label: string, value: string) => `<tr><td style="padding:3px 12px 3px 0;color:#5d6675;font-size:14px;white-space:nowrap;vertical-align:top;">${esc(label)}</td><td style="padding:3px 0;font-size:14px;white-space:pre-line;">${esc(value)}</td></tr>`;
@@ -72,19 +72,22 @@ ${order.lines.map((l) => `<tr><td style="${cell}font-weight:700;">${l.quantity}<
 ${kv(order.delivery === "Delivery" ? "Deliver to" : "Collection", where)}${place.deliveryNotes ? kv("Delivery notes", place.deliveryNotes) : ""}${contact ? kv("Contact", contact) : ""}${order.reference ? kv("Reference", order.reference) : ""}
 </table></td></tr>
 ${order.customerNote ? `<tr><td style="padding:14px 24px 0;"><div style="border:1px solid #14181f;border-radius:10px;padding:10px 12px;"><div style="font-size:12px;font-weight:700;color:#5d6675;text-transform:uppercase;letter-spacing:.05em;">Customer comments</div><div style="font-size:14px;white-space:pre-line;margin-top:3px;">${esc(order.customerNote)}</div></div></td></tr>` : ""}
-<tr><td style="padding:18px 24px 22px;"><a href="${esc(adminUrl)}" style="display:inline-block;background:#0062cc;color:#fff;text-decoration:none;font-weight:600;padding:11px 18px;border-radius:10px;">Open in Admin</a></td></tr>
+<tr><td style="padding:18px 24px 22px;"><a href="${esc(orderUrl)}" style="display:inline-block;background:#0062cc;color:#fff;text-decoration:none;font-weight:600;padding:11px 18px;border-radius:10px;">Open the order</a></td></tr>
 </table><div style="font-size:12px;color:#5d6675;padding:12px;">Sent by the Strangers staff site for each new wholesale order. Change who gets these in Admin → Wholesale → Orders → Order emails.</div></td></tr></table></body></html>`;
   return { subject, html, text, replyTo: customer.email || undefined };
 }
 
+/** The staff Wholesale orders page (diary host, /orders), opened on this order. */
+const ordersPageUrl = (diaryBase: string, id?: string) => `${diaryBase.replace(/\/$/, "")}/orders${id ? `#${encodeURIComponent(id)}` : ""}`;
+
 /** Emails the new order to Strangers in the background of the checkout request. Never throws. */
-export async function notifyNewOrder(env: Env, ctx: ExecutionContext | undefined, order: MailOrder, adminBase: string) {
+export async function notifyNewOrder(env: Env, ctx: ExecutionContext | undefined, order: MailOrder, diaryBase: string) {
   if (!emailReady(env)) return;
   const run = (async () => {
     try {
       const settings = await orderEmailSettings(env);
       if (!settings.enabled) return;
-      const mail = buildOrderEmail(order, `${adminBase.replace(/\/$/, "")}/#wholesale`);
+      const mail = buildOrderEmail(order, ordersPageUrl(diaryBase, order.id));
       for (const to of settings.to) await send(env, { to: { id: "orders", name: to, email: to, email_prefs: "{}", active: 1 }, kind: "order", mail, about: `new wholesale order ${order.id} (${order.business || "customer"})`, from: FROM(env), replyTo: mail.replyTo });
     } catch (error) {
       await audit(env, "email_failed", null, `Couldn't email new wholesale order ${order.id}: ${String((error as Error)?.message || error).slice(0, 160)}`).catch(() => {});
@@ -94,7 +97,7 @@ export async function notifyNewOrder(env: Env, ctx: ExecutionContext | undefined
 }
 
 /** Admin: GET/PUT order-emails ({ifVersion, enabled, to}) and POST order-emails/test. */
-export async function handleOrderEmailsAdmin(req: Request, env: Env, route: string, actor: string, adminBase: string): Promise<Response | null> {
+export async function handleOrderEmailsAdmin(req: Request, env: Env, route: string, actor: string, diaryBase: string): Promise<Response | null> {
   if (route === "order-emails" && req.method === "GET") return json(await orderEmailSettings(env));
   if (route === "order-emails" && req.method === "PUT") {
     const body = object(await readJson(req, 4096));
@@ -117,7 +120,7 @@ export async function handleOrderEmailsAdmin(req: Request, env: Env, route: stri
     if (!emailReady(env)) throw new ApiError(409, "email_off", "Email isn't set up on this site (no RESEND_API_KEY).");
     const settings = await orderEmailSettings(env);
     const sample: MailOrder = { id: "WS-TEST", business: "Test order (no action needed)", createdAt: Date.now(), delivery: "Roastery collection", pence: 1800, deliveryPence: 0, totalPence: 1800, grams: 1000, customerNote: "This is a test of the new-order email.", lines: [{ title: "Brazil Fazenda Bom Jesus Natural", pack: "kilo", grindLabel: "Beans", quantity: 1, grams: 1000 }], customerSnapshot: null };
-    const mail = buildOrderEmail(sample, `${adminBase.replace(/\/$/, "")}/#wholesale`);
+    const mail = buildOrderEmail(sample, ordersPageUrl(diaryBase));
     mail.subject = `Test: ${mail.subject}`;
     const results = [];
     for (const to of settings.to) results.push(await send(env, { to: { id: "orders", name: to, email: to, email_prefs: "{}", active: 1 }, kind: "test", mail, about: "test new-order email", from: FROM(env) }));

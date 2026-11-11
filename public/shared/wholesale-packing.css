@@ -1,0 +1,54 @@
+/* Wholesale packing, shared by Admin and the staff orders page: bag-total tiles and tables on screen, and the printed
+   pages (#wPrintArea): plain black on white whatever the theme, a page per order. */
+.wp-summary-body{display:grid;gap:14px;min-width:0}
+.wp-tiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.wp-tile{display:grid;gap:4px;padding:14px 16px;border-radius:16px;border:1px solid var(--line);background:var(--sunk)}
+.wp-tile span{color:var(--muted);font-size:13px;font-weight:600}
+.wp-tile strong{font-size:clamp(26px,5vw,34px);line-height:1.1;font-variant-numeric:tabular-nums}
+.wp-tile small{color:var(--muted)}
+.wp-tile-total{background:var(--tint,var(--sunk))}
+.wp-meta{margin:0;color:var(--muted)}
+.wp-empty{margin:8px 0;color:var(--muted)}
+.wp-table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+.wp-table caption{text-align:left;font-weight:700;padding:4px 0 8px}
+.wp-table th,.wp-table td{padding:9px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+.wp-table thead th{font-size:12px;color:var(--muted);font-weight:650;text-transform:uppercase;letter-spacing:.03em}
+.wp-table tbody th{font-weight:600}
+.wp-table td small{display:block;color:var(--muted);font-size:12px}
+.wp-table tfoot th,.wp-table tfoot td{font-weight:700;border-bottom:0;border-top:2px solid var(--fg)}
+.wp-tag{display:inline-block;padding:1px 6px;border:1px solid var(--line);border-radius:6px;font-size:11px;font-weight:650;vertical-align:1px}
+@media(max-width:600px){
+  .wp-tiles{grid-template-columns:1fr 1fr}.wp-tile-total{grid-column:1/-1}
+  .wp-table th,.wp-table td{padding:8px 5px;font-size:14px}
+}
+
+/* Printed pages: plain black on white whatever the screen's theme; each order on its own page. */
+#wPrintArea{display:none}
+@media print{
+  @page{size:A4;margin:14mm}
+  body>*:not(#wPrintArea){display:none!important}
+  body{background:#fff!important}
+  #wPrintArea{display:block;color:#111;background:#fff;font:11pt/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;--fg:#111;--muted:#555;--line:#c9c9c9;--sunk:#f3f3f3;--tint:#eef3fb}
+  .wp-page{break-after:page;page-break-after:always}
+  .wp-page:last-child{break-after:auto;page-break-after:auto}
+  .wp-head{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;padding-bottom:10px;margin-bottom:14px;border-bottom:2px solid #111}
+  .wp-head h2{margin:2px 0;font-size:20pt;line-height:1.15}
+  .wp-kicker{margin:0;font-size:9pt;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#555}
+  .wp-id{margin:0;font-size:9pt;color:#555;font-family:ui-monospace,Menlo,Consolas,monospace}
+  .wp-when{display:grid;text-align:right;font-size:10pt}.wp-when span{color:#555;font-size:8.5pt;text-transform:uppercase;letter-spacing:.05em}
+  .wp-tiles{gap:8px;margin-bottom:12px}.wp-tile{padding:10px 12px;border-radius:10px}.wp-tile strong{font-size:22pt}
+  .wp-meta{margin:0 0 10px}
+  .wp-table{margin:0 0 16px;font-size:10.5pt;break-inside:auto}.wp-table tr{break-inside:avoid}
+  .wp-table th,.wp-table td{padding:6px 6px}
+  .wp-details{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:12px}
+  .wp-details h3,.wp-note h3{margin:0 0 3px;font-size:8.5pt;text-transform:uppercase;letter-spacing:.05em;color:#555}
+  .wp-details p,.wp-note p{margin:0 0 8px;white-space:pre-line;overflow-wrap:anywhere}
+  .wp-note{padding:8px 10px;margin-bottom:12px;border:1.5px solid #111;border-radius:8px}
+  .wp-internal{border-style:dashed}
+  .wp-lines td,.wp-lines th{font-size:11pt}
+  .wp-tick{width:26px}.wp-box{display:inline-block;width:14px;height:14px;border:1.5px solid #111;border-radius:3px}
+  .wp-order-total{margin:6px 0 22px;font-size:11pt}
+  .wp-sign{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}.wp-sign span{padding-top:26px;border-bottom:1px solid #111;font-size:9pt;color:#555}
+  .w-coffee-swatch{print-color-adjust:exact;-webkit-print-color-adjust:exact}
+  .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+}
