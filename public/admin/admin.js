@@ -39,6 +39,10 @@
     x: '<path d="M6 6l12 12M18 6L6 18"/>',
     doc: '<path d="M6 3h8l4 4v14H6zM14 3v5h4M9 12h6M9 16h6"/>',
     copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>',
+    "grind-beans": '<path d="M18 4c-4-3-11 1-13 6s0 10 4 11 10-3 12-8 1-7-3-9Z"/><path d="M17 5c-6 3-2 8-10 14"/>',
+    "grind-fine": '<path d="M5 4h14v5H5zM7 9v4h10V9M9 13v3h6v-3M5 21h14M10 18v3M14 18v3"/>',
+    "grind-medium": '<path d="m3 4 9 12 9-12H3ZM12 16v4M8 21h8M7 4l5 8 5-8"/>',
+    "grind-coarse": '<path d="M6 8h11v11H6zM4 21h15M4 4h15M11 2v6M17 10h2a3 3 0 0 1 0 6h-2"/>',
   };
   const svg = (k) => raw(`<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${P[k]}</svg>`);
   document.querySelectorAll("[data-icon]").forEach((e) => { e.innerHTML = svg(e.dataset.icon)[RAW]; });

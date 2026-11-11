@@ -323,6 +323,30 @@ button.stat{cursor:pointer}
 .w-pack-quantity{display:grid;justify-items:center;align-content:center;gap:1px;min-width:38px;padding:6px;border-radius:10px;background:var(--surface);font-variant-numeric:tabular-nums}
 .w-pack-quantity>b{font-size:20px;line-height:1.1}
 .w-pack-quantity>span{font-size:11px;color:var(--muted)}
+/* Grind colours reuse the rota's hue stripe/tint treatment; words remain the primary label. */
+.w-grind-tone{--w-grind-edge:hsl(var(--w-grind-h) 68% 46%);--w-grind-bg:hsl(var(--w-grind-h) 80% 50% / .12);--w-grind-ink:hsl(var(--w-grind-h) 70% 26%)}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]) .w-grind-tone{--w-grind-edge:hsl(var(--w-grind-h) 78% 64%);--w-grind-bg:hsl(var(--w-grind-h) 70% 55% / .17);--w-grind-ink:hsl(var(--w-grind-h) 90% 80%)}}
+:root[data-theme="dark"] .w-grind-tone{--w-grind-edge:hsl(var(--w-grind-h) 78% 64%);--w-grind-bg:hsl(var(--w-grind-h) 70% 55% / .17);--w-grind-ink:hsl(var(--w-grind-h) 90% 80%)}
+.w-packing-list{display:grid;gap:12px;border:0;background:none;border-radius:0;overflow:visible}
+.w-packing-list>.w-packing-line{display:grid;grid-template-columns:52px minmax(0,1fr) auto;align-items:start;gap:12px;padding:16px;border:1px solid var(--line);border-left:4px solid var(--w-grind-edge);border-radius:15px;background:var(--sunk)}
+.w-packing-line .w-pack-quantity{min-width:0;width:52px;padding:8px 6px;border-radius:12px}
+.w-packing-line .w-pack-quantity>b{font-size:26px;letter-spacing:-.03em}
+.w-packing-line .tx .w-pack-coffee{font-size:16px;font-weight:650;line-height:1.4;letter-spacing:-.01em}
+.w-packing-line .tx .w-pack-size{font-size:13px;margin-top:2px}
+.w-packing-line .tx .w-grind-details{display:flex;align-items:center;flex-wrap:wrap;gap:7px 9px;margin-top:7px}
+.w-packing-line .tx .w-grind-badge{display:inline-flex;align-items:center;gap:6px;padding:6px 11px;border-radius:99px;background:var(--w-grind-bg);color:var(--w-grind-ink);font-size:14px;font-weight:650;line-height:1.4;max-width:100%;overflow-wrap:anywhere}
+.w-grind-badge svg.i{width:16px;height:16px;flex:none}
+.w-packing-line .tx .w-grind-hint{font-size:12px;line-height:1.5;overflow-wrap:anywhere;color:var(--muted)}
+.w-packing-line .tx .w-decaf-label{display:inline-block;vertical-align:2px;padding:2px 6px;border:1px solid var(--line);border-radius:6px;margin-left:7px;font-size:10px;line-height:1.4;font-weight:650;letter-spacing:.02em;color:var(--muted)}
+.w-packing-line .end{max-width:none;font-size:13px;padding-top:2px;white-space:nowrap}
+.w-grind-filters{display:flex;flex-wrap:wrap;gap:7px}
+.w-grind-filters button{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:44px;padding:9px 12px;max-width:100%;background:var(--sunk);color:var(--muted);border:1px solid transparent;border-radius:99px;font-size:12.5px;font-weight:600;overflow-wrap:anywhere}
+.w-grind-filters button.w-grind-tone{background:var(--w-grind-bg);color:var(--w-grind-ink)}
+.w-grind-filters button[aria-pressed="true"]{border-color:var(--w-grind-edge,var(--accent));box-shadow:inset 0 0 0 1px var(--w-grind-edge,var(--accent));color:var(--w-grind-ink,var(--accent))}
+.w-grind-filters svg.i{height:15px;width:15px;flex:none}
+@media(max-width:600px){.w-packing-list>.w-packing-line{grid-template-columns:46px minmax(0,1fr);gap:7px 11px;padding:14px 12px}.w-packing-line .w-pack-quantity{width:46px}.w-packing-line .tx .w-pack-coffee{font-size:15.5px}.w-packing-line .end{grid-column:2;justify-self:end;padding:0}.w-packing-line .tx .w-grind-badge{font-size:13.5px}.w-packing-line .tx .w-grind-hint{font-size:12px}}
+@media(forced-colors:active){.w-grind-tone{--w-grind-edge:CanvasText;--w-grind-bg:Canvas;--w-grind-ink:CanvasText}.w-grind-badge{outline:1px solid CanvasText}}
+@media print{.w-grind-filters,#wGrindCount{display:none}.w-packing-list>[data-grind-line][hidden]{display:grid!important}.w-grind-tone{--w-grind-edge:#777;--w-grind-bg:transparent;--w-grind-ink:#111}.w-packing-line{break-inside:avoid}}
 @media(max-width:600px){.w-order-actions{padding-left:14px}.w-order-actions>.btn{flex:1}.w-packing-line .tx{min-width:0}.w-packing-line .end{font-size:13px}}
 
 .w-order-danger{padding-top:14px;border-top:1px solid var(--line);display:flex;justify-content:flex-start}

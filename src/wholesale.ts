@@ -19,7 +19,7 @@ const PACKS: Record<Pack, { label: string; grams: number }> = { quarter: { label
 // 500 g bags are no longer sold or priced: kept above only so past orders and their exact retries still read; refused for new orders.
 const ORDERABLE_PACKS: Pack[] = ["quarter", "kilo"]; // checked before any price is read (the catalogue has none for 500 g)
 const STATUSES = ["New", "Preparing", "Ready", "Dispatched", "Cancelled"];
-interface Line { productId: string; title: string; pack: Pack; packLabel: string; grind: string; grindLabel: string; quantity: number; price: number; grams: number }
+interface Line { productId: string; title: string; pack: Pack; packLabel: string; grind: string; grindLabel: string; grindHint?: string; decaf?: boolean; quantity: number; price: number; grams: number }
 interface Order {
   createdBy: string; createdName: string; business: string; reference: string; delivery: string;
   customerId: string | null; status: string; note: string; date: string; createdAt: number;
@@ -116,7 +116,7 @@ async function createOrder(req: Request, env: Env, user: OrderingUser): Promise<
     if (line.price !== product.prices[line.pack as "quarter" | "kilo"]) throw new ApiError(409, "conflict", "The prices have changed. Reload and review your order again.");
     const grind = product.grindOptions.find(option => option.id === line.grind && option.enabled);
     if (!grind) throw new ApiError(409, "grind_unavailable", `${product.name} no longer offers this grind. Remove it from your basket and choose an available option.`);
-    return { ...line, title: product.title, packLabel: PACKS[line.pack].label, grindLabel: grind.label, price: product.prices[line.pack as "quarter" | "kilo"], grams: PACKS[line.pack].grams };
+    return { ...line, title: product.title, packLabel: PACKS[line.pack].label, grindLabel: grind.label, grindHint: grind.hint || "", decaf: product.categories.includes("decaf"), price: product.prices[line.pack as "quarter" | "kilo"], grams: PACKS[line.pack].grams };
   });
   const at = Date.now();
   const customerSnapshot = customer && location ? (() => {

@@ -178,3 +178,6 @@ Existing Live payment observations continue while Sandbox is active. Exports ret
 ## Page loading
 
 The shared page loader uses the Strangers logo and lightweight, uncached identity checks. First-load metadata and fresh proof remain separate; network failures retry the same protected startup and the retry action resumes it. No configuration or migration is needed. Phone/iPad/desktop light/dark loader, recovery, request-coalescing and privacy regressions are in `test/loader.e2e.test.mjs` and `test/identity.e2e.test.mjs`.
+
+
+Admin wholesale preparation labels use saved order metadata and the shared light/dark theme. New line snapshots add optional grind-purpose and Decaf fields without a migration. Branding image/icon failures retry once with a fresh URL; a persistent failure is quietly recorded, while script and stylesheet failures retain their visible error cards.
