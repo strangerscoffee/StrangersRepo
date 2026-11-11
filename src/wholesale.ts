@@ -41,7 +41,7 @@ interface Order {
 }
 type Links = { admin: string; diary: string; preview?: string };
 const denied = () => new ApiError(403, "permission_denied", "Only admins can manage wholesale ordering.");
-function visibleOrder(order: Order & Versioned, admin = false) {
+export function visibleOrder(order: Order & Versioned, admin = false) {
   const { requestKey, note, ...visible } = order;
   return admin ? { ...visible, trackingUrl: order.trackingUrl || "", note } : { ...visible, trackingUrl: order.trackingUrl || "" };
 }
@@ -150,7 +150,7 @@ async function createOrder(req: Request, env: Env, user: OrderingUser, links: Li
   }
   await audit(env, customer ? "wholesale_order" : "wholesale_preview_order", user.name, `${user.name} placed ${customer ? "wholesale" : "staff preview"} order ${body.id}.`);
   // A new customer order (never a staff preview or a retry, which returned above) is emailed to Strangers.
-  if (customer) await notifyNewOrder(env, ctx, saved, links.admin);
+  if (customer) await notifyNewOrder(env, ctx, saved, links.diary);
   return json({ order: visibleOrder(saved), preview: !customer }, 201);
 }
 
@@ -210,12 +210,46 @@ export async function handleWholesale(req: Request, env: Env, route: string, use
 }
 
 /** Management is part of the existing admin app and uses its admin-only API boundary. */
+/** Orders to print or count: customer orders with the given statuses (no previews or removed orders, oldest first, up
+ * to 500), or exactly the picked ids (up to 200, in the order given). Shared by Admin and the staff orders page. */
+export async function ordersToPrint(env: Env, query: URLSearchParams, { customerOnly = false } = {}): Promise<(Order & Versioned)[]> {
+  const ids = (query.get("ids") || "").split(",").filter(Boolean), statuses = (query.get("status") || "").split(",").filter(Boolean);
+  if (ids.length > 200 || ids.some((id) => !/^(?:PREVIEW|WS)-[A-F0-9]{32}$/.test(id))) throw invalid("Choose up to 200 orders to print.");
+  if (!ids.length && (!statuses.length || statuses.some((value) => !STATUSES.includes(value)))) throw invalid("Choose which orders to print.");
+  const rows = ids.length
+    ? await env.DB.prepare(`SELECT id, data, version, updated_at FROM wholesale_preview WHERE kind = 'order' AND id IN (${ids.map(() => "?").join(",")}) AND json_extract(data, '$.deletedAt') IS NULL${customerOnly ? " AND json_extract(data, '$.preview') = 0" : ""}`).bind(...ids).all<Row>()
+    : await env.DB.prepare(`SELECT id, data, version, updated_at FROM wholesale_preview WHERE kind = 'order' AND json_extract(data, '$.preview') = 0 AND json_extract(data, '$.deletedAt') IS NULL AND json_extract(data, '$.status') IN (${statuses.map(() => "?").join(",")}) ORDER BY json_extract(data, '$.createdAt') LIMIT 501`).bind(...statuses).all<Row>();
+  if (rows.results.length > 500) throw invalid("There are more than 500 orders to print. Choose fewer.");
+  const orders = rows.results.map((row) => decode<Order>(row) as Order & Versioned);
+  if (ids.length) orders.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+  return orders;
+}
+
+/** Changes an order's status, internal note and (optionally) tracking link, version-checked. Shared by Admin and the
+ * staff orders page; only Admin may relink a staff preview to a customer. */
+export async function updateOrderStatus(env: Env, id: string, body: Record<string, any>, actor: string, { allowRelink = false, customerOnly = false } = {}): Promise<Order & Versioned> {
+  const order = await get<Order>(env, "order", id);
+  if (!order || order.deletedAt != null || (customerOnly && order.preview !== false)) throw new ApiError(404, "not_found", "Order not found.");
+  if (!STATUSES.includes(body.status)) throw invalid("Choose a listed order status.");
+  let customerId = order.customerId ?? null;
+  if (allowRelink) {
+    customerId = body.customerId ?? null;
+    if (customerId !== null && (typeof customerId !== "string" || !await get<Customer>(env, "customer", customerId))) throw invalid("Choose an existing wholesale customer.");
+    if (order.preview === false && customerId !== order.customerId) throw invalid("Customer orders stay linked to the business that placed them.");
+  }
+  const { id: savedId, version: oldVersion, updatedAt, ...current } = order;
+  const note = body.note === undefined ? order.note || "" : text(body.note, "order note", 1000);
+  const updated = await save(env, "order", id, { ...current, status: body.status, customerId, note, trackingUrl: body.trackingUrl === undefined ? order.trackingUrl || "" : trackingUrl(body.trackingUrl) }, version(body.ifVersion));
+  await audit(env, "wholesale_preview_status", actor, `${actor} marked wholesale order ${id} as ${body.status}. No fulfilment action was sent.`);
+  return updated as Order & Versioned;
+}
+
 export async function handleWholesaleAdmin(req: Request, env: Env, route: string, user: User, links: Links, ctx?:ExecutionContext): Promise<Response> {
   const quickbooks = await handleQuickBooks(req, env, route, user, ctx); if (quickbooks) return quickbooks;
   if (user.role !== "admin") throw denied();
   const invoiceResponse = await handleInvoiceAdmin(req, env, route, user.name);
   if (invoiceResponse) return invoiceResponse;
-  const orderEmails = await handleOrderEmailsAdmin(req, env, route, user.name, links.admin);
+  const orderEmails = await handleOrderEmailsAdmin(req, env, route, user.name, links.diary);
   if (orderEmails) return orderEmails;
   if (route === "" && req.method === "GET") {
     const [orderPage, customerPage, products, counts, stats] = await Promise.all([
@@ -227,16 +261,7 @@ export async function handleWholesaleAdmin(req: Request, env: Env, route: string
   }
   // Orders to print (packing sheets and bag totals): customer orders by status, or the orders an admin picked.
   if (route === "orders/print" && req.method === "GET") {
-    const query = new URL(req.url).searchParams;
-    const ids = (query.get("ids") || "").split(",").filter(Boolean), statuses = (query.get("status") || "").split(",").filter(Boolean);
-    if (ids.length > 200 || ids.some((id) => !/^(?:PREVIEW|WS)-[A-F0-9]{32}$/.test(id))) throw invalid("Choose up to 200 orders to print.");
-    if (!ids.length && (!statuses.length || statuses.some((value) => !STATUSES.includes(value)))) throw invalid("Choose which orders to print.");
-    const rows = ids.length
-      ? await env.DB.prepare(`SELECT id, data, version, updated_at FROM wholesale_preview WHERE kind = 'order' AND id IN (${ids.map(() => "?").join(",")}) AND json_extract(data, '$.deletedAt') IS NULL`).bind(...ids).all<Row>()
-      : await env.DB.prepare(`SELECT id, data, version, updated_at FROM wholesale_preview WHERE kind = 'order' AND json_extract(data, '$.preview') = 0 AND json_extract(data, '$.deletedAt') IS NULL AND json_extract(data, '$.status') IN (${statuses.map(() => "?").join(",")}) ORDER BY json_extract(data, '$.createdAt') LIMIT 501`).bind(...statuses).all<Row>();
-    if (rows.results.length > 500) throw invalid("There are more than 500 orders to print. Choose fewer.");
-    const orders = rows.results.map((row) => visibleOrder(decode<Order>(row), true));
-    if (ids.length) orders.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+    const orders = (await ordersToPrint(env, new URL(req.url).searchParams)).map((order) => visibleOrder(order, true));
     return json({ orders, printedAt: Date.now() });
   }
   if ((route === "orders" || route === "customers") && req.method === "GET") {
@@ -288,15 +313,7 @@ export async function handleWholesaleAdmin(req: Request, env: Env, route: string
     return json({ deleted: true, id, version: removed.version });
   }
   if (orderMatch && req.method === "PATCH") {
-    const order = await get<Order>(env, "order", orderMatch[1]);
-    if (!order || order.deletedAt != null) throw new ApiError(404, "not_found", "Order not found.");
-    if (!STATUSES.includes(body.status)) throw invalid("Choose a listed order status.");
-    const customerId = body.customerId ?? null;
-    if (customerId !== null && (typeof customerId !== "string" || !await get<Customer>(env, "customer", customerId))) throw invalid("Choose an existing wholesale customer.");
-    if (order.preview === false && customerId !== order.customerId) throw invalid("Customer orders stay linked to the business that placed them.");
-    const { id, version: oldVersion, updatedAt, ...current } = order;
-    const updated = await save(env, "order", id, { ...current, status: body.status, customerId, note: text(body.note, "order note", 1000), trackingUrl: body.trackingUrl === undefined ? order.trackingUrl || "" : trackingUrl(body.trackingUrl) }, version(body.ifVersion));
-    await audit(env, "wholesale_preview_status", user.name, `${user.name} marked wholesale order ${id} as ${body.status}. No fulfilment action was sent.`);
+    const updated = await updateOrderStatus(env, orderMatch[1], body, user.name, { allowRelink: true });
     return json({ order: visibleOrder(updated, true) });
   }
   throw new ApiError(404, "not_found", "Unknown wholesale management route.");

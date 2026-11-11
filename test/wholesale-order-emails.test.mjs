@@ -55,7 +55,8 @@ test("each new customer order emails sales@ from orders@, with Reply-To the cust
   assert.match(mail.text, /6 × Brazil.*1 kg, Beans/); assert.match(mail.text, /4 × 250 g · 6 × 1 kg · 10 bags · 7 kg/);
   assert.match(mail.text, /Deliver to: .*1 Elm Hill, Norwich, NR3 1HN/); assert.match(mail.text, /Reference: PO-77/); assert.match(mail.text, /Use our own custom labels/);
   assert.match(mail.html, /Café &lt;Lune&gt; &amp; Co/); assert.doesNotMatch(mail.html, /<Lune>/, "customer text is escaped");
-  assert.match(mail.html, /#wholesale/);
+  assert.match(mail.html, new RegExp(`/orders#${order.id}"`), "the button opens the order on the staff Wholesale orders page");
+  assert.match(mail.html, />Open the order</); assert.doesNotMatch(mail.html, /#wholesale/);
 
   assert.equal((await call("POST", "/api/wholesale/orders", body, A)).status, 200, "an exact retry returns the order");
   await call("POST", "/api/wholesale/orders", { requestId: crypto.randomUUID(), lines: [{ productId: "brazil", pack: "quarter", grind: "beans", quantity: 1, price: 500 }], delivery: "Roastery collection", reference: "" });

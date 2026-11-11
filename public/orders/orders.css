@@ -2,3 +2,46 @@
 @media(min-width:1024px){.order-row{padding:20px 24px}.top{margin-bottom:46px}.dialog-body{padding:25px}.order-row b{font-size:17px}}
 @media(max-width:600px){.wrap{padding:18px 16px 26px}.top{margin-bottom:30px}.brand{font-size:15px;gap:10px}.brandlogo{width:56px}.back{font-size:12px}.heading{align-items:start}.heading h1{font-size:29px}.heading p{font-size:14px}.read-only{font-size:10px;padding:5px 8px}.order-row{padding:16px 14px;gap:10px}.row-end{gap:7px;flex-direction:column;align-items:flex-end}.row-end>.i{display:none}.row-meta{font-size:12px}.order-row b{font-size:15px}.footer{font-size:11px}dialog{width:calc(100vw - 16px);max-height:calc(100dvh - 24px);border-radius:22px}.dialog-head{padding:12px 16px}.dialog-body{padding:17px}.dialog-foot{padding:12px 16px}.business-title h3{font-size:20px}.kv{font-size:13px}.account-warning{font-size:12px}}
 @media(prefers-reduced-motion:reduce){.refresh[aria-busy=true] .i{animation:none}}
+/* Changing orders, printing and customers (staff with wholesale orders access). */
+.view-tabs{margin:0 0 18px}
+.order-entry{display:flex;align-items:center;gap:12px;padding-right:16px}
+.order-entry+.order-entry{border-top:1px solid var(--line)}
+.order-entry .order-row{flex:1;min-width:0}
+.order-entry.is-picking{padding-right:0}
+.order-entry .quick{flex:none;min-width:150px}
+.order-row.is-picking{justify-content:flex-start}.order-row.is-picking>span:nth-child(2){flex:1;min-width:0}
+.order-row[aria-pressed=true]{background:var(--tint)}
+.pick{flex:none;display:grid;place-items:center;width:26px;height:26px;border-radius:50%;border:2px solid var(--muted)}
+.pick.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}.pick .i{width:16px;height:16px}
+.row-note{font-style:italic;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:60ch}
+.btn.soft{background:var(--tint);color:var(--accent)}
+.btn.sm{min-height:40px;padding:8px 15px;font-size:13px}
+.btn .i{width:18px;height:18px;margin-right:7px}
+.btn:disabled{opacity:.5;cursor:default}
+.print-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:-10px 0 22px}
+.print-bar.picking{padding:10px 12px;border-radius:16px;background:var(--sunk);border:1px solid var(--line)}
+.picked-count{margin-right:auto;font-weight:650}
+.order-edit{margin-top:22px;padding-top:18px;border-top:1px solid var(--line);display:grid;gap:12px}
+.order-edit:empty{display:none}
+.edit-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.4fr);gap:12px}
+.field{display:grid;gap:6px;font-size:13px;font-weight:600;color:var(--muted)}.field[hidden]{display:none}
+.field select,.field input,.field textarea{font:inherit;font-size:16px;font-weight:400;color:var(--fg);background:var(--surface,var(--sunk));border:1px solid var(--line);border-radius:12px;padding:10px 12px;min-height:44px;width:100%;box-sizing:border-box}
+.field textarea{resize:vertical;min-height:72px}
+.field small{font-weight:400;font-size:12px}
+.edit-error{margin:0;padding:10px 12px;border-radius:12px;background:var(--warn-bg);color:var(--warn);font-size:14px;font-weight:600}.edit-error[hidden]{display:none}
+.edit-actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end}
+.location{white-space:pre-line}.location .row-meta{white-space:normal}
+#totalsDialog{width:min(820px,calc(100vw - 24px))}
+.totals-hint{margin:0 0 12px}
+#totalsScope .filters{margin:0 0 16px}
+.totals-foot{justify-content:flex-end;flex-wrap:wrap}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(env(safe-area-inset-bottom,0px) + 24px);z-index:40;display:flex;align-items:center;gap:12px;max-width:calc(100vw - 32px);box-sizing:border-box;white-space:nowrap}
+.toast span{overflow:hidden;text-overflow:ellipsis}.toast[hidden]{display:none}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+@media(max-width:600px){
+ .order-entry{flex-wrap:wrap;padding:0 0 12px}.order-entry.is-picking{padding:0}
+ .order-entry .quick{margin:0 14px;flex:1 1 100%;min-width:0}
+ .edit-grid{grid-template-columns:1fr}
+ .print-bar .btn{flex:1 1 auto}.picked-count{flex-basis:100%}
+ .totals-foot .btn{flex:1 1 100%}
+}
