@@ -261,6 +261,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       await admin.locator('[data-act="wh-order"]', { hasText: business }).click();
       assert.match(await admin.locator('#sheet').textContent(), /10 Coffee Street/);
       assert.match(await admin.locator('#sheet .w-customer-note').textContent(), /Customer comments\s*Use our own custom labels/);
+      assert.match(await admin.locator('#sheet .w-packing-line').first().getAttribute('style'), /--w-coffee:\s*(?:repeating-)?linear-gradient\(/, 'each packing line shows its coffee colour');
       await admin.locator('#wStatus').selectOption('Ready');
       await admin.locator('#wNote').fill('Private admin note');
       await admin.locator('#sheet button[type="submit"]').click();

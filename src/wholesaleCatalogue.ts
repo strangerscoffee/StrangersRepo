@@ -66,6 +66,15 @@ function editedGrinds(value: unknown, previous: GrindOption[] = []): GrindOption
   const builtIn = (option: GrindOption) => defaultGrinds.some(d => d.id === option.id && d.label === option.label);
   return options.map(option => !builtIn(option) && previous.some(old => old.id === option.id && old.label !== option.label) ? { ...option, id: "grind-" + crypto.randomUUID() } : option);
 }
+// Packaging colours: one or two #RRGGBB (two show as stripes), or null/[] for the built-in or automatic colour.
+function coloursFor(body: Record<string, any>, current: Coffee | null): Pick<Coffee, "colours" | "colourStyle"> {
+  const value = body.colours === undefined ? current?.colours : body.colours;
+  if (value == null || (Array.isArray(value) && !value.length)) return {};
+  if (!Array.isArray(value) || value.length > 2 || value.some((c) => typeof c !== "string" || !/^#[0-9a-f]{6}$/i.test(c))) throw invalid("Choose one or two colours, like #4B8E68.");
+  const style = body.colourStyle === undefined ? current?.colourStyle ?? "solid" : body.colourStyle;
+  if (style !== "solid" && style !== "striped") throw invalid("Choose solid or striped.");
+  return { colours: value.map((c: string) => c.toUpperCase()), colourStyle: value.length > 1 ? "striped" : style };
+}
 function edited(body: Record<string, any>, current: Coffee | null): Coffee {
   const field = (key: "name" | "title" | "origin" | "process" | "notes" | "badge", max: number, required = false) => body[key] === undefined && current ? current[key] : text(body[key], key, max, required);
   const title = field("title", 180, true);
@@ -82,6 +91,7 @@ function edited(body: Record<string, any>, current: Coffee | null): Coffee {
     prices, price: prices.kilo, active: body.active, inStock, grindOptions: editedGrinds(body.grindOptions === undefined ? current?.grindOptions ?? defaultGrinds : body.grindOptions, current?.grindOptions),
     image: current?.image || "", sourceUrl: current?.sourceUrl || "", sourceImage: current?.sourceImage || "", sourceUpdatedAt: current?.sourceUpdatedAt || Date.now(),
     images: current?.images || [], imageUrls: current?.imageUrls || [], version: current?.version || 0,
+    ...coloursFor(body, current),
   };
 }
 function imageType(bytes: Uint8Array): string | null {

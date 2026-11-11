@@ -183,3 +183,25 @@ test('grind options: custom choices are server validated, renamed options retire
   const fresh = await requestFor(product); fresh.lines[0].grind=product.grindOptions[0].id;
   assert.equal((await call('POST','/api/wholesale/orders',fresh,BUYER)).body.order.lines[0].grindLabel,'Turkish fine');
 });
+
+test("packaging colours: admins set one or two colours or go back to the automatic one; other edits keep them", async () => {
+  const list = async () => (await call("GET", "/api/admin/wholesale")).body;
+  const products = (await list()).products;
+  const brazil = products.find(p => p.id === "brazil");
+  assert.equal(brazil.colours, undefined, "built-in coffees use the packaging colours from the page, not saved ones");
+  const put = (product, values) => call("PUT", `/api/admin/wholesale/catalogue/${product.id}`, { ifVersion: product.version, prices: product.prices, active: product.active, inStock: product.inStock, ...values });
+  let saved = await put(brazil, { colours: ["#e35d4e", "#2a7162"] });
+  assert.equal(saved.status, 200, saved.text);
+  assert.deepEqual([saved.body.product.colours, saved.body.product.colourStyle], [["#E35D4E", "#2A7162"], "striped"]);
+  saved = await put(saved.body.product, { notes: "Edited notes" });
+  assert.deepEqual(saved.body.product.colours, ["#E35D4E", "#2A7162"], "an edit without colours keeps them");
+  saved = await put(saved.body.product, { colours: ["#4A697B"], colourStyle: "striped" });
+  assert.deepEqual([saved.body.product.colours, saved.body.product.colourStyle], [["#4A697B"], "striped"]);
+  for (const bad of [["red"], ["#12345"], ["#111111", "#222222", "#333333"], "#111111"]) assert.equal((await put(saved.body.product, { colours: bad })).status, 400, JSON.stringify(bad));
+  assert.equal((await put(saved.body.product, { colours: ["#111111"], colourStyle: "dotted" })).status, 400);
+  saved = await put(saved.body.product, { colours: null });
+  assert.equal(saved.status, 200); assert.equal(saved.body.product.colours, undefined, "null goes back to the packaging colour");
+  const added = await call("POST", "/api/admin/wholesale/catalogue", { title: "Twin Peaks Blend", categories: ["blend"], prices: { quarter: 500, kilo: 1800 }, active: false, colours: ["#810A40"] });
+  assert.equal(added.status, 201, added.text); assert.deepEqual(added.body.product.colours, ["#810A40"]);
+  assert.equal((await call("PUT", `/api/admin/wholesale/catalogue/${added.body.product.id}`, { ifVersion: added.body.product.version, prices: added.body.product.prices, active: false, colours: ["#000000"] }, BUYER)).status >= 400, true, "customers can't change colours");
+});
