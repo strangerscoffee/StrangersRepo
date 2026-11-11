@@ -353,10 +353,10 @@ export async function handleAuth(req: Request, env: Env, route: string, current:
       user: current ? { id: current.id, role: current.role } : null,
       ...(cookieDomain(req, env) ? { cookieDomain: cookieDomain(req, env) } : {}),
     });
-    const quick = current ? await env.DB.prepare("SELECT quick_hash IS NOT NULL AS has, notif_seen FROM users WHERE id = ?").bind(current.id).first<{ has: number; notif_seen: number }>() : null;
+    const quick = current ? await env.DB.prepare("SELECT u.quick_hash IS NOT NULL AS has,u.notif_seen,COALESCE(a.enabled,0) AS staff_orders FROM users u LEFT JOIN staff_order_access a ON a.user_id=u.id WHERE u.id=?").bind(current.id).first<{ has: number; notif_seen: number; staff_orders: number }>() : null;
     return json({
       user: current ? { ...publicUser(current), quickPin: !!quick?.has, notifSeen: quick?.notif_seen ?? 0 } : null,
-      ...(current ? { links: appLinks(new URL(req.url), env.ROTA_HOST, env.ADMIN_HOST, env.PREVIEW_HOST, env.LEGACY_PREVIEW_HOST) } : {}),
+      ...(current ? { links: appLinks(new URL(req.url), env.ROTA_HOST, env.ADMIN_HOST, env.PREVIEW_HOST, env.LEGACY_PREVIEW_HOST), capabilities: {staffOrders: current.role==="admin"||quick?.staff_orders===1} } : {}),
       setupNeeded: (await userCount(env)) === 0,
       quickSwitch: await trustedDevice(req, env), // this device can switch person with a quick PIN
       ...(cookieDomain(req, env) ? { cookieDomain: cookieDomain(req, env) } : {}), // non-secret pending sign-out across apps

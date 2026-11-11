@@ -1,0 +1,14 @@
+<!doctype html><html lang="en-GB"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="robots" content="noindex,nofollow"><title>Strangers Coffee · Wholesale orders</title>
+<link rel="preload" href="/logo.svg" as="image" type="image/svg+xml" crossorigin="anonymous"><link rel="icon" type="image/png" href="/icon-192.png">
+<script src="/errors.js"></script><link rel="stylesheet" href="/theme.css"><link rel="stylesheet" href="/shared/wholesale-preparation.css"><link rel="stylesheet" href="/orders/orders.css">
+<style>html[data-orders-locked] #ordersContent{visibility:hidden!important;pointer-events:none!important}html[data-orders-locked] #orderDialog{visibility:hidden!important;pointer-events:none!important}</style>
+</head><body><div class="wrap">
+<header class="top"><a class="brand" href="/"><span class="brandlogo" role="img" aria-label="Strangers Coffee"></span><span>Wholesale orders</span></a><a class="back" href="/">Kitchen Diary <span aria-hidden="true">↗</span></a></header>
+<main><header class="heading"><div><h1>Wholesale orders</h1><p>Orders, preparation and account warnings.</p></div><span class="read-only">View only</span></header>
+<div id="accessStatus" role="status" class="access-status">Checking access…</div>
+<div id="ordersContent" hidden><div class="toolbar"><label class="search"><span aria-hidden="true">⌕</span><input id="search" type="search" maxlength="120" placeholder="Search business or reference" aria-label="Search wholesale orders"></label><button class="refresh" id="refresh" aria-label="Refresh orders" type="button"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 3M18 17a7 7 0 0 1-12 1l-2-3"/></svg></button></div>
+<nav id="statusFilters" class="filters" aria-label="Order status"></nav><div class="list-title"><h2>Orders</h2><span id="orderCount"></span></div><div id="orderList" class="order-list glass"></div><button id="loadMore" class="btn more" type="button" hidden>Load more orders</button><p class="hint">Order changes and payment checks are managed by Strangers admins.</p></div>
+</main><footer class="footer"><span>Strangers Coffee</span><span id="signedIn"></span></footer></div>
+<dialog id="orderDialog" aria-labelledby="orderTitle"><div class="dialog-head"><h2 id="orderTitle">Order details</h2><button id="closeOrder" class="close" aria-label="Close order details" type="button">×</button></div><div id="orderDetail" class="dialog-body"></div><div class="dialog-foot"><span>View only</span><button id="doneOrder" class="btn" type="button">Done</button></div></dialog>
+<script src="/shared/core.js"></script><script src="/shared/wholesale-preparation.js"></script><script src="/orders/orders.js"></script></body></html>

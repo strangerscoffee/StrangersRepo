@@ -182,7 +182,7 @@ applyTabs();renderAll();
     const me=await S.user.me();S.me=me.id;
     const w=await S.user.can("data.write");if(w===false){S.canWrite=false;$("#readonly").hidden=false}
     S.notifSeen=me.notifSeen||0;
-    S.myUserId=me.userId||"";S.myName=me.name||"";S.role=me.role||"staff";S.quickPin=!!me.quickPin;S.quickSwitch=!!me.quickSwitch;renderMe();
+    S.myUserId=me.userId||"";S.myName=me.name||"";S.role=me.role||"staff";S.quickPin=!!me.quickPin;S.quickSwitch=!!me.quickSwitch;S.staffOrders=!!me.staffOrders;renderMe();
     if(!canTab(S.tab))show("day",{quiet:true});else renderNav();
     loadTeam();
   }

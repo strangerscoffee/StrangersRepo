@@ -128,3 +128,9 @@ The shared sign-in shield uses the full Strangers logo and a small indeterminate
 
 
 Wholesale order packing lines use the approved rota-style hue stripe and soft labelled pill: blue Whole bean, purple Fine, teal Medium and orange Coarse. Custom/retired saved labels remain escaped and receive a deterministic hue. Decaf is a separate neutral label. Multiple-grind filters hide only rows, keep all order totals and form drafts, and reset to All grinds on reopening. Small screens put prices beneath preparation details. New orders snapshot grind hints and Decaf classification; old orders use only saved labels/IDs for safe fallbacks.
+
+## Staff wholesale fulfilment
+
+The separate view-only `/orders` screen follows the shared Liquid Glass theme and Strangers branding. The diary sidebar and More menu show Wholesale orders only for granted employees or admins. Search, status chips and an icon refresh lead to a compact list; order details use a native dialog with pinned title/close and Done footer. The shared Admin packing helper and stylesheet retain the same grind stripes, labelled pills, bag quantities and separate neutral Decaf tag.
+
+Overdue accounts show a red text-and-icon warning in the list and order details, directing staff to an admin before fulfilment. Uncertain accounting status uses a separate amber review warning. Colour never replaces text. Staff receive no payment edit, price, invoice or order mutation controls. Phone/tablet/desktop and light/dark layouts retain 44 px controls, keyboard focus and reduced-motion refresh states. Private content is shielded before fresh focus/restore verification.

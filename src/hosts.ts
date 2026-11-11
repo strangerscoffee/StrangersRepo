@@ -19,7 +19,7 @@ export function isPreviewFile(path: string): boolean {
 
 /** The helpers all three apps share (public/shared/*.js: code, no data). */
 export function isSharedCode(path: string): boolean {
-  return /^\/shared\/[\w-]+\.js$/.test(path);
+  return /^\/shared\/[\w-]+\.(?:js|css)$/.test(path);
 }
 
 /** On the rota's hostname, files it may serve besides its own (/rota/…): the diary's shared styles and icons, and

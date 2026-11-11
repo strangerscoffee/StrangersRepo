@@ -257,6 +257,9 @@ const MIGRATIONS: Migration[] = [
   { id: 15, name: "QuickBooks sandbox connection", run: migrateQuickBooks },
   { id: 16, name: "QuickBooks environments and durable accounting operations", run: migrateQuickBooksRuntime },
   { id: 17, name: "Encrypted QuickBooks app settings", run: migrateQuickBooksAppSettings },
+  { id: 18, name: "Read-only staff wholesale order access", run: async env => {
+    await env.DB.prepare("CREATE TABLE IF NOT EXISTS staff_order_access (user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0,1)), version INTEGER NOT NULL DEFAULT 1, updated_at INTEGER NOT NULL, updated_by TEXT NOT NULL)").run();
+  } },
 ];
 
 async function migrate(env: Env): Promise<void> {

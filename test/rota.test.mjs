@@ -76,7 +76,8 @@ test("hostnames: the rota on ROTA_HOST, the diary everywhere else", async () => 
   assert.deepEqual(appLinks(new URL(`https://${A}/`), R, A), { rota: `https://${R}/`, diary: "https://staffstrangerscoffee.com/", admin: "/" });
   assert.ok(isRotaSharedFile("/theme.css") && isRotaSharedFile("/rota/rota.js") && isRotaSharedFile("/icon-192.png") && isRotaSharedFile("/shared/core.js"));
   assert.ok(!isRotaSharedFile("/diary/core.js") && !isRotaSharedFile("/admin.html") && !isRotaSharedFile("/claude-shim.js"));
-  assert.ok(!isRotaSharedFile("/shared/../diary/core.js") && !isRotaSharedFile("/shared/x.css"), "only the shared scripts");
+  assert.ok(isRotaSharedFile("/shared/wholesale-preparation.css"), "shared presentation styles are code");
+  assert.ok(!isRotaSharedFile("/shared/../diary/core.js") && !isRotaSharedFile("/shared/x.json"), "only flat shared scripts and styles");
 });
 
 test("one Staff Login: the rota's sign-in page is the diary's, and comes back after", async () => {
@@ -668,6 +669,7 @@ test("the rota host: / is the rota, diary pages go there, diary APIs are refused
     assert.equal(db.status, 404, "the diary's data API isn't on the rota host");
     assert.equal((await get("/api/rota/links", c).then((x) => x.json())).rota, "/");
     assert.equal((await get("/api/rota/week", c)).status, 200);
+    assert.equal((await get("/api/staff-orders/orders", c)).status,404,"staff orders stay on the diary host");
     assert.equal((await get("/robots.txt")).status, 200);
     assert.equal((await get("/", c)).headers.get("x-robots-tag"), "noindex, nofollow");
   } finally { await host.stop(); }

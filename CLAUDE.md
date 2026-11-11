@@ -105,3 +105,11 @@ Staff page startup uses `SC.startSession({clear})` and a provisional full `/api/
 
 
 Wholesale grind colours are presentation-only: preserve immutable saved labels, optional `grindHint`/`decaf` snapshots and exact checkout retries. Colour must always accompany readable words. Custom/historical labels remain escaped. Packing filters must not modify totals, unsaved order drafts or stored orders. Branding retries are limited to one per image/icon element; never suppress persistent failures or treat failed scripts/styles as harmless images.
+
+## Read-only staff wholesale orders
+
+The staff dashboard is `/orders` on the diary host (`staffstrangerscoffee.com`), with capability-gated desktop and More links. Admins inherit access; every other account requires the stable-ID grant in migration 18's `staff_order_access`. Admin → People manages it through versioned GET/PUT `/api/admin/users/<id>/orders-access`. Never reuse the role or this grant to authorize employee information or Admin.
+
+`src/staffOrders.ts` serves only GET `/api/staff-orders/orders` on the diary host. Its separate whitelist excludes previews, deleted orders, prices, employee attribution, contact details, internal notes, invoice documents and bank information. It exposes the fulfilment address/instructions and only account overdue/review booleans. Manual overdue invoices and authoritative Live partial/unpaid balances use server UK dates; uncertain accounting observations require review and Sandbox is ignored. Check access before querying and before returning. The frontend uses protected identity-bound fetch, no persistent data/queues, and clears or shields on revocation, identity changes and focus/restore checks. Shared packing labels/colours live in `public/shared/wholesale-preparation.{js,css}`.
+
+HTML contains transformed script fingerprints: strip conditional HTML validators before fetching the asset and return private no-store without ETag/Last-Modified. Keep immutable caching for fingerprinted assets. Regressions: staff-orders-api and staff-orders.e2e plus existing grind, shared-session, privacy and host tests.

@@ -157,11 +157,12 @@ test("the admin host: admins only, its page at /, nothing of the diary's", async
     const home = await get("/", setup);
     assert.equal(home.status, 200);
     assert.match(home.text, /admin\.js/);
-    for (const p of ["/admin/admin.js", "/admin/quickbooks.js", "/admin/wholesale-invoices.js", "/admin/wholesale.js", "/admin/admin.css", "/admin/wholesale-invoices.css", "/theme.css", "/icon-192.png", "/shared/core.js", "/wholesale-preview/images/brazil.webp"]) assert.equal((await get(p, setup)).status, 200, p);
-    assert.match(home.text, /<script src="\/shared\/core.js\?v=\w+"><\/script>\n<script src="\/admin\/quickbooks.js\?v=\w+"><\/script>\n<script src="\/admin\/wholesale-invoices.js\?v=\w+"><\/script>\n<script src="\/admin\/wholesale.js\?v=\w+"><\/script>\n<script src="\/admin\/admin.js\?v=\w+"><\/script>/, "shared helpers, QuickBooks, invoicing and wholesale view load before the admin shell");
+    for (const p of ["/admin/admin.js", "/admin/quickbooks.js", "/admin/wholesale-invoices.js", "/admin/wholesale.js", "/admin/admin.css", "/admin/wholesale-invoices.css", "/theme.css", "/icon-192.png", "/shared/core.js", "/shared/wholesale-preparation.js", "/shared/wholesale-preparation.css", "/wholesale-preview/images/brazil.webp"]) assert.equal((await get(p, setup)).status, 200, p);
+    assert.match(home.text, /<script src="\/shared\/core.js\?v=\w+"><\/script>\n<script src="\/shared\/wholesale-preparation.js\?v=\w+"><\/script>\n<script src="\/admin\/quickbooks.js\?v=\w+"><\/script>\n<script src="\/admin\/wholesale-invoices.js\?v=\w+"><\/script>\n<script src="\/admin\/wholesale.js\?v=\w+"><\/script>\n<script src="\/admin\/admin.js\?v=\w+"><\/script>/, "shared helpers and packing labels, QuickBooks, invoicing and wholesale view load before the admin shell");
     for (const p of ["/diary/core.js", "/index.html", "/rota/", "/admin/"]) assert.equal((await get(p, setup)).headers.get("location"), "/", p + " goes to /");
     assert.equal((await call("POST", "/api/db/get", { path: "days/x" }, setup, host.base)).status, 404, "the diary's data API isn't here");
     assert.equal((await get("/api/admin/overview", setup)).status, 200);
+    assert.equal((await get("/api/staff-orders/orders", setup)).status,404,"staff orders stay on the diary host");
     assert.equal((await get("/api/rota/links", setup)).body.admin, "/");
     // A member of staff who opens the admin address goes back to the diary; its API refuses them.
     await call("POST", "/api/admin/users", { name: "Kim Lee", username: "kim", role: "manager", password: "temp-pass-1" }, setup, host.base);

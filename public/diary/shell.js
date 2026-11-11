@@ -104,6 +104,7 @@ function renderNav(){
   }
   // The rota is its own app on its own address; it opens in the same tab.
   sn.append(el("div",{class:"h",text:"Rota"}),el("a",{href:S.rotaUrl},svgi(ICON.staff),el("span",{text:"Rota"})));
+  if(S.staffOrders)sn.append(el("div",{class:"h",text:"Wholesale"}),el("a",{href:"/orders"},svgi(ICON.records),el("span",{text:"Wholesale orders"})));
   const fade=()=>sn.classList.toggle("more",sn.scrollHeight-sn.scrollTop-sn.clientHeight>4);
   sn.onscroll=fade;requestAnimationFrame(fade);
   // tab bar
@@ -126,6 +127,7 @@ function renderNav(){
   if(ad.length)mh.append(el("div",{class:"label",text:"Admin"}),el("div",{class:"list glass"},...ad.map(n=>navRow(n,()=>show(n.id)))));
   mh.append(el("div",{class:"label",text:"Rota"}),el("div",{class:"list glass"},el("a",{class:"lrow",href:S.rotaUrl},el("span",{class:"tile teal"},svgi(ICON.staff)),
     el("span",{class:"t"},el("b",{text:"Rota"}),el("span",{class:"s",text:"Your shifts, open shifts, cover and time off"})),el("span",{class:"chev"},svgi(ICON.chevR)))));
+  if(S.staffOrders)mh.append(el("div",{class:"label",text:"Wholesale"}),el("div",{class:"list glass"},el("a",{class:"lrow",href:"/orders"},el("span",{class:"tile blue"},svgi(ICON.records)),el("span",{class:"t"},el("b",{text:"Wholesale orders"}),el("span",{class:"s",text:"Orders, preparation and account warnings"})),el("span",{class:"chev"},svgi(ICON.chevR)))));
   mh.append(el("div",{class:"label",text:"Account"}),el("div",{class:"list glass"},...accountItems().map(([t,ic,tile,fn,danger])=>
     el("button",{class:"lrow"+(danger?" danger":""),type:"button",onclick:fn},el("span",{class:"tile "+tile},svgi(ICON[ic])),el("span",{class:"t"},el("b",{text:t}),danger&&S.myName?el("span",{class:"s",text:"Signed in as "+S.myName}):null)))));
 }

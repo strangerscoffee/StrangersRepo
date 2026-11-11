@@ -26,7 +26,7 @@
     const url = typeof input === "string" ? input : (input && input.url) || "";
     const own = url.startsWith("/") || url.startsWith(location.origin);
     const path = own ? new URL(url, location.origin).pathname : "";
-    const protectedCall = /^\/api\/(?:db\/|admin\/|rota\/|assets(?:\/|$))/.test(path) || /^\/api\/auth\/(?:pin|notifications\/seen)$/.test(path);
+    const protectedCall = /^\/api\/(?:db\/|admin\/|rota\/|staff-orders\/|assets(?:\/|$))/.test(path) || /^\/api\/auth\/(?:pin|notifications\/seen)$/.test(path);
     if (protectedCall && sessionIdentity) {
       if (!(await ensureSession())) throw sessionError();
       init = Object.assign({}, init);

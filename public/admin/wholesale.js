@@ -35,24 +35,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
   const field = (label, input) => html`<label class="field"><span class="fl">${label}</span>${input}</label>`;
   const buttons = (label) => html`<p class="err" id="wErr" role="alert"></p><div class="row w-actions"><button class="btn soft" type="button" data-sheet="close">Cancel</button><button class="btn" type="submit">${label}</button></div>`;
   const note = html`<p class="hint">Manage payment and invoicing according to the customer’s agreed terms.</p>`;
-  const grindStyles = {
-    beans: { hue: 212, icon: "grind-beans", hint: "Your own grinder" },
-    espresso: { hue: 276, icon: "grind-fine", hint: "Espresso" },
-    filter: { hue: 170, icon: "grind-medium", hint: "Filter" },
-    cafetiere: { hue: 32, icon: "grind-coarse", hint: "Cafetiere / batch brew" },
-    moka: { hue: 276, icon: "grind-fine", hint: "Moka pot" },
-  };
-  function grindFor(line) {
-    const savedLabel = line.grindLabel || "Unspecified grind", normal = savedLabel.trim().toLowerCase();
-    const aliases = { "whole bean": "beans", "whole beans": "beans", beans: "beans", fine: "espresso", medium: "filter", coarse: "cafetiere" };
-    const alias = Object.hasOwn(aliases, normal) ? aliases[normal] : null;
-    const known = Object.hasOwn(grindStyles, line.grind) ? grindStyles[line.grind] : alias ? grindStyles[alias] : null;
-    let hash = 0; for (const char of String(line.grind || savedLabel)) hash = (Math.imul(hash, 31) + char.charCodeAt(0)) >>> 0;
-    return { key: JSON.stringify([line.grind || "", savedLabel]), label: line.grind === "beans" && normal === "beans" ? "Whole bean" : savedLabel,
-      hue: known?.hue ?? [212, 276, 170, 32, 340, 230][hash % 6], icon: known?.icon || "coffee",
-      hint: typeof line.grindHint === "string" ? line.grindHint : known?.hint || "" };
-  }
-  const decafLine = line => typeof line.decaf === "boolean" ? line.decaf : line.productId === "decaf" || /\bdecaf(?:feinated)?\b/i.test(line.title);
+  const {grindFor,decafLine} = window.SCWholesalePreparation;
   const matches = (value) => value.toLowerCase().includes(query.toLowerCase().trim());
   const termsFor = (row) => data.paymentTermChoices.find((term) => term.id === row.paymentTerms)?.label || "To be agreed";
   const search = (label, placeholder) => html`<label class="search">${svg("search")}<input id="wq" type="search" maxlength="120" aria-label="${label}" placeholder="${placeholder}" value="${query}"></label>`;

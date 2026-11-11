@@ -5,6 +5,7 @@ import { cleanEmail, emailReady, linksFor, savePrefs, send } from "./email/send"
 import { testEmail } from "./email/templates";
 import { sendSummary } from "./email/weekly";
 import { appLinks } from "./hosts";
+import { handleStaffOrderAccess } from "./staffOrdersAccess";
 import { ApiError, Env, SQL_NOW_MS, invalid, json, readJson } from "./http";
 
 function listItem(r: UserRow) {
@@ -48,6 +49,8 @@ async function usernameTaken(env: Env, username: string, exceptId = ""): Promise
 }
 
 export async function handleAdmin(req: Request, env: Env, route: string, admin: User): Promise<Response> {
+  const orderAccess=route.match(/^users\/([0-9a-f]{24})\/orders-access$/);
+  if(orderAccess)return handleStaffOrderAccess(req,env,orderAccess[1],admin);
   // GET /api/admin/users
   if (route === "users" && req.method === "GET") {
     const { results } = await env.DB.prepare("SELECT * FROM users ORDER BY active DESC, name_key").all<UserRow>();

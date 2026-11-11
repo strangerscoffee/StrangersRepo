@@ -267,3 +267,13 @@ Live-linked invoice JSON keeps financial snapshots intact and adds `payment.sour
 
 
 New wholesale order lines include server-derived `grindHint` and `decaf` snapshots alongside existing saved labels. These optional presentation fields do not alter request hashing, quote validation, totals or old records. Clients cannot override them. Catalogue changes never rewrite an existing line or exact checkout retry.
+
+## Read-only staff wholesale orders
+
+Only the diary hostname serves `/orders` and `/api/staff-orders/*`. Existing staff authentication is required; wholesale customer sessions are not accepted. Admins inherit access and staff/managers require an enabled stable-ID grant. Normal `/api/auth/me` adds `capabilities.staffOrders` for the current authenticated employee; the compact session-proof and anonymous response shapes stay unchanged. The capability controls navigation only.
+
+Admin-only `GET /api/admin/users/<id>/orders-access` returns `{userId,enabled,version,inherited}`; `PUT` accepts `{enabled:boolean,ifVersion}` and returns the new version. Missing grants are version 0. Stale writes return 409. Admin-role inherited access is read-only. Grants/revocations are audited; the normal Origin, write limit and expected-identity checks apply.
+
+`GET /api/staff-orders/orders?status=open&q=&cursor=` returns `{orders,count,nextCursor}` with 100 records per page, newest update first and ID tie-breaks. Status is `open` (New/Preparing/Ready, default), `all` or a listed saved status. Search is at most 120 characters and literal wildcard characters are escaped. Filtering, exclusion of previews/tombstones and total counts happen before paging. No mutation methods are allowed. Every response is no-store, bound to the expected staff identity and rechecks the capability before release.
+
+Each row includes order ID, approved business name, location name, received time, reference, status, fulfilment preference/address/postcode/instructions, customer comment, safe tracking URL, bag/weight totals, saved preparation lines, and `account:{overdue,review}`. It excludes money, invoice documents, customer contacts, employee attribution and internal notes. Account warnings use server UK dates and Live observations, never Sandbox. The page holds no persisted order data or offline queue, hides immediately on blur/restore and clears on denial/identity change.
