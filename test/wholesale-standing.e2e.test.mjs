@@ -74,6 +74,7 @@ test("Admin: dispatch day, standing order, edit bags, dispatch makes the next ru
   await p.locator('#sheet button[type="submit"]').click();
   await p.locator("#sheet .w-order-sheet").waitFor({ state: "detached" });
   const row = p.locator(`[data-act="wh-order"][data-id="${orderId}"]`);
+  await row.locator(".w-dispatch").waitFor(); // the list reloads after saving
   assert.match(await row.innerText(), /Dispatch .* · Standing order, every 2 weeks/);
   // Mark it dispatched from the order: the next run is made for two weeks on.
   await row.click(); await p.locator("#wStatus").selectOption("Dispatched");
