@@ -403,7 +403,8 @@ test("staff journey on the real page", async () => {
   await openSection(page, "day");
   await page.fill("#dayDate", await page.evaluate(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }));
   await page.locator("#dayDate").dispatchEvent("change");
-  await page.locator("#openList label").first().waitFor();
+  // Today redraws once the saved order arrives (it can first show the list from before the save).
+  await page.locator("#openList label").first().filter({ hasText: "Surfaces sanitised" }).waitFor().catch(() => {});
   assert.match(await page.locator("#openList label").first().innerText(), /Surfaces sanitised/, "Today follows the new order");
   assert.match(await page.locator("#probCard").innerText(), /Problems & changes \(Corrective actions\)/);
 
