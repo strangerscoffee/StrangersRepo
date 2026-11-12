@@ -116,3 +116,19 @@
 .ins-cust-link{padding:0;font-size:inherit;font-weight:600;text-align:left}
 .ins-customer h3{margin:2px 0 0;font-size:20px}
 .ins-cust-kvs{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:4px 16px}
+
+/* Buttons: the admin page has no global .row, so Insights lays out its own rows (with gaps between buttons). On a
+   phone the actions sit in a tidy two-column grid, and the customer picker and periods fill the width. */
+.ins-workspace .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.ins-actions .btn{white-space:nowrap}
+.ins-imports .row{flex-wrap:nowrap}
+@media (max-width:600px){
+  .ins-workspace>.toolbar{flex-direction:column;align-items:stretch;gap:12px}
+  .ins-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .ins-actions .btn{justify-content:center;width:100%;min-width:0;padding-inline:12px;font-size:15px}
+  .ins-actions .btn:first-child{grid-column:1/-1}
+  .ins-filters{display:grid;grid-template-columns:minmax(0,1fr);gap:8px}
+  .ins-filters .btn{justify-content:center}
+  .ins-periods .seg{display:flex;width:100%}
+  .ins-periods .seg button{flex:1 1 0;padding-inline:8px}
+}
