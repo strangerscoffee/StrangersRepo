@@ -69,3 +69,4 @@
 #tabFoot .edit-actions{margin-left:auto}
 @media(max-width:600px){.tab-list{grid-template-columns:1fr}#tabFoot{flex-wrap:wrap}#tabFoot .btn{flex:1 1 auto}}
 .tab-tools{display:flex;align-items:center;gap:10px}
+.row-dispatch{color:var(--accent);font-weight:600}

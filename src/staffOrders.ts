@@ -36,7 +36,7 @@ function staffView(o:any,account?:{overdue:boolean;review:boolean}){
     id:o.id,version:o.version,business:o.business,reference:o.reference,status:o.status,delivery:o.delivery,createdAt:o.createdAt,
     locationName:o.locationSnapshot?.name||'Main location',
     address:o.locationSnapshot?.address??o.customerSnapshot?.address??'',postcode:o.locationSnapshot?.postcode??o.customerSnapshot?.postcode??'',
-    deliveryNotes:o.locationSnapshot?.deliveryNotes??o.deliveryNotes??'',customerNote:o.customerNote||'',note:o.note||'',trackingUrl:o.trackingUrl||'',onTab:!!o.tab&&!o.tabClearedId,customerId:o.customerId||null,packs:o.packs,grams:o.grams,
+    deliveryNotes:o.locationSnapshot?.deliveryNotes??o.deliveryNotes??'',customerNote:o.customerNote||'',note:o.note||'',trackingUrl:o.trackingUrl||'',dispatchDate:o.dispatchDate||'',standingEvery:o.standing?.every||0,onTab:!!o.tab&&!o.tabClearedId,customerId:o.customerId||null,packs:o.packs,grams:o.grams,
     lines:o.lines.map((l:any)=>({productId:l.productId,title:l.title,pack:l.pack,packLabel:l.packLabel,grind:l.grind,grindLabel:l.grindLabel,grindHint:l.grindHint,decaf:l.decaf,quantity:l.quantity,grams:l.grams})),
     account:account||{overdue:false,review:false},
   };

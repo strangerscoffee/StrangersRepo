@@ -36,6 +36,13 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
   const customer = (id) => data.customers.find((row) => row.id === id);
   const accountFor = (id) => data.accounts.find((row) => row.customerId === id);
   const pill = (value) => html`<span class="pill ${["New", "Pending review", "Out of stock"].includes(value) ? "warn" : ["Ready", "Active", "In stock"].includes(value) ? "ok" : ["Cancelled", "On hold", "Declined"].includes(value) ? "bad" : ""}">${value}</span>`;
+  // Dispatch day and standing order (src/wholesaleStanding.ts).
+  const EVERY = [[1, "Every week"], [2, "Every 2 weeks"], [4, "Every 4 weeks"]];
+  const today = () => window.SC?.londonToday?.() || new Date().toISOString().slice(0, 10);
+  const day = (iso) => new Date(iso + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+  const everyText = (n) => n === 1 ? "every week" : `every ${n} weeks`;
+  const scheduleOf = (form) => form.querySelector("#wDispatchDate") ? { dispatchDate: form.querySelector("#wDispatchDate").value || null, every: form.querySelector("#wStanding").checked ? Number(form.querySelector("#wEvery").value) : 0 } : undefined;
+  const draftOf = (form, row) => ({ status: form.querySelector("#wStatus").value, customerId: row.preview === false ? row.customerId : form.querySelector("#wCustomer").value || null, note: form.querySelector("#wNote").value, trackingUrl: form.querySelector("#wTrackingUrl").value, schedule: scheduleOf(form) });
   const field = (label, input) => html`<label class="field"><span class="fl">${label}</span>${input}</label>`;
   const buttons = (label) => html`<p class="err" id="wErr" role="alert"></p><div class="row w-actions"><button class="btn soft" type="button" data-sheet="close">Cancel</button><button class="btn" type="submit">${label}</button></div>`;
   const note = html`<p class="hint">Manage payment and invoicing according to the customer’s agreed terms.</p>`;
@@ -121,7 +128,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
   function orderRow(row) {
     const next = nextStatus(row), busy = quickBusy.has(row.id), problem = orderErrors.get(row.id);
     const chosen = picked.has(row.id);
-    return html`<div class="w-order-entry ${picking ? "is-picking" : ""}" data-order-entry="${row.id}" aria-busy="${busy}"><button class="item w-order" type="button" data-act="${picking ? "wh-pick" : "wh-order"}" data-id="${row.id}" ${picking ? html`aria-pressed="${chosen}"` : ""} ${busy ? raw("disabled") : ""}><span class="ic ${picking ? chosen ? "ok w-pick-on" : "mut w-pick-off" : row.preview === false ? "acc" : "mut"}">${picking ? chosen ? svg("ok") : html`<span class="w-pick-ring" aria-hidden="true"></span>` : svg("coffee")}</span><span class="tx"><b>${row.business || customer(row.customerId)?.business || row.createdName}</b><span>${shortId(row.id)}… · ${date(row.createdAt)}</span><span>${row.locationSnapshot?.name ? row.locationSnapshot.name + " · " : ""}${row.delivery} · ${row.packs} ${row.packs === 1 ? "bag" : "bags"} · ${weight(row.grams)}</span>${row.reference ? html`<span>Reference: ${row.reference}</span>` : ""}${row.customerNote ? html`<span class="w-has-note">Customer comments</span>` : ""}${row.tab && !row.tabClearedId ? html`<span class="w-has-note">On tab</span>` : ""}${row.preview === false ? "" : html`<span class="w-test-label">Staff preview · ${row.createdName}</span>`}</span><span class="end"><strong class="num">${money(Number.isSafeInteger(row.totalPence) ? row.totalPence : row.pence)}</strong>${pill(row.status)}<span class="chev">${svg("chev")}</span></span></button>
+    return html`<div class="w-order-entry ${picking ? "is-picking" : ""}" data-order-entry="${row.id}" aria-busy="${busy}"><button class="item w-order" type="button" data-act="${picking ? "wh-pick" : "wh-order"}" data-id="${row.id}" ${picking ? html`aria-pressed="${chosen}"` : ""} ${busy ? raw("disabled") : ""}><span class="ic ${picking ? chosen ? "ok w-pick-on" : "mut w-pick-off" : row.preview === false ? "acc" : "mut"}">${picking ? chosen ? svg("ok") : html`<span class="w-pick-ring" aria-hidden="true"></span>` : svg("coffee")}</span><span class="tx"><b>${row.business || customer(row.customerId)?.business || row.createdName}</b><span>${shortId(row.id)}… · ${date(row.createdAt)}</span><span>${row.locationSnapshot?.name ? row.locationSnapshot.name + " · " : ""}${row.delivery} · ${row.packs} ${row.packs === 1 ? "bag" : "bags"} · ${weight(row.grams)}</span>${row.dispatchDate || row.standing ? html`<span class="w-dispatch">${row.dispatchDate ? `Dispatch ${day(row.dispatchDate)}` : ""}${row.dispatchDate && row.standing ? " · " : ""}${row.standing ? `Standing order, ${everyText(row.standing.every)}` : ""}</span>` : ""}${row.reference ? html`<span>Reference: ${row.reference}</span>` : ""}${row.customerNote ? html`<span class="w-has-note">Customer comments</span>` : ""}${row.tab && !row.tabClearedId ? html`<span class="w-has-note">On tab</span>` : ""}${row.preview === false ? "" : html`<span class="w-test-label">Staff preview · ${row.createdName}</span>`}</span><span class="end"><strong class="num">${money(Number.isSafeInteger(row.totalPence) ? row.totalPence : row.pence)}</strong>${pill(row.status)}<span class="chev">${svg("chev")}</span></span></button>
       ${!picking && (next || problem) ? html`<div class="w-order-actions"><div class="w-order-feedback" data-order-error="${row.id}" role="alert" ${problem ? "" : raw("hidden")}>${problem ? html`<p>${problem.message}</p><button class="btn sm soft" type="button" data-act="wh-refresh-orders" data-id="${row.id}">Reload orders</button>` : ""}</div>${next ? html`<button class="btn sm soft" type="button" data-act="wh-next" data-id="${row.id}" aria-label="Mark ${row.business || "order"} ${next.toLowerCase()}" ${busy || problem ? raw("disabled") : ""}>${busy ? "Saving…" : "Mark " + next.toLowerCase()}</button>` : ""}</div>` : ""}</div>`;
   }
   // Who gets an email for each new customer order (sent from orders@staffstrangerscoffee.com).
@@ -287,6 +294,58 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
       rows.length ? rows.map((row) => html`<div class="item w-coffee w-coffee-tone" style="${coffeeStyle(row)}">${row.imageUrls.length ? html`<img src="${row.imageUrls[0]}" alt="" width="52" height="52" loading="lazy">` : html`<span class="ic mut">${svg("coffee")}</span>`}<span class="tx"><b><span class="w-coffee-swatch" aria-hidden="true"></span>${row.title}</b><span>250 g ${money(row.prices.quarter)} · 1 kg ${money(row.prices.kilo)}</span><span>${row.notes}</span></span><span class="end"><span class="w-coffee-state">${pill(row.active ? "Visible" : "Hidden")}${pill(row.inStock ? "In stock" : "Out of stock")}</span><button class="btn sm soft" type="button" data-act="wh-coffee" data-id="${row.id}" aria-label="Edit ${row.name}">Edit</button></span></div>`) : emptyState(query.trim() ? "search" : "coffee", query.trim() ? "No matching coffees" : "Your catalogue starts here", query.trim() ? "Try another search or clear your filters to see all coffees." : "Add your first coffee, with its prices, photos and availability.", !!query.trim()),
       html`<p class="hint">Edit coffees, bag prices, photos and availability. Existing orders retain their original details.</p>`);
   }
+  function scheduleSection(row, draft) {
+    const dispatchDate = draft ? draft.dispatchDate || "" : row.dispatchDate || "", every = draft ? draft.every : row.standing?.every || 0;
+    const closed = ["Dispatched", "Cancelled"].includes(row.status);
+    return html`<section class="w-order-section w-schedule" aria-labelledby="wScheduleTitle"><h3 id="wScheduleTitle">Dispatch and standing order</h3>
+      ${field("Dispatch day", html`<input id="wDispatchDate" type="date" min="${dispatchDate && dispatchDate < today() ? dispatchDate : today()}" value="${dispatchDate}">`)}
+      <div class="checks"><label><input id="wStanding" type="checkbox" ${every ? raw("checked") : ""}>Standing order</label></div>
+      ${field("Repeats", html`<select id="wEvery">${EVERY.map(([n, label]) => html`<option value="${n}" ${n === (every || 1) ? raw("selected") : ""}>${label}</option>`)}</select>`)}
+      <p class="hint">${row.nextRunId ? html`The next run has been made: <button class="link" type="button" data-sheet="open-run" data-id="${row.nextRunId}">${shortId(row.nextRunId)}…</button>` : closed && row.standing ? "Saving makes the next run." : "When a standing order is marked dispatched (or cancelled, to skip one), the next run is made straight away as a New order for the next dispatch day, so you can prepare it and change its bags in advance."}${row.standing?.run > 1 ? ` This is run ${row.standing.run}.` : ""}${row.previousRunId ? html` <button class="link" type="button" data-sheet="open-run" data-id="${row.previousRunId}">Previous run</button>` : ""}</p>
+      <p class="hint">Untick Standing order to stop it repeating. The customer sees the dispatch day and the schedule on their orders.</p></section>`;
+  }
+  // Change the bags on a New or Preparing customer order. Kept lines keep the price they were ordered at; added ones
+  // take today's catalogue price. `back` reopens the order with what was typed there.
+  function editLines(row, state = null, back = null) {
+    const lines = state || row.lines.map((line) => ({ ...line }));
+    const coffees = data.products.filter((p) => p.active);
+    const total = lines.reduce((sum, l) => sum + l.quantity, 0), grams = lines.reduce((sum, l) => sum + (l.pack === "kilo" ? 1000 : l.pack === "half" ? 500 : 250) * l.quantity, 0);
+    openSheet(html`<form class="w-sheet w-lines-sheet" novalidate><h2 id="sheetTitle" tabindex="-1">Edit bags</h2><p class="hint">${row.business} · ${shortId(row.id)}…</p>
+      <div class="w-edit-lines">${lines.length ? lines.map((line, i) => html`<div class="w-edit-line"><span class="w-edit-tx"><b>${line.title}</b><span>${line.packLabel} · ${line.grindLabel}</span></span><input class="w-qty" type="number" inputmode="numeric" min="1" max="999" step="1" value="${line.quantity}" data-line-qty="${i}" aria-label="Bags of ${line.title}, ${line.packLabel}, ${line.grindLabel}"><button class="btn sm soft" type="button" data-sheet="remove-line" data-index="${i}" aria-label="Remove ${line.title} ${line.packLabel} ${line.grindLabel}">Remove</button></div>`) : html`<p class="hint">No bags on this order. Add at least one.</p>`}</div>
+      <p class="hint" id="wLinesTotal">${total} ${total === 1 ? "bag" : "bags"} · ${weight(grams)}</p>
+      <fieldset class="w-add-line"><legend>Add a coffee</legend>
+        ${field("Coffee and grind", html`<select id="wAddCoffee"><option value="">Choose a coffee</option>${coffees.map((p) => html`<optgroup label="${p.title}">${p.grindOptions.filter((g) => g.enabled).map((g) => html`<option value="${p.id}|${g.id}">${p.name || p.title} · ${g.label}</option>`)}</optgroup>`)}</select>`)}
+        <div class="w-add-row">${field("Bag size", html`<select id="wAddPack"><option value="quarter">250 g bag</option><option value="kilo">1 kg bag</option></select>`)}${field("Bags", html`<input id="wAddQty" type="number" inputmode="numeric" min="1" max="999" value="1">`)}</div>
+        <button class="btn sm soft" type="button" data-sheet="add-line">Add to order</button></fieldset>
+      <p class="hint">Bags already on the order keep their price; added bags use today's price. The order total and delivery charge are worked out again. The customer sees the updated order.</p>
+      <p class="err" id="wErr" role="alert"></p><div class="row w-actions"><button class="btn soft" type="button" data-sheet="lines-back">Back</button><button class="btn" type="submit">Save bags</button></div></form>`, async (action, element) => {
+      const form = element.closest("form") || element;
+      for (const input of form.querySelectorAll("[data-line-qty]")) lines[Number(input.dataset.lineQty)].quantity = Number(input.value);
+      const error = form.querySelector("#wErr");
+      if (action === "lines-back") { editOrder(row.id, back, row); return; }
+      if (action === "remove-line") { lines.splice(Number(element.dataset.index), 1); editLines(row, lines, back); return; }
+      if (action === "add-line") {
+        const [productId, grind] = form.querySelector("#wAddCoffee").value.split("|"), pack = form.querySelector("#wAddPack").value, quantity = Number(form.querySelector("#wAddQty").value);
+        const product = coffees.find((p) => p.id === productId), option = product?.grindOptions.find((g) => g.id === grind);
+        if (!product || !option) { error.textContent = "Choose a coffee and grind to add."; return; }
+        if (!Number.isInteger(quantity) || quantity < 1 || quantity > 999) { error.textContent = "Choose from 1 to 999 bags."; return; }
+        const same = lines.find((l) => l.productId === productId && l.pack === pack && l.grind === grind);
+        if (same) same.quantity += quantity;
+        else lines.push({ productId, pack, grind, quantity, title: product.title, packLabel: pack === "kilo" ? "1 kg bag" : "250 g bag", grindLabel: option.label });
+        editLines(row, lines, back); return;
+      }
+      if (action !== "submit") return;
+      if (!lines.length) { error.textContent = "Keep at least one coffee on the order, or cancel the order instead."; return; }
+      if (lines.some((l) => !Number.isInteger(l.quantity) || l.quantity < 1 || l.quantity > 999)) { error.textContent = "Each line needs from 1 to 999 bags. Use Remove to take a coffee off."; return; }
+      await saveForm(form, async () => {
+        const result = await api("PUT", `/api/admin/wholesale/orders/${row.id}/lines`, { ifVersion: row.version, lines: lines.map(({ productId, pack, grind, quantity }) => ({ productId, pack, grind, quantity })) });
+        await reload();
+        toast("Bags updated.");
+        editOrder(row.id, back, data.orders.find((r) => r.id === row.id) || result.order);
+      });
+    });
+    $("#sheetTitle").focus({ preventScroll: true });
+  }
   function editOrder(id, draft = null, displayed = null) {
     const row = displayed || data.orders.find((row) => row.id === id);
     if (!row || quickBusy.has(id)) return;
@@ -295,12 +354,13 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     openSheet(html`<form class="w-sheet w-order-sheet"><h2 id="sheetTitle" tabindex="-1">Order details</h2><div class="w-order-heading"><h3>${row.business || row.createdName}</h3>${pill(row.status)}${row.preview === false ? "" : html`<span class="pill">Staff preview</span>`}</div><p class="w-id">${row.id}</p>
       <div class="kvs">${row.locationSnapshot?.name ? html`<div class="kv"><span>Location</span><span>${row.locationSnapshot.name}</span></div>` : ""}<div class="kv"><span>Received</span><span>${date(row.createdAt)}</span></div><div class="kv"><span>Reference</span><span>${row.reference || "None supplied"}</span></div><div class="kv"><span>Ordered by</span><span>${row.createdName}</span></div></div>
       ${row.customerNote ? html`<section class="w-order-section w-customer-note" aria-labelledby="wCustomerNoteTitle"><h3 id="wCustomerNoteTitle">Customer comments</h3><p class="w-address">${row.customerNote}</p></section>` : ""}
-      <section class="w-order-section" aria-labelledby="wPackingTitle"><h3 id="wPackingTitle">Packing list</h3>${choices.length > 1 ? html`<div class="w-grind-filters" role="group" aria-label="Filter packing list by grind"><button type="button" data-sheet="grind-filter" data-grind-key="" aria-pressed="true">All grinds</button>${choices.map(grind => html`<button type="button" class="w-grind-tone" style="--w-grind-h:${grind.hue}" data-sheet="grind-filter" data-grind-key="${grind.key}" aria-pressed="false">${svg(grind.icon)}${grind.label}</button>`)}</div><p id="wGrindCount" class="hint" role="status">${row.lines.length} packing lines · Order totals include all lines.</p>` : ""}<div class="group w-packing-list">${row.lines.map((line, index) => { const grind = grinds[index]; return html`<div class="item w-packing-line w-grind-tone w-coffee-tone" style="--w-grind-h:${grind.hue};${coffeeStyle(line, data.products)}" data-grind-line="${grind.key}"><span class="w-pack-quantity"><b>${line.quantity}</b><span>${line.quantity === 1 ? "bag" : "bags"}</span></span><span class="tx"><b class="w-pack-coffee"><span class="w-coffee-swatch" aria-hidden="true"></span>${line.title}${decafLine(line) ? html`<span class="w-decaf-label">Decaf</span>` : ""}</b><span class="w-pack-size">${line.packLabel}</span><span class="w-grind-details"><span class="w-grind-badge">${svg(grind.icon)}${grind.label}</span>${grind.hint ? html`<span class="w-grind-hint">${grind.hint}</span>` : ""}</span></span><span class="end num">${money(line.price * line.quantity)}</span></div>`; })}</div><div class="kv"><span>${row.packs} ${row.packs === 1 ? "bag" : "bags"} · ${weight(row.grams)} total</span><strong>${money(row.pence)}</strong></div>${Number.isSafeInteger(row.deliveryPence) ? html`<div class="kv"><span>${row.delivery === "Delivery" ? "Delivery (including VAT)" : "Roastery collection"}</span><strong>${row.deliveryPence ? money(row.deliveryPence) : "Free"}</strong></div><div class="kv"><span>Order total</span><strong>${money(row.totalPence ?? row.pence + row.deliveryPence)}</strong></div>` : ""}</section>
+      <section class="w-order-section" aria-labelledby="wPackingTitle"><div class="w-section-head"><h3 id="wPackingTitle">Packing list</h3>${row.preview === false && ["New", "Preparing"].includes(row.status) ? html`<button class="btn sm soft" type="button" data-sheet="edit-lines">Edit bags</button>` : ""}</div>${row.amendedAt ? html`<p class="hint w-amended">Bags changed${row.amendedBy ? ` by ${row.amendedBy}` : ""} on ${date(row.amendedAt)}. The customer sees the updated order.</p>` : ""}${choices.length > 1 ? html`<div class="w-grind-filters" role="group" aria-label="Filter packing list by grind"><button type="button" data-sheet="grind-filter" data-grind-key="" aria-pressed="true">All grinds</button>${choices.map(grind => html`<button type="button" class="w-grind-tone" style="--w-grind-h:${grind.hue}" data-sheet="grind-filter" data-grind-key="${grind.key}" aria-pressed="false">${svg(grind.icon)}${grind.label}</button>`)}</div><p id="wGrindCount" class="hint" role="status">${row.lines.length} packing lines · Order totals include all lines.</p>` : ""}<div class="group w-packing-list">${row.lines.map((line, index) => { const grind = grinds[index]; return html`<div class="item w-packing-line w-grind-tone w-coffee-tone" style="--w-grind-h:${grind.hue};${coffeeStyle(line, data.products)}" data-grind-line="${grind.key}"><span class="w-pack-quantity"><b>${line.quantity}</b><span>${line.quantity === 1 ? "bag" : "bags"}</span></span><span class="tx"><b class="w-pack-coffee"><span class="w-coffee-swatch" aria-hidden="true"></span>${line.title}${decafLine(line) ? html`<span class="w-decaf-label">Decaf</span>` : ""}</b><span class="w-pack-size">${line.packLabel}</span><span class="w-grind-details"><span class="w-grind-badge">${svg(grind.icon)}${grind.label}</span>${grind.hint ? html`<span class="w-grind-hint">${grind.hint}</span>` : ""}</span></span><span class="end num">${money(line.price * line.quantity)}</span></div>`; })}</div><div class="kv"><span>${row.packs} ${row.packs === 1 ? "bag" : "bags"} · ${weight(row.grams)} total</span><strong>${money(row.pence)}</strong></div>${Number.isSafeInteger(row.deliveryPence) ? html`<div class="kv"><span>${row.delivery === "Delivery" ? "Delivery (including VAT)" : "Roastery collection"}</span><strong>${row.deliveryPence ? money(row.deliveryPence) : "Free"}</strong></div><div class="kv"><span>Order total</span><strong>${money(row.totalPence ?? row.pence + row.deliveryPence)}</strong></div>` : ""}</section>
       <section class="w-order-section" aria-labelledby="wDeliveryTitle"><h3 id="wDeliveryTitle">${row.delivery}</h3>${snapshot ? html`<p class="w-address">${[snapshot.contact, snapshot.email, snapshot.phone].filter(Boolean).join(" · ") || "No contact details recorded"}</p>${row.delivery === "Delivery" ? html`<div class="kvs"><div class="kv"><span>Delivery address at checkout</span><span class="w-address">${[snapshot.address, snapshot.postcode].filter(Boolean).join("\n") || "Not recorded"}</span></div><div class="kv"><span>Delivery instructions</span><span class="w-address">${row.deliveryNotes || "None supplied"}</span></div></div>` : ""}` : html`<p class="hint">Staff preview order.</p>`}</section>
       ${row.preview === false ? html`<section class="w-order-section" aria-labelledby="wTermsTitle"><h3 id="wTermsTitle">Payment terms at order</h3><p>${row.paymentTerms?.label || "Not recorded on this order"}</p>${row.paymentTerms?.note ? html`<p class="w-address">${row.paymentTerms.note}</p>` : ""}</section>` : ""}
       ${invoiceUI.orderPanel(row)}
       ${row.preview === false && row.customerId ? html`<section class="w-order-section" aria-labelledby="wTabTitle"><div class="w-section-head"><h3 id="wTabTitle">Customer tab</h3>${row.tabClearedId ? "" : html`<button class="btn sm soft" type="button" data-sheet="tab-toggle">${row.tab ? "Take off tab" : "Put on tab"}</button>`}</div>
         <p class="hint">${row.tabClearedId ? "On a tab that has been cleared." : row.tab ? `On this customer’s tab${row.tab.auto ? " (added automatically)" : row.tab.by ? ` (added by ${row.tab.by})` : ""}.` : "Not on a tab."} Tabs are cleared on the staff <a href="${(data.links?.diary || "").replace(/\/$/, "")}/orders#tabs">Wholesale orders page</a>.</p></section>` : ""}
+      ${row.preview === false ? scheduleSection(row, draft?.schedule) : ""}
       <section class="w-order-section w-order-management" aria-labelledby="wManageTitle"><h3 id="wManageTitle">Manage order</h3>${field("Order status", html`<select id="wStatus">${data.statuses.map((value) => html`<option ${value === (draft?.status ?? row.status) ? raw("selected") : ""}>${value}</option>`)}</select>`)}
       ${field("Customer", html`<select id="wCustomer" ${row.preview === false ? raw("disabled") : ""}><option value="">Not linked to a customer</option>${selectedCustomer && !customer(selectedCustomer) ? html`<option value="${selectedCustomer}" selected>${snapshot?.business || row.business}</option>` : ""}${data.customers.map((value) => html`<option value="${value.id}" ${value.id === selectedCustomer ? raw("selected") : ""}>${value.business}</option>`)}</select>`)}
       ${field("Tracking link (optional)", html`<input id="wTrackingUrl" type="url" inputmode="url" maxlength="2000" placeholder="https://" autocapitalize="none" spellcheck="false" autocomplete="off" value="${draft?.trackingUrl ?? row.trackingUrl ?? ""}">`)}<p class="hint">Add, edit or clear the link. Customers see it on dispatched delivery orders.</p>
@@ -315,7 +375,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
         return;
       }
       if (action === "invoice-open") {
-        const draft = { status: form.querySelector("#wStatus").value, customerId: row.preview === false ? row.customerId : form.querySelector("#wCustomer").value || null, note: form.querySelector("#wNote").value, trackingUrl: form.querySelector("#wTrackingUrl").value };
+        const draft = draftOf(form, row);
         await invoiceUI.openOrder(row, () => editOrder(row.id, draft, row));
         return;
       }
@@ -329,14 +389,19 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
         return;
       }
       if (action === "delete-order") {
-        confirmOrderDeletion(row, { status: form.querySelector("#wStatus").value, customerId: row.preview === false ? row.customerId : form.querySelector("#wCustomer").value || null, note: form.querySelector("#wNote").value, trackingUrl: form.querySelector("#wTrackingUrl").value });
+        confirmOrderDeletion(row, draftOf(form, row));
         return;
       }
+      if (action === "edit-lines") { editLines(row, null, draftOf(form, row)); return; }
+      if (action === "open-run") { const run = data.orders.find((r) => r.id === element.dataset.id); if (run) editOrder(run.id); else { query = element.dataset.id; closeSheet(); await reload(); } return; }
       if (action !== "submit") return;
       await saveForm(form, async () => {
-        await api("PATCH", `/api/admin/wholesale/orders/${row.id}`, { ifVersion: row.version, status: $("#wStatus").value, customerId: row.preview === false ? row.customerId : $("#wCustomer").value || null, note: $("#wNote").value, trackingUrl: $("#wTrackingUrl").value });
+        const schedule = scheduleOf(form);
+        const result = await api("PATCH", `/api/admin/wholesale/orders/${row.id}`, { ifVersion: row.version, status: $("#wStatus").value, customerId: row.preview === false ? row.customerId : $("#wCustomer").value || null, note: $("#wNote").value, trackingUrl: $("#wTrackingUrl").value, ...(schedule ? { schedule } : {}) });
         orderErrors.delete(row.id);
-        if (form.isConnected) closeSheet(); await reload(); toast("Order saved.");
+        if (form.isConnected) closeSheet(); await reload();
+        const nextRun = result.order?.nextRunId && !row.nextRunId ? data.orders.find((r) => r.id === result.order.nextRunId) : null;
+        toast(result.order?.nextRunId && !row.nextRunId ? `Order saved. The next standing order run is ready${nextRun?.dispatchDate ? ` for ${day(nextRun.dispatchDate)}` : ""}.` : "Order saved.");
       });
     });
     $("#sheetTitle").focus({ preventScroll: true });
