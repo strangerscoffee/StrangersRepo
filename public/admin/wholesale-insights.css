@@ -76,3 +76,29 @@
   .ins-map td{border:0;padding:0}
   .ins-map select,.ins-map input{min-width:0}
 }
+
+/* Coffee colours: the coffee mix (stacked bars), the legend, what's moving, and a 12-week line per coffee. Each coffee
+   is its packaging colour (--w-coffee, from public/shared/wholesale-preparation.js) and always sits beside its name. */
+.ins-stack{display:flex;flex-direction:column-reverse;gap:1px;width:min(100%,28px);border-radius:4px 4px 0 0;overflow:hidden}
+.ins-seg{display:block;flex:1 1 0;min-height:1px;background:var(--w-coffee);print-color-adjust:exact;-webkit-print-color-adjust:exact}
+.ins-legend{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:13px;color:var(--muted)}
+.ins-legend-item{display:inline-flex;align-items:center;gap:0;min-width:0}
+.ins-legend-name{margin-right:6px}
+.ins-legend-item b{color:var(--fg);font-weight:600;font-variant-numeric:tabular-nums}
+.ins-share span{background:var(--w-coffee,var(--accent))}
+.ins-moves{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+.ins-move{position:relative;display:grid;grid-template-columns:minmax(0,1fr) 92px;align-items:end;gap:10px;padding:14px 16px 14px 20px;border-radius:var(--r-lg);background:var(--surface);border:1px solid var(--line);overflow:hidden;min-width:0}
+.ins-move.cust{grid-template-columns:1fr}
+.ins-move-edge{position:absolute;left:0;top:0;bottom:0;width:6px;background:var(--w-coffee)}
+.ins-move-k{margin:0;font-size:12px;font-weight:650;letter-spacing:.02em;color:var(--muted);text-transform:uppercase}
+.ins-move h4{margin:4px 0 2px;font-size:16px;line-height:1.25;overflow-wrap:anywhere}
+.ins-move-v{margin:0;font-size:24px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.2}
+.ins-move-v.up{color:var(--ok)}.ins-move-v.down{color:var(--bad)}
+.ins-move-s{margin:4px 0 0;font-size:12.5px;color:var(--muted);line-height:1.45}
+.ins-spark{display:block;width:100%;height:30px;overflow:visible}
+.ins-move .ins-spark{height:40px}
+.ins-trend{width:90px;min-width:90px;vertical-align:middle}
+.ins-trend .ins-spark{width:90px;height:24px}
+.ins-trend-h{white-space:nowrap}
+@media (max-width:600px){.ins-moves{grid-template-columns:1fr}.ins-move{grid-template-columns:minmax(0,1fr) 80px}.ins-legend{gap:4px 14px}}
+@media (forced-colors:active){.ins-seg,.ins-move-edge{forced-color-adjust:none}}
