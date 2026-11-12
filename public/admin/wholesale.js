@@ -112,7 +112,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     const tools = html`<div class="w-order-toolbar"><div class="toolbar">${search("Search wholesale orders", "Search order, reference or customer")}</div>
       <div class="segwrap w-filters"><div class="seg" role="group" aria-label="Order status">${["all", ...data.statuses].map((value) => html`<button type="button" data-act="wh-status" data-id="${value}" aria-pressed="${status === value}">${value === "all" ? "All orders" : value}</button>`)}</div></div>
       ${picking ? html`<div class="w-print-bar w-picking" role="region" aria-label="Choose orders to print"><span class="w-picked-count" aria-live="polite">${picked.size ? `${picked.size} selected` : "Tap orders to select them"}</span><button class="btn sm soft" type="button" data-act="wh-pick-all">Select all shown</button><button class="btn sm soft" type="button" data-act="wh-totals" ${picked.size ? "" : raw("disabled")}>Bag totals</button><button class="btn sm" type="button" data-act="wh-print-picked" ${picked.size ? "" : raw("disabled")}>${svg("doc")}Print selected</button><button class="btn sm soft" type="button" data-act="wh-pick-done">Done</button></div>`
-        : html`<div class="w-print-bar"><button class="btn sm" type="button" data-act="wh-print-new">${svg("doc")}Print new orders</button><button class="btn sm soft" type="button" data-act="wh-pick-start">Select to print</button><button class="btn sm soft" type="button" data-act="wh-totals">Bags to process</button><button class="btn sm soft" type="button" data-act="wh-order-emails">Order emails</button></div>`}</div>`;
+        : html`<div class="w-print-bar"><button class="btn sm" type="button" data-act="wh-print-new">${svg("doc")}Print new orders</button><button class="btn sm soft" type="button" data-act="wh-pick-start">Select to print</button><button class="btn sm soft" type="button" data-act="wh-totals">Bags to process</button><button class="btn sm soft" type="button" data-act="wh-order-emails">Order alerts</button></div>`}</div>`;
     return listing("wOrdersTitle", "Orders", resultCount(rows.length, data.matchingCount, "order"), tools,
       rows.length ? rows.map(orderRow) : emptyState(filtered ? "search" : "coffee", filtered ? "No matching orders" : "No orders yet", filtered ? "Try another search or status, or clear your filters to see all orders." : "Customer orders will appear here when they’re placed.", filtered),
       html`${more("orders")}<p class="hint">Coffee subtotals are saved with each order. Delivery and invoicing are managed separately.</p>`);
@@ -126,12 +126,14 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
   // Who gets an email for each new customer order (sent from orders@staffstrangerscoffee.com).
   async function openOrderEmails() {
     let settings = await api("GET", "/api/admin/wholesale/order-emails");
-    const view = () => html`<div class="w-sheet wp-sheet"><div class="wp-sheet-head"><div><h2 id="sheetTitle" tabindex="-1">Order emails</h2><p class="hint">An email for every new customer order, from ${settings.from}. Replies go to the customer.</p></div><button class="btn soft" type="button" data-sheet="close" aria-label="Close">${svg("x")}</button></div>
+    const view = () => html`<div class="w-sheet wp-sheet"><div class="wp-sheet-head"><div><h2 id="sheetTitle" tabindex="-1">New-order alerts</h2><p class="hint">An email for every new customer order, from ${settings.from}. Replies go to the customer.</p></div><button class="btn soft" type="button" data-sheet="close" aria-label="Close">${svg("x")}</button></div>
       ${settings.sending ? "" : html`<p class="err">Email isn’t set up on this site yet, so nothing will be sent.</p>`}
       <form id="wOrderEmailsForm" class="w-order-emails" novalidate><div class="checks"><label><input id="wOrderEmailsOn" type="checkbox" ${settings.enabled ? raw("checked") : ""}>Email new orders</label></div>
       <label class="field"><span class="fl">Send to</span><textarea id="wOrderEmailsTo" rows="3" autocapitalize="none" spellcheck="false" aria-describedby="wOrderEmailsHint">${settings.to.join("\n")}</textarea></label><p class="hint" id="wOrderEmailsHint">One address per line, up to 5.</p>
       <p class="err" id="wOrderEmailsErr" role="alert" hidden></p></form>
-      <div class="row w-actions"><button class="btn soft" type="button" data-sheet="test" ${settings.sending ? "" : raw("disabled")}>Send a test email</button><button class="btn" type="button" data-sheet="save">Save</button></div></div>`;
+      <div class="row w-actions"><button class="btn soft" type="button" data-sheet="test" ${settings.sending ? "" : raw("disabled")}>Send a test email</button><button class="btn" type="button" data-sheet="save">Save</button></div>
+      <h3>Slack</h3><p class="hint" id="wSlackState">${settings.slack ? "Each new order is posted to the orders channel: straight away from 07:45 to 16:45, otherwise at 07:50 the next morning." : "Not set up: add the SLACK_ORDERS_WEBHOOK_URL secret in Cloudflare (README-deploy.md)."}</p>
+      <div class="row w-actions"><button class="btn soft" type="button" data-sheet="slack-test" ${settings.slack ? "" : raw("disabled")}>Send a test to Slack</button></div></div>`;
     const fail = (error) => { const box = $("#wOrderEmailsErr"); if (box) { box.textContent = error.message; box.hidden = false; } };
     openSheet(view(), async (action) => {
       if (action === "close") { closeSheet(); return; }
@@ -140,6 +142,10 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
         const to = $("#wOrderEmailsTo").value.split(/[\s,;]+/).map((value) => value.trim()).filter(Boolean);
         try { settings = await api("PUT", "/api/admin/wholesale/order-emails", { ifVersion: settings.version, enabled: $("#wOrderEmailsOn").checked, to }); closeSheet(); toast(settings.enabled ? "Order emails saved" : "Order emails switched off"); }
         catch (error) { if (error.code === "conflict") { settings = await api("GET", "/api/admin/wholesale/order-emails"); } fail(error); }
+      }
+      if (action === "slack-test") {
+        try { await api("POST", "/api/admin/wholesale/order-emails/slack-test", {}); toast("Test posted to Slack"); }
+        catch (error) { fail(error); }
       }
       if (action === "test") {
         try { const result = await api("POST", "/api/admin/wholesale/order-emails/test", {}); toast(`Test email sent to ${result.sent.join(", ")}`); }

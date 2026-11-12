@@ -13,6 +13,7 @@ import { ApiError, type Env, invalid, json, readJson } from "./http";
 import { manageWholesaleAccount, publicCustomer, wholesaleAccounts, wholesaleCustomer, paymentTermsFor, PAYMENT_TERMS, type Customer, type OrderingUser } from "./wholesaleAccounts";
 import { customerLocations, editedCustomerLocations, locationDefaults, validLocationId, type CustomerLocation } from "./wholesaleCustomers";
 import { handleOrderEmailsAdmin, notifyNewOrder } from "./email/orders";
+import { notifySlackNewOrder } from "./slackOrders";
 import { customersSeeInvoices, handleInvoiceAdmin, handleInvoiceCustomer, invoiceLinks } from "./wholesaleInvoices";
 
 type Pack = "quarter" | "half" | "kilo";
@@ -150,7 +151,7 @@ async function createOrder(req: Request, env: Env, user: OrderingUser, links: Li
   }
   await audit(env, customer ? "wholesale_order" : "wholesale_preview_order", user.name, `${user.name} placed ${customer ? "wholesale" : "staff preview"} order ${body.id}.`);
   // A new customer order (never a staff preview or a retry, which returned above) is emailed to Strangers.
-  if (customer) await notifyNewOrder(env, ctx, saved, links.diary);
+  if (customer) { await notifyNewOrder(env, ctx, saved, links.diary); await notifySlackNewOrder(env, ctx, saved, links.diary); }
   return json({ order: visibleOrder(saved), preview: !customer }, 201);
 }
 

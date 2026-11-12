@@ -128,6 +128,11 @@ export async function overview(env: Env, links: { rota: string; diary: string })
     attention.push({ tone: "warn", icon: "warn", title: `${mailFails.n} rota email${mailFails.n === 1 ? "" : "s"} didn't send in the last day`,
       detail: String(mailFails.t || "").slice(0, 160), action: { label: "See activity", go: "activity" }, dismiss: "email_failed" });
   }
+  const slackFails = await env.DB.prepare("SELECT COUNT(*) AS n, MAX(text) AS t FROM audit_log WHERE kind = 'slack_failed' AND at > ?").bind(since("slack_failed")).first<{ n: number; t: string }>().catch(() => null);
+  if (slackFails && slackFails.n) {
+    attention.push({ tone: "warn", icon: "warn", title: `${slackFails.n} new-order Slack post${slackFails.n === 1 ? "" : "s"} didn't send`,
+      detail: String(slackFails.t || "").slice(0, 160), action: { label: "See activity", go: "activity" }, dismiss: "slack_failed" });
+  }
   for (const u of active.filter((u) => u.must_change && !u.last_login_at && now - u.created_at > 2 * 864e5)) {
     const days = Math.floor((now - u.created_at) / 864e5);
     attention.push({ tone: "warn", icon: "user", title: `${u.name} hasn't signed in yet`, detail: `Added ${days} days ago with a temporary password.`, action: { label: "New password", act: "password", id: u.id } });
@@ -383,7 +388,7 @@ async function exportShifts(env: Env, url: URL) {
 
 /** The notices on the Overview that can be dismissed: things that happened, not things still to do. Errors and
  *  failed emails come back when there's a new one; a device's clock or a site closed today don't come back. */
-const DISMISSIBLE = /^(errors|email_failed|clock:\d{1,12}|closed:[a-z]{1,20}:\d{4}-\d{2}-\d{2})$/;
+const DISMISSIBLE = /^(errors|email_failed|slack_failed|clock:\d{1,12}|closed:[a-z]{1,20}:\d{4}-\d{2}-\d{2})$/;
 async function dismiss(env: Env, user: User, body: any) {
   const key = body?.key;
   if (typeof key !== "string" || !DISMISSIBLE.test(key)) throw invalid("That notice can't be dismissed.");

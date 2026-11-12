@@ -77,7 +77,18 @@ The rota emails people their shifts when a week is published, when their shifts 
 
 Managers and admins with an address can receive a summary every Monday at 07:30 for their chosen sites. Managers receive business food-safety information only; employee planning, requests, leave and training aggregates are admin-only. Personal shift/decision emails and calendar files contain only the recipient’s permitted information, without co-worker assignments. Emails come from `Strangers Rota <rota@staffstrangerscoffee.com>` (`EMAIL_FROM` changes the business sender); no employee account address is used as a shared Reply-To. At most 100 are sent a day (`EMAIL_DAILY_LIMIT`). Delete the sending secret to stop emails.
 
-**New wholesale order emails.** With the same Resend key, every new customer order is emailed to sales@strangerscoffee.com from orders@staffstrangerscoffee.com (no mailbox needed: Resend sends for any address on the verified domain). Change who gets them, switch them off or send a test in Admin → Wholesale → Orders → **Order emails**. Replies go to the customer. The email's **Open the order** button opens it on the staff Wholesale orders page, so anyone with wholesale orders access can use it.
+**New wholesale order emails.** With the same Resend key, every new customer order is emailed to sales@strangerscoffee.com from orders@staffstrangerscoffee.com (no mailbox needed: Resend sends for any address on the verified domain). Change who gets them, switch them off or send a test in Admin → Wholesale → Orders → **Order alerts**. Replies go to the customer. The email's **Open the order** button opens it on the staff Wholesale orders page, so anyone with wholesale orders access can use it.
+
+## New wholesale orders in Slack
+
+Every new customer order can be posted to a Slack channel (Strangers uses #C0CH4KT2BS6): the business name, the bags by coffee, size and grind, collection or delivery, any customer comments, and a link to the staff Wholesale orders page. No prices or contact details. Orders placed between 07:45 and 16:45 UK time are posted straight away; anything earlier or later is held and posted at 07:50 the next morning (the 5-minute cron sends it). Nothing is posted until this is set up, once:
+
+1. Go to api.slack.com/apps → **Create New App** → **From scratch**, name it "Wholesale orders", workspace Strangers Coffee. (Free; a Slack admin may need to approve it.)
+2. In the app: **Incoming Webhooks** → switch on → **Add New Webhook to Workspace** → pick the orders channel → **Allow**. Copy the webhook URL (it starts `https://hooks.slack.com/services/`). Treat it like a password: anyone with it can post in that channel.
+3. In the Worker: **Settings → Variables and Secrets → Add**, type **Secret**, name `SLACK_ORDERS_WEBHOOK_URL`, the URL as its value. Deploy.
+4. Admin → Wholesale → Orders → **Order alerts** → **Send a test to Slack**.
+
+Delete the secret to stop the posts. If Slack refuses a post, it's tried again every 5 minutes, up to six times, and then Admin's Overview says so.
 
 ## Change the setup code
 
