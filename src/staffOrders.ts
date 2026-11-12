@@ -8,6 +8,7 @@ import {ApiError,type Env,invalid,json,readJson} from "./http";
 import {customerOrdersUrl,ordersToPrint,updateOrderStatus} from "./wholesale";
 import {customerLocations} from "./wholesaleCustomers";
 import {object} from "./wholesaleStore";
+import {clearTab,listTabs,setOnTab} from "./wholesaleTabs";
 import {requireStaffOrders} from "./staffOrdersAccess";
 
 const today=()=>new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/London",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date());
@@ -35,7 +36,7 @@ function staffView(o:any,account?:{overdue:boolean;review:boolean}){
     id:o.id,version:o.version,business:o.business,reference:o.reference,status:o.status,delivery:o.delivery,createdAt:o.createdAt,
     locationName:o.locationSnapshot?.name||'Main location',
     address:o.locationSnapshot?.address??o.customerSnapshot?.address??'',postcode:o.locationSnapshot?.postcode??o.customerSnapshot?.postcode??'',
-    deliveryNotes:o.locationSnapshot?.deliveryNotes??o.deliveryNotes??'',customerNote:o.customerNote||'',note:o.note||'',trackingUrl:o.trackingUrl||'',packs:o.packs,grams:o.grams,
+    deliveryNotes:o.locationSnapshot?.deliveryNotes??o.deliveryNotes??'',customerNote:o.customerNote||'',note:o.note||'',trackingUrl:o.trackingUrl||'',onTab:!!o.tab&&!o.tabClearedId,customerId:o.customerId||null,packs:o.packs,grams:o.grams,
     lines:o.lines.map((l:any)=>({productId:l.productId,title:l.title,pack:l.pack,packLabel:l.packLabel,grind:l.grind,grindLabel:l.grindLabel,grindHint:l.grindHint,decaf:l.decaf,quantity:l.quantity,grams:l.grams})),
     account:account||{overdue:false,review:false},
   };
@@ -65,6 +66,11 @@ export async function handleStaffOrders(req:Request,env:Env,route:string,user:Us
     await requireStaffOrders(env,user);
     return json({order:staffView(updated)});
   }
+  // Customer tabs: kg and bags only here (no money); the same checks as Admin.
+  const tabOrder=/^orders\/(WS-[A-F0-9]{32})\/tab$/.exec(route),tabClear=/^tabs\/([a-f0-9-]{36})\/clear$/.exec(route);
+  if(tabOrder&&req.method==="PUT"){const saved=await setOnTab(env,tabOrder[1],await readJson(req,4096),user.name);await requireStaffOrders(env,user);return json({order:staffView(saved)});}
+  if(tabClear&&req.method==="POST"){const cleared=await clearTab(env,tabClear[1],await readJson(req,64*1024),user.name);await requireStaffOrders(env,user);return json({cleared});}
+  if(route==="tabs"&&req.method==="GET"){const tabs=await listTabs(env);await requireStaffOrders(env,user);return json(tabs);}
   if(req.method!=="GET")return json({code:"method_not_allowed",message:"Only order status and notes can be changed here."},405,{Allow:"GET"});
   if(route==="print"){
     const orders=(await ordersToPrint(env,new URL(req.url).searchParams,{customerOnly:true})).map(o=>staffView(o));

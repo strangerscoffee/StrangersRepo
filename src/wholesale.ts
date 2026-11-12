@@ -15,6 +15,7 @@ import { customerLocations, editedCustomerLocations, locationDefaults, validLoca
 import { confirmToCustomer, dispatchToCustomer, handleOrderEmailsAdmin, notifyNewOrder } from "./email/orders";
 import { notifySlackNewOrder } from "./slackOrders";
 import { handleInsights } from "./insights";
+import { autoTabFor, clearTab, listTabs, setOnTab } from "./wholesaleTabs";
 import { customersSeeInvoices, handleInvoiceAdmin, handleInvoiceCustomer, invoiceLinks } from "./wholesaleInvoices";
 
 type Pack = "quarter" | "half" | "kilo";
@@ -42,6 +43,8 @@ interface Order {
   customerNote?: string;
   /** When the customer was emailed that it was shipped or collected (once). */
   dispatchEmailedAt?: number;
+  /** On the customer's open tab (src/wholesaleTabs.ts), and the cleared tab it went into. Staff/admin only. */
+  tab?: { at: number; by: string; auto?: boolean }; tabClearedId?: string;
 }
 type Links = { admin: string; diary: string; preview?: string };
 /** My orders on the customer ordering site, for links in customers' emails (…/#orders opens it). */
@@ -51,8 +54,8 @@ export function customerOrdersUrl(env: Env, links: { preview?: string }, req: Re
 }
 const denied = () => new ApiError(403, "permission_denied", "Only admins can manage wholesale ordering.");
 export function visibleOrder(order: Order & Versioned, admin = false) {
-  const { requestKey, note, ...visible } = order;
-  return admin ? { ...visible, trackingUrl: order.trackingUrl || "", note } : { ...visible, trackingUrl: order.trackingUrl || "" };
+  const { requestKey, note, tab, tabClearedId, ...visible } = order;
+  return admin ? { ...visible, trackingUrl: order.trackingUrl || "", note, ...(tab ? { tab } : {}), ...(tabClearedId ? { tabClearedId } : {}) } : { ...visible, trackingUrl: order.trackingUrl || "" };
 }
 function trackingUrl(value: unknown): string {
   if (typeof value !== "string" || /[\u0000-\u001f\u007f]/.test(value) || /%(?:0[0-9a-f]|1[0-9a-f]|7f)/i.test(value)) throw invalid("Use a tracking link without control characters.");
@@ -143,7 +146,7 @@ async function createOrder(req: Request, env: Env, user: OrderingUser, links: Li
   const order: Order = {
     createdBy: user.id, createdName: user.name, business: body.business, reference: body.reference, delivery: body.delivery,
     customerId: customer?.id || null, status: "New", note: "", trackingUrl: "", preview: !customer, ...(customer && location ? { customerSnapshot, deliveryNotes: location.deliveryNotes, paymentTerms: paymentTermsFor(customer), locationId: location.id, locationSnapshot: { ...location } } : {}), date: new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone: "Europe/London" }).format(new Date(at)),
-    createdAt: at, requestKey, lines, ...(body.customerNote ? { customerNote: body.customerNote } : {}),
+    createdAt: at, requestKey, lines, ...(body.customerNote ? { customerNote: body.customerNote } : {}), ...autoTabFor(customer),
     pence: lines.reduce((sum, line) => sum + line.price * line.quantity, 0), grams: lines.reduce((sum, line) => sum + line.grams * line.quantity, 0), packs: lines.reduce((sum, line) => sum + line.quantity, 0),
   };
   order.deliveryPence = shippingFor(order.delivery, order.pence);
@@ -297,6 +300,11 @@ export async function handleWholesaleAdmin(req: Request, env: Env, route: string
   if (catalogueResponse) return catalogueResponse;
   const accountMatch = /^customers\/([a-f0-9-]{36})\/account(\/reset-password)?$/.exec(route);
   if (accountMatch && ((accountMatch[2] && req.method === "POST") || (!accountMatch[2] && ["POST", "PUT"].includes(req.method)))) return manageWholesaleAccount(req, env, accountMatch[1], !!accountMatch[2], user.name);
+  // Customer tabs (also on the staff orders page): list, put an order on or off, clear.
+  if (route === "tabs" && req.method === "GET") return json(await listTabs(env, { admin: true }));
+  const tabOrder = /^orders\/(WS-[A-F0-9]{32})\/tab$/.exec(route), tabClear = /^tabs\/([a-f0-9-]{36})\/clear$/.exec(route);
+  if (tabOrder && req.method === "PUT") return json({ order: visibleOrder(await setOnTab(env, tabOrder[1], await readJson(req, 4096), user.name) as Order & Versioned, true) });
+  if (tabClear && req.method === "POST") return json({ cleared: await clearTab(env, tabClear[1], await readJson(req, 64 * 1024), user.name, { admin: true }) });
   if (!["POST", "PUT", "PATCH", "DELETE"].includes(req.method)) throw new ApiError(404, "not_found", "Unknown wholesale management route.");
   const customerMatch = /^customers\/([a-f0-9-]{36})$/.exec(route);
   const customerWrite = (route === "customers" && req.method === "POST") || (customerMatch && req.method === "PUT");
@@ -318,6 +326,8 @@ export async function handleWholesaleAdmin(req: Request, env: Env, route: string
     if (body.noMinimumOrder ?? oldCustomer?.noMinimumOrder) data.noMinimumOrder = true;
     if (body.hidePrices !== undefined && typeof body.hidePrices !== "boolean") throw invalid("Choose whether this business sees prices.");
     if (body.hidePrices ?? oldCustomer?.hidePrices) data.hidePrices = true;
+    if (body.autoTab !== undefined && typeof body.autoTab !== "boolean") throw invalid("Choose whether this business's orders go on a tab.");
+    if (body.autoTab ?? oldCustomer?.autoTab) data.autoTab = true;
     data.paymentNote = body.paymentNote === undefined ? oldCustomer?.paymentNote || "" : text(body.paymentNote, "payment instructions", 500);
     if (paymentTerms === "custom" && !data.paymentNote.trim()) throw invalid("Add the agreed custom payment terms in payment instructions.");
     const customer = await save(env, "customer", customerMatch?.[1] || crypto.randomUUID(), editedCustomerLocations(data, body), expected);

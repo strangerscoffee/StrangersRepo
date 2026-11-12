@@ -14,6 +14,8 @@ export interface Customer {
   /** Admin-only: the ordering page shows this business no prices or totals (Strangers' own shops). Never in
    * publicCustomer: the page only learns showPrices:false. Orders still keep their prices. */
   hidePrices?: boolean;
+  /** Admin-only: new orders go on this business's tab automatically (src/wholesaleTabs.ts). Never in publicCustomer. */
+  autoTab?: boolean;
 }
 export const PAYMENT_TERMS = [
   { id: "to-agree", label: "To be agreed" },

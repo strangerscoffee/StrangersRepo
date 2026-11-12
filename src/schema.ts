@@ -271,6 +271,12 @@ const MIGRATIONS: Migration[] = [
     ]);
   } },
   { id: 21, name: "Wholesale insights and QuickBooks sales history", run: migrateInsights },
+  { id: 22, name: "Wholesale customer tabs", run: async env => {
+    await env.DB.batch([
+      env.DB.prepare("CREATE TABLE IF NOT EXISTS wholesale_tabs (id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, cleared_at INTEGER NOT NULL, data TEXT NOT NULL)"),
+      env.DB.prepare("CREATE INDEX IF NOT EXISTS wholesale_tabs_cleared ON wholesale_tabs (cleared_at)"),
+    ]);
+  } },
 ];
 
 async function migrate(env: Env): Promise<void> {

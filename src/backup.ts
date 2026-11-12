@@ -63,6 +63,7 @@ export async function makeBackup(env: Env, by: string): Promise<BackupInfo> {
       invoices: (await env.DB.prepare("SELECT * FROM wholesale_invoices ORDER BY seq").all()).results,
     },
     wholesaleOrderEmails: (await env.DB.prepare("SELECT * FROM wholesale_order_emails").all()).results,
+    wholesaleTabs: (await env.DB.prepare("SELECT * FROM wholesale_tabs ORDER BY cleared_at").all()).results,
     salesHistory: {
       settings: (await env.DB.prepare("SELECT * FROM insights_settings").all()).results,
       imports: (await env.DB.prepare("SELECT * FROM sales_history_imports").all()).results,
