@@ -17,6 +17,7 @@ import { notifySlackNewOrder } from "./slackOrders";
 import { handleInsights } from "./insights";
 import { autoTabFor, clearTab, listTabs, setOnTab } from "./wholesaleTabs";
 import { importCustomers, inviteCustomer, inviteStates } from "./wholesaleImport";
+import { canOrder, catalogueFor, customerLines, recipeText } from "./wholesaleWhiteLabel";
 import { amendLines, rollStanding, scheduleFields, type Standing } from "./wholesaleStanding";
 import { customersSeeInvoices, handleInvoiceAdmin, handleInvoiceCustomer, invoiceLinks } from "./wholesaleInvoices";
 
@@ -29,7 +30,7 @@ const PACKS: Record<Pack, { label: string; grams: number }> = { quarter: { label
 // 500 g bags are no longer sold or priced: kept above only so past orders and their exact retries still read; refused for new orders.
 const ORDERABLE_PACKS: Pack[] = ["quarter", "kilo"]; // checked before any price is read (the catalogue has none for 500 g)
 const STATUSES = ["New", "Preparing", "Ready", "Dispatched", "Cancelled"];
-interface Line { productId: string; title: string; pack: Pack; packLabel: string; grind: string; grindLabel: string; grindHint?: string; decaf?: boolean; quantity: number; price: number; grams: number }
+interface Line { productId: string; title: string; pack: Pack; packLabel: string; grind: string; grindLabel: string; grindHint?: string; decaf?: boolean; quantity: number; price: number; grams: number; recipe?: string }
 interface Order {
   createdBy: string; createdName: string; business: string; reference: string; delivery: string;
   customerId: string | null; status: string; note: string; date: string; createdAt: number;
@@ -61,7 +62,7 @@ export function customerOrdersUrl(env: Env, links: { preview?: string }, req: Re
 const denied = () => new ApiError(403, "permission_denied", "Only admins can manage wholesale ordering.");
 export function visibleOrder(order: Order & Versioned, admin = false) {
   const { requestKey, note, tab, tabClearedId, amendedBy, ...visible } = order;
-  return admin ? { ...visible, trackingUrl: order.trackingUrl || "", note, ...(tab ? { tab } : {}), ...(tabClearedId ? { tabClearedId } : {}), ...(amendedBy ? { amendedBy } : {}) } : { ...visible, trackingUrl: order.trackingUrl || "" };
+  return admin ? { ...visible, trackingUrl: order.trackingUrl || "", note, ...(tab ? { tab } : {}), ...(tabClearedId ? { tabClearedId } : {}), ...(amendedBy ? { amendedBy } : {}) } : { ...visible, lines: customerLines(visible.lines)!, ...(visible.originalLines ? { originalLines: customerLines(visible.originalLines) } : {}), trackingUrl: order.trackingUrl || "" };
 }
 function trackingUrl(value: unknown): string {
   if (typeof value !== "string" || /[\u0000-\u001f\u007f]/.test(value) || /%(?:0[0-9a-f]|1[0-9a-f]|7f)/i.test(value)) throw invalid("Use a tracking link without control characters.");
@@ -132,14 +133,14 @@ async function createOrder(req: Request, env: Env, user: OrderingUser, links: Li
   const coffees = await catalogue(env);
   const lines = body.lines.map((line): Line => {
     const product = coffees.find((product) => product.id === line.productId);
-    if (!product) throw invalid("Choose a listed coffee.");
+    if (!product || !canOrder(product, customer?.id || null)) throw invalid("Choose a listed coffee.");
     if (!product.inStock) throw new ApiError(409, "out_of_stock", `${product.name} is out of stock. Remove it from your basket to continue.`);
     if (!ORDERABLE_PACKS.includes(line.pack)) throw new ApiError(409, "pack_unavailable", `${PACKS[line.pack].label}s are no longer available. Remove the ${PACKS[line.pack].label} of ${product.name} from your basket and choose 250 g or 1 kg.`);
     if (!product.active) throw new ApiError(409, "conflict", `${product.name} is no longer in the catalogue. Reload your basket.`);
     if (line.price !== product.prices[line.pack as "quarter" | "kilo"]) throw new ApiError(409, "conflict", "The prices have changed. Reload and review your order again.");
     const grind = product.grindOptions.find(option => option.id === line.grind && option.enabled);
     if (!grind) throw new ApiError(409, "grind_unavailable", `${product.name} no longer offers this grind. Remove it from your basket and choose an available option.`);
-    return { ...line, title: product.title, packLabel: PACKS[line.pack].label, grindLabel: grind.label, grindHint: grind.hint || "", decaf: product.categories.includes("decaf"), price: product.prices[line.pack as "quarter" | "kilo"], grams: PACKS[line.pack].grams };
+    return { ...line, title: product.title, packLabel: PACKS[line.pack].label, grindLabel: grind.label, grindHint: grind.hint || "", decaf: product.categories.includes("decaf"), price: product.prices[line.pack as "quarter" | "kilo"], grams: PACKS[line.pack].grams, ...(product.recipe?.length ? { recipe: recipeText(product) } : {}) };
   });
   // After the retry check above, so an order already placed is still returned if the minimum changes later.
   const minimum = minimumOrderGrams(env, customer), grams = lines.reduce((sum, line) => sum + line.grams * line.quantity, 0);
@@ -181,7 +182,7 @@ export async function handleWholesale(req: Request, env: Env, route: string, use
   const invoiceResponse = await handleInvoiceCustomer(req, env, route, user);
   if (invoiceResponse) return invoiceResponse;
   const customer = user.role === "wholesale" ? await wholesaleCustomer(env, user.customerId) : null;
-  if ((route === "catalogue" || route === "session") && req.method === "GET") return json({ ...(route === "catalogue" ? { products: await catalogue(env), sourceDate: catalogueRetrievedAt } : {}), stage: "beta", invoices: await customersSeeInvoices(env), minimumOrderGrams: minimumOrderGrams(env, customer), showPrices: !customer?.hidePrices, me: user, customer: customer ? publicCustomer(customer) : null, links: { ...(user.role === "wholesale" ? {} : links), preview: links.preview || "/wholesale-preview/" }, preview: user.role !== "wholesale" });
+  if ((route === "catalogue" || route === "session") && req.method === "GET") return json({ ...(route === "catalogue" ? { products: catalogueFor(await catalogue(env), user.role === "wholesale" ? user.customerId : null), sourceDate: catalogueRetrievedAt } : {}), stage: "beta", invoices: await customersSeeInvoices(env), minimumOrderGrams: minimumOrderGrams(env, customer), showPrices: !customer?.hidePrices, me: user, customer: customer ? publicCustomer(customer) : null, links: { ...(user.role === "wholesale" ? {} : links), preview: links.preview || "/wholesale-preview/" }, preview: user.role !== "wholesale" });
   if (route === "account" && req.method === "PUT" && customer) {
     const body = object(await readJson(req, 64 * 1024));
     if (body.orderingIdentity !== undefined && body.orderingIdentity !== user.id) throw new ApiError(409, "account_changed", "The signed-in account changed. Reload ordering before saving business details.");
@@ -219,7 +220,7 @@ export async function handleWholesale(req: Request, env: Env, route: string, use
     const visible = page.map((row) => visibleOrder(decode<Order>(row)));
     return json({ orders: await customersSeeInvoices(env) ? await invoiceLinks(env, visible) : visible, count: total?.n || 0, nextCursor: rows.results.length > 200 && last ? `${last.updated_at}:${last.id}` : null });
   }
-  if (/^images\/[a-f0-9]{32}$/.test(route) && req.method === "GET") return serveCatalogueImage(env, route.slice("images/".length));
+  if (/^images\/[a-f0-9]{32}$/.test(route) && req.method === "GET") return serveCatalogueImage(env, route.slice("images/".length), user.role === "wholesale" ? user.customerId : null);
   if (route === "orders" && req.method === "POST") return createOrder(req, env, user, links, ctx);
   const match = /^orders\/((?:PREVIEW|WS)-[A-F0-9]{32})$/.exec(route);
   if (match && req.method === "GET") {
@@ -317,6 +318,11 @@ export async function handleWholesaleAdmin(req: Request, env: Env, route: string
   const tabOrder = /^orders\/(WS-[A-F0-9]{32})\/tab$/.exec(route), tabClear = /^tabs\/([a-f0-9-]{36})\/clear$/.exec(route);
   if (tabOrder && req.method === "PUT") return json({ order: visibleOrder(await setOnTab(env, tabOrder[1], await readJson(req, 4096), user.name) as Order & Versioned, true) });
   if (tabClear && req.method === "POST") return json({ cleared: await clearTab(env, tabClear[1], await readJson(req, 64 * 1024), user.name, { admin: true }) });
+  // Every business's name, for choosing who a white-label coffee belongs to.
+  if (route === "customers/names" && req.method === "GET") {
+    const rows = await env.DB.prepare("SELECT id, json_extract(data, '$.business') AS business FROM wholesale_preview WHERE kind = 'customer' ORDER BY business COLLATE NOCASE").all<{ id: string; business: string }>();
+    return json({ customers: rows.results.map((r) => ({ id: r.id, business: r.business || "" })) });
+  }
   // QuickBooks customer import and invites to order online (src/wholesaleImport.ts).
   if (route === "customers/invites" && req.method === "GET") return json({ invites: await inviteStates(env) });
   if (route === "customers/import" && req.method === "POST") return json(await importCustomers(env, await readJson(req, 512 * 1024), user.name));

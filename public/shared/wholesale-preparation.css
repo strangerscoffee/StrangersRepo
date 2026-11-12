@@ -9,6 +9,7 @@
 .w-packing-line .w-pack-quantity>b{font-size:26px;letter-spacing:-.03em}
 .w-packing-line .tx .w-pack-coffee{font-size:16px;font-weight:650;line-height:1.4;letter-spacing:-.01em}
 .w-packing-line .tx .w-pack-size{font-size:13px;margin-top:2px}
+.w-packing-line .tx .w-recipe{display:block;font-size:12.5px;font-weight:500;color:var(--muted);margin-top:2px}
 .w-packing-line .tx .w-grind-details{display:flex;align-items:center;flex-wrap:wrap;gap:7px 9px;margin-top:7px}
 .w-packing-line .tx .w-grind-badge{display:inline-flex;align-items:center;gap:6px;padding:6px 11px;border-radius:99px;background:var(--w-grind-bg);color:var(--w-grind-ink);font-size:14px;font-weight:650;line-height:1.4;max-width:100%;overflow-wrap:anywhere}
 .w-grind-badge svg.i{width:16px;height:16px;flex:none}

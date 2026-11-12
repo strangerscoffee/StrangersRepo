@@ -27,6 +27,9 @@
 
   const swatch = (line) => el("span", { class: "w-coffee-swatch", style: coffeeStyle(line), "aria-hidden": "true" });
   const decafTag = (decaf) => decaf ? [" ", el("span", { class: "wp-tag" }, "Decaf")] : null;
+  // What a white-label coffee or blend is made from (snapshotted on the order line: "60% Campo Santo · 40% Bom Jesus").
+  const recipeOf = (line) => line.recipe ? el("small", { class: "wp-recipe" }, `Made from ${line.recipe}`) : null;
+  const parts = (recipe) => String(recipe || "").split(" · ").map((part) => /^(\d{1,3})% (.+)$/.exec(part)).filter(Boolean).map((m) => ({ percent: Number(m[1]), name: m[2] }));
   const grindCell = (label, hint) => el("td", {}, label || "", hint ? el("small", {}, hint) : null);
   const th = (text, attrs = { scope: "col" }) => el("th", attrs, text);
 
@@ -39,12 +42,18 @@
   function tables(t) {
     const byCoffee = el("table", { class: "wp-table" }, el("caption", {}, "By coffee"),
       el("thead", {}, el("tr", {}, th("Coffee"), th("250 g bags"), th("1 kg bags"), t.half ? th("500 g bags") : null, th("All bags"), th("Weight"))),
-      el("tbody", {}, ...t.coffees.map((c) => el("tr", {}, el("th", { scope: "row" }, swatch(c.line), c.title), el("td", {}, String(c.quarter || "–")), el("td", {}, String(c.kilo || "–")), t.half ? el("td", {}, String(c.half || "–")) : null, el("td", {}, el("b", {}, String(c.bags))), el("td", {}, kg(c.grams))))),
+      el("tbody", {}, ...t.coffees.map((c) => el("tr", {}, el("th", { scope: "row" }, swatch(c.line), c.title, recipeOf(c.line)), el("td", {}, String(c.quarter || "–")), el("td", {}, String(c.kilo || "–")), t.half ? el("td", {}, String(c.half || "–")) : null, el("td", {}, el("b", {}, String(c.bags))), el("td", {}, kg(c.grams))))),
       el("tfoot", {}, el("tr", {}, el("th", { scope: "row" }, "Total"), el("td", {}, String(t.sum.quarter)), el("td", {}, String(t.sum.kilo)), t.half ? el("td", {}, String(t.sum.half)) : null, el("td", {}, el("b", {}, String(t.sum.bags))), el("td", {}, kg(t.sum.grams)))));
     const toPack = el("table", { class: "wp-table" }, el("caption", {}, "To pack: by coffee, size and grind"),
       el("thead", {}, el("tr", {}, th("Coffee"), th("Size"), th("Grind"), th("Bags"))),
-      el("tbody", {}, ...t.packs.map((p) => el("tr", {}, el("th", { scope: "row" }, swatch(p.line), p.title, decafTag(p.decaf)), el("td", {}, packName[p.pack]), grindCell(p.grind, p.hint), el("td", {}, el("b", {}, String(p.bags)))))));
-    return [byCoffee, toPack];
+      el("tbody", {}, ...t.packs.map((p) => el("tr", {}, el("th", { scope: "row" }, swatch(p.line), p.title, decafTag(p.decaf), recipeOf(p.line)), el("td", {}, packName[p.pack]), grindCell(p.grind, p.hint), el("td", {}, el("b", {}, String(p.bags)))))));
+    // Blends and white labels: how much of each coffee goes into them.
+    const needed = new Map();
+    for (const c of t.coffees) for (const part of parts(c.line.recipe)) needed.set(part.name, (needed.get(part.name) || 0) + c.grams * part.percent / 100);
+    const madeFrom = needed.size ? el("table", { class: "wp-table" }, el("caption", {}, "Coffee for blends and white labels"),
+      el("thead", {}, el("tr", {}, th("Coffee"), th("Weight"))),
+      el("tbody", {}, ...[...needed].sort((a, b) => b[1] - a[1]).map(([name, grams]) => el("tr", {}, el("th", { scope: "row" }, name), el("td", {}, kg(Math.round(grams))))))) : null;
+    return [byCoffee, toPack, madeFrom];
   }
   /** The bags to process for these orders, for a screen or a printed page. */
   function summaryBody(orders, label) {
@@ -73,7 +82,7 @@
       order.note ? el("div", { class: "wp-note wp-internal" }, el("h3", {}, "Internal note"), el("p", {}, order.note)) : null,
       el("table", { class: "wp-table wp-lines" },
         el("thead", {}, el("tr", {}, el("th", { scope: "col", class: "wp-tick" }, el("span", { class: "sr-only" }, "Packed")), th("Bags"), th("Coffee"), th("Size"), th("Grind"))),
-        el("tbody", {}, ...(order.lines || []).map((line) => el("tr", {}, el("td", { class: "wp-tick" }, el("span", { class: "wp-box", "aria-hidden": "true" })), el("td", {}, el("b", {}, String(line.quantity))), el("th", { scope: "row" }, swatch(line), line.title, decafTag(line.decaf)), el("td", {}, packName[line.pack] || line.packLabel || ""), grindCell(line.grindLabel, line.grindHint))))),
+        el("tbody", {}, ...(order.lines || []).map((line) => el("tr", {}, el("td", { class: "wp-tick" }, el("span", { class: "wp-box", "aria-hidden": "true" })), el("td", {}, el("b", {}, String(line.quantity))), el("th", { scope: "row" }, swatch(line), line.title, decafTag(line.decaf), recipeOf(line)), el("td", {}, packName[line.pack] || line.packLabel || ""), grindCell(line.grindLabel, line.grindHint))))),
       el("p", { class: "wp-order-total" }, `${t.sum.quarter} × 250 g · ${t.sum.kilo} × 1 kg${t.half ? ` · ${t.sum.half} × 500 g` : ""} · `, el("b", {}, bags(t.sum.bags)), ` · ${kg(t.sum.grams)}`),
       el("footer", { class: "wp-sign" }, el("span", {}, "Packed by"), el("span", {}, "Checked by"), el("span", {}, "Date")));
   }

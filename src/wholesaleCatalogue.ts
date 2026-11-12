@@ -4,6 +4,7 @@ import { newId } from "./auth";
 import { audit } from "./audit";
 import { ApiError, type Env, invalid, json, readJson } from "./http";
 import { list, object, save, text, version } from "./wholesaleStore";
+import { canOrder, editedRecipe, editedWhiteLabel } from "./wholesaleWhiteLabel";
 
 import { defaultGrinds, validGrindId, type GrindOption } from "../public/wholesale-preview/grinds.js";
 
@@ -75,7 +76,7 @@ function coloursFor(body: Record<string, any>, current: Coffee | null): Pick<Cof
   if (style !== "solid" && style !== "striped") throw invalid("Choose solid or striped.");
   return { colours: value.map((c: string) => c.toUpperCase()), colourStyle: value.length > 1 ? "striped" : style };
 }
-function edited(body: Record<string, any>, current: Coffee | null): Coffee {
+function edited(body: Record<string, any>, current: Coffee | null, ids: Set<string> = new Set()): Coffee {
   const field = (key: "name" | "title" | "origin" | "process" | "notes" | "badge", max: number, required = false) => body[key] === undefined && current ? current[key] : text(body[key], key, max, required);
   const title = field("title", 180, true);
   const name = body.name === undefined && !current ? text(title, "short name", 120, true) : field("name", 120, true);
@@ -92,6 +93,8 @@ function edited(body: Record<string, any>, current: Coffee | null): Coffee {
     image: current?.image || "", sourceUrl: current?.sourceUrl || "", sourceImage: current?.sourceImage || "", sourceUpdatedAt: current?.sourceUpdatedAt || Date.now(),
     images: current?.images || [], imageUrls: current?.imageUrls || [], version: current?.version || 0,
     ...coloursFor(body, current),
+    ...((v) => (v ? { whiteLabel: v } : {}))(body.whiteLabel === undefined ? current?.whiteLabel : editedWhiteLabel(body.whiteLabel)),
+    ...((v) => (v ? { recipe: v } : {}))(body.recipe === undefined ? current?.recipe : editedRecipe(body.recipe, ids, current?.id || null)),
   };
 }
 function imageType(bytes: Uint8Array): string | null {
@@ -123,23 +126,30 @@ async function upload(req: Request, env: Env, coffee: Coffee, by: string): Promi
   await audit(env, "wholesale_photo", by, `${by} added a photo to ${coffee.title}.`);
   return json({ product }, 201);
 }
-export async function serveCatalogueImage(env: Env, id: string): Promise<Response> {
+export async function serveCatalogueImage(env: Env, id: string, customerId: string | null = null): Promise<Response> {
   if (!/^[a-f0-9]{32}$/.test(id)) throw missing();
   const stored = await env.FILES.getWithMetadata<ImageMeta>(PHOTO_PREFIX + id, { type: "stream" });
   if (!stored.value || !stored.metadata) throw missing();
   const coffee = (await catalogue(env)).find((row) => row.id === stored.metadata!.productId);
-  if (!coffee?.images.includes("upload:" + id)) throw missing();
+  if (!coffee?.images.includes("upload:" + id) || !canOrder(coffee, customerId)) throw missing();
   return new Response(stored.value, { headers: { "content-type": stored.metadata.contentType, "content-length": String(stored.metadata.size), "x-content-type-options": "nosniff", "cache-control": "private, max-age=0, must-revalidate" } });
 }
 
 /** Called only after the existing admin-role guard. Binary uploads never enter the JSON parser. */
+/** A white-label coffee can only belong to businesses that exist. */
+async function checkBusinesses(env: Env, ids: string[] | undefined) {
+  if (!ids?.length) return;
+  const found = await env.DB.prepare("SELECT COUNT(*) AS n FROM wholesale_preview WHERE kind = 'customer' AND id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(ids)).first<{ n: number }>();
+  if ((found?.n || 0) !== ids.length) throw invalid("Choose saved businesses for a white-label coffee.");
+}
 export async function handleCatalogueAdmin(req: Request, env: Env, route: string, by: string): Promise<Response | null> {
   const image = /^images\/([a-f0-9]{32})$/.exec(route);
   if (image && req.method === "GET") return serveCatalogueImage(env, image[1]);
   if (route === "catalogue" && req.method === "POST") {
     if ((await catalogue(env)).length >= 500) throw invalid("This catalogue supports up to 500 coffees.");
     const body = object(await readJson(req, 16 * 1024));
-    const coffee = edited(body, null);
+    const coffee = edited(body, null, new Set((await catalogue(env, true)).map((c) => c.id)));
+    await checkBusinesses(env, coffee.whiteLabel);
     const product = await write(env, coffee, 0);
     await audit(env, "wholesale_catalogue", by, `${by} added coffee ${product.title}.`);
     return json({ product }, 201);
@@ -170,7 +180,9 @@ export async function handleCatalogueAdmin(req: Request, env: Env, route: string
   }
   if (!match[2] && req.method === "PUT") {
     const body = object(await readJson(req, 16 * 1024));
-    const product = await write(env, edited(body, coffee), version(body.ifVersion));
+    const next = edited(body, coffee, new Set((await catalogue(env, true)).map((c) => c.id)));
+    await checkBusinesses(env, next.whiteLabel);
+    const product = await write(env, next, version(body.ifVersion));
     await audit(env, "wholesale_catalogue", by, `${by} updated coffee ${product.title}.`);
     return json({ product });
   }

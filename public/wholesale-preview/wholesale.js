@@ -162,10 +162,10 @@ function stepper(id, quantity, label, errorId) {
 }
 
 function renderProducts() {
-  $("#products").innerHTML = products.map((product, index) => `<article class="product-card" data-product="${product.id}" aria-labelledby="name-${product.id}">
+  $("#products").innerHTML = products.map((product, index) => `<article class="product-card${product.yours ? " yours" : ""}" data-product="${product.id}" aria-labelledby="name-${product.id}">
     <div class="product-image"><div class="product-photo">${product.imageUrls.length ? `<img data-product-photo src="${escape(product.imageUrls[Math.min(photoIndexes.get(product.id) || 0, product.imageUrls.length - 1)])}" alt="${escape(product.title)}" width="722" height="511" ${index > 1 ? 'loading="lazy"' : 'fetchpriority="high"'}>` : '<div class="image-placeholder"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h12v7a6 6 0 0 1-12 0V7Zm12 1h2a3 3 0 0 1 0 6h-2M3 22h15M8 4V1M12 4V1"/></svg><span>Photo coming soon</span></div>'}</div>${product.badge ? `<span class="product-badge">${escape(product.badge)}</span>` : ""}</div>
     ${product.imageUrls.length > 1 ? `<div class="photo-controls"><button type="button" data-photo-step="-1" aria-label="Previous photo of ${escape(product.name)}">Previous</button><span data-photo-count>${Math.min(photoIndexes.get(product.id) || 0, product.imageUrls.length - 1) + 1} / ${product.imageUrls.length}</span><button type="button" data-photo-step="1" aria-label="Next photo of ${escape(product.name)}">Next</button></div>` : ""}
-    <div class="product-info"><p class="product-origin">${escape(product.origin)}</p><h3 class="product-name" id="name-${product.id}">${escape(product.name)}</h3><p class="product-process">${escape(product.process)}</p><p class="tasting-notes">${escape(product.notes)}</p><p class="product-stock ${product.inStock ? "" : "out"}">${product.inStock ? "In stock" : "Out of stock"}</p></div>
+    <div class="product-info">${product.yours ? '<p class="product-yours">Your coffee</p>' : product.whiteLabel ? '<p class="product-yours">White label</p>' : ""}<p class="product-origin">${escape(product.origin)}</p><h3 class="product-name" id="name-${product.id}">${escape(product.name)}</h3><p class="product-process">${escape(product.process)}</p><p class="tasting-notes">${escape(product.notes)}</p><p class="product-stock ${product.inStock ? "" : "out"}">${product.inStock ? "In stock" : "Out of stock"}</p></div>
     <form class="product-config" data-product="${product.id}">
       <fieldset class="pack-options"><legend>Pack size <span class="sr-only">for ${escape(product.name)}</span></legend>${orderablePacks.map(([id, pack]) => `<label class="pack-choice"><input type="radio" name="pack" value="${id}" ${id === bagSize ? "checked" : ""}><span>${escape(pack.short)} bag</span></label>`).join("")}</fieldset>
       <div class="grind-field"><span class="field-label">Grind</span><select name="grind" hidden aria-label="Grind for ${escape(product.name)}">${availableGrinds(product).map(option => `<option value="${escape(option.id)}">${escape(option.label)}</option>`).join("")}</select><button class="grind-picker" type="button" data-grind-open aria-haspopup="dialog" aria-controls="grind-dialog" aria-label="Choose grind for ${escape(product.name)}"><span class="grind-current"><span data-grind-label>${escape(availableGrinds(product)[0]?.label || "Unavailable")}</span><small data-grind-hint>${escape(availableGrinds(product)[0]?.hint || "")}</small></span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 7 7-7 7"/></svg></button></div>
@@ -180,9 +180,10 @@ function sortProducts() {
   const container = $("#products"), focused = document.activeElement;
   const cards = products.map((product, index) => {
     const card = container.querySelector(`article[data-product="${product.id}"]`);
-    return { card, index, price: unitPrice(product, bagSize) ?? Infinity };
+    return { card, index, yours: product.yours ? 1 : 0, price: unitPrice(product, bagSize) ?? Infinity };
   });
-  if (currentSort !== "catalogue") cards.sort((a, b) => (a.price === b.price ? 0 : currentSort === "price-asc" ? (a.price < b.price ? -1 : 1) : (a.price > b.price ? -1 : 1)) || a.index - b.index);
+  // A business's own white-label coffees always come first.
+  if (currentSort !== "catalogue") cards.sort((a, b) => (b.yours - a.yours) || (a.price === b.price ? 0 : currentSort === "price-asc" ? (a.price < b.price ? -1 : 1) : (a.price > b.price ? -1 : 1)) || a.index - b.index);
   for (let i = 0; i < cards.length; i++) if (container.children[i] !== cards[i].card) container.insertBefore(cards[i].card, container.children[i] || null);
   if (focused && container.contains(focused) && document.activeElement !== focused) focused.focus({ preventScroll: true });
 }

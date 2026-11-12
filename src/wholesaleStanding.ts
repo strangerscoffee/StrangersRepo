@@ -13,6 +13,7 @@ import { publicCustomer, wholesaleCustomer, paymentTermsFor } from "./wholesaleA
 import { customerLocations } from "./wholesaleCustomers";
 import { audit } from "./audit";
 import { autoTabFor } from "./wholesaleTabs";
+import { canOrder, recipeText } from "./wholesaleWhiteLabel";
 import { ApiError, type Env, invalid } from "./http";
 
 export const STANDING_EVERY = [1, 2, 4] as const;
@@ -61,7 +62,8 @@ export async function rollStanding(env: Env, saved: AnyOrder, actor: string): Pr
   const coffees = await catalogue(env, true);
   const lines = saved.lines.map((line: any) => {
     const product = coffees.find((p) => p.id === line.productId), price = product?.active ? (product.prices as Record<string, number>)[line.pack] : undefined;
-    return { ...line, price: Number.isInteger(price) ? price : line.price };
+    const { recipe, ...rest } = line, now = product?.recipe?.length ? recipeText(product) : product ? "" : recipe;
+    return { ...rest, price: Number.isInteger(price) ? price : line.price, ...(now ? { recipe: now } : {}) };
   });
   const customer = saved.customerId ? await wholesaleCustomer(env, saved.customerId) : null;
   const fresh: Record<string, unknown> = {};
@@ -105,12 +107,12 @@ export async function amendLines(env: Env, id: string, value: unknown, actor: st
     const kept = order.lines.find(same);
     if (kept) { lines.push({ ...kept, quantity: line.quantity }); continue; }
     const product = coffees.find((p) => p.id === line.productId);
-    if (!product || !product.active) throw invalid("Choose a coffee from the catalogue.");
+    if (!product || !product.active || !canOrder(product, order.customerId || null)) throw invalid("Choose a coffee from the catalogue that this business can order.");
     const price = (product.prices as Record<string, number>)[line.pack];
     if (!Number.isInteger(price)) throw invalid("Choose a 250 g or 1 kg bag.");
     const grind = product.grindOptions.find((option) => option.id === line.grind);
     if (!grind) throw invalid(`${product.name} doesn't offer that grind.`);
-    lines.push({ productId: product.id, pack: line.pack, grind: grind.id, quantity: line.quantity, title: product.title, packLabel: LABELS[line.pack], grindLabel: grind.label, grindHint: grind.hint || "", decaf: product.categories.includes("decaf"), price, grams: GRAMS[line.pack] });
+    lines.push({ productId: product.id, pack: line.pack, grind: grind.id, quantity: line.quantity, title: product.title, packLabel: LABELS[line.pack], grindLabel: grind.label, grindHint: grind.hint || "", decaf: product.categories.includes("decaf"), price, grams: GRAMS[line.pack], ...(product.recipe?.length ? { recipe: recipeText(product) } : {}) });
   }
   lines.sort((a, b) => `${a.productId}:${a.pack}:${a.grind}`.localeCompare(`${b.productId}:${b.pack}:${b.grind}`));
   const current = strip(order as AnyOrder);
