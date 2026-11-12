@@ -533,3 +533,16 @@ button.stat{cursor:pointer}
 .w-add-row{display:grid;grid-template-columns:minmax(0,1fr) 110px;gap:10px}
 .w-add-line .btn{justify-self:start}
 @media (max-width:600px){.w-edit-line{grid-template-columns:minmax(0,1fr) auto}.w-edit-line .btn{grid-column:1/-1;justify-self:start}}
+/* Import from QuickBooks and invites (Admin → Wholesale → Customers) */
+.w-import-sheet{display:grid;gap:12px}
+.w-import-count{margin:0;font-size:14.5px}
+.w-import-picks{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-start}
+.w-import-picks .btn{flex:0 0 auto}
+.w-import-list{max-height:min(58vh,560px);overflow:auto}
+.w-import-row{display:flex;align-items:center;gap:12px;cursor:pointer}
+.w-import-row input{width:20px;height:20px;flex:none;accent-color:var(--accent)}
+.w-import-row .tx{flex:1;min-width:0}
+.w-import-row .tx span{display:block;color:var(--muted);font-size:13px;overflow-wrap:anywhere}
+.w-import-row.off{opacity:.6;cursor:default}
+.w-import-row .end{flex:none}
+@media(max-width:600px){.w-import-row .end{display:none}}

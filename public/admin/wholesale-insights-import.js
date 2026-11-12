@@ -129,5 +129,11 @@ window.SCSalesImport = (() => {
     const table = isXlsx ? await xlsx(await file.arrayBuffer()) : csv(await file.text());
     return { fileName: file.name, ...rowsFrom(table) };
   }
-  return Object.freeze({ parseFile, rowsFrom, csv });
+  /** Any CSV or Excel (.xlsx) file as rows of cells (used by the QuickBooks customer import too). */
+  async function readTable(file) {
+    if (file.size > 25 * 1024 * 1024) throw new Error("That file is over 25 MB.");
+    if (/\.xls$/i.test(file.name)) throw new Error("Old .xls files can't be read here. Export it as CSV or Excel (.xlsx).");
+    return /\.xlsx$/i.test(file.name) || /spreadsheetml/.test(file.type) ? xlsx(await file.arrayBuffer()) : csv(await file.text());
+  }
+  return Object.freeze({ parseFile, rowsFrom, csv, readTable });
 })();

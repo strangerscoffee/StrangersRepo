@@ -12,10 +12,11 @@ import { audit } from "./audit";
 import { ApiError, type Env, invalid, json, readJson } from "./http";
 import { manageWholesaleAccount, publicCustomer, wholesaleAccounts, wholesaleCustomer, paymentTermsFor, PAYMENT_TERMS, type Customer, type OrderingUser } from "./wholesaleAccounts";
 import { customerLocations, editedCustomerLocations, locationDefaults, validLocationId, type CustomerLocation } from "./wholesaleCustomers";
-import { confirmToCustomer, dispatchToCustomer, handleOrderEmailsAdmin, notifyNewOrder } from "./email/orders";
+import { confirmToCustomer, dispatchToCustomer, handleOrderEmailsAdmin, notifyNewOrder, orderEmailSettings } from "./email/orders";
 import { notifySlackNewOrder } from "./slackOrders";
 import { handleInsights } from "./insights";
 import { autoTabFor, clearTab, listTabs, setOnTab } from "./wholesaleTabs";
+import { importCustomers, inviteCustomer, inviteStates } from "./wholesaleImport";
 import { amendLines, rollStanding, scheduleFields, type Standing } from "./wholesaleStanding";
 import { customersSeeInvoices, handleInvoiceAdmin, handleInvoiceCustomer, invoiceLinks } from "./wholesaleInvoices";
 
@@ -316,6 +317,19 @@ export async function handleWholesaleAdmin(req: Request, env: Env, route: string
   const tabOrder = /^orders\/(WS-[A-F0-9]{32})\/tab$/.exec(route), tabClear = /^tabs\/([a-f0-9-]{36})\/clear$/.exec(route);
   if (tabOrder && req.method === "PUT") return json({ order: visibleOrder(await setOnTab(env, tabOrder[1], await readJson(req, 4096), user.name) as Order & Versioned, true) });
   if (tabClear && req.method === "POST") return json({ cleared: await clearTab(env, tabClear[1], await readJson(req, 64 * 1024), user.name, { admin: true }) });
+  // QuickBooks customer import and invites to order online (src/wholesaleImport.ts).
+  if (route === "customers/invites" && req.method === "GET") return json({ invites: await inviteStates(env) });
+  if (route === "customers/import" && req.method === "POST") return json(await importCustomers(env, await readJson(req, 512 * 1024), user.name));
+  const inviteOne = /^customers\/([a-f0-9-]{36})\/invite$/.exec(route);
+  if ((inviteOne || route === "customers/invites") && req.method === "POST") {
+    const ids: unknown = inviteOne ? [inviteOne[1]] : (await readJson<Record<string, unknown>>(req, 64 * 1024))?.customerIds;
+    if (!Array.isArray(ids) || !ids.length || ids.length > 25 || ids.some((x) => typeof x !== "string" || !/^[a-f0-9-]{36}$/.test(x))) throw invalid("Choose from 1 to 25 businesses to invite.");
+    const replyTo = (await orderEmailSettings(env)).to[0] || "sales@strangerscoffee.com";
+    const signin = customerOrdersUrl(env, links, req).replace(/#orders$/, "signin");
+    const results: Record<string, string> = {};
+    for (const id of ids as string[]) { results[id] = await inviteCustomer(env, id, user.name, signin, replyTo); if (results[id] === "limit" || results[id] === "off") break; }
+    return json({ results, invites: await inviteStates(env) });
+  }
   if (!["POST", "PUT", "PATCH", "DELETE"].includes(req.method)) throw new ApiError(404, "not_found", "Unknown wholesale management route.");
   const customerMatch = /^customers\/([a-f0-9-]{36})$/.exec(route);
   const customerWrite = (route === "customers" && req.method === "POST") || (customerMatch && req.method === "PUT");
@@ -339,6 +353,7 @@ export async function handleWholesaleAdmin(req: Request, env: Env, route: string
     if (body.hidePrices ?? oldCustomer?.hidePrices) data.hidePrices = true;
     if (body.autoTab !== undefined && typeof body.autoTab !== "boolean") throw invalid("Choose whether this business's orders go on a tab.");
     if (body.autoTab ?? oldCustomer?.autoTab) data.autoTab = true;
+    if (oldCustomer?.quickbooksName) data.quickbooksName = oldCustomer.quickbooksName;
     data.paymentNote = body.paymentNote === undefined ? oldCustomer?.paymentNote || "" : text(body.paymentNote, "payment instructions", 500);
     if (paymentTerms === "custom" && !data.paymentNote.trim()) throw invalid("Add the agreed custom payment terms in payment instructions.");
     const customer = await save(env, "customer", customerMatch?.[1] || crypto.randomUUID(), editedCustomerLocations(data, body), expected);
