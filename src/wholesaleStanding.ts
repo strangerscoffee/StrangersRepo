@@ -12,6 +12,7 @@ import { object, get, save, version, type Versioned } from "./wholesaleStore";
 import { publicCustomer, wholesaleCustomer, paymentTermsFor } from "./wholesaleAccounts";
 import { customerLocations } from "./wholesaleCustomers";
 import { audit } from "./audit";
+import { autoTabFor } from "./wholesaleTabs";
 import { ApiError, type Env, invalid } from "./http";
 
 export const STANDING_EVERY = [1, 2, 4] as const;
@@ -76,6 +77,7 @@ export async function rollStanding(env: Env, saved: AnyOrder, actor: string): Pr
     ...totals(lines, saved.delivery),
     dispatchDate: nextDispatchDay(saved.dispatchDate || ukDay(now), saved.standing.every),
     standing: { ...saved.standing, run: (saved.standing.run || 1) + 1 }, previousRunId: saved.id,
+    ...autoTabFor(customer), // on the customer's tab if they're set to use one
   };
   await save(env, "order", id, next, 0);
   await audit(env, "wholesale_standing_run", actor, `Standing order ${saved.standing.seriesId}: ${actor} ${saved.status === "Cancelled" ? "skipped" : "dispatched"} ${saved.id}; next run ${id} is due for dispatch on ${next.dispatchDate}.`);
