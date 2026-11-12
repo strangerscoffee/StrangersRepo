@@ -20,8 +20,16 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
     try {
       const page = await context.newPage(), errors = [];
       page.on("pageerror", (error) => errors.push(error.message));
+      const failed = []; page.on("response", (r) => { if (r.status() >= 400) failed.push(`${r.status()} ${new URL(r.url()).pathname}`); });
       await page.goto(srv.base + "/"); await page.waitForURL("**/signin");
       assert.equal(await page.title(), "Wholesale sign-in · Strangers Coffee");
+      // Signed out, every file the sign-in page needs loads: the logo shows and the terms open.
+      await page.waitForFunction(() => document.querySelector(".login-logo img")?.complete);
+      assert.ok(await page.evaluate(() => document.querySelector(".login-logo img").naturalWidth > 0), "the logo loads signed out");
+      await page.locator(".login-panel [data-terms]").click(); await page.locator("#terms-dialog[open]").waitFor();
+      await page.locator("#terms-dialog .close-button").click();
+      assert.deepEqual(failed, [], "no file on the sign-in page fails to load");
+      assert.equal(await page.locator("#sc-error").count(), 0, "no error card");
       await page.locator("#username").fill("trade.browser"); await page.locator("#password").fill("trade-browser-password");
       await page.locator("#login-submit").click();
       await page.locator("#products article").first().waitFor();
