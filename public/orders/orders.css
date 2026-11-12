@@ -45,3 +45,27 @@
  .print-bar .btn{flex:1 1 auto}.picked-count{flex-basis:100%}
  .totals-foot .btn{flex:1 1 100%}
 }
+/* Customer tabs: a card per customer with kg towards 6 kg; ready tabs stand out. */
+.row-tab{color:var(--accent);font-weight:650}
+.tab-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+.tab-card{display:grid;gap:8px;padding:16px 18px;border-radius:18px;text-align:left;color:var(--fg);border:1px solid var(--glass-edge);min-width:0}
+.tab-card:hover{background:var(--sunk)}
+.tab-card.ready{border-color:var(--ok);box-shadow:0 0 0 2px var(--ok-bg),var(--lift)}
+.tab-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.tab-head b{font-size:16px;overflow-wrap:anywhere}
+.tab-head .pill{flex:none}.pill .i{width:14px;height:14px}
+.tab-kg{font-size:14px;color:var(--muted)}.tab-kg strong{font-size:22px;color:var(--fg);font-variant-numeric:tabular-nums}
+.tab-kg.big strong{font-size:30px}
+.tab-progress{height:10px;border-radius:99px;background:var(--sunk);overflow:hidden}
+.tab-progress span{display:block;height:100%;border-radius:99px;background:var(--accent)}
+.tab-progress.ready span{background:var(--ok)}
+.tab-empty{grid-column:1/-1;border-radius:18px}
+.tab-summary{display:grid;gap:10px;padding:16px;border-radius:16px;background:var(--sunk)}
+.tab-summary.ready{background:var(--ok-bg)}
+.tab-summary p{font-size:14px}
+.tab-order.not-counted{opacity:.6}
+.cleared-title{font-size:16px;margin:28px 6px 12px}
+.cleared-kg{font-weight:650;font-variant-numeric:tabular-nums}
+#tabFoot .edit-actions{margin-left:auto}
+@media(max-width:600px){.tab-list{grid-template-columns:1fr}#tabFoot{flex-wrap:wrap}#tabFoot .btn{flex:1 1 auto}}
+.tab-tools{display:flex;align-items:center;gap:10px}

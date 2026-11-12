@@ -13,14 +13,15 @@
  const NEXT={New:['Preparing','Mark preparing'],Preparing:['Ready','Mark ready'],Ready:['Dispatched','Mark dispatched']};
  let rows=[],cursor=null,total=0,status='open',selected=null,sequence=0,timer=null,searchTimer=null,customerTimer=null,started=false;
  let view='orders',customers=[],customersMore=false,picking=false,busy=new Set(),editing=false;
+ let tabs={open:[],cleared:[],threshold:6000},tabSelected=null,tabConfirm=false;
  const picked=new Set();
  const weight=grams=>new Intl.NumberFormat('en-GB',{maximumFractionDigits:2}).format(grams/1000)+' kg';
  const date=at=>new Date(at).toLocaleString('en-GB',{timeZone:'Europe/London',day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});
  const pill=value=>el('span',{class:'pill '+String(value).toLowerCase()},value);
- function closeDialogs(){for(const id of ['orderDialog','customerDialog','totalsDialog'])if($(id).open)$(id).close();}
+ function closeDialogs(){for(const id of ['orderDialog','customerDialog','totalsDialog','tabDialog'])if($(id).open)$(id).close();}
  function lock(clear=false){
   document.documentElement.setAttribute('data-orders-locked','');closeDialogs();
-  if(clear){rows=[];customers=[];selected=null;cursor=null;picked.clear();picking=false;editing=false;
+  if(clear){rows=[];customers=[];tabs={open:[],cleared:[],threshold:6000};tabSelected=null;$('tabList').replaceChildren();$('clearedList').replaceChildren();$('tabDetail').replaceChildren();selected=null;cursor=null;picked.clear();picking=false;editing=false;
    for(const id of ['orderList','orderDetail','orderEdit','customerList','customerDetail','totalsBody'])$(id).replaceChildren();
    $('signedIn').textContent='';$('ordersContent').hidden=true;}
  }
@@ -51,7 +52,7 @@
   const chosen=picked.has(row.id),next=NEXT[row.status],working=busy.has(row.id);
   const main=el('button',{type:'button',class:'order-row'+(picking?' is-picking':''),'data-order-id':row.id,...(picking?{'aria-pressed':String(chosen)}:{}),onclick:()=>picking?togglePick(row.id):openOrder(row.id)},
    picking?el('span',{class:'pick '+(chosen?'on':'off'),'aria-hidden':'true'},chosen?svg('ok'):null):null,
-   el('span',{},el('b',{},row.business),el('span',{class:'row-meta'},`${row.locationName} · ${row.delivery} · ${row.packs} ${row.packs===1?'bag':'bags'} · ${weight(row.grams)}`),el('span',{class:'row-meta'},date(row.createdAt)),row.note?el('span',{class:'row-meta row-note'},'Note: '+row.note):null,warning(row.account)),
+   el('span',{},el('b',{},row.business),el('span',{class:'row-meta'},`${row.locationName} · ${row.delivery} · ${row.packs} ${row.packs===1?'bag':'bags'} · ${weight(row.grams)}`),el('span',{class:'row-meta'},date(row.createdAt)),row.onTab?el('span',{class:'row-meta row-tab'},'On tab'):null,row.note?el('span',{class:'row-meta row-note'},'Note: '+row.note):null,warning(row.account)),
    el('span',{class:'row-end'},pill(row.status),picking?null:svg('chev')));
   return el('div',{class:'order-entry'+(picking?' is-picking':''),'aria-busy':String(working)},main,!picking&&next?el('button',{type:'button',class:'btn soft quick','data-quick':row.id,disabled:working,onclick:()=>quick(row.id)},working?'Saving…':next[1]):null);
  }
@@ -87,6 +88,7 @@
    el('p',{class:'edit-error',id:'editError',role:'alert',hidden:true}),
    el('div',{class:'edit-actions'},
     el('button',{type:'button',class:'btn soft',onclick:()=>printOne(row.id)},svg('doc'),'Print'),
+    row.customerId?el('button',{type:'button',class:'btn soft',id:'tabToggle',onclick:()=>toggleTab(row.id)},row.onTab?'Take off tab':'Put on tab'):null,
     next?el('button',{type:'button',class:'btn soft',onclick:()=>{statusSelect.value=next[0];trackingField.hidden=!(next[0]==='Dispatched'||tracking.value);save(row.id)}},next[1]):null,
     el('button',{type:'button',class:'btn',id:'saveOrder',onclick:()=>save(row.id)},'Save')));
  }
@@ -151,6 +153,59 @@
   $('totalsDialog').showModal();await drawTotals();
  }
 
+ // Customer tabs: a running tally of each customer's orders until 6 kg, then cleared (or sooner). No money here.
+ async function tabRequest(method,path,body){
+  const response=await fetch('/api/staff-orders/'+path,{method,cache:'no-store',headers:{'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
+  const data=await response.json().catch(()=>({}));
+  if(response.status===403){lock(true);message('You no longer have access to wholesale orders.',{denied:true});throw Object.assign(new Error('No access.'),{quiet:true});}
+  if(!response.ok)throw Object.assign(new Error(data.message||'That could not be saved. Check your connection and try again.'),{code:data.code});
+  return data;
+ }
+ async function toggleTab(id){
+  const row=rows.find(r=>r.id===id),button=$('tabToggle');if(!row||!button)return;
+  button.disabled=true;
+  try{const {order}=await tabRequest('PUT','orders/'+encodeURIComponent(id)+'/tab',{ifVersion:row.version,onTab:!row.onTab});
+   const i=rows.findIndex(r=>r.id===id);if(i>=0)rows[i]={...rows[i],...order};draw();renderDetail(rows[i]);toast(order.onTab?`${order.business}: on the tab`:`${order.business}: off the tab`);if(view==='tabs')loadTabs();}
+  catch(e){if(e.quiet)return;toast(e.code==='conflict'?'That order changed elsewhere. Reloaded: try again.':e.message);if(e.code==='conflict')await load();}
+  finally{const b=$('tabToggle');if(b)b.disabled=false;}
+ }
+ const tabProgress=(t,threshold)=>{const pct=Math.min(100,Math.round(t.grams/threshold*100));return el('div',{class:'tab-progress'+(t.ready?' ready':''),role:'progressbar','aria-valuemin':'0','aria-valuemax':String(threshold/1000),'aria-valuenow':String(t.grams/1000),'aria-label':`${weight(t.grams)} of ${weight(threshold)}`},el('span',{style:`width:${pct}%`}));};
+ function drawTabs(){
+  const open=tabs.open,ready=open.filter(t=>t.ready).length;
+  $('tabCount').textContent=open.length?`${open.length} ${open.length===1?'tab':'tabs'}${ready?` · ${ready} ready to clear`:''}`:'';
+  $('tabList').replaceChildren(...open.map(t=>el('button',{type:'button',class:'tab-card glass'+(t.ready?' ready':''),'data-tab':t.customerId,onclick:()=>openTab(t.customerId)},
+   el('span',{class:'tab-head'},el('b',{},t.business),t.ready?el('span',{class:'pill ready'},svg('ok'),'Ready to clear'):t.autoTab?el('span',{class:'pill'},'Automatic'):null),
+   el('span',{class:'tab-kg'},el('strong',{},weight(t.grams)),el('span',{},` of ${weight(tabs.threshold)}`)),
+   tabProgress(t,tabs.threshold),
+   el('span',{class:'row-meta'},t.orders.length?`${t.orders.filter(o=>o.counts).length} ${t.orders.filter(o=>o.counts).length===1?'order':'orders'} · ${t.packs} ${t.packs===1?'bag':'bags'}${t.ready?'':` · ${weight(t.toGo)} to go`}`:'Nothing on the tab yet'))));
+  if(!open.length)$('tabList').append(el('div',{class:'empty glass tab-empty'},'No open tabs. Open an order and choose Put on tab.'));
+  $('clearedList').replaceChildren(...tabs.cleared.map(c=>el('div',{class:'order-row cleared-row'},el('span',{},el('b',{},c.business),el('span',{class:'row-meta'},`Cleared ${date(c.clearedAt)} by ${c.clearedBy}`)),el('span',{class:'row-end'},el('span',{class:'cleared-kg'},weight(c.grams)),c.early?pill('Early'):null))));
+  if(!tabs.cleared.length)$('clearedList').append(el('div',{class:'empty'},'No tabs cleared yet.'));
+  if($('tabDialog').open&&tabSelected){const t=open.find(x=>x.customerId===tabSelected);if(t)renderTab(t);else $('tabDialog').close();}
+ }
+ function renderTab(t){
+  $('tabTitle').textContent=t.business;
+  $('tabDetail').replaceChildren(
+   el('div',{class:'tab-summary'+(t.ready?' ready':'')},el('div',{class:'tab-kg big'},el('strong',{},weight(t.grams)),el('span',{},` of ${weight(tabs.threshold)}`)),tabProgress(t,tabs.threshold),
+    el('p',{},t.ready?'This tab has reached 6 kg and is ready to clear.':`${weight(t.toGo)} to go before it's ready to clear. You can clear it sooner if needed.`)),
+   el('h3',{class:'packing-heading'},'Orders on the tab'),
+   t.orders.length?el('div',{class:'order-list glass'},...t.orders.map(o=>el('div',{class:'order-row tab-order'+(o.counts?'':' not-counted')},el('span',{},el('b',{},new Date(o.createdAt).toLocaleDateString('en-GB',{timeZone:'Europe/London',day:'numeric',month:'short',year:'numeric'})+(o.reference?' · '+o.reference:'')),el('span',{class:'row-meta'},`${o.packs} ${o.packs===1?'bag':'bags'} · ${weight(o.grams)}${o.counts?'':' · cancelled, not counted'}`),el('span',{class:'row-meta'},o.addedBy==='Automatically'?'Added automatically':`Added by ${o.addedBy}`)),el('span',{class:'row-end'},pill(o.status))))):el('p',{class:'hint'},'Nothing on this tab yet. New orders will be added automatically.'),
+   el('p',{class:'edit-error',id:'tabError',role:'alert',hidden:true}));
+  $('tabFoot').replaceChildren(...(t.orders.length?(tabConfirm?[el('span',{},t.ready?`Clear ${weight(t.grams)}?`:`Clear early at ${weight(t.grams)}?`),el('div',{class:'edit-actions'},el('button',{type:'button',class:'btn soft',onclick:()=>{tabConfirm=false;renderTab(t)}},'Cancel'),el('button',{type:'button',class:'btn',id:'confirmClear',onclick:()=>clearTabNow(t)},'Clear tab'))]
+   :[el('span',{},t.ready?'Ready to clear':'Not at 6 kg yet'),el('button',{type:'button',class:'btn'+(t.ready?'':' soft'),id:'clearTab',onclick:()=>{tabConfirm=true;renderTab(t)}},t.ready?'Clear tab':'Clear tab early')]):[el('span',{}),el('button',{type:'button',class:'btn soft',onclick:()=>$('tabDialog').close()},'Done')]));
+ }
+ function openTab(customerId){const t=tabs.open.find(x=>x.customerId===customerId);if(!t)return;tabSelected=customerId;tabConfirm=false;renderTab(t);$('tabDialog').showModal();}
+ async function clearTabNow(t){
+  const button=$('confirmClear');if(button){button.disabled=true;button.textContent='Clearing…';}
+  try{const {cleared}=await tabRequest('POST','tabs/'+encodeURIComponent(t.customerId)+'/clear',{orderIds:t.orders.map(o=>o.id)});$('tabDialog').close();toast(`${cleared.business}: tab cleared at ${weight(cleared.grams)}`);await loadTabs();await load();}
+  catch(e){if(e.quiet)return;tabConfirm=false;if(e.code==='conflict'){await loadTabs();}const box=$('tabError');if(box){box.textContent=e.code==='conflict'?'This tab changed on another device. It has been reloaded: check it and clear again.':e.message;box.hidden=false;}}
+ }
+ async function loadTabs(){
+  const current=sequence;
+  try{const data=await tabRequest('GET','tabs');if(current!==sequence)return;tabs=data;drawTabs();}
+  catch(e){if(!e.quiet&&current===sequence)$('tabList').replaceChildren(el('div',{class:'empty'},'Tabs could not be loaded. Check your connection and try again.'));}
+ }
+
  // Customers: contact and delivery details, read-only.
  function drawCustomers(){
   $('customerCount').textContent=`${customers.length}${customersMore?'+':''} ${customers.length===1?'customer':'customers'}`;
@@ -179,13 +234,15 @@
   }catch{if(current===sequence)$('customerList').replaceChildren(el('div',{class:'empty'},'Customers could not be loaded. Check your connection and try again.'));}
  }
  function showView(next){
-  view=next;$('ordersView').hidden=view!=='orders';$('customersView').hidden=view!=='customers';
+  view=next;$('ordersView').hidden=view!=='orders';$('customersView').hidden=view!=='customers';$('tabsView').hidden=view!=='tabs';
   for(const b of $('viewTabs').querySelectorAll('button'))b.setAttribute('aria-pressed',String(b.dataset.view===view));
   if(view==='customers')loadCustomers();
+  if(view==='tabs')loadTabs();
  }
 
  // A link to one order (the new-order email's button: /orders#WS-…) opens it, searching all orders if needed.
  async function openFromLink(){
+  if(location.hash==='#tabs'){history.replaceState(null,'',location.pathname+location.search);showView('tabs');return;}
   const id=decodeURIComponent(location.hash.slice(1));if(!/^WS-[A-F0-9]{32}$/.test(id))return;
   history.replaceState(null,'',location.pathname+location.search);
   if(!rows.some(r=>r.id===id)){status='all';$('search').value=id;await load();}
@@ -209,6 +266,7 @@
    draw();$('accessStatus').hidden=true;$('ordersContent').hidden=false;document.documentElement.removeAttribute('data-orders-locked');
    if(wasOpen&&wasSelected){const row=rows.find(row=>row.id===wasSelected);if(row){selected=row.id;renderDetail(row);if(!$('orderDialog').open)$('orderDialog').showModal()}else{$('orderDialog').close();selected=null;}}
    if(reverify&&view==='customers')loadCustomers();
+   if(view==='tabs')loadTabs();
   }catch(error){if(current===sequence){lock(true);message('Orders could not be verified. Reconnect, then try again.',{retry:true});}}
   finally{if(current===sequence){$('refresh').disabled=false;$('refresh').setAttribute('aria-busy','false');$('loadMore').disabled=false;}}
  }
@@ -219,6 +277,7 @@
  $('closeOrder').onclick=$('doneOrder').onclick=()=>{$('orderDialog').close()};
  $('orderDialog').addEventListener('close',()=>{selected=null;editing=false;$('orderEdit').replaceChildren()});
  $('closeCustomer').onclick=$('doneCustomer').onclick=()=>$('customerDialog').close();
+ $('refreshTabs').onclick=()=>load({reverify:true});$('closeTab').onclick=()=>$('tabDialog').close();$('tabDialog').addEventListener('close',()=>{tabSelected=null;tabConfirm=false;});
  $('closeTotals').onclick=()=>$('totalsDialog').close();
  // Printing moves focus to the print dialog: that isn't leaving the page, so it doesn't lock it.
  let printing=false;addEventListener('beforeprint',()=>{printing=true});addEventListener('afterprint',()=>{setTimeout(()=>{printing=false},500)});
