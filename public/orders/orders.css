@@ -18,7 +18,14 @@
 .btn.sm{min-height:40px;padding:8px 15px;font-size:13px}
 .btn .i{width:18px;height:18px;margin-right:7px}
 .btn:disabled{opacity:.5;cursor:default}
+.orders-bar{display:contents}
 .print-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:-10px 0 22px}
+@media(min-width:960px){
+ .orders-bar{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:15px 0 24px;flex-wrap:nowrap}
+ .orders-bar #statusFilters{margin:0;overflow-x:visible;padding-bottom:0;flex-shrink:0}
+ .orders-bar #printBar{margin-left:auto;flex-shrink:1;min-width:0}
+ .orders-bar .print-bar{margin:0;flex-wrap:nowrap}
+}
 .print-bar.picking{padding:10px 12px;border-radius:16px;background:var(--sunk);border:1px solid var(--line)}
 .picked-count{margin-right:auto;font-weight:650}
 .order-edit{margin-top:22px;padding-top:18px;border-top:1px solid var(--line);display:grid;gap:12px}
