@@ -249,7 +249,9 @@ button.stat{cursor:pointer}
 .w-workspace .label .count{flex:none}
 .w-workspace .seg button{min-height:44px}
 .w-workspace .w-sections{padding-top:8px}
-.w-workspace .w-sections .seg{display:flex;width:100%}
+/* On phones and iPads the sections scroll sideways as one pill: it grows with its buttons (never clipping the last one) and fills the width when they fit. */
+.w-workspace .w-sections .seg{display:flex;width:max-content;min-width:100%}
+.w-workspace .w-sections{scroll-padding-inline:12px;overscroll-behavior-x:contain}
 .w-workspace .w-sections button{flex:1;padding-inline:12px}
 .w-workspace .btn.sm,.w-sheet .btn.sm{min-height:44px}
 .w-stats .v{font-size:clamp(24px,3vw,34px);overflow-wrap:anywhere}

@@ -145,6 +145,12 @@ test("on a phone and an iPad, light and dark", async () => {
   for (const [name, viewport] of [["phone", { width: 390, height: 844 }], ["ipad", { width: 820, height: 1180 }]]) for (const colorScheme of ["light", "dark"]) {
     const { ctx, p, errors } = await adminPage(viewport, { isMobile: true, hasTouch: true, colorScheme });
     await p.locator(".ins-tiles").waitFor();
+    // The Wholesale sections bar: the pill holds every section (none cut off) and the open one is in view.
+    if (name === "phone" || name === "ipad") {
+      const bar = await p.evaluate(() => { const wrap = document.querySelector("#wSectionsHost .w-sections"), seg = wrap?.querySelector(".seg"), on = seg?.querySelector('[aria-pressed="true"]'); if (!wrap) return null; const w = wrap.getBoundingClientRect(), r = on.getBoundingClientRect(); return { fits: seg.scrollWidth <= seg.getBoundingClientRect().width + 1, inView: r.left >= w.left - 1 && r.right <= w.right + 1 }; });
+      if (bar) assert.deepEqual(bar, { fits: true, inView: true }, `${name}: sections bar`);
+    }
+    if (process.env.WHOLESALE_SCREENSHOT_DIR) await p.screenshot({ path: `${process.env.WHOLESALE_SCREENSHOT_DIR}/sections-${name}-${colorScheme}.png` });
     const overflow = await p.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     assert.ok(overflow <= 1, `${name} ${colorScheme}: the page doesn't scroll sideways (${overflow}px)`);
     if (process.env.WHOLESALE_SCREENSHOT_DIR) await p.screenshot({ path: `${process.env.WHOLESALE_SCREENSHOT_DIR}/insights-${name}-${colorScheme}.png`, fullPage: true });

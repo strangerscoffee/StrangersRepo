@@ -25,6 +25,8 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     if (host.dataset.navigation === key) return;
     host.dataset.navigation = key; host.hidden = desktop;
     put(host, desktop ? html`` : html`<div class="segwrap w-sections"><div class="seg" role="group" aria-label="Wholesale sections">${navigation()}</div></div>`);
+    // Keep the open section in view when the sections scroll sideways (Invoicing, Insights on a phone).
+    if (!desktop) requestAnimationFrame(() => { const wrap = host.querySelector(".w-sections"), on = wrap?.querySelector('[aria-pressed="true"]'); if (wrap && on) { const r = on.getBoundingClientRect(), w = wrap.getBoundingClientRect(); if (r.left < w.left || r.right > w.right) wrap.scrollLeft += r.left - w.left - 12; } });
   }
   function selectSection(id, { pending = false } = {}) {
     if (!sections.some(([value]) => value === id)) return false;
