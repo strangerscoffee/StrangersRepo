@@ -104,7 +104,7 @@ test("Admin: automatic tabs on the customer and Put on tab in the order", async 
   await p.locator('[data-act="wh-customer"]', { hasText: "Lune Café" }).click();
   await p.locator("#wAutoTab").check();
   await p.locator('#wCustomerForm button[type="submit"]').click();
-  await p.locator('[data-act="wh-customer"]', { hasText: "On a tab" }).waitFor();
+  await p.locator('[data-act="wh-customer"]', { hasText: "Lune Café" }).filter({ hasText: "On a tab" }).waitFor();
   assert.equal((await call("GET", "/api/admin/wholesale")).body.customers.find((c) => c.business === "Lune Café").autoTab, true);
   assert.deepEqual(errors, []);
   await ctx.close();
