@@ -71,7 +71,11 @@ for (const [device, viewport] of [['phone', {width:393,height:852}], ['ipad', {w
       assert.equal(await retained.locator('select[name="grind"]').inputValue(), 'filter');
       assert.equal(await retained.locator('input[type="number"]').inputValue(), '3');
       await page.locator('[data-bag-size="quarter"]').click(); await page.reload(); await page.locator('#products[aria-busy="false"]').waitFor();
-      assert.deepEqual(await packsShown(), ['quarter'], 'bag size remembered'); await page.locator('[data-bag-size="kilo"]').click();
+      assert.deepEqual(await packsShown(), ['quarter'], 'bag size remembered');
+      // A 250 g choice saved under the old key doesn't carry over: everyone started again on 1 kg.
+      await page.evaluate(() => { localStorage.removeItem('sc.wholesale.bagSize.v2'); localStorage.setItem('sc.wholesale.bagSize', 'quarter'); });
+      await page.reload(); await page.locator('#products[aria-busy="false"]').waitFor();
+      assert.deepEqual(await packsShown(), ['kilo'], 'old saved 250 g is ignored'); await page.locator('[data-bag-size="kilo"]').click();
       await page.locator('#coffee-search').fill('brazil'); assert.ok(await page.locator('#products > article:visible').count());
       await page.locator('#coffee-search').fill(''); await choose('catalogue');
       assert.deepEqual(await page.locator('#products > article').evaluateAll(nodes => nodes.map(n=>n.dataset.product)), original);

@@ -18,7 +18,8 @@ let currentSort = "catalogue", catalogueLoading = false;
 const sortLabels = { catalogue: "Catalogue order", "price-asc": "Price: low to high", "price-desc": "Price: high to low" };
 // The bag size the whole catalogue shows (250 g or 1 kg). Price sorting always compares this size, so every coffee is
 // ranked on the same bag and a card doesn't jump when one coffee's own size is changed. Remembered on this browser.
-const BAG_SIZE_KEY = "sc.wholesale.bagSize";
+// v2: everyone starts again on 1 kg (the default); a customer who switches to 250 g is remembered from then on.
+const BAG_SIZE_KEY = "sc.wholesale.bagSize.v2";
 let bagSize = (() => { try { const saved = localStorage.getItem(BAG_SIZE_KEY); return Object.hasOwn(packs, saved) ? saved : "kilo"; } catch { return "kilo"; } })();
 function refreshBusy(id, busy) {
   const button = $(id); button.disabled = busy; button.setAttribute("aria-busy", String(busy));
