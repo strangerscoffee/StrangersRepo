@@ -63,6 +63,12 @@ export async function makeBackup(env: Env, by: string): Promise<BackupInfo> {
       invoices: (await env.DB.prepare("SELECT * FROM wholesale_invoices ORDER BY seq").all()).results,
     },
     wholesaleOrderEmails: (await env.DB.prepare("SELECT * FROM wholesale_order_emails").all()).results,
+    salesHistory: {
+      settings: (await env.DB.prepare("SELECT * FROM insights_settings").all()).results,
+      imports: (await env.DB.prepare("SELECT * FROM sales_history_imports").all()).results,
+      products: (await env.DB.prepare("SELECT * FROM sales_history_products").all()).results,
+      rows: (await env.DB.prepare("SELECT * FROM sales_history ORDER BY date, id").all()).results,
+    },
   });
   const gz = await gzip(body);
   const id = new Date(at).toISOString().replace(/\.\d+Z$/, "Z").replace(/:/g, "-");

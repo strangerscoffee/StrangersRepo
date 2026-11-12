@@ -90,6 +90,16 @@ Every new customer order can be posted to a Slack channel (Strangers uses #C0CH4
 
 Delete the secret to stop the posts. If Slack refuses a post, it's tried again every 5 minutes, up to six times, and then Admin's Overview says so.
 
+## Wholesale Insights and QuickBooks sales history
+
+Admin → Wholesale → **Insights** shows sales, coffee volumes, customers, an 8-week forecast and next week's roast plan from the site's customer orders. To add past years (and a seasonal forecast), import your QuickBooks sales once; no QuickBooks connection is needed:
+
+1. In QuickBooks: **Reports** → **Sales by Product/Service Detail** (or Sales by Customer Detail), choose the dates, run it, then **Export** → **Export to Excel** (or CSV).
+2. Insights → **Import QuickBooks history** → choose the file → **Import**. Large files go up in parts; importing the same report again adds nothing twice.
+3. Check **QuickBooks products**: which coffee and bag size each product is (anything else, such as delivery, as Not coffee).
+
+History is used up to the first site order unless changed under the roast plan's batch button, so orders later sent to QuickBooks from the site aren't counted twice. Remove an imported file from QuickBooks products → Imported files.
+
 ## Change the setup code
 
 In the Worker: **Settings → Variables and Secrets**, edit `SETUP_CODE`. It takes effect immediately and only affects creating the first admin and the "Admin? Forgotten password" recovery. Existing accounts and sessions are unaffected. (`SYNC_TOKEN`, the secret's name before the Claude sync was removed, is still accepted if `SETUP_CODE` isn't set.)
