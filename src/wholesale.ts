@@ -12,7 +12,7 @@ import { audit } from "./audit";
 import { ApiError, type Env, invalid, json, readJson } from "./http";
 import { manageWholesaleAccount, publicCustomer, wholesaleAccounts, wholesaleCustomer, paymentTermsFor, PAYMENT_TERMS, type Customer, type OrderingUser } from "./wholesaleAccounts";
 import { customerLocations, editedCustomerLocations, locationDefaults, validLocationId, type CustomerLocation } from "./wholesaleCustomers";
-import { handleOrderEmailsAdmin, notifyNewOrder } from "./email/orders";
+import { confirmToCustomer, dispatchToCustomer, handleOrderEmailsAdmin, notifyNewOrder } from "./email/orders";
 import { notifySlackNewOrder } from "./slackOrders";
 import { handleInsights } from "./insights";
 import { customersSeeInvoices, handleInvoiceAdmin, handleInvoiceCustomer, invoiceLinks } from "./wholesaleInvoices";
@@ -40,8 +40,15 @@ interface Order {
   trackingUrl?: string;
   /** The customer's own optional note at checkout ("Use our own custom labels"); shown back to them, unlike the internal `note`. */
   customerNote?: string;
+  /** When the customer was emailed that it was shipped or collected (once). */
+  dispatchEmailedAt?: number;
 }
 type Links = { admin: string; diary: string; preview?: string };
+/** My orders on the customer ordering site, for links in customers' emails (…/#orders opens it). */
+export function customerOrdersUrl(env: Env, links: { preview?: string }, req: Request) {
+  const site = /^https?:\/\//.test(links.preview || "") ? links.preview! : env.PREVIEW_HOST ? `https://${env.PREVIEW_HOST}/` : new URL("/wholesale-preview/", req.url).href;
+  return site.replace(/\/?$/, "/") + "#orders";
+}
 const denied = () => new ApiError(403, "permission_denied", "Only admins can manage wholesale ordering.");
 export function visibleOrder(order: Order & Versioned, admin = false) {
   const { requestKey, note, ...visible } = order;
@@ -152,7 +159,11 @@ async function createOrder(req: Request, env: Env, user: OrderingUser, links: Li
   }
   await audit(env, customer ? "wholesale_order" : "wholesale_preview_order", user.name, `${user.name} placed ${customer ? "wholesale" : "staff preview"} order ${body.id}.`);
   // A new customer order (never a staff preview or a retry, which returned above) is emailed to Strangers.
-  if (customer) { await notifyNewOrder(env, ctx, saved, links.diary); await notifySlackNewOrder(env, ctx, saved, links.diary); }
+  if (customer) {
+    await notifyNewOrder(env, ctx, saved, links.diary); await notifySlackNewOrder(env, ctx, saved, links.diary);
+    // And the customer gets their own confirmation, linking back to My orders on the ordering site.
+    await confirmToCustomer(env, ctx, saved, { showPrices: !customer.hidePrices, ordersUrl: customerOrdersUrl(env, links, req) });
+  }
   return json({ order: visibleOrder(saved), preview: !customer }, 201);
 }
 
@@ -229,7 +240,7 @@ export async function ordersToPrint(env: Env, query: URLSearchParams, { customer
 
 /** Changes an order's status, internal note and (optionally) tracking link, version-checked. Shared by Admin and the
  * staff orders page; only Admin may relink a staff preview to a customer. */
-export async function updateOrderStatus(env: Env, id: string, body: Record<string, any>, actor: string, { allowRelink = false, customerOnly = false } = {}): Promise<Order & Versioned> {
+export async function updateOrderStatus(env: Env, id: string, body: Record<string, any>, actor: string, { allowRelink = false, customerOnly = false, notify }: { allowRelink?: boolean; customerOnly?: boolean; notify?: { ctx?: ExecutionContext; ordersUrl: string } } = {}): Promise<Order & Versioned> {
   const order = await get<Order>(env, "order", id);
   if (!order || order.deletedAt != null || (customerOnly && order.preview !== false)) throw new ApiError(404, "not_found", "Order not found.");
   if (!STATUSES.includes(body.status)) throw invalid("Choose a listed order status.");
@@ -241,7 +252,11 @@ export async function updateOrderStatus(env: Env, id: string, body: Record<strin
   }
   const { id: savedId, version: oldVersion, updatedAt, ...current } = order;
   const note = body.note === undefined ? order.note || "" : text(body.note, "order note", 1000);
-  const updated = await save(env, "order", id, { ...current, status: body.status, customerId, note, trackingUrl: body.trackingUrl === undefined ? order.trackingUrl || "" : trackingUrl(body.trackingUrl) }, version(body.ifVersion));
+  // The first time a customer order is marked Dispatched, the customer is emailed (shipped or collected); recorded on
+  // the order so going back and forth never sends it twice.
+  const firstDispatch = body.status === "Dispatched" && order.status !== "Dispatched" && order.preview === false && !order.dispatchEmailedAt;
+  const updated = await save(env, "order", id, { ...current, status: body.status, customerId, note, trackingUrl: body.trackingUrl === undefined ? order.trackingUrl || "" : trackingUrl(body.trackingUrl), ...(firstDispatch && notify ? { dispatchEmailedAt: Date.now() } : {}) }, version(body.ifVersion));
+  if (firstDispatch && notify) await dispatchToCustomer(env, notify.ctx, updated, notify.ordersUrl);
   await audit(env, "wholesale_preview_status", actor, `${actor} marked wholesale order ${id} as ${body.status}. No fulfilment action was sent.`);
   return updated as Order & Versioned;
 }
@@ -319,7 +334,7 @@ export async function handleWholesaleAdmin(req: Request, env: Env, route: string
     return json({ deleted: true, id, version: removed.version });
   }
   if (orderMatch && req.method === "PATCH") {
-    const updated = await updateOrderStatus(env, orderMatch[1], body, user.name, { allowRelink: true });
+    const updated = await updateOrderStatus(env, orderMatch[1], body, user.name, { allowRelink: true, notify: { ctx, ordersUrl: customerOrdersUrl(env, links, req) } });
     return json({ order: visibleOrder(updated, true) });
   }
   throw new ApiError(404, "not_found", "Unknown wholesale management route.");

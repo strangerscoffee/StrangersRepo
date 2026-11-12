@@ -704,6 +704,8 @@ async function start() {
   try {
     applyCatalogue(await api("/api/wholesale/catalogue"), true);
     $("#catalogue-status").hidden = true;
+    // The order confirmation email's "See your orders" link (…/#orders) opens My orders once the page is ready.
+    if (location.hash === "#orders") { window.history.replaceState(null, "", location.pathname + location.search); document.querySelector("[data-order-history]")?.click(); }
   } catch (error) {
     $("#catalogue-status").textContent = error.message;
     $("#retry-catalogue").hidden = false;
