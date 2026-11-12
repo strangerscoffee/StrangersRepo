@@ -1,5 +1,5 @@
 // New wholesale orders posted to Slack (src/slackOrders.ts, src/slackOrderText.ts): straight away from 07:45 to 16:45
-// UK time, otherwise held until 07:50 next morning and sent by the 5-minute cron; business name, a short summary and
+// UK time (Sunday 10:00 to 15:30), otherwise held until 07:50 (Sunday 10:00) and sent by the 5-minute cron; business name, a short summary and
 // a link to the staff Wholesale orders page; never for staff previews or retries; retried when Slack refuses.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -8,7 +8,7 @@ import { startServer, SETUP_CODE } from "./harness.mjs";
 import { slackPostTime, buildSlackOrder } from "../src/slackOrderText.ts";
 
 const at = (iso) => Date.parse(iso);
-test("orders from 07:45 to 16:45 UK time post at once; the rest wait for 07:50 the next morning (GMT and BST)", () => {
+test("orders post at once 07:45–16:45 UK time (Sunday 10:00–15:30); the rest wait for 07:50 (Sunday 10:00), GMT and BST", () => {
   const cases = [
     // Winter (GMT = UTC)
     ["2026-11-12T07:44:00Z", "2026-11-12T07:50:00Z"], ["2026-11-12T07:45:00Z", "now"], ["2026-11-12T12:00:00Z", "now"],
@@ -17,8 +17,15 @@ test("orders from 07:45 to 16:45 UK time post at once; the rest wait for 07:50 t
     // Summer (BST = UTC+1): 07:44 UK is 06:44 UTC
     ["2026-07-01T06:44:00Z", "2026-07-01T06:50:00Z"], ["2026-07-01T06:45:00Z", "now"], ["2026-07-01T15:45:00Z", "now"],
     ["2026-07-01T15:46:00Z", "2026-07-02T06:50:00Z"], ["2026-06-30T23:30:00Z", "2026-07-01T06:50:00Z"],
-    // The nights the clocks change: 07:50 is BST on 29 March, GMT on 25 October
-    ["2026-03-28T20:00:00Z", "2026-03-29T06:50:00Z"], ["2026-10-24T20:00:00Z", "2026-10-25T07:50:00Z"],
+    // Saturday as the week; Sunday 10:00–15:30, anything held posting at 10:00 (14 and 15 Nov 2026 are Sat and Sun)
+    ["2026-11-14T08:00:00Z", "now"], ["2026-11-14T16:45:00Z", "now"], ["2026-11-14T18:00:00Z", "2026-11-15T10:00:00Z"],
+    ["2026-11-15T07:50:00Z", "2026-11-15T10:00:00Z"], ["2026-11-15T09:59:00Z", "2026-11-15T10:00:00Z"], ["2026-11-15T10:00:00Z", "now"],
+    ["2026-11-15T15:30:59Z", "now"], ["2026-11-15T15:31:00Z", "2026-11-16T07:50:00Z"], ["2026-11-15T22:00:00Z", "2026-11-16T07:50:00Z"],
+    ["2026-11-16T07:44:00Z", "2026-11-16T07:50:00Z"],
+    // Sunday in summer (BST): 10:00 UK is 09:00 UTC
+    ["2026-07-04T17:00:00Z", "2026-07-05T09:00:00Z"], ["2026-07-05T14:30:00Z", "now"], ["2026-07-05T14:31:00Z", "2026-07-06T06:50:00Z"],
+    // The clocks change on Sunday nights: 10:00 is BST on 29 March, GMT on 25 October
+    ["2026-03-28T20:00:00Z", "2026-03-29T09:00:00Z"], ["2026-10-24T20:00:00Z", "2026-10-25T10:00:00Z"],
   ];
   for (const [placed, expected] of cases) assert.equal(slackPostTime(at(placed)), expected === "now" ? at(placed) : at(expected), placed);
 });

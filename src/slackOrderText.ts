@@ -1,5 +1,8 @@
 // The new-order Slack post's timing and text (src/slackOrders.ts sends it). No imports, so tests load it directly.
-const OPEN = 7 * 60 + 45, CLOSE = 16 * 60 + 45, POST_AT = 7 * 60 + 50; // minutes after midnight, UK time
+// When posts go out, in minutes after midnight UK time: Monday to Saturday from 07:45 to 16:45 (anything held posts
+// at 07:50); Sunday from 10:00 to 15:30 (anything held posts at 10:00).
+const HOURS = { week: { open: 7 * 60 + 45, close: 16 * 60 + 45, postAt: 7 * 60 + 50 }, sunday: { open: 10 * 60, close: 15 * 60 + 30, postAt: 10 * 60 } };
+const hoursOn = (date: string) => (new Date(`${date}T12:00:00Z`).getUTCDay() === 0 ? HOURS.sunday : HOURS.week);
 
 /** UK date and minutes past midnight of a moment. */
 function london(at: number) {
@@ -18,11 +21,13 @@ function londonMoment(date: string, minutes: number) {
 }
 const nextDay = (date: string) => new Date(Date.parse(`${date}T12:00:00Z`) + 864e5).toISOString().slice(0, 10);
 
-/** When an order placed at `at` should reach Slack: now within 07:45–16:45 UK time, otherwise 07:50 next morning. */
+/** When an order placed at `at` should reach Slack: now within that day's hours (UK time), otherwise when they
+ *  next start: 07:50 Monday to Saturday, 10:00 on Sunday. */
 export function slackPostTime(at: number): number {
-  const { date, minutes } = london(at);
-  if (minutes >= OPEN && minutes <= CLOSE) return at;
-  return londonMoment(minutes < OPEN ? date : nextDay(date), POST_AT);
+  const { date, minutes } = london(at), today = hoursOn(date);
+  if (minutes >= today.open && minutes <= today.close) return at;
+  const day = minutes < today.open ? date : nextDay(date);
+  return londonMoment(day, hoursOn(day).postAt);
 }
 
 interface Line { title: string; pack: string; packLabel?: string; grindLabel?: string; quantity: number; decaf?: boolean }

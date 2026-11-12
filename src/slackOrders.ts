@@ -2,8 +2,8 @@
 // (a Slack "incoming webhook", made for that one channel; the host adds it in Cloudflare). Business name, a short
 // summary of what was ordered and a link to the staff Wholesale orders page; no prices or contact details.
 //
-// Orders placed between 07:45 and 16:45 UK time are posted straight away. Anything earlier waits until 07:50 that
-// morning, anything later until 07:50 the next morning, so nothing arrives overnight and gets missed. Every post goes
+// Orders placed in business hours (UK time: 07:45 to 16:45, Sunday 10:00 to 15:30) are posted straight away; the rest
+// wait until the hours next start (07:50, Sunday 10:00), so nothing arrives overnight and gets missed. Every post goes
 // in slack_order_posts first (migration 20) and the 5-minute cron delivers any that are due, so a post held for the
 // morning, or one Slack refused, still goes out. Staff previews and retries of an order already placed post nothing.
 import { audit } from "./audit";

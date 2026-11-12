@@ -81,7 +81,7 @@ Managers and admins with an address can receive a summary every Monday at 07:30 
 
 ## New wholesale orders in Slack
 
-Every new customer order can be posted to a Slack channel (Strangers uses #C0CH4KT2BS6): the business name, the bags by coffee, size and grind, collection or delivery, any customer comments, and a link to the staff Wholesale orders page. No prices or contact details. Orders placed between 07:45 and 16:45 UK time are posted straight away; anything earlier or later is held and posted at 07:50 the next morning (the 5-minute cron sends it). Nothing is posted until this is set up, once:
+Every new customer order can be posted to a Slack channel (Strangers uses #C0CH4KT2BS6): the business name, the bags by coffee, size and grind, collection or delivery, any customer comments, and a link to the staff Wholesale orders page. No prices or contact details. Orders placed between 07:45 and 16:45 UK time (Sunday 10:00 to 15:30) are posted straight away; anything earlier or later is held and posted when those hours next start: 07:50, or 10:00 on a Sunday (the 5-minute cron sends it). Nothing is posted until this is set up, once:
 
 1. Go to api.slack.com/apps → **Create New App** → **From scratch**, name it "Wholesale orders", workspace Strangers Coffee. (Free; a Slack admin may need to approve it.)
 2. In the app: **Incoming Webhooks** → switch on → **Add New Webhook to Workspace** → pick the orders channel → **Allow**. Copy the webhook URL (it starts `https://hooks.slack.com/services/`). Treat it like a password: anyone with it can post in that channel.

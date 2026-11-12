@@ -132,7 +132,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
       <label class="field"><span class="fl">Send to</span><textarea id="wOrderEmailsTo" rows="3" autocapitalize="none" spellcheck="false" aria-describedby="wOrderEmailsHint">${settings.to.join("\n")}</textarea></label><p class="hint" id="wOrderEmailsHint">One address per line, up to 5.</p>
       <p class="err" id="wOrderEmailsErr" role="alert" hidden></p></form>
       <div class="row w-actions"><button class="btn soft" type="button" data-sheet="test" ${settings.sending ? "" : raw("disabled")}>Send a test email</button><button class="btn" type="button" data-sheet="save">Save</button></div>
-      <h3>Slack</h3><p class="hint" id="wSlackState">${settings.slack ? "Each new order is posted to the orders channel: straight away from 07:45 to 16:45, otherwise at 07:50 the next morning." : "Not set up: add the SLACK_ORDERS_WEBHOOK_URL secret in Cloudflare (README-deploy.md)."}</p>
+      <h3>Slack</h3><p class="hint" id="wSlackState">${settings.slack ? "Each new order is posted to the orders channel: straight away from 07:45 to 16:45 (Sunday 10:00 to 15:30), otherwise at 07:50 (Sunday 10:00)." : "Not set up: add the SLACK_ORDERS_WEBHOOK_URL secret in Cloudflare (README-deploy.md)."}</p>
       <div class="row w-actions"><button class="btn soft" type="button" data-sheet="slack-test" ${settings.slack ? "" : raw("disabled")}>Send a test to Slack</button></div></div>`;
     const fail = (error) => { const box = $("#wOrderEmailsErr"); if (box) { box.textContent = error.message; box.hidden = false; } };
     openSheet(view(), async (action) => {
