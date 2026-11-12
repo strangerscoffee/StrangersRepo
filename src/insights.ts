@@ -72,7 +72,9 @@ async function insights(env: Env) {
   const span = await env.DB.prepare("SELECT COUNT(*) AS n, MIN(date) AS first, MAX(date) AS last FROM sales_history").first<{ n: number; first: string | null; last: string | null }>();
   const unreviewed = await env.DB.prepare("SELECT COUNT(*) AS n FROM sales_history_products WHERE reviewed = 0").first<{ n: number }>();
   const result = buildInsights({ today: ukDay(Date.now()), lines: [...history, ...site.lines], open: site.open, settings: s });
-  return { ...result, settings: s, sources: { siteOrders: site.count, firstSiteOrder: site.first, historyRows: span?.n || 0, historyFirst: span?.first || null, historyLast: span?.last || null, historyUntil: until, historyUsed: history.length, unreviewedProducts: unreviewed?.n || 0 } };
+  // Each coffee's packaging colours as saved in Admin, so the page draws every coffee in its own colour.
+  const palette = (await catalogue(env, true)).map((c: any) => ({ id: c.id, title: c.title, name: c.name, ...(Array.isArray(c.colours) && c.colours.length ? { colours: c.colours, colourStyle: c.colourStyle } : {}) }));
+  return { ...result, palette, settings: s, sources: { siteOrders: site.count, firstSiteOrder: site.first, historyRows: span?.n || 0, historyFirst: span?.first || null, historyLast: span?.last || null, historyUntil: until, historyUsed: history.length, unreviewedProducts: unreviewed?.n || 0 } };
 }
 
 function cleanRow(value: any) {

@@ -1,7 +1,9 @@
 // Admin → Wholesale → Insights: sales and volumes over time, by coffee and by customer, the forecast for the coming
 // weeks and next week's roast plan, from the site's customer orders plus QuickBooks history imported from a report
-// (src/insights.ts, src/insightsMath.ts). Charts are plain HTML bars (one hue; the forecast hatched), each with a
-// table beside it; every value is escaped by the admin `html` template.
+// (src/insights.ts, src/insightsMath.ts). Each coffee is drawn in its own packaging colour (`coffeeColour` in
+// public/shared/wholesale-preparation.js, with colours saved in Admin), always beside its name: the period's biggest
+// movers, the coffee mix by week, and a 12-week line per coffee. Charts are plain HTML/SVG with a table beside them;
+// every value is escaped by the admin `html` template.
 window.WholesaleInsights = function ({ api, html, raw, svg, put, openSheet, closeSheet, reload, toast }) {
   const root = "/api/admin/wholesale/insights";
   const $ = (s) => document.querySelector(s);
@@ -44,9 +46,14 @@ window.WholesaleInsights = function ({ api, html, raw, svg, put, openSheet, clos
 
   /* ---------- bar chart: weekly up to 6 months, monthly beyond ---------- */
   function buckets(weeks) {
-    if (weeks.length <= 26) return weeks.map((w) => ({ label: day(w.week), tip: `Week of ${longDay(w.week)}`, pence: w.pence, grams: w.grams }));
+    if (weeks.length <= 26) return weeks.map((w) => ({ label: day(w.week), tip: `Week of ${longDay(w.week)}`, pence: w.pence, grams: w.grams, byCoffee: w.byCoffee }));
     const by = new Map();
-    for (const w of weeks) { const k = w.week.slice(0, 7), b = by.get(k) || { label: month(k + "-01"), tip: day(k + "-01", { month: "long", year: "numeric" }), pence: 0, grams: 0 }; b.pence += w.pence; b.grams += w.grams; by.set(k, b); }
+    for (const w of weeks) {
+      const k = w.week.slice(0, 7), b = by.get(k) || { label: month(k + "-01"), tip: day(k + "-01", { month: "long", year: "numeric" }), pence: 0, grams: 0, byCoffee: {} };
+      b.pence += w.pence; b.grams += w.grams;
+      for (const [c, v] of Object.entries(w.byCoffee)) { const e = b.byCoffee[c] || (b.byCoffee[c] = [0, 0, 0, 0]); v.forEach((x, i) => (e[i] += x)); }
+      by.set(k, b);
+    }
     return [...by.values()];
   }
   const nice = (max) => { if (max <= 0) return 1; const p = Math.pow(10, Math.floor(Math.log10(max))), f = max / p; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * p; };
@@ -62,12 +69,52 @@ window.WholesaleInsights = function ({ api, html, raw, svg, put, openSheet, clos
       <div class="ins-cols">${points.map((p, i) => col(p, i, ""))}${forecast.map((p, i) => col(p, points.length + i, "fc"))}</div></div>
       ${forecast.length ? html`<figcaption class="ins-key"><span class="ins-swatch"></span>Sold<span class="ins-swatch fc"></span>Forecast, with its likely range</figcaption>` : ""}</figure>`;
   }
+  // The coffee mix: one stacked bar per week (or month), each coffee in its packaging colour, the biggest at the bottom;
+  // up to 7 coffees by name, the rest as Other coffees. The legend gives each coffee's total for the period.
+  const TOP = 7;
+  function mix(points, fmt, label, idx) {
+    const totals = coffeeTotals(points.map((p) => ({ byCoffee: p.byCoffee }))), ranked = [...totals.entries()].sort((a, b) => b[1][idx] - a[1][idx]).filter(([, v]) => v[idx] > 0);
+    const keys = ranked.slice(0, TOP).map(([k]) => k), rest = ranked.slice(TOP).map(([k]) => k);
+    const series = rest.length ? [...keys, OTHER] : keys;
+    const value = (p, k) => k === OTHER ? rest.reduce((t, r) => t + (p.byCoffee[r]?.[idx] || 0), 0) : p.byCoffee[k]?.[idx] || 0;
+    const top = nice(Math.max(...points.map((p) => series.reduce((t, k) => t + value(p, k), 0)), 0)), every = Math.ceil(points.length / 8);
+    const sumOf = (k) => k === OTHER ? rest.reduce((t, r) => t + totals.get(r)[idx], 0) : totals.get(k)[idx];
+    return html`<figure class="ins-chart" aria-label="${label}"><div class="ins-plot">
+      ${[1, 0.5].map((f) => html`<div class="ins-grid" style="bottom:${f * 100}%"><span>${fmt(top * f)}</span></div>`)}<div class="ins-grid base" style="bottom:0"><span>0</span></div>
+      <div class="ins-cols">${points.map((p, i) => { const all = series.reduce((t, k) => t + value(p, k), 0);
+        return html`<div class="ins-col" title="${p.tip}: ${fmt(all)}${series.filter((k) => value(p, k) > 0).map((k) => `\n${titleOf(k)}: ${fmt(value(p, k))}`).join("")}"><span class="ins-stack" style="height:${Math.max(all > 0 ? 1.5 : 0, (all / top) * 100)}%">${series.filter((k) => value(p, k) > 0).map((k) => html`<span class="ins-seg" style="flex-grow:${value(p, k)};--w-coffee:${fillOf(k, titleOf(k))}"></span>`)}</span><span class="ins-x ${i % every ? "hide" : ""}">${p.label}</span></div>`; })}</div></div>
+      <figcaption class="ins-legend">${series.map((k) => html`<span class="ins-legend-item">${swatch(k, titleOf(k))}<span class="ins-legend-name">${titleOf(k)}</span><b>${fmt(sumOf(k))}</b></span>`)}</figcaption></figure>`;
+  }
   function overTime({ now }) {
-    const pts = buckets(now).map((b) => ({ ...b, value: measure === "pence" ? b.pence : b.grams }));
     const fmt = measure === "pence" ? money : (g) => kg(g, 0);
-    return html`<section class="ins-section glass" aria-labelledby="insTime"><header class="ins-head"><h3 id="insTime">${measure === "pence" ? "Sales" : "Coffee sold"} ${now.length <= 26 ? "by week" : "by month"}</h3>
+    return html`<section class="ins-section glass" aria-labelledby="insTime"><header class="ins-head"><h3 id="insTime">${measure === "pence" ? "Sales" : "Coffee sold"} ${now.length <= 26 ? "by week" : "by month"}, by coffee</h3>
       <div class="seg" role="group" aria-label="Show">${[["pence", "£ sales"], ["grams", "kg coffee"]].map(([v, l]) => html`<button type="button" data-act="wh-ins-measure" data-id="${v}" aria-pressed="${measure === v}">${l}</button>`)}</div></header>
-      ${now.length ? bars(pts, fmt, `${measure === "pence" ? "Sales" : "Coffee sold"} over the period`) : html`<p class="hint">No sales in this period.</p>`}</section>`;
+      ${now.some((w) => w.grams || w.pence) ? mix(buckets(now), fmt, `${measure === "pence" ? "Sales" : "Coffee sold"} over the period, by coffee`, measure === "pence" ? 1 : 0) : html`<p class="hint">No sales in this period.</p>`}</section>`;
+  }
+
+  /* ---------- what's moving: the biggest risers and fallers this period, and customers due ---------- */
+  function movers({ now, before, comparable }) {
+    const cur = coffeeTotals(now), prev = coffeeTotals(before), name = PERIODS.find(([v]) => v === period)[1];
+    const cards = [];
+    const card = (k, kind, headline, a, b) => cards.push(html`<article class="ins-move ${kind}" style="--w-coffee:${fillOf(k, titleOf(k))}"><span class="ins-move-edge" aria-hidden="true"></span><div><p class="ins-move-k">${kind === "up" ? "Rising" : kind === "down" ? "Falling" : "Top seller"}</p><h4>${titleOf(k)}</h4><p class="ins-move-v ${kind}">${headline}</p><p class="ins-move-s">${a}${b ? html`<br>${b}` : ""}</p></div>${spark(k, 12)}</article>`);
+    if (comparable) {
+      const changes = [...new Set([...cur.keys(), ...prev.keys()])].map((k) => { const a = cur.get(k)?.[0] || 0, b = prev.get(k)?.[0] || 0; return { k, a, b, d: a - b }; }).filter((x) => (x.b >= 2000 || x.a >= 2000) && (!x.b || Math.abs(x.d / x.b) >= 0.05)); // ignore changes under 5%
+      const up = changes.filter((x) => x.d > 0).sort((x, y) => y.d - x.d)[0], down = changes.filter((x) => x.d < 0).sort((x, y) => x.d - y.d)[0];
+      if (up) card(up.k, "up", `▲ ${up.b ? `${Math.round((up.d / up.b) * 100)}%` : "new"}`, `${kg(up.a, 0)} in the last ${name}`, `${kg(up.b, 0)} the ${name} before`);
+      if (down) card(down.k, "down", `▼ ${Math.round((-down.d / down.b) * 100)}%`, `${kg(down.a, 0)} in the last ${name}`, `${kg(down.b, 0)} the ${name} before`);
+    }
+    const best = [...cur.entries()].sort((a, b) => b[1][0] - a[1][0])[0];
+    if (best && cards.length < 2) card(best[0], "", kg(best[1][0], 0), `${Math.round((best[1][0] / (sum(now, "grams") || 1)) * 100)}% of all coffee`, money(best[1][1]));
+    const due = data.customers.filter((c) => ["due", "overdue", "quiet"].includes(c.status));
+    if (due.length) cards.push(html`<article class="ins-move cust"><div><p class="ins-move-k">Customers</p><h4>${due.length} due or overdue</h4><p class="ins-move-s">${due.slice(0, 3).map((c) => c.name).join(", ")}${due.length > 3 ? ` and ${due.length - 3} more` : ""}</p></div></article>`);
+    return cards.length ? html`<section class="ins-moves" aria-label="What's moving">${cards}</section>` : "";
+  }
+  // A coffee's last N weeks as a small line in its own colour (the numbers are in the tables).
+  function spark(k, count) {
+    const weeks = data.weekly.slice(-count), vals = weeks.map((w) => w.byCoffee[k]?.[0] || 0), max = Math.max(...vals, 1);
+    if (vals.length < 2) return "";
+    const pts = vals.map((v, i) => `${((i / (vals.length - 1)) * 100).toFixed(1)},${(28 - (v / max) * 24).toFixed(1)}`).join(" ");
+    return html`<svg class="ins-spark" viewBox="0 0 100 30" preserveAspectRatio="none" aria-hidden="true"><polyline points="${pts}" fill="none" stroke="${lineOf(k, titleOf(k))}" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round"/></svg>`;
   }
 
   /* ---------- forecast ---------- */
@@ -84,7 +131,17 @@ window.WholesaleInsights = function ({ api, html, raw, svg, put, openSheet, clos
       <tbody>${f.byCoffee.map((c) => html`<tr><th scope="row">${swatch(c.key, c.title)}${c.title}</th>${c.weeks.slice(0, 4).map((p) => html`<td class="num" title="Likely ${kg(p.low)}–${kg(p.high)}">${kgNum(p.grams)}</td>`)}<td class="num muted">${kgNum(c.recentWeekly)}</td></tr>`)}</tbody>
       <tfoot><tr><th scope="row">All coffee</th>${head4.map((p) => html`<td class="num"><b>${kgNum(p.grams)}</b></td>`)}<td class="num muted">${kgNum(f.total.recentWeekly)}</td></tr></tfoot></table></div></section>`;
   }
-  const swatch = (key, title) => { const style = window.SCWholesalePreparation?.coffeeStyle?.({ productId: key, title }); return style ? html`<span class="w-coffee-swatch ins-sw" style="${style}" aria-hidden="true"></span>` : ""; };
+  // Coffee colours: the packaging colour (or stripes) of each coffee, from what Admin saved, the packaging table or a
+  // steady automatic colour. "Other coffees" (beyond the top ones in a chart) are a neutral grey.
+  const prep = () => window.SCWholesalePreparation;
+  const colourOf = (key, title) => prep()?.coffeeColour?.({ productId: key, title }, data?.palette || []) || { colours: ["#8A8F98"], striped: false };
+  const fillOf = (key, title) => key === OTHER ? "var(--muted)" : prep()?.coffeeFill?.(colourOf(key, title)) || "var(--accent)";
+  const lineOf = (key, title) => colourOf(key, title).colours[0];
+  const swatch = (key, title) => html`<span class="w-coffee-swatch ins-sw" style="--w-coffee:${fillOf(key, title)}" aria-hidden="true"></span>`;
+  const OTHER = "__other__";
+  const titleOf = (k) => k === OTHER ? "Other coffees" : data.coffees.find((c) => c.key === k)?.title || data.forecast.byCoffee.find((c) => c.key === k)?.title || k;
+  /** Coffees in a run of weeks, biggest first: key → [grams, pence, 250 g bags, 1 kg bags]. */
+  const coffeeTotals = (rows) => { const m = new Map(); for (const w of rows) for (const [k, v] of Object.entries(w.byCoffee)) { const e = m.get(k) || [0, 0, 0, 0]; v.forEach((x, i) => (e[i] += x)); m.set(k, e); } return m; };
 
   /* ---------- roast plan ---------- */
   function roastRow(r) {
@@ -127,15 +184,14 @@ window.WholesaleInsights = function ({ api, html, raw, svg, put, openSheet, clos
 
   /* ---------- by coffee and by customer ---------- */
   function byCoffee({ now, before, comparable }) {
-    const add = (rows) => { const m = new Map(); for (const w of rows) for (const [k, v] of Object.entries(w.byCoffee)) { const e = m.get(k) || [0, 0, 0, 0]; v.forEach((x, i) => (e[i] += x)); m.set(k, e); } return m; };
-    const cur = add(now), prev = add(before), total = [...cur.values()].reduce((t, v) => t + v[0], 0) || 1;
-    const title = (k) => data.coffees.find((c) => c.key === k)?.title || k;
+    const cur = coffeeTotals(now), prev = coffeeTotals(before), total = [...cur.values()].reduce((t, v) => t + v[0], 0) || 1;
+    const title = titleOf;
     const rows = [...cur.entries()].sort((a, b) => b[1][0] - a[1][0]);
     return html`<section class="ins-section glass" aria-labelledby="insCoffee"><header class="ins-head"><h3 id="insCoffee">By coffee</h3></header>
-      ${rows.length ? html`<div class="ins-table-wrap"><table class="ins-table"><thead><tr><th scope="col">Coffee</th><th scope="col" class="num">Weight</th><th scope="col" class="num">250 g bags</th><th scope="col" class="num">1 kg bags</th><th scope="col" class="num">Sales</th><th scope="col" class="num">Share</th>${comparable ? html`<th scope="col" class="num">Change</th>` : ""}</tr></thead>
+      ${rows.length ? html`<div class="ins-table-wrap"><table class="ins-table"><thead><tr><th scope="col">Coffee</th><th scope="col" class="num">Weight</th><th scope="col" class="num">250 g bags</th><th scope="col" class="num">1 kg bags</th><th scope="col" class="num">Sales</th><th scope="col" class="num">Share</th><th scope="col" class="ins-trend-h">Last 12 weeks</th>${comparable ? html`<th scope="col" class="num">Change</th>` : ""}</tr></thead>
         <tbody>${rows.map(([k, v]) => { const p = prev.get(k)?.[0] || 0, c = p ? Math.round(((v[0] - p) / p) * 100) : null;
           return html`<tr><th scope="row">${swatch(k, title(k))}${title(k)}</th><td class="num">${kg(v[0])}</td><td class="num">${n(v[2])}</td><td class="num">${n(v[3])}</td><td class="num">${money(v[1])}</td>
-            <td class="num"><span class="ins-share"><span style="width:${(v[0] / total) * 100}%"></span></span>${Math.round((v[0] / total) * 100)}%</td>${comparable ? html`<td class="num ins-change ${c > 0 ? "up" : c < 0 ? "down" : ""}">${c === null ? "new" : `${c > 0 ? "▲" : c < 0 ? "▼" : ""} ${Math.abs(c)}%`}</td>` : ""}</tr>`; })}</tbody></table></div>`
+            <td class="num"><span class="ins-share"><span style="width:${(v[0] / total) * 100}%;--w-coffee:${fillOf(k, title(k))}"></span></span>${Math.round((v[0] / total) * 100)}%</td><td class="ins-trend">${spark(k, 12)}</td>${comparable ? html`<td class="num ins-change ${c > 0 ? "up" : c < 0 ? "down" : ""}">${c === null ? "new" : `${c > 0 ? "▲" : c < 0 ? "▼" : ""} ${Math.abs(c)}%`}</td>` : ""}</tr>`; })}</tbody></table></div>`
         : html`<p class="hint">No coffee sold in this period.</p>`}</section>`;
   }
   const STATUS = { due: ["Due now", "warn"], overdue: ["Overdue", "bad"], quiet: ["Gone quiet", "bad"], ok: ["On track", "ok"], new: ["New", ""] };
@@ -159,7 +215,7 @@ window.WholesaleInsights = function ({ api, html, raw, svg, put, openSheet, clos
       ${s.unreviewedProducts ? html`<div class="ins-note group"><p><b>${s.unreviewedProducts} QuickBooks ${s.unreviewedProducts === 1 ? "product needs" : "products need"} checking.</b> The site guessed which coffee and bag size each one is; check them so the history counts the right coffee.</p><button class="btn sm soft" type="button" data-act="wh-ins-products">Check products</button></div>` : ""}
       ${empty ? html`<div class="w-empty"><span class="ic mut">${svg("pulse")}</span><h3>No sales to show yet</h3><p>Insights fill in as customer orders arrive. Import your QuickBooks sales history to see past years and a seasonal forecast straight away.</p><button class="btn" type="button" data-act="wh-ins-import">Import QuickBooks history</button></div>` : html`
       <div class="segwrap"><div class="seg" role="group" aria-label="Period">${PERIODS.map(([v, l]) => html`<button type="button" data-act="wh-ins-period" data-id="${v}" aria-pressed="${period === v}">${l}</button>`)}</div></div>
-      ${tiles(cut)}${roast()}${overTime(cut)}${forecast()}${byCoffee(cut)}${customers()}`}</section>`;
+      ${tiles(cut)}${movers(cut)}${roast()}${overTime(cut)}${forecast()}${byCoffee(cut)}${customers()}`}</section>`;
   }
 
   /* ---------- CSV ---------- */

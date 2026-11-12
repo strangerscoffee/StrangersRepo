@@ -93,6 +93,14 @@ test("import QuickBooks history, confirm products, then read the insights and pl
   await campo.locator(".ins-stock").fill("");
   await p.locator('[data-act="wh-ins-print-roast"]').click(); await p.waitForFunction(() => window.__printed);
   assert.match(await p.evaluate(() => window.__printed), /Roast plan[\s\S]*Colombia Campo Santo Washed[\s\S]*Total/);
+  // Coffee colours: the mix chart stacks each coffee in its packaging colour with a named legend, the movers name
+  // coffees, and each coffee has a 12-week line in the by-coffee table.
+  const legend = await p.locator(".ins-section", { hasText: "by coffee" }).first().locator(".ins-legend").innerText();
+  assert.match(legend, /Colombia Campo Santo Washed/);
+  const fills = await p.locator(".ins-seg").evaluateAll((els) => [...new Set(els.map((e) => getComputedStyle(e).backgroundImage + getComputedStyle(e).backgroundColor))]);
+  assert.ok(fills.length >= 2, "coffees are drawn in different colours");
+  assert.ok(await p.locator(".ins-move").count() >= 1);
+  assert.ok(await p.locator(".ins-trend .ins-spark").count() >= 2);
   // Period and measure switch without reloading the data; the chart has one bar per week up to 3 months.
   await p.locator('[data-act="wh-ins-period"][data-id="4"]').click();
   await p.locator('[data-act="wh-ins-period"][data-id="4"][aria-pressed="true"]').waitFor();
