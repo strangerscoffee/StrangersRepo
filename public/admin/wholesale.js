@@ -103,6 +103,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
       snapshot[section] = result.rows; snapshot.accounts = result.accounts;
       snapshot.nextCursor = result.cursor; snapshot.matchingCount = result.count;
     }
+    if (section === "customers") snapshot.invites = (await api("GET", "/api/admin/wholesale/customers/invites")).invites;
     if (current !== sequence) return html``;
     data = snapshot;
     const stats = data.stats || { openOrders: data.orders.filter((row) => row.preview === false && !["Dispatched", "Cancelled"].includes(row.status)).length, gramsToPrepare: data.orders.filter((row) => row.preview === false && ["New", "Preparing"].includes(row.status)).reduce((total, row) => total + row.grams, 0), totalCustomers: data.counts.customer || 0, visibleCoffees: data.products.filter((row) => row.active).length, totalCoffees: data.products.length, pendingAccounts: data.accounts.filter((row) => row.approvalStatus === "pending").length };
@@ -280,13 +281,122 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     scrim.addEventListener("click", (event) => { if (event.target !== scrim || !form.isConnected) return; event.preventDefault(); event.stopImmediatePropagation(); if (!form.dataset.whBusy) back(); }, { capture: true, signal: controller.signal });
     $("#sheetTitle").focus({ preventScroll: true }); $("#sheet").scrollTop = 0;
   }
+  // Invites to order online (src/wholesaleImport.ts): what each business's sign-in looks like before it has one.
+  const inviteText = (id) => { const i = data.invites?.[id]; return !i ? "No sign-in yet" : i.used ? "Invite accepted" : i.expired ? "Invite ran out" : `Invited ${date(i.invitedAt)}`; };
+  const invitable = (row) => !accountFor(row.id) && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(row.email || "");
+  const keyOf = (v) => String(v || "").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+  const OWN = /strangers|pottergate/i;
+  async function sendInvites(ids, onProgress) {
+    const sent = [], problems = {};
+    for (let i = 0; i < ids.length; i += 25) {
+      const r = await api("POST", "/api/admin/wholesale/customers/invites", { customerIds: ids.slice(i, i + 25) });
+      for (const [id, result] of Object.entries(r.results)) (result === "sent" ? sent : (problems[result] ||= [])).push(id);
+      onProgress?.(sent.length);
+      if (problems.limit || problems.off) break;
+    }
+    return { sent, problems, notTried: ids.length - sent.length - Object.values(problems).flat().length };
+  }
+  const inviteSummary = ({ sent, problems, notTried }) => [
+    `${sent.length} ${sent.length === 1 ? "invite" : "invites"} sent.`,
+    problems.limit || notTried ? `The rest weren’t sent: today’s email limit was reached. Send them tomorrow.` : "",
+    problems.off ? "Email isn’t set up on the site, so no invites could be sent." : "",
+    problems.no_email ? `${problems.no_email.length} had no email address.` : "",
+    problems.account ? `${problems.account.length} already had a sign-in.` : "",
+    problems.failed ? `${problems.failed.length} couldn’t be sent; see Activity.` : "",
+  ].filter(Boolean).join(" ");
+  // Import from QuickBooks: read the exported customer list, tick who to bring in (by default everyone who bought in
+  // the last 12 months, from the QuickBooks history in Insights, except Strangers' own businesses), then add or fill in.
+  function openCustomerImport(state = {}) {
+    const rows = state.rows || [], picked = state.picked || new Set();
+    const existing = new Map(data.customers.map((c) => [keyOf(c.quickbooksName || c.business), c]));
+    const recent = state.recent || new Map();
+    const stateOf = (r) => existing.get(keyOf(r.quickbooksName)) || existing.get(keyOf(r.business)) ? "Already set up: fills any gaps" : "New";
+    const lastOf = (r) => recent.get(keyOf(r.quickbooksName)) || recent.get(keyOf(r.business));
+    openSheet(html`<form class="w-sheet w-import-sheet" novalidate><div class="wp-sheet-head"><div><h2 id="sheetTitle" tabindex="-1">Import customers from QuickBooks</h2><p class="hint">Each ticked customer becomes a wholesale business with their contact details and delivery address. No logins are made and nothing is emailed: invite them afterwards.</p></div><button class="btn soft" type="button" data-sheet="close" aria-label="Close">${svg("x")}</button></div>
+      ${rows.length ? html`<p class="w-import-count"><b>${picked.size}</b> of ${rows.length} customers ticked · from ${state.fileName}</p>
+        <div class="row w-import-picks"><button class="btn sm soft" type="button" data-sheet="pick-recent">Bought in the last 12 months</button><button class="btn sm soft" type="button" data-sheet="pick-all">All</button><button class="btn sm soft" type="button" data-sheet="pick-none">None</button></div>
+        <div class="group w-import-list">${rows.map((r, i) => { const last = lastOf(r); return html`<label class="item w-import-row"><input type="checkbox" data-import-row="${i}" ${picked.has(i) ? raw("checked") : ""}><span class="tx"><b>${r.business}</b><span>${[r.contact, r.email || "No email", r.postcode].filter(Boolean).join(" · ")}</span><span>${last ? `Last bought ${new Date(last.last + "T12:00:00Z").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" })}` : "No sales in the last 12 months"}${OWN.test(r.business) ? " · Strangers business" : ""}</span></span><span class="end">${pill(stateOf(r))}</span></label>`; })}</div>
+        <p class="err" id="wErr" role="alert"></p><div class="row w-actions"><button class="btn soft" type="button" data-sheet="import-file">Choose another file</button><button class="btn" type="submit">Import ${picked.size} ${picked.size === 1 ? "customer" : "customers"}</button></div>`
+      : html`<ol class="ins-steps"><li>In QuickBooks, go to <b>Sales → Customers</b>.</li><li>Choose <b>Export to Excel</b> (the icon above the list). The Customer Contact List report works too.</li><li>Choose the file here.</li></ol>
+        <label class="btn ins-file">${svg("plus")}Choose the customer list<input type="file" id="wImportFile" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"></label><p class="err" id="wErr" role="alert">${state.error || ""}</p>`}
+      </form>`, async (action, element) => {
+      const form = element.closest("form") || element;
+      for (const box of form.querySelectorAll("[data-import-row]")) box.checked ? picked.add(Number(box.dataset.importRow)) : picked.delete(Number(box.dataset.importRow));
+      if (action === "import-file") return openCustomerImport({});
+      if (action === "pick-all") { rows.forEach((_, i) => picked.add(i)); return openCustomerImport({ ...state, picked }); }
+      if (action === "pick-none") { picked.clear(); return openCustomerImport({ ...state, picked }); }
+      if (action === "pick-recent") { picked.clear(); rows.forEach((r, i) => { if (lastOf(r) && !OWN.test(r.business)) picked.add(i); }); return openCustomerImport({ ...state, picked }); }
+      if (action !== "submit") return;
+      if (!picked.size) { form.querySelector("#wErr").textContent = "Tick at least one customer to import."; return; }
+      await saveForm(form, async () => {
+        const r = await api("POST", "/api/admin/wholesale/customers/import", { customers: [...picked].sort((a, b) => a - b).map((i) => rows[i]) });
+        closeSheet(); query = ""; await reload();
+        toast(`${r.created} ${r.created === 1 ? "business" : "businesses"} added${r.updated ? `, ${r.updated} filled in` : ""}${r.unchanged ? `, ${r.unchanged} already up to date` : ""}.`);
+      });
+    });
+    // Ticking and unticking keeps the count and the button up to date.
+    $("#sheet .w-import-sheet")?.addEventListener("change", (event) => {
+      const box = event.target.closest?.("[data-import-row]"); if (!box) return;
+      box.checked ? picked.add(Number(box.dataset.importRow)) : picked.delete(Number(box.dataset.importRow));
+      const count = $("#sheet .w-import-count b"), submit = $('#sheet button[type="submit"]');
+      if (count) count.textContent = picked.size; if (submit) submit.textContent = `Import ${picked.size} ${picked.size === 1 ? "customer" : "customers"}`;
+    });
+    const input = $("#wImportFile");
+    input?.addEventListener("change", async () => {
+      const file = input.files?.[0]; if (!file) return;
+      try {
+        const parsed = await window.SCCustomerImport.parseFile(file);
+        let recentMap = new Map();
+        try { const ins = await api("GET", "/api/admin/wholesale/insights"), cutoff = new Date(Date.now() - 365 * 864e5).toISOString().slice(0, 10); recentMap = new Map(ins.customers.filter((c) => c.last >= cutoff).map((c) => [c.key, c])); } catch {}
+        const pickedNow = new Set(); parsed.rows.forEach((r, i) => { if ((recentMap.get(keyOf(r.quickbooksName)) || recentMap.get(keyOf(r.business))) && !OWN.test(r.business)) pickedNow.add(i); });
+        if (!pickedNow.size && !recentMap.size) parsed.rows.forEach((r, i) => { if (!OWN.test(r.business)) pickedNow.add(i); });
+        openCustomerImport({ rows: parsed.rows, fileName: parsed.fileName, picked: pickedNow, recent: recentMap });
+      } catch (error) { openCustomerImport({ error: error.message }); }
+    });
+    $("#sheetTitle").focus({ preventScroll: true });
+  }
+  // Invite to order online: every business without a sign-in that has an email, not invited in the last 14 days
+  // ticked; sent 25 at a time, stopping at the day's email limit.
+  async function openInvites(state = {}) {
+    if (!state.rows) {
+      const all = await api("GET", "/api/admin/wholesale"), invites = (await api("GET", "/api/admin/wholesale/customers/invites")).invites;
+      const accounts = new Set(all.accounts.map((a) => a.customerId));
+      const rows = all.customers.filter((c) => !accounts.has(c.id)).sort((a, b) => a.business.localeCompare(b.business));
+      const ok = (c) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(c.email || "");
+      const fresh = (c) => invites[c.id] && !invites[c.id].expired && !invites[c.id].used;
+      state = { rows, invites, picked: new Set(rows.filter((c) => ok(c) && !fresh(c) && c.status === "Active").map((c) => c.id)), ok };
+    }
+    const { rows, invites, picked, ok } = state;
+    openSheet(html`<form class="w-sheet w-import-sheet" novalidate><div class="wp-sheet-head"><div><h2 id="sheetTitle" tabindex="-1">Invite to order online</h2><p class="hint">Each ticked business is emailed a link to set up their own username and password (it lasts 14 days and works once). Their account is ready to order as soon as they do.</p></div><button class="btn soft" type="button" data-sheet="close" aria-label="Close">${svg("x")}</button></div>
+      ${rows.length ? html`<p class="w-import-count"><b>${picked.size}</b> of ${rows.length} businesses without a sign-in ticked</p>
+      <div class="group w-import-list">${rows.map((c) => { const i = invites[c.id]; return html`<label class="item w-import-row ${ok(c) ? "" : "off"}"><input type="checkbox" data-invite="${c.id}" ${picked.has(c.id) ? raw("checked") : ""} ${ok(c) ? "" : raw("disabled")}><span class="tx"><b>${c.business}</b><span>${c.email || "No email address: add one to invite them"}</span></span><span class="end">${i ? pill(i.expired ? "Invite ran out" : i.used ? "Accepted" : `Invited ${date(i.invitedAt)}`) : ""}</span></label>`; })}</div>
+      <p class="hint">Emails share the site’s daily email limit; if it’s reached, the rest can be sent tomorrow.</p>
+      <p class="err" id="wErr" role="alert"></p><div class="row w-actions"><button class="btn soft" type="button" data-sheet="close">Cancel</button><button class="btn" type="submit">Send ${picked.size} ${picked.size === 1 ? "invite" : "invites"}</button></div>` : html`<p class="hint">Every business already has a sign-in.</p>`}</form>`, async (action, element) => {
+      const form = element.closest("form") || element;
+      for (const box of form.querySelectorAll("[data-invite]")) box.checked ? picked.add(box.dataset.invite) : picked.delete(box.dataset.invite);
+      if (action !== "submit") return;
+      if (!picked.size) { form.querySelector("#wErr").textContent = "Tick at least one business."; return; }
+      await saveForm(form, async () => {
+        const submit = form.querySelector('button[type="submit"]');
+        const result = await sendInvites([...picked], (n) => { if (submit) submit.textContent = `Sending… ${n} sent`; });
+        closeSheet(); await reload(); toast(inviteSummary(result));
+      });
+    });
+    $("#sheet .w-import-sheet")?.addEventListener("change", (event) => {
+      const box = event.target.closest?.("[data-invite]"); if (!box) return;
+      box.checked ? picked.add(box.dataset.invite) : picked.delete(box.dataset.invite);
+      const count = $("#sheet .w-import-count b"), submit = $('#sheet button[type="submit"]');
+      if (count) count.textContent = picked.size; if (submit) submit.textContent = `Send ${picked.size} ${picked.size === 1 ? "invite" : "invites"}`;
+    });
+    $("#sheetTitle").focus({ preventScroll: true });
+  }
   function customers() {
     const rows = [...data.customers].sort((a,b) => Number(accountFor(b.id)?.approvalStatus === "pending") - Number(accountFor(a.id)?.approvalStatus === "pending"));
     const filtered = !!query.trim() || approval !== "all";
-    const tools = html`<div class="toolbar">${search("Search wholesale customers", "Search business, contact or email")}<button class="btn" type="button" data-act="wh-customer">${svg("plus")}Add customer</button></div>
+    const tools = html`<div class="toolbar">${search("Search wholesale customers", "Search business, contact or email")}<button class="btn" type="button" data-act="wh-customer">${svg("plus")}Add customer</button><button class="btn soft" type="button" data-act="wh-import-customers">Import from QuickBooks</button><button class="btn soft" type="button" data-act="wh-invite-customers">${svg("mail")}Invite to order online</button></div>
       <div class="segwrap w-filters"><div class="seg" role="group" aria-label="Customer access">${[["all", "All customers"], ["pending", "Awaiting review"]].map(([id, label]) => html`<button type="button" data-act="wh-approval" data-id="${id}" aria-pressed="${approval === id}">${label}</button>`)}</div></div>`;
     return listing("wCustomersTitle", "Customers", resultCount(rows.length, data.matchingCount, "customer"), tools,
-      rows.length ? rows.map((row) => html`<button class="item w-customer" type="button" data-act="wh-customer" data-id="${row.id}"><span class="ic ${accountFor(row.id)?.approvalStatus === "pending" ? "warn" : "ok"}">${svg("people")}</span><span class="tx"><b>${row.business}</b><span>${[row.contact, row.email].filter(Boolean).join(" · ") || "No contact details"}</span><span>${accountFor(row.id)?.approvalStatus === "pending" ? "Awaiting account approval" : accountFor(row.id) ? accountFor(row.id).active ? "Sign-in enabled" : "Sign-in disabled" : "No sign-in yet"} · ${termsFor(row)}${row.noMinimumOrder ? " · No minimum order" : ""}${row.hidePrices ? " · Prices hidden" : ""}${row.autoTab ? " · On a tab" : ""}</span></span><span class="end">${pill(row.status)}<span class="chev">${svg("chev")}</span></span></button>`) : emptyState(filtered ? "search" : "people", filtered ? "No matching customers" : "No customers yet", filtered ? "Try another search or clear your filters to see all customers." : "Add a business, or review new registrations as they arrive.", filtered),
+      rows.length ? rows.map((row) => html`<button class="item w-customer" type="button" data-act="wh-customer" data-id="${row.id}"><span class="ic ${accountFor(row.id)?.approvalStatus === "pending" ? "warn" : "ok"}">${svg("people")}</span><span class="tx"><b>${row.business}</b><span>${[row.contact, row.email].filter(Boolean).join(" · ") || "No contact details"}</span><span>${accountFor(row.id)?.approvalStatus === "pending" ? "Awaiting account approval" : accountFor(row.id) ? accountFor(row.id).active ? "Sign-in enabled" : "Sign-in disabled" : inviteText(row.id)} · ${termsFor(row)}${row.noMinimumOrder ? " · No minimum order" : ""}${row.hidePrices ? " · Prices hidden" : ""}${row.autoTab ? " · On a tab" : ""}</span></span><span class="end">${pill(row.status)}<span class="chev">${svg("chev")}</span></span></button>`) : emptyState(filtered ? "search" : "people", filtered ? "No matching customers" : "No customers yet", filtered ? "Try another search or clear your filters to see all customers." : "Add a business, or review new registrations as they arrive.", filtered),
       html`${more("customers")}<p class="hint">Customers can access ordering after an admin approves their registration.</p>`);
   }
   function catalogue() {
@@ -505,7 +615,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
       <div class="checks w-minimum-check"><label><input id="wNoMinimum" type="checkbox" ${state.noMinimumOrder ? raw("checked") : ""}>No minimum order (invoice as they go)</label></div><p class="hint">Only Strangers sees this setting. Without it, orders must be at least ${minimumKg()} of coffee. The customer just won’t see a minimum.</p>
       <div class="checks w-minimum-check"><label><input id="wHidePrices" type="checkbox" ${state.hidePrices ? raw("checked") : ""}>Hide prices (our own shops)</label></div><p class="hint">Ordering shows no prices or totals to this business: bags and weights only. Orders still record their prices for Admin and invoices.</p>
       <div class="checks w-minimum-check"><label><input id="wAutoTab" type="checkbox" ${state.autoTab ? raw("checked") : ""}>Put orders on a tab</label></div><p class="hint">Each new order goes on this business’s tab automatically. Tabs are cleared on the staff Wholesale orders page (Tabs) when they reach 6 kg, or sooner.</p></section>
-      ${id ? html`<section class="w-customer-card" aria-labelledby="wSigninTitle"><h3 id="wSigninTitle">Wholesale sign-in</h3><div class="kv"><span>Username</span><span>${accountFor(id)?.username || "Not created"}</span></div><button class="btn soft" type="button" data-sheet="account">${accountFor(id)?.approvalStatus === "pending" ? "Save and review sign-in" : accountFor(id) ? "Save and manage sign-in" : "Save and create sign-in"}</button></section>` : ""}
+      ${id ? html`<section class="w-customer-card" aria-labelledby="wSigninTitle"><h3 id="wSigninTitle">Wholesale sign-in</h3><div class="kv"><span>Username</span><span>${accountFor(id)?.username || "Not created"}</span></div><button class="btn soft" type="button" data-sheet="account">${accountFor(id)?.approvalStatus === "pending" ? "Save and review sign-in" : accountFor(id) ? "Save and manage sign-in" : "Save and create sign-in"}</button>${accountFor(id) ? "" : html`<button class="btn soft" type="button" data-sheet="invite">${svg("mail")}${data.invites?.[id] && !data.invites[id].used ? "Save and send a new invite" : "Save and invite to order online"}</button><p class="hint">${inviteText(id)}. The invite emails a link to choose their own username and password.</p>`}</section>` : ""}
       <section class="w-customer-card" aria-labelledby="wInternalNoteTitle"><h3 id="wInternalNoteTitle">Internal notes</h3>${field("Internal account note", html`<textarea id="wNote" maxlength="1000">${state.note || ""}</textarea>`)}${note}</section></div></div>
       <footer id="wCustomerFooter" class="w-customer-footer"><p class="err" id="wErr" role="alert"></p><div class="row w-actions"><button class="btn soft" type="button" data-sheet="close">Cancel</button><button class="btn" type="submit">Save customer</button></div></footer></form>`, async (action, element) => {
       if (action === "location-add" || action === "location-edit") {
@@ -521,14 +631,16 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
         editCustomerChoice(id, key, draft, row);
         return;
       }
-      if (!["submit", "account"].includes(action)) return;
+      if (!["submit", "account", "invite"].includes(action)) return;
       const draft = capture();
       await saveForm(form, async () => {
         const { scrollTop, focusLocationIndex, focusChoiceId, ...body } = draft;
         await api(id ? "PUT" : "POST", "/api/admin/wholesale/customers" + (id ? `/${id}` : ""), { ...body, ifVersion: row.version });
         const stillOpen = form.isConnected;
         if (stillOpen) closeSheet(); await reload();
-        if (action === "account" && stillOpen) editAccount(id); else toast("Customer saved.");
+        if (action === "account" && stillOpen) editAccount(id);
+        else if (action === "invite") { const result = await sendInvites([id]); await reload(); toast(result.sent.length ? `Invite sent to ${body.email}.` : inviteSummary(result)); }
+        else toast("Customer saved.");
       });
     });
     form = $("#wCustomerForm");
@@ -734,6 +846,8 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
       if (name === "wh-pick" && id) { picked.has(id) ? picked.delete(id) : picked.add(id); refreshPicks(); return; }
       if (name === "wh-pick-all") { for (const row of data.orders) picked.add(row.id); refreshPicks(); return; }
       if (name === "wh-print-picked" && picked.size) { await printUI.printOrders({ ids: [...picked], label: `${picked.size} selected ${picked.size === 1 ? "order" : "orders"}` }); return; }
+      if (name === "wh-import-customers") { openCustomerImport(); return; }
+      if (name === "wh-invite-customers") { await openInvites(); return; }
       if (name === "wh-tab" && selectSection(id)) await reload();
       if (name === "wh-status" && ["all", ...data.statuses].includes(id)) { clearTimeout(timer); status = id; orderPages = 1; await reload(); }
       if (name === "wh-approval" && ["all", "pending"].includes(id)) { clearTimeout(timer); approval = id; customerPages = 1; await reload(); }

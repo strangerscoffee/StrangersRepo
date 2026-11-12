@@ -3,6 +3,7 @@ import { checkPassword, checkUsername, hashPassword, newId, tempPassword, type U
 import { audit } from "./audit";
 import { ApiError, type Env, invalid, json, readJson, safeEqual } from "./http";
 import { locationDefaults, type CustomerLocation } from "./wholesaleCustomers";
+import { handleInvite } from "./wholesaleImport";
 
 export interface Customer {
   business: string; contact: string; email: string; status: "Active" | "On hold"; note: string;
@@ -16,6 +17,8 @@ export interface Customer {
   hidePrices?: boolean;
   /** Admin-only: new orders go on this business's tab automatically (src/wholesaleTabs.ts). Never in publicCustomer. */
   autoTab?: boolean;
+  /** Admin-only: the customer's name in QuickBooks, set when imported from QuickBooks (src/wholesaleImport.ts). */
+  quickbooksName?: string;
 }
 export const PAYMENT_TERMS = [
   { id: "to-agree", label: "To be agreed" },
@@ -130,6 +133,8 @@ async function register(req: Request, env: Env): Promise<Response> {
 
 export async function handleWholesaleAuth(req: Request, env: Env, route: string): Promise<Response> {
   if (route === "register" && req.method === "POST") return register(req, env);
+  // An invite from Strangers: see what it's for, then choose a username and password (src/wholesaleImport.ts).
+  if (route === "invite") return handleInvite(req, env, async (accountId) => newSession(env, (await env.DB.prepare("SELECT * FROM wholesale_accounts WHERE id = ?").bind(accountId).first<Account>())!));
   if (route === "me" && req.method === "GET") return json({ user: await wholesaleSession(req, env) });
   if (route === "logout" && req.method === "POST") {
     const token = tokenFrom(req);

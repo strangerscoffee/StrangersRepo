@@ -1,6 +1,7 @@
 // The database schema. The Worker applies it itself (once per Worker instance) so a fresh deploy needs no
 // migration step: first the tables (every statement idempotent), then any migrations not yet recorded in
 // schema_migrations (MIGRATIONS below). To change the schema, add a migration.
+import { migrateInvites } from "./wholesaleImport";
 import { migrateInsights } from "./insights";
 import { Env } from "./http";
 import { migrateQuickBooks } from "./quickbooks/schema";
@@ -277,6 +278,7 @@ const MIGRATIONS: Migration[] = [
       env.DB.prepare("CREATE INDEX IF NOT EXISTS wholesale_tabs_cleared ON wholesale_tabs (cleared_at)"),
     ]);
   } },
+  { id: 23, name: "Wholesale invites", run: migrateInvites },
 ];
 
 async function migrate(env: Env): Promise<void> {

@@ -4,6 +4,23 @@
   const home = local ? '/wholesale-preview/' : '/';
   let changing = false;
   let registering = false;
+  // An invite from Strangers (…/signin?invite=…): choose a username and password to set up the business's account.
+  let invite = new URLSearchParams(location.search).get('invite');
+  if (invite) {
+    history.replaceState(null, '', location.pathname);
+    const showError = (message) => { $('#login-error').textContent = message; $('#login-error').hidden = false; };
+    fetch('/api/wholesale/auth/invite?token=' + encodeURIComponent(invite), { cache: 'no-store' }).then(async (response) => {
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) { invite = null; showError(result.message || 'This invite link could not be opened. Ask Strangers for a new one.'); return; }
+      $('#login-title').textContent = 'Set up your account.';
+      $('#login-intro').textContent = `Set up your account to order coffee for ${result.business}. Choose a username and password you'll use to sign in.`;
+      $('#login-submit').textContent = 'Set up account';
+      $('#password').autocomplete = 'new-password';
+      $('#invite-confirm').hidden = false; $('#invite-password2').required = true;
+      $('#registration-toggle').hidden = true;
+      $('#username').focus();
+    }).catch(() => { invite = null; showError('Check your connection, then open the invite link again.'); });
+  }
   $('#registration-toggle').addEventListener('click', () => {
     registering = $('#registration-complete').hidden ? !registering : false;
     changing = false;
@@ -24,6 +41,20 @@
   $('#wholesale-login').addEventListener('submit', async (event) => {
     event.preventDefault();
     $('#login-error').hidden = true;
+    if (invite) {
+      if ($('#password').value !== $('#invite-password2').value) { $('#login-error').textContent = 'The passwords do not match.'; $('#login-error').hidden = false; return; }
+      $('#login-submit').disabled = true;
+      try {
+        const response = await fetch('/api/wholesale/auth/invite', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: invite, username: $('#username').value, password: $('#password').value }) });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.message || 'Could not set up your account. Try again.');
+        location.replace(home);
+      } catch (error) {
+        $('#login-error').textContent = error.message === 'Failed to fetch' ? 'Check your connection and try again.' : error.message;
+        $('#login-error').hidden = false;
+      } finally { $('#login-submit').disabled = false; }
+      return;
+    }
     if (changing && $('#new-password').value !== $('#confirm-password').value) {
       $('#login-error').textContent = 'The new passwords do not match.';
       $('#login-error').hidden = false;
