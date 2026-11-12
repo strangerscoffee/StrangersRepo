@@ -38,7 +38,7 @@ test("wholesale beta: indexed admin pages expose older orders/customers and all-
   assert.equal(bootstrap.orders.length, 200); assert.equal(bootstrap.customers.length, 200);
   assert.equal(bootstrap.stats.openOrders, 205); assert.equal(bootstrap.stats.gramsToPrepare, 205000);
   assert.equal(bootstrap.stats.totalCustomers, 205); assert.equal(bootstrap.stats.pendingAccounts, 1);
-  assert.equal(bootstrap.stats.visibleCoffees, 10); assert.equal(bootstrap.stats.totalCoffees, 10);
+  assert.equal(bootstrap.stats.visibleCoffees, 14); assert.equal(bootstrap.stats.totalCoffees, 14);
   assert.ok(bootstrap.orderCursor); assert.ok(bootstrap.customerCursor);
   const orders = (await call("GET", "/api/admin/wholesale/orders?cursor=" + encodeURIComponent(bootstrap.orderCursor))).body;
   assert.equal(orders.count, 207); assert.equal(orders.orders.length, 7); assert.equal(orders.nextCursor, null);
