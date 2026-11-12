@@ -258,7 +258,7 @@ const COLLECTION_LABEL: Record<string, string> = {
   days: "the diary", weeks: "the end-of-week checks", extras: "an extra check", cleaning: "a cleaning job", proveit: "a Prove it check",
   allergens: "an allergen item", allergenDocs: "an allergen PDF", suppliers: "a supplier", contacts: "a contact", staff: "a training record",
   reviews: "the 4-weekly review", plans: "a HACCP or risk document", onboarding: "an onboarding document", inspections: "an EHO inspection",
-  deliveries: "a delivery", maintenance: "a maintenance job", settings: "the Setup",
+  deliveries: "a delivery", maintenance: "a maintenance job", fire: "a fire safety check", accidents: "an accident book entry", settings: "the Setup",
 };
 const who = (by: string | null, names: Map<string, string>) => !by ? "Someone" : by.startsWith("web:") ? by.slice(4) : names.get(by) || "Someone";
 
@@ -283,7 +283,7 @@ export async function activity(env: Env, kind: string) {
     let what = d.path === "config/shared" ? "the shared setup" : COLLECTION_LABEL[col] || col;
     if (col === "days" && isDay(d.doc_id)) what = `the diary for ${shortDate(d.doc_id)}`;
     else if (col === "weeks" && isDay(d.doc_id)) what = `the end-of-week checks for the week of ${shortDate(d.doc_id)}`;
-    else if (title && col !== "staff" && col !== "settings") what += ` (${title.slice(0, 60)})`;
+    else if (title && col !== "staff" && col !== "accidents" && col !== "settings") what += ` (${title.slice(0, 60)})`;
     items.push({ kind: "diary", at: d.updated_at, text: `${who(d.updated_by, names)} ${d.deleted ? "removed" : "updated"} ${what}`, where: d.path.startsWith("config/") ? "Kitchen Diary · all sites" : `Kitchen Diary · ${site.name}` });
   }
   for (const w of weeks?.results || []) items.push({ kind: "rota", at: w.published_at, text: `${w.name || "Someone"} published the rota for the week of ${shortDate(w.week)}`, where: "Rota" });

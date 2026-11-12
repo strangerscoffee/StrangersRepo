@@ -16,6 +16,10 @@ const SHAPES: Record<string, Shape> = {
   extras: { name: "string", how: "string", freq: "string", who: "string", createdAt: "number", lastAt: "number", lastBy: "string", lastSet: "boolean", log: "array", sites: "array" },
   cleaning: { name: "string", how: "string", freq: "string", who: "string", createdAt: "number", lastAt: "number", lastBy: "string", lastSet: "boolean", log: "array", sites: "array" },
   deliveries: { date: "date", at: "number", supplier: "string", items: "string", chilled: "numberish", frozen: "numberish", noTemp: "boolean", outcome: "string", note: "string", by: "string" },
+  // Fire safety log: jobs on a schedule, like cleaning (records.js TASKS.fire).
+  fire: { name: "string", how: "string", freq: "string", who: "string", createdAt: "number", lastAt: "number", lastBy: "string", lastSet: "boolean", log: "array", sites: "array" },
+  // Accident book (private: admins and whoever recorded it, src/employeePrivacy.ts).
+  accidents: { date: "date", time: "string", place: "string", person: "string", personType: "string", contact: "string", what: "string", injury: "string", firstAid: "string", hospital: "string", timeOff: "string", riddor: "string", riddorDate: "date", riddorRef: "string", witnesses: "string", action: "string", by: "string", byName: "string", at: "number", ownerUserId: "string" },
   maintenance: { title: "string", area: "string", details: "string", priority: "string", status: "string", reportedBy: "string", reportedAt: "number", doneAt: "number", at: "number", log: "array" },
   proveit: { date: "date", method: "string", food: "string", reading: "numberish", unit: "string", pass: "boolean", by: "string", at: "number" },
   allergens: { name: "string", contains: "array", notes: "string", by: "string", at: "number", sites: "array" },

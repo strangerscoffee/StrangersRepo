@@ -1,12 +1,35 @@
-// Records: extra checks and cleaning (task lists), prove it, the temperature log and deliveries.
+// Records: extra checks, cleaning and the fire safety log (task lists), prove it, the temperature log and deliveries.
 
-/* ---------- task lists (extra checks & cleaning) ---------- */
+/* ---------- task lists (extra checks, cleaning, fire safety) ---------- */
 const TASKS={
   extras:{list:"#xList",form:"#xForm",title:"#xFormTitle",panel:"#xFormPanel",noun:"extra check",
     fields:[["name","Check","text","e.g. Probe thermometer accuracy check"],["how","How to do it","text","e.g. Iced water and boiling water test; record in Prove it"],["freq","How often","freq"],["who","Who does it","text","e.g. Duty manager"]]},
   cleaning:{list:"#kList",form:"#kForm",title:"#kFormTitle",panel:"#kFormPanel",noun:"cleaning task",
-    fields:[["name","Item or area","text","e.g. Coffee machine group heads"],["how","How to clean (method & product)","text","e.g. Backflush with cleaning tablet, rinse"],["freq","How often","freq"],["who","Who does it","text","e.g. Closing barista"]]}};
-const editing={extras:null,cleaning:null};
+    fields:[["name","Item or area","text","e.g. Coffee machine group heads"],["how","How to clean (method & product)","text","e.g. Backflush with cleaning tablet, rinse"],["freq","How often","freq"],["who","Who does it","text","e.g. Closing barista"]]},
+  fire:{list:"#fList",form:"#fForm",title:"#fFormTitle",panel:"#fFormPanel",noun:"fire safety check",
+    fields:[["name","Check","text","e.g. Fire alarm test"],["how","How to do it","text","e.g. Use a different call point each week"],["freq","How often","freq"],["who","Who does it","text","e.g. Duty manager"]]}};
+const editing={extras:null,cleaning:null,fire:null};
+/* The usual fire safety checks for a small UK food business (the Regulatory Reform (Fire Safety) Order 2005 asks the
+   responsible person to keep fire equipment maintained and tested; the timings follow the British Standards fire
+   services work to). Added once from the empty list; every site edits, removes or adds its own. */
+const FIRE_DEFAULTS=[
+  ["Fire alarm test","Set off a different call point each week (key or test tool); check the alarm is heard everywhere, then reset. Note which call point.","weekly","Duty manager"],
+  ["Escape routes and fire doors","Fire exits unlocked and clear inside and out, exit signs in place, fire doors close fully and aren't wedged open.","weekly","Duty manager"],
+  ["Emergency lighting test","Short test: switch the lights to battery (test key) and check every emergency light comes on; report any that don't.","monthly","Duty manager"],
+  ["Fire extinguishers and fire blanket","Each one in its place and easy to reach, pin and seal intact, gauge in the green, no damage; blanket in place.","monthly","Duty manager"],
+  ["Fire drill","Evacuate everyone to the assembly point; note how long it took, who took part and anything to improve.","six-monthly","Manager"],
+  ["Fire alarm service","Serviced by a competent fire alarm engineer. Keep their certificate.","six-monthly","Manager (engineer)"],
+  ["Emergency lighting full test","Full-duration test and service by a competent person. Keep their certificate.","yearly","Manager (engineer)"],
+  ["Fire extinguisher service","Serviced by a competent engineer, who tags each one. Keep their certificate.","yearly","Manager (engineer)"],
+  ["Fire risk assessment review","Review the written fire risk assessment, and sooner after any change to the building, layout or staff.","yearly","Manager"],
+  ["Staff fire training","Everyone knows the alarm, the escape routes, the assembly point and how to use the extinguishers; new staff on their first day.","yearly","Manager"]];
+async function addFireDefaults(btn){
+  if(ro())return;btn.disabled=true;
+  const have=new Set(S.fire.map(t=>normT(t.name))),now=Date.now();let n=0;
+  try{for(const[name,how,freq,who]of FIRE_DEFAULTS)if(!have.has(normT(name))){await C("fire").add({name,how,freq,who,createdAt:now,linkId:newLinkId(),sites:[S.site]});n++}}
+  catch(e){fail(e)}finally{btn.disabled=false}
+  if(n)toast(`Added ${n} fire safety checks. Edit or remove any that don't apply here.`);
+}
 function buildTaskForm(kind){
   const cfg=TASKS[kind],box=$(cfg.form);box.replaceChildren();
   const f=el("div",{class:"fields"});
@@ -43,6 +66,8 @@ function renderTasks(kind){
   const R=ro(),ids=[];let over=0;
   const items=[...S[kind]].map(t=>({t,st:taskState(t),due:dueDate(t)}));
   if(!items.length)box.append(el("div",{class:"empty glass",text:`Nothing listed yet.${R?"":` Tap ${FORMS[kind].add} to add your first ${cfg.noun}.`}`}));
+  if(kind==="fire"&&!R&&!items.length)
+    box.append(el("div",{class:"row"},el("button",{class:"btn",type:"button",onclick:e=>addFireDefaults(e.currentTarget)},"Add the usual fire safety checks")));
   const groups=[["Overdue",x=>x.st.overdue],["Due today",x=>!x.st.overdue&&x.st.cls==="warn"&&FREQ[x.t.freq]>0],["As needed",x=>!FREQ[x.t.freq]],["Coming up",()=>true]];
   const left=new Set(items);
   for(const[label,test]of groups){

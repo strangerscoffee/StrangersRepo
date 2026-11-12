@@ -248,6 +248,45 @@
     <div class="stack tight" id="mList"></div>
   </div>
 
+  <!-- FIRE SAFETY LOG -->
+  <div data-panel="fire" class="stack" hidden>
+    <section class="panel formpanel" id="fFormPanel" hidden>
+      <h2 id="fFormTitle">Add a fire safety check</h2>
+      <div id="fForm"></div>
+    </section>
+    <p class="note intro">The fire safety checks for this site and when each is due. The law (the Regulatory Reform (Fire Safety) Order 2005) asks us to keep fire equipment tested and maintained and to keep a record. Tap Done when a check is finished, with a note for anything found (the call point used, a light that failed, a drill's time). Add, edit or remove checks to suit this site, and keep engineers' certificates.</p>
+    <div class="stack tight" id="fList"></div>
+  </div>
+
+  <!-- ACCIDENT BOOK -->
+  <div data-panel="accidents" class="stack" hidden>
+    <section class="panel formpanel" id="aFormPanel" hidden>
+      <h2 id="aFormTitle">Record an accident</h2>
+      <div class="fields">
+        <div class="field"><label class="label" for="aDate">Date</label><input type="date" id="aDate"></div>
+        <div class="field"><label class="label" for="aTime">Time</label><input type="time" id="aTime"></div>
+        <div class="field wide"><label class="label" for="aPlace">Where it happened</label><input type="text" id="aPlace" placeholder="e.g. Basement kitchen stairs"></div>
+        <div class="field"><label class="label" for="aPerson">Who was hurt</label><input type="text" id="aPerson" placeholder="Full name" autocomplete="off"></div>
+        <div class="field"><label class="label" for="aType">They are</label><select id="aType"><option>Employee</option><option>Customer</option><option>Contractor</option><option>Other</option></select></div>
+        <div class="field wide"><label class="label" for="aContact">Their contact details (optional)</label><input type="text" id="aContact" placeholder="Phone or address, for a customer or contractor" autocomplete="off"></div>
+        <div class="field wide"><label class="label" for="aWhat">What happened</label><textarea id="aWhat" placeholder="What they were doing and how it happened"></textarea></div>
+        <div class="field wide"><label class="label" for="aInjury">Injury</label><textarea id="aInjury" placeholder="e.g. Burn to the back of the right hand; or none (a near miss)"></textarea></div>
+        <div class="field wide"><label class="label" for="aFirstAid">First aid given, and by whom</label><input type="text" id="aFirstAid" placeholder="e.g. Cooled under running water for 20 minutes, covered (Sam)"></div>
+        <div class="field"><label class="label" for="aHospital">Hospital</label><select id="aHospital"><option>No</option><option>Went to hospital</option><option>Ambulance called</option></select></div>
+        <div class="field"><label class="label" for="aTimeOff">Time off work (employees)</label><select id="aTimeOff"><option>None</option><option>Up to 3 days</option><option>More than 3 days</option><option>More than 7 days</option><option>Not known yet</option></select></div>
+        <div class="field wide"><label class="label" for="aWitnesses">Witnesses (optional)</label><input type="text" id="aWitnesses" placeholder="Names"></div>
+        <div class="field wide"><label class="label" for="aAction">Action taken to stop it happening again</label><textarea id="aAction" placeholder="e.g. Anti-slip strip fitted to the bottom step"></textarea></div>
+        <div class="field"><label class="label" for="aRiddor">Reportable to the HSE (RIDDOR)</label><select id="aRiddor"><option>Not reportable</option><option>Not sure yet</option><option>Reported to the HSE</option></select></div>
+        <div class="field" id="aRiddorDateF"><label class="label" for="aRiddorDate">Date reported</label><input type="date" id="aRiddorDate"></div>
+        <div class="field wide" id="aRiddorRefF"><label class="label" for="aRiddorRef">HSE reference</label><input type="text" id="aRiddorRef" placeholder="From the HSE's confirmation"></div>
+      </div>
+      <p class="note">Report to the HSE (hse.gov.uk/riddor) when, because of work: someone dies; a worker has a specified injury (such as a broken bone other than a finger, thumb or toe, an amputation, or a serious burn); a worker is off or can't do their normal work for more than 7 days (report within 15 days); or a customer or other member of the public is taken from here straight to hospital for treatment.</p>
+      <div class="row"><button class="btn" id="aSave">Save entry</button><button class="btn ghost danger" id="aDelete" hidden>Remove entry</button><span class="by" id="aMsg"></span></div>
+    </section>
+    <p class="note intro">Write up every injury at work, to staff, customers or anyone else, and near misses too, as soon as you can. Entries are private (they hold personal details): only admins and the person who recorded an entry can see it. Entries are kept for at least 3 years, so only an admin can remove one.</p>
+    <div class="stack tight" id="aList"></div>
+  </div>
+
   <div data-panel="prove" class="stack" hidden>
     <section class="panel" id="pFormPanel">
       <h2>Record a check</h2>

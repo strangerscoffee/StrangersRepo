@@ -17,7 +17,7 @@ The Roastery's records were recorded before sites existed, so they sit at the to
 
 Under each site prefix:
 
-`settings` · `days` · `weeks` · `extras` · `cleaning` · `proveit` · `allergens` · `allergenDocs` · `suppliers` · `contacts` · `staff` · `reviews` · `plans` · `onboarding` · `inspections` · `deliveries` · `maintenance`
+`settings` · `days` · `weeks` · `extras` · `cleaning` · `proveit` · `allergens` · `allergenDocs` · `suppliers` · `contacts` · `staff` · `reviews` · `plans` · `onboarding` · `inspections` · `deliveries` · `maintenance` · `fire` · `accidents`
 
 Plus two single documents: `config/shared` (the shared setup, below) and `config/people` (read-only: names for people who recorded in the earlier Claude version of the diary, see below).
 
@@ -86,6 +86,10 @@ The page writes these with nested `update`s such as `{temps:{u1:{am:{v:3.2,by,at
 
 **`maintenance/<id>`**: `title, area, details, priority ("urgent"|"soon"|"later"), status ("open"|"done"), assignee? ("web:<name>" or null), assigneeName?, reportedBy, reportedAt, at, doneBy?, doneAt?, fixNote?, log:[{at,by,what:"Done"|"Reopened"|"Assigned to <name>"|"Unassigned",note}]` (newest first, max 30). The people to assign come from `user.team()` (everyone with an account). Staff can write. Maintenance → All sites reads every site's collection.
 
+**`fire/<id>`** (More → Fire safety log): the same shape as `cleaning` (`name, how, freq, who, createdAt, lastAt?, lastBy?, lastSet?, log, linkId?, sites?`), one document per check: the weekly alarm test, monthly emergency lighting and extinguisher checks, drills, engineers' services and so on. "Add the usual fire safety checks" fills an empty list from `FIRE_DEFAULTS` (`public/diary/records.js`); each site then edits its own. Staff can write. Overdue checks show on Today, in the site summary (`src/summary.ts`, without logs) and on the section's badge.
+
+**`accidents/<id>`** (More → Accident book, private): `date, time ("HH:MM"), place, person, personType ("Employee"|"Customer"|"Contractor"|"Other"), contact, what, injury, firstAid, hospital ("No"|"Went to hospital"|"Ambulance called"), timeOff ("None"|"Up to 3 days"|"More than 3 days"|"More than 7 days"|"Not known yet"), witnesses, action, riddor ("Not reportable"|"Not sure yet"|"Reported to the HSE"), riddorDate?, riddorRef?, by, byName, at, ownerUserId`. A protected collection owned like `staff`: `ownerUserId` is the stable account that recorded it (set by the server for nonadmins), and only that person and admins can read or change it; only admins delete one (entries are kept at least 3 years). Saved online only (`claude-shim.js`). The admin activity feed names the section, never the person or injury.
+
 **`proveit/<id>`**: `date, method, food, reading, unit, pass, action, by, at`
 
 **`allergens/<id>`**: `name, source, contains:[allergen names], notes, kind? ("drink"|"food"), by, at, importedFrom?`. When a site separates allergens into Drinks and Food (settings `allergenSections`; on by default at the Cafe), `kind` puts the item in a section; items without one are drinks.
@@ -120,7 +124,7 @@ Training topics (`<topic>`): `hygiene`, `cross`, `cleaning`, `chilling`, `cookin
 
 Only admins or the individual employee may access employee-private data. The manager role grants business management, never access to another employee’s hours, contracts, availability, leave, reasons, private contact/training/onboarding or request details. Full rota planning, assignments, actual-hour amendments and employee exports are admin-only.
 
-Protected collections are `staff`, `contacts` and `onboarding` under every site prefix. A nonadmin read requires server-verified metadata: `employee_privacy_version === seq`. Verified training additionally requires `data.ownerUserId === user.id`. Contacts/onboarding allow either `visibility: "shared-business"` or `visibility: "employee"` with matching `ownerUserId`. Unclassified or unverified legacy rows remain admin-only, even if their old JSON contains plausible ownership/classification fields. Admin responses clear unverified claims so the editor requests an explicit review/link; names never establish ownership.
+Protected collections are `staff`, `contacts`, `onboarding` and `accidents` under every site prefix. A nonadmin read requires server-verified metadata: `employee_privacy_version === seq`. Verified training and accident book entries additionally require `data.ownerUserId === user.id` (`OWNED` in `src/employeePrivacy.ts`: no shared-business classification; nonadmins create them as their own and never delete them). Contacts/onboarding allow either `visibility: "shared-business"` or `visibility: "employee"` with matching `ownerUserId`. Unclassified or unverified legacy rows remain admin-only, even if their old JSON contains plausible ownership/classification fields. Admin responses clear unverified claims so the editor requests an explicit review/link; names never establish ownership.
 
 Only validated writes stamp `employee_privacy_version` to the new row version. Filtering occurs before query ordering/limits and applies to get, query, poll, delta requests and conflict responses. Nonadmin protected polls return complete authorized snapshots, including when the change counter is unchanged, so reassignment removes stale rows. A denied direct read is a nonrevealing missing document; unauthorized writes cannot disclose a current record in a conflict.
 

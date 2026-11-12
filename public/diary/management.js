@@ -958,3 +958,57 @@ function renderReview(){
   }
   resolveNames(S.reviews.map(r=>r.by));
 }
+
+/* ---------- accident book ----------
+   Injuries (and near misses) at this site, to staff, customers or anyone else. Private records: the Worker shows an
+   entry only to admins and to whoever recorded it (ownerUserId, src/employeePrivacy.ts), saves them online only,
+   and only admins remove one (kept at least 3 years). Fields follow the HSE accident book. */
+const ACC_FIELDS=[["date","aDate"],["time","aTime"],["place","aPlace"],["person","aPerson"],["personType","aType"],["contact","aContact"],["what","aWhat"],["injury","aInjury"],["firstAid","aFirstAid"],["hospital","aHospital"],["timeOff","aTimeOff"],["witnesses","aWitnesses"],["action","aAction"],["riddor","aRiddor"],["riddorDate","aRiddorDate"],["riddorRef","aRiddorRef"]];
+const ACC_DEFAULTS={personType:"Employee",hospital:"No",timeOff:"None",riddor:"Not reportable"};
+let editAcc=null;
+function accidentForm(){
+  $("#aSave").addEventListener("click",saveAccident);
+  $("#aRiddor").addEventListener("change",accRiddorFields);
+  armDelete($("#aDelete"),"Remove entry",async()=>{if(await save(()=>D("accidents",editAcc).delete())){editAccident(null);toast("Entry removed")}});
+}
+function accRiddorFields(){const on=$("#aRiddor").value==="Reported to the HSE";$("#aRiddorDateF").hidden=!on;$("#aRiddorRefF").hidden=!on}
+function editAccident(a){
+  editAcc=a?a.id:null;beginEdit("accidents",editAcc);
+  $("#aFormTitle").textContent=a?"Edit accident entry":"Record an accident";
+  for(const[k,id]of ACC_FIELDS)$("#"+id).value=a?(a[k]||ACC_DEFAULTS[k]||""):(k==="date"?today():ACC_DEFAULTS[k]||"");
+  if(!a)$("#aTime").value=new Date().toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit",timeZone:"Europe/London"});
+  accRiddorFields();
+  $("#aDelete").hidden=!a||S.role!=="admin";$("#aMsg").textContent="";
+  setForm("accidents",!!a);
+}
+async function saveAccident(){
+  const v=Object.fromEntries(ACC_FIELDS.map(([k,id])=>[k,$("#"+id).value.trim()]));
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(v.date)){$("#aMsg").textContent="Choose the date it happened.";return}
+  if(v.date>today()){$("#aMsg").textContent="That date is in the future.";return}
+  if(!v.person||!v.what){$("#aMsg").textContent="Say who was hurt and what happened.";return}
+  if(v.riddor!=="Reported to the HSE"){v.riddorDate=null;v.riddorRef=""}else if(!v.riddorDate)v.riddorDate=null;
+  v.at=Date.now();
+  const ok=editAcc?await save(()=>saveEdited("accidents",D("accidents",editAcc),v,"update"))
+    :await save(()=>C("accidents").add({...v,by:S.me,byName:S.myName,ownerUserId:S.myUserId}));
+  if(ok){toast(editAcc?"Accident entry saved":"Accident recorded");editAccident(null)}
+}
+function renderAccidents(){
+  const box=$("#aList");if(!box)return;box.replaceChildren();
+  const R=ro(),admin=S.role==="admin";
+  const items=[...S.accidents].sort((a,b)=>(b.date||"").localeCompare(a.date||"")||(b.time||"").localeCompare(a.time||"")||(b.at||0)-(a.at||0));
+  if(!items.length)box.append(el("div",{class:"empty glass",text:(admin?"No accidents recorded at this site.":"You haven't recorded any accidents at this site.")+(R?"":" Tap Record an accident when something happens.")}));
+  else{
+    const list=el("div",{class:"list glass"});
+    for(const a of items){
+      const reported=a.riddor==="Reported to the HSE",unsure=a.riddor==="Not sure yet";
+      list.append(xrow("acc"+a.id,{
+        title:`${a.person||"Someone"}${a.personType?" ("+a.personType.toLowerCase()+")":""}`,
+        sub:[nice(a.date)+(a.time?" "+a.time:""),a.place,a.injury].filter(Boolean).join(" · "),
+        right:[reported?el("span",{class:"pill",text:"Reported to HSE"}):unsure?el("span",{class:"pill warn",text:"RIDDOR: check"}):null],
+        details:[xfacts([["When",longDate(a.date)+(a.time?", "+a.time:"")],["Where",a.place],["Who",[a.person,a.personType].filter(Boolean).join(", ")],["Contact",a.contact],["What happened",a.what],["Injury",a.injury],["First aid",a.firstAid],["Hospital",a.hospital],["Time off work",a.personType==="Employee"?a.timeOff:""],["Witnesses",a.witnesses],["To stop it happening again",a.action],["RIDDOR",reported?`Reported${a.riddorDate?" "+short(a.riddorDate):""}${a.riddorRef?", reference "+a.riddorRef:""}`:a.riddor],["Recorded by",a.byName||nameOf(a.by)]]),
+          R?null:el("div",{class:"row"},el("button",{class:"btn ghost sm",type:"button",onclick:()=>editAccident(a)},"Edit entry"))]}));
+    }
+    box.append(list);
+  }
+  $("#aFormPanel").hidden=R||!formOpen.accidents;
+}

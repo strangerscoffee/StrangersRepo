@@ -72,7 +72,7 @@ const SITES=[
   {id:"asg",name:"ASG",addr:"14 All Saints Green, Norwich, NR1 3NA"},
   {id:"factory",name:"Factory",addr:"122 Ber Street, Norwich, NR1 3ES"}];
 const siteOf=id=>SITES.find(s=>s.id===id)||SITES[0];
-const OPT_TABS=[["week","End of week"],["extras","Extra checks"],["cleaning","Cleaning schedule"],["prove","Prove it"],["allergens","Allergens"],["templog","Temperature log"],["deliveries","Deliveries"],["maintenance","Maintenance"],["eho","Last EHO inspection report"],["plans","HACCP & risk"],["suppliers","Suppliers"],["contacts","Contacts"],["staff","Staff training"],["onboarding","Onboarding"],["review","4-weekly review"]];
+const OPT_TABS=[["week","End of week"],["extras","Extra checks"],["cleaning","Cleaning schedule"],["prove","Prove it"],["allergens","Allergens"],["templog","Temperature log"],["deliveries","Deliveries"],["maintenance","Maintenance"],["fire","Fire safety log"],["accidents","Accident book"],["eho","Last EHO inspection report"],["plans","HACCP & risk"],["suppliers","Suppliers"],["contacts","Contacts"],["staff","Staff training"],["onboarding","Onboarding"],["review","4-weekly review"]];
 const WEEKDAYS=[[1,"Monday"],[2,"Tuesday"],[3,"Wednesday"],[4,"Thursday"],[5,"Friday"],[6,"Saturday"],[0,"Sunday"]];
 const LISTS=[["opening","Opening"],["closing","Closing"],["weekly","End-of-week"]];
 
@@ -101,7 +101,7 @@ const toast=SC.makeToast(2400);
 
 const S={site:(()=>{try{const s=localStorage.getItem("sfbb.site");return SITES.some(x=>x.id===s)?s:"roastery"}catch(e){return"roastery"}})(),
   cfg:null,sum:{},subs:[],allergenDocs:[],assets:null,shared:null,
-  db:null,user:null,me:null,canWrite:true,settings:DEFAULT_SETTINGS,days:{},weeks:{},allergens:[],reviews:[],extras:[],cleaning:[],deliveries:[],maintenance:[],suppliers:[],contacts:[],plans:[],plan:null,onboarding:[],onb:null,inspections:[],insp:null,staff:[],prove:[],
+  db:null,user:null,me:null,canWrite:true,settings:DEFAULT_SETTINGS,days:{},weeks:{},allergens:[],reviews:[],extras:[],cleaning:[],deliveries:[],maintenance:[],fire:[],accidents:[],suppliers:[],contacts:[],plans:[],plan:null,onboarding:[],onb:null,inspections:[],insp:null,staff:[],prove:[],
   date:today(),week:monday(today()),editAlg:null,editStaff:null,names:{},rev:{}};
 S.role="";S.myName="";
 const ro=()=>!S.canWrite||!S.db;
@@ -219,7 +219,7 @@ async function save(fn){if(ro())return false;try{return (await fn())!==false}cat
    one site. Every copy carries the same linkId and the list of sites it was sent to (sites). Saving again replaces
    the linked copy at each ticked site (found by linkId, or by name for items saved before linking), or adds one
    where there isn't one. Unticking a site leaves its copy alone; Remove only removes the copy at the current site. */
-const MULTI_NAME={extras:"name",cleaning:"name",suppliers:"name",contacts:"name",allergens:"name",allergenDocs:"title",plans:"title",onboarding:"title"};
+const MULTI_NAME={extras:"name",cleaning:"name",fire:"name",suppliers:"name",contacts:"name",allergens:"name",allergenDocs:"title",plans:"title",onboarding:"title"};
 const newLinkId=()=>"l"+Date.now().toString(36)+Math.random().toString(36).slice(2,8);
 // "Save to sites" switches. The current site is always included; All sites ticks every other one too.
 const PICKERS=new Set();
@@ -363,6 +363,8 @@ const callBtn=(n,label)=>n?el("a",{class:"call",href:"tel:"+String(n).replace(/[
 const FORMS={
   extras:{panel:"#xFormPanel",add:"Add check",reset:()=>editTask("extras",null)},
   cleaning:{panel:"#kFormPanel",add:"Add job",reset:()=>editTask("cleaning",null)},
+  fire:{panel:"#fFormPanel",add:"Add check",reset:()=>editTask("fire",null)},
+  accidents:{panel:"#aFormPanel",add:"Record an accident",reset:()=>editAccident(null)},
   allergens:{panel:"#algFormPanel",add:"Add item",reset:()=>{algNewKind="drink";editAlg(null)}},
   suppliers:{panel:"#sFormPanel",add:"Add supplier",reset:()=>editSupplier(null)},
   contacts:{panel:"#cFormPanel",add:"Add contact",reset:()=>editContact(null)},
@@ -454,6 +456,8 @@ const ICON={
   allergens:'<path d="M5 19c0-9 6-14 15-14 0 9-5 15-14 15zM5 19l7-7"/>',
   eho:'<path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/>',
   deliveries:'<path d="M3.5 7.5L12 3l8.5 4.5v9L12 21l-8.5-4.5z"/><path d="M3.5 7.5L12 12l8.5-4.5M12 12v9M7.8 5.2l8.5 4.6"/>',
+  fire:'<path d="M12 21c-3.9 0-6.5-2.6-6.5-6.3 0-3.4 2.3-5.4 3.7-7.8.5 1.7 1.4 2.8 2.6 3.5.3-2.8 1.5-5.4 3.7-7.4.2 3.5 4 6.1 4 11.2 0 4-2.9 6.8-7.5 6.8z"/><path d="M12 21c-1.7 0-2.8-1.2-2.8-2.8 0-1.8 1.6-2.9 2.8-4.7 1.2 1.8 2.8 2.9 2.8 4.7 0 1.6-1.1 2.8-2.8 2.8z"/>',
+  accidents:'<rect x="4" y="5" width="16" height="15" rx="3"/><path d="M12 9v7M8.5 12.5h7"/><path d="M9 5V3.5h6V5"/>',
   maintenance:'<path d="M14.7 6.3a4 4 0 015 5l-1.4-1.4-2.1.7-.7 2.1 1.4 1.4a4 4 0 01-5-5L4.6 17.4a1.9 1.9 0 002.7 2.7l8.3-8.3"/>',
   plans:'<path d="M9 3h6M10 3v6l-5 9a2 2 0 002 3h10a2 2 0 002-3l-5-9V3"/>',
   suppliers:'<path d="M3 7h11v9H3zM14 10h4l3 3v3h-7"/><circle cx="7" cy="18" r="1.8"/><circle cx="17" cy="18" r="1.8"/>',
