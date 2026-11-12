@@ -197,7 +197,8 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
     target.searchParams.set("next", customerOnly ? (env.LEGACY_PREVIEW_HOST ? `https://${env.LEGACY_PREVIEW_HOST}/` : new URL(links.admin, url).toString()) : new URL(app === "preview" ? "/" : "/wholesale-preview/", url).toString());
     return redirect(target.toString());
   }
-  if (wholesaleHost && isGet && ["/wholesale-preview/signin.js", "/wholesale-preview/wholesale.css", "/theme.css", "/shared/core.js"].includes(p)) return staticFile(req, env, p);
+  // The customer sign-in page's own files load signed out: its script and styles, the terms pop-up and the logo.
+  if (wholesaleHost && isGet && (["/wholesale-preview/signin.js", "/wholesale-preview/terms.js", "/wholesale-preview/wholesale.css", "/theme.css", "/shared/core.js"].includes(p) || /^\/wholesale-preview\/images\/logo\.svg$/.test(p))) return staticFile(req, env, p);
   // One Staff Login for every address: the rota's sign-in page is the diary's (src/hosts.ts).
   if (isGet && (p === "/signin" || p === "/signin.html")) {
     const to = unifiedSignin(url, env.COOKIE_DOMAIN);
