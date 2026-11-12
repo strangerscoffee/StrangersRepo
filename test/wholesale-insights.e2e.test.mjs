@@ -122,6 +122,21 @@ test("import QuickBooks history, confirm products, then read the insights and pl
   await p.locator(".ins-products").waitFor({ timeout: 20000 });
   await p.locator('#sheet [data-sheet="close"]').first().click();
   await p.locator(".ins-workspace", { hasText: "Market Stall Co" }).waitFor();
+  // One customer: search, pick, and see just their sales and forecast; then back to everyone.
+  await p.locator('[data-act="wh-ins-pick"]').click();
+  await p.locator("#insCustSearch").fill("bakehouse");
+  assert.equal(await p.locator(".ins-pick-row").count(), 1);
+  await p.locator(".ins-pick-row").click();
+  await p.locator("#insCustTitle", { hasText: "Bakehouse Norwich" }).waitFor();
+  assert.match(await p.locator(".ins-pick").innerText(), /Bakehouse Norwich/);
+  assert.match(await p.locator("#insFc").innerText(), /Bakehouse Norwich's coffee/);
+  assert.equal(await p.locator("#insCust").count(), 0, "no customer table for one customer");
+  if (process.env.WHOLESALE_SCREENSHOT_DIR) await p.screenshot({ path: `${process.env.WHOLESALE_SCREENSHOT_DIR}/insights-customer-desktop.png`, fullPage: true });
+  await p.locator('[aria-label="Show all customers"]').click();
+  await p.locator("#insCust").waitFor();
+  await p.locator('[data-act="wh-ins-customer"]', { hasText: "Market Stall Co" }).click();
+  await p.locator("#insCustTitle", { hasText: "Market Stall Co" }).waitFor();
+  await p.locator('[aria-label="Show all customers"]').click(); await p.locator("#insCust").waitFor();
   assert.deepEqual(errors, []);
   await ctx.close();
 });
@@ -133,6 +148,12 @@ test("on a phone and an iPad, light and dark", async () => {
     const overflow = await p.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     assert.ok(overflow <= 1, `${name} ${colorScheme}: the page doesn't scroll sideways (${overflow}px)`);
     if (process.env.WHOLESALE_SCREENSHOT_DIR) await p.screenshot({ path: `${process.env.WHOLESALE_SCREENSHOT_DIR}/insights-${name}-${colorScheme}.png`, fullPage: true });
+    await p.locator('[data-act="wh-ins-pick"]').click(); await p.locator(".ins-pick-row").first().waitFor();
+    if (process.env.WHOLESALE_SCREENSHOT_DIR) await p.screenshot({ path: `${process.env.WHOLESALE_SCREENSHOT_DIR}/insights-picker-${name}-${colorScheme}.png` });
+    await p.locator(".ins-pick-row").first().click(); await p.locator("#insCustTitle").waitFor();
+    if (process.env.WHOLESALE_SCREENSHOT_DIR) await p.screenshot({ path: `${process.env.WHOLESALE_SCREENSHOT_DIR}/insights-one-${name}-${colorScheme}.png`, fullPage: true });
+    assert.ok(await p.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth) <= 1, "one customer: no sideways scroll");
+    await p.locator('[aria-label="Show all customers"]').click(); await p.locator("#insCust").waitFor();
     await p.locator('[data-act="wh-ins-products"]').first().click(); await p.locator(".ins-products").waitFor();
     if (process.env.WHOLESALE_SCREENSHOT_DIR) await p.screenshot({ path: `${process.env.WHOLESALE_SCREENSHOT_DIR}/insights-products-${name}-${colorScheme}.png` });
     assert.deepEqual(errors, []);

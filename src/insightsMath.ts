@@ -8,7 +8,7 @@ export interface SaleLine {
   day: string; customer: string; coffee: string; title: string; pack: Pack; bags: number; grams: number; pence: number;
   source: "site" | "history"; order: string;
 }
-export interface OpenLine { coffee: string; title: string; grams: number; bags: number }
+export interface OpenLine { coffee: string; title: string; grams: number; bags: number; customer?: string }
 export interface InsightSettings { batchKg: number; yieldKg: number; historyUntil: string | null }
 
 const DAY = 864e5;
@@ -21,6 +21,8 @@ export function mondayOf(day: string) { const dow = new Date(toTime(day)).getUTC
 export const ukDay = (ms: number) => new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone: "Europe/London" }).format(new Date(ms));
 const median = (xs: number[]) => { if (!xs.length) return 0; const s = [...xs].sort((a, b) => a - b), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
 const mean = (xs: number[]) => xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0;
+/** The key a customer is matched by across site orders and QuickBooks history (case, accents and punctuation ignored). */
+export const customerKey = (value: string) => norm(value) || "unknown";
 const norm = (value: string) => value.toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
 
 /* ---------- QuickBooks product names → coffee and bag size ---------- */
@@ -139,7 +141,7 @@ export function buildInsights(input: { today: string; lines: SaleLine[]; open: O
     const due = usual ? addDays(last, usual) : null, late = usual && due ? daysBetween(due, today) : null;
     const status = !usual ? "new" : late! > Math.max(14, usual) ? "quiet" : late! > Math.max(3, Math.round(usual * 0.25)) ? "overdue" : late! >= -3 ? "due" : "ok";
     const top = [...c.coffees.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k]) => titles.get(k) || k);
-    return { name: c.name, orders: c.orders.size, pence: c.pence, grams: c.grams, recentPence: c.recentPence, recentGrams: c.recentGrams, first: days[0], last, usualDays: usual, nextDue: due, status, top };
+    return { key: customerKey(c.name), name: c.name, orders: c.orders.size, pence: c.pence, grams: c.grams, recentPence: c.recentPence, recentGrams: c.recentGrams, first: days[0], last, usualDays: usual, nextDue: due, status, top };
   }).sort((a, b) => b.recentGrams - a.recentGrams || b.grams - a.grams);
   return {
     today, thisWeek, nextWeek, firstSale: first,
