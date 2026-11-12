@@ -14,6 +14,7 @@
   <link rel="stylesheet" href="/wholesale-preview/wholesale.css">
   <script src="/errors.js"></script>
   <script src="/shared/core.js"></script>
+  <script src="/wholesale-preview/terms.js" defer></script>
   <script type="module" src="/wholesale-preview/wholesale.js"></script>
 </head>
 <body>
@@ -77,7 +78,7 @@
     </div>
   </main>
 
-  <footer class="site-footer wrap"><div class="footer-panel"><a class="footer-brand" href="#coffee"><img src="/mark.svg" width="36" height="36" alt=""><span><strong>Strangers Coffee</strong><span>Wholesale · Roasted in Norwich</span></span></a><nav class="footer-actions" aria-label="Wholesale footer"><a href="#coffee">Browse coffee</a><button type="button" data-order-history>My orders</button><a href="https://strangerscoffee.com/" target="_blank" rel="noopener noreferrer">Visit website <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg><span class="sr-only">(opens in a new tab)</span></a></nav></div></footer>
+  <footer class="site-footer wrap"><div class="footer-panel"><a class="footer-brand" href="#coffee"><img src="/mark.svg" width="36" height="36" alt=""><span><strong>Strangers Coffee</strong><span>Wholesale · Roasted in Norwich</span></span></a><nav class="footer-actions" aria-label="Wholesale footer"><a href="#coffee">Browse coffee</a><button type="button" data-order-history>My orders</button><button type="button" data-terms>Terms and conditions</button><a href="https://strangerscoffee.com/" target="_blank" rel="noopener noreferrer">Visit website <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg><span class="sr-only">(opens in a new tab)</span></a></nav></div></footer>
 
   <div class="mobile-basket" id="mobile-basket" hidden><div><span id="mobile-packs">0 packs</span><strong id="mobile-total">£0.00</strong></div><button class="button button-dark" type="button" data-basket>View order <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></button></div>
   <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
@@ -101,6 +102,7 @@
           <p class="payment-terms" id="review-payment-terms"></p>
           <label class="form-field">Purchase reference <span>(optional)</span><input name="reference" maxlength="80" placeholder="e.g. Your café name or PO number" autocomplete="off"></label>
           <label class="form-field">Additional comments or order information <span>(optional)</span><textarea name="customerNote" id="review-customer-note" rows="3" maxlength="1000" placeholder="e.g. Use our own custom labels"></textarea></label>
+          <div class="checkout-terms" id="checkout-terms"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.5v.5"/></svg><p>By placing this order, you accept the payment terms and conditions set up for your account. <button class="link-button" type="button" data-terms>Read the terms and conditions</button></p></div>
           <p class="quantity-error" id="preview-submit-error" role="alert" hidden></p><button class="button button-dark" id="submit-preview-order" type="submit">Place order</button>
           <button class="button button-outline" type="button" data-close>Keep choosing coffee</button>
         </form>
@@ -127,7 +129,7 @@
         <section class="saved-locations account-card" aria-labelledby="account-locations-title"><div class="location-section-heading"><h3 id="account-locations-title">Saved locations</h3><button class="text-button" type="button" id="add-location">Add location</button></div><p class="location-hint">Choose a saved location when ordering. Changes are saved with your account details.</p><div id="account-locations"></div><p class="location-hint" id="location-limit-note" hidden>You can save up to 20 locations.</p></section>
       </div></form>
       <div class="account-secondary-grid">
-        <section class="account-terms account-card" aria-labelledby="account-terms-title"><h3 id="account-terms-title">Payment terms</h3><p id="account-payment-terms"></p><p id="account-payment-note"></p></section>
+        <section class="account-terms account-card" aria-labelledby="account-terms-title"><h3 id="account-terms-title">Payment terms</h3><p id="account-payment-terms"></p><p id="account-payment-note"></p><button class="link-button" type="button" data-terms>Terms and conditions</button></section>
         <details class="password-settings account-card"><summary>Change password</summary><form id="account-password-form">
           <label class="form-field">Current password<input name="password" type="password" autocomplete="current-password" minlength="8" maxlength="128" required></label>
           <label class="form-field">New password<input name="newPassword" type="password" autocomplete="new-password" minlength="8" maxlength="128" required></label>
