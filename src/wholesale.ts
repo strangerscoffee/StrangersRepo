@@ -16,6 +16,7 @@ import { confirmToCustomer, dispatchToCustomer, handleOrderEmailsAdmin, notifyNe
 import { notifySlackNewOrder } from "./slackOrders";
 import { handleInsights } from "./insights";
 import { autoTabFor, clearTab, listTabs, setOnTab } from "./wholesaleTabs";
+import { amendLines, rollStanding, scheduleFields, type Standing } from "./wholesaleStanding";
 import { customersSeeInvoices, handleInvoiceAdmin, handleInvoiceCustomer, invoiceLinks } from "./wholesaleInvoices";
 
 type Pack = "quarter" | "half" | "kilo";
@@ -45,6 +46,10 @@ interface Order {
   dispatchEmailedAt?: number;
   /** On the customer's open tab (src/wholesaleTabs.ts), and the cleared tab it went into. Staff/admin only. */
   tab?: { at: number; by: string; auto?: boolean }; tabClearedId?: string;
+  /** Admin only to set (src/wholesaleStanding.ts): the day it's due to go out, and the standing order it belongs to. */
+  dispatchDate?: string; standing?: Standing; nextRunId?: string; previousRunId?: string;
+  /** When an admin changed the bags; `originalLines` are the bags as first placed. */
+  amendedAt?: number; amendedBy?: string; originalLines?: Line[];
 }
 type Links = { admin: string; diary: string; preview?: string };
 /** My orders on the customer ordering site, for links in customers' emails (…/#orders opens it). */
@@ -54,8 +59,8 @@ export function customerOrdersUrl(env: Env, links: { preview?: string }, req: Re
 }
 const denied = () => new ApiError(403, "permission_denied", "Only admins can manage wholesale ordering.");
 export function visibleOrder(order: Order & Versioned, admin = false) {
-  const { requestKey, note, tab, tabClearedId, ...visible } = order;
-  return admin ? { ...visible, trackingUrl: order.trackingUrl || "", note, ...(tab ? { tab } : {}), ...(tabClearedId ? { tabClearedId } : {}) } : { ...visible, trackingUrl: order.trackingUrl || "" };
+  const { requestKey, note, tab, tabClearedId, amendedBy, ...visible } = order;
+  return admin ? { ...visible, trackingUrl: order.trackingUrl || "", note, ...(tab ? { tab } : {}), ...(tabClearedId ? { tabClearedId } : {}), ...(amendedBy ? { amendedBy } : {}) } : { ...visible, trackingUrl: order.trackingUrl || "" };
 }
 function trackingUrl(value: unknown): string {
   if (typeof value !== "string" || /[\u0000-\u001f\u007f]/.test(value) || /%(?:0[0-9a-f]|1[0-9a-f]|7f)/i.test(value)) throw invalid("Use a tracking link without control characters.");
@@ -243,7 +248,7 @@ export async function ordersToPrint(env: Env, query: URLSearchParams, { customer
 
 /** Changes an order's status, internal note and (optionally) tracking link, version-checked. Shared by Admin and the
  * staff orders page; only Admin may relink a staff preview to a customer. */
-export async function updateOrderStatus(env: Env, id: string, body: Record<string, any>, actor: string, { allowRelink = false, customerOnly = false, notify }: { allowRelink?: boolean; customerOnly?: boolean; notify?: { ctx?: ExecutionContext; ordersUrl: string } } = {}): Promise<Order & Versioned> {
+export async function updateOrderStatus(env: Env, id: string, body: Record<string, any>, actor: string, { allowRelink = false, customerOnly = false, allowSchedule = false, notify }: { allowRelink?: boolean; customerOnly?: boolean; allowSchedule?: boolean; notify?: { ctx?: ExecutionContext; ordersUrl: string } } = {}): Promise<Order & Versioned> {
   const order = await get<Order>(env, "order", id);
   if (!order || order.deletedAt != null || (customerOnly && order.preview !== false)) throw new ApiError(404, "not_found", "Order not found.");
   if (!STATUSES.includes(body.status)) throw invalid("Choose a listed order status.");
@@ -255,12 +260,18 @@ export async function updateOrderStatus(env: Env, id: string, body: Record<strin
   }
   const { id: savedId, version: oldVersion, updatedAt, ...current } = order;
   const note = body.note === undefined ? order.note || "" : text(body.note, "order note", 1000);
+  // Dispatch day and standing order: Admin only (the staff orders page never sends `schedule`).
+  const schedule = allowSchedule ? scheduleFields(order, body.schedule) : null;
   // The first time a customer order is marked Dispatched, the customer is emailed (shipped or collected); recorded on
   // the order so going back and forth never sends it twice.
   const firstDispatch = body.status === "Dispatched" && order.status !== "Dispatched" && order.preview === false && !order.dispatchEmailedAt;
-  const updated = await save(env, "order", id, { ...current, status: body.status, customerId, note, trackingUrl: body.trackingUrl === undefined ? order.trackingUrl || "" : trackingUrl(body.trackingUrl), ...(firstDispatch && notify ? { dispatchEmailedAt: Date.now() } : {}) }, version(body.ifVersion));
+  const data: Order = { ...current, ...(schedule || {}), status: body.status, customerId, note, trackingUrl: body.trackingUrl === undefined ? order.trackingUrl || "" : trackingUrl(body.trackingUrl), ...(firstDispatch && notify ? { dispatchEmailedAt: Date.now() } : {}) };
+  for (const key of ["dispatchDate", "standing"] as const) if (data[key] === undefined) delete data[key];
+  const updated = await save(env, "order", id, data, version(body.ifVersion));
   if (firstDispatch && notify) await dispatchToCustomer(env, notify.ctx, updated, notify.ordersUrl);
   await audit(env, "wholesale_preview_status", actor, `${actor} marked wholesale order ${id} as ${body.status}. No fulfilment action was sent.`);
+  // A standing run that went out (or was skipped) makes the next one, which also records it on this order.
+  if (await rollStanding(env, updated, actor)) return (await get<Order>(env, "order", id))!;
   return updated as Order & Versioned;
 }
 
@@ -308,7 +319,7 @@ export async function handleWholesaleAdmin(req: Request, env: Env, route: string
   if (!["POST", "PUT", "PATCH", "DELETE"].includes(req.method)) throw new ApiError(404, "not_found", "Unknown wholesale management route.");
   const customerMatch = /^customers\/([a-f0-9-]{36})$/.exec(route);
   const customerWrite = (route === "customers" && req.method === "POST") || (customerMatch && req.method === "PUT");
-  const body = object(await readJson(req, (customerWrite ? 64 : 16) * 1024));
+  const body = object(await readJson(req, (customerWrite || route.endsWith("/lines") ? 64 : 16) * 1024));
   if (customerWrite) {
     const expected = customerMatch ? version(body.ifVersion) : 0;
     const oldCustomer = customerMatch ? await get<Customer>(env, "customer", customerMatch[1]) : null;
@@ -343,8 +354,10 @@ export async function handleWholesaleAdmin(req: Request, env: Env, route: string
     await audit(env, "wholesale_order_deleted", user.name, `${user.name} removed wholesale ${order.preview === false ? "customer" : "staff preview"} order ${id}.`);
     return json({ deleted: true, id, version: removed.version });
   }
+  const linesMatch = /^orders\/(WS-[A-F0-9]{32})\/lines$/.exec(route);
+  if (linesMatch && req.method === "PUT") return json({ order: visibleOrder(await amendLines(env, linesMatch[1], body, user.name) as Order & Versioned, true) });
   if (orderMatch && req.method === "PATCH") {
-    const updated = await updateOrderStatus(env, orderMatch[1], body, user.name, { allowRelink: true, notify: { ctx, ordersUrl: customerOrdersUrl(env, links, req) } });
+    const updated = await updateOrderStatus(env, orderMatch[1], body, user.name, { allowRelink: true, allowSchedule: true, notify: { ctx, ordersUrl: customerOrdersUrl(env, links, req) } });
     return json({ order: visibleOrder(updated, true) });
   }
   throw new ApiError(404, "not_found", "Unknown wholesale management route.");

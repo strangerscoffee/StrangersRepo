@@ -512,3 +512,22 @@ button.stat{cursor:pointer}
 #wGrindOptions{margin-bottom:12px}
 
 #orderAccessControls{border:0;margin:0;padding:4px 0}#orderAccessControls input{width:20px;height:20px;vertical-align:middle;margin-right:7px;accent-color:var(--accent)}
+/* Standing orders and dispatch days (Admin → Wholesale → Orders) */
+.w-order-entry .w-order .w-dispatch{font-weight:650;color:var(--accent)}
+.w-section-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.w-section-head h3{font-size:15px;font-weight:650;margin:0}
+.w-schedule .checks{margin:0}
+.w-schedule .hint .link{padding:0;font-size:inherit}
+.w-amended{margin:0}
+.w-edit-lines{display:grid;gap:0;border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+.w-edit-line{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:10px;padding:10px 12px;border-top:1px solid var(--line)}
+.w-edit-line:first-child{border-top:0}
+.w-edit-tx{min-width:0}.w-edit-tx b{display:block;font-weight:650;overflow-wrap:anywhere}
+.w-edit-tx span{display:block;color:var(--muted);font-size:13px}
+.w-qty{width:76px;min-height:40px;text-align:right}
+.w-add-line{border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;display:grid;gap:10px;margin:0;min-width:0}
+.w-add-line legend{font-weight:650;font-size:14.5px;padding:0 6px}
+.w-add-line select{width:100%;min-width:0}
+.w-add-row{display:grid;grid-template-columns:minmax(0,1fr) 110px;gap:10px}
+.w-add-line .btn{justify-self:start}
+@media (max-width:600px){.w-edit-line{grid-template-columns:minmax(0,1fr) auto}.w-edit-line .btn{grid-column:1/-1;justify-self:start}}

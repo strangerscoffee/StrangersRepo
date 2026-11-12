@@ -473,3 +473,7 @@ dialog::backdrop { background: rgba(0,0,0,.3); -webkit-backdrop-filter: blur(6px
 .terms-list h3 { font-size: 16px; margin: 0; }
 .terms-list p { margin: 4px 0 0; color: var(--muted); font-size: 14.5px; line-height: 1.6; }
 .terms-dialog .button { width: 100%; }
+
+/* Standing orders: dispatch day, schedule and changes made by Strangers, on My orders. */
+.history-schedule { margin-top: 6px; color: var(--accent); font-size: 14px; font-weight: 600; }
+.history-amended { margin-top: 8px; padding: 10px 12px; border-radius: 12px; background: var(--tint); font-size: 13.5px; line-height: 1.5; }

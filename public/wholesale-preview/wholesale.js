@@ -833,6 +833,16 @@ $("#account-password-form").addEventListener("submit", async (event) => {
 const bagCount = (value) => `${value} ${value === 1 ? "bag" : "bags"}`;
 let reorderPlan = null;
 let reordering = false;
+// Set by Strangers in Admin: the day the order is due to go out, its standing order schedule, and whether its bags were
+// changed after it was placed (the lines shown are the current ones).
+function historySchedule(order) {
+  const parts = [];
+  if (typeof order.dispatchDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(order.dispatchDate)) parts.push(`Dispatch day: ${escape(new Date(order.dispatchDate + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" }))}`);
+  const every = order.standing?.every;
+  if ([1, 2, 4].includes(every)) parts.push(`Standing order, ${every === 1 ? "every week" : `every ${every} weeks`}`);
+  const amended = Number.isSafeInteger(order.amendedAt) ? `<p class="history-amended">Updated by Strangers on ${escape(new Date(order.amendedAt).toLocaleDateString("en-GB", { day: "numeric", month: "long", timeZone: "Europe/London" }))}. The bags below are the updated order.</p>` : "";
+  return (parts.length ? `<p class="history-schedule">${parts.join(" · ")}</p>` : "") + amended;
+}
 function historyStatus(order) {
   const states = ["New", "Preparing", "Ready", "Dispatched"];
   const current = states.indexOf(order.status);
@@ -871,7 +881,7 @@ function historyCard(order, expanded) {
   const date = new Date(order.createdAt).toLocaleDateString("en-GB", { timeZone: "Europe/London", day: "numeric", month: "short", year: "numeric" });
   const snapshot = order.customerSnapshot;
   const trackingUrl = historyTrackingUrl(order);
-  return `<article class="history-card" data-history-order="${escape(order.id)}"><div class="history-card-head"><h3>${date}</h3>${pricesShown() ? `<strong>${money(orderTotal(order))}</strong>` : ""}</div><p class="history-summary">${bagCount(order.packs)} · ${escape(order.delivery)}</p>${order.reference ? `<p class="history-summary">Reference: ${escape(order.reference)}</p>` : ""}${historyStatus(order)}
+  return `<article class="history-card" data-history-order="${escape(order.id)}"><div class="history-card-head"><h3>${date}</h3>${pricesShown() ? `<strong>${money(orderTotal(order))}</strong>` : ""}</div><p class="history-summary">${bagCount(order.packs)} · ${escape(order.delivery)}</p>${order.reference ? `<p class="history-summary">Reference: ${escape(order.reference)}</p>` : ""}${historySchedule(order)}${historyStatus(order)}
     ${trackingUrl ? `<a class="button button-outline history-tracking" data-order-tracking="${escape(order.id)}" href="${escape(trackingUrl)}" target="_blank" rel="noopener noreferrer">Track delivery <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg><span class="sr-only">(opens in a new tab)</span></a>` : ""}
     <details class="history-details" ${expanded.has(order.id) ? "open" : ""}><summary>Order details · ${bagCount(order.packs)}</summary><p class="history-id">${escape(order.id)}</p><ul class="history-lines">${order.lines.map(line => `<li><span>${line.quantity} × ${escape(line.title)}</span><small>${escape(line.packLabel)} · ${escape(line.grindLabel)}</small>${pricesShown() ? `<strong>${money(line.price * line.quantity)}</strong>` : ""}</li>`).join("")}${Number.isSafeInteger(order.deliveryPence) && pricesShown() ? `<li><span>${order.delivery === "Delivery" ? "Delivery" : "Roastery collection"}</span><small>${order.deliveryPence ? "Including VAT" : order.delivery === "Delivery" ? "Free on orders of £250 or more" : "No delivery charge"}</small><strong>${order.deliveryPence ? money(order.deliveryPence) : "Free"}</strong></li>` : ""}</ul>${order.customerNote ? `<p class="history-address"><b>Your comments</b><br>${escape(order.customerNote)}</p>` : ""}${order.locationSnapshot ? `<p class="history-address"><b>Location at order</b><br>${escape(order.locationSnapshot.name)}</p>` : ""}${snapshot?.address && order.delivery === "Delivery" ? `<p class="history-address"><b>Delivery address at order</b><br>${escape(snapshot.address)}<br>${escape(snapshot.postcode || "")}</p>` : ""}${order.deliveryNotes ? `<p class="history-address">${escape(order.deliveryNotes)}</p>` : ""}${order.paymentTerms ? `<p class="payment-terms">Payment terms: ${escape(order.paymentTerms.label)}${order.paymentTerms.note ? `<br>${escape(order.paymentTerms.note)}` : ""}</p>` : ""}</details>
     <button class="button button-outline history-reorder" type="button" data-reorder="${escape(order.id)}" ${pendingAttempt ? "disabled" : ""}>Order again</button></article>`;
