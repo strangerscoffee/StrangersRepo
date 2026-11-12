@@ -1,6 +1,7 @@
 // The database schema. The Worker applies it itself (once per Worker instance) so a fresh deploy needs no
 // migration step: first the tables (every statement idempotent), then any migrations not yet recorded in
 // schema_migrations (MIGRATIONS below). To change the schema, add a migration.
+import { migrateInsights } from "./insights";
 import { Env } from "./http";
 import { migrateQuickBooks } from "./quickbooks/schema";
 import { migrateQuickBooksRuntime } from "./quickbooks/runtimeSchema";
@@ -269,6 +270,7 @@ const MIGRATIONS: Migration[] = [
       env.DB.prepare("CREATE INDEX IF NOT EXISTS slack_order_posts_due ON slack_order_posts (sent_at, send_after)"),
     ]);
   } },
+  { id: 21, name: "Wholesale insights and QuickBooks sales history", run: migrateInsights },
 ];
 
 async function migrate(env: Env): Promise<void> {

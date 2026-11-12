@@ -14,6 +14,7 @@ import { manageWholesaleAccount, publicCustomer, wholesaleAccounts, wholesaleCus
 import { customerLocations, editedCustomerLocations, locationDefaults, validLocationId, type CustomerLocation } from "./wholesaleCustomers";
 import { handleOrderEmailsAdmin, notifyNewOrder } from "./email/orders";
 import { notifySlackNewOrder } from "./slackOrders";
+import { handleInsights } from "./insights";
 import { customersSeeInvoices, handleInvoiceAdmin, handleInvoiceCustomer, invoiceLinks } from "./wholesaleInvoices";
 
 type Pack = "quarter" | "half" | "kilo";
@@ -252,6 +253,8 @@ export async function handleWholesaleAdmin(req: Request, env: Env, route: string
   if (invoiceResponse) return invoiceResponse;
   const orderEmails = await handleOrderEmailsAdmin(req, env, route, user.name, links.diary);
   if (orderEmails) return orderEmails;
+  const insightsResponse = await handleInsights(req, env, route, user.name);
+  if (insightsResponse) return insightsResponse;
   if (route === "" && req.method === "GET") {
     const [orderPage, customerPage, products, counts, stats] = await Promise.all([
       adminWholesalePage<Order>(env, "order"), adminWholesalePage<Customer>(env, "customer"), catalogue(env, true),

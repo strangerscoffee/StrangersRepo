@@ -3,6 +3,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
   const $ = (selector) => document.querySelector(selector);
   const invoiceUI = window.WholesaleInvoices({ api, html, raw, svg, put, openSheet, closeSheet, reload, toast });
   const printUI = window.WholesalePrint({ api, html, raw, svg, put, openSheet, closeSheet, toast });
+  const insightsUI = window.WholesaleInsights({ api, html, raw, svg, put, openSheet, closeSheet, reload, toast });
   // Picking orders to print: while on, tapping an order ticks it instead of opening it.
   let picking = false; const picked = new Set();
   const money = (pence) => new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(pence / 100);
@@ -11,7 +12,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
   const date = (ms) => new Date(ms).toLocaleString("en-GB", { timeZone: "Europe/London", year: "numeric", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
   let tab = "orders", status = "all", approval = "all", query = "", data = null, timer, sequence = 0;
   let orderPages = 1, customerPages = 1, loadingMore = false;
-  const sections = [["orders", "Orders"], ["customers", "Customers"], ["catalogue", "Coffee catalogue"], ["invoices", "Invoicing"]];
+  const sections = [["orders", "Orders"], ["customers", "Customers"], ["catalogue", "Coffee catalogue"], ["invoices", "Invoicing"], ["insights", "Insights"]];
   const pendingReviews = () => data?.stats?.pendingAccounts ?? data?.accounts?.filter((row) => row.approvalStatus === "pending").length ?? 0;
   function navigation({ sidebar = false, active = true } = {}) {
     const pending = pendingReviews();
@@ -100,9 +101,9 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     if (section !== "orders") metrics.push(["Customers", stats.totalCustomers, "Business accounts"], ["Visible coffees", stats.visibleCoffees, `Of ${stats.totalCoffees} coffees`]);
     onNavigationChange();
     return html`<div class="w-workspace">${head("Wholesale")}
-      ${section === "orders" ? "" : html`<div class="label w-overview-label">Wholesale at a glance</div>`}<div class="stats w-stats ${section === "orders" ? "w-stats-orders" : ""}" role="group" aria-label="${section === "orders" ? "Order preparation overview" : "Wholesale overview"}">${metrics.map(([label, value, sub]) => html`<div class="stat glass"><span class="k">${label}</span><span class="v">${value}</span><span class="s">${sub}</span></div>`)}</div>
+      ${section === "orders" || section === "insights" ? "" : html`<div class="label w-overview-label">Wholesale at a glance</div>`}<div class="stats w-stats ${section === "orders" ? "w-stats-orders" : ""}" ${section === "insights" ? raw("hidden") : ""} role="group" aria-label="${section === "orders" ? "Order preparation overview" : "Wholesale overview"}">${metrics.map(([label, value, sub]) => html`<div class="stat glass"><span class="k">${label}</span><span class="v">${value}</span><span class="s">${sub}</span></div>`)}</div>
       <div id="wSectionsHost" class="w-sections-host" hidden></div>
-      <div class="w-content">${tab === "orders" ? orders() : tab === "customers" ? customers() : tab === "invoices" ? await invoiceUI.view() : catalogue()}</div></div>`;
+      <div class="w-content">${tab === "orders" ? orders() : tab === "customers" ? customers() : tab === "invoices" ? await invoiceUI.view() : tab === "insights" ? await insightsUI.view() : catalogue()}</div></div>`;
   }
   function more(kind) {
     return data.nextCursor ? html`<div class="w-more"><button class="btn soft" type="button" data-act="wh-more" data-id="${kind}">Load more ${kind}</button></div>` : "";
@@ -643,6 +644,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     currentSection: () => tab,
     async act(name, id) {
       if (name.startsWith("wh-invoice-")) { await invoiceUI.act(name, id); return; }
+      if (name.startsWith("wh-ins-")) { await insightsUI.act(name, id); return; }
       if (name === "wh-order-emails") { await openOrderEmails(); return; }
       if (name === "wh-print-new") { await printUI.printOrders(printUI.scopes.New); return; }
       if (name === "wh-totals") { await printUI.openTotals(picking ? [...picked] : []); return; }
