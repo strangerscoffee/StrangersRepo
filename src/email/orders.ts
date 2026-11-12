@@ -7,6 +7,7 @@ import { ApiError, Env, invalid, json, readJson } from "../http";
 import { object } from "../wholesaleStore";
 import { cleanEmail, emailReady, send } from "./send";
 import { esc } from "./templates";
+import { sendSlackTest, slackReady } from "../slackOrders";
 
 export const DEFAULT_ORDER_EMAIL = "sales@strangerscoffee.com";
 const FROM = (env: Env) => env.ORDER_EMAIL_FROM || "Strangers Coffee Orders <orders@staffstrangerscoffee.com>";
@@ -21,13 +22,13 @@ interface MailOrder {
   locationSnapshot?: { name?: string; contact?: string; phone?: string; address?: string; postcode?: string; deliveryNotes?: string } | null;
 }
 
-export async function orderEmailSettings(env: Env): Promise<OrderEmailSettings & { version: number; updatedAt: number | null; sending: boolean; from: string }> {
+export async function orderEmailSettings(env: Env): Promise<OrderEmailSettings & { version: number; updatedAt: number | null; sending: boolean; from: string; slack: boolean }> {
   const row = await env.DB.prepare("SELECT data, version, updated_at FROM wholesale_order_emails WHERE id = 1").first<{ data: string; version: number; updated_at: number }>();
   let saved: Partial<OrderEmailSettings> = {};
   try { saved = row ? JSON.parse(row.data) : {}; } catch {}
   return {
     enabled: saved.enabled !== false, to: Array.isArray(saved.to) && saved.to.length ? saved.to : [DEFAULT_ORDER_EMAIL],
-    version: row?.version || 0, updatedAt: row?.updated_at || null, sending: emailReady(env), from: FROM(env).replace(/^.*<|>$/g, ""),
+    version: row?.version || 0, updatedAt: row?.updated_at || null, sending: emailReady(env), from: FROM(env).replace(/^.*<|>$/g, ""), slack: slackReady(env),
   };
 }
 
@@ -115,6 +116,11 @@ export async function handleOrderEmailsAdmin(req: Request, env: Env, route: stri
     if (!result.meta.changes) throw new ApiError(409, "conflict", "Order emails were changed on another device. Reload and try again.");
     await audit(env, "wholesale_order_emails", actor, `${actor} ${body.enabled ? `set new-order emails to ${(to as string[]).join(", ")}` : "switched new-order emails off"}.`);
     return json(await orderEmailSettings(env));
+  }
+  if (route === "order-emails/slack-test" && req.method === "POST") {
+    if (!slackReady(env)) throw new ApiError(409, "slack_off", "Slack isn't set up on this site (no SLACK_ORDERS_WEBHOOK_URL).");
+    try { await sendSlackTest(env, diaryBase); } catch (error) { throw new ApiError(502, "slack_failed", `Slack didn't accept the test post. ${String((error as Error)?.message || "").slice(0, 120)}`); }
+    return json({ sent: true });
   }
   if (route === "order-emails/test" && req.method === "POST") {
     if (!emailReady(env)) throw new ApiError(409, "email_off", "Email isn't set up on this site (no RESEND_API_KEY).");

@@ -25,6 +25,8 @@ export interface Env {
   RESEND_API_KEY?: string; // rota emails (src/email/): a secret the host adds in Cloudflare; without it nothing is sent
   RESEND_API_URL?: string; // for tests only: where to send instead of Resend
   EMAIL_FROM?: string; // default "Strangers Rota <rota@staffstrangerscoffee.com>"
+  SLACK_ORDERS_WEBHOOK_URL?: string; // a secret the host adds: Slack incoming webhook for the new-order channel (src/slackOrders.ts)
+  SLACK_TEST_HOOKS?: string; // tests only: "1" lets the webhook be a local stand-in
   ORDER_EMAIL_FROM?: string; // new wholesale order emails; default "Strangers Coffee Orders <orders@staffstrangerscoffee.com>"
   EMAIL_DAILY_LIMIT?: string; // default 100 (Resend's free plan)
   WEEKLY_ANY_TIME?: string; // tests only: "1" sends the Monday summary whenever its cron runs

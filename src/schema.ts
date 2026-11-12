@@ -263,6 +263,12 @@ const MIGRATIONS: Migration[] = [
   { id: 19, name: "Wholesale new-order emails", run: async env => {
     await env.DB.prepare("CREATE TABLE IF NOT EXISTS wholesale_order_emails (id INTEGER PRIMARY KEY CHECK(id = 1), data TEXT NOT NULL, version INTEGER NOT NULL, updated_at INTEGER NOT NULL)").run();
   } },
+  { id: 20, name: "Wholesale new-order Slack posts", run: async env => {
+    await env.DB.batch([
+      env.DB.prepare("CREATE TABLE IF NOT EXISTS slack_order_posts (order_id TEXT PRIMARY KEY, payload TEXT NOT NULL, send_after INTEGER NOT NULL, created_at INTEGER NOT NULL, sent_at INTEGER, attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT)"),
+      env.DB.prepare("CREATE INDEX IF NOT EXISTS slack_order_posts_due ON slack_order_posts (sent_at, send_after)"),
+    ]);
+  } },
 ];
 
 async function migrate(env: Env): Promise<void> {
