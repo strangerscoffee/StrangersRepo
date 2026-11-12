@@ -12,6 +12,7 @@ const NAV=[
   {id:"templog",t:"Temperature log",grp:"records",ic:"prove",tile:"blue"},
   {id:"review",t:"4-weekly review",grp:"records",ic:"review",tile:"red"},
   {id:"deliveries",t:"Deliveries",grp:"records",ic:"deliveries",tile:"indigo"},{id:"maintenance",t:"Maintenance",grp:"records",ic:"maintenance",tile:"purple"},
+  {id:"fire",t:"Fire safety log",grp:"manage",ic:"fire",tile:"red",sub:"Alarm, lighting, extinguisher and drill checks"},{id:"accidents",t:"Accident book",grp:"manage",ic:"accidents",tile:"orange",sub:"Record injuries and near misses"},
   {id:"eho",t:"Last EHO inspection report",grp:"manage",ic:"eho",tile:"green"},{id:"plans",t:"HACCP & risk",grp:"manage",ic:"plans",tile:"purple"},
   {id:"suppliers",t:"Suppliers",grp:"manage",ic:"suppliers",tile:"orange"},{id:"contacts",t:"Contacts",grp:"manage",ic:"contacts",tile:"green"},
   {id:"staff",t:"Staff training",grp:"records",ic:"staff",tile:"teal"},{id:"onboarding",t:"Onboarding",grp:"manage",ic:"onboarding",tile:"indigo"},
@@ -30,7 +31,7 @@ function siteState(id){
 }
 // Small status shown beside a section in lists ("1 overdue").
 function navBadge(id){
-  if(id==="cleaning"||id==="extras"){const n=S[id].filter(x=>taskState(x).overdue).length;return n?{cls:"bad",text:`${n} overdue`}:null}
+  if(id==="cleaning"||id==="extras"||id==="fire"){const n=S[id].filter(x=>taskState(x).overdue).length;return n?{cls:"bad",text:`${n} overdue`}:null}
   if(id==="review"&&S.db&&!S.reviewsLoading&&reviewPeriod().due<today())return{cls:"bad",text:"Overdue"};
   if(id==="maintenance"){const u=unreadNotifs().length;if(u)return{cls:"bad",text:`${u} new`};const n=S.maintenance.filter(m=>m.status!=="done"&&m.priority==="urgent").length;return n?{cls:"bad",text:`${n} urgent`}:null}
   return null;
@@ -55,13 +56,16 @@ function hubSub(id){
   const n=(k,w)=>`${k} ${w}${k===1?"":"s"}`;
   const t=today();
   switch(id){
-    case "extras":case "cleaning":{
+    case "extras":case "cleaning":case "fire":{
       const xs=S[id].map(x=>({x,st:taskState(x),due:dueDate(x)}));if(!xs.length)return "Nothing listed yet";
       const over=xs.filter(a=>a.st.overdue),todayN=xs.filter(a=>!a.st.overdue&&a.st.cls==="warn"&&FREQ[a.x.freq]>0);
       if(over.length)return `Overdue: ${over.map(a=>a.x.name).slice(0,2).join(", ")}${over.length>2?` and ${over.length-2} more`:""}`;
       if(todayN.length)return `Due today: ${todayN.map(a=>a.x.name).slice(0,2).join(", ")}`;
       const next=xs.filter(a=>a.due).sort((a,b)=>a.due.localeCompare(b.due))[0];
       return next?`All up to date · next ${next.x.name}, ${nice(next.due)}`:`${n(xs.length,id==="cleaning"?"job":"check")}, all up to date`;
+    }
+    case "accidents":{const l=[...S.accidents].sort((a,b)=>(b.date||"").localeCompare(a.date||"")||(b.at||0)-(a.at||0))[0];
+      return l?`${n(S.accidents.length,"entry").replace("entrys","entries")}${S.role==="admin"?"":" you recorded"} · last ${short(l.date)}`:S.role==="admin"?"Nothing recorded":"Nothing you've recorded";
     }
     case "prove":{const r=[...S.prove].sort((a,b)=>(b.at||0)-(a.at||0))[0];return r?`Last: ${r.food}, ${r.pass?"pass":"fail"} · ${short(r.date)}`:"No checks recorded yet"}
     case "allergens":return S.allergens.length?`${n(S.allergens.length,"menu item")} · allergen matrix PDF`:"No menu items yet";

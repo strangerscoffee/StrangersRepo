@@ -1,7 +1,7 @@
 // Tabs, site switching and subscriptions, events, and start-up. Loaded last.
 
 /* ---------- tabs ---------- */
-const TABS=["day","week","history","inspect","extras","cleaning","prove","allergens","templog","deliveries","maintenance","eho","plans","suppliers","contacts","staff","onboarding","review","setup","records","more"];
+const TABS=["day","week","history","inspect","extras","cleaning","prove","allergens","templog","deliveries","maintenance","fire","accidents","eho","plans","suppliers","contacts","staff","onboarding","review","setup","records","more"];
 function show(tab,opts){
   if(!TABS.includes(tab))tab="day";
   if(!canTab(tab)){if(S.role==="staff"&&MANAGER_TABS.has(tab)&&!(opts&&opts.quiet))toast("That section is for managers.");tab="day"}
@@ -11,6 +11,8 @@ function show(tab,opts){
   if(changed)for(const n of[document.querySelector(`[data-panel="${tab}"]`),$("#pagehead")])if(n){n.classList.remove("enter");void n.offsetWidth;n.classList.add("enter")}
   $("#dayCtl").hidden=tab!=="day";$("#weekCtl").hidden=tab!=="week";updFab();
   renderHead();renderNav();renderAddBtn();
+  // Today's reminders follow changes made elsewhere (a cleaning job or fire check added or ticked on its own page).
+  if(tab==="day"&&changed&&S.db)renderDay();
   if(tab==="inspect")renderInspect();
   if(tab==="templog")renderTempLog();
   if(tab==="deliveries"||tab==="prove")needHistory(); // the full lists
@@ -41,10 +43,10 @@ function switchSite(id){
   if(S.plan)closePlan();if(S.insp)closeInsp();if(S.onb)closeOnb();
   $("#toast").hidden=true; // an Undo still showing belongs to the site being left
   S.site=id;try{localStorage.setItem("sfbb.site",id)}catch(e){}
-  Object.assign(S,{days:{},weeks:{},allergens:[],allergenDocs:[],reviews:[],extras:[],cleaning:[],deliveries:[],maintenance:[],suppliers:[],contacts:[],plans:[],onboarding:[],inspections:[],staff:[],prove:[],rev:{}});
+  Object.assign(S,{days:{},weeks:{},allergens:[],allergenDocs:[],reviews:[],extras:[],cleaning:[],deliveries:[],maintenance:[],fire:[],accidents:[],suppliers:[],contacts:[],plans:[],onboarding:[],inspections:[],staff:[],prove:[],rev:{}});
   S.settings=S.sum[id]&&S.sum[id].ready?S.sum[id].settings:normSettings(null);S.cfg=activeCfg(S.settings);
   SE=null;setupDirty=false;pubNote="";$("#setupMsg").textContent="";
-  editTask("extras",null);editTask("cleaning",null);editMaint(null);resetDelivery();editSupplier(null);editContact(null);editStaff(null);editAlg(null);
+  editTask("extras",null);editTask("cleaning",null);editTask("fire",null);editAccident(null);editMaint(null);resetDelivery();editSupplier(null);editContact(null);editStaff(null);editAlg(null);
   IN.key="";IN.data=null;IN.loading=null;
   for(const x of["#problems","#wkNotes","#revNotes"])$(x).value="";
   editStaff(null);
@@ -99,6 +101,8 @@ function subscribeSite(){
   const atGlance=()=>{renderSites();renderNav();if(S.tab==="day")renderDay()};
   list("extras","extras",()=>{renderTasks("extras");renderReview();atGlance()});
   list("cleaning","cleaning",()=>{renderTasks("cleaning");renderReview();atGlance()});
+  list("fire","fire",()=>{renderTasks("fire");atGlance()});
+  list("accidents","accidents",renderAccidents);
   list("suppliers","suppliers",()=>{renderSuppliers();renderDeliveries()});
   list("maintenance","maintenance",()=>{renderMaint();renderNotifs();atGlance()});
   list("contacts","contacts",renderContacts);
@@ -112,11 +116,11 @@ function subscribeSite(){
 // loaded in full, are used for this site (siteAttention, maintNotifs). Asked again at midnight for the new days.
 function subscribeSummaries(){
   const upd=()=>{renderSites();renderNav();if(S.tab==="day")renderDay();renderPublish()};
-  for(const x of SITES)if(!S.sum[x.id])S.sum[x.id]={settings:normSettings(null),days:{},firstDay:null,extras:[],cleaning:[],maintenance:[],ready:false};
+  for(const x of SITES)if(!S.sum[x.id])S.sum[x.id]={settings:normSettings(null),days:{},firstDay:null,extras:[],cleaning:[],fire:[],maintenance:[],ready:false};
   if(S.sumUnsub)try{S.sumUnsub()}catch(e){}
   const t=today();
   S.sumUnsub=S.db.summary(addDays(t,-8),t).onSnapshot(all=>{
-    for(const x of SITES){const a=all[x.id]||{};S.sum[x.id]={settings:normSettings(a.settings||null),days:a.days||{},firstDay:a.firstDay||null,extras:a.extras||[],cleaning:a.cleaning||[],maintenance:a.maintenance||[],ready:true}}
+    for(const x of SITES){const a=all[x.id]||{};S.sum[x.id]={settings:normSettings(a.settings||null),days:a.days||{},firstDay:a.firstDay||null,extras:a.extras||[],cleaning:a.cleaning||[],fire:a.fire||[],maintenance:a.maintenance||[],ready:true}}
     if(S.tab==="maintenance"&&maintAll)renderMaint();
     renderNotifs();upd();
   },()=>{});
@@ -163,7 +167,7 @@ document.querySelectorAll(".note.intro").forEach(n=>{n.setAttribute("title","Tap
 /* ---------- boot ---------- */
 // The shared session guard shields first, then clears the old person's private page before reloading.
 window.addEventListener("sc:session-invalid",()=>{
-  Object.assign(S,{staff:[],contacts:[],onboarding:[],team:[],days:{},weeks:{},reviews:[],plans:[],inspections:[],sum:{},names:{},plan:null,onb:null,insp:null,rota:null,editStaff:null,myUserId:"",myName:"",role:"",me:null,db:null,canWrite:false});
+  Object.assign(S,{staff:[],contacts:[],onboarding:[],accidents:[],team:[],days:{},weeks:{},reviews:[],plans:[],inspections:[],sum:{},names:{},plan:null,onb:null,insp:null,rota:null,editStaff:null,myUserId:"",myName:"",role:"",me:null,db:null,canWrite:false});
   contactPrivacy={};editCon=null;IN.data=null;IN.loading=null;IN.key="";
   for(const key of Object.keys(BASE))delete BASE[key];
   closeSheets();
@@ -172,7 +176,7 @@ window.addEventListener("sc:session-invalid",()=>{
   for(const panel of document.querySelectorAll("[data-panel]"))panel.hidden=true;
 });
 for(const x of["#dv_chilled","#dv_frozen","#pReading"])minusIn(x);
-inspectForm();tempLogForm();closureForm();buildAlgChecks();buildTaskForm("extras");buildTaskForm("cleaning");proveForm();delivForm();maintForm();supForm();conForm();staffForm();editStaff(null);
+inspectForm();tempLogForm();closureForm();buildAlgChecks();buildTaskForm("extras");buildTaskForm("cleaning");buildTaskForm("fire");accidentForm();proveForm();delivForm();maintForm();supForm();conForm();staffForm();editStaff(null);
 applyTabs();renderAll();
 (async()=>{
   const[db,user,assets]=await Promise.all([window.claude?.use?.("db"),window.claude?.use?.("user"),window.claude?.use?.("assets")]);

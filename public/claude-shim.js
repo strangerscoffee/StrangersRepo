@@ -186,8 +186,8 @@
     const ifVersion = baseFor(op, body, opts);
     if (ifVersion !== undefined) body = Object.assign({}, body, { ifVersion });
     // Personal drafts never enter shared-profile localStorage or optimistic overlays. Preserve already queued
-    // legacy work, but require an authenticated online reply for every new private-collection write.
-    if (/(^|\/)(staff|contacts|onboarding)\/[^/]+$/.test(body.path)) {
+    // legacy work, but require an authenticated online reply for every new private-collection write (accident entries too).
+    if (/(^|\/)(staff|contacts|onboarding|accidents)\/[^/]+$/.test(body.path)) {
       if (!(await SC.ensureSession({ force: true }))) throw { code: OFFLINE, message: "Private records need a connection to save. Your draft is still here; reconnect and try again." };
       if (queue.some((entry) => entry.path === body.path)) {
         await flush();

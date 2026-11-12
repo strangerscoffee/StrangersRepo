@@ -18,7 +18,7 @@ export function checkSummary(q: { from?: unknown; to?: unknown }): SummarySpec {
 
 const cols = (name: string) => SITE_PREFIXES.map((p) => p + name);
 /** Every collection a summary reads from (for its version). */
-export const summaryCollections = () => [...cols("settings"), ...cols("days"), ...cols("extras"), ...cols("cleaning"), ...cols("maintenance")];
+export const summaryCollections = () => [...cols("settings"), ...cols("days"), ...cols("extras"), ...cols("cleaning"), ...cols("fire"), ...cols("maintenance")];
 
 export async function siteSummary(env: Env, spec: SummarySpec) {
   const j = JSON.stringify;
@@ -29,18 +29,18 @@ export async function siteSummary(env: Env, spec: SummarySpec) {
     // The days around today (today, the last trading day before it), by date: the (collection, doc_id) index.
     env.DB.prepare("SELECT collection, doc_id, data, seq FROM docs WHERE deleted = 0 AND collection IN (SELECT value FROM json_each(?)) AND doc_id BETWEEN ? AND ?").bind(j(cols("days")), spec.from, spec.to),
     env.DB.prepare("SELECT collection, MIN(doc_id) AS doc_id FROM docs WHERE deleted = 0 AND collection IN (SELECT value FROM json_each(?)) GROUP BY collection").bind(j(cols("days"))),
-    // Extra checks and cleaning without their logs (only when each was last done matters here).
-    env.DB.prepare("SELECT collection, doc_id, json_remove(data, '$.log') AS data, seq FROM docs WHERE deleted = 0 AND collection IN (SELECT value FROM json_each(?))").bind(j([...cols("extras"), ...cols("cleaning")])),
+    // Extra checks, cleaning and fire safety checks without their logs (only when each was last done matters here).
+    env.DB.prepare("SELECT collection, doc_id, json_remove(data, '$.log') AS data, seq FROM docs WHERE deleted = 0 AND collection IN (SELECT value FROM json_each(?))").bind(j([...cols("extras"), ...cols("cleaning"), ...cols("fire")])),
     env.DB.prepare(`SELECT collection, doc_id, data, seq FROM docs WHERE deleted = 0 AND collection IN (SELECT value FROM json_each(?))
       AND (json_extract(data, '$.status') IS NOT 'done' OR COALESCE(json_extract(data, '$.doneAt'), 0) > ?)`).bind(j(cols("maintenance")), Date.now() - DONE_KEPT_MS),
   ]);
-  const out: Record<string, { settings: unknown; days: Record<string, unknown>; firstDay: string | null; extras: unknown[]; cleaning: unknown[]; maintenance: unknown[] }> = {};
-  for (const id of SITE_IDS) out[id] = { settings: null, days: {}, firstDay: null, extras: [], cleaning: [], maintenance: [] };
+  const out: Record<string, { settings: unknown; days: Record<string, unknown>; firstDay: string | null; extras: unknown[]; cleaning: unknown[]; fire: unknown[]; maintenance: unknown[] }> = {};
+  for (const id of SITE_IDS) out[id] = { settings: null, days: {}, firstDay: null, extras: [], cleaning: [], fire: [], maintenance: [] };
   for (const r of settings.results as Row[]) out[siteOf(r.collection)].settings = JSON.parse(r.data);
   for (const r of days.results as Row[]) out[siteOf(r.collection)].days[r.doc_id] = JSON.parse(r.data);
   for (const r of first.results as Row[]) out[siteOf(r.collection)].firstDay = r.doc_id;
   for (const r of tasks.results as Row[]) {
-    const kind = r.collection.endsWith("cleaning") ? "cleaning" : "extras";
+    const kind = r.collection.endsWith("cleaning") ? "cleaning" : r.collection.endsWith("fire") ? "fire" : "extras";
     out[siteOf(r.collection)][kind].push({ id: r.doc_id, ...JSON.parse(r.data) });
   }
   for (const r of maint.results as Row[]) out[siteOf(r.collection)].maintenance.push({ id: r.doc_id, ...JSON.parse(r.data) });

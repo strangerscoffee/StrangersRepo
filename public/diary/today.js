@@ -71,7 +71,7 @@ function renderDayInner(){
     if(tabOn("review")&&S.db&&!S.reviewsLoading){const{due}=reviewPeriod();
       if(due<today())alerts.push(alertEl("4-weekly review overdue",`It was due ${nice(due)}. Look back over the last four weeks and answer the questions.`,R?null:["Do it now",()=>show("review")]))}
     for(const{kind,t,ts}of a.tasks)
-      alerts.push(alertEl(t.name,`${kind==="cleaning"?"Cleaning":"Extra check"} · ${(t.freq||"").replace(/^./,c=>c.toUpperCase())} · ${ts.text.toLowerCase()}`,R?null:["Done",()=>completeTask(kind,t,a.id,"")]));
+      alerts.push(alertEl(t.name,`${kind==="cleaning"?"Cleaning":kind==="fire"?"Fire safety":"Extra check"} · ${(t.freq||"").replace(/^./,c=>c.toUpperCase())} · ${ts.text.toLowerCase()}`,R?null:["Done",()=>completeTask(kind,t,a.id,"")]));
     // Two reminders at most, so today's checks stay near the top; the rest fold under one row.
     const more=alerts.length-2;
     if(more>1&&!S.alertsAll){
@@ -192,9 +192,9 @@ function siteAttention(id){
   const st=dayStatus(days[t],cfg,t),closedToday=!!closure(days[t])||isClosed(t,s)&&!st.any;
   const prev=prevTradingDay(s,days),pd=prev?days[prev]:null,pst=prev?dayStatus(pd,cfg,prev):null;
   const tasks=[];
-  for(const kind of["cleaning","extras"]){
+  for(const kind of["cleaning","extras","fire"]){
     if(!tabOn(kind,s))continue;
-    for(const x of live?S[kind]:sm[kind]){const ts=taskState(x);if(ts.overdue)tasks.push({kind,t:x,ts})}
+    for(const x of (live?S[kind]:sm[kind])||[]){const ts=taskState(x);if(ts.overdue)tasks.push({kind,t:x,ts})}
   }
   tasks.sort((a,b)=>(a.t.lastAt||0)-(b.t.lastAt||0));
   let openDue=!closedToday&&st.oT>0&&st.open!=="y";

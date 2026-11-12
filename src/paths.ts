@@ -5,7 +5,7 @@ export const SITE_PREFIXES = ["", "sites/cafe/", "sites/asg/", "sites/factory/"]
 
 export const COLLECTIONS = [
   "settings", "days", "weeks", "extras", "cleaning", "proveit", "allergens", "allergenDocs",
-  "suppliers", "contacts", "staff", "reviews", "plans", "onboarding", "inspections", "deliveries", "maintenance",
+  "suppliers", "contacts", "staff", "reviews", "plans", "onboarding", "inspections", "deliveries", "maintenance", "fire", "accidents",
 ];
 
 /** Single documents outside the per-site collections. config/people holds names for people who recorded in
