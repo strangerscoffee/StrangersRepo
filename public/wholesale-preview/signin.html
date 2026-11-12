@@ -12,13 +12,13 @@
   <link rel="stylesheet" href="/wholesale-preview/wholesale.css">
   <script src="/errors.js"></script>
   <script src="/shared/core.js"></script>
+  <script src="/wholesale-preview/terms.js" defer></script>
   <script src="/wholesale-preview/signin.js" defer></script>
 </head>
 <body class="wholesale-login">
   <main class="login-panel">
-    <div class="login-brand"><img class="login-mark" src="/mark.svg" width="64" height="64" alt="Strangers Coffee"></div>
     <p class="eyebrow">WHOLESALE</p>
-    <h1 id="login-title">Welcome back.</h1>
+    <h1 class="login-logo"><img src="/wholesale-preview/images/logo.svg" width="160" height="90" alt="Strangers Coffee"><span class="sr-only" id="login-title">Welcome back.</span></h1>
     <p class="dialog-intro" id="login-intro">Sign in to order coffee for your business.</p>
     <form id="wholesale-login">
       <div id="registration-fields" hidden>
@@ -40,6 +40,7 @@
     <div id="registration-complete" hidden><h2>Thanks for registering.</h2><p class="dialog-intro">Your account is awaiting review by Strangers. You can sign in and order once an admin has approved it.</p></div>
     <button class="text-button" type="button" id="registration-toggle">Request a wholesale account</button>
     <p class="login-help">Forgotten your password? Contact the Strangers team.</p>
+    <button class="text-button" type="button" data-terms>Terms and conditions</button>
     <a class="text-button" href="/wholesale-preview/staff-signin">Staff sign-in</a>
   </main>
 </body>

@@ -265,6 +265,8 @@ dialog::backdrop { background: rgba(0,0,0,.3); -webkit-backdrop-filter: blur(6px
 .login-brand { display: flex; align-items: center; justify-content: space-between; margin-bottom: 28px; }
 .login-mark { width: 48px; height: 48px; object-fit: contain; }
 .login-panel h1 { font-size: 36px; margin-top: 10px; }
+.login-logo { margin: 14px 0 10px; line-height: 0; }
+.login-logo img { display: block; width: 160px; height: auto; }
 .login-panel .button { display: flex; width: 100%; margin-top: 24px; }
 .login-panel > .text-button { display: flex; width: 100%; margin-top: 12px; }
 .login-help { color: var(--muted); font-size: 13px; margin-top: 20px; text-align: center; }
@@ -282,7 +284,7 @@ dialog::backdrop { background: rgba(0,0,0,.3); -webkit-backdrop-filter: blur(6px
   .is-account-collapsed .header-account { max-height: 0; margin-top: -8px; padding-block: 0; border-block-width: 0; opacity: 0; transform: translateY(-6px); visibility: hidden; transition-delay: 0s, 0s, 0s, 0s, 0s, 0s, .2s; }
   .is-measuring-header .header-account { max-height: none; transition: none !important; }
 }
-@media (prefers-color-scheme: dark) { .brand img, .login-mark, .footer-brand img { filter: invert(.94); } }
+@media (prefers-color-scheme: dark) { .brand img, .login-mark, .login-logo img, .footer-brand img { filter: invert(.94); } }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } *, *::before, *::after { transition: none !important; animation: none !important; } }
 @media (prefers-reduced-transparency: reduce) { .site-header, .product-card, .order-panel, .footer-panel, .login-panel, .mobile-basket, dialog, .no-results, .toast { background: var(--surface); -webkit-backdrop-filter: none; backdrop-filter: none; box-shadow: none; } dialog::backdrop { -webkit-backdrop-filter: none; backdrop-filter: none; } }
 @media (prefers-contrast: more) { .site-header, .product-card, .order-panel, .footer-panel, .login-panel, .mobile-basket, dialog, .no-results, .toast { background: var(--surface); border-color: var(--fg); box-shadow: none; } .text-button, .nav-link, .basket-link, .filter { font-weight: 700; } }
@@ -459,3 +461,15 @@ dialog::backdrop { background: rgba(0,0,0,.3); -webkit-backdrop-filter: blur(6px
 .review-subtotal:not(.review-grand) strong { font-size: 18px; }
 .review-delivery { margin-top: 8px; }
 .review-grand { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line, rgba(127,127,127,.25)); }
+
+/* Terms and conditions (terms.js): the checkout note above Place order, and the pop-up. */
+.link-button { border: 0; padding: 0; background: none; color: var(--accent); font: inherit; font-weight: 600; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; text-align: left; }
+.checkout-terms { display: flex; gap: 10px; align-items: flex-start; margin-top: 18px; padding: 14px 16px; border-radius: 14px; background: var(--tint); color: var(--fg); font-size: 14px; line-height: 1.55; }
+.checkout-terms svg { flex: 0 0 auto; width: 20px; height: 20px; margin-top: 1px; fill: none; stroke: var(--accent); stroke-width: 2; stroke-linecap: round; }
+.checkout-terms p { margin: 0; }
+.account-terms .link-button { margin-top: 12px; font-size: 14px; min-height: 32px; }
+.terms-list { margin: 18px 0 22px; padding-left: 22px; display: grid; gap: 14px; }
+.terms-list li::marker { color: var(--muted); font-weight: 600; }
+.terms-list h3 { font-size: 16px; margin: 0; }
+.terms-list p { margin: 4px 0 0; color: var(--muted); font-size: 14.5px; line-height: 1.6; }
+.terms-dialog .button { width: 100%; }
