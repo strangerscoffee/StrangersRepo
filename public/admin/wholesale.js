@@ -131,6 +131,8 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
       ${settings.sending ? "" : html`<p class="err">Email isn’t set up on this site yet, so nothing will be sent.</p>`}
       <form id="wOrderEmailsForm" class="w-order-emails" novalidate><div class="checks"><label><input id="wOrderEmailsOn" type="checkbox" ${settings.enabled ? raw("checked") : ""}>Email new orders</label></div>
       <label class="field"><span class="fl">Send to</span><textarea id="wOrderEmailsTo" rows="3" autocapitalize="none" spellcheck="false" aria-describedby="wOrderEmailsHint">${settings.to.join("\n")}</textarea></label><p class="hint" id="wOrderEmailsHint">One address per line, up to 5.</p>
+      <h3>Customers</h3><div class="checks"><label><input id="wConfirmCustomers" type="checkbox" ${settings.confirmCustomers !== false ? raw("checked") : ""}>Email customers about their orders</label></div>
+      <p class="hint">Two emails to the business’s email address. When they place an order: a confirmation with their bags, delivery or collection, totals (not for businesses with hidden prices) and payment terms. When it’s marked dispatched: that it’s been shipped (with the tracking link, if added) or collected from the Roastery. Replies come to the first address above.</p>
       <p class="err" id="wOrderEmailsErr" role="alert" hidden></p></form>
       <div class="row w-actions"><button class="btn soft" type="button" data-sheet="test" ${settings.sending ? "" : raw("disabled")}>Send a test email</button><button class="btn" type="button" data-sheet="save">Save</button></div>
       <h3>Slack</h3><p class="hint" id="wSlackState">${settings.slack ? "Each new order is posted to the orders channel: straight away from 07:45 to 16:45 (Sunday 10:00 to 15:30), otherwise at 07:50 (Sunday 10:00)." : "Not set up: add the SLACK_ORDERS_WEBHOOK_URL secret in Cloudflare (README-deploy.md)."}</p>
@@ -141,7 +143,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
       $("#wOrderEmailsErr").hidden = true;
       if (action === "save") {
         const to = $("#wOrderEmailsTo").value.split(/[\s,;]+/).map((value) => value.trim()).filter(Boolean);
-        try { settings = await api("PUT", "/api/admin/wholesale/order-emails", { ifVersion: settings.version, enabled: $("#wOrderEmailsOn").checked, to }); closeSheet(); toast(settings.enabled ? "Order emails saved" : "Order emails switched off"); }
+        try { settings = await api("PUT", "/api/admin/wholesale/order-emails", { ifVersion: settings.version, enabled: $("#wOrderEmailsOn").checked, to, confirmCustomers: $("#wConfirmCustomers").checked }); closeSheet(); toast(settings.enabled ? "Order emails saved" : "Order emails switched off"); }
         catch (error) { if (error.code === "conflict") { settings = await api("GET", "/api/admin/wholesale/order-emails"); } fail(error); }
       }
       if (action === "slack-test") {

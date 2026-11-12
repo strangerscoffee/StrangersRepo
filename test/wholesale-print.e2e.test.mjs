@@ -40,6 +40,16 @@ test("print new orders, pick orders to print, and see the bags to process", asyn
     await p.goto(srv.base + "/admin#wholesale");
     await p.locator('[data-act="wh-tab"][data-id="orders"]').click(); await p.locator('[data-act="wh-order"]').first().waitFor();
 
+    // Order alerts: the customer confirmation switch saves and comes back as saved.
+    await p.locator('[data-act="wh-order-emails"]').click(); await p.locator("#wConfirmCustomers").waitFor();
+    assert.equal(await p.locator("#wConfirmCustomers").isChecked(), true, "customer confirmations are on by default");
+    await p.locator("#wConfirmCustomers").uncheck(); await p.locator('#sheet [data-sheet="save"]').click(); await p.locator("#wConfirmCustomers").waitFor({ state: "detached" });
+    await p.locator('[data-act="wh-order-emails"]').click(); await p.locator("#wConfirmCustomers").waitFor();
+    assert.equal(await p.locator("#wConfirmCustomers").isChecked(), false);
+    await p.locator("#wConfirmCustomers").check();
+    if (process.env.WHOLESALE_SCREENSHOT_DIR) { await p.locator("#wConfirmCustomers").scrollIntoViewIfNeeded(); await p.screenshot({ path: `${process.env.WHOLESALE_SCREENSHOT_DIR}/order-alerts-${name}.png` }); }
+    await p.locator('#sheet [data-sheet="save"]').click(); await p.locator("#wConfirmCustomers").waitFor({ state: "detached" });
+
     await p.locator('[data-act="wh-totals"]').click(); await p.locator(".wp-tiles").waitFor();
     assert.match((await p.locator(".wp-tiles").innerText()).replace(/\s+/g, " "), /250 g bags 20 1 kg bags 6 All bags 26 11 kg of coffee/, name);
     assert.match(await p.locator(".wp-body").innerText(), /To pack: by coffee, size and grind/);

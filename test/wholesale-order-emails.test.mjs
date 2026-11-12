@@ -41,7 +41,9 @@ after(async () => { await srv?.stop(); await new Promise((r) => mock?.close(r));
 
 test("each new customer order emails sales@ from orders@, with Reply-To the customer; retries and staff previews don't", async () => {
   const defaults = (await call("GET", "/api/admin/wholesale/order-emails")).body;
-  assert.deepEqual([defaults.enabled, defaults.to, defaults.from, defaults.sending, defaults.version], [true, ["sales@strangerscoffee.com"], "orders@staffstrangerscoffee.com", true, 0]);
+  assert.deepEqual([defaults.enabled, defaults.to, defaults.from, defaults.sending, defaults.version, defaults.confirmCustomers], [true, ["sales@strangerscoffee.com"], "orders@staffstrangerscoffee.com", true, 0, true]);
+  // Customer confirmations are tested on their own (below); here only Strangers' own emails are counted.
+  assert.equal((await call("PUT", "/api/admin/wholesale/order-emails", { ifVersion: 0, enabled: true, to: ["sales@strangerscoffee.com"], confirmCustomers: false })).body.confirmCustomers, false);
   take();
   const { body, order } = await place({ customerNote: "Use our own custom labels" });
   assert.equal(await settle(1), 1);
@@ -70,7 +72,7 @@ test("admins choose who gets them, switch them off and send a test; others can't
   }
   assert.equal((await call("PUT", "/api/admin/wholesale/order-emails", { ifVersion: 9, enabled: true, to: ["a@x.example"] })).status, 409);
   settings = (await call("PUT", "/api/admin/wholesale/order-emails", { ifVersion: settings.version, enabled: true, to: ["Sales@StrangersCoffee.com", "roastery@x.example", "sales@strangerscoffee.com"] })).body;
-  assert.deepEqual([settings.to, settings.version], [["sales@strangerscoffee.com", "roastery@x.example"], 1]);
+  assert.deepEqual([settings.to, settings.version, settings.confirmCustomers], [["sales@strangerscoffee.com", "roastery@x.example"], 2, false], "saving without confirmCustomers keeps it");
   take(); await place();
   assert.equal(await settle(2), 2);
   assert.deepEqual(take().map((m) => m.to[0]).sort(), ["roastery@x.example", "sales@strangerscoffee.com"]);
@@ -88,4 +90,83 @@ test("admins choose who gets them, switch them off and send a test; others can't
   assert.equal((await call("POST", "/api/admin/wholesale/order-emails/test", {}, A)).status, 401);
   const backup = await call("POST", "/api/admin/backups", {});
   assert.ok(backup.status < 300, backup.text);
+});
+
+test("the customer gets their own confirmation: their bags, delivery, totals and terms, replies to Strangers", async () => {
+  let settings = (await call("GET", "/api/admin/wholesale/order-emails")).body;
+  settings = (await call("PUT", "/api/admin/wholesale/order-emails", { ifVersion: settings.version, enabled: false, to: [], confirmCustomers: true })).body;
+  assert.equal(settings.confirmCustomers, true);
+  take();
+  const { body, order } = await place({ customerNote: "Ring the bell" });
+  assert.equal(await settle(1), 1, "just the confirmation (Strangers' own alert is switched off here)");
+  const [mail] = take();
+  assert.deepEqual(mail.to, ["buyer@lune.example"]);
+  assert.equal(mail.from, "Strangers Coffee Orders <orders@staffstrangerscoffee.com>");
+  assert.equal(mail.reply_to, "sales@strangerscoffee.com", "replies go to Strangers");
+  assert.equal(mail.headers, undefined);
+  assert.match(mail.subject, /^Order confirmed: 10 bags of Strangers Coffee/);
+  assert.match(mail.text, /^Hi Sam,/); assert.match(mail.text, new RegExp(order.id));
+  assert.match(mail.text, /6 × Brazil.*1 kg, Beans · £108\.00/); assert.match(mail.text, /Total £/);
+  assert.match(mail.text, /Delivering to: .*1 Elm Hill, Norwich, NR3 1HN/); assert.match(mail.text, /Your reference: PO-77/);
+  assert.match(mail.text, /Ring the bell/); assert.match(mail.text, /Payment terms: To be agreed/);
+  assert.match(mail.text, /accepted the payment terms and conditions/);
+  assert.match(mail.html, /See your orders/); assert.match(mail.html, /#orders"/);
+  assert.match(mail.html, /Café &lt;Lune&gt; &amp; Co/); assert.doesNotMatch(mail.html, /<Lune>/);
+  assert.equal((await call("POST", "/api/wholesale/orders", body, A)).status, 200);
+  assert.equal(await settle(1, 1500), 0, "no second confirmation for a retry");
+
+  // Hidden prices: bags only, no money.
+  const rows = (await call("GET", "/api/admin/wholesale")).body.customers, c = rows.find((x) => x.business === "Café <Lune> & Co");
+  const { id, version, updatedAt, ...fields } = c;
+  assert.equal((await call("PUT", `/api/admin/wholesale/customers/${id}`, { ...fields, hidePrices: true, ifVersion: version })).status, 200);
+  await place();
+  assert.equal(await settle(1), 1);
+  const [hidden] = take();
+  assert.doesNotMatch(hidden.text + hidden.html, /£/, "no prices for a business that doesn't see them");
+
+  settings = (await call("PUT", "/api/admin/wholesale/order-emails", { ifVersion: settings.version, enabled: false, to: [], confirmCustomers: false })).body;
+  await place();
+  assert.equal(await settle(1, 1500), 0, "switched off: no confirmation");
+  assert.equal((await call("PUT", "/api/admin/wholesale/order-emails", { ifVersion: settings.version, enabled: false, to: [], confirmCustomers: "yes" })).status, 400);
+});
+
+test("when an order is marked dispatched the customer is told, once: shipped (with tracking) or collected from the Roastery", async () => {
+  let settings = (await call("GET", "/api/admin/wholesale/order-emails")).body;
+  settings = (await call("PUT", "/api/admin/wholesale/order-emails", { ifVersion: settings.version, enabled: false, to: [], confirmCustomers: true })).body;
+  const patch = (o, extra) => call("PATCH", `/api/admin/wholesale/orders/${o.id}`, { ifVersion: o.version, status: o.status, customerId: o.customerId, note: o.note || "", trackingUrl: o.trackingUrl || "", ...extra });
+  const latest = async (id) => (await call("GET", `/api/wholesale/orders/${id}`)).body.order;
+
+  // Delivery: shipped, with the tracking link.
+  const { order } = await place(); await settle(1); take();
+  let r = await patch(await latest(order.id), { status: "Preparing" });
+  assert.equal(await settle(1, 1200), 0, "nothing for other statuses");
+  r = await patch(r.body.order, { status: "Dispatched", trackingUrl: "https://track.example/abc" });
+  assert.equal(r.status, 200, r.text);
+  assert.equal(await settle(1), 1);
+  const [shipped] = take();
+  assert.deepEqual(shipped.to, ["buyer@lune.example"]); assert.equal(shipped.reply_to, "sales@strangerscoffee.com");
+  assert.match(shipped.subject, /^Shipped: your Strangers Coffee order/);
+  assert.match(shipped.text, /SHIPPED/); assert.match(shipped.text, /on its way to .*1 Elm Hill/);
+  assert.match(shipped.html, /Your order has been shipped/); assert.match(shipped.html, /href="https:\/\/track\.example\/abc"/);
+  assert.doesNotMatch(shipped.text + shipped.html, /£/, "no prices in the dispatch email");
+  // Back and forth never sends it again.
+  r = await patch(r.body.order, { status: "Ready" }); r = await patch(r.body.order, { status: "Dispatched" });
+  assert.equal(await settle(1, 1500), 0, "only once");
+
+  // Collection, marked dispatched from the staff orders page: collected from the Roastery.
+  const { order: pickup } = await place({ delivery: "Roastery collection" }); await settle(1); take();
+  const o = await latest(pickup.id);
+  r = await call("PATCH", `/api/staff-orders/orders/${o.id}`, { ifVersion: o.version, status: "Dispatched", note: "", trackingUrl: "" });
+  assert.equal(r.status, 200, r.text);
+  assert.equal(await settle(1), 1);
+  const [collected] = take();
+  assert.match(collected.subject, /^Collected: your Strangers Coffee order/);
+  assert.match(collected.html, /Your order has been collected from the Roastery/); assert.match(collected.text, /COLLECTED FROM THE ROASTERY/);
+  assert.doesNotMatch(collected.html, /Track your delivery/);
+
+  // Switched off: nothing.
+  settings = (await call("PUT", "/api/admin/wholesale/order-emails", { ifVersion: settings.version, enabled: false, to: [], confirmCustomers: false })).body;
+  const { order: quiet } = await place();
+  await patch(await latest(quiet.id), { status: "Dispatched" });
+  assert.equal(await settle(1, 1500), 0);
 });

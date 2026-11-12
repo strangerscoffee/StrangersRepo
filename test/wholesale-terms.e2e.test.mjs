@@ -58,6 +58,10 @@ test("terms on the sign-in page, footer and checkout; logo on sign-in", async ()
     // Ordering page: footer, My account, and the note above Place order.
     const [n, v] = BUYER.split("="); await ctx.addCookies([{ name: n, value: v, url: srv.base }]);
     await p.goto(srv.base + "/wholesale-preview/"); await p.locator(".product-card").first().waitFor();
+    // The emails' "See your orders" link (…/#orders) opens My orders, then the address loses the #orders.
+    await p.goto("about:blank"); await p.goto(srv.base + "/wholesale-preview/#orders"); await p.locator("#orders-dialog[open]").waitFor();
+    assert.equal(await p.evaluate(() => location.hash), "");
+    await p.locator("#orders-dialog .close-button").click();
     d = await readTerms(p, p.locator(".footer-actions [data-terms]"), `${name} footer`);
     await d.getByRole("button", { name: "Done" }).click();
     const card = p.locator(".product-card").first();

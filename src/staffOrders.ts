@@ -5,7 +5,7 @@
 // exemption or login details).
 import type {User} from "./auth";
 import {ApiError,type Env,invalid,json,readJson} from "./http";
-import {ordersToPrint,updateOrderStatus} from "./wholesale";
+import {customerOrdersUrl,ordersToPrint,updateOrderStatus} from "./wholesale";
 import {customerLocations} from "./wholesaleCustomers";
 import {object} from "./wholesaleStore";
 import {requireStaffOrders} from "./staffOrdersAccess";
@@ -55,13 +55,13 @@ async function customers(req:Request,env:Env){
   const rows=await env.DB.prepare(`SELECT id,data FROM wholesale_preview WHERE ${where.join(' AND ')} ORDER BY json_extract(data,'$.business') COLLATE NOCASE,id LIMIT 501`).bind(...values).all<{id:string;data:string}>();
   return {customers:rows.results.slice(0,500).map(staffCustomer),more:rows.results.length>500};
 }
-export async function handleStaffOrders(req:Request,env:Env,route:string,user:User):Promise<Response>{
+export async function handleStaffOrders(req:Request,env:Env,route:string,user:User,links:{preview?:string}={},ctx?:ExecutionContext):Promise<Response>{
   await requireStaffOrders(env,user);
   const orderMatch=/^orders\/((?:PREVIEW|WS)-[A-F0-9]{32})$/.exec(route);
   if(orderMatch){
     if(req.method!=="PATCH")return json({code:"method_not_allowed",message:"Use PATCH to change an order."},405,{Allow:"PATCH"});
     const body=object(await readJson(req,8192));
-    const updated=await updateOrderStatus(env,orderMatch[1],{ifVersion:body.ifVersion,status:body.status,note:body.note,trackingUrl:body.trackingUrl},user.name,{customerOnly:true});
+    const updated=await updateOrderStatus(env,orderMatch[1],{ifVersion:body.ifVersion,status:body.status,note:body.note,trackingUrl:body.trackingUrl},user.name,{customerOnly:true,notify:{ctx,ordersUrl:customerOrdersUrl(env,links,req)}});
     await requireStaffOrders(env,user);
     return json({order:staffView(updated)});
   }
