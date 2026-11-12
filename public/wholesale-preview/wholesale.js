@@ -16,6 +16,10 @@ let basket = [];
 let currentFilter = "all";
 let currentSort = "catalogue", catalogueLoading = false;
 const sortLabels = { catalogue: "Catalogue order", "price-asc": "Price: low to high", "price-desc": "Price: high to low" };
+// The bag size the whole catalogue shows (250 g or 1 kg). Price sorting always compares this size, so every coffee is
+// ranked on the same bag and a card doesn't jump when one coffee's own size is changed. Remembered on this browser.
+const BAG_SIZE_KEY = "sc.wholesale.bagSize";
+let bagSize = (() => { try { const saved = localStorage.getItem(BAG_SIZE_KEY); return Object.hasOwn(packs, saved) ? saved : "kilo"; } catch { return "kilo"; } })();
 function refreshBusy(id, busy) {
   const button = $(id); button.disabled = busy; button.setAttribute("aria-busy", String(busy));
 }
@@ -160,9 +164,9 @@ function renderProducts() {
     ${product.imageUrls.length > 1 ? `<div class="photo-controls"><button type="button" data-photo-step="-1" aria-label="Previous photo of ${escape(product.name)}">Previous</button><span data-photo-count>${Math.min(photoIndexes.get(product.id) || 0, product.imageUrls.length - 1) + 1} / ${product.imageUrls.length}</span><button type="button" data-photo-step="1" aria-label="Next photo of ${escape(product.name)}">Next</button></div>` : ""}
     <div class="product-info"><p class="product-origin">${escape(product.origin)}</p><h3 class="product-name" id="name-${product.id}">${escape(product.name)}</h3><p class="product-process">${escape(product.process)}</p><p class="tasting-notes">${escape(product.notes)}</p><p class="product-stock ${product.inStock ? "" : "out"}">${product.inStock ? "In stock" : "Out of stock"}</p></div>
     <form class="product-config" data-product="${product.id}">
-      <fieldset class="pack-options"><legend>Pack size <span class="sr-only">for ${escape(product.name)}</span></legend>${orderablePacks.map(([id, pack]) => `<label class="pack-choice"><input type="radio" name="pack" value="${id}" ${id === "kilo" ? "checked" : ""}><span>${escape(pack.short)} bag</span></label>`).join("")}</fieldset>
+      <fieldset class="pack-options"><legend>Pack size <span class="sr-only">for ${escape(product.name)}</span></legend>${orderablePacks.map(([id, pack]) => `<label class="pack-choice"><input type="radio" name="pack" value="${id}" ${id === bagSize ? "checked" : ""}><span>${escape(pack.short)} bag</span></label>`).join("")}</fieldset>
       <div class="grind-field"><span class="field-label">Grind</span><select name="grind" hidden aria-label="Grind for ${escape(product.name)}">${availableGrinds(product).map(option => `<option value="${escape(option.id)}">${escape(option.label)}</option>`).join("")}</select><button class="grind-picker" type="button" data-grind-open aria-haspopup="dialog" aria-controls="grind-dialog" aria-label="Choose grind for ${escape(product.name)}"><span class="grind-current"><span data-grind-label>${escape(availableGrinds(product)[0]?.label || "Unavailable")}</span><small data-grind-hint>${escape(availableGrinds(product)[0]?.hint || "")}</small></span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 7 7-7 7"/></svg></button></div>
-      <div class="product-price"><strong data-price>${money(product.price)}</strong><span data-price-unit>per 1 kg bag</span></div>
+      <div class="product-price"><strong data-price>${money(unitPrice(product, bagSize))}</strong><span data-price-unit>per ${escape(packs[bagSize].label)}</span></div>
       <div class="add-row">${stepper(`qty-${product.id}`, 1, product.name, `error-${product.id}`)}<button class="button button-dark" type="submit" aria-label="Add ${escape(product.name)} to order" ${isAvailable(product) ? "" : "disabled"}>${product.inStock ? 'Add to order <span aria-hidden="true">+</span>' : "Out of stock"}</button></div>
       <p class="quantity-error" id="error-${product.id}" hidden role="status">Choose a whole number of packs, from 1 to ${MAX_QUANTITY}.</p>
     </form>
@@ -173,9 +177,9 @@ function sortProducts() {
   const container = $("#products"), focused = document.activeElement;
   const cards = products.map((product, index) => {
     const card = container.querySelector(`article[data-product="${product.id}"]`);
-    return { card, index, price: unitPrice(product, card.querySelector("form").elements.pack.value) };
+    return { card, index, price: unitPrice(product, bagSize) ?? Infinity };
   });
-  if (currentSort !== "catalogue") cards.sort((a, b) => (currentSort === "price-asc" ? a.price - b.price : b.price - a.price) || a.index - b.index);
+  if (currentSort !== "catalogue") cards.sort((a, b) => (a.price === b.price ? 0 : currentSort === "price-asc" ? (a.price < b.price ? -1 : 1) : (a.price > b.price ? -1 : 1)) || a.index - b.index);
   for (let i = 0; i < cards.length; i++) if (container.children[i] !== cards[i].card) container.insertBefore(cards[i].card, container.children[i] || null);
   if (focused && container.contains(focused) && document.activeElement !== focused) focused.focus({ preventScroll: true });
 }
@@ -213,6 +217,31 @@ sortMenu.addEventListener("keydown", event => {
 function closeSortMenu() { if (sortMenu.matches(":popover-open")) sortMenu.hidePopover(); }
 window.addEventListener("resize", () => { if (sortMenu.matches(":popover-open")) positionSortMenu(); });
 window.addEventListener("scroll", event => { if (!sortMenu.contains(event.target) && sortMenu.matches(":popover-open")) positionSortMenu(); }, true);
+function setPackPrice(form) {
+  const pack = form.elements.pack.value, product = productFor(form.dataset.product);
+  form.querySelector("[data-price]").textContent = money(unitPrice(product, pack));
+  form.querySelector("[data-price-unit]").textContent = `per ${packs[pack].label}`;
+}
+// Shows the chosen size on the switch, or neither when some coffees have been changed to the other size.
+function showBagSize() {
+  const chosen = new Set([...document.querySelectorAll('#products .product-config input[name="pack"]:checked')].map(input => input.value));
+  for (const button of document.querySelectorAll("[data-bag-size]")) {
+    const on = button.dataset.bagSize === bagSize && !(chosen.size > 1 || (chosen.size === 1 && !chosen.has(bagSize)));
+    button.classList.toggle("selected", on); button.setAttribute("aria-pressed", String(on));
+  }
+  $("#sort-basis").textContent = `Sort by ${packs[bagSize].label} price`;
+}
+document.querySelectorAll("[data-bag-size]").forEach(button => button.addEventListener("click", () => {
+  if (!Object.hasOwn(packs, button.dataset.bagSize)) return;
+  bagSize = button.dataset.bagSize;
+  try { localStorage.setItem(BAG_SIZE_KEY, bagSize); } catch {}
+  for (const form of document.querySelectorAll("#products .product-config")) {
+    const input = form.querySelector(`input[name="pack"][value="${bagSize}"]`);
+    if (input && !input.checked) { input.checked = true; setPackPrice(form); }
+  }
+  showBagSize();
+  if (ready) sortProducts();
+}));
 function filterProducts() {
   if (!ready) return;
   const query = $("#coffee-search").value.trim().toLocaleLowerCase("en-GB");
@@ -226,6 +255,7 @@ function filterProducts() {
   }
   $("#product-count").textContent = `${count} ${count === 1 ? "coffee" : "coffees"}`;
   $("#no-results").hidden = count !== 0;
+  showBagSize();
   sortProducts();
 }
 
@@ -295,11 +325,8 @@ $("#products").addEventListener("change", (event) => {
   const form = event.target.closest(".product-config");
   if (!form) return;
   if (event.target.name === "pack") {
-    const pack = form.elements.pack.value;
-    const product = productFor(form.dataset.product);
-    form.querySelector("[data-price]").textContent = money(unitPrice(product, pack));
-    form.querySelector("[data-price-unit]").textContent = `per ${packs[pack].label}`;
-    if (currentSort !== "catalogue") sortProducts();
+    setPackPrice(form);
+    showBagSize();
   }
   if (event.target.type === "number") validateQuantity(event.target);
 });

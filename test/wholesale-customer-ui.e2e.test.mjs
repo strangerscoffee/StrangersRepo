@@ -39,10 +39,6 @@ for (const [device, viewport] of [['phone', {width:393,height:852}], ['ipad', {w
       await page.locator('#coffee-title').click(); await page.locator('#sort-menu:popover-open').waitFor({state:'hidden'});
       assert.equal(await page.locator('#sort-coffee').getAttribute('aria-expanded'),'false');
       const original = await page.locator('#products > article').evaluateAll(nodes => nodes.map(n => n.dataset.product));
-      const card = page.locator('#products > article').first(), product = await card.getAttribute('data-product');
-      await card.locator('input[name="pack"][value="quarter"]').check();
-      await card.locator('input[type="number"]').fill('3');
-      await card.locator('[data-grind-open]').click(); await page.locator('#grind-choice-form input[value="filter"]').check(); await page.locator('#confirm-grind').click();
       const prices = () => page.locator('#products > article').evaluateAll(nodes => nodes.map(n => Number(n.querySelector('[data-price]').textContent.replace(/[^0-9.]/g,''))));
       async function choose(value, apply=true) {
         await page.locator('#sort-coffee').click(); await page.locator('#sort-menu:popover-open').waitFor();
@@ -50,14 +46,32 @@ for (const [device, viewport] of [['phone', {width:393,height:852}], ['ipad', {w
         else { await page.keyboard.press('ArrowDown'); await page.keyboard.press('Escape'); }
         await page.locator('#sort-menu:popover-open').waitFor({state:'hidden'});
       }
+      const order = () => page.locator('#products > article').evaluateAll(nodes => nodes.map(n => n.dataset.product));
+      const packsShown = () => page.locator('#products input[name="pack"]:checked').evaluateAll(nodes => [...new Set(nodes.map(n => n.value))]);
+      assert.deepEqual(await packsShown(), ['kilo'], '1 kg by default');
       await choose('price-asc'); let values = await prices(); assert.deepEqual(values, [...values].sort((a,b)=>a-b));
       await choose('price-desc', false); assert.deepEqual(await prices(), values, 'cancel does not change sorting');
       await choose('price-desc'); values = await prices(); assert.deepEqual(values, [...values].sort((a,b)=>b-a));
+      // One switch moves every coffee to 250 g and sorts on 250 g prices; it's remembered after a reload.
+      await page.locator('[data-bag-size="quarter"]').click();
+      assert.deepEqual(await packsShown(), ['quarter']); assert.equal(await page.locator('[data-bag-size="quarter"]').getAttribute('aria-pressed'), 'true');
+      values = await prices(); assert.deepEqual(values, [...values].sort((a,b)=>b-a), 'sorted on 250 g prices');
+      assert.match(await page.locator('#sort-basis').textContent(), /250 g/);
+      await page.locator('[data-bag-size="kilo"]').click(); assert.deepEqual(await packsShown(), ['kilo']);
+      values = await prices(); assert.deepEqual(values, [...values].sort((a,b)=>b-a), 'sorted on 1 kg prices');
+      // Changing one coffee's size, grind or quantity leaves the order alone (the card doesn't jump away).
+      const before = await order(), card = page.locator('#products > article').nth(1), product = await card.getAttribute('data-product');
+      await card.locator('input[name="pack"][value="quarter"]').check();
+      await card.locator('input[type="number"]').fill('3');
+      await card.locator('[data-grind-open]').click(); await page.locator('#grind-choice-form input[value="filter"]').check(); await page.locator('#confirm-grind').click();
+      assert.deepEqual(await order(), before, 'one card changing size keeps the order');
+      assert.equal(await page.locator('[data-bag-size][aria-pressed="true"]').count(), 0, 'mixed sizes: neither switch pressed');
       const retained = page.locator(`.product-config[data-product="${product}"]`);
       assert.equal(await retained.locator('input[name="pack"]:checked').inputValue(), 'quarter');
       assert.equal(await retained.locator('select[name="grind"]').inputValue(), 'filter');
       assert.equal(await retained.locator('input[type="number"]').inputValue(), '3');
-      await retained.locator('input[name="pack"][value="kilo"]').check(); values = await prices(); assert.deepEqual(values, [...values].sort((a,b)=>b-a), 'pack price changes update ordering');
+      await page.locator('[data-bag-size="quarter"]').click(); await page.reload(); await page.locator('#products[aria-busy="false"]').waitFor();
+      assert.deepEqual(await packsShown(), ['quarter'], 'bag size remembered'); await page.locator('[data-bag-size="kilo"]').click();
       await page.locator('#coffee-search').fill('brazil'); assert.ok(await page.locator('#products > article:visible').count());
       await page.locator('#coffee-search').fill(''); await choose('catalogue');
       assert.deepEqual(await page.locator('#products > article').evaluateAll(nodes => nodes.map(n=>n.dataset.product)), original);
