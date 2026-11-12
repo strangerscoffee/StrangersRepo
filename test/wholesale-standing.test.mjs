@@ -86,6 +86,7 @@ test("dispatching a run makes the next one once; cancelling skips a run; unticki
   assert.equal(next.previousRunId, orderId);
   assert.deepEqual(next.lines.map((l) => [l.productId, l.quantity]), [["campo", 4], ["rosalina", 12]], "the amended bags repeat");
   assert.equal(next.amendedAt, undefined); assert.equal(next.note, ""); assert.equal(next.preview, false);
+  assert.equal(next.dispatchEmailedAt, undefined, "the next run gets its own shipped/collected email");
   assert.equal(next.reference, "Weekly"); assert.equal(next.customerSnapshot.business, "Café Standing");
   // Saving the dispatched run again never makes a second next run.
   const resaved = await patch(sent.body.order, { note: "Sent" });
