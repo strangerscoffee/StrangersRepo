@@ -1,7 +1,11 @@
 /* Wholesale invoices reuse the native Admin sheet and grouped-list materials. */
 .wi-workspace{display:grid;gap:14px;min-width:0}
 .wi-workspace .toolbar{justify-content:space-between}
-.wi-workspace .toolbar>div{display:grid;gap:5px}
+.wi-workspace .toolbar>div:not(.row){display:grid;gap:5px}
+.wi-workspace .toolbar .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+@media(min-width:700px){
+ .wi-workspace .toolbar .row{flex-wrap:nowrap}
+}
 .wi-records{display:grid;align-content:start;gap:14px;min-width:0}
 .wi-stats{grid-template-columns:repeat(3,minmax(0,1fr))}
 .wi-stats .v{font-size:clamp(24px,3vw,34px);overflow-wrap:anywhere}
