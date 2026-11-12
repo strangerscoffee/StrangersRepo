@@ -62,7 +62,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       assert.match(design.headingFont, /system-ui/, 'customer headings use the same system type as Admin');
       assert.equal(design.actionColour, design.accent, 'ordering actions follow the shared light/dark accent');
       assert.deepEqual(design.smallTargets, [], 'primary touch controls are at least 44 by 44 pixels');
-      assert.equal(await page.locator("#products article").count(), 10);
+      assert.equal(await page.locator("#products article").count(), 14);
       assert.equal(await page.locator("#signed-in-name").textContent(), "Wholesale Owner");
       assert.equal(await page.locator("#admin-wholesale-link").getAttribute("href"), "/admin#wholesale");
       const card = page.locator('article[data-product="brazil"]');
@@ -220,7 +220,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
         for (const image of images) image.loading = 'eager';
         return Promise.all(images.map(async (image) => { try { await image.decode(); return { loaded: image.naturalWidth > 0, src: image.getAttribute('src') }; } catch { return { loaded: false, src: image.getAttribute('src') }; } }));
       });
-      assert.equal(photos.length, 10); assert.ok(photos.every((photo) => photo.loaded), JSON.stringify(photos));
+      assert.equal(photos.length, 14); assert.ok(photos.every((photo) => photo.loaded), JSON.stringify(photos));
       assert.equal(await page.locator('#signed-in-name').textContent(), business);
       assert.equal(await page.locator('#admin-wholesale-link').isHidden(), true);
       assert.equal(await page.locator('#staff-preview-notice').isHidden(), true);

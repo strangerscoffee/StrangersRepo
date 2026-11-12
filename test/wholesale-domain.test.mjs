@@ -45,7 +45,7 @@ test("wholesale domain: customer-only sign-in and approval work without exposing
   const profile = await call("GET", "/api/wholesale/session", undefined, customerCookie);
   assert.equal(profile.data.customer.business, "Trade café"); assert.equal(profile.data.me.role, "wholesale"); assert.equal(profile.data.links.admin, undefined);
   assert.equal((await call("GET", "/", undefined, customerCookie)).response.status, 200);
-  assert.equal((await call("GET", "/api/wholesale/catalogue", undefined, customerCookie)).data.products.length, 10);
+  assert.equal((await call("GET", "/api/wholesale/catalogue", undefined, customerCookie)).data.products.length, 14);
   for (const path of ["/api/auth/me", "/api/admin/wholesale", "/api/admin/users", "/api/db/get", "/api/rota/week", "/api/staff-orders/orders", "/api/live"]) {
     assert.equal((await call("GET", path, undefined, customerCookie)).response.status, 404, path);
   }

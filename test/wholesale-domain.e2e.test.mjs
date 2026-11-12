@@ -26,7 +26,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       await page.locator("#login-submit").click();
       await page.locator("#products article").first().waitFor();
       assert.equal(await page.locator("main h1").textContent(), "Wholesale");
-      assert.equal(await page.locator("#products article").count(), 10);
+      assert.equal(await page.locator("#products article").count(), 14);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
       await page.reload(); await page.locator("#products article").first().waitFor();
       const profile = await page.evaluate(async () => (await fetch("/api/wholesale/session")).json());

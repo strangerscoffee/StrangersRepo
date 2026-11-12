@@ -11,6 +11,9 @@ export interface Customer {
   locations?: CustomerLocation[]; defaultLocationId?: string;
   /** Admin-only: no minimum order for this business (invoiced as they go). Never in publicCustomer. */
   noMinimumOrder?: boolean;
+  /** Admin-only: the ordering page shows this business no prices or totals (Strangers' own shops). Never in
+   * publicCustomer: the page only learns showPrices:false. Orders still keep their prices. */
+  hidePrices?: boolean;
 }
 export const PAYMENT_TERMS = [
   { id: "to-agree", label: "To be agreed" },

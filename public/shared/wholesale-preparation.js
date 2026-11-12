@@ -35,9 +35,9 @@
     { ids: ["ethiopia"], match: /idido/i, colours: ["#E29578"] },
     { ids: ["decaf"], match: /san lorenzo/i, colours: ["#7AB0A3"] },
     { ids: ["half-caff"], match: /half[ -]?caff/i, colours: ["#5D5DAB"] },
-    { ids: [], match: /twin peaks/i, colours: ["#810A40"] },
-    { ids: [], match: /fine city/i, colours: ["#EA4320", "#4A697B"] },
-    { ids: [], match: /roasters'? blend/i, colours: ["#4A697B"], striped: true },
+    { ids: ["twin-peaks"], match: /twin peaks/i, colours: ["#810A40"] },
+    { ids: ["fine-city"], match: /fine city/i, colours: ["#EA4320", "#4A697B"] },
+    { ids: ["roasters"], match: /roasters'? blend/i, colours: ["#4A697B"], striped: true },
   ];
   const HEX = /^#[0-9a-f]{6}$/i;
   const rgb = hex => [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16));

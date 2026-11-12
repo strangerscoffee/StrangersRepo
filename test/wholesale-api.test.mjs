@@ -72,7 +72,7 @@ test("wholesale: catalogue, ordering pages and every management route require th
   assert.equal((await call("GET", "/api/wholesale/catalogue", undefined, null)).status, 401);
   assert.equal((await call("POST", "/api/wholesale/orders", payload(), null)).status, 401);
   const data = (await call("GET", "/api/wholesale/catalogue", undefined, STAFF)).body;
-  assert.equal(data.products.length, 10); assert.equal(data.products[0].prices.quarter, 500); assert.equal(data.preview, true); assert.equal(data.stage, "beta");
+  assert.equal(data.products.length, 14); assert.equal(data.products[0].prices.quarter, 500); assert.equal(data.preview, true); assert.equal(data.stage, "beta");
   for (const cookie of [STAFF, MANAGER]) for (const [method, path, body] of [
     ["GET", "/api/admin/wholesale"], ["POST", "/api/admin/wholesale/customers", {}],
     ["PUT", "/api/admin/wholesale/catalogue/brazil", {}], ["PATCH", "/api/admin/wholesale/orders/PREVIEW-" + "A".repeat(32), {}],
