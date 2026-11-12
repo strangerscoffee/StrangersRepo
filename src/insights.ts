@@ -5,7 +5,7 @@
 import { audit } from "./audit";
 import { ApiError, type Env, invalid, json, readJson } from "./http";
 import { catalogue } from "./wholesaleCatalogue";
-import { buildInsights, type InsightSettings, type Mapping, type OpenLine, type Pack, type SaleLine, suggestMapping, ukDay } from "./insightsMath";
+import { buildInsights, customerKey, type InsightSettings, type Mapping, type OpenLine, type Pack, type SaleLine, suggestMapping, ukDay } from "./insightsMath";
 
 const DEFAULTS: InsightSettings = { batchKg: 10, yieldKg: 8, historyUntil: null };
 const MAX_ROWS = 500;
@@ -41,7 +41,7 @@ async function siteOrders(env: Env) {
     for (const l of o.lines || []) {
       const bags = Number(l.quantity) || 0, grams = (Number(l.grams) || 0) * bags;
       lines.push({ day, customer, coffee: l.productId, title: l.title, pack: (["quarter", "kilo", "half"].includes(l.pack) ? l.pack : "other") as Pack, bags, grams, pence: (Number(l.price) || 0) * bags, source: "site", order: row.id });
-      if (o.status === "New" || o.status === "Preparing") open.push({ coffee: l.productId, title: l.title, grams, bags });
+      if (o.status === "New" || o.status === "Preparing") open.push({ coffee: l.productId, title: l.title, grams, bags, customer });
     }
   }
   return { lines, open, first, count: rows.results.length };
@@ -65,16 +65,25 @@ async function historyLines(env: Env, until: string | null) {
   return lines;
 }
 
-async function insights(env: Env) {
+async function insights(env: Env, only: string | null = null) {
   const s = await settings(env), site = await siteOrders(env);
   const until = s.historyUntil || site.first;
   const history = await historyLines(env, until);
   const span = await env.DB.prepare("SELECT COUNT(*) AS n, MIN(date) AS first, MAX(date) AS last FROM sales_history").first<{ n: number; first: string | null; last: string | null }>();
   const unreviewed = await env.DB.prepare("SELECT COUNT(*) AS n FROM sales_history_products WHERE reviewed = 0").first<{ n: number }>();
-  const result = buildInsights({ today: ukDay(Date.now()), lines: [...history, ...site.lines], open: site.open, settings: s });
+  const today = ukDay(Date.now()), all = [...history, ...site.lines];
+  let result = buildInsights({ today, lines: all, open: site.open, settings: s });
+  // One customer: their own sales, forecast and share of the roast plan; the customer list stays whole for choosing.
+  let customer = null;
+  if (only) {
+    customer = result.customers.find((c) => c.key === only) || null;
+    if (!customer) throw new ApiError(404, "not_found", "That customer has no sales to show.");
+    const mine = buildInsights({ today, lines: all.filter((l) => customerKey(l.customer) === only), open: site.open.filter((o) => customerKey(o.customer || "") === only), settings: s });
+    result = { ...mine, customers: result.customers };
+  }
   // Each coffee's packaging colours as saved in Admin, so the page draws every coffee in its own colour.
   const palette = (await catalogue(env, true)).map((c: any) => ({ id: c.id, title: c.title, name: c.name, ...(Array.isArray(c.colours) && c.colours.length ? { colours: c.colours, colourStyle: c.colourStyle } : {}) }));
-  return { ...result, palette, settings: s, sources: { siteOrders: site.count, firstSiteOrder: site.first, historyRows: span?.n || 0, historyFirst: span?.first || null, historyLast: span?.last || null, historyUntil: until, historyUsed: history.length, unreviewedProducts: unreviewed?.n || 0 } };
+  return { ...result, customer, palette, settings: s, sources: { siteOrders: site.count, firstSiteOrder: site.first, historyRows: span?.n || 0, historyFirst: span?.first || null, historyLast: span?.last || null, historyUntil: until, historyUsed: history.length, unreviewedProducts: unreviewed?.n || 0 } };
 }
 
 function cleanRow(value: any) {
@@ -98,7 +107,11 @@ async function rowId(r: ReturnType<typeof cleanRow>) {
 
 export async function handleInsights(req: Request, env: Env, route: string, actor: string): Promise<Response | null> {
   if (!route.startsWith("insights")) return null;
-  if (route === "insights" && req.method === "GET") return json(await insights(env));
+  if (route === "insights" && req.method === "GET") {
+    const only = new URL(req.url).searchParams.get("customer");
+    if (only !== null && (only.length > 200 || !only.trim())) throw invalid("Choose a customer.");
+    return json(await insights(env, only));
+  }
   if (route === "insights/settings" && req.method === "PUT") {
     const body = await readJson<Record<string, any>>(req, 4096), current = await settings(env);
     if (body.ifVersion !== current.version) throw new ApiError(409, "conflict", "These settings were changed on another device. Reload and try again.");

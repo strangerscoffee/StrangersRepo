@@ -102,3 +102,17 @@
 .ins-trend-h{white-space:nowrap}
 @media (max-width:600px){.ins-moves{grid-template-columns:1fr}.ins-move{grid-template-columns:minmax(0,1fr) 80px}.ins-legend{gap:4px 14px}}
 @media (forced-colors:active){.ins-seg,.ins-move-edge{forced-color-adjust:none}}
+
+/* One customer: the picker, the chip that shows who's selected, and their summary card. */
+.ins-filters{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.ins-pick svg.i{width:16px;height:16px}
+.ins-pick.on{background:var(--tint);color:var(--accent);font-weight:650}
+.ins-pick{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ins-picker{display:grid;gap:12px}
+.ins-pick-list{max-height:min(60vh,520px);overflow:auto}
+.ins-pick-row{width:100%;text-align:left;display:flex;align-items:center;gap:10px}
+.ins-pick-row .tx{flex:1;min-width:0}
+.ins-pick-row .tx span{display:block;color:var(--muted);font-size:13px}
+.ins-cust-link{padding:0;font-size:inherit;font-weight:600;text-align:left}
+.ins-customer h3{margin:2px 0 0;font-size:20px}
+.ins-cust-kvs{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:4px 16px}

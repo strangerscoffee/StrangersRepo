@@ -132,6 +132,21 @@ test("removing an import takes its lines (and products only it had) out", async 
   assert.ok(!after.products.some((p) => p.product === "Rosalina 250g"), "only the removed file had it");
 });
 
+test("one customer: their own sales and forecast, with the whole customer list to choose from", async () => {
+  const all = (await call("GET", "/api/admin/wholesale/insights")).body;
+  const lune = all.customers.find((c) => c.name === "Café Lune");
+  assert.equal(lune.key, "cafe lune");
+  const r = await call("GET", "/api/admin/wholesale/insights?customer=" + encodeURIComponent(lune.key));
+  assert.equal(r.status, 200, r.text);
+  assert.equal(r.body.customer.name, "Café Lune");
+  assert.equal(r.body.customers.length, all.customers.length, "the list stays whole for choosing");
+  const sum = (ins) => ins.weekly.reduce((t, w) => t + w.grams, 0);
+  assert.ok(sum(r.body) > 0 && sum(r.body) < sum(all) + 1);
+  assert.equal(sum(r.body), lune.grams, "only their coffee");
+  assert.equal((await call("GET", "/api/admin/wholesale/insights?customer=nobody")).status, 404);
+  assert.equal((await call("GET", "/api/admin/wholesale/insights?customer=" + "x".repeat(201))).status, 400);
+});
+
 test("admins only: staff, customers and signed-out requests can't read or change Insights", async () => {
   for (const cookie of [STAFF, A, null]) {
     for (const [method, path, body] of [["GET", "/api/admin/wholesale/insights"], ["GET", "/api/admin/wholesale/insights/history"], ["POST", "/api/admin/wholesale/insights/history/rows", { importId: crypto.randomUUID(), fileName: "x", rows: [] }], ["PUT", "/api/admin/wholesale/insights/settings", { ifVersion: 0 }]]) {
