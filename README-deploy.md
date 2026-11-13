@@ -42,6 +42,8 @@ Data lives in a D1 database (`kitchen-diary`); allergen PDFs and uploaded catalo
 
 ## Changing the site
 
+Worker initialization caches completed schema readiness and resolved session-signing keys per database, never a pending promise created by another request. An interrupted cold request cannot trap later page/API loads. Existing persisted signing keys and database migrations are retained; this fix requires a normal redeploy and no setup or credential changes.
+
 **Custom coffees:** Admin → Wholesale → Custom coffees manages products for selected customers. Existing white-label assignments appear here automatically. New custom coffees start hidden and remain private when no customers are selected; access is enforced for catalogue responses, new orders and uploaded photos. General coffees remain in Coffee catalogue. These settings use the existing versioned catalogue records; no new migration, secret or setup is required.
 
 The customer wholesale catalogue uses a compact three-row mobile toolbar (coffee count, bag size and sort; search; category pills). It reuses the same controls across the 700 px breakpoint, keeping search, sort and product choices when resizing. Desktop retains the full catalogue heading and layout. No backend migration or configuration is required. Order and invoice history use matching circular refresh actions with a larger rounded arrow, busy-state rotation and reduced-motion support.

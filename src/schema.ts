@@ -305,14 +305,13 @@ async function migrate(env: Env): Promise<void> {
 /** The migrations, for tests and the admin section. */
 export const MIGRATION_LIST = () => MIGRATIONS.map(({ id, name }) => ({ id, name }));
 
-let ready: Promise<unknown> | null = null;
+// Only completed initialization can cross request lifetimes. A pending D1 promise
+// belongs to its creating request and may never settle after that request ends.
+const ready = new WeakSet<Env["DB"]>();
 
-export function ensureSchema(env: Env): Promise<unknown> {
-  if (!ready) {
-    ready = env.DB.batch(SCHEMA.map((s) => env.DB.prepare(s))).then(() => migrate(env)).catch((e) => {
-      ready = null; // retry on the next request
-      throw e;
-    });
-  }
-  return ready;
+export async function ensureSchema(env: Env): Promise<void> {
+  if (ready.has(env.DB)) return;
+  await env.DB.batch(SCHEMA.map((s) => env.DB.prepare(s)));
+  await migrate(env);
+  ready.add(env.DB);
 }
