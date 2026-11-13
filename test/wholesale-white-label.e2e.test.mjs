@@ -284,3 +284,32 @@ test("Custom coffees section: private drafts, customer choices and safe removal 
     } finally { await ctx.close(); }
   }
 });
+
+test("cards in a row line up: same photo height and controls at the same place, with or without a photo label", async () => {
+  for (const [name, viewport] of [["ipad", { width: 820, height: 1180 }], ["desktop", { width: 1440, height: 900 }]]) for (const colorScheme of ["light", "dark"]) {
+    const { ctx, p, errors } = await page(lune.cookie, viewport, { colorScheme });
+    await p.goto(srv.base + "/wholesale-preview/"); await p.locator(".product-card").nth(1).waitFor();
+    const rows = await p.evaluate(() => {
+      const cards = [...document.querySelectorAll("#products .product-card")].filter((c) => c.offsetParent);
+      const byTop = new Map();
+      for (const c of cards) { const top = Math.round(c.getBoundingClientRect().top); byTop.set(top, [...(byTop.get(top) || []), c]); }
+      return [...byTop.values()].filter((row) => row.length > 1).map((row) => row.map((c) => ({
+        badge: !!c.querySelector(".product-badge"),
+        photo: Math.round(c.querySelector(".product-image").getBoundingClientRect().height),
+        config: Math.round(c.querySelector(".product-config").getBoundingClientRect().top),
+        bottom: Math.round(c.getBoundingClientRect().bottom),
+      })));
+    });
+    assert.ok(rows.length, `${name}: some rows have more than one card`);
+    assert.ok(rows.some((row) => row.some((c) => c.badge) && row.some((c) => !c.badge)) || rows.flat().some((c) => c.badge), "a photo label is on the page");
+    for (const row of rows) {
+      assert.equal(new Set(row.map((c) => c.photo)).size, 1, `${name} ${colorScheme}: photos the same height ${JSON.stringify(row)}`);
+      assert.equal(new Set(row.map((c) => c.bottom)).size, 1, `${name} ${colorScheme}: cards the same height ${JSON.stringify(row)}`);
+      assert.ok(Math.max(...row.map((c) => c.config)) - Math.min(...row.map((c) => c.config)) <= 1, `${name} ${colorScheme}: controls line up ${JSON.stringify(row)}`);
+    }
+    await p.locator("#products .product-card:visible").first().scrollIntoViewIfNeeded();
+    await shot(p, `cards-${name}-${colorScheme}`);
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  }
+});
