@@ -888,6 +888,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     };
     const loadBusinesses = async () => {
       if (names) return drawBusinesses();
+      form.querySelector("#wWlList").replaceChildren(SC.skeleton({label:"Loading businesses…",rows:2}));
       try {
         names = (await api("GET", "/api/admin/wholesale/customers/names")).customers;
         // Keep unavailable saved choices removable, without inventing a replacement customer.

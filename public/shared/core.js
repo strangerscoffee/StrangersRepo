@@ -1,5 +1,4 @@
-// Helpers shared by the three apps: the diary (public/diary/), the rota (public/rota/) and the admin section
-// (public/admin/). A classic script loaded before each app's own scripts; it defines window.SC, and makes the
+// Helpers shared by the diary, rota, Admin, customer wholesale and staff fulfilment apps. A classic script loaded before each app's own scripts; it defines window.SC, and makes the
 // page's clock the server's (see "the time" below). Only what is the same in every app that uses it lives here: an app with different needs keeps its
 // own (the diary's dates are the device's local days, the admin section builds HTML only through its escaping
 // html`` template).
@@ -107,6 +106,34 @@
       t.replaceChildren(el("span", { text: m }), action ? el("button", { type: "button", onclick: () => { t.hidden = true; action[1](); } }, action[0]) : "");
       t.hidden = false; clearTimeout(timer); timer = setTimeout(() => (t.hidden = true), action ? 7000 : ms);
     };
+  }
+
+
+  // Neutral shapes contain no cached names, balances or other customer/employee data.
+  function skeleton({ kind = "list", rows = 3, label = "Loading…" } = {}) {
+    const bar = cls => el("span", { class: "sc-sk-bar " + cls });
+    const shapes = el("div", { class: "sc-sk-shapes", "aria-hidden": "true" });
+    for (let i = 0; i < Math.max(1, Math.min(rows, 8)); i++) {
+      shapes.append(el("div", { class: "sc-sk-card" },
+        kind === "products" ? bar("sc-sk-photo") : kind === "calendar" ? el("div", { class: "sc-sk-week" }, ...Array.from({ length: 7 }, () => bar(""))) : bar("sc-sk-icon"),
+        el("div", { class: "sc-sk-copy" }, bar("sc-sk-title"), bar("sc-sk-line"), bar("sc-sk-short"))));
+    }
+    return el("div", { class: "sc-skeleton sc-skeleton-" + kind, role: "status", "aria-label": label },
+      el("span", { class: "sc-sr-only", text: label }), shapes);
+  }
+
+  // Only deliberate navigation/first results reveal. Background updates never animate a whole list.
+  const motionPreference = matchMedia("(prefers-reduced-motion: reduce)"), reveals = new Set(), revealFor = new WeakMap();
+  function stopReveals() { for (const animation of reveals) animation.cancel(); reveals.clear(); }
+  motionPreference.addEventListener("change", () => { if (motionPreference.matches) stopReveals(); });
+  new MutationObserver(() => { if (document.documentElement.hasAttribute("data-sc-session-locked") || document.documentElement.hasAttribute("data-orders-locked")) stopReveals(); })
+    .observe(document.documentElement, { attributes: true, attributeFilter: ["data-sc-session-locked", "data-orders-locked"] });
+  function reveal(node) {
+    if (!node?.animate || motionPreference.matches || document.documentElement.hasAttribute("data-sc-session-locked") || document.documentElement.hasAttribute("data-orders-locked")) return;
+    revealFor.get(node)?.cancel();
+    const animation = node.animate([{ opacity: .25, translate: "0 6px" }, { opacity: 1, translate: "0 0" }], { duration: 220, easing: "cubic-bezier(.22,1,.36,1)" });
+    animation.id = "sc-reveal"; revealFor.set(node, animation); reveals.add(animation);
+    animation.finished.then(() => reveals.delete(animation), () => reveals.delete(animation));
   }
 
   /* ---------- dates in Europe/London (YYYY-MM-DD; arithmetic in UTC so daylight saving never shifts a day) ---------- */
@@ -428,6 +455,6 @@
   window.SC = Object.freeze({
     $, el, kids, svgi, initials, makeToast,
     dOf, isoOf, addDays, dow, monday, londonToday, londonNow,
-    goSignIn, signOut, recheckOnPageshow, bindSession, startSession, loadingView, ensureSession, sessionHeaders, notifyAuthChange, watchChanges, live, clockOffset,
+    goSignIn, signOut, recheckOnPageshow, bindSession, startSession, loadingView, skeleton, reveal, ensureSession, sessionHeaders, notifyAuthChange, watchChanges, live, clockOffset,
   });
 })();

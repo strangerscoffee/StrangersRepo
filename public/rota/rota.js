@@ -189,7 +189,7 @@
     } catch (e) { /* offline: keep the last count */ }
   }
 
-  let renderSeq = 0;
+  let renderSeq = 0, renderKey = "";
   async function render() {
     let { page, args } = parseHash();
     if (!allowed(page)) page = mgr() ? "week" : "mine";
@@ -200,16 +200,23 @@
     const seq = ++renderSeq;
     // The last page's buttons in the heading would act on what it showed: clear them while this one loads.
     $("#pageAction").replaceChildren(); $("#backBtn").hidden = true;
-    const box = $("#page");
+    const box = $("#page"), key = page + JSON.stringify(args) + R.week, changed = key !== renderKey;
+    renderKey = key;
+    if (changed) {
+      $("#pageTitle").textContent = PAGES[page].t; $("#pageSub").textContent = "";
+      box.replaceChildren(SC.skeleton({ kind: ["week", "leave"].includes(page) ? "calendar" : "list", label: "Loading " + PAGES[page].t + "…" }));
+    }
+    box.setAttribute("aria-busy", "true");
     try {
       const out = await PAGE_RENDER[page](args);
       if (seq !== renderSeq) return;
       // The way into the sickness form, at the top of My shifts and Holidays.
       box.replaceChildren(...[page === "mine" || page === "leave" ? Sick.link() : null, out].flat().filter(Boolean));
+      if (changed) SC.reveal(box);
     } catch (e) {
       if (seq !== renderSeq) return;
       box.replaceChildren(el("div", { class: "empty", text: e.message || "Couldn't load this page." }));
-    }
+    } finally { if (seq === renderSeq) box.setAttribute("aria-busy", "false"); }
   }
   const rerender = () => render();
 
@@ -343,7 +350,7 @@
     } });
   }
   async function openPeopleSheet() {
-    const box = $("#peopleList"); box.replaceChildren(empty("Loading…"));
+    const box = $("#peopleList"); box.replaceChildren(SC.skeleton({label:"Loading people…"}));
     $("#sheetVeil").hidden = false; $("#peopleSheet").hidden = false;
     let people = [];
     try { people = (await (await fetch("/api/auth/people")).json()).people || []; } catch (e) {}

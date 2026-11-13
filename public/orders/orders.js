@@ -13,6 +13,7 @@
  const NEXT={New:['Preparing','Mark preparing'],Preparing:['Ready','Mark ready'],Ready:['Dispatched','Mark dispatched']};
  let rows=[],cursor=null,total=0,status='open',selected=null,sequence=0,timer=null,searchTimer=null,customerTimer=null,started=false;
  let view='orders',customers=[],customersMore=false,picking=false,busy=new Set(),editing=false;
+ let ordersKey='';
  let tabs={open:[],cleared:[],threshold:6000},tabSelected=null,tabConfirm=false;
  const picked=new Set();
  const weight=grams=>new Intl.NumberFormat('en-GB',{maximumFractionDigits:2}).format(grams/1000)+' kg';
@@ -145,7 +146,7 @@
   const segment=el('div',{class:'filters seg',role:'group','aria-label':'Which orders'});
   async function drawTotals(){
    segment.replaceChildren(...choices.map(([key,label])=>el('button',{type:'button','aria-pressed':String(current===key),onclick:()=>{current=key;drawTotals()}},label)));
-   $('totalsBody').replaceChildren(el('p',{class:'wp-meta'},'Loading…'));
+   $('totalsBody').replaceChildren(SC.skeleton({label:'Loading bag totals…',rows:2}));
    try{const {orders}=await fetchPrint(scopes[current]);if(!$('totalsDialog').open)return;$('totalsBody').replaceChildren(packing.summaryBody(orders,scopes[current].label));$('printTotals').disabled=$('printSheets').disabled=!orders.length;}
    catch(e){if(!e.quiet)$('totalsBody').replaceChildren(el('p',{class:'edit-error'},e.message));}
   }
@@ -204,8 +205,11 @@
  }
  async function loadTabs(){
   const current=sequence;
+  if(!$('tabList').hasChildNodes())$('tabList').replaceChildren(SC.skeleton({label:'Loading customer tabs…'}));
+  $('tabList').setAttribute('aria-busy','true');
   try{const data=await tabRequest('GET','tabs');if(current!==sequence)return;tabs=data;drawTabs();}
   catch(e){if(!e.quiet&&current===sequence)$('tabList').replaceChildren(el('div',{class:'empty'},'Tabs could not be loaded. Check your connection and try again.'));}
+  finally{if(current===sequence)$('tabList').setAttribute('aria-busy','false');}
  }
 
  // Customers: contact and delivery details, read-only.
@@ -227,6 +231,8 @@
  }
  async function loadCustomers(){
   const current=sequence;
+  if(!$('customerList').hasChildNodes())$('customerList').replaceChildren(SC.skeleton({label:'Loading customers…'}));
+  $('customerList').setAttribute('aria-busy','true');
   try{
    const q=$('customerSearch').value.trim(),response=await fetch('/api/staff-orders/customers'+(q?'?q='+encodeURIComponent(q):''),{cache:'no-store'});
    if(current!==sequence)return;
@@ -234,10 +240,12 @@
    const data=await response.json();if(!response.ok||!Array.isArray(data.customers))throw new Error();
    if(current!==sequence)return;customers=data.customers;customersMore=!!data.more;drawCustomers();
   }catch{if(current===sequence)$('customerList').replaceChildren(el('div',{class:'empty'},'Customers could not be loaded. Check your connection and try again.'));}
+  finally{if(current===sequence)$('customerList').setAttribute('aria-busy','false');}
  }
  function showView(next){
   view=next;$('ordersView').hidden=view!=='orders';$('customersView').hidden=view!=='customers';$('tabsView').hidden=view!=='tabs';
   for(const b of $('viewTabs').querySelectorAll('button'))b.setAttribute('aria-pressed',String(b.dataset.view===view));
+  SC.reveal($(view+'View'));
   if(view==='customers')loadCustomers();
   if(view==='tabs')loadTabs();
  }
@@ -253,7 +261,10 @@
  async function load({more=false,reverify=false}={}){
   if(!started)return;
   const current=++sequence,wasOpen=$('orderDialog').open,wasSelected=selected;
-  if(reverify){lock();message('Checking access…');}
+  if(reverify){lock();$('accessStatus').hidden=false;$('accessStatus').replaceChildren(SC.skeleton({label:'Checking access…'}));}
+  const key=status+'|'+$('search').value.trim(),changed=key!==ordersKey;ordersKey=key;
+  if(!more&&changed)$('orderList').replaceChildren(SC.skeleton({label:'Loading orders…'}));
+  $('orderList').setAttribute('aria-busy','true');
   $('refresh').disabled=true;$('refresh').setAttribute('aria-busy','true');$('loadMore').disabled=true;
   try{
    if(!(await SC.ensureSession({force:reverify})))return;
@@ -265,12 +276,12 @@
    const data=await response.json();if(current!==sequence)return;
    if(!Array.isArray(data.orders))throw new Error('Orders could not be verified.');
    rows=more?[...new Map([...rows,...data.orders].map(row=>[row.id,row])).values()]:data.orders;cursor=data.nextCursor;total=data.count;
-   draw();$('accessStatus').hidden=true;$('ordersContent').hidden=false;document.documentElement.removeAttribute('data-orders-locked');
+   draw();$('accessStatus').hidden=true;$('ordersContent').hidden=false;document.documentElement.removeAttribute('data-orders-locked');if(changed||reverify)SC.reveal($('orderList'));
    if(wasOpen&&wasSelected){const row=rows.find(row=>row.id===wasSelected);if(row){selected=row.id;renderDetail(row);if(!$('orderDialog').open)$('orderDialog').showModal()}else{$('orderDialog').close();selected=null;}}
    if(reverify&&view==='customers')loadCustomers();
    if(view==='tabs')loadTabs();
   }catch(error){if(current===sequence){lock(true);message('Orders could not be verified. Reconnect, then try again.',{retry:true});}}
-  finally{if(current===sequence){$('refresh').disabled=false;$('refresh').setAttribute('aria-busy','false');$('loadMore').disabled=false;}}
+  finally{if(current===sequence){$('orderList').setAttribute('aria-busy','false');$('refresh').disabled=false;$('refresh').setAttribute('aria-busy','false');$('loadMore').disabled=false;}}
  }
  $('refresh').onclick=()=>load({reverify:true});$('loadMore').onclick=()=>load({more:true});
  $('search').oninput=()=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>load(),250)};

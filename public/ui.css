@@ -123,8 +123,8 @@ html{scroll-padding-top:calc(env(safe-area-inset-top,0px) + 72px);scroll-padding
 .menu .m:hover,.menu .m:focus-visible{background:var(--sunk);outline:none}
 .menu .m.danger{color:var(--bad)}
 @media (prefers-reduced-motion:no-preference){
-  .sheet:not([hidden]){animation:ui-up .3s cubic-bezier(.2,.8,.2,1)}
-  .menu:not([hidden]){animation:ui-pop .18s cubic-bezier(.2,.8,.2,1)}
+  .sheet:not([hidden]){animation:ui-up var(--motion-open) var(--motion-ease)}
+  .menu:not([hidden]){animation:ui-pop 180ms var(--motion-ease)}
   @keyframes ui-up{from{transform:translateY(24px);opacity:0}}
   @media (min-width:1024px){@keyframes ui-up{from{transform:translate(-50%,12px);opacity:0}}}
   @keyframes ui-pop{from{transform:scale(.96);opacity:0}}
@@ -375,9 +375,9 @@ section.panel.onlywide{display:none}
   .addbtn:active,.fchip:active,.methods button:active,.sitebtn:active,.avatar:active,.call:active,.fab:active,.mebox:active,button.scard-head:active,.scard>button.sec:active{transform:scale(.97)}
   .enter{animation:ui-in .32s cubic-bezier(.2,.8,.2,1) both}
   @keyframes ui-in{from{opacity:0;transform:translateY(10px)}}
-  .toast:not([hidden]){animation:ui-toast .4s cubic-bezier(.2,1.3,.4,1) both}
+  .toast:not([hidden]){animation:ui-toast 220ms var(--motion-ease) both}
   @keyframes ui-toast{from{opacity:0;transform:translate(-50%,18px) scale(.94)}}
-  .scard:not(.shut)>.secbody,.xmore.anim:not([hidden]),.advice,.result:not([hidden]),.formpanel:not([hidden]),.adup[open]>*:not(summary){animation:ui-open .28s cubic-bezier(.2,.8,.2,1)}
+  .scard:not(.shut)>.secbody,.xmore.anim:not([hidden]),.advice,.result:not([hidden]),.formpanel:not([hidden]),.adup[open]>*:not(summary){animation:ui-open var(--motion-open) var(--motion-ease)}
   @keyframes ui-open{from{opacity:0;transform:translateY(-6px)}}
   .scard .checks input.rc.pop,.badge.pop,.ring.pop{animation:ui-pop .3s cubic-bezier(.2,1.6,.4,1)}
   @keyframes ui-pop{from{transform:scale(.6)}}

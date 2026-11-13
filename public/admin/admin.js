@@ -167,17 +167,19 @@
     renderNav();
     const my = ++seq;
     const main = $("#main");
-    if (!keepScroll) { put(main, html`<p class="loading">Loading…</p>`); window.scrollTo(0, 0); }
+    if (!keepScroll) { main.replaceChildren(SC.skeleton({ label: "Loading " + S.page + "…", rows: 4 })); window.scrollTo(0, 0); }
+    main.setAttribute("aria-busy", "true");
     try {
       const view = await VIEWS[S.page]();
       if (my !== seq) return;
       put(main, view);
+      if (!keepScroll) SC.reveal(main);
       if (S.page === "wholesale") wholesale.syncNavigation(desktopNav.matches);
       document.title = "Strangers Coffee - Admin"; // the same tab name on every page
     } catch (e) {
       if (my !== seq) return;
       put(main, html`${head("Couldn't load this page", "")}<div class="group glass"><div class="empty">${svg("warn")}<span>${e.message}</span></div></div>`);
-    }
+    } finally { if (my === seq) main.setAttribute("aria-busy", "false"); }
   }
   const reload = () => show(S.page, { keepScroll: true });
 

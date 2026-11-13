@@ -23,7 +23,7 @@ window.WholesalePrint = function ({ api, html, svg, put, openSheet, closeSheet, 
     async function draw() {
       const scope = scopeFor(current), body = document.getElementById("wpBody");
       if (!body) return;
-      body.replaceChildren(Object.assign(document.createElement("p"), { className: "wp-meta", textContent: "Loading…" }));
+      body.replaceChildren(SC.skeleton({ label: "Loading bag totals…", rows: 2 }));
       try {
         const { orders } = await load(scope);
         if (!document.getElementById("wpBody")) return;

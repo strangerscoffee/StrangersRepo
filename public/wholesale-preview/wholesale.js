@@ -715,11 +715,11 @@ async function start() {
   catalogueLoading = true; $("#products").setAttribute("aria-busy", "true");
   $("#retry-catalogue").hidden = true;
   $("#catalogue-status").hidden = false;
-  $("#catalogue-status").replaceChildren(SC.loadingView("Loading your coffee…"));
+  $("#catalogue-status").replaceChildren(SC.skeleton({ kind: "products", rows: 2, label: "Loading your coffee…" }));
   try {
     if (!await SC.startSession({scope:"wholesale",clear:clearOrderingSession})) return;
     applyCatalogue(await api("/api/wholesale/catalogue"), true);
-    $("#catalogue-status").hidden = true;
+    $("#catalogue-status").hidden = true; SC.reveal($("#products"));
     // The order confirmation email's "See your orders" link (…/#orders) opens My orders once the page is ready.
     if (location.hash === "#orders") { window.history.replaceState(null, "", location.pathname + location.search); document.querySelector("[data-order-history]")?.click(); }
   } catch (error) {
@@ -910,7 +910,7 @@ async function loadOrders(append = false) {
   if (historyLoading) return;
   historyLoading = true;
   const expanded = new Set([...document.querySelectorAll('[data-history-order]:has(details[open])')].map(node => node.dataset.historyOrder));
-  if (!append) { history = []; historyCursor = null; historyTotal = 0; $("#order-history").textContent = "Loading your orders…"; $("#history-more").hidden = true; }
+  if (!append) { history = []; historyCursor = null; historyTotal = 0; $("#order-history").replaceChildren(SC.skeleton({ label: "Loading your orders…" })); $("#history-more").hidden = true; }
   $("#history-count").textContent = append ? "Loading earlier orders…" : "Loading orders…";
   $("#order-history").setAttribute("aria-busy", "true");
   refreshBusy("#refresh-orders", true); $("#history-more").disabled = true;
@@ -1172,7 +1172,7 @@ async function loadInvoices(append = false) {
   if (invoiceLoading || !invoicesShown()) return;
   invoiceLoading = true;
   const expanded = new Set([...document.querySelectorAll('[data-customer-invoice]:has(details[open])')].map(node => node.dataset.customerInvoice));
-  if (!append) { customerInvoices = []; invoiceCursor = null; invoiceTotal = 0; $("#customer-invoices-list").textContent = "Loading your invoices…"; $("#invoice-more").hidden = true; $("#history-invoice-note").hidden = true; }
+  if (!append) { customerInvoices = []; invoiceCursor = null; invoiceTotal = 0; $("#customer-invoices-list").replaceChildren(SC.skeleton({ label: "Loading your invoices…" })); $("#invoice-more").hidden = true; $("#history-invoice-note").hidden = true; }
   $("#invoice-count").textContent = append ? "Loading earlier invoices…" : "Loading invoices…";
   $("#customer-invoices-list").setAttribute("aria-busy", "true");
   refreshBusy("#refresh-invoices", true); $("#invoice-more").disabled = true;

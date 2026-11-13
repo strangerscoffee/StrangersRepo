@@ -2,15 +2,37 @@
 
 /* ---------- tabs ---------- */
 const TABS=["day","week","history","inspect","extras","cleaning","prove","allergens","templog","deliveries","maintenance","fire","accidents","eho","plans","suppliers","contacts","staff","onboarding","review","setup","records","more"];
+
+// First snapshots, including a legitimate empty result, determine when a section is ready.
+// Refreshes keep their current DOM, drafts and scroll. Nothing here caches employee data.
+const DIARY_DATA={day:["settings","days","extras","cleaning","fire","reviews"],week:["settings","weeks"],history:["days"],templog:["days"],deliveries:["deliveries"],prove:["prove"],extras:["extras"],cleaning:["cleaning"],allergens:["allergens","allergenDocs"],maintenance:["maintenance"],fire:["fire"],accidents:["accidents"],eho:["inspections"],plans:["plans"],suppliers:["suppliers"],contacts:["contacts"],staff:["staff"],onboarding:["onboarding"],review:["reviews","days"],setup:["settings"]};
+let diaryLoading={ready:new Set(),failed:new Set()},diaryLoadingKey="";
+function updateDiaryLoading(){
+  const required=DIARY_DATA[S.tab]||[],pending=required.some(key=>!diaryLoading.ready.has(key)),failed=required.some(key=>diaryLoading.failed.has(key));
+  const panel=document.querySelector(`[data-panel="${S.tab}"]`);if(!panel)return;
+  const loadingKey=[S.site,S.tab,pending,failed].join("|");if(loadingKey===diaryLoadingKey)return;diaryLoadingKey=loadingKey;
+  const wasPending=panel.classList.contains("sc-awaiting-data");
+  for(const p of document.querySelectorAll("[data-panel]")){p.classList.toggle("sc-awaiting-data",p===panel&&pending);p.inert=p===panel&&pending;p.setAttribute("aria-busy",String(p===panel&&pending));}
+  let loader=$("#diaryLoading");
+  if(pending){
+    if(!loader){loader=el("div",{id:"diaryLoading"});panel.before(loader)}
+    const key=S.site+S.tab+String(failed);
+    if(loader.dataset.key!==key){loader.dataset.key=key;loader.replaceChildren(failed?el("p",{class:"banner",role:"status",text:"Couldn't load this section. Check your connection and reload, or wait to reconnect."}):SC.skeleton({label:"Loading diary records…"}));}
+    loader.hidden=false;
+  }else if(loader){loader.hidden=true;loader.replaceChildren();}
+  $("#pageAction").inert=pending;
+  if(wasPending&&!pending)SC.reveal(panel);
+}
+
 function show(tab,opts){
   if(!TABS.includes(tab))tab="day";
   if(!canTab(tab)){if(S.role==="staff"&&MANAGER_TABS.has(tab)&&!(opts&&opts.quiet))toast("That section is for managers.");tab="day"}
   const changed=S.tab!==tab;
   S.tab=tab;
   document.querySelectorAll("[data-panel]").forEach(p=>p.hidden=p.dataset.panel!==tab);
-  if(changed)for(const n of[document.querySelector(`[data-panel="${tab}"]`),$("#pagehead")])if(n){n.classList.remove("enter");void n.offsetWidth;n.classList.add("enter")}
+  if(changed)for(const n of[document.querySelector(`[data-panel="${tab}"]`),$("#pagehead")])SC.reveal(n);
   $("#dayCtl").hidden=tab!=="day";$("#weekCtl").hidden=tab!=="week";updFab();
-  renderHead();renderNav();renderAddBtn();
+  renderHead();renderNav();renderAddBtn();updateDiaryLoading();
   // Today's reminders follow changes made elsewhere (a cleaning job or fire check added or ticked on its own page).
   if(tab==="day"&&changed&&S.db)renderDay();
   if(tab==="inspect")renderInspect();
@@ -42,7 +64,7 @@ function switchSite(id){
   if((S.plan&&S.plan.dirty)||(S.insp&&S.insp.dirty)||(S.onb&&S.onb.dirty)||setupDirty){toast("Save or discard your changes before switching site.");return}
   if(S.plan)closePlan();if(S.insp)closeInsp();if(S.onb)closeOnb();
   $("#toast").hidden=true; // an Undo still showing belongs to the site being left
-  S.site=id;try{localStorage.setItem("sfbb.site",id)}catch(e){}
+  S.site=id;diaryLoading={ready:new Set(),failed:new Set()};updateDiaryLoading();try{localStorage.setItem("sfbb.site",id)}catch(e){}
   Object.assign(S,{days:{},weeks:{},allergens:[],allergenDocs:[],reviews:[],extras:[],cleaning:[],deliveries:[],maintenance:[],fire:[],accidents:[],suppliers:[],contacts:[],plans:[],onboarding:[],inspections:[],staff:[],prove:[],rev:{}});
   S.settings=S.sum[id]&&S.sum[id].ready?S.sum[id].settings:normSettings(null);S.cfg=activeCfg(S.settings);
   SE=null;setupDirty=false;pubNote="";$("#setupMsg").textContent="";
@@ -70,10 +92,11 @@ function needHistory(from){
 const inspStale=()=>{IN.stale=true;if(S.tab==="inspect")renderInspect()}; // what inspection mode reports on changed
 function siteSubs(){
   const site=S.site,mine=()=>site===S.site;
-  const err=e=>{if(e&&e.code==="revoked"){S.canWrite=false;renderAll()}};
-  const sub=(arr,q,fn)=>arr.push(q.onSnapshot(x=>{if(mine())fn(x)},err));
+  const state=diaryLoading;
+  const finished=(key,error)=>{if(!key||!mine()||state!==diaryLoading)return;if(error){if(!state.ready.has(key))state.failed.add(key)}else{state.ready.add(key);state.failed.delete(key)}updateDiaryLoading()};
+  const sub=(arr,q,fn,key)=>arr.push(q.onSnapshot(x=>{if(mine()){fn(x);finished(key)}},e=>{if(e&&e.code==="revoked"){S.canWrite=false;renderAll()}finished(key,true)}));
   const hub=()=>{if(S.tab==="records"||S.tab==="more")renderNav()};
-  const list=(arr,col,key,after,q)=>sub(arr,q||C(col,site),x=>{S[key]=x.docs.map(d=>({id:d.id,...d.data()}));after();hub()});
+  const list=(arr,col,key,after,q)=>sub(arr,q||C(col,site),x=>{S[key]=x.docs.map(d=>({id:d.id,...d.data()}));after();hub()},key);
   return{site,sub,list};
 }
 function subscribeHistory(){
@@ -81,8 +104,8 @@ function subscribeHistory(){
   // change made offline meanwhile still shows.
   const old=S.histSubs||[];
   const subs=S.histSubs=[],{site,sub,list}=siteSubs(),n=k=>HIST[k][S.hist?1:0];
-  sub(subs,C("days",site).orderBy("date","desc").limit(n("days")),q=>{const m={};for(const d of q.docs)m[d.id]=d.data();S.days=m;renderDay();renderHistory();renderReview();renderTempLog();renderClosures();renderSites();inspStale()});
-  sub(subs,C("weeks",site).orderBy("week","desc").limit(n("weeks")),q=>{const m={};for(const d of q.docs)m[d.id]=d.data();S.weeks=m;renderWeek();inspStale()});
+  sub(subs,C("days",site).orderBy("date","desc").limit(n("days")),q=>{const m={};for(const d of q.docs)m[d.id]=d.data();S.days=m;renderDay();renderHistory();renderReview();renderTempLog();renderClosures();renderSites();inspStale()},"days");
+  sub(subs,C("weeks",site).orderBy("week","desc").limit(n("weeks")),q=>{const m={};for(const d of q.docs)m[d.id]=d.data();S.weeks=m;renderWeek();inspStale()},"weeks");
   list(subs,"deliveries","deliveries",()=>{renderDeliveries();inspStale()},C("deliveries",site).orderBy("at","desc").limit(n("deliveries")));
   list(subs,"proveit","prove",()=>{renderProve();renderReview();inspStale()},C("proveit",site).orderBy("at","desc").limit(n("proveit")));
   for(const u of old)try{u()}catch(e){}
@@ -90,8 +113,8 @@ function subscribeHistory(){
 function subscribeSite(){
   for(const u of S.subs)try{u()}catch(e){}
   S.subs=[];S.hist=false;
-  const{site,sub:sub0,list:list0}=siteSubs(),sub=(q,fn)=>sub0(S.subs,q,fn),list=(...a)=>list0(S.subs,...a);
-  sub(D("settings","main",site),x=>{S.settings=normSettings(x.exists?x.data():null);S.cfg=activeCfg(S.settings);fillProve();applyTabs();renderAll()});
+  const{site,sub:sub0,list:list0}=siteSubs(),sub=(q,fn,key)=>sub0(S.subs,q,fn,key),list=(...a)=>list0(S.subs,...a);
+  sub(D("settings","main",site),x=>{S.settings=normSettings(x.exists?x.data():null);S.cfg=activeCfg(S.settings);fillProve();applyTabs();renderAll()},"settings");
   subscribeHistory();
   list("allergens","allergens",renderAllergens);
   list("allergenDocs","allergenDocs",renderAllergenDocs);
@@ -136,6 +159,10 @@ function subscribeShared(){
 }
 
 /* ---------- events ---------- */
+// Subscription transport retries offline reads itself; display an error instead of an endless first-load sweep.
+window.addEventListener("diary:connection",event=>{
+  if(event.detail?.offline){for(const key of new Set(Object.values(DIARY_DATA).flat()))if(!diaryLoading.ready.has(key))diaryLoading.failed.add(key);updateDiaryLoading()}
+});
 $("#dayDate").addEventListener("change",e=>{if(e.target.value){S.date=e.target.value;renderDay();renderHead()}});
 $("#todayBtn").addEventListener("click",()=>{S.date=today();renderDay();renderHead()});
 $("#dayPrev").addEventListener("click",()=>{S.date=addDays(S.date,-1);renderDay();renderHead()});
@@ -173,6 +200,7 @@ window.addEventListener("sc:session-invalid",()=>{
   closeSheets();
   for(const field of document.querySelectorAll("[data-panel] input,[data-panel] textarea,[data-panel] select")){field.value="";if("checked"in field)field.checked=false;field.disabled=true}
   for(const id of ["#tList","#tMatrix","#cList","#cPrivacy","#obList","#obEditView","#inReport","#inJump","#onShift","#peopleList","#acctMenu","#snav","#tabbar","#meBox"])$(id)?.replaceChildren();
+  diaryLoading={ready:new Set(),failed:new Set()};diaryLoadingKey="";$("#diaryLoading")?.remove();
   for(const panel of document.querySelectorAll("[data-panel]"))panel.hidden=true;
 });
 for(const x of["#dv_chilled","#dv_frozen","#pReading"])minusIn(x);
@@ -181,7 +209,7 @@ applyTabs();renderAll();
 (async()=>{
   const[db,user,assets]=await Promise.all([window.claude?.use?.("db"),window.claude?.use?.("user"),window.claude?.use?.("assets")]);
   S.db=db||null;S.user=user||null;S.assets=assets||null;
-  if(!S.db){$("#offline").hidden=false;S.canWrite=false;renderAll();return}
+  if(!S.db){$("#offline").hidden=false;S.canWrite=false;diaryLoading.failed=new Set(Object.values(DIARY_DATA).flat());updateDiaryLoading();renderAll();return}
   if(S.user){
     const me=await S.user.me();S.me=me.id;
     const w=await S.user.can("data.write");if(w===false){S.canWrite=false;$("#readonly").hidden=false}

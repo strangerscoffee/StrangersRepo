@@ -42,6 +42,8 @@ Data lives in a D1 database (`kitchen-diary`); allergen PDFs and uploaded catalo
 
 ## Changing the site
 
+Shared motion and skeleton loading run entirely in the existing theme and shared browser helpers. Admin, rota/holidays, diary records, customer catalogue/history/invoices and staff fulfilment use neutral placeholders for first data loads. Background refreshes retain their content and drafts. The Strangers sign-in shield remains immediate and branded; reduced motion stops shimmer and page reveals, and identity/permission locks cancel decorative exits. No new service, dependency, secret, migration or setup is required.
+
 The wholesale filter and order-history window use locally served motion adapted from the free Transitions.dev dropdown and modal examples. Native popover/dialog controls retain focus, Escape and session verification; reduced-motion and identity locks suppress decorative motion. No external runtime library, account, API key or new setup is required.
 
 Worker initialization caches completed schema readiness and resolved session-signing keys per database, never a pending promise created by another request. An interrupted cold request cannot trap later page/API loads. Existing persisted signing keys and database migrations are retained; this fix requires a normal redeploy and no setup or credential changes.

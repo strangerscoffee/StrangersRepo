@@ -224,7 +224,7 @@ button.stat{cursor:pointer}
 .checks{display:flex;flex-wrap:wrap;gap:8px}
 .checks label{display:inline-flex;align-items:center;gap:6px;min-height:40px;padding:0 12px;border-radius:12px;border:1px solid var(--line);background:var(--surface);font-weight:600;cursor:pointer}
 .toast{position:fixed;z-index:60;left:50%;transform:translateX(-50%);bottom:calc(96px + env(safe-area-inset-bottom,0px));padding:10px 16px;border-radius:99px;background:var(--fg);color:var(--bg);font-weight:600;font-size:14.5px;box-shadow:var(--float);max-width:calc(100% - 32px);text-align:center}
-@media (prefers-reduced-motion:no-preference){main>*{animation:rise .2s ease both}@keyframes rise{from{transform:translateY(6px)}to{transform:none}}}
+/* Page entry is triggered by navigation, not each live data refresh (SC.reveal). */
 
 /* Errors (Activity → Errors): the technical details, folded */
 .item.haserr{flex-wrap:wrap}
