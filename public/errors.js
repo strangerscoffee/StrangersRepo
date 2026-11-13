@@ -83,6 +83,8 @@
   // between here and the phone added, like Cloudflare's analytics beacon, which the site's security rules block on
   // purpose) says nothing about the site and isn't reported.
   const ours = (u) => { try { return new URL(u, location.href).origin === location.origin; } catch (e) { return false; } };
+  const ownFrame = detail => (String(detail || "").match(/https?:\/\/[^\s)]+|\/[\w./-]+\.(?:js|mjs)(?:\?[^\s)]*)?(?::\d+:\d+)?/g) || []).some(ours);
+  const browserAutofill = (message, detail, file) => /^Could not find identifiable element\.?$/.test(message) && !(file && ours(file)) && !ownFrame(detail);
   const retriedBranding = new WeakSet();
   addEventListener("error", (e) => {
     const t = e.target;
@@ -93,7 +95,7 @@
       const image = t.tagName === "IMG" || imageLink;
       // A dropped logo request must not interrupt sign-in. Retry the original element once at a fresh URL;
       // retain a quiet report if that retry also fails. Scripts/styles keep their existing visible errors.
-      if (image && /^\/(?:logo|mark)\.svg$/.test(new URL(u).pathname) && !t.srcset && t.isConnected && navigator.onLine !== false && !retriedBranding.has(t)) {
+      if (image && /^\/(?:(?:logo|mark)\.svg|favicon\.ico|wholesale-preview\/images\/logo\.svg)$/.test(new URL(u).pathname) && !t.srcset && t.isConnected && navigator.onLine !== false && !retriedBranding.has(t)) {
         retriedBranding.add(t);
         const retry = new URL(u); retry.searchParams.set("sc-asset-retry", "1");
         queueMicrotask(() => { if (t.isConnected) { if (t.tagName === "IMG") t.src = retry.href; else t.href = retry.href; } });
@@ -107,7 +109,8 @@
     // Chrome's harmless layout warning; "Script error." with no file is another site's script (browsers hide what it
     // was); and an error in a file from elsewhere isn't the site's.
     if (/ResizeObserver loop/.test(msg)) return;
-    if (/^Script error\.?$/.test(msg) && !e.filename) return;
+    if (/^Script error\.?$/.test(msg) && !e.filename && !ownFrame(e.error && e.error.stack)) return;
+    if (browserAutofill(msg, e.error && e.error.stack, e.filename)) return;
     if (e.filename && !ours(e.filename)) return;
     report(msg, (e.error && e.error.stack) || (e.filename ? `${e.filename}:${e.lineno}:${e.colno}` : ""));
   }, true);
@@ -118,6 +121,7 @@
     // Not reaching the server and being signed out are handled by the pages themselves.
     if (r && (r.code === "unavailable" || r.code === "unauthenticated" || r.name === "AbortError")) return;
     const msg = (r && r.message) || String(r);
+    if (browserAutofill(msg, r && r.stack)) return;
     // A request that didn't get through (the signal dropped) and that nothing caught: worth fixing, so it's
     // reported, but it isn't put in front of anyone; the page carries on and tries again.
     report("Unhandled: " + msg, r && r.stack, { quiet: r && r.name === "TypeError" && NETWORK.test(msg) });

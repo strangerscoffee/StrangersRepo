@@ -151,10 +151,10 @@ function withFingerprints(res: Response, env: Env, url: URL): Response {
  * checked again, and images for a day. */
 async function staticFile(req: Request, env: Env, p: string): Promise<Response> {
   const res = await env.ASSETS.fetch(req);
-  if (!res.ok || !/\.(js|css|svg|png|webmanifest)$/.test(p)) return res;
+  if (!res.ok || !/\.(js|css|svg|png|ico|webmanifest)$/.test(p)) return res;
   const out = new Response(res.body, res);
   const pinned = new URL(req.url).searchParams.has("v");
-  out.headers.set("cache-control", pinned ? "private, max-age=31536000, immutable" : /\.(svg|png)$/.test(p) ? "private, max-age=86400" : "private, max-age=60, must-revalidate");
+  out.headers.set("cache-control", pinned ? "private, max-age=31536000, immutable" : /\.(svg|png|ico)$/.test(p) ? "private, max-age=86400" : "private, max-age=60, must-revalidate");
   return out;
 }
 

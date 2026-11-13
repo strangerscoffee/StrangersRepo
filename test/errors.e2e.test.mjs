@@ -22,25 +22,25 @@ before(async () => {
 after(async () => { await browser?.close(); await srv?.stop(); });
 
 test('sign-in branding retries once; a persistent logo or favicon failure stays non-blocking and is reported', {timeout:45000}, async()=>{
-  for(const kind of ['image','icon']) for(const recover of [true,false]){
+  for(const asset of ['/mark.svg','/favicon.ico','/wholesale-preview/images/logo.svg']) for(const kind of ['image','icon']) for(const recover of [true,false]){
     const context=await browser.newContext(),page=await context.newPage();let requests=0;const reports=[];
-    await page.route('**/mark.svg*',async route=>{requests++;if(recover&&requests>1)await route.continue();else await route.fulfill({status:503,body:'temporarily unavailable'});});
+    await page.route('**'+asset+'*',async route=>{if(!new URL(route.request().url()).searchParams.has('brand-test'))return route.continue();requests++;if(recover&&requests>1)await route.continue();else await route.fulfill({status:503,body:'temporarily unavailable'});});
     await page.route('**/api/errors',async route=>{reports.push(route.request().postDataJSON());await route.fulfill({status:200,contentType:'application/json',body:'{}'});});
     try{
       await page.goto(srv.base+'/signin');await page.locator('#signin').waitFor();
-      await page.evaluate(kind=>{const node=document.createElement(kind==='image'?'img':'link');node.id='brand-retry-test';if(kind==='image'){node.alt='Strangers';node.src='/mark.svg';document.body.append(node)}else{node.rel='icon';let href=location.origin+'/mark.svg';Object.defineProperty(node,'href',{get:()=>href,set:value=>{href=value}});document.head.append(node)}},kind);
+      await page.evaluate(({kind,asset})=>{const node=document.createElement(kind==='image'?'img':'link');node.id='brand-retry-test';if(kind==='image'){node.alt='Strangers';node.src=asset+'?brand-test=1';document.body.append(node)}else{node.rel='icon';let href=location.origin+asset+'?brand-test=1';Object.defineProperty(node,'href',{get:()=>href,set:value=>{href=value}});document.head.append(node)}},{kind,asset});
       if(kind==='icon')await page.evaluate(()=>document.getElementById('brand-retry-test').dispatchEvent(new Event('error'))); // favicon error delivery varies across engines
       await page.waitForFunction(()=>(document.getElementById('brand-retry-test')?.tagName==='IMG'?document.getElementById('brand-retry-test').src:document.getElementById('brand-retry-test')?.href)?.includes('sc-asset-retry=1'));
       if(recover&&kind==='image')await page.waitForFunction(()=>document.getElementById('brand-retry-test').naturalWidth>0);
       if(!recover){
         if(kind==='icon')await page.evaluate(()=>document.getElementById('brand-retry-test').dispatchEvent(new Event('error')));
-        for(let attempt=0;attempt<40&&!reports.some(r=>r.message==="Couldn't load /mark.svg");attempt++)await page.waitForTimeout(25);
+        for(let attempt=0;attempt<40&&!reports.some(r=>r.message==="Couldn't load "+asset);attempt++)await page.waitForTimeout(25);
       }
       assert.equal(await page.locator('#sc-error').count(),0,'image errors never cover the sign-in form');
       assert.equal(await page.locator('#signin').isVisible(),true);
       if(kind==='image')assert.equal(requests,2,'only one fresh retry');
       if(recover)assert.deepEqual(reports,[],'a recovered logo does not leave an unresolved error');
-      else assert.equal(reports.filter(r=>r.message==="Couldn't load /mark.svg").length,1,'one persistent failure is retained for admins');
+      else assert.equal(reports.filter(r=>r.message==="Couldn't load "+asset).length,1,'one persistent failure is retained for admins');
     }finally{await context.close()}
   }
 });
@@ -130,4 +130,23 @@ test("only the site's own errors count; a dropped signal is noted but not shown;
   assert.deepEqual(list.slice(0, list.length - before).map((e) => e.text).filter((t) => /beacon|Script error|boom/.test(t)), [], "nothing from elsewhere");
   assert.equal(await page.locator("#sc-error").count(), 0, "no card for any of them");
   await ctx.close();
+});
+
+
+test('unattributed browser autofill noise is ignored while the same message with an app frame is retained',async()=>{
+ const context=await browser.newContext(),page=await context.newPage(),reports=[];
+ await page.route('**/api/errors',async route=>{reports.push(route.request().postDataJSON());await route.fulfill({status:200,contentType:'application/json',body:'{}'})});
+ try{
+  await page.goto(srv.base+'/signin');await page.locator('#signin').waitFor();
+  await page.evaluate(()=>{
+   const reason={message:'Could not find identifiable element',stack:'resolveElement@user-script:1:1'};
+   dispatchEvent(new PromiseRejectionEvent('unhandledrejection',{promise:Promise.resolve(),reason}));
+   dispatchEvent(new ErrorEvent('error',{message:reason.message,error:reason}));
+  });
+  await page.waitForTimeout(100);assert.deepEqual(reports,[]);assert.equal(await page.locator('#sc-error').count(),0);
+  await page.evaluate(()=>{const reason={message:'Could not find identifiable element',stack:'findElement@'+location.origin+'/diary/today.js:12:3'};dispatchEvent(new PromiseRejectionEvent('unhandledrejection',{promise:Promise.resolve(),reason}))});
+  await page.locator('#sc-error').waitFor();await page.waitForFunction(()=>document.querySelector('#sc-error').textContent.includes('/diary/today.js:12:3'));
+  for(let attempt=0;attempt<40&&reports.length<1;attempt++)await page.waitForTimeout(25);
+  assert.equal(reports.length,1);assert.match(reports[0].message,/Could not find identifiable element/);
+ }finally{await context.close()}
 });

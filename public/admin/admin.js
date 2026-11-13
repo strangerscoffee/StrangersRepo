@@ -217,7 +217,7 @@
         ${d.emails ? html`<section class="panel glass" aria-labelledby="rem"><h2 id="rem">Rota emails ${d.emails.ready ? html`<span class="pill ok">On</span>` : html`<span class="pill warn">Not set up</span>`}</h2>
           <p class="emline">${d.emails.ready ? `${plural(d.emails.sentToday, "email", "emails")} sent in the last day.` : "Add the RESEND_API_KEY secret in Cloudflare to start sending. Until then nothing is sent."}</p>
           <p class="emline">${d.emails.withAddress} of ${d.emails.active} ${d.emails.active === 1 ? "person has" : "people have"} an email address. Add them in People → Edit.</p>
-          ${d.emails.ready ? html`<div class="row"><button class="btn sm soft" type="button" data-act="testemail">Send me a test email</button><button class="btn sm soft" type="button" data-act="weeklytest">Send me this week's summary</button></div>` : ""}
+          ${d.emails.ready ? html`<div class="email-actions"><button class="btn sm soft" type="button" data-act="testemail">Send me a test email</button><button class="btn sm soft" type="button" data-act="weeklytest">Send me this week's summary</button></div>` : ""}
         </section>` : ""}
       </div>`;
   };

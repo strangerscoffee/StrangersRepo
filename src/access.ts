@@ -23,7 +23,7 @@ export function isPublicAsset(path: string): boolean {
   return (
     path === "/signin" || path === "/signin.html" || path === "/signin.js" || path === "/theme.css" || path === "/pinpad.js" || path === "/errors.js" ||
     path === "/robots.txt" || path === "/manifest.webmanifest" || /^\/icon-\d+\.png$/.test(path) ||
-    path === "/logo.svg" || path === "/mark.svg"
+    path === "/logo.svg" || path === "/mark.svg" || path === "/favicon.ico"
   );
 }
 
