@@ -260,7 +260,10 @@ function filterProducts() {
     $(`article[data-product="${product.id}"]`).hidden = !visible;
     if (visible) count++;
   }
-  $("#product-count").textContent = `${count} ${count === 1 ? "coffee" : "coffees"}`;
+  const countNoun = document.createElement("span");
+  countNoun.className = "count-noun";
+  countNoun.textContent = count === 1 ? " coffee" : " coffees";
+  $("#product-count").replaceChildren(String(count), countNoun);
   $("#no-results").hidden = count !== 0;
   showBagSize();
   sortProducts();
@@ -1015,6 +1018,32 @@ $("#confirm-reorder").addEventListener("click", async () => {
 });
 // One compact mobile row; the same account controls become an anchored native popover.
 const mobileHeaderQuery = matchMedia("(max-width: 700px)");
+// Move the existing controls at the breakpoint so visual and keyboard order agree.
+// Keep their nodes: pack selections, search drafts and sort state survive resizing.
+const catalogueActions = $(".catalogue-actions"), catalogueTitle = $(".catalogue-title");
+const bagSizeControl = $(".bag-size"), productCount = $("#product-count");
+const coffeeSearch = $(".catalogue-tools .search-field"), coffeeCategories = $(".coffee-categories");
+const catalogueAnchors = [bagSizeControl, productCount, coffeeSearch].map(node => {
+  const anchor = document.createComment("catalogue desktop position");
+  node.before(anchor);
+  return { node, anchor };
+});
+function configureCatalogue() {
+  const focused = document.activeElement;
+  const movingFocus = catalogueAnchors.some(({ node }) => node.contains(focused));
+  if (mobileHeaderQuery.matches) {
+    catalogueTitle.append(productCount);
+    catalogueActions.insertBefore(bagSizeControl, sortButton);
+    coffeeCategories.before(coffeeSearch);
+  } else {
+    for (const { node, anchor } of catalogueAnchors) anchor.after(node);
+  }
+  if (movingFocus && ready && !document.querySelector("dialog[open]") && !document.documentElement.hasAttribute("data-sc-session-locked")) focused.focus({ preventScroll: true });
+  if (sortMenu.matches(":popover-open")) positionSortMenu();
+}
+mobileHeaderQuery.addEventListener("change", configureCatalogue);
+configureCatalogue();
+
 const mobileHeader = $(".site-header"), headerAccount = $("#wholesale-account"), accountToggle = $("#account-toggle");
 const headerNavigation = mobileHeader.querySelector("nav"), accountActions = headerAccount.querySelector(".account-buttons");
 function closeAccountMenu() {
