@@ -28,7 +28,7 @@ export async function makeBackup(env: Env, by: string): Promise<BackupInfo> {
   const users = await env.DB.prepare("SELECT id, name, username, role, active, created_at, last_login_at, email, email_prefs FROM users ORDER BY name_key").all();
   // The rota's tables (src/rota.ts). People are users.id, listed (without any password or PIN) under users.
   const rota: Record<string, unknown[]> = {};
-  for (const t of ["rota_shifts", "rota_weeks", "rota_sites", "rota_people", "rota_time_off", "rota_requests"]) {
+  for (const t of ["rota_shifts", "rota_weeks", "rota_sites", "rota_people", "rota_time_off", "rota_requests", "rota_leave_state", "rota_leave_settings", "rota_leave_allowances", "rota_leave_days", "rota_leave_blocks", "rota_leave_events"]) {
     rota[t] = (await env.DB.prepare(`SELECT * FROM ${t}`).all()).results;
   }
   // quickbooks_app_settings is intentionally excluded: even encrypted app secrets are not JSON backup data.

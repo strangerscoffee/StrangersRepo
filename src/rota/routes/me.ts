@@ -1,4 +1,5 @@
 // Rota routes for the person signed in: their shifts, who's on today, their details, and their availability.
+import { policy } from "../leave/model";
 import { invalid, json } from "../../http";
 import { approvers, loadPeople, loadShifts, publishedWeeks, weekRow } from "../load";
 import { visibleRequests } from "../requests";
@@ -61,19 +62,21 @@ export async function meRoutes(r: RotaRequest): Promise<Response | null> {
   }
 
   if (route === "me" && m === "GET") {
-    const [p, offs, reqs, appr, mail] = await Promise.all([
+    const [p, offs, reqs, appr, mail, leavePolicy] = await Promise.all([
       env.DB.prepare("SELECT * FROM rota_people WHERE user_id = ?").bind(user.id).first<{ contract_min: number | null; contract_max: number | null; sites: string; pattern: string }>(),
-      env.DB.prepare("SELECT id, user_id, from_day, to_day, reason, status, decided_at FROM rota_time_off WHERE user_id = ? AND to_day >= ? ORDER BY from_day")
+      env.DB.prepare("SELECT id, user_id, from_day, to_day, reason, status, decided_at, kind, version, from_time, to_time FROM rota_time_off WHERE user_id = ? AND to_day >= ? ORDER BY from_day")
         .bind(user.id, addDays(londonToday(), -30)).all<any>(),
       env.DB.prepare("SELECT * FROM rota_requests WHERE (from_user = ? OR to_user = ? OR taker = ?) AND created_at > ? ORDER BY created_at DESC LIMIT 100")
         .bind(user.id, user.id, user.id, nowMs() - 60 * 864e5).all<ReqRow>(),
       approvers(env),
       env.DB.prepare("SELECT email, email_prefs FROM users WHERE id = ?").bind(user.id).first<{ email: string | null; email_prefs: string }>(),
+      policy(env),
     ]);
     return json({
+      holidayManagement: leavePolicy.settings.enabled,
       user: { id: user.id, name: user.name, role: user.role, manager: mgr, admin, siteManager }, links, today: londonToday(), approvers: appr,
       contractMin: p?.contract_min ?? null, contractMax: p?.contract_max ?? null, contractHours: p?.contract_max ?? null, sites: parseJson(p?.sites, []), pattern: parseJson(p?.pattern, {}),
-      timeOff: offs.results.map((t) => ({ id: t.id, from: t.from_day, to: t.to_day, reason: t.reason, status: t.status, decidedAt: t.decided_at })),
+      timeOff: offs.results.map((t) => ({ id: t.id, from: t.from_day, to: t.to_day, reason: t.reason, status: t.status, decidedAt: t.decided_at, kind:t.kind, version:t.version,fromTime:t.from_time,toTime:t.to_time })),
       requests: await visibleRequests(env, reqs.results, user),
       // Rota emails: their address (set by an admin) and which emails they get, which they choose themselves.
       email: { address: mail?.email || null, prefs: prefsOf(mail?.email_prefs), ready: emailReady(env), ...(siteManager ? { weeklySites: weeklySitesOf(mail?.email_prefs) } : {}) },

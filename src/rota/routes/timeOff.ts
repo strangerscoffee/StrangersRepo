@@ -1,4 +1,6 @@
 // Rota routes for time off: asking for it (or adding it for someone), and deciding or cancelling it.
+import { createLeave, decideLeave } from "../leave/routes";
+import { commitLeave, event, policy, revision } from "../leave/model";
 import { newId } from "../../auth";
 import { invalid, json } from "../../http";
 import { activeUser } from "../load";
@@ -11,6 +13,8 @@ export async function timeOffRoutes(r: RotaRequest): Promise<Response | null> {
 
   if (route === "time-off" && m === "POST") {
     const b = await body();
+    const rev = await revision(env);
+    if ((await policy(env)).settings.enabled) return createLeave(r, b);
     const forOther = b.userId != null && b.userId !== user.id;
     if (forOther) needMgr();
     if (!isDay(b.from) || !isDay(b.to)) throw invalid("Choose real dates.");
@@ -23,17 +27,19 @@ export async function timeOffRoutes(r: RotaRequest): Promise<Response | null> {
     if (clash) throw conflict(`${forOther ? "They" : "You"} already have time off asked for or booked from ${clash.from_day} to ${clash.to_day}.`);
     const approved = admin && b.userId != null; // admins may add already-approved time off
     const id = newId(10);
-    await env.DB.prepare(
+    await commitLeave(env, rev, [env.DB.prepare(
       "INSERT INTO rota_time_off (id, user_id, from_day, to_day, reason, status, decided_by, decided_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    ).bind(id, uid, b.from, b.to, reason, approved ? "approved" : "requested", approved ? user.id : null, approved ? nowMs() : null, nowMs()).run();
+    ).bind(id, uid, b.from, b.to, reason, approved ? "approved" : "requested", approved ? user.id : null, approved ? nowMs() : null, nowMs()), event(env,uid,id,"legacy_created",user.id,{from:b.from,to:b.to})]);
     return json({ id, userId: uid, from: b.from, to: b.to, reason, status: approved ? "approved" : "requested" });
   }
 
   if (seg[0] === "time-off" && seg.length === 2 && m === "PATCH") {
-    const t = await env.DB.prepare("SELECT * FROM rota_time_off WHERE id = ?").bind(seg[1]).first<{ user_id: string; status: string; from_day: string; to_day: string }>();
+    const rev = await revision(env);
+    const t = await env.DB.prepare("SELECT * FROM rota_time_off WHERE id = ?").bind(seg[1]).first<{ user_id: string; status: string; from_day: string; to_day: string; kind: string }>();
     if (!t) throw notFound("That request has gone. Refresh and try again.");
     if (!admin && t.user_id !== user.id) throw denied("Only an admin can manage another employee's time off.");
     const b = await body();
+    if (t.kind !== "legacy" || ((await policy(env)).settings.enabled && b.status === "approved")) return decideLeave(r, seg[1], b);
     if (b.status === "cancelled") {
       if (t.user_id !== user.id && !mgr) throw denied("Only the person who asked can cancel it.");
       if (!["requested", "approved"].includes(t.status)) throw conflict("That request is already settled.");
@@ -43,7 +49,7 @@ export async function timeOffRoutes(r: RotaRequest): Promise<Response | null> {
       needMgr();
       if (t.status !== "requested") throw conflict("That request is already settled.");
     } else throw invalid("Choose approve, decline or cancel.");
-    await env.DB.prepare("UPDATE rota_time_off SET status = ?, decided_by = ?, decided_at = ? WHERE id = ?").bind(b.status, user.id, nowMs(), seg[1]).run();
+    await commitLeave(env, rev, [env.DB.prepare("UPDATE rota_time_off SET status = ?, version=version+1, decided_by = ?, decided_at = ? WHERE id = ?").bind(b.status, user.id, nowMs(), seg[1]), event(env,t.user_id,seg[1],b.status,user.id,{legacy:true})]);
     if (b.status === "approved" || b.status === "declined") await timeOffDecided(env, exec, mailLinks, t, b.status === "approved", await actor(env, user)).catch(() => {});
     return json({ id: seg[1], status: b.status });
   }

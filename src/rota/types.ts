@@ -52,7 +52,7 @@ export interface SiteInfo {
   /** Days of the week with other opening hours than the usual ones, by mon…sun. */
   dayHours: Record<string, { opensAt: string; closesAt: string }>;
 }
-export interface TimeOff { id: string; userId: string; from: string; to: string; reason: string; status: string }
+export interface TimeOff { id: string; userId: string; from: string; to: string; reason: string; status: string; kind?:string; fromTime?:string|null; toTime?:string|null }
 export interface Problem {
   kind: string; severity: "error" | "warn" | "info"; day?: string; site?: string; userId?: string; shiftIds: string[]; message: string;
 }

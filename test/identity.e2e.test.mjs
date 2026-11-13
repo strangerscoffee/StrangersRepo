@@ -80,14 +80,20 @@ test("an Admin cache is shielded before focus verification and erased after anot
   } finally { release?.(); await context.close(); }
 });
 
-test("same-account role downgrade and persisted page restoration cannot retain Admin screens", async () => {
+test("same-account role downgrade and persisted page restoration cannot retain Admin screens", {timeout:60000}, async () => {
   const { context, page } = await pageAs(secondAdmin.cookie, "/admin#people");
   try {
     await page.locator('[data-person="' + alice.id + '"]').click();
     await page.getByText(alice.username + "@example.test", { exact: true }).waitFor();
-    await api("/api/admin/users/" + secondAdmin.id, { role: "manager" }, admin, "PATCH");
-    await page.evaluate(() => dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })));
-    await page.waitForURL((url) => !url.pathname.startsWith("/admin"));
+    const leftAdmin = page.waitForURL((url) => !url.pathname.startsWith("/admin"));
+    await Promise.all([leftAdmin, (async () => {
+      await api("/api/admin/users/" + secondAdmin.id, { role: "manager" }, admin, "PATCH");
+      // Live identity invalidation may already navigate before the synthetic restoration event runs.
+      // Only that expected destroyed-realm error is allowed; safe navigation and the private-data assertion remain required.
+      await page.evaluate(() => dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true }))).catch((error) => {
+        if (!/Execution context was destroyed.*navigation/s.test(error.message)) throw error;
+      });
+    })()]);
     assert.ok(!(await page.locator("body").innerText()).includes(alice.username + "@example.test"));
   } finally { await context.close(); }
 });

@@ -73,9 +73,9 @@ export async function loadShifts(env: Env, from: string, to: string): Promise<Sh
 
 export async function loadTimeOff(env: Env, from: string, to: string, status = "approved"): Promise<TimeOff[]> {
   const r = await env.DB.prepare(
-    "SELECT id, user_id, from_day, to_day, reason, status FROM rota_time_off WHERE status = ? AND from_day <= ? AND to_day >= ? ORDER BY from_day",
-  ).bind(status, to, from).all<{ id: string; user_id: string; from_day: string; to_day: string; reason: string; status: string }>();
-  return r.results.map((t) => ({ id: t.id, userId: t.user_id, from: t.from_day, to: t.to_day, reason: t.reason, status: t.status }));
+    "SELECT id, user_id, from_day, to_day, reason, status, kind, from_time, to_time FROM rota_time_off WHERE status = ? AND from_day <= ? AND to_day >= ? ORDER BY from_day",
+  ).bind(status, to, from).all<{ id: string; user_id: string; from_day: string; to_day: string; reason: string; status: string; kind: string; from_time:string|null;to_time:string|null }>();
+  return r.results.map((t) => ({ id: t.id, userId: t.user_id, from: t.from_day, to: t.to_day, reason: t.reason, status: t.status, kind:t.kind,fromTime:t.from_time,toTime:t.to_time }));
 }
 
 export async function weekRow(env: Env, week: string): Promise<WeekRow | null> {

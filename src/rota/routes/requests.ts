@@ -24,7 +24,7 @@ export async function requestRoutes(r: RotaRequest): Promise<Response | null> {
       : { results: [] as any[] };
     return json({
       requests: await visibleRequests(env, pending.results, user),
-      timeOff: offs.results.map((t) => ({ id: t.id, userId: t.user_id, name: t.name, from: t.from_day, to: t.to_day, reason: t.reason, status: t.status, createdAt: t.created_at })),
+      timeOff: offs.results.map((t) => ({ id: t.id, userId: t.user_id, name: t.name, from: t.from_day, to: t.to_day, reason: t.reason, status: t.status, kind:t.kind, version:t.version, createdAt: t.created_at })),
     });
   }
 
@@ -38,7 +38,7 @@ export async function requestRoutes(r: RotaRequest): Promise<Response | null> {
     const pendingAny = await env.DB.prepare("SELECT DISTINCT shift_id FROM rota_requests WHERE kind = 'claim' AND status IN ('open', 'accepted')").all<{ shift_id: string }>();
     const myShifts = all.filter((s) => s.userId === user.id);
     const list = all.filter((s) => !s.userId && weeks.has(mondayOf(s.day)))
-      .filter((s) => !myShifts.some((x) => overlaps(x, s)) && !onTimeOff(offs, user.id, s.day))
+      .filter((s) => !myShifts.some((x) => overlaps(x, s)) && !onTimeOff(offs, user.id, s.day, s.start, s.end))
       .map((s) => ({
         ...visibleShift(s, user)!, siteName: siteName(s.site),
         asked: mine.results.some((r) => r.shift_id === s.id),
