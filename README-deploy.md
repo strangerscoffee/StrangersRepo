@@ -206,6 +206,8 @@ The wholesale footer is a compact logo/Terms/Website row using the existing them
 
 The Strangers logo is centred on wholesale sign-in and registration screens, using the same existing image and light/dark styling.
 
+The staff order status filters and print/selection actions share one desktop row, including selection mode. Narrower layouts wrap the actions; desktop filters scroll horizontally when needed, with 44 px action targets.
+
 Maintenance completion notes retain their text and focus during live list refreshes, so Mark as done saves the typed note. Drafts remain in the current page and follow its existing session clearing; no new browser storage is used.
 
 The shared page loader uses the Strangers logo and lightweight, uncached identity checks. First-load metadata and fresh proof remain separate; network failures retry the same protected startup and the retry action resumes it. No configuration or migration is needed. Phone/iPad/desktop light/dark loader, recovery, request-coalescing and privacy regressions are in `test/loader.e2e.test.mjs` and `test/identity.e2e.test.mjs`.
