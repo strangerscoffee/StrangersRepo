@@ -11,6 +11,7 @@ Scope: the current Worker, staff diary/rota/Admin, staff wholesale dashboard, cu
 | Protected downloads | Uploaded business PDFs could remain in a browser cache for an hour after sign-out. | Authenticated PDFs and uploaded catalogue images use `private, no-store`. Responses declare `Cross-Origin-Resource-Policy: same-origin`; public static code retains its normal caching. |
 | Request bodies | JSON limits were checked after buffering the full body when Content-Length was absent. | Stop reading chunked requests at the byte limit, including public sign-in/registration routes, while preserving split UTF-8 decoding. |
 | Verification recovery | A native customer dialog's top layer could block interaction with a section-based sign-in shield. | The verification shield uses a native modal dialog above private dialogs. Retry remains reachable, Escape cannot dismiss the privacy shield, and previous dialogs remain inaccessible until verification completes. |
+| Browser-history restore | The customer page's old restore handler reloaded while the shared guard was navigating an expired session to sign-in. | Let the shared guard verify and navigate once; dismiss private dialogs without closing the verification shield. Restored pages remain covered until the current identity is proved. |
 
 ## Access boundaries reviewed
 
