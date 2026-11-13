@@ -292,7 +292,8 @@ function renderInspect(){
   const R=IN.data&&IN.key===`${S.site}|${p.from}|${p.to}`?IN.data:null;
   $("#inPdf").disabled=!R;
   $("#inMsg").textContent=IN.err?IN.err:R?"":"Gathering the records…";
-  if(!R){box.replaceChildren(el("div",{class:"empty glass",text:IN.err?"Couldn't gather the records. Check the connection and try again.":"Gathering the records…"}));$("#inJump").replaceChildren();return}
+  box.setAttribute("aria-busy",String(!R&&!IN.err));
+  if(!R){box.replaceChildren(IN.err?el("div",{class:"empty glass",text:"Couldn't gather the records. Check the connection and try again."}):SC.skeleton({label:"Gathering the records…"}));$("#inJump").replaceChildren();return}
   const secs=inspectSections(R);
   $("#inJump").replaceChildren(...secs.filter(x=>!x.plan).map(x=>el("button",{type:"button",class:"fchip",onclick:()=>{const n=document.getElementById("in-"+x.id);if(n)n.scrollIntoView({behavior:"smooth",block:"start"})}},x.title)),
     ...(secs.some(x=>x.plan)?[el("button",{type:"button",class:"fchip",onclick:()=>{const n=document.querySelector("[id^='in-plan-']");if(n)n.scrollIntoView({behavior:"smooth",block:"start"})}},"HACCP & risk")]:[]));

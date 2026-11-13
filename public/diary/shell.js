@@ -166,7 +166,7 @@ function setQuickPin(){
   }});
 }
 async function openPeopleSheet(){
-  const box=$("#peopleList");box.replaceChildren(el("div",{class:"empty",text:"Loading…"}));
+  const box=$("#peopleList");box.replaceChildren(SC.skeleton({label:"Loading people…"}));
   $("#sheetVeil").hidden=false;$("#peopleSheet").hidden=false;
   let people=[];try{people=(await (await fetch("/api/auth/people")).json()).people||[]}catch(e){}
   box.replaceChildren(...people.map(p=>el("button",{class:"lrow"+(p.name===S.myName?" on":""),type:"button","aria-current":p.name===S.myName?"true":null,onclick:()=>{

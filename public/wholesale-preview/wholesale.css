@@ -470,7 +470,7 @@ dialog::backdrop { background: rgba(0,0,0,.3); -webkit-backdrop-filter: blur(6px
    Public recipes: https://transitions.dev/transitions/menu-dropdown/
    https://transitions.dev/transitions/modal-open-close/
    Use terms: https://github.com/Jakubantalik/transitions.dev/blob/main/LICENSE */
-:root { --w-motion-open: 250ms; --w-motion-close: 150ms; --w-motion-ease: cubic-bezier(.22,1,.36,1); }
+:root { --w-motion-open:var(--motion-open); --w-motion-close:var(--motion-close); --w-motion-ease:var(--motion-ease); }
 .sort-menu {
   position: fixed; inset: auto; margin: 0; padding: 8px; border: 1px solid var(--glass-edge); border-radius: 18px;
   color: var(--fg); background: var(--glass); box-shadow: var(--glass-hi), var(--lift);
@@ -485,19 +485,6 @@ dialog::backdrop { background: rgba(0,0,0,.3); -webkit-backdrop-filter: blur(6px
 #sort-coffee[aria-expanded="true"] { background: var(--tint); }
 @starting-style { .sort-menu:popover-open { opacity: 0; transform: translateY(var(--w-menu-offset, -6px)) scale(.97); } }
 
-/* The browser owns opening/closing, focus, Escape and inertness; CSS adds only the motion. */
-#orders-dialog {
-  opacity: 0; transform: translateY(6px) scale(.96); transform-origin: center; pointer-events: none;
-  transition: opacity var(--w-motion-close) var(--w-motion-ease), transform var(--w-motion-close) var(--w-motion-ease), display var(--w-motion-close) allow-discrete, overlay var(--w-motion-close) allow-discrete;
-}
-#orders-dialog[open] { opacity: 1; transform: none; pointer-events: auto; transition-duration: var(--w-motion-open); }
-#orders-dialog::backdrop { opacity: 0; transition: opacity var(--w-motion-close) var(--w-motion-ease), display var(--w-motion-close) allow-discrete, overlay var(--w-motion-close) allow-discrete; }
-#orders-dialog[open]::backdrop { opacity: 1; transition-duration: var(--w-motion-open); }
-#orders-dialog:not([open])::backdrop { pointer-events: none; }
-@starting-style {
-  #orders-dialog[open] { opacity: 0; transform: translateY(6px) scale(.96); }
-  #orders-dialog[open]::backdrop { opacity: 0; }
-}
 #orders-panel:not([hidden]), #invoices-panel:not([hidden]) { animation: history-panel-enter var(--w-motion-open) var(--w-motion-ease); }
 @keyframes history-panel-enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 /* Verification and identity changes take precedence over decorative exit transitions. */
@@ -570,3 +557,6 @@ html[data-sc-session-locked] #orders-dialog, html[data-sc-session-locked] #order
   .catalogue-title h2 { font-size: 21px; }
   .catalogue-actions .bag-size .filter { min-width: 54px; padding-inline: 8px; }
 }
+
+.catalogue-status .sc-sk-shapes { grid-template-columns:repeat(2,minmax(0,1fr)); }
+@media(max-width:700px) { .catalogue-status .sc-sk-shapes { grid-template-columns:1fr; } }

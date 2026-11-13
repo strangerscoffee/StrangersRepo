@@ -369,7 +369,8 @@ test("beta checkout: deleting a saved uncertain order prevents frozen retries fr
     assert.equal(postCount, 2, "the rejected review cannot submit again, including through a form submit event");
     await page.locator("#review-dialog .close-button").click();
     await page.locator("#review-order").click();
-    await page.locator("#review-dialog").waitFor();
+    // A closing dialog can still paint during its exit; wait for the newly reviewed checkout.
+    await page.locator("#review-dialog[open]").waitFor();
     assert.equal(await page.locator("#submit-preview-order").isEnabled(), true, "a fresh review permits a genuinely new order");
     assert.equal(await page.locator('#review-form [name="reference"]').inputValue(), "");
     assert.equal(await page.locator('#review-form [name="reference"]').getAttribute("readonly"), null);
