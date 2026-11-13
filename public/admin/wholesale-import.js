@@ -44,7 +44,9 @@ window.SCCustomerImport = (() => {
       const email = (cell("email").split(/[\s,;]+/).find((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) || "").toLowerCase();
       const contact = tidy(cell("contact") || [cell("first"), cell("last")].filter(Boolean).join(" "));
       const phone = tidy(cell("phone") || cell("mobile")).replace(/^(phone|mobile|tel)\s*:\s*/i, "").slice(0, 40);
-      out.push({ business: business.slice(0, 120), quickbooksName: (qbName || business).slice(0, 200), contact: contact.slice(0, 120), email, phone, address: address.slice(0, 500), postcode: postcode.toUpperCase().slice(0, 20) });
+      // For Accounts emails: the company name exactly as written (spaces tidied) and every address in the email cell.
+      const company = tidy(cell("company")).slice(0, 200), emails = [...new Set(cell("email").split(/[\s,;]+/).map((e) => e.toLowerCase()).filter((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)))].slice(0, 10);
+      out.push({ company, emails, business: business.slice(0, 120), quickbooksName: (qbName || business).slice(0, 200), contact: contact.slice(0, 120), email, phone, address: address.slice(0, 500), postcode: postcode.toUpperCase().slice(0, 20) });
     }
     return out;
   }

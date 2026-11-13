@@ -165,3 +165,57 @@ export async function handleInvite(req: Request, env: Env, startSession: (accoun
   await audit(env, "wholesale_invite_accepted", username, `${customer.business} set up their wholesale sign-in (${username}) from an invite.`);
   return json({ ok: true, business: customer.business }, 201, { "set-cookie": await startSession(accountId) });
 }
+
+/* Accounts emails from a QuickBooks customer list (Admin → Wholesale → Customers → Accounts emails). Each row's
+ * company name must match a business on the site exactly (surrounding spaces aside); nothing is ever added. When the
+ * file's email isn't the business's order email, it becomes the business's accounts email. A cell with several
+ * addresses gives the one that looks like an accounts address (accounts@, finance@, invoices@…), else the first that
+ * isn't the order email; if the order email is in the cell and nothing looks like an accounts address, it's a match.
+ * `apply: false` previews; `apply: true` saves each change against the version it was previewed at. */
+const VALID = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const ACCOUNTS_LIKE = /^(accounts?|finance|invoices?|invoicing|bills?|billing|payables|purchase-?ledger|ap)[@._-]/i;
+type Outcome = { company: string; status: "update" | "replace" | "same" | "already" | "notFound" | "noEmail" | "ambiguous" | "updated" | "changed"; customerId?: string; business?: string; email?: string; current?: string; accountsEmail?: string; version?: number };
+export async function matchAccountsEmails(env: Env, value: unknown, actor: string): Promise<{ results: Outcome[]; updated: number }> {
+  const body = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  if (!Array.isArray(body.rows) || body.rows.length > 2000) throw invalid("Send up to 2,000 rows from the customer list.");
+  const apply = body.apply === true;
+  const versions = apply && body.versions && typeof body.versions === "object" ? body.versions as Record<string, unknown> : {};
+  const customers = (await env.DB.prepare("SELECT id, data, version FROM wholesale_preview WHERE kind = 'customer'").all<{ id: string; data: string; version: number }>()).results
+    .map((row) => ({ id: row.id, version: row.version, ...(JSON.parse(row.data) as Customer) }));
+  const byName = new Map<string, typeof customers>();
+  for (const c of customers) { const key = String(c.business || "").trim(); byName.set(key, [...(byName.get(key) || []), c]); }
+  const results: Outcome[] = [], done = new Set<string>();
+  let updated = 0;
+  for (const raw of body.rows) {
+    const row = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+    const company = typeof row.company === "string" ? row.company.trim().slice(0, 200) : "";
+    if (!company) continue;
+    const emails = (Array.isArray(row.emails) ? row.emails : []).filter((e): e is string => typeof e === "string").map((e) => e.trim().toLowerCase()).filter((e) => VALID.test(e) && e.length <= 150).slice(0, 10);
+    const found = byName.get(company) || [];
+    if (!found.length) { results.push({ company, status: "notFound" }); continue; }
+    if (found.length > 1) { results.push({ company, status: "ambiguous" }); continue; }
+    const c = found[0], base = { company, customerId: c.id, business: c.business, email: c.email || "", current: c.accountsEmail || "", version: c.version };
+    if (done.has(c.id)) continue;
+    done.add(c.id);
+    if (!emails.length) { results.push({ ...base, status: "noEmail" }); continue; }
+    const order = (c.email || "").trim().toLowerCase(), others = emails.filter((e) => e !== order);
+    const pick = others.find((e) => ACCOUNTS_LIKE.test(e)) || (emails.includes(order) ? undefined : others[0]);
+    if (!pick) { results.push({ ...base, status: "same" }); continue; }
+    if ((c.accountsEmail || "").toLowerCase() === pick) { results.push({ ...base, status: "already", accountsEmail: pick }); continue; }
+    const status = c.accountsEmail ? "replace" : "update";
+    if (!apply) { results.push({ ...base, status, accountsEmail: pick }); continue; }
+    // Applying: only what was previewed, at the version it was previewed at.
+    if (versions[c.id] !== c.version) { results.push({ ...base, status: "changed", accountsEmail: pick }); continue; }
+    const { id, version, ...data } = c;
+    try {
+      await save(env, "customer", id, { ...data, accountsEmail: pick }, version);
+      results.push({ ...base, status: "updated", accountsEmail: pick });
+      updated++;
+    } catch (error) {
+      if (error instanceof ApiError && error.code === "conflict") { results.push({ ...base, status: "changed", accountsEmail: pick }); continue; }
+      throw error;
+    }
+  }
+  if (updated) await audit(env, "wholesale_accounts_emails", actor, `${actor} set the accounts email on ${updated} wholesale ${updated === 1 ? "business" : "businesses"} from a QuickBooks customer list.`);
+  return { results, updated };
+}

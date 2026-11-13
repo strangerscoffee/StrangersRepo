@@ -357,6 +357,44 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     });
     $("#sheetTitle").focus({ preventScroll: true });
   }
+  // Accounts emails: a QuickBooks customer list matched to businesses by exact company name (nothing is added). Where the
+  // list's email isn't the business's order email, it becomes the accounts email. Preview first, then apply.
+  function openAccountsEmails(state = {}) {
+    const results = state.results || [], changes = results.filter((r) => r.status === "update" || r.status === "replace");
+    const LABEL = { update: "Add accounts email", replace: "Replace accounts email", same: "Same as the order email: nothing to do", already: "Already has this accounts email", notFound: "Not on the website: not added", ambiguous: "More than one business has this name: skipped", noEmail: "No email in the list", updated: "Accounts email saved", changed: "Changed by someone else since the preview: not saved" };
+    const groups = state.applied ? ["updated", "changed", "already", "same", "noEmail", "ambiguous", "notFound"] : ["update", "replace", "already", "same", "noEmail", "ambiguous", "notFound"];
+    const rowOf = (r) => html`<div class="item"><span class="tx"><b>${r.business || r.company}</b>${r.accountsEmail ? html`<span>Accounts: ${r.accountsEmail}${r.status === "replace" ? ` (was ${r.current})` : ""}</span>` : ""}${r.customerId ? html`<span>Order email: ${r.email || "none"}</span>` : ""}</span></div>`;
+    openSheet(html`<form class="w-sheet w-import-sheet" novalidate><div class="wp-sheet-head"><div><h2 id="sheetTitle" tabindex="-1">Accounts emails from QuickBooks</h2><p class="hint">Matches each company in the customer list to a business here by its exact name. Where the list's email isn't the business's order email, it's saved as the accounts email. No businesses are added.</p></div><button class="btn soft" type="button" data-sheet="close" aria-label="Close">${svg("x")}</button></div>
+      ${results.length ? html`<p class="w-import-count">${state.applied ? html`<b>${state.updated}</b> accounts ${state.updated === 1 ? "email" : "emails"} saved` : html`<b>${changes.length}</b> ${changes.length === 1 ? "business" : "businesses"} to update`} · from ${state.fileName}</p>
+        ${groups.map((g) => { const list = results.filter((r) => r.status === g); return list.length ? html`<details class="w-ae-group" ${["update", "replace", "updated", "changed"].includes(g) ? raw("open") : ""}><summary><b>${LABEL[g]}</b> · ${list.length}</summary><div class="group">${list.map(rowOf)}</div></details>` : ""; })}
+        <p class="err" id="wErr" role="alert"></p><div class="row w-actions"><button class="btn soft" type="button" data-sheet="ae-file">Choose another file</button>${state.applied ? html`<button class="btn" type="button" data-sheet="close">Done</button>` : html`<button class="btn" type="submit" ${changes.length ? "" : raw("disabled")}>Save ${changes.length} accounts ${changes.length === 1 ? "email" : "emails"}</button>`}</div>`
+      : html`<ol class="ins-steps"><li>In QuickBooks, go to <b>Sales → Customers</b> and choose <b>Export to Excel</b>.</li><li>If it saves as an old .xls file, open it and save it as .xlsx or CSV.</li><li>Choose the file here. You'll see every match before anything is saved.</li></ol>
+        <label class="btn ins-file">${svg("plus")}Choose the customer list<input type="file" id="wAeFile" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"></label><p class="err" id="wErr" role="alert">${state.error || ""}</p>`}
+      </form>`, async (action, element) => {
+      const form = element.closest("form") || element;
+      if (action === "ae-file") return openAccountsEmails({});
+      if (action !== "submit" || state.applied) return;
+      await saveForm(form, async () => {
+        const versions = Object.fromEntries(changes.map((r) => [r.customerId, r.version]));
+        const r = await api("POST", "/api/admin/wholesale/customers/accounts-emails", { rows: state.rows, apply: true, versions });
+        await reload();
+        openAccountsEmails({ ...state, results: r.results, updated: r.updated, applied: true });
+        toast(`${r.updated} accounts ${r.updated === 1 ? "email" : "emails"} saved.`);
+      });
+    });
+    const input = $("#wAeFile");
+    input?.addEventListener("change", async () => {
+      const file = input.files?.[0]; if (!file) return;
+      try {
+        const parsed = await window.SCCustomerImport.parseFile(file);
+        const rows = parsed.rows.filter((r) => r.company).map((r) => ({ company: r.company, emails: r.emails }));
+        if (!rows.length) throw new Error("No company names found in that file. Export the customer list from QuickBooks with the Company name column.");
+        const r = await api("POST", "/api/admin/wholesale/customers/accounts-emails", { rows, apply: false });
+        openAccountsEmails({ rows, fileName: parsed.fileName, results: r.results });
+      } catch (error) { openAccountsEmails({ error: error.message }); }
+    });
+    $("#sheetTitle").focus({ preventScroll: true });
+  }
   // Invite to order online: every business without a sign-in that has an email, not invited in the last 14 days
   // ticked; sent 25 at a time, stopping at the day's email limit.
   async function openInvites(state = {}) {
@@ -395,7 +433,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
   function customers() {
     const rows = [...data.customers].sort((a,b) => Number(accountFor(b.id)?.approvalStatus === "pending") - Number(accountFor(a.id)?.approvalStatus === "pending"));
     const filtered = !!query.trim() || approval !== "all";
-    const tools = html`<div class="toolbar">${search("Search wholesale customers", "Search business, contact or email")}<button class="btn" type="button" data-act="wh-customer">${svg("plus")}Add customer</button><button class="btn soft" type="button" data-act="wh-import-customers">Import from QuickBooks</button><button class="btn soft" type="button" data-act="wh-invite-customers">${svg("mail")}Invite to order online</button></div>
+    const tools = html`<div class="toolbar">${search("Search wholesale customers", "Search business, contact or email")}<button class="btn" type="button" data-act="wh-customer">${svg("plus")}Add customer</button><button class="btn soft" type="button" data-act="wh-import-customers">Import from QuickBooks</button><button class="btn soft" type="button" data-act="wh-accounts-emails">${svg("mail")}Accounts emails</button><button class="btn soft" type="button" data-act="wh-invite-customers">${svg("mail")}Invite to order online</button></div>
       <div class="segwrap w-filters"><div class="seg" role="group" aria-label="Customer access">${[["all", "All customers"], ["pending", "Awaiting review"]].map(([id, label]) => html`<button type="button" data-act="wh-approval" data-id="${id}" aria-pressed="${approval === id}">${label}</button>`)}</div></div>`;
     return listing("wCustomersTitle", "Customers", resultCount(rows.length, data.matchingCount, "customer"), tools,
       rows.length ? rows.map((row) => html`<button class="item w-customer" type="button" data-act="wh-customer" data-id="${row.id}"><span class="ic ${accountFor(row.id)?.approvalStatus === "pending" ? "warn" : "ok"}">${svg("people")}</span><span class="tx"><b>${row.business}</b><span>${[row.contact, row.email].filter(Boolean).join(" · ") || "No contact details"}</span><span>${accountFor(row.id)?.approvalStatus === "pending" ? "Awaiting account approval" : accountFor(row.id) ? accountFor(row.id).active ? "Sign-in enabled" : "Sign-in disabled" : inviteText(row.id)} · ${termsFor(row)}${row.noMinimumOrder ? " · No minimum order" : ""}${row.hidePrices ? " · Prices hidden" : ""}${row.autoTab ? " · On a tab" : ""}</span></span><span class="end">${pill(row.status)}<span class="chev">${svg("chev")}</span></span></button>`) : emptyState(filtered ? "search" : "people", filtered ? "No matching customers" : "No customers yet", filtered ? "Try another search or clear your filters to see all customers." : "Add a business, or review new registrations as they arrive.", filtered),
@@ -908,6 +946,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
       if (name === "wh-pick-all") { for (const row of data.orders) picked.add(row.id); refreshPicks(); return; }
       if (name === "wh-print-picked" && picked.size) { await printUI.printOrders({ ids: [...picked], label: `${picked.size} selected ${picked.size === 1 ? "order" : "orders"}` }); return; }
       if (name === "wh-import-customers") { openCustomerImport(); return; }
+      if (name === "wh-accounts-emails") { openAccountsEmails(); return; }
       if (name === "wh-invite-customers") { await openInvites(); return; }
       if (name === "wh-tab" && selectSection(id)) await reload();
       if (name === "wh-status" && ["all", ...data.statuses].includes(id)) { clearTimeout(timer); status = id; orderPages = 1; await reload(); }
