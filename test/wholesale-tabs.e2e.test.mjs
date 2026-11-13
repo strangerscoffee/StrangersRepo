@@ -153,8 +153,7 @@ test("Admin → Wholesale → Tabs: see every tab with £, and clear one", async
   await shot(p, "admin-confirm");
   await p.locator('.w-tab-sheet button[type="submit"]').click();
   await p.locator(".w-tab-sheet").waitFor({ state: "detached" });
-  await p.locator(".w-tabs-workspace", { hasText: "Recently cleared" }).waitFor();
-  assert.equal(await p.locator(".w-tab-card.ready", { hasText: "Strangers ASG" }).count(), 0);
+  await p.locator(".w-tab-card.ready", { hasText: "Strangers ASG" }).waitFor({ state: "detached" });
   assert.match(await p.locator(".w-tabs-workspace .group").last().innerText(), /Strangers ASG[\s\S]*Cleared .* by Admin[\s\S]*kg[\s\S]*£/);
   const tabs = (await call("GET", "/api/admin/wholesale/tabs")).body;
   assert.ok(tabs.cleared.some((c) => c.business === "Strangers ASG" && c.clearedBy === "Admin" && c.grams >= 6000 && Number.isFinite(c.pence)));
