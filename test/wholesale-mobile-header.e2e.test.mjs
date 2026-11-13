@@ -32,6 +32,29 @@ for (const colorScheme of ['light','dark']) test(`compact mobile header ${colorS
       await page.goto(srv.base+'/wholesale-preview/'); await page.locator('#products article').first().waitFor();
       const measure = () => page.locator('.site-header').evaluate(node => ({height:node.getBoundingClientRect().height, mainTop:document.querySelector('main').getBoundingClientRect().top+scrollY, overflow:document.documentElement.scrollWidth-innerWidth, targets:[...node.querySelectorAll('a,button')].map(n=>n.getBoundingClientRect()).filter(b=>b.width&&b.height).map(b=>({width:b.width,height:b.height}))}));
       const before = await measure(); assert.equal(before.height,64); assert.equal(before.overflow,0); assert.equal(before.targets.length,5); assert.ok(before.targets.every(target=>target.width>=44&&target.height>=44));
+      const toolbar = await page.locator('.catalogue').evaluate(node => {
+        const box = selector => node.querySelector(selector).getBoundingClientRect().toJSON();
+        return {heading:box('.section-heading'), search:box('.search-field'), categories:box('.coffee-categories'), firstCard:box('.product-card'), size:box('.bag-size'), sort:box('#sort-coffee'), targets:[...node.querySelectorAll('[data-bag-size], [data-filter], #sort-coffee')].map(n=>n.getBoundingClientRect().toJSON())};
+      });
+      assert.ok(toolbar.heading.bottom <= toolbar.search.top && toolbar.search.bottom <= toolbar.categories.top && toolbar.categories.bottom < toolbar.firstCard.top, 'three compact rows above the first coffee');
+      assert.ok(toolbar.firstCard.top < 290, 'products start near the top of the phone');
+      assert.ok(toolbar.size.y >= toolbar.heading.y && toolbar.size.bottom <= toolbar.heading.bottom && toolbar.sort.right <= width-12, 'size and sort stay in the heading row');
+      assert.ok(toolbar.targets.every(target=>target.width>=44&&target.height>=44), 'catalogue controls retain touch targets');
+      await page.locator('[data-bag-size="quarter"]').focus(); await page.keyboard.press('Tab');
+      assert.equal(await page.evaluate(()=>document.activeElement.dataset.bagSize),'kilo');
+      await page.keyboard.press('Tab'); assert.equal(await page.evaluate(()=>document.activeElement.id),'sort-coffee');
+      await page.keyboard.press('Tab'); assert.equal(await page.evaluate(()=>document.activeElement.id),'coffee-search');
+      await page.locator('#coffee-search').fill('Brazil');
+      await page.setViewportSize({width:1440,height:900});
+      await page.locator('.catalogue-tools > .bag-size').waitFor();
+      assert.equal(await page.locator('#coffee-search').inputValue(),'Brazil');
+      assert.equal(await page.locator('.catalogue-tools > .bag-size').count(),1, 'desktop restores the original toolbar');
+      await page.setViewportSize({width,height:852});
+      await page.waitForFunction(()=>document.getElementById('wholesale-account').hasAttribute('popover') && !!document.querySelector('.catalogue-actions > .bag-size'));
+      assert.equal(await page.evaluate(()=>document.activeElement.id),'coffee-search', 'focused search survives the breakpoint');
+      assert.equal(await page.locator('#coffee-search').inputValue(),'Brazil');
+      await page.locator('#coffee-search').fill('');
+      await page.locator('#signed-in-name').waitFor({state:'hidden'});
       assert.equal(await page.locator('#signed-in-name').isVisible(),false);
       await openWholesaleAccountMenu(page);
       assert.equal(await page.locator('#signed-in-name').innerText(),business);
@@ -39,7 +62,7 @@ for (const colorScheme of ['light','dark']) test(`compact mobile header ${colorS
       const bounds = await page.locator('#wholesale-account').boundingBox(); assert.ok(bounds.x>=15&&bounds.x+bounds.width<=width-15);
       await page.keyboard.press('Escape'); await page.locator('#wholesale-account:popover-open').waitFor({state:'hidden'});
       await page.waitForFunction(()=>document.activeElement===document.getElementById('account-toggle'));
-      await openWholesaleAccountMenu(page); await page.locator('main > .page-heading h1').click({position:{x:4,y:4}}); await page.locator('#wholesale-account:popover-open').waitFor({state:'hidden'});
+      await openWholesaleAccountMenu(page); await page.locator('#coffee-title').click({position:{x:4,y:4}}); await page.locator('#wholesale-account:popover-open').waitFor({state:'hidden'});
       await openWholesaleAccount(page); await page.locator('#account-dialog[open]').waitFor();
       await page.locator('#account-form [name="contact"]').fill('Draft survives resizing');
       await page.setViewportSize({width:1440,height:900}); await page.waitForFunction(()=>!document.getElementById('wholesale-account').hasAttribute('popover'));

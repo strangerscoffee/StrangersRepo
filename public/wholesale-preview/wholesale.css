@@ -488,3 +488,35 @@ dialog::backdrop { background: rgba(0,0,0,.3); -webkit-backdrop-filter: blur(6px
 @media (prefers-contrast: more) { .footer-panel { border-color: var(--fg); } }
 /* A coffee sold in one bag size only: its one size shown as a plain label. */
 .pack-options.one-size .pack-choice { cursor: default; }
+
+/* Compact customer catalogue: one controls row, search, then category pills. */
+.mobile-catalogue-label { display: none; }
+@media (max-width: 700px) {
+  html { scroll-padding-top: 88px; }
+  main > .page-heading { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .shop-layout { grid-template-columns: minmax(0, 1fr); margin-top: 20px; }
+  .catalogue .section-heading { flex-wrap: nowrap; gap: 8px; margin-bottom: 12px; }
+  .catalogue-title { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+  .catalogue-title h2 { font-size: 22px; letter-spacing: -.5px; white-space: nowrap; }
+  .desktop-catalogue-label, .bag-size-prefix, .category-suffix { display: none; }
+  .mobile-catalogue-label { display: inline; }
+  .catalogue-title .product-count { max-width: 36px; overflow: hidden; text-overflow: ellipsis; font-size: 14px; }
+  .product-count .count-noun, .catalogue-actions .bag-size-label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .catalogue-actions { gap: 6px; flex-shrink: 0; }
+  .catalogue-actions .bag-size { flex-basis: auto; margin: 0; }
+  .catalogue-actions .bag-size .filters { flex: none; width: auto; padding: 3px; gap: 0; }
+  .catalogue-actions .bag-size .filter { flex: none; min-width: 58px; min-height: 44px; padding: 8px 10px; font-size: 13px; }
+  .catalogue-tools { display: flex; flex-direction: column; align-items: stretch; gap: 10px; margin-bottom: 16px; }
+  .catalogue-tools .search-field { flex: none; min-height: 48px; margin: 0; border-radius: 14px; }
+  .coffee-categories { flex: none; justify-content: flex-start; gap: 6px; padding: 2px; margin: -2px; width: calc(100% + 4px); max-width: none; overflow-x: auto; scrollbar-width: none; border-radius: 0; background: transparent; }
+  .coffee-categories::-webkit-scrollbar { display: none; }
+  .coffee-categories .filter { flex: none; min-height: 44px; padding: 9px 14px; font-size: 13px; background: var(--sunk); }
+  .coffee-categories .filter.selected { background: var(--surface); }
+  .product-photo { width: 100%; max-width: 254px; margin-inline: auto; }
+  .product-info { padding-top: 14px; }
+}
+@media (max-width: 360px) {
+  .catalogue-title { gap: 6px; }
+  .catalogue-title h2 { font-size: 21px; }
+  .catalogue-actions .bag-size .filter { min-width: 54px; padding-inline: 8px; }
+}
