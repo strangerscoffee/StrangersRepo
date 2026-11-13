@@ -179,6 +179,9 @@ async function createOrder(req: Request, env: Env, user: OrderingUser, links: Li
 
 /** All staff can browse the signed-in catalogue and save preview orders. They cannot read others' records. */
 export async function handleWholesale(req: Request, env: Env, route: string, user: OrderingUser, links: Links, ctx?: ExecutionContext): Promise<Response> {
+  const expected=req.headers.get('x-expected-ordering-id'),role=req.headers.get('x-expected-ordering-role');
+  if((expected&&expected!==user.id)||(role&&role!==user.role))throw new ApiError(409,'session_changed','The signed-in account changed. Reload to continue.');
+  if(route==='session'&&req.method==='GET'&&req.headers.get('x-sc-session-check')==='1')return json({user:{id:user.id,role:user.role},...(user.role!=='wholesale'&&env.COOKIE_DOMAIN?{cookieDomain:env.COOKIE_DOMAIN}:{})});
   const invoiceResponse = await handleInvoiceCustomer(req, env, route, user);
   if (invoiceResponse) return invoiceResponse;
   const customer = user.role === "wholesale" ? await wholesaleCustomer(env, user.customerId) : null;

@@ -279,10 +279,8 @@ test("beta checkout: switching business sessions cannot send another customer's 
     });
     await page.locator("#submit-preview-order").click();
     await page.locator("#preview-submit-error:not([hidden])").waitFor();
-    const switched = await page.evaluate(async ({ username, password }) => {
-      const response = await fetch("/api/wholesale/auth/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ username, password }) });
-      return { status: response.status, body: await response.json() };
-    }, { username: other.username, password: other.password });
+    const switchedResponse = await context.request.post(srv.base + "/api/wholesale/auth/login", { data: { username: other.username, password: other.password } });
+    const switched = {status: switchedResponse.status(), body: await switchedResponse.json()};
     assert.equal(switched.status, 200, JSON.stringify(switched.body));
     await page.locator("#submit-preview-order").click();
     await page.waitForFunction((business) => document.querySelector("#signed-in-name")?.textContent === business, other.customer.business);
@@ -315,11 +313,9 @@ for (const restored of [true, false]) {
         await page.locator('#account-form [name="address"]').fill("Do not copy this address to another business");
       }
       const before = (await api("GET", "/api/admin/wholesale")).body.customers.filter((row) => [customer.id, other.customer.id].includes(row.id));
-      const switched = await page.evaluate(async ({ username, password }) => {
-        window.profileBeforeSessionChange = true;
-        const response = await fetch("/api/wholesale/auth/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ username, password }) });
-        return { status: response.status, body: await response.json() };
-      }, { username: other.username, password: other.password });
+      await page.evaluate(() => { window.profileBeforeSessionChange = true; });
+      const switchedResponse = await context.request.post(srv.base + "/api/wholesale/auth/login", { data: { username: other.username, password: other.password } });
+      const switched = {status: switchedResponse.status(), body: await switchedResponse.json()};
       assert.equal(switched.status, 200, JSON.stringify(switched.body));
       let profileWrites = 0;
       await page.route("**/api/wholesale/account", async (route) => { if (route.request().method() === "PUT") profileWrites++; return route.continue(); });

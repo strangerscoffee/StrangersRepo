@@ -23,10 +23,10 @@
   window.Date = ServerDate;
   const realFetch = window.fetch.bind(window);
   window.fetch = async (input, init) => {
-    const url = typeof input === "string" ? input : (input && input.url) || "";
-    const own = url.startsWith("/") || url.startsWith(location.origin);
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : (input && input.url) || "";
+    const own = !!url && new URL(url, location.origin).origin === location.origin;
     const path = own ? new URL(url, location.origin).pathname : "";
-    const protectedCall = /^\/api\/(?:db\/|admin\/|rota\/|staff-orders\/|assets(?:\/|$))/.test(path) || /^\/api\/auth\/(?:pin|notifications\/seen)$/.test(path);
+    const protectedCall = /^\/api\/(?:db\/|admin\/|rota\/|staff-orders\/|wholesale\/|assets(?:\/|$))/.test(path) || /^\/api\/auth\/(?:pin|notifications\/seen)$/.test(path);
     if (protectedCall && sessionIdentity) {
       if (!(await ensureSession())) throw sessionError();
       init = Object.assign({}, init);
@@ -44,10 +44,12 @@
       rememberCookieDomain(me && me.cookieDomain);
     }
     if (protectedCall && sessionIdentity) {
+      if (res.status === 401) invalidateSession(true);
       if (res.status === 409 && (await res.clone().json().catch(() => null))?.code === "session_changed") invalidateSession();
       if (sessionInvalid || ((sessionLocked || generation !== sessionGeneration) && !(await ensureSession()))) throw sessionError();
     }
     if (/^\/api\/auth\/(?:login|switch|change|setup|recover|logout)$/.test(path) && res.ok) notifyAuthChange();
+    if (/^\/api\/wholesale\/auth\/(?:login|change-password|invite|logout)$/.test(path) && res.ok) notifyAuthChange();
     // Only from answers the browser never keeps (no-store, the API): a kept file comes back instantly with the time
     // it was first fetched, which would win as the quickest reading and put the page on an earlier day.
     const fresh = own && /no-store/i.test(res.headers.get("cache-control") || "");
@@ -129,6 +131,9 @@
   let sessionCheck = null, sessionCheckedAt = 0, sessionEnabled = false, sessionSignedOut = goSignIn, logoutTask = null, cookieDomain = "";
   const sessionClearers = new Set(), sessionWaiters = new Set();
   let startupTask = null, wakeStartup = null, retryTimer = null, retryAttempt = 0, resumeTimer = null;
+  let sessionScope = "staff";
+  const sessionUrl = () => sessionScope === "wholesale" ? "/api/wholesale/session" : "/api/auth/me";
+  const sessionData = raw => sessionScope === "wholesale" ? { ...raw, user: Object.hasOwn(raw || {}, "user") ? raw.user : raw?.me ?? null } : raw;
   async function authRequest(input, init = {}) {
     const controller = new AbortController(), outer = init.signal;
     const abort = () => controller.abort();
@@ -158,6 +163,8 @@
     if (typeof domain === "string" && (domain === "" || location.hostname === domain || location.hostname.endsWith("." + domain))) cookieDomain = domain;
   }
   function logoutIntent() {
+    // A customer's host-only identity is separate from any pending staff-domain sign-out.
+    if (sessionScope === "wholesale" && sessionIdentity?.role === "wholesale") return "";
     const cookie = document.cookie.match(/(?:^|;\s*)sfbb_logout_pending=([^;]*)/);
     if (cookie) { try { return decodeURIComponent(cookie[1]) || "1"; } catch (_) { return "1"; } }
     try { return localStorage.getItem(LOGOUT_KEY) || ""; } catch (_) { return ""; }
@@ -172,7 +179,7 @@
   function loadingView(message = "Loading…") {
     if (!document.getElementById("sc-loader-style")) {
       const style = el("style", { id: "sc-loader-style" });
-      style.textContent = 'html[data-sc-session-locked] body>:not(#sc-session-shield),html[data-sc-session-locked] body>:not(#sc-session-shield) *{visibility:hidden!important;pointer-events:none!important}#sc-session-shield{position:fixed;inset:0;z-index:2147483647;display:grid;place-content:center;justify-items:center;gap:20px;padding:32px;text-align:center;background:var(--bg,#edf1f6);color:var(--fg,#17212f);font:16px system-ui}#sc-session-shield[hidden],#sc-session-shield button[hidden]{display:none}@media(prefers-color-scheme:dark){#sc-session-shield{background:var(--bg,#05070b);color:var(--fg,#f0f3f8)}}';
+      style.textContent = 'html[data-sc-session-locked] body>:not(#sc-session-shield),html[data-sc-session-locked] body>:not(#sc-session-shield) *{visibility:hidden!important;pointer-events:none!important}#sc-session-shield{box-sizing:border-box;position:fixed;inset:0;z-index:2147483647;margin:0;width:100vw;max-width:none;height:100dvh;max-height:none;border:0;border-radius:0;display:grid;place-content:center;justify-items:center;gap:20px;padding:32px;text-align:center;background:var(--bg,#edf1f6);color:var(--fg,#17212f);font:16px system-ui}#sc-session-shield[hidden],#sc-session-shield button[hidden]{display:none}@media(prefers-color-scheme:dark){#sc-session-shield{background:var(--bg,#05070b);color:var(--fg,#f0f3f8)}}';
       document.head.append(style);
     }
     return el("div", { class: "sc-loading" }, el("span", { class: "sc-loading-logo", role: "img", "aria-label": "Strangers Coffee" }), el("span", { class: "sc-loading-track", "aria-hidden": "true" }), el("p", { "data-loading-message": "" }, message));
@@ -188,11 +195,12 @@
     document.documentElement.setAttribute("data-sc-session-locked", "");
     let box = document.getElementById("sc-session-shield");
     if (!box && document.body) {
-      box = el("section", { id: "sc-session-shield", role: "status", "aria-live": "polite" }, loadingView(message), el("button", { type: "button", onclick: retrySession, hidden: true }, "Try again"));
+      box = el("dialog", { id: "sc-session-shield", role: "status", "aria-live": "polite" }, loadingView(message), el("button", { type: "button", onclick: retrySession, hidden: true }, "Try again"));
+      box.addEventListener("cancel", event => event.preventDefault());
       document.body.append(box);
     }
     if (box) {
-      box.hidden = false; box.dataset.phase = error ? "error" : "checking";
+      box.hidden = false; if (!box.open) box.showModal(); box.dataset.phase = error ? "error" : "checking";
       box.setAttribute("aria-busy", String(!error));
       box.querySelector("[data-loading-message]").textContent = message;
       box.querySelector("button").hidden = !error;
@@ -208,14 +216,14 @@
     if (sessionInvalid || logoutIntent()) return;
     clearTimeout(retryTimer); retryTimer = null; retryAttempt = 0;
     sessionLocked = false; document.documentElement.removeAttribute("data-sc-session-locked");
-    const box = document.getElementById("sc-session-shield"); if (box) box.hidden = true;
+    const box = document.getElementById("sc-session-shield"); if (box) { if (box.open) box.close(); box.hidden = true; }
     settleSessionWaiters(true);
   }
   function invalidateSession(signedOut = false, navigate = true) {
     if (sessionInvalid) return false;
     sessionShield(signedOut ? "Signed out. Opening sign-in…" : "Your sign-in changed. Reloading…"); sessionInvalid = true;
     clearTimeout(retryTimer); clearTimeout(resumeTimer); settleSessionWaiters(false); wakeStartup?.();
-    for (const dialog of document.querySelectorAll("dialog[open]")) try { dialog.close(); } catch (_) {}
+    for (const dialog of document.querySelectorAll("dialog[open]:not(#sc-session-shield)")) try { dialog.close(); } catch (_) {}
     for (const clear of sessionClearers) try { clear(); } catch (_) {}
     dispatchEvent(new CustomEvent("sc:session-invalid"));
     if (navigate) { if (signedOut) sessionSignedOut(); else location.reload(); }
@@ -235,7 +243,8 @@
     ensureSession({ force: true });
     return verified; // The startup reply may predate a switch; no render or queue load before fresh proof.
   }
-  async function startSession({ clear } = {}) {
+  async function startSession({ clear, scope = "staff" } = {}) {
+    if (!startupTask) sessionScope = scope === "wholesale" ? "wholesale" : "staff";
     if (sessionInvalid) return null;
     if (typeof clear === "function") sessionClearers.add(clear);
     sessionEnabled = true;
@@ -243,9 +252,10 @@
       for (let attempt = 0; !sessionInvalid; attempt++) {
         sessionShield();
         try {
-          const response = await fetch("/api/auth/me", { cache: "no-store" });
+          const response = await fetch(sessionUrl(), { cache: "no-store" });
+          if (response.status === 401) { invalidateSession(true); return null; }
           if (!response.ok) throw new Error();
-          const me = await response.json();
+          const me = sessionData(await response.json());
           if (!me || !("user" in me)) throw new Error();
           if (me.user === null) { invalidateSession(true); return null; }
           if (!me.user || typeof me.user.id !== "string" || typeof me.user.role !== "string") throw new Error();
@@ -265,7 +275,7 @@
     const me = await startupTask;
     return me && await ensureSession() ? me : null; // Never release cached bootstrap metadata after a switch or failed logout.
   }
-  function sessionHeaders() { return sessionIdentity ? { "x-expected-user-id": sessionIdentity.id, "x-expected-user-role": sessionIdentity.role } : {}; }
+  function sessionHeaders() { return sessionIdentity ? (sessionScope === "wholesale" ? { "x-expected-ordering-id": sessionIdentity.id, "x-expected-ordering-role": sessionIdentity.role } : { "x-expected-user-id": sessionIdentity.id, "x-expected-user-role": sessionIdentity.role }) : {}; }
   async function ensureSession({ force = false } = {}) {
     if (!sessionEnabled || !sessionIdentity) return !sessionInvalid && !logoutIntent();
     if (sessionInvalid || logoutIntent()) return false;
@@ -278,9 +288,10 @@
         for (;;) {
           if (sessionInvalid || logoutIntent()) return false;
           const generation = sessionGeneration;
-          const response = await authRequest("/api/auth/me", { cache: "no-store", headers: { "x-sc-session-check": "1" } });
+          const response = await authRequest(sessionUrl(), { cache: "no-store", headers: { "x-sc-session-check": "1" } });
+          if (response.status === 401) { invalidateSession(true); return false; }
           if (!response.ok) throw new Error();
-          const me = await response.json(); rememberCookieDomain(me.cookieDomain);
+          const me = sessionData(await response.json()); rememberCookieDomain(me.cookieDomain);
           // A switch/focus event during this request means its cookie snapshot is already obsolete.
           if (generation !== sessionGeneration) continue;
           if (!me.user) { invalidateSession(true); return false; }

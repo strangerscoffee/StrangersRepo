@@ -556,3 +556,5 @@ button.stat{cursor:pointer}
 .w-recipe-row:has(.field[hidden]){grid-template-columns:minmax(0,1fr) 76px 44px}
 @media (max-width:560px){.w-recipe-row{grid-template-columns:minmax(0,1fr) 76px 44px}.w-recipe-row .field:first-child{grid-column:1/-1}.w-recipe-row:has(.field[hidden]) .field:first-child{grid-column:auto}}
 .w-wl-tag{display:inline-flex;margin-left:6px;padding:2px 8px;border-radius:99px;background:var(--tint);color:var(--accent);font-size:11.5px;font-weight:700;vertical-align:middle}
+
+.email-actions{display:flex;flex-wrap:wrap;align-items:center;gap:10px}

@@ -216,3 +216,9 @@ Staff with that access can now also change an order's status (the quick **Mark p
 JSON backups include grant metadata as `staffOrderAccess`, keyed by stable `users.id`. Restore only reviewed grants to the same stable employee IDs; omitting an old backup's missing grant table leaves nonadmins denied. Do not infer grants from names or roles. Existing private employee-data restrictions remain independent.
 
 HTML responses, including Staff Login, are private/no-store and omit conditional validators because the Worker transforms asset fingerprints. Returning browsers receive current script URLs; fingerprinted scripts/styles keep their one-year cache.
+
+## Security review
+
+The [13 November security/privacy review](docs/security-privacy-review-2026-11-13.md) records application access boundaries, encryption and deployment limitations. Customer ordering uses the shared fresh-identity shield and expected-ordering headers; private downloads are no-store. Cross-app writes trust only configured staff hostnames (`COOKIE_DOMAIN`, `ADMIN_HOST`, `ROTA_HOST`, `LEGACY_PREVIEW_HOST`) over HTTPS, not arbitrary sibling subdomains. No new secret, DNS entry or storage migration is needed for these safeguards. D1/KV encryption at rest is automatic; QuickBooks keeps its separate application encryption key. Keep hosting account membership, two-factor authentication and exported backups under independent review.
+
+The root `/favicon.ico` is a real icon using the existing Strangers artwork and is served signed out on every app host. Logo/favicon element recovery is limited to one fresh retry, including the customer sign-in logo. Persistent image failures remain quiet reports; scripts/styles and app-attributed errors remain visible. The specific browser autofill message “Could not find identifiable element” is ignored only when it has no app-owned frame. Historical Activity reports are retained. Rota email actions use a wrapping flex layout with a consistent gap.

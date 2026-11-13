@@ -285,7 +285,10 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       assert.equal(await page.locator('#basket-count').textContent(), '2');
       const ownOrders = await page.evaluate(() => fetch('/api/wholesale/orders').then(r => r.json()));
       assert.equal(ownOrders.orders.length, 1, 'reorder builds a basket and waits for confirmation');
-      await page.evaluate(() => fetch('/api/wholesale/auth/logout', { method: 'POST' }));
+      // Expire the cookie outside this page, then restore it as from browser history. A page's
+      // own guarded logout already starts navigation before a second evaluate can run.
+      const logout = await context.request.post(srv.base + '/api/wholesale/auth/logout');
+      assert.equal(logout.status(), 200);
       await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
       await page.waitForURL(/\/wholesale-preview\/signin$/);
       assert.deepEqual(errors, []);

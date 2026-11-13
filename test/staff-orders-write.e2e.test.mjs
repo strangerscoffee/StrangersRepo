@@ -14,6 +14,7 @@ const cookieOf = (r) => (r.headers.getSetCookie().find((v) => /^sf(?:bb|_wholesa
 async function call(method, path, body, cookie = ADMIN) {
   const r = await fetch(srv.base + path, { method, headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
   const text = await r.text(); let data; try { data = JSON.parse(text); } catch {}
+  assert.ok(r.ok, `${method} ${path}: ${r.status} ${text}`);
   return { status: r.status, body: data, cookie: cookieOf(r), text };
 }
 before(async () => {

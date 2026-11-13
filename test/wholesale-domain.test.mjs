@@ -26,6 +26,7 @@ test("wholesale domain: canonical and legacy hosts share ordering while staff li
 test("wholesale domain: customer-only sign-in and approval work without exposing staff setup or data", async () => {
   const home = await call("GET", "/");
   assert.equal(home.response.status, 302); assert.equal(home.response.headers.get("location"), "/signin");
+  const icon = await call("GET", "/favicon.ico"); assert.equal(icon.response.status,200); assert.match(icon.response.headers.get("content-type"),/^image\//);
   const signin = await call("GET", "/signin");
   assert.equal(signin.response.status, 200); assert.match(signin.text, /Wholesale sign-in/);
   const staff = await call("GET", "/wholesale-preview/staff-signin");

@@ -69,6 +69,10 @@ test("signed out: only the sign-in page and the site's code are reachable, no pa
   assert.deepEqual(me, { user: null, setupNeeded: false, quickSwitch: false, cookieDomain: "staffstrangerscoffee.com" });
 });
 
+test("the browser's default favicon loads signed out as an icon, without a sign-in redirect",async()=>{
+ const r=await fetch(srv.base+'/favicon.ico',{redirect:'manual'});assert.equal(r.status,200);assert.match(r.headers.get('content-type'),/^image\//);const bytes=new Uint8Array(await r.arrayBuffer());assert.deepEqual([...bytes.slice(0,6)],[0,0,1,0,1,0]);assert.equal(r.headers.get('set-cookie'),null);
+});
+
 test("page is served with the shim and noindex once signed in", async () => {
   const r = await fetch(srv.base + "/", { headers: { cookie: ADMIN } });
   assert.equal(r.status, 200);
