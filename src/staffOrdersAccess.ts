@@ -1,4 +1,4 @@
-// This capability grants only the dedicated, read-only wholesale order projection.
+// This capability grants the dedicated staff wholesale dashboard, without Admin or employee-data access.
 import type { User } from "./auth";
 import { audit } from "./audit";
 import { ApiError, type Env, invalid, json, readJson } from "./http";
@@ -27,6 +27,6 @@ export async function handleStaffOrderAccess(req: Request, env: Env, userId: str
     ?await env.DB.prepare("INSERT INTO staff_order_access(user_id,enabled,version,updated_at,updated_by) VALUES(?,?,1,?,?) ON CONFLICT(user_id) DO NOTHING").bind(userId,enabled,at,actor.id).run()
     :await env.DB.prepare("UPDATE staff_order_access SET enabled=?,version=version+1,updated_at=?,updated_by=? WHERE user_id=? AND version=?").bind(enabled,at,actor.id,userId,expected).run();
   if(!result.meta.changes)throw new ApiError(409,"conflict","This person's order access changed. Reload before saving.");
-  await audit(env,"staff_orders_access",actor.name,`${actor.name} ${enabled?"enabled":"disabled"} read-only wholesale orders for ${target.name}`);
+  await audit(env,"staff_orders_access",actor.name,`${actor.name} ${enabled?"enabled":"disabled"} wholesale orders dashboard access for ${target.name}`);
   return json({userId,enabled:!!enabled,version:expected+1,inherited:false});
 }
