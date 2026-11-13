@@ -281,6 +281,15 @@ const MIGRATIONS: Migration[] = [
   } },
   { id: 23, name: "Wholesale invites", run: migrateInvites },
   { id: 24, name: "Rota holiday allowances, calendar and absence records", run: migrateLeave },
+  // The owner's decision (13 Nov 2026): every wholesale business whose payment terms were still "To be agreed" (or never
+  // set) moves to "30 days from invoice". Businesses already on other terms are left alone; orders keep their snapshots.
+  // Runs once; businesses added later start on "To be agreed" as usual.
+  { id: 25, name: "Wholesale businesses on To be agreed move to 30 days from invoice", run: async env => {
+    const now = Date.now();
+    const result = await env.DB.prepare("UPDATE wholesale_preview SET data = json_set(data, '$.paymentTerms', 'net-30'), version = version + 1, updated_at = ? WHERE kind = 'customer' AND COALESCE(json_extract(data, '$.paymentTerms'), 'to-agree') NOT IN ('before-dispatch', 'net-7', 'net-14', 'net-30', 'net-60', 'custom')").bind(now).run();
+    const changed = result.meta?.changes || 0;
+    if (changed) await env.DB.prepare("INSERT INTO audit_log (at, kind, actor, text) VALUES (?, 'wholesale_terms_bulk', 'system', ?)").bind(now, `Payment terms set to 30 days from invoice for ${changed} wholesale ${changed === 1 ? "business" : "businesses"} that were on To be agreed.`).run();
+  } },
 ];
 
 async function migrate(env: Env): Promise<void> {
