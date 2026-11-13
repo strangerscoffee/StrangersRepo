@@ -274,7 +274,3 @@ Custom coffees remain in the existing versioned wholesale catalogue JSON. `white
 ## Diary Slack reminders (migration 27)
 
 `slack_diary_posts (site, day, slot, created_at, sent_at, attempts, last_error)`, primary key `(site, day, slot)`: one row per site (`cafe`, `asg`, `roastery`), UK date and slot (`morning` | `evening`) once its time comes, so each message is sent once (`src/slackDiary.ts`). `last_error` is Slack's refusal, or `closed` when the site was closed that day. Rows older than 60 days are removed. Not in backups.
-
-## Wholesale password reset links (migration 28)
-
-`wholesale_resets (hash, account_id, email, created_at, expires_at, used_at)`: one row per "Forgotten your password?" link emailed to a wholesale business (`src/wholesaleReset.ts`). `hash` is the SHA-256 of the link's token (the token itself is never stored); `email` is the address on file it went to; links last an hour and work once (`used_at`, also set when a newer link replaces it). Rows older than 30 days are removed. Not in backups.

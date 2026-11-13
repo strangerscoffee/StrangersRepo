@@ -706,6 +706,17 @@ function showPaymentTerms() {
   $("#account-payment-terms").textContent = session.customer?.paymentTerms.label || "";
   $("#account-payment-note").textContent = session.customer?.paymentTerms.note || "";
 }
+function renderAccountIdentity() {
+  const business = session?.customer?.business || session?.me.name || '';
+  const contact = (session?.customer ? session.customer.contact : session?.me.name)?.trim();
+  const greeting = session ? (contact ? `Hi, ${contact}` : 'Hi') : '';
+  $('#signed-in-name').textContent = business;
+  if (business) $('#signed-in-name').title = business;
+  else $('#signed-in-name').removeAttribute('title');
+  $('#account-greeting').textContent = greeting || 'Account';
+  $('#account-menu-greeting').textContent = greeting || 'Hi';
+  $('#account-toggle').setAttribute('aria-label', greeting ? `${greeting}. Account menu` : 'Account menu');
+}
 function applyCatalogue(fresh, initial) {
   session = fresh;
   document.body.classList.toggle("hide-prices", !pricesShown());
@@ -717,8 +728,7 @@ function applyCatalogue(fresh, initial) {
     pendingAttempt = readAttempt();
     if (pendingAttempt) basket = sanitiseBasket(pendingAttempt.payload.lines);
   } else { basket = sanitiseBasket(basket); saveBasket(); }
-  $("#signed-in-name").textContent = session.customer?.business || session.me.name;
-  $("#signed-in-name").title = session.customer?.business || session.me.name;
+  renderAccountIdentity();
   $("#preview-home").href = session.links.preview;
   $("#admin-wholesale-link").hidden = session.me.role !== "admin";
   if (session.me.role === "admin") $("#admin-wholesale-link").href = session.links.admin + "#wholesale";
@@ -771,6 +781,7 @@ async function openAccount() {
     const current = await api("/api/wholesale/session");
     if (current.me.id !== session.me.id) { location.reload(); return; }
     session.customer = current.customer;
+    renderAccountIdentity();
     if (!session.customer) return;
     showPaymentTerms();
     for (const key of ["contact", "email", "accountsEmail", "phone", "address", "postcode", "deliveryNotes"]) $("#account-form").elements[key].value = session.customer[key] || "";
@@ -851,8 +862,7 @@ $("#account-form").addEventListener("submit", async (event) => {
     const result = await api("/api/wholesale/account", { ...fields, locations, defaultLocationId: accountDefaultLocation, ifVersion: session.customer.version, orderingIdentity: session.me.id }, "PUT");
     session.customer = result.customer;
     showPaymentTerms();
-    $("#signed-in-name").textContent = session.customer.business;
-    $("#signed-in-name").title = session.customer.business;
+    renderAccountIdentity();
     $("#account-dialog").close(); toast("Business details saved.");
   } catch (error) { $("#account-error").textContent = error.message; $("#account-error").hidden = false; }
   finally { accountSaving = false; controls.forEach(control => { if (control.isConnected) control.disabled = false; }); if ($("#account-dialog").open) renderAccountLocations(); }
@@ -1137,7 +1147,7 @@ function clearOrderingSession() {
   accountLocations = []; customerInvoices = []; STORAGE_KEY = null;
   setCatalogue([]); photoIndexes.clear();
   for (const id of ["#products","#order-items","#review-items","#order-history","#customer-invoices-list","#customer-invoice-summary","#history-invoice-note","#account-locations","#signed-in-name","#account-business","#account-payment-terms","#account-payment-note","#review-business","#review-location-name","#delivery-summary","#review-payment-terms","#review-total","#review-grand","#complete-message","#complete-total","#complete-note","#complete-location","#complete-payment-terms","#reorder-items","#reorder-skipped-items","#reorder-summary","#reorder-existing","#location-choices","#location-remove-summary","#grind-product-name",".grind-choices"]) $(id)?.replaceChildren();
-  $("#signed-in-name")?.removeAttribute("title");
+  renderAccountIdentity();
   document.querySelectorAll("form").forEach(form=>form.reset());
 }
 SC.recheckOnPageshow(goSignIn);

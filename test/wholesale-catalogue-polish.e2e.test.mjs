@@ -30,13 +30,15 @@ for (const width of [320, 820, 1920]) for (const colorScheme of ['light', 'dark'
     try {
       await page.goto(server.base + '/wholesale-preview/'); await page.locator('#products[aria-busy="false"]').waitFor();
       await page.locator('#repeat-shortcut').waitFor();
+      assert.equal(await page.locator('#account-greeting').textContent(), 'Hi, Buyer');
+      assert.equal(await page.locator('#account-menu-greeting').textContent(), 'Hi, Buyer');
       assert.equal(await page.locator('.site-header nav').count(), 0);
       assert.ok((await page.locator('.site-header').boundingBox()).height < 90, 'header stays on one compact row at every width');
       assert.equal(await page.locator('#basket-dialog').isVisible(), false);
       assert.equal(await page.locator('#my-orders').isVisible(), false);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       const card = page.locator('article[data-product="brazil"]');
-      assert.equal(await card.locator('.product-photo img').evaluate(node => getComputedStyle(node).objectFit), 'contain');
+      assert.equal(await card.locator('.product-photo img').evaluate(node => getComputedStyle(node).objectFit), 'cover');
       assert.ok((await card.locator('.product-photo').boundingBox()).width > 200);
       if (width > 700) {
         assert.equal(await page.locator('#coffee-search').isVisible(), false);
@@ -84,3 +86,32 @@ for (const width of [320, 820, 1920]) for (const colorScheme of ['light', 'dark'
     } finally { await context.close(); }
   });
 }
+
+test('contact greeting follows saved contact names, escapes text, handles long and blank names, and survives reload', { timeout: 60000 }, async () => {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const [name, value] = customerCookie.split('='); await context.addCookies([{ name, value, url: server.base }]);
+  const page = await context.newPage(), errors = []; page.on('pageerror', error => errors.push(error.message));
+  try {
+    await page.goto(server.base + '/wholesale-preview/'); await page.locator('#products[aria-busy="false"]').waitFor();
+    for (const contact of ['Will <Coffee & Co>', 'Will ' + 'Longcontactname '.repeat(6), '']) {
+      await page.locator('#account-toggle').click(); await page.locator('#my-account').click();
+      await page.locator('#account-dialog[open]').waitFor();
+      await page.locator('#account-form [name="contact"]').fill(contact);
+      const saved = page.waitForResponse(response => new URL(response.url()).pathname === '/api/wholesale/account' && response.request().method() === 'PUT');
+      await page.locator('#save-account').click();
+      const response = await saved; assert.equal(response.status(), 200);
+      assert.equal((await response.json()).customer.contact, contact.trim());
+      await page.locator('#account-dialog[open]').waitFor({ state: 'hidden' });
+      const greeting = contact.trim() ? 'Hi, ' + contact.trim() : 'Hi';
+      assert.equal(await page.locator('#account-greeting').textContent(), greeting);
+      assert.equal(await page.locator('#account-menu-greeting').textContent(), greeting);
+      assert.equal(await page.locator('#account-toggle').getAttribute('aria-label'), greeting + '. Account menu');
+      assert.equal(await page.locator('#signed-in-name').textContent(), 'Catalogue Coffee Company');
+      assert.equal(await page.locator('#account-menu-greeting > *').count(), 0, 'contact names render as text');
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    }
+    await page.reload(); await page.locator('#products[aria-busy="false"]').waitFor();
+    assert.equal(await page.locator('#account-greeting').textContent(), 'Hi');
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
