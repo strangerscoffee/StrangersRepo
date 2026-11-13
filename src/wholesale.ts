@@ -179,6 +179,13 @@ async function createOrder(req: Request, env: Env, user: OrderingUser, links: Li
 }
 
 /** All staff can browse the signed-in catalogue and save preview orders. They cannot read others' records. */
+/** A separate accounts email (invoices and statements), or "" when it's the same as the order email. Undefined keeps the saved one. */
+function accountsEmailFrom(value: unknown, current: string | undefined): string {
+  if (value === undefined) return current || "";
+  const email = text(value, "accounts email", 150);
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw invalid("Check the accounts email.");
+  return email;
+}
 export async function handleWholesale(req: Request, env: Env, route: string, user: OrderingUser, links: Links, ctx?: ExecutionContext): Promise<Response> {
   const expected=req.headers.get('x-expected-ordering-id'),role=req.headers.get('x-expected-ordering-role');
   if((expected&&expected!==user.id)||(role&&role!==user.role))throw new ApiError(409,'session_changed','The signed-in account changed. Reload to continue.');
@@ -195,8 +202,9 @@ export async function handleWholesale(req: Request, env: Env, route: string, use
     if (expected !== customer.version) throw new ApiError(409, "conflict", "This business changed on another device. Reload it before saving.");
     const email = body.email === undefined ? customer.email : text(body.email, "email", 150);
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw invalid("Check the contact email.");
-    const { id, version: oldVersion, updatedAt, ...current } = customer;
-    const data = editedCustomerLocations({ ...current, business: customer.business, contact: body.contact === undefined ? customer.contact : text(body.contact, "contact name", 120), email, phone: body.phone === undefined ? customer.phone || "" : text(body.phone, "phone number", 40), address: body.address === undefined ? customer.address || "" : text(body.address, "delivery address", 500), postcode: body.postcode === undefined ? customer.postcode || "" : text(body.postcode, "postcode", 20), deliveryNotes: body.deliveryNotes === undefined ? customer.deliveryNotes || "" : text(body.deliveryNotes, "delivery notes", 1000) }, body);
+    const accountsEmail = accountsEmailFrom(body.accountsEmail, customer.accountsEmail);
+    const { id, version: oldVersion, updatedAt, accountsEmail: _old, ...current } = customer;
+    const data = editedCustomerLocations({ ...current, business: customer.business, contact: body.contact === undefined ? customer.contact : text(body.contact, "contact name", 120), email, ...(accountsEmail ? { accountsEmail } : {}), phone: body.phone === undefined ? customer.phone || "" : text(body.phone, "phone number", 40), address: body.address === undefined ? customer.address || "" : text(body.address, "delivery address", 500), postcode: body.postcode === undefined ? customer.postcode || "" : text(body.postcode, "postcode", 20), deliveryNotes: body.deliveryNotes === undefined ? customer.deliveryNotes || "" : text(body.deliveryNotes, "delivery notes", 1000) }, body);
     const saved = await save(env, "customer", id, data, expected);
     await audit(env, "wholesale_profile", user.name, `${user.name} updated their wholesale business details.`);
     return json({ customer: publicCustomer(saved) });
@@ -357,6 +365,8 @@ export async function handleWholesaleAdmin(req: Request, env: Env, route: string
     if (typeof paymentTerms !== "string" || !PAYMENT_TERMS.some((term) => term.id === paymentTerms)) throw invalid("Choose listed payment terms.");
     const data: Customer = { business, email, contact: text(body.contact, "contact name", 120), phone: body.phone === undefined ? oldCustomer?.phone || "" : text(body.phone, "phone number", 40), address: body.address === undefined ? oldCustomer?.address || "" : text(body.address, "delivery address", 500), postcode: body.postcode === undefined ? oldCustomer?.postcode || "" : text(body.postcode, "postcode", 20), deliveryNotes: body.deliveryNotes === undefined ? oldCustomer?.deliveryNotes || "" : text(body.deliveryNotes, "delivery notes", 1000), status: body.status, note: text(body.note, "account note", 1000), locations: oldCustomer?.locations, defaultLocationId: oldCustomer?.defaultLocationId };
     data.paymentTerms = paymentTerms;
+    const accountsEmail = accountsEmailFrom(body.accountsEmail, oldCustomer?.accountsEmail);
+    if (accountsEmail) data.accountsEmail = accountsEmail;
     if (body.noMinimumOrder !== undefined && typeof body.noMinimumOrder !== "boolean") throw invalid("Choose whether this business has a minimum order.");
     if (body.noMinimumOrder ?? oldCustomer?.noMinimumOrder) data.noMinimumOrder = true;
     if (body.hidePrices !== undefined && typeof body.hidePrices !== "boolean") throw invalid("Choose whether this business sees prices.");

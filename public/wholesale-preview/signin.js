@@ -65,7 +65,7 @@
       const form = $('#wholesale-login');
       const response = await fetch('/api/wholesale/auth/' + (registering ? 'register' : changing ? 'change-password' : 'login'), {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ username: $('#username').value, password: $('#password').value, ...(changing ? { newPassword: $('#new-password').value } : {}), ...(registering ? Object.fromEntries(['business', 'contact', 'email', 'phone'].map(name => [name, form.elements[name].value])) : {}) }),
+        body: JSON.stringify({ username: $('#username').value, password: $('#password').value, ...(changing ? { newPassword: $('#new-password').value } : {}), ...(registering ? Object.fromEntries(['business', 'contact', 'email', 'accountsEmail', 'phone'].map(name => [name, form.elements[name].value])) : {}) }),
       });
       const result = await response.json();
       if (result.code === 'password_change_required') {

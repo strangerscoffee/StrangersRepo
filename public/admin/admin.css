@@ -565,3 +565,5 @@ button.stat{cursor:pointer}
 .w-size .field{margin:0}.w-size-on{display:flex;align-items:center;gap:10px;min-height:44px;font-size:15px}.w-size-on input{width:22px;height:22px;margin:0;accent-color:var(--accent)}
 .w-size input:disabled{opacity:.45}
 @media (max-width:420px){.w-size{grid-template-columns:1fr;gap:4px}}
+
+.w-sheet .w-duplicate{margin:2px 0 10px}

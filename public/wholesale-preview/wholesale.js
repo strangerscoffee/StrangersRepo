@@ -740,7 +740,7 @@ async function openAccount() {
     session.customer = current.customer;
     if (!session.customer) return;
     showPaymentTerms();
-    for (const key of ["contact", "email", "phone", "address", "postcode", "deliveryNotes"]) $("#account-form").elements[key].value = session.customer[key] || "";
+    for (const key of ["contact", "email", "accountsEmail", "phone", "address", "postcode", "deliveryNotes"]) $("#account-form").elements[key].value = session.customer[key] || "";
     $("#account-business").textContent = session.customer.business;
     accountLocations = locationsFor();
     accountDefaultLocation = session.customer.defaultLocationId || "primary";
@@ -813,7 +813,7 @@ $("#account-form").addEventListener("submit", async (event) => {
   try {
     if (!await confirmIdentity()) return;
     syncPrimaryLocation();
-    const fields = Object.fromEntries(["contact", "email", "phone", "address", "postcode", "deliveryNotes"].map((key) => [key, form.elements[key].value]));
+    const fields = Object.fromEntries(["contact", "email", "accountsEmail", "phone", "address", "postcode", "deliveryNotes"].map((key) => [key, form.elements[key].value]));
     const locations = accountLocations.map(location => ({ ...(location.id ? { id: location.id } : {}), ...Object.fromEntries(LOCATION_FIELDS.map(key => [key, location[key] || ""])) }));
     const result = await api("/api/wholesale/account", { ...fields, locations, defaultLocationId: accountDefaultLocation, ifVersion: session.customer.version, orderingIdentity: session.me.id }, "PUT");
     session.customer = result.customer;

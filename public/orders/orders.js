@@ -220,7 +220,7 @@
   const c=customers.find(c=>c.id===id);if(!c)return;
   const link=(href,text)=>el('a',{href},text);
   $('customerDetail').replaceChildren(el('div',{class:'business-title'},el('h3',{},c.business),c.status==='On hold'?pill('On hold'):pill('Active')),
-   el('div',{class:'details'},kv('Contact',c.contact),el('div',{class:'kv'},el('span',{},'Email'),c.email?link('mailto:'+c.email,c.email):el('span',{},'None supplied')),el('div',{class:'kv'},el('span',{},'Phone'),c.phone?link('tel:'+c.phone.replace(/[^\d+]/g,''),c.phone):el('span',{},'None supplied'))),
+   el('div',{class:'details'},kv('Contact',c.contact),el('div',{class:'kv'},el('span',{},'Email'),c.email?link('mailto:'+c.email,c.email):el('span',{},'None supplied')),c.accountsEmail?el('div',{class:'kv'},el('span',{},'Accounts email'),link('mailto:'+c.accountsEmail,c.accountsEmail)):null,el('div',{class:'kv'},el('span',{},'Phone'),c.phone?link('tel:'+c.phone.replace(/[^\d+]/g,''),c.phone):el('span',{},'None supplied'))),
    el('h3',{class:'packing-heading'},c.locations.length===1?'Delivery location':'Delivery locations'),
    ...c.locations.map(l=>el('div',{class:'detail-note location'},el('b',{},l.name+(l.id===c.defaultLocationId&&c.locations.length>1?' (default)':'')),[l.address,l.postcode].filter(Boolean).join('\n')||'No address saved',(l.contact||l.phone)&&(l.contact!==c.contact||l.phone!==c.phone)?el('span',{class:'row-meta'},[l.contact,l.phone].filter(Boolean).join(' · ')):null,l.deliveryNotes?el('span',{class:'row-meta'},'Delivery notes: '+l.deliveryNotes):null)));
   $('customerDialog').showModal();
