@@ -152,7 +152,8 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       assert.equal(await buyer.locator("#submit-preview-order").isDisabled(), true, "changed agreement requires a new review before submitting again");
       await buyer.locator('#review-dialog .close-button').click();
       await buyer.locator('#review-order').click();
-      await buyer.locator('#review-dialog').waitFor();
+      // Visibility can include the previous exit frame; [open] means the fresh terms have loaded.
+      await buyer.locator('#review-dialog[open]').waitFor();
       assert.match(await buyer.locator('#review-payment-terms').textContent(), /7 days from invoice/);
       await buyer.locator('#review-form [name="delivery"][value="collection"]').check();
       await screenshot(buyer, `checkout-terms-${device}-${color}`);
