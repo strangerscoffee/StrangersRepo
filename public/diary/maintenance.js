@@ -128,7 +128,11 @@ function openMaintJob(x){
 }
 
 function renderMaint(){
-  const box=$("#mList");if(!box)return;box.replaceChildren();const ids=[],R=ro();
+  const box=$("#mList");if(!box)return;
+  // Reuse each visible job's input: live/name/team refreshes must not erase a note being typed.
+  // Keep drafts only in the current DOM, keyed by site and job, with the normal session clearing.
+  const notes=new Map([...box.querySelectorAll("input[data-maint-note]")].map(n=>[n.dataset.maintNote,n])),focused=document.activeElement;
+  box.replaceChildren();const ids=[],R=ro();
   if(S.tab==="maintenance"&&!document.hidden)setTimeout(markNotifsSeen,0); // looking at Maintenance counts as seeing them
   for(const b of document.querySelectorAll("#mScope button"))b.setAttribute("aria-pressed",String((b.dataset.scope==="all")===maintAll));
   if(maintAll)subscribeMaintAll();
@@ -139,7 +143,8 @@ function renderMaint(){
   const done=items.filter(x=>x.m.status==="done").sort((a,b)=>(b.m.doneAt||0)-(a.m.doneAt||0)).slice(0,30);
   const row=({m,site})=>{
     ids.push(m.reportedBy,m.doneBy);const pr=mtPri(m.priority),isDone=m.status==="done";
-    const note=el("input",{type:"text",placeholder:"What was done (optional)","aria-label":"What was done for "+m.title});
+    const noteKey=site+"/"+m.id,note=notes.get(noteKey)||el("input",{type:"text",placeholder:"What was done (optional)","data-maint-note":noteKey});
+    note.setAttribute("aria-label","What was done for "+m.title);
     const hist=(m.log||[]).slice(0,5).map(e=>{ids.push(e.by);return el("li",{},el("span",{text:when(e.at)}),el("span",{class:"s",text:`${e.what} · ${nameOf(e.by)}${e.note?" · "+e.note:""}`}))});
     return xrow("m"+site+m.id,{
       title:m.title,
@@ -165,5 +170,6 @@ function renderMaint(){
   if(done.length)box.append(el("div",{class:"label",text:`Done · ${done.length}`}),el("div",{class:"list glass"},...done.map(row)));
   $("#mFormPanel").hidden=R||!formOpen.maintenance;
   renderMtWho();
+  if(focused?.matches("input[data-maint-note]")&&box.contains(focused))focused.focus({preventScroll:true});
   resolveNames(ids.filter(Boolean));
 }

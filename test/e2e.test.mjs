@@ -552,6 +552,9 @@ test("staff journey on the real page", async () => {
   const dish = page.locator("#mList .xrow", { hasText: "Dishwasher" });
   await dish.locator(".xmain").click();
   await dish.locator("input[type=text]").fill("Cleared the filter");
+  // Team/name/live updates may redraw this list between typing and pressing Done.
+  await page.evaluate(() => renderMaint());
+  assert.equal(await dish.locator("input[type=text]").inputValue(), "Cleared the filter", "a live redraw keeps the unsaved completion note");
   await dish.locator(".btn", { hasText: "Mark as done" }).click();
   await assert.doesNotReject(waitFor(async () => (await api("get", { path: "sites/cafe/maintenance/cm1" })).data.status === "done"), "done at the Cafe");
   const cm = (await api("get", { path: "sites/cafe/maintenance/cm1" })).data;
