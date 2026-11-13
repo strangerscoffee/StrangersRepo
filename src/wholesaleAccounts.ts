@@ -7,6 +7,8 @@ import { handleInvite } from "./wholesaleImport";
 
 export interface Customer {
   business: string; contact: string; email: string; status: "Active" | "On hold"; note: string;
+  /** Where invoices and statements go, when it isn't the order email. */
+  accountsEmail?: string;
   phone?: string; address?: string; postcode?: string; deliveryNotes?: string;
   paymentTerms?: string; paymentNote?: string;
   locations?: CustomerLocation[]; defaultLocationId?: string;
@@ -57,7 +59,7 @@ export async function wholesaleCustomer(env: Env, id: string): Promise<CustomerR
 }
 export function publicCustomer(row: CustomerRecord) {
   const { locations, defaultLocationId } = locationDefaults(row);
-  return { id: row.id, version: row.version, updatedAt: row.updatedAt, business: row.business, contact: row.contact, email: row.email, phone: row.phone || "", address: row.address || "", postcode: row.postcode || "", deliveryNotes: row.deliveryNotes || "", status: row.status, paymentTerms: paymentTermsFor(row), locations, defaultLocationId };
+  return { id: row.id, version: row.version, updatedAt: row.updatedAt, business: row.business, contact: row.contact, email: row.email, accountsEmail: row.accountsEmail || "", phone: row.phone || "", address: row.address || "", postcode: row.postcode || "", deliveryNotes: row.deliveryNotes || "", status: row.status, paymentTerms: paymentTermsFor(row), locations, defaultLocationId };
 }
 export async function wholesaleSession(req: Request, env: Env): Promise<WholesaleUser | null> {
   const token = tokenFrom(req);
@@ -115,7 +117,9 @@ async function register(req: Request, env: Env): Promise<Response> {
   };
   const email = clean("email", 150, true);
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw invalid("Check your email address.");
-  const customer: Customer = { business: clean("business", 120, true), contact: clean("contact", 120, true), email, phone: clean("phone", 40), address: "", postcode: "", deliveryNotes: "", note: "", status: "On hold" };
+  const accountsEmail = clean("accountsEmail", 150);
+  if (accountsEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(accountsEmail)) throw invalid("Check the accounts email address.");
+  const customer: Customer = { business: clean("business", 120, true), contact: clean("contact", 120, true), email, ...(accountsEmail && accountsEmail.toLowerCase() !== email.toLowerCase() ? { accountsEmail } : {}), phone: clean("phone", 40), address: "", postcode: "", deliveryNotes: "", note: "", status: "On hold" };
   const { hash, salt } = await hashPassword(checkPassword(body.password));
   const customerId = crypto.randomUUID(), at = Date.now();
   try {

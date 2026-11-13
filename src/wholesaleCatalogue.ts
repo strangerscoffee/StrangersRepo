@@ -47,11 +47,20 @@ async function write(env: Env, coffee: Coffee, expected: number): Promise<Coffee
   const result = await save(env, "catalogue", coffee.id, settings, expected);
   return decorate(settings.product!, settings, result.version, true);
 }
-function pricesFor(value: unknown): Prices {
+/** The bag sizes a coffee is sold in: both unless it has been limited to one. */
+export const packsOf = (product: { packs?: string[] }): ("quarter" | "kilo")[] => product.packs?.length === 1 && ["quarter", "kilo"].includes(product.packs[0]) ? [product.packs[0] as "quarter" | "kilo"] : ["quarter", "kilo"];
+function packsFor(value: unknown): ("quarter" | "kilo")[] | undefined {
+  if (!Array.isArray(value) || !value.length || value.length > 2 || value.some((pack) => pack !== "quarter" && pack !== "kilo") || new Set(value).size !== value.length) throw invalid("Sell this coffee in 250 g bags, 1 kg bags or both.");
+  return value.length === 1 ? [value[0]] : undefined;
+}
+function pricesFor(value: unknown, sold: string[] = ["quarter", "kilo"], current?: Prices): Prices {
   const prices = object(value);
   // 250 g and 1 kg. A 500 g price from an older page is ignored: 500 g bags are no longer sold.
-  if (Object.keys(prices).some((pack) => !["quarter", "half", "kilo"].includes(pack)) || ["quarter", "kilo"].some((pack) => !Number.isInteger(prices[pack]) || prices[pack] < 1 || prices[pack] > 1000000)) throw invalid("Send the 250 g and 1 kg bag prices in pence, from £0.01 to £10,000.00.");
-  return { quarter: prices.quarter, kilo: prices.kilo };
+  const valid = (pack: string) => Number.isInteger(prices[pack]) && prices[pack] >= 1 && prices[pack] <= 1000000;
+  if (Object.keys(prices).some((pack) => !["quarter", "half", "kilo"].includes(pack)) || sold.some((pack) => !valid(pack))) throw invalid(sold.length === 2 ? "Send the 250 g and 1 kg bag prices in pence, from £0.01 to £10,000.00." : `Send the ${sold[0] === "kilo" ? "1 kg" : "250 g"} bag price in pence, from £0.01 to £10,000.00.`);
+  // A size that isn't sold keeps a price (the one sent, the saved one, or one worked out from the other size) for when it's sold again.
+  const kept = (pack: "quarter" | "kilo") => valid(pack) ? prices[pack] : current?.[pack] ?? (pack === "quarter" ? Math.max(1, Math.round(prices.kilo / 4)) : prices.quarter * 4);
+  return { quarter: kept("quarter"), kilo: kept("kilo") };
 }
 function editedGrinds(value: unknown, previous: GrindOption[] = []): GrindOption[] {
   if (!Array.isArray(value) || value.length < 1 || value.length > 20) throw invalid("Choose between 1 and 20 grind options.");
@@ -85,7 +94,8 @@ function edited(body: Record<string, any>, current: Coffee | null, ids: Set<stri
   if (typeof body.active !== "boolean") throw invalid("Choose whether this coffee is visible.");
   const inStock = body.inStock === undefined ? current?.inStock ?? true : body.inStock;
   if (typeof inStock !== "boolean") throw invalid("Choose whether this coffee is in stock.");
-  const prices = pricesFor(body.prices);
+  const packs = body.packs === undefined ? current?.packs : packsFor(body.packs);
+  const prices = pricesFor(body.prices, packsOf({ packs }), current?.prices);
   return {
     id: current?.id || "coffee-" + crypto.randomUUID(), title, name,
     origin: field("origin", 100), process: field("process", 120), notes: field("notes", 400), badge: field("badge", 60), categories: [...categories],
@@ -93,6 +103,7 @@ function edited(body: Record<string, any>, current: Coffee | null, ids: Set<stri
     image: current?.image || "", sourceUrl: current?.sourceUrl || "", sourceImage: current?.sourceImage || "", sourceUpdatedAt: current?.sourceUpdatedAt || Date.now(),
     images: current?.images || [], imageUrls: current?.imageUrls || [], version: current?.version || 0,
     ...coloursFor(body, current),
+    ...(packs ? { packs } : {}),
     ...((v) => (v ? { whiteLabel: v } : {}))(body.whiteLabel === undefined ? current?.whiteLabel : editedWhiteLabel(body.whiteLabel)),
     ...((v) => (v ? { recipe: v } : {}))(body.recipe === undefined ? current?.recipe : editedRecipe(body.recipe, ids, current?.id || null)),
   };

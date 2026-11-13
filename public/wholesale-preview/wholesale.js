@@ -1,6 +1,6 @@
 import { availableGrinds, grindLabel, grindHint, isGrindAvailable } from "./grinds.js";
 import { shippingFor, SHIPPING_PENCE, FREE_SHIPPING_FROM_PENCE } from "./shipping.js";
-import { products, setCatalogue, isAvailable, packs, orderablePacks, lineOrderable, grinds, MAX_QUANTITY, money, weight, productFor, lineKey, unitPrice, validQuantity, sanitiseBasket, addToBasket, totals } from "./order.js";
+import { products, setCatalogue, isAvailable, packs, packsFor, sizeFor, lineOrderable, grinds, MAX_QUANTITY, money, weight, productFor, lineKey, unitPrice, validQuantity, sanitiseBasket, addToBasket, totals } from "./order.js";
 
 let STORAGE_KEY = null;
 let session = null;
@@ -167,9 +167,9 @@ function renderProducts() {
     ${product.imageUrls.length > 1 ? `<div class="photo-controls"><button type="button" data-photo-step="-1" aria-label="Previous photo of ${escape(product.name)}">Previous</button><span data-photo-count>${Math.min(photoIndexes.get(product.id) || 0, product.imageUrls.length - 1) + 1} / ${product.imageUrls.length}</span><button type="button" data-photo-step="1" aria-label="Next photo of ${escape(product.name)}">Next</button></div>` : ""}
     <div class="product-info">${product.yours ? '<p class="product-yours">Your coffee</p>' : product.whiteLabel ? '<p class="product-yours">White label</p>' : ""}<p class="product-origin">${escape(product.origin)}</p><h3 class="product-name" id="name-${product.id}">${escape(product.name)}</h3><p class="product-process">${escape(product.process)}</p><p class="tasting-notes">${escape(product.notes)}</p><p class="product-stock ${product.inStock ? "" : "out"}">${product.inStock ? "In stock" : "Out of stock"}</p></div>
     <form class="product-config" data-product="${product.id}">
-      <fieldset class="pack-options"><legend>Pack size <span class="sr-only">for ${escape(product.name)}</span></legend>${orderablePacks.map(([id, pack]) => `<label class="pack-choice"><input type="radio" name="pack" value="${id}" ${id === bagSize ? "checked" : ""}><span>${escape(pack.short)} bag</span></label>`).join("")}</fieldset>
+      <fieldset class="pack-options${packsFor(product).length === 1 ? " one-size" : ""}"><legend>Pack size <span class="sr-only">for ${escape(product.name)}</span></legend>${packsFor(product).map(([id, pack]) => `<label class="pack-choice"><input type="radio" name="pack" value="${id}" ${id === sizeFor(product, bagSize) ? "checked" : ""}><span>${escape(pack.short)} bag${packsFor(product).length === 1 ? "s only" : ""}</span></label>`).join("")}</fieldset>
       <div class="grind-field"><span class="field-label">Grind</span><select name="grind" hidden aria-label="Grind for ${escape(product.name)}">${availableGrinds(product).map(option => `<option value="${escape(option.id)}">${escape(option.label)}</option>`).join("")}</select><button class="grind-picker" type="button" data-grind-open aria-haspopup="dialog" aria-controls="grind-dialog" aria-label="Choose grind for ${escape(product.name)}"><span class="grind-current"><span data-grind-label>${escape(availableGrinds(product)[0]?.label || "Unavailable")}</span><small data-grind-hint>${escape(availableGrinds(product)[0]?.hint || "")}</small></span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 7 7-7 7"/></svg></button></div>
-      <div class="product-price"><strong data-price>${money(unitPrice(product, bagSize))}</strong><span data-price-unit>per ${escape(packs[bagSize].label)}</span></div>
+      <div class="product-price"><strong data-price>${money(unitPrice(product, sizeFor(product, bagSize)))}</strong><span data-price-unit>per ${escape(packs[sizeFor(product, bagSize)].label)}</span></div>
       <div class="add-row">${stepper(`qty-${product.id}`, 1, product.name, `error-${product.id}`)}<button class="button button-dark" type="submit" aria-label="Add ${escape(product.name)} to order" ${isAvailable(product) ? "" : "disabled"}>${product.inStock ? 'Add to order <span aria-hidden="true">+</span>' : "Out of stock"}</button></div>
       <p class="quantity-error" id="error-${product.id}" hidden role="status">Choose a whole number of packs, from 1 to ${MAX_QUANTITY}.</p>
     </form>
@@ -180,7 +180,9 @@ function sortProducts() {
   const container = $("#products"), focused = document.activeElement;
   const cards = products.map((product, index) => {
     const card = container.querySelector(`article[data-product="${product.id}"]`);
-    return { card, index, yours: product.yours ? 1 : 0, price: unitPrice(product, bagSize) ?? Infinity };
+    // A coffee sold only in the other size is compared at the same price per gram.
+    const size = sizeFor(product, bagSize), price = unitPrice(product, size);
+    return { card, index, yours: product.yours ? 1 : 0, price: Number.isFinite(price) ? price * packs[bagSize].grams / packs[size].grams : Infinity };
   });
   // A business's own white-label coffees always come first.
   if (currentSort !== "catalogue") cards.sort((a, b) => (b.yours - a.yours) || (a.price === b.price ? 0 : currentSort === "price-asc" ? (a.price < b.price ? -1 : 1) : (a.price > b.price ? -1 : 1)) || a.index - b.index);
@@ -228,7 +230,8 @@ function setPackPrice(form) {
 }
 // Shows the chosen size on the switch, or neither when some coffees have been changed to the other size.
 function showBagSize() {
-  const chosen = new Set([...document.querySelectorAll('#products .product-config input[name="pack"]:checked')].map(input => input.value));
+  // Coffees sold in only one size don't count: they can't follow the switch.
+  const chosen = new Set([...document.querySelectorAll('#products .product-config .pack-options:not(.one-size) input[name="pack"]:checked')].map(input => input.value));
   for (const button of document.querySelectorAll("[data-bag-size]")) {
     const on = button.dataset.bagSize === bagSize && !(chosen.size > 1 || (chosen.size === 1 && !chosen.has(bagSize)));
     button.classList.toggle("selected", on); button.setAttribute("aria-pressed", String(on));
@@ -737,7 +740,7 @@ async function openAccount() {
     session.customer = current.customer;
     if (!session.customer) return;
     showPaymentTerms();
-    for (const key of ["contact", "email", "phone", "address", "postcode", "deliveryNotes"]) $("#account-form").elements[key].value = session.customer[key] || "";
+    for (const key of ["contact", "email", "accountsEmail", "phone", "address", "postcode", "deliveryNotes"]) $("#account-form").elements[key].value = session.customer[key] || "";
     $("#account-business").textContent = session.customer.business;
     accountLocations = locationsFor();
     accountDefaultLocation = session.customer.defaultLocationId || "primary";
@@ -810,7 +813,7 @@ $("#account-form").addEventListener("submit", async (event) => {
   try {
     if (!await confirmIdentity()) return;
     syncPrimaryLocation();
-    const fields = Object.fromEntries(["contact", "email", "phone", "address", "postcode", "deliveryNotes"].map((key) => [key, form.elements[key].value]));
+    const fields = Object.fromEntries(["contact", "email", "accountsEmail", "phone", "address", "postcode", "deliveryNotes"].map((key) => [key, form.elements[key].value]));
     const locations = accountLocations.map(location => ({ ...(location.id ? { id: location.id } : {}), ...Object.fromEntries(LOCATION_FIELDS.map(key => [key, location[key] || ""])) }));
     const result = await api("/api/wholesale/account", { ...fields, locations, defaultLocationId: accountDefaultLocation, ifVersion: session.customer.version, orderingIdentity: session.me.id }, "PUT");
     session.customer = result.customer;
@@ -950,7 +953,7 @@ function buildReorderPlan(order) {
   const additions = [], skipped = [];
   for (const line of order.lines) {
     const product = productFor(line.productId);
-    if (!lineOrderable(line)) { skipped.push({ title: line.title, quantity: line.quantity, reason: !Object.hasOwn(packs, line.pack) ? `${line.packLabel || "this size"}s are no longer sold` : "grind no longer offered" }); continue; }
+    if (!lineOrderable(line)) { skipped.push({ title: line.title, quantity: line.quantity, reason: !Object.hasOwn(packs, line.pack) ? `${line.packLabel || "this size"}s are no longer sold` : !packsFor(productFor(line.productId)).some(([id]) => id === line.pack) ? `now sold in ${packs[packsFor(productFor(line.productId))[0][0]].label}s only` : "grind no longer offered" }); continue; }
     if (!isAvailable(product)) { skipped.push({ title: line.title, quantity: line.quantity, reason: product?.active === false || !product ? "no longer offered" : "out of stock" }); continue; }
     const result = addToBasket(next, line, line.quantity);
     next = result.basket;

@@ -44,7 +44,7 @@ function staffView(o:any,account?:{overdue:boolean;review:boolean}){
 /** A customer's contact and delivery details, read-only for staff with orders access. */
 function staffCustomer(row:{id:string;data:string}){
   const c=JSON.parse(row.data);
-  return {id:row.id,business:c.business,contact:c.contact||'',email:c.email||'',phone:c.phone||'',status:c.status==='On hold'?'On hold':'Active',
+  return {id:row.id,business:c.business,contact:c.contact||'',email:c.email||'',accountsEmail:c.accountsEmail||'',phone:c.phone||'',status:c.status==='On hold'?'On hold':'Active',
     locations:customerLocations(c).map(l=>({id:l.id,name:l.name,contact:l.contact,phone:l.phone,address:l.address,postcode:l.postcode,deliveryNotes:l.deliveryNotes})),
     defaultLocationId:c.defaultLocationId||'primary'};
 }

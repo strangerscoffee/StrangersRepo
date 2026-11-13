@@ -17,8 +17,13 @@ export const grinds = {
   filter: "Filter / Medium", cafetiere: "Cafetiere / Coarse",
 };
 export const orderablePacks = Object.entries(packs);
+// The sizes a coffee is sold in: both, unless Admin has turned one off (a white-label blend only in 1 kg bags, say).
+export const packsFor = (product) => product?.packs?.length === 1 && Object.hasOwn(packs, product.packs[0]) ? orderablePacks.filter(([id]) => id === product.packs[0]) : orderablePacks;
+export const sells = (product, pack) => packsFor(product).some(([id]) => id === pack);
+/** The size to show for a coffee: the one chosen for the whole page if it's sold, else the one it is sold in. */
+export const sizeFor = (product, wanted) => sells(product, wanted) ? wanted : packsFor(product)[0][0];
 // Can this line still be ordered as it is (size still sold, grind still offered)? Past orders can hold 500 g bags.
-export const lineOrderable = (line) => Object.hasOwn(packs, line.pack) && isGrindAvailable(productFor(line.productId), line.grind);
+export const lineOrderable = (line) => Object.hasOwn(packs, line.pack) && sells(productFor(line.productId), line.pack) && isGrindAvailable(productFor(line.productId), line.grind);
 import { MAX_QUANTITY } from "./limits.js";
 export { MAX_QUANTITY };
 export const money = (pence) => new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(pence / 100);
