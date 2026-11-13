@@ -132,7 +132,7 @@ export async function serveCatalogueImage(env: Env, id: string, customerId: stri
   if (!stored.value || !stored.metadata) throw missing();
   const coffee = (await catalogue(env)).find((row) => row.id === stored.metadata!.productId);
   if (!coffee?.images.includes("upload:" + id) || !canOrder(coffee, customerId)) throw missing();
-  return new Response(stored.value, { headers: { "content-type": stored.metadata.contentType, "content-length": String(stored.metadata.size), "x-content-type-options": "nosniff", "cache-control": "private, max-age=0, must-revalidate" } });
+  return new Response(stored.value, { headers: { "content-type": stored.metadata.contentType, "content-length": String(stored.metadata.size), "x-content-type-options": "nosniff", "cache-control": "private, no-store" } });
 }
 
 /** Called only after the existing admin-role guard. Binary uploads never enter the JSON parser. */

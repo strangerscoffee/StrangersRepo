@@ -704,6 +704,7 @@ async function start() {
   $("#catalogue-status").hidden = false;
   $("#catalogue-status").replaceChildren(SC.loadingView("Loading your coffee…"));
   try {
+    if (!await SC.startSession({scope:"wholesale",clear:clearOrderingSession})) return;
     applyCatalogue(await api("/api/wholesale/catalogue"), true);
     $("#catalogue-status").hidden = true;
     // The order confirmation email's "See your orders" link (…/#orders) opens My orders once the page is ready.
@@ -1084,6 +1085,15 @@ scheduleDesktopBasketLayout();
 if ("IntersectionObserver" in window) {
   new IntersectionObserver(([entry]) => { orderVisible = entry.isIntersecting; updateMobileBasket(); }, { threshold: 0 }).observe($("#your-order"));
 }
+function clearOrderingSession() {
+  ready = false; session = null; basket = []; history = []; pendingAttempt = null;
+  accountLocations = []; customerInvoices = []; STORAGE_KEY = null;
+  setCatalogue([]); photoIndexes.clear();
+  for (const id of ["#products","#order-items","#review-items","#order-history","#customer-invoices-list","#customer-invoice-summary","#history-invoice-note","#account-locations","#signed-in-name","#account-business","#account-payment-terms","#account-payment-note","#review-business","#review-location-name","#delivery-summary","#review-payment-terms","#review-total","#review-grand","#complete-message","#complete-total","#complete-note","#complete-location","#complete-payment-terms","#reorder-items","#reorder-skipped-items","#reorder-summary","#reorder-existing","#location-choices","#location-remove-summary","#grind-product-name",".grind-choices"]) $(id)?.replaceChildren();
+  $("#signed-in-name")?.removeAttribute("title");
+  document.querySelectorAll("form").forEach(form=>form.reset());
+}
+SC.recheckOnPageshow(goSignIn);
 start();
 
 

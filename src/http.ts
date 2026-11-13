@@ -57,10 +57,15 @@ export function errorResponse(e: ApiError): Response {
 export async function readJson<T = any>(req: Request, maxBytes: number): Promise<T> {
   const len = Number(req.headers.get("content-length") || 0);
   if (len > maxBytes) throw new ApiError(413, "invalid_argument", "Request body is too large.");
-  const text = await req.text();
-  if (new TextEncoder().encode(text).length > maxBytes) {
-    throw new ApiError(413, "invalid_argument", "Request body is too large.");
-  }
+  const reader=req.body?.getReader(),decoder=new TextDecoder(),parts:string[]=[];
+  let bytes=0;
+  if(reader)try{
+    for(;;){const {value,done}=await reader.read();if(done)break;bytes+=value.byteLength;
+      if(bytes>maxBytes){await reader.cancel();throw new ApiError(413,"invalid_argument","Request body is too large.");}
+      parts.push(decoder.decode(value,{stream:true}));
+    }
+  }finally{reader.releaseLock();}
+  const text=parts.join('')+decoder.decode();
   try {
     return JSON.parse(text);
   } catch {

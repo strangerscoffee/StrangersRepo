@@ -132,6 +132,8 @@ async function register(req: Request, env: Env): Promise<Response> {
 }
 
 export async function handleWholesaleAuth(req: Request, env: Env, route: string): Promise<Response> {
+  const expected=req.headers.get('x-expected-ordering-id'),role=req.headers.get('x-expected-ordering-role');
+  if(expected||role){const current=await wholesaleSession(req,env);if(!current||(expected&&current.id!==expected)||(role&&current.role!==role))throw new ApiError(409,'session_changed','The signed-in account changed. Reload to continue.');}
   if (route === "register" && req.method === "POST") return register(req, env);
   // An invite from Strangers: see what it's for, then choose a username and password (src/wholesaleImport.ts).
   if (route === "invite") return handleInvite(req, env, async (accountId) => newSession(env, (await env.DB.prepare("SELECT * FROM wholesale_accounts WHERE id = ?").bind(accountId).first<Account>())!));

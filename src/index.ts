@@ -23,6 +23,7 @@ import { handleWholesale, handleWholesaleAdmin } from "./wholesale";
 import { handleWholesaleAuth, wholesaleSession } from "./wholesaleAccounts";
 import {handleWebhook} from "./quickbooks/webhooks";
 import {processEvents,runQuickBooksJobs} from "./quickbooks/jobs";
+import {trustedOrigin} from "./requestOrigins";
 export { LiveHub } from "./live";
 
 export default {
@@ -209,10 +210,7 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
   if (!isGet && p.startsWith("/api/")) {
     const origin = req.headers.get("origin");
     if (origin && origin !== "null") {
-      let host = "";
-      try { host = new URL(origin).hostname; } catch {}
-      const own = host === url.hostname || (!!env.COOKIE_DOMAIN && (host === env.COOKIE_DOMAIN || host.endsWith("." + env.COOKIE_DOMAIN)));
-      if (!own) throw new ApiError(403, "bad_origin", "That request came from another site.");
+      if (!trustedOrigin(origin,url,env)) throw new ApiError(403, "bad_origin", "That request came from another site.");
     } else if (origin === "null") throw new ApiError(403, "bad_origin", "That request came from another site.");
   }
   // The sign-in page and its files need no session (and no database); nor do the diary's and the rota's
@@ -319,10 +317,7 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
   // from the site's own pages (a browser always sends Origin when opening one).
   if (p === "/api/live" && isGet) {
     if (req.headers.get("upgrade")?.toLowerCase() !== "websocket") throw new ApiError(426, "upgrade_required", "This address is for a live connection.");
-    let host = "";
-    try { host = new URL(req.headers.get("origin") || "").hostname; } catch {}
-    const own = host === url.hostname || (!!env.COOKIE_DOMAIN && (host === env.COOKIE_DOMAIN || host.endsWith("." + env.COOKIE_DOMAIN)));
-    if (!own) throw new ApiError(403, "bad_origin", "That request came from another site.");
+    if (!trustedOrigin(req.headers.get("origin"),url,env)) throw new ApiError(403, "bad_origin", "That request came from another site.");
     if (!env.LIVE) throw new ApiError(404, "not_found", "Live updates aren't set up.");
     return openLive(req, env);
   }
@@ -444,6 +439,7 @@ function withSecurityHeaders(res: Response, local: boolean): Response {
   h.set("x-robots-tag", "noindex, nofollow");
   h.set("x-content-type-options", "nosniff");
   h.set("referrer-policy", "same-origin");
+  h.set("cross-origin-resource-policy", "same-origin");
   // Only the site's own scripts run (no inline or third-party scripts), it only talks to itself, and it can't be framed.
   // Defence in depth: even if text someone typed into a record were ever shown as HTML, it couldn't run as script.
   h.set("content-security-policy", [

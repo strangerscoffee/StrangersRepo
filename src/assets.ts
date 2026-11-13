@@ -48,7 +48,7 @@ export async function serveBlob(env: Env, id: string): Promise<Response> {
       "content-disposition": "inline",
       ...(meta?.size ? { "content-length": String(meta.size) } : {}),
       "x-content-type-options": "nosniff",
-      "cache-control": "private, max-age=3600",
+      "cache-control": "private, no-store",
     },
   });
 }
