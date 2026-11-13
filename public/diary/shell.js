@@ -12,7 +12,7 @@ const NAV=[
   {id:"templog",t:"Temperature log",grp:"records",ic:"prove",tile:"blue"},
   {id:"review",t:"4-weekly review",grp:"records",ic:"review",tile:"red"},
   {id:"deliveries",t:"Deliveries",grp:"records",ic:"deliveries",tile:"indigo"},{id:"maintenance",t:"Maintenance",grp:"records",ic:"maintenance",tile:"purple"},
-  {id:"fire",t:"Fire safety log",grp:"manage",ic:"fire",tile:"red",sub:"Alarm, lighting, extinguisher and drill checks"},{id:"accidents",t:"Accident book",grp:"manage",ic:"accidents",tile:"orange",sub:"Record injuries and near misses"},
+  {id:"fire",t:"Fire safety log",grp:"manage",ic:"fire",tile:"red",sub:"Alarm, lighting, extinguisher and drill checks"},{id:"firelog",t:"Fire safety records",grp:"manage",ic:"fire",tile:"red",sub:"Every site's fire checks in one log"},{id:"accidents",t:"Accident book",grp:"manage",ic:"accidents",tile:"orange",sub:"Record injuries and near misses"},
   {id:"eho",t:"Last EHO inspection report",grp:"manage",ic:"eho",tile:"green"},{id:"plans",t:"HACCP & risk",grp:"manage",ic:"plans",tile:"purple"},
   {id:"suppliers",t:"Suppliers",grp:"manage",ic:"suppliers",tile:"orange"},{id:"contacts",t:"Contacts",grp:"manage",ic:"contacts",tile:"green"},
   {id:"staff",t:"Staff training",grp:"records",ic:"staff",tile:"teal"},{id:"onboarding",t:"Onboarding",grp:"manage",ic:"onboarding",tile:"indigo"},
@@ -21,7 +21,9 @@ const NAV=[
 const navOf=id=>NAV.find(n=>n.id===id);
 // Sections only managers and admins use. The Worker enforces the same rule on saves (src/access.ts).
 const MANAGER_TABS=new Set(["setup"]);
-const roleAllows=t=>S.role!=="staff"||!MANAGER_TABS.has(t);
+// Sections only admins see: Fire safety records (every site's fire checks together).
+const ADMIN_TABS=new Set(["firelog"]);
+const roleAllows=t=>ADMIN_TABS.has(t)?S.role==="admin"||!S.role:S.role!=="staff"||!MANAGER_TABS.has(t);
 const canTab=t=>t==="records"||t==="more"||(tabOn(t)&&roleAllows(t));
 function siteState(id){
   const a=siteAttention(id);
@@ -64,6 +66,8 @@ function hubSub(id){
       const next=xs.filter(a=>a.due).sort((a,b)=>a.due.localeCompare(b.due))[0];
       return next?`All up to date · next ${next.x.name}, ${nice(next.due)}`:`${n(xs.length,id==="cleaning"?"job":"check")}, all up to date`;
     }
+    case "firelog":{const xs=SITES.flatMap(x=>(S.sum[x.id]&&S.sum[x.id].fire||[]).map(f=>({f,site:x.id}))).filter(c=>taskState(c.f).overdue);
+      return xs.length?`Overdue: ${xs.slice(0,2).map(c=>`${c.f.name} (${siteOf(c.site).name})`).join(", ")}${xs.length>2?` and ${xs.length-2} more`:""}`:"All sites up to date"}
     case "accidents":{const l=[...S.accidents].sort((a,b)=>(b.date||"").localeCompare(a.date||"")||(b.at||0)-(a.at||0))[0];
       return l?`${n(S.accidents.length,"entry").replace("entrys","entries")}${S.role==="admin"?"":" you recorded"} · last ${short(l.date)}`:S.role==="admin"?"Nothing recorded":"Nothing you've recorded";
     }
@@ -94,7 +98,7 @@ function navRow(n,onclick){
 }
 function renderNav(){
   // Until we know who is signed in, list only what every role can open.
-  const vis=NAV.filter(n=>canTab(n.id)&&(S.role||!MANAGER_TABS.has(n.id)));
+  const vis=NAV.filter(n=>canTab(n.id)&&(S.role||!MANAGER_TABS.has(n.id)&&!ADMIN_TABS.has(n.id)));
   // sidebar
   const sn=$("#snav");sn.replaceChildren();
   const groups=[["diary",""],["records","Records"],["manage","Management"],["admin","Admin"]];

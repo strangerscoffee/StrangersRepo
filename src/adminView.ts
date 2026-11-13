@@ -9,6 +9,8 @@ import { listBackups } from "./backup";
 import { setDoc } from "./docs";
 import { ApiError, Env, invalid, json, readJson } from "./http";
 import { addDays, isDay, londonToday, mondayOf, rotaWeekSummary } from "./rota";
+import { diaryReminderReady, sendDiaryReminderTest } from "./slackDiary";
+import { SLACK_DIARY_SITES, timesText } from "./slackDiaryText";
 
 const SITES = [
   { id: "roastery", name: "Roastery", prefix: "", address: "10 Dove Street, Norwich, NR2 1DE" },
@@ -235,9 +237,16 @@ export async function sites(env: Env) {
         } : null,
         rota: { opensAt: r?.opens_at ?? null, closesAt: r?.closes_at ?? null, minPeople: r?.min_people ?? 1, dayHours: parse(r?.day_hours, {}) },
         people: here, anywhere,
+        slack: slackOf(env, s.id),
       };
     }),
   };
+}
+
+/** The site's daily Slack reminders (src/slackDiary.ts): its channel, whether it's connected and when they go. */
+function slackOf(env: Env, site: string) {
+  const s = SLACK_DIARY_SITES.find((x) => x.id === site);
+  return s ? { channel: s.channel, secret: s.secret, connected: diaryReminderReady(env, site), times: timesText(site) } : null;
 }
 
 /** Copies one site's diary Setup to a site that has none yet (for example the Roastery's to the Factory). */
@@ -411,6 +420,12 @@ export async function handleAdminView(req: Request, env: Env, route: string, use
   if (route === "sites" && m === "GET") return json(await sites(env));
   const copy = route.match(/^sites\/([a-z]+)\/copy-setup$/);
   if (copy && m === "POST") return json(await copySetup(env, user, copy[1], await readJson<any>(req, 1024)));
+  const slackTest = route.match(/^sites\/([a-z]+)\/slack-test$/);
+  if (slackTest && m === "POST") {
+    const body = await readJson<any>(req, 1024);
+    if (body?.slot !== "morning" && body?.slot !== "evening") throw invalid("Choose the morning or the end-of-day message.");
+    return json(await sendDiaryReminderTest(env, slackTest[1], body.slot));
+  }
   if (route === "activity" && m === "GET") return json(await activity(env, new URL(req.url).searchParams.get("kind") || "all"));
   if (route === "security" && m === "GET") return json(await security(env));
   if (route === "security/reset-pins" && m === "POST") {

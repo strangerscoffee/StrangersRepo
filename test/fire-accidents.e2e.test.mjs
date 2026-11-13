@@ -126,3 +126,42 @@ test("accident book: staff record an entry; they and the admin see it, a manager
     await d.ctx.close();
   }
 });
+
+test("fire safety records: admins see every site's fire checks in one log; staff and managers don't", async () => {
+  const at = Date.now() - 3600e3;
+  await call("POST", "/api/db/set", { path: "sites/cafe/fire/cafealarm", data: { name: "Cafe alarm panel check", how: "", freq: "weekly", who: "", createdAt: at, lastAt: at, lastBy: "web:Will Owner", lastSet: false, log: [{ at, by: "web:Will Owner", note: "Zone 2 sounder replaced" }] } });
+  await call("POST", "/api/db/set", { path: "sites/asg/fire/asgdrill", data: { name: "ASG fire drill", how: "", freq: "six-monthly", who: "", createdAt: at } });
+  for (const [view, dev] of views) for (const colorScheme of ["light", "dark"]) {
+    const d = await device(ADMIN, { ...dev, colorScheme });
+    await d.page.goto(srv.base + "/#firelog");
+    await d.page.locator('[data-panel="firelog"]:not([hidden])').waitFor();
+    await d.page.locator("#flList .xrow", { hasText: "Cafe alarm panel check" }).waitFor();
+    const text = await d.page.locator("#flList").innerText();
+    // Done at the Roastery (ticked by Alex above) and at the Cafe, with the site and the note.
+    assert.match(text, /Fire alarm test\s+Roastery · Alex Brown · Call point 3, back door/);
+    assert.match(text, /Cafe alarm panel check\s+Cafe · Will Owner · Zone 2 sounder replaced/);
+    assert.match(text, /Overdue now · \d+/i);
+    assert.match(text, /ASG fire drill\s+ASG · Six-monthly · never done/);
+    assert.equal(await d.page.locator("#flStats .stat").first().locator("b").innerText(), "2");
+    await shot(d.page, `firelog-${view}-${colorScheme}`);
+    // One site at a time.
+    await d.page.locator("#flSites button", { hasText: "Cafe" }).click();
+    await d.page.waitForFunction(() => !/Roastery/.test(document.querySelector("#flList").innerText));
+    assert.match(await d.page.locator("#flList").innerText(), /Cafe alarm panel check/);
+    await d.page.locator("#flSites button", { hasText: "All sites" }).click();
+    assert.deepEqual(d.errors, []);
+    await d.ctx.close();
+  }
+  // Admins find it under More; staff and managers don't, and the address takes them to Today.
+  const a = await device(ADMIN, devices["iPhone 15 Pro"]);
+  await a.page.goto(srv.base + "/#more"); await a.page.locator("#moreHub .lrow", { hasText: "Fire safety records" }).waitFor();
+  await a.ctx.close();
+  for (const cookie of [ALEX, MGR]) {
+    const d = await device(cookie, devices["iPhone 15 Pro"]);
+    await d.page.goto(srv.base + "/#firelog");
+    await d.page.locator('[data-panel="day"]:not([hidden])').waitFor();
+    await d.page.goto(srv.base + "/#more"); await d.page.locator("#moreHub .lrow", { hasText: "Fire safety log" }).waitFor();
+    assert.equal(await d.page.locator("#moreHub .lrow", { hasText: "Fire safety records" }).count(), 0);
+    await d.ctx.close();
+  }
+});

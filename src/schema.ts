@@ -292,6 +292,11 @@ const MIGRATIONS: Migration[] = [
     if (changed) await env.DB.prepare("INSERT INTO audit_log (at, kind, actor, text) VALUES (?, 'wholesale_terms_bulk', 'system', ?)").bind(now, `Payment terms set to 30 days from invoice for ${changed} wholesale ${changed === 1 ? "business" : "businesses"} that were on To be agreed.`).run();
   } },
   { id: 26, name: "Self-certified sickness forms", run: migrateSickness },
+  // The diary's morning and end-of-day Slack reminders (src/slackDiary.ts): one row per site, day and slot, so each
+  // is sent once.
+  { id: 27, name: "Diary Slack reminders", run: async env => {
+    await env.DB.prepare("CREATE TABLE IF NOT EXISTS slack_diary_posts (site TEXT NOT NULL, day TEXT NOT NULL, slot TEXT NOT NULL, created_at INTEGER NOT NULL, sent_at INTEGER, attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT, PRIMARY KEY (site, day, slot))").run();
+  } },
 ];
 
 async function migrate(env: Env): Promise<void> {

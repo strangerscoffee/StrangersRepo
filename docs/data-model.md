@@ -270,3 +270,7 @@ Custom coffees remain in the existing versioned wholesale catalogue JSON. `white
 ## Self-certified sickness (migration 26)
 
 `rota_sickness`: `id, user_id, time_off_id` (its approved `kind='sick'` row in `rota_time_off`), `kind` (`off` | `early`), `from_day, to_day, left_at` (HH:MM, going home early), `data` (JSON answers: `category, details, vomiting, doctor, workAccident, fitNote, leftAt, declaredBy, declaredAt, onBehalf`), `amended` (JSON: each shift changed, with the hours before/after and its previous `actual_*`/`adjust_note`/`adjusted_*` values), `status` (`active` | `removed`), `created_at, created_by, request_key` (unique per person), `removed_at, removed_by`. Admin-only to read; in backups. See `src/rota/sickness.ts`.
+
+## Diary Slack reminders (migration 27)
+
+`slack_diary_posts (site, day, slot, created_at, sent_at, attempts, last_error)`, primary key `(site, day, slot)`: one row per site (`cafe`, `asg`, `roastery`), UK date and slot (`morning` | `evening`) once its time comes, so each message is sent once (`src/slackDiary.ts`). `last_error` is Slack's refusal, or `closed` when the site was closed that day. Rows older than 60 days are removed. Not in backups.

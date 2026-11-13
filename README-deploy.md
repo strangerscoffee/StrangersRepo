@@ -100,6 +100,24 @@ Every new customer order can be posted to a Slack channel (Strangers uses #C0CH4
 
 Delete the secret to stop the posts. If Slack refuses a post, it's tried again every 5 minutes, up to six times, and then Admin's Overview says so.
 
+## Daily diary reminders in Slack
+
+The Cafe, ASG and the Roastery each get two messages a day in their own channel, saying what's still to do in the Kitchen Diary at that site: today's opening and closing checks, fridge and freezer temperatures and the day's sign-off; the last open day if it wasn't signed off; the end-of-week checks and sign-off (last week if it wasn't signed off, and this week on its last open day); and any overdue cleaning, extra checks, fire safety checks or 4-weekly review. Nothing is sent on a day the site is closed. Times (UK):
+
+| Site | Channel | Secret | Monday–Friday | Saturday | Sunday |
+|---|---|---|---|---|---|
+| Cafe | #cafe-internal | `SLACK_CAFE_WEBHOOK_URL` | 9:00 and 17:00 | 9:00 and 17:00 | 9:00 and 15:30 |
+| ASG | #asg-internal | `SLACK_ASG_WEBHOOK_URL` | 8:15 and 16:30 | 9:00 and 17:00 | 10:45 and 16:00 |
+| Roastery | #roastery-internal | `SLACK_ROASTERY_WEBHOOK_URL` | 9:00 and 17:00 | 9:00 and 17:00 | 10:45 and 16:00 |
+
+The times are in `src/slackDiaryText.ts` (`SLACK_DIARY_TIMES`). To set up each channel, once:
+
+1. In the same Slack app as the order posts (api.slack.com/apps → your app; or create one, "Kitchen Diary"): **Incoming Webhooks** → **Add New Webhook to Workspace** → pick the site's channel → **Allow**. Copy the URL (it starts `https://hooks.slack.com/services/`). Each channel has its own URL; treat it like a password.
+2. In the Worker: **Settings → Variables and Secrets → Add**, type **Secret**, the name from the table, the URL as its value. Deploy.
+3. Admin → Sites → the site's card → **Send a test morning message**.
+
+Delete a secret to stop that site's messages. If Slack refuses one, it's tried again on the next 5-minute runs (three times, within 45 minutes of its time), then Admin's Overview says so.
+
 ## Wholesale Insights and QuickBooks sales history
 
 Admin → Wholesale → **Insights** shows sales, coffee volumes, customers, an 8-week forecast and next week's roast plan from the site's customer orders. To add past years (and a seasonal forecast), import your QuickBooks sales once; no QuickBooks connection is needed:

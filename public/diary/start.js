@@ -1,11 +1,11 @@
 // Tabs, site switching and subscriptions, events, and start-up. Loaded last.
 
 /* ---------- tabs ---------- */
-const TABS=["day","week","history","inspect","extras","cleaning","prove","allergens","templog","deliveries","maintenance","fire","accidents","eho","plans","suppliers","contacts","staff","onboarding","review","setup","records","more"];
+const TABS=["day","week","history","inspect","extras","cleaning","prove","allergens","templog","deliveries","maintenance","fire","firelog","accidents","eho","plans","suppliers","contacts","staff","onboarding","review","setup","records","more"];
 
 // First snapshots, including a legitimate empty result, determine when a section is ready.
 // Refreshes keep their current DOM, drafts and scroll. Nothing here caches employee data.
-const DIARY_DATA={day:["settings","days","extras","cleaning","fire","reviews"],week:["settings","weeks"],history:["days"],templog:["days"],deliveries:["deliveries"],prove:["prove"],extras:["extras"],cleaning:["cleaning"],allergens:["allergens","allergenDocs"],maintenance:["maintenance"],fire:["fire"],accidents:["accidents"],eho:["inspections"],plans:["plans"],suppliers:["suppliers"],contacts:["contacts"],staff:["staff"],onboarding:["onboarding"],review:["reviews","days"],setup:["settings"]};
+const DIARY_DATA={day:["settings","days","extras","cleaning","fire","reviews"],week:["settings","weeks"],history:["days"],templog:["days"],deliveries:["deliveries"],prove:["prove"],extras:["extras"],cleaning:["cleaning"],allergens:["allergens","allergenDocs"],maintenance:["maintenance"],fire:["fire"],firelog:[],accidents:["accidents"],eho:["inspections"],plans:["plans"],suppliers:["suppliers"],contacts:["contacts"],staff:["staff"],onboarding:["onboarding"],review:["reviews","days"],setup:["settings"]};
 let diaryLoading={ready:new Set(),failed:new Set()},diaryLoadingKey="";
 function updateDiaryLoading(){
   const required=DIARY_DATA[S.tab]||[],pending=required.some(key=>!diaryLoading.ready.has(key)),failed=required.some(key=>diaryLoading.failed.has(key));
@@ -37,6 +37,7 @@ function show(tab,opts){
   if(tab==="day"&&changed&&S.db)renderDay();
   if(tab==="inspect")renderInspect();
   if(tab==="templog")renderTempLog();
+  if(tab==="firelog")renderFireLog();
   if(tab==="deliveries"||tab==="prove")needHistory(); // the full lists
   if(tab==="maintenance"||tab==="staff")loadTeam();
   if(changed&&!(opts&&opts.keepScroll))window.scrollTo({top:0});
@@ -47,7 +48,7 @@ function renderHead(){
   const t=S.tab,n=navOf(t);
   const thisWk=S.week===monday(today());
   const title=t==="records"?"Records":t==="more"?"More":t==="day"?(S.date===today()?"Today":S.date===addDays(today(),-1)?"Yesterday":"Diary"):t==="week"?(thisWk?"This week":"Week"):n?n.t:"";
-  const sub=t==="day"?parse(S.date).toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long"}):t==="week"?`${nice(S.week)} – ${nice(addDays(S.week,6))}`:curSite().name;
+  const sub=t==="day"?parse(S.date).toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long"}):t==="week"?`${nice(S.week)} – ${nice(addDays(S.week,6))}`:t==="firelog"?"All sites":curSite().name;
   $("#pageTitle").textContent=title;$("#pageSub").textContent=sub;
   const back=n&&n.grp==="records"?["records","Records"]:n&&(n.grp==="manage"||n.grp==="admin")?["more","More"]:null;
   const bb=$("#backBtn");bb.hidden=!back;
@@ -154,6 +155,12 @@ function subscribeMaintAll(){
   S.maintFull={};
   for(const x of SITES)C("maintenance",x.id).onSnapshot(q=>{S.maintFull[x.id]=q.docs.map(d=>({id:d.id,...d.data()}));if(S.tab==="maintenance"&&maintAll)renderMaint()},()=>{});
 }
+// Fire safety records (admins): every site's fire checks with their logs.
+function subscribeFireAll(){
+  if(S.fireAll||S.role!=="admin"||!S.db)return;
+  S.fireAll={};
+  for(const x of SITES)C("fire",x.id).onSnapshot(q=>{S.fireAll[x.id]=q.docs.map(d=>({id:d.id,...d.data()}));if(S.tab==="firelog")renderFireLog();renderNav()},()=>{});
+}
 function subscribeShared(){
   S.db.doc("config/shared").onSnapshot(s=>{S.shared=s.exists?s.data():null;if(!setupDirty){SE=setupDraft();buildSetup()}renderPublish()},()=>{});
 }
@@ -204,7 +211,7 @@ window.addEventListener("sc:session-invalid",()=>{
   for(const panel of document.querySelectorAll("[data-panel]"))panel.hidden=true;
 });
 for(const x of["#dv_chilled","#dv_frozen","#pReading"])minusIn(x);
-inspectForm();tempLogForm();closureForm();buildAlgChecks();buildTaskForm("extras");buildTaskForm("cleaning");buildTaskForm("fire");accidentForm();proveForm();delivForm();maintForm();supForm();conForm();staffForm();editStaff(null);
+inspectForm();tempLogForm();closureForm();buildAlgChecks();buildTaskForm("extras");buildTaskForm("cleaning");buildTaskForm("fire");fireLogForm();accidentForm();proveForm();delivForm();maintForm();supForm();conForm();staffForm();editStaff(null);
 applyTabs();renderAll();
 (async()=>{
   const[db,user,assets]=await Promise.all([window.claude?.use?.("db"),window.claude?.use?.("user"),window.claude?.use?.("assets")]);
