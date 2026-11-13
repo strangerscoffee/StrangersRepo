@@ -42,7 +42,7 @@ Data lives in a D1 database (`kitchen-diary`); allergen PDFs and uploaded catalo
 
 ## Changing the site
 
-The customer wholesale catalogue uses a compact three-row mobile toolbar (coffee count, bag size and sort; search; category pills). It reuses the same controls across the 700 px breakpoint, keeping search, sort and product choices when resizing. Desktop retains the full catalogue heading and layout. No backend migration or configuration is required.
+The customer wholesale catalogue uses a compact three-row mobile toolbar (coffee count, bag size and sort; search; category pills). It reuses the same controls across the 700 px breakpoint, keeping search, sort and product choices when resizing. Desktop retains the full catalogue heading and layout. No backend migration or configuration is required. Order and invoice history use matching circular refresh actions with a larger rounded arrow, busy-state rotation and reduced-motion support.
 
 Edit the files in `public/` (or `src/` for the API), run the tests, and open a pull request. Once Tests passes, squash-merge it into `main`; Cloudflare deploys that commit. The deploy takes about a minute. If a deploy fails, the build log is in the Cloudflare dashboard under the Worker → **Deployments**, and GitHub shows a red cross next to the commit. If a deploy sits as "queued" for more than a few minutes, press **Retry build** on it in the Worker's **Deployments** (or **Builds**) tab; any later merge to `main` also starts a fresh build that includes every earlier change.
 
