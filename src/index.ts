@@ -2,6 +2,7 @@
 // Serves the diary page (public/index.html) and the API it uses through claude-shim.js, and, on its own
 // hostname (ROTA_HOST), the staff rota (public/rota/, src/rota.ts). One Worker, one database, one set of accounts.
 import { deliverSlackPosts } from "./slackOrders";
+import { deliverDiaryReminders } from "./slackDiary";
 import { appForHost, appLinks, authorize, isAdminSharedFile, isPreviewFile, isPublicAsset, isPublicCode, isRotaManager, isRotaSharedFile, limitWrites, recordId, requireUser, unifiedSignin } from "./access";
 import { handleAdmin } from "./admin";
 import { handleStaffOrders } from "./staffOrders";
@@ -78,6 +79,7 @@ export default {
       ctx.waitUntil(ensureSchema(env).then(async()=>{
         // App credentials can be saved in Admin instead of Worker vars. Keep idle cron runs small.
         await deliverSlackPosts(env).catch(() => {}); // new-order posts held for 07:50, and retries
+        await deliverDiaryReminders(env).catch(() => {}); // each site's morning and end-of-day diary reminder
         if(env.QUICKBOOKS_CLIENT_ID||env.QUICKBOOKS_PRODUCTION_CLIENT_ID||await env.DB.prepare('SELECT 1 FROM quickbooks_app_settings WHERE data IS NOT NULL LIMIT 1').first())await runQuickBooksJobs(env);
       }));
       return;

@@ -27,6 +27,10 @@ export interface Env {
   EMAIL_FROM?: string; // default "Strangers Rota <rota@staffstrangerscoffee.com>"
   SLACK_ORDERS_WEBHOOK_URL?: string; // a secret the host adds: Slack incoming webhook for the new-order channel (src/slackOrders.ts)
   SLACK_TEST_HOOKS?: string; // tests only: "1" lets the webhook be a local stand-in
+  SLACK_CAFE_WEBHOOK_URL?: string; // secrets the host adds: Slack incoming webhooks for each site's channel, for the
+  SLACK_ASG_WEBHOOK_URL?: string; // diary's morning and end-of-day reminders (src/slackDiary.ts)
+  SLACK_ROASTERY_WEBHOOK_URL?: string;
+  SLACK_DIARY_NOW?: string; // tests only (with SLACK_TEST_HOOKS): the time the diary reminders work from
   ORDER_EMAIL_FROM?: string; // new wholesale order emails; default "Strangers Coffee Orders <orders@staffstrangerscoffee.com>"
   EMAIL_DAILY_LIMIT?: string; // default 100 (Resend's free plan)
   WEEKLY_ANY_TIME?: string; // tests only: "1" sends the Monday summary whenever its cron runs

@@ -206,6 +206,52 @@ function renderProve(){
   resolveNames(ids);
 }
 
+/* ---------- fire safety records (admins) ----------
+   Every site's fire safety checks in one place, like the temperature log: what's overdue now at each site, and every
+   time a check was done (each check keeps its last 30 entries), newest first, for one site or all of them. Read from
+   each site's fire collection (subscribeFireAll in start.js); ticking checks off stays on each site's Fire safety log. */
+const FL_RANGES=[["28","Last 4 weeks"],["91","Last 3 months"],["365","Last 12 months"],["all","Everything"]];
+let FL={site:"all",range:(()=>{try{return localStorage.getItem("sfbb.flRange")||"91"}catch(e){return"91"}})()};
+function fireLogForm(){
+  const sites=$("#flSites"),chips=$("#flChips");if(!sites||!chips)return;
+  for(const[k,l]of[["all","All sites"],...SITES.map(x=>[x.id,x.name])])sites.append(el("button",{type:"button",role:"radio","data-s":k,onclick:()=>{FL.site=k;renderFireLog()}},l));
+  for(const[k,l]of FL_RANGES)chips.append(el("button",{type:"button",role:"radio","data-r":k,onclick:()=>{FL.range=k;try{localStorage.setItem("sfbb.flRange",k)}catch(e){}renderFireLog()}},l));
+}
+function renderFireLog(){
+  const box=$("#flList");if(!box||S.tab!=="firelog")return;
+  subscribeFireAll();
+  for(const b of document.querySelectorAll("#flSites button")){const on=b.dataset.s===FL.site;b.classList.toggle("on",on);b.setAttribute("aria-checked",String(on))}
+  for(const b of document.querySelectorAll("#flChips button")){const on=b.dataset.r===FL.range;b.classList.toggle("on",on);b.setAttribute("aria-checked",String(on))}
+  const sites=SITES.filter(x=>FL.site==="all"||x.id===FL.site),loading=sites.some(x=>!(S.fireAll&&S.fireAll[x.id]));
+  const t=today(),from=FL.range==="all"?"":addDays(t,-(Number(FL.range)-1)),ids=[];
+  const checks=sites.flatMap(x=>(S.fireAll&&S.fireAll[x.id]||[]).map(f=>({f,site:x.id})));
+  const overdue=checks.map(c=>({...c,st:taskState(c.f)})).filter(c=>c.st.overdue).sort((a,b)=>(a.f.lastAt||0)-(b.f.lastAt||0));
+  const entries=checks.flatMap(c=>(c.f.log||[]).map(e=>({e,f:c.f,site:c.site,day:dayOf(e.at)}))).filter(x=>!from||x.day>=from).sort((a,b)=>b.e.at-a.e.at);
+  box.replaceChildren();
+  const stat=(n,l,c)=>el("div",{class:"stat glass"},el("b",{class:c||"",text:n}),el("span",{text:l}));
+  $("#flStats").replaceChildren(stat(String(entries.length),entries.length===1?"check done":"checks done"),stat(String(overdue.length),"overdue now",overdue.length?"bad":"ok"),stat(String(checks.length),checks.length===1?"check set up":"checks set up"));
+  if(loading&&!checks.length){box.append(el("div",{class:"empty glass",text:"Loading every site's fire safety checks…"}));return}
+  const where=x=>FL.site==="all"?siteOf(x).name:"";
+  if(overdue.length){
+    box.append(el("div",{class:"label bad",text:`Overdue now · ${overdue.length}`}));
+    box.append(el("div",{class:"list glass"},...overdue.map(({f,site,st})=>{if(f.lastBy)ids.push(f.lastBy);
+      return xrow("fl"+site+f.id,{title:f.name,sub:[where(site),(f.freq||"").replace(/^./,c=>c.toUpperCase()),f.lastAt?`last ${lastWhen(f.lastAt,f.lastSet)}, ${fullName(f.lastBy)}`:"never done"].filter(Boolean).join(" · "),
+        right:[el("span",{class:"pill bad",text:st.overdue?st.text.replace(/^Not done yet · /,"").replace(/^Overdue by (\d+) days?$/,"$1d late"):st.text}),
+          el("button",{class:"btn ghost sm",type:"button","aria-label":`Open the ${siteOf(site).name}'s fire safety log`,onclick:()=>{if(site!==S.site)switchSite(site);if(S.site===site)show("fire")}},"Open")]})})));
+  }
+  box.append(el("div",{class:"label",text:`Checks done · ${entries.length}`}));
+  if(!entries.length){box.append(el("div",{class:"empty glass",text:checks.length?"No fire safety checks were recorded as done in this period.":`No fire safety checks are set up${FL.site==="all"?" at any site":` at the ${siteOf(FL.site).name}`}. Add them in each site's Fire safety log.`}));resolveNames(ids);return}
+  let day="",list=null;
+  for(const x of entries.slice(0,600)){
+    if(x.day!==day){day=x.day;list=el("div",{class:"list glass"});box.append(el("div",{class:"label",text:day===t?"Today":day===addDays(t,-1)?"Yesterday":nice(day)}),list)}
+    ids.push(x.e.by);
+    list.append(xrow("fle"+x.site+x.f.id+x.e.at,{title:x.f.name,sub:[where(x.site),fullName(x.e.by),x.e.note].filter(Boolean).join(" · "),
+      right:[el("span",{class:"pill",text:x.e.set?"Date entered":time(x.e.at)})]}));
+  }
+  if(entries.length>600)box.append(el("p",{class:"note",text:`Showing the latest 600 of ${entries.length}. Choose a shorter period or one site to see the rest.`}));
+  resolveNames(ids);
+}
+
 /* ---------- temperature log ----------
    Every fridge and freezer reading at this site, a day per row, newest first. Open a day to add a missed reading
    or amend one: the reading's first value is kept as `was` (with who took it and when), and the amendment is

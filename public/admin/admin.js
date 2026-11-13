@@ -318,6 +318,11 @@
     const d = await api("GET", "/api/admin/sites");
     cache.sites = d.sites;
     const hoursText = (r) => (r.opensAt && r.closesAt ? `${r.opensAt}–${r.closesAt}` : "Not set");
+    // The diary's daily Slack reminders to the site's channel (src/slackDiary.ts).
+    const slack = (s) => !s.slack ? "" : html`<div class="sub">${svg("pulse")}Slack reminders</div>
+      ${kv("Channel", `#${s.slack.channel}`)}${kv("Sent at", s.slack.times)}
+      ${s.slack.connected ? html`<div class="acts"><button class="btn sm soft" type="button" data-act="slacktest" data-id="${s.id}:morning">Send a test morning message</button><button class="btn sm soft" type="button" data-act="slacktest" data-id="${s.id}:evening">Send a test end-of-day message</button></div>`
+        : html`<div class="callout">${svg("warn")}<span>Not connected yet. Add the channel's Slack webhook as the <b>${s.slack.secret}</b> secret in Cloudflare (README-deploy.md).</span></div>`}`;
     const other = (r) => { const e = Object.entries(r.dayHours || {}); return e.length ? e.map(([k, v]) => `${(DAYS.find((x) => x[0] === k) || [k, k, k])[2].slice(0, 3)} ${v.opensAt}–${v.closesAt}`).join(", ") : "Same every day"; };
     return html`
       ${head("Sites", "Each site's diary setup and rota hours side by side. Change them in the diary's Setup and the Rota's settings.")}
@@ -326,7 +331,7 @@
           <section class="site glass"><header><div><h2><span class="dot ${s.id}"></span>${s.name}</h2><p>${s.address}</p></div><span class="pill warn">Not set up</span></header>
             <div class="callout">${svg("warn")}<span>The ${s.name} has no diary Setup yet, so it isn't counted in the diary and can't have shifts on the Rota.</span></div>
             ${kv("People who work here", s.people ? `${s.people}${s.anywhere ? `, plus ${s.anywhere} at any site` : ""}` : s.anywhere ? `${s.anywhere} at any site` : "None yet")}
-            <div class="acts">${d.sites.some((x) => x.setUp) ? html`<button class="btn sm" type="button" data-act="copy" data-id="${s.id}">${svg("copy")}Copy setup from another site</button>` : ""}<a class="btn sm soft" href="${S.links.diary}#setup">Open Setup</a></div></section>` : html`
+            <div class="acts">${d.sites.some((x) => x.setUp) ? html`<button class="btn sm" type="button" data-act="copy" data-id="${s.id}">${svg("copy")}Copy setup from another site</button>` : ""}<a class="btn sm soft" href="${S.links.diary}#setup">Open Setup</a></div>${slack(s)}</section>` : html`
           <section class="site glass"><header><div><h2><span class="dot ${s.id}"></span>${s.name}</h2><p>${s.address}</p></div><span class="pill ok">${svg("ok")}Set up</span></header>
             <div class="sub">${svg("cal")}Kitchen Diary</div>
             ${kv("Fridges and freezers", s.diary.units)}${kv("Checks", `${s.diary.opening} opening · ${s.diary.closing} closing · ${s.diary.weekly} weekly`)}
@@ -334,7 +339,7 @@
             <div class="sub">${svg("clock")}Rota</div>
             ${kv("Usual hours", hoursText(s.rota))}${kv("Other days", other(s.rota))}${kv("Minimum on shift", plural(s.rota.minPeople, "person", "people"))}
             ${kv("People who work here", `${s.people}${s.anywhere ? `, plus ${s.anywhere} at any site` : ""}`)}
-            <div class="acts"><a class="btn sm soft" href="${S.links.diary}#setup">Diary Setup</a><a class="btn sm soft" href="${S.links.rota}#settings">Rota settings</a></div></section>`)}
+            <div class="acts"><a class="btn sm soft" href="${S.links.diary}#setup">Diary Setup</a><a class="btn sm soft" href="${S.links.rota}#settings">Rota settings</a></div>${slack(s)}</section>`)}
       </div>
       <p class="hint">Diary Setup opens at the site that device last used: switch site at the top of the diary if needed.</p>`;
   };
@@ -628,6 +633,12 @@
       case "order-access": if(p)editOrderAccess(p);return;
       case "avail": if (p) editAvailability(p); return;
       case "copy": copySetup(id); return;
+      case "slacktest": {
+        const [site, slot] = String(id).split(":");
+        try { const r = await api("POST", `/api/admin/sites/${site}/slack-test`, { slot }); toast(r.closed ? "Sent: it says the site is closed today, so no reminder would go." : `Test ${slot === "morning" ? "morning" : "end-of-day"} message sent to Slack`); }
+        catch (e) { toast(e.message); }
+        return;
+      }
       case "unlock": patchUser(id, { unlock: true }, () => toast("Unlocked")); return;
       case "password": {
         const who = p || { name: "this person" };
