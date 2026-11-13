@@ -4,6 +4,7 @@ import { audit } from "./audit";
 import { ApiError, type Env, invalid, json, readJson, safeEqual } from "./http";
 import { locationDefaults, type CustomerLocation } from "./wholesaleCustomers";
 import { handleInvite } from "./wholesaleImport";
+import { handleReset } from "./wholesaleReset";
 
 export interface Customer {
   business: string; contact: string; email: string; status: "Active" | "On hold"; note: string;
@@ -135,12 +136,17 @@ async function register(req: Request, env: Env): Promise<Response> {
   return json({ registered: true, approvalStatus: "pending" }, 201);
 }
 
-export async function handleWholesaleAuth(req: Request, env: Env, route: string): Promise<Response> {
+export async function handleWholesaleAuth(req: Request, env: Env, route: string, ctx?: ExecutionContext): Promise<Response> {
   const expected=req.headers.get('x-expected-ordering-id'),role=req.headers.get('x-expected-ordering-role');
   if(expected||role){const current=await wholesaleSession(req,env);if(!current||(expected&&current.id!==expected)||(role&&current.role!==role))throw new ApiError(409,'session_changed','The signed-in account changed. Reload to continue.');}
   if (route === "register" && req.method === "POST") return register(req, env);
   // An invite from Strangers: see what it's for, then choose a username and password (src/wholesaleImport.ts).
   if (route === "invite") return handleInvite(req, env, async (accountId) => newSession(env, (await env.DB.prepare("SELECT * FROM wholesale_accounts WHERE id = ?").bind(accountId).first<Account>())!));
+  // Forgotten password: a one-time link emailed to the business (src/wholesaleReset.ts), and how to contact Strangers.
+  if (route === "forgot" || route === "reset" || route === "contact") {
+    const signinUrl = env.PREVIEW_HOST ? `https://${env.PREVIEW_HOST}/signin` : new URL("/wholesale-preview/signin", req.url).href;
+    return handleReset(req, env, route, { signinUrl, startSession: async (accountId) => newSession(env, (await env.DB.prepare("SELECT * FROM wholesale_accounts WHERE id = ?").bind(accountId).first<Account>())!), waitUntil: ctx ? (p) => ctx.waitUntil(p) : undefined });
+  }
   if (route === "me" && req.method === "GET") return json({ user: await wholesaleSession(req, env) });
   if (route === "logout" && req.method === "POST") {
     const token = tokenFrom(req);

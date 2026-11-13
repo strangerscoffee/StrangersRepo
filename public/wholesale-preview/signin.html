@@ -41,10 +41,25 @@
       <button class="button button-dark" id="login-submit" type="submit">Sign in</button>
     </form>
     <div id="registration-complete" hidden><h2>Thanks for registering.</h2><p class="dialog-intro">Your account is awaiting review by Strangers. You can sign in and order once an admin has approved it.</p></div>
+    <!-- Forgotten password: a one-time link emailed to the business's email address on file (src/wholesaleReset.ts). -->
+    <form id="forgot-form" hidden>
+      <p class="dialog-intro">Type your username or your business's email address. We'll email a link to choose a new password, and remind you of your username, to the email address we have for your business.</p>
+      <label class="form-field">Username or business email<input id="forgot-identifier" name="identifier" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="150" required></label>
+      <p class="quantity-error" id="forgot-error" role="alert" hidden></p>
+      <p class="login-sent" id="forgot-sent" role="status" hidden></p>
+      <button class="button button-dark" id="forgot-submit" type="submit">Email me a reset link</button>
+    </form>
+    <form id="reset-form" hidden>
+      <p class="dialog-intro" id="reset-intro">Choose a new password.</p>
+      <label class="form-field">New password <span>(at least 8 characters)</span><input id="reset-password" type="password" autocomplete="new-password" minlength="8" maxlength="128" required></label>
+      <label class="form-field">Confirm new password<input id="reset-password2" type="password" autocomplete="new-password" minlength="8" maxlength="128" required></label>
+      <p class="quantity-error" id="reset-error" role="alert" hidden></p>
+      <button class="button button-dark" id="reset-submit" type="submit">Save password and sign in</button>
+    </form>
     <button class="text-button" type="button" id="registration-toggle">Request a wholesale account</button>
-    <p class="login-help">Forgotten your password? Contact the Strangers team.</p>
+    <button class="text-button" type="button" id="forgot-toggle">Forgotten your password or username?</button>
+    <p class="login-help" id="contact-help">Need help? <a id="contact-link" href="mailto:sales@strangerscoffee.com">Email the Strangers team</a></p>
     <button class="text-button" type="button" data-terms>Terms and conditions</button>
-    <a class="text-button" href="/wholesale-preview/staff-signin">Staff sign-in</a>
   </main>
 </body>
 </html>

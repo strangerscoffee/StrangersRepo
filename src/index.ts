@@ -263,7 +263,7 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
   if (wholesaleScope) {
     if (p.startsWith("/api/wholesale/auth/")) {
       if (!isGet) await limitWrites(req, env, ctx);
-      const response = await handleWholesaleAuth(req, env, p.slice("/api/wholesale/auth/".length));
+      const response = await handleWholesaleAuth(req, env, p.slice("/api/wholesale/auth/".length), ctx);
       if (!isGet && response.ok) await bumpChanges(env, "accounts");
       return response;
     }

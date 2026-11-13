@@ -4,6 +4,7 @@
 import { migrateLeave } from "./rota/leave/schema";
 import { migrateSickness } from "./rota/sickness";
 import { migrateInvites } from "./wholesaleImport";
+import { migrateResets } from "./wholesaleReset";
 import { migrateInsights } from "./insights";
 import { Env } from "./http";
 import { migrateQuickBooks } from "./quickbooks/schema";
@@ -297,6 +298,7 @@ const MIGRATIONS: Migration[] = [
   { id: 27, name: "Diary Slack reminders", run: async env => {
     await env.DB.prepare("CREATE TABLE IF NOT EXISTS slack_diary_posts (site TEXT NOT NULL, day TEXT NOT NULL, slot TEXT NOT NULL, created_at INTEGER NOT NULL, sent_at INTEGER, attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT, PRIMARY KEY (site, day, slot))").run();
   } },
+  { id: 28, name: "Wholesale password reset links", run: migrateResets },
 ];
 
 async function migrate(env: Env): Promise<void> {
