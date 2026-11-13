@@ -15,6 +15,7 @@ import { peopleRoutes } from "./routes/people";
 import { requestRoutes } from "./routes/requests";
 import { shiftRoutes } from "./routes/shifts";
 import { leaveRoutes } from "./leave/routes";
+import { sicknessRoutes } from "./sickness";
 import { timeOffRoutes } from "./routes/timeOff";
 import { weekRoutes } from "./routes/week";
 import { paidHours } from "./shift";
@@ -56,7 +57,7 @@ export async function handleRota(req: Request, env: Env, ctx: ExecutionContext, 
 
   const mailLinks = { rota: new URL(links.rota, url.origin).href, diary: new URL(links.diary, url.origin).href };
   const r: RotaRequest = { mailLinks, env, exec: ctx, user, route, seg, m, q, mgr, admin, needMgr, needAdmin, needSiteManager, body, withProblems, links };
-  for (const handle of [leaveRoutes, weekRoutes, shiftRoutes, meRoutes, peopleRoutes, timeOffRoutes, requestRoutes]) {
+  for (const handle of [sicknessRoutes, leaveRoutes, weekRoutes, shiftRoutes, meRoutes, peopleRoutes, timeOffRoutes, requestRoutes]) {
     const res = await handle(r);
     if (res) return res;
   }

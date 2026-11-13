@@ -266,3 +266,7 @@ One row (`id = 1`): `data` JSON `{enabled, to: [emails]}`, `version`, `updated_a
 Detailed reads are employee/admin only; every administrative mutation and event read is admin-only. The calendar allowlist emits approved annual-leave names/dates and generic blocking information. Existing full/private rota endpoints retain their owner/admin filters. See [holiday setup, calculations, concurrency and reconciliation](leave-management.md).
 
 Custom coffees remain in the existing versioned wholesale catalogue JSON. `whiteLabel` lists authorised customer IDs; optional `customerOnly: true` marks a private coffee even when none are selected. Existing nonempty white-label lists retain their restrictions without migration. Customer projections strip the allowlist, marker and recipe.
+
+## Self-certified sickness (migration 26)
+
+`rota_sickness`: `id, user_id, time_off_id` (its approved `kind='sick'` row in `rota_time_off`), `kind` (`off` | `early`), `from_day, to_day, left_at` (HH:MM, going home early), `data` (JSON answers: `category, details, vomiting, doctor, workAccident, fitNote, leftAt, declaredBy, declaredAt, onBehalf`), `amended` (JSON: each shift changed, with the hours before/after and its previous `actual_*`/`adjust_note`/`adjusted_*` values), `status` (`active` | `removed`), `created_at, created_by, request_key` (unique per person), `removed_at, removed_by`. Admin-only to read; in backups. See `src/rota/sickness.ts`.

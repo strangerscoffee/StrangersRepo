@@ -29,6 +29,7 @@
     send: '<path d="M4 12l16-8-6 16-2.5-6.5z"/><path d="M11.5 13.5L20 4"/>',
     copy: '<rect x="8" y="8" width="12" height="12" rx="2.5"/><path d="M16 8V6a2 2 0 00-2-2H6a2 2 0 00-2 2v8a2 2 0 002 2h2"/>',
     plane: '<path d="M3 13l18-7-7 18-2-8z"/>',
+    sick: '<path d="M14 14.76V5a2 2 0 0 0-4 0v9.76a4 4 0 1 0 4 0z"/><path d="M12 9v7"/>',
     hand: '<path d="M8 13V6a1.5 1.5 0 013 0v5M11 11V4.5a1.5 1.5 0 013 0V11M14 11V6a1.5 1.5 0 013 0v7a6 6 0 01-6 6h-1a6 6 0 01-5-3l-2-3a1.5 1.5 0 012.5-1.6L8 13"/>',
   };
   const ROLE = { admin: "Admin", manager: "Manager", staff: "Staff" };
@@ -124,6 +125,7 @@
     day: { t: "Day", ic: "week", mgr: true, parent: "week" },
     mine: { t: "My shifts", ic: "mine" },
     leave: { t: "Holidays", ic: "plane" },
+    sick: { t: "Report sickness", ic: "sick", parent: "mine" },
     "leave-admin": {t: "Holiday management", ic:"plane", mgr:true, parent:"leave"},
     swaps: { t: "Open shifts & cover", nav: "Open shifts & cover", ic: "swap" },
     avail: { t: "When I can work", ic: "avail" },
@@ -150,9 +152,10 @@
     if (mgr()) {
       sn.append(link("week", "Week", "week"), link("mine", "My shifts", "mine"), link("leave", "Holidays", "plane"), link("requests", "Requests", "requests", R.badge),
         link("swaps", "Open shifts & cover", "swap"), link("avail", "When I can work", "avail"),
+        link("sick", "Report sickness", "sick"),
         el("div", { class: "h", text: "Manage" }), link("leave-admin", "Holiday management", "plane"), link("hours", "Hours", "hours"), link("settings", "Rota settings", "setup"));
     } else {
-      sn.append(link("mine", "My shifts", "mine"), link("leave", "Holidays", "plane"), link("swaps", "Open shifts & cover", "swap"), link("avail", "When I can work", "avail"));
+      sn.append(link("mine", "My shifts", "mine"), link("leave", "Holidays", "plane"), link("swaps", "Open shifts & cover", "swap"), link("avail", "When I can work", "avail"), link("sick", "Report sickness", "sick"));
       if (siteManager()) sn.append(el("div", { class: "h", text: "Manage" }), link("settings", "Site rota settings", "setup"));
     }
     sn.append(el("div", { class: "h", text: "Kitchen Diary" }), el("a", { href: R.links.diary }, svgi(ICON.diary), el("span", { text: "Open the diary" })));
@@ -201,7 +204,8 @@
     try {
       const out = await PAGE_RENDER[page](args);
       if (seq !== renderSeq) return;
-      box.replaceChildren(...[out].flat().filter(Boolean));
+      // The way into the sickness form, at the top of My shifts and Holidays.
+      box.replaceChildren(...[page === "mine" || page === "leave" ? Sick.link() : null, out].flat().filter(Boolean));
     } catch (e) {
       if (seq !== renderSeq) return;
       box.replaceChildren(el("div", { class: "empty", text: e.message || "Couldn't load this page." }));
@@ -1603,7 +1607,8 @@
   }
 
   const Leave = SCLeave({el,btn,ghost,label,empty,api,get,openSheet,closeSheets,cancelLink,setHead,go,R,mgr,toast,render,fmt,shortM,addDays,monday,londonToday});
-  const PAGE_RENDER = {leave:Leave.dashboard, "leave-admin":Leave.admin, week: renderWeek, day: renderDay, mine: renderMine, swaps: renderSwaps, avail: renderAvail, requests: renderRequests, more: renderMore, hours: renderHours, settings: renderSettings };
+  const Sick = SCSickness({ el, svgi, btn, api, get, setHead, go, toast, fmt, addDays, monday, londonToday, londonNow, isAdmin, me: () => R.me.user });
+  const PAGE_RENDER = {sick: (args) => Sick.page(args), leave:Leave.dashboard, "leave-admin":Leave.admin, week: renderWeek, day: renderDay, mine: renderMine, swaps: renderSwaps, avail: renderAvail, requests: renderRequests, more: renderMore, hours: renderHours, settings: renderSettings };
 
   /* ---------- start ---------- */
 
@@ -1613,7 +1618,7 @@
   async function start() {
     try {
       const auth = await SC.startSession({ clear: () => {
-        renderSeq++; Leave.clear();
+        renderSeq++; Leave.clear(); Sick.clear();
         R.me = null; R.auth = null; R.weekData = null; R.approvers = []; R.everyone = false; weekBody = null;
         for (const key of Object.keys(HUE.id)) delete HUE.id[key]; for (const key of Object.keys(HUE.name)) delete HUE.name[key];
         closeSheets(); for (const id of ["#page", "#sheet", "#peopleList", "#acctMenu", "#snav", "#tabbar", "#meBox"]) $(id)?.replaceChildren();
