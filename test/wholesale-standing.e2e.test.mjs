@@ -92,7 +92,7 @@ test("Admin: dispatch day, standing order, edit bags, dispatch makes the next ru
   // The customer's My orders.
   const c = await page(A, { width: 390, height: 844 }, { isMobile: true, hasTouch: true });
   await c.p.goto(srv.base + "/wholesale-preview/"); await c.p.locator(".product-card").first().waitFor();
-  await c.p.locator("footer [data-order-history]").click();
+  await c.p.locator("#my-orders").click();
   const card = c.p.locator(`[data-history-order="${orderId}"]`); await card.waitFor();
   assert.match(await card.innerText(), /Dispatch day: .*Standing order, every 2 weeks/);
   assert.match(await card.innerText(), /Updated by Strangers on/);

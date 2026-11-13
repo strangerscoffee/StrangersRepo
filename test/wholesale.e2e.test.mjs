@@ -114,7 +114,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       assert.equal(order.lines[0].grind, 'espresso', 'the saved order receives the confirmed picker value');
       await assertDialogCloseClear(page, '#review-dialog');
       await page.locator('#preview-complete [data-close]').click();
-      await page.locator('footer [data-order-history]').click();
+      await page.locator('#my-orders').click();
       await page.locator('#orders-dialog').waitFor();
       await page.locator(`[data-history-order="${order.id}"]`).waitFor();
       await assertDialogCloseClear(page, '#orders-dialog');

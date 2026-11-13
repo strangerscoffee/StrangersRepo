@@ -202,6 +202,8 @@ Existing Live payment observations continue while Sandbox is active. Exports ret
 
 ## Page loading
 
+The wholesale footer is a compact logo/Terms/Website row using the existing theme. Terms still opens its native window; My orders and email links use the header action. No migration or configuration is required.
+
 The shared page loader uses the Strangers logo and lightweight, uncached identity checks. First-load metadata and fresh proof remain separate; network failures retry the same protected startup and the retry action resumes it. No configuration or migration is needed. Phone/iPad/desktop light/dark loader, recovery, request-coalescing and privacy regressions are in `test/loader.e2e.test.mjs` and `test/identity.e2e.test.mjs`.
 
 
