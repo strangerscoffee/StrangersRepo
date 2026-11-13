@@ -4,6 +4,7 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { startServer, SETUP_CODE } from "./harness.mjs";
+import { openWholesaleAccount } from "./wholesale-ui-helpers.mjs";
 
 const require = createRequire(import.meta.url);
 let chromium;
@@ -74,7 +75,7 @@ test("Admin edits it on the customer, and the business sees it in My account", a
   const cookie = (await call("POST", "/api/wholesale/auth/login", { username: "lune.light", password: "lune-password-1" }, null)).cookie;
   const { ctx, p, errors } = await page(cookie, { width: 390, height: 844 }, { isMobile: true, hasTouch: true });
   await p.goto(srv.base + "/wholesale-preview/"); await p.locator(".product-card").first().waitFor();
-  await p.locator("#my-account").click(); await p.locator("#account-dialog").waitFor();
+  await openWholesaleAccount(p); await p.locator("#account-dialog").waitFor();
   await p.locator('#account-form [name="accountsEmail"]').waitFor({ state: "visible" });
   assert.equal(await p.locator('#account-form [name="accountsEmail"]').inputValue(), "finance@lune.example");
   await p.locator('#account-form [name="accountsEmail"]').scrollIntoViewIfNeeded();
