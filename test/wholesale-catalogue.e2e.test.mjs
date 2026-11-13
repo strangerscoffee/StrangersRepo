@@ -110,7 +110,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       await card.locator('[data-photo-step="1"]').click();
       await photoReady();
       assert.equal(await card.locator('[data-photo-count]').textContent(), '2 / 3');
-      assert.equal(await card.locator('[data-product-photo]').evaluate(image => getComputedStyle(image).objectFit), 'contain');
+      assert.equal(await card.locator('[data-product-photo]').evaluate(image => getComputedStyle(image).objectFit), 'cover');
       await card.locator('[data-photo-step="-1"]').click();
       await buyer.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
       await buyer.waitForFunction(() => window.scrollY <= 8);

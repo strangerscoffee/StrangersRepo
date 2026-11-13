@@ -68,8 +68,8 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       assert.equal(await page.locator("#admin-wholesale-link").getAttribute("href"), "/admin#wholesale");
       const card = page.locator('article[data-product="brazil"]');
       const photo = await card.locator('img').evaluate((img) => ({ width: img.getBoundingClientRect().width, height: img.getBoundingClientRect().height, naturalWidth: img.naturalWidth, naturalHeight: img.naturalHeight, fit: getComputedStyle(img).objectFit }));
-      assert.ok(photo.width > 0 && photo.height > 0 && photo.naturalWidth > 0 && photo.naturalHeight > 0, "photo has a complete intrinsic source inside its contained frame");
-      assert.equal(photo.fit, "contain");
+      assert.ok(photo.width > 0 && photo.height > 0 && photo.naturalWidth > 0 && photo.naturalHeight > 0, "photo has a complete intrinsic source filling its frame");
+      assert.equal(photo.fit, "cover");
       assert.equal(await page.locator('.intro').count(), 0, "requested marketing introduction is removed");
       assert.equal(await page.locator('#basket-count').isHidden(), true, 'an empty order has no zero badge');
       assert.match(await page.locator('#order-items').textContent(), /Your order is empty/);
