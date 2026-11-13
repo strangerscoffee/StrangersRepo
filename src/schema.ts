@@ -4,6 +4,7 @@
 import { migrateLeave } from "./rota/leave/schema";
 import { migrateSickness } from "./rota/sickness";
 import { migrateInvites } from "./wholesaleImport";
+import { migrateResets } from "./wholesaleReset";
 import { migrateInsights } from "./insights";
 import { Env } from "./http";
 import { migrateQuickBooks } from "./quickbooks/schema";

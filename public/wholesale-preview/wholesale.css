@@ -279,6 +279,10 @@ dialog::backdrop { background: rgba(0,0,0,.3); -webkit-backdrop-filter: blur(6px
 .login-panel .button { display: flex; width: 100%; margin-top: 24px; }
 .login-panel > .text-button { display: flex; width: 100%; margin-top: 12px; }
 .login-help { color: var(--muted); font-size: 13px; margin-top: 20px; text-align: center; }
+.login-help a { color: var(--accent); font-weight: 600; }
+.login-sent { background: var(--sunk); border-radius: 12px; padding: 12px 14px; font-size: 14px; line-height: 1.45; margin: 4px 0 12px; }
+#forgot-form, #reset-form { display: grid; }
+#forgot-form[hidden], #reset-form[hidden] { display: none; }
 #registration-complete { padding: 18px 0 8px; }
 @media (min-width: 1500px) { .wrap { width: min(1440px, calc(100% - 80px)); } .shop-layout { grid-template-columns: minmax(0, 1fr) 350px; gap: 30px; } .product-grid { gap: 24px; } }
 @media (max-width: 1100px) { .shop-layout { grid-template-columns: 1fr; } .order-column { position: static; } .order-panel { max-width: 700px; margin-inline: auto; } .mobile-basket { position: fixed; z-index: 10; left: max(20px, env(safe-area-inset-left)); right: max(20px, env(safe-area-inset-right)); bottom: max(12px, env(safe-area-inset-bottom)); display: flex; align-items: center; justify-content: space-between; gap: 16px; max-width: 700px; margin-inline: auto; padding: 12px 16px 12px 22px; border-radius: 99px; box-shadow: var(--glass-hi), var(--float); } .mobile-basket > div { display: flex; flex-direction: column; font-size: 12px; } .mobile-basket strong { font-size: 22px; font-weight: 700; letter-spacing: -.025em; } .mobile-basket .button { min-width: 148px; } body:has(.mobile-basket:not([hidden])) { padding-bottom: 100px; } .toast { bottom: max(110px, calc(env(safe-area-inset-bottom) + 96px)); } }
