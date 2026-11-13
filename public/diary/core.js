@@ -443,6 +443,7 @@ function setFab(btn,show,label,onclick){
 function updFab(){document.body.classList.toggle("hasfab",[...document.querySelectorAll(".fab")].some(b=>!b.hidden&&!b.closest("[hidden]")))}
 
 const ICON={
+  sick:'<path d="M14 14.76V5a2 2 0 0 0-4 0v9.76a4 4 0 1 0 4 0z"/><path d="M12 9v7"/>',
   bell:'<path d="M6 16V11a6 6 0 0112 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 004 0"/>',
   checkc:'<circle cx="12" cy="12" r="8.5"/><path d="M8.5 12.3l2.4 2.4 4.6-4.9"/>',
   today:'<rect x="4" y="5" width="16" height="15" rx="3"/><path d="M4 10h16M9 3v4M15 3v4"/><path d="M9 14.5l2 2 4-4"/>',
