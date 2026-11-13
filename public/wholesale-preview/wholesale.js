@@ -199,12 +199,19 @@ function positionSortMenu() {
   const rect = sortButton.getBoundingClientRect(), width = Math.min(290, innerWidth - 32);
   sortMenu.style.width = width + "px";
   sortMenu.style.left = Math.max(16, Math.min(rect.right - width, innerWidth - width - 16)) + "px";
-  const below = innerHeight - rect.bottom - 16;
-  sortMenu.style.top = (below >= 210 ? rect.bottom + 8 : Math.max(16, rect.top - 210)) + "px";
-  sortMenu.style.maxHeight = Math.max(100, innerHeight - 32) + "px";
+  sortMenu.style.maxHeight = Math.max(44, innerHeight - 32) + "px";
+  const height = sortMenu.offsetHeight || Math.min(210, innerHeight - 32);
+  const below = innerHeight - rect.bottom - 16, above = rect.top - 16;
+  const opensBelow = below >= height + 8 || below >= above;
+  const top = opensBelow ? rect.bottom + 8 : rect.top - height - 8;
+  sortMenu.style.top = Math.max(16, Math.min(top, innerHeight - height - 16)) + "px";
+  sortMenu.dataset.side = opensBelow ? "below" : "above";
 }
 sortMenu.addEventListener("toggle", event => {
-  if (event.newState === "open") sortMenu.querySelector('[aria-checked="true"]')?.focus({ preventScroll: true });
+  if (event.newState === "open") {
+    positionSortMenu(); // The open popover now has its actual untransformed height.
+    sortMenu.querySelector('[aria-checked="true"]')?.focus({ preventScroll: true });
+  }
 });
 sortMenu.addEventListener("click", event => {
   const option = event.target.closest("[data-sort]");
