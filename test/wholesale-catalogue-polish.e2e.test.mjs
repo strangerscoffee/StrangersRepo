@@ -95,8 +95,13 @@ test('contact greeting follows saved contact names, escapes text, handles long a
     await page.goto(server.base + '/wholesale-preview/'); await page.locator('#products[aria-busy="false"]').waitFor();
     for (const contact of ['Will <Coffee & Co>', 'Will ' + 'Longcontactname '.repeat(6), '']) {
       await page.locator('#account-toggle').click(); await page.locator('#my-account').click();
+      await page.locator('#account-dialog[open]').waitFor();
       await page.locator('#account-form [name="contact"]').fill(contact);
-      await page.locator('#save-account').click(); await page.locator('#account-dialog[open]').waitFor({ state: 'hidden' });
+      const saved = page.waitForResponse(response => new URL(response.url()).pathname === '/api/wholesale/account' && response.request().method() === 'PUT');
+      await page.locator('#save-account').click();
+      const response = await saved; assert.equal(response.status(), 200);
+      assert.equal((await response.json()).customer.contact, contact.trim());
+      await page.locator('#account-dialog[open]').waitFor({ state: 'hidden' });
       const greeting = contact.trim() ? 'Hi, ' + contact.trim() : 'Hi';
       assert.equal(await page.locator('#account-greeting').textContent(), greeting);
       assert.equal(await page.locator('#account-menu-greeting').textContent(), greeting);
