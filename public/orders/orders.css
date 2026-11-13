@@ -20,14 +20,19 @@
 .btn:disabled{opacity:.5;cursor:default}
 .orders-bar{display:contents}
 .print-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:-10px 0 22px}
+.print-bar .btn{min-height:44px}
 @media(min-width:960px){
- .orders-bar{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:15px 0 24px;flex-wrap:wrap}
- .orders-bar #statusFilters{margin:0;overflow-x:visible;padding-bottom:0}
- .orders-bar #printBar{margin-left:auto}
- .orders-bar .print-bar{margin:0}
+ .orders-bar{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:52px;margin:15px 0 24px;flex-wrap:nowrap}
+ .orders-bar #statusFilters{margin:0;overflow-x:auto;scrollbar-width:none;padding-bottom:0;flex:1 1 auto;min-width:0}
+ .orders-bar #statusFilters::-webkit-scrollbar{display:none}
+ .orders-bar #printBar{margin-left:auto;flex:0 0 auto}
+ .orders-bar .print-bar{margin:0;flex-wrap:nowrap}
+ .orders-bar .print-bar.picking{padding:3px 4px 3px 14px;border-radius:99px;gap:6px}
+ .orders-bar .print-bar.picking .btn{padding:8px 13px;font-size:13px}
+ .orders-bar .picked-count{margin-right:4px;flex-basis:auto}
 }
 .print-bar.picking{padding:10px 12px;border-radius:16px;background:var(--sunk);border:1px solid var(--line)}
-.picked-count{margin-right:auto;font-weight:650}
+.picked-count{margin-right:auto;font-weight:650;font-size:13px;white-space:nowrap}
 .order-edit{margin-top:22px;padding-top:18px;border-top:1px solid var(--line);display:grid;gap:12px}
 .order-edit:empty{display:none}
 .edit-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.4fr);gap:12px}
