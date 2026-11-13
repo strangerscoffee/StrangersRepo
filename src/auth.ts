@@ -105,21 +105,19 @@ async function passwordMatches(pw: string, row: { pin_hash: string; pin_salt: st
 
 /* ---------- sessions ---------- */
 
-let keyPromise: Promise<CryptoKey> | null = null;
+// Cache the resolved key, never request-owned pending I/O. Other requests must
+// be able to load the persisted key if an earlier request was interrupted.
+const sessionKeys = new WeakMap<Env["DB"], CryptoKey>();
 
 /** HMAC key for session cookies, generated on first use and kept in the secrets table. */
-function sessionKey(env: Env): Promise<CryptoKey> {
-  if (!keyPromise) {
-    keyPromise = (async () => {
-      await env.DB.prepare("INSERT OR IGNORE INTO secrets (k, v) VALUES ('session_key', ?)").bind(newId(32)).run();
-      const row = await env.DB.prepare("SELECT v FROM secrets WHERE k = 'session_key'").first<{ v: string }>();
-      return crypto.subtle.importKey("raw", enc.encode(row!.v), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
-    })().catch((e) => {
-      keyPromise = null;
-      throw e;
-    });
-  }
-  return keyPromise;
+async function sessionKey(env: Env): Promise<CryptoKey> {
+  const cached = sessionKeys.get(env.DB);
+  if (cached) return cached;
+  await env.DB.prepare("INSERT OR IGNORE INTO secrets (k, v) VALUES ('session_key', ?)").bind(newId(32)).run();
+  const row = await env.DB.prepare("SELECT v FROM secrets WHERE k = 'session_key'").first<{ v: string }>();
+  const key = await crypto.subtle.importKey("raw", enc.encode(row!.v), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
+  sessionKeys.set(env.DB, key);
+  return key;
 }
 
 /* Cookies are shared across COOKIE_DOMAIN (wrangler.jsonc: staffstrangerscoffee.com), so one sign-in covers the
