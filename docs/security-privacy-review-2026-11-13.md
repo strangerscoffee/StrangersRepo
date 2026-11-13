@@ -40,3 +40,10 @@ Cloudflare/GitHub account membership, two-factor authentication, secret rotation
 The existing PBKDF2 work factor is 10,000 iterations. Benchmark a higher password hashing cost within the Workers CPU budget as a further defense against an offline attack after a database compromise. This review does not silently change password formats or hosting resource requirements.
 
 Validation records: `security-boundary.test.mjs` covers anonymous/forged sessions, configured origins, employee ownership, ordering identity mismatches, compact proof privacy and protected PDF caching. `wholesale-session-security.e2e.test.mjs` covers phone/iPad light/dark identity changes, held history responses and offline Retry. Existing staff/employee identity, checkout recovery, customer isolation and QuickBooks suites remain part of the full checks. Final release results are recorded in the pull request.
+
+
+### Holiday-management addendum
+
+The later holiday-management request explicitly authorises a narrow colleague calendar. The new calendar constructs only approved annual-leave names/dates and generic blackout availability. It does not change the general rota privacy filter or expose colleagues’ contracts, hours, reasons, pending requests, balances or sickness/other absence. Detailed reads remain owner/admin; settings, allowances, credits, blackout changes, classification and events remain admin-only. The shared session guard clears dashboard/editor state on identity changes, and leave data is not persisted in localStorage.
+
+The optional GOV.UK lookup sends no personal information and uses a fixed public URL. Leave records/audit history stay in D1 and admin-only backups under the existing transport/storage controls. Dedicated API and browser regressions exercise ownership, role boundaries, no-store responses, shared-calendar minimisation, account switching, approval concurrency and duplicate/double-count prevention.

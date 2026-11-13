@@ -1,6 +1,7 @@
 // The database schema. The Worker applies it itself (once per Worker instance) so a fresh deploy needs no
 // migration step: first the tables (every statement idempotent), then any migrations not yet recorded in
 // schema_migrations (MIGRATIONS below). To change the schema, add a migration.
+import { migrateLeave } from "./rota/leave/schema";
 import { migrateInvites } from "./wholesaleImport";
 import { migrateInsights } from "./insights";
 import { Env } from "./http";
@@ -279,6 +280,7 @@ const MIGRATIONS: Migration[] = [
     ]);
   } },
   { id: 23, name: "Wholesale invites", run: migrateInvites },
+  { id: 24, name: "Rota holiday allowances, calendar and absence records", run: migrateLeave },
 ];
 
 async function migrate(env: Env): Promise<void> {

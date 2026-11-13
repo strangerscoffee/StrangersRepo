@@ -95,7 +95,7 @@
     c.hidden = !v; c.textContent = "Offline · showing what was last loaded";
     if (!v) toast("Back online.");
   }
-  async function api(method, url, body) {
+  async function api(method, url, body, { optionalDependency = false } = {}) {
     let res;
     try {
       res = await fetch(url, { method, headers: body ? { "content-type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined });
@@ -104,7 +104,7 @@
       throw Object.assign(new Error("Couldn't reach the rota. Check your connection."), { code: "unavailable" });
     }
     if (res.status === 401) { goSignIn(); throw new Error("Signed out."); }
-    if (res.status >= 502 && res.status <= 504) { setOffline(true); throw Object.assign(new Error("The rota didn't respond. Try again."), { code: "unavailable" }); }
+    if (res.status >= 502 && res.status <= 504 && !optionalDependency) { setOffline(true); throw Object.assign(new Error("The rota didn't respond. Try again."), { code: "unavailable" }); }
     setOffline(false);
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw Object.assign(new Error(data.message || "Something went wrong."), data, { code: data.code, status: res.status });
@@ -123,6 +123,8 @@
     week: { t: "Rota", nav: "Week", ic: "week", mgr: true },
     day: { t: "Day", ic: "week", mgr: true, parent: "week" },
     mine: { t: "My shifts", ic: "mine" },
+    leave: { t: "Holidays", ic: "plane" },
+    "leave-admin": {t: "Holiday management", ic:"plane", mgr:true, parent:"leave"},
     swaps: { t: "Open shifts & cover", nav: "Open shifts & cover", ic: "swap" },
     avail: { t: "When I can work", ic: "avail" },
     requests: { t: "Requests", ic: "requests", mgr: true },
@@ -130,7 +132,7 @@
     hours: { t: "Hours", ic: "hours", mgr: true, parent: "more" },
     settings: { t: "Rota settings", ic: "setup", site: true, parent: "more" },
   };
-  const TABS = () => (mgr() ? ["week", "mine", "requests", "more"] : siteManager() ? ["mine", "swaps", "avail", "more"] : ["mine", "swaps", "avail"]);
+  const TABS = () => (mgr() ? ["week", "mine", "leave", "requests", "more"] : siteManager() ? ["mine", "leave", "swaps", "avail", "more"] : ["mine", "leave", "swaps", "avail"]);
   const allowed = (p) => PAGES[p] && (!PAGES[p].mgr || mgr()) && (!PAGES[p].site || siteManager());
   const tabOf = (p) => (TABS().includes(p) ? p : PAGES[p]?.parent && TABS().includes(PAGES[p].parent) ? PAGES[p].parent : mgr() ? "more" : p);
 
@@ -146,16 +148,16 @@
     const link = (id, label, ic, badge) => el("a", { href: "#" + id, class: cur === id || tabOf(cur) === id && !TABS().includes(cur) && PAGES[cur]?.parent === id ? "on" : "", "aria-current": cur === id ? "page" : null },
       svgi(ICON[ic]), el("span", { text: label }), badge ? el("span", { class: "n pill bad", text: String(badge) }) : null);
     if (mgr()) {
-      sn.append(link("week", "Week", "week"), link("mine", "My shifts", "mine"), link("requests", "Requests", "requests", R.badge),
+      sn.append(link("week", "Week", "week"), link("mine", "My shifts", "mine"), link("leave", "Holidays", "plane"), link("requests", "Requests", "requests", R.badge),
         link("swaps", "Open shifts & cover", "swap"), link("avail", "When I can work", "avail"),
-        el("div", { class: "h", text: "Manage" }), link("hours", "Hours", "hours"), link("settings", "Rota settings", "setup"));
+        el("div", { class: "h", text: "Manage" }), link("leave-admin", "Holiday management", "plane"), link("hours", "Hours", "hours"), link("settings", "Rota settings", "setup"));
     } else {
-      sn.append(link("mine", "My shifts", "mine"), link("swaps", "Open shifts & cover", "swap"), link("avail", "When I can work", "avail"));
+      sn.append(link("mine", "My shifts", "mine"), link("leave", "Holidays", "plane"), link("swaps", "Open shifts & cover", "swap"), link("avail", "When I can work", "avail"));
       if (siteManager()) sn.append(el("div", { class: "h", text: "Manage" }), link("settings", "Site rota settings", "setup"));
     }
     sn.append(el("div", { class: "h", text: "Kitchen Diary" }), el("a", { href: R.links.diary }, svgi(ICON.diary), el("span", { text: "Open the diary" })));
     const tb = $("#tabbar"); tb.replaceChildren();
-    const label = { week: "Week", mine: "My shifts", swaps: "Open shifts", avail: "When I work", requests: "Requests", more: "More" };
+    const label = { week: "Week", mine: "My shifts", leave:"Holidays", swaps: "Open shifts", avail: "When I work", requests: "Requests", more: "More" };
     for (const t of TABS()) {
       const on = tabOf(cur) === t;
       tb.append(el("button", { type: "button", class: "tab" + (on ? " on" : ""), "aria-current": on ? "page" : null, onclick: () => go(t) },
@@ -1110,9 +1112,10 @@
           "aria-label": `${longD(day)}: ${span(s)} at ${s.siteName}${s.job ? ", " + jobWord(s.job).toLowerCase() : ""}${s.overtime > 0 ? `, ${hrs(s.overtime)}h overtime` : ""}` },
           el("b", { class: "tm" }, effS(s), el("br"), effE(s)), el("span", { class: "site", "data-s": s.siteName.slice(0, 1), text: s.siteName }), el("span", { class: "jobw", text: jobWord(s.job) || " " }));
       });
-      else if (hol) blks = [el("div", { class: "blk hol", text: "Holiday" })];
+      else if (hol) blks = [el("div", { class: "blk hol", text: ({annual:"Holiday",sick:"Sick leave",unpaid:"Unpaid leave",unauthorised:"Absent"}[hol.kind]||"Time off")+(hol.fromTime?` ${hol.fromTime}–${hol.toTime}`:"") })];
       else if (pat(day) === "off") blks = [el("div", { class: "blk off cant", text: "Can't work" })];
       else blks = [el("div", { class: "blk off", text: "Off" })];
+      if(hol&&(!weekOut||here.length))blks.push(el("div",{class:"blk hol",text:({annual:"Holiday",sick:"Sick leave",unpaid:"Unpaid leave",unauthorised:"Absent"}[hol.kind]||"Time off")+(hol.fromTime?` ${hol.fromTime}–${hol.toTime}`:"")}));
       return el("div", { class: "mday" + (day === today ? " today" : ""), role: "listitem" },
         el("div", { class: "dh" }, fmt(day, { weekday: "short" }), el("b", { text: fmt(day, { day: "numeric" }) })), ...blks);
     }), weekOut && inWeek.length ? el("div", { class: "mlegend" }, ...[...new Map(inWeek.map((s) => [s.site, s.siteName]))].map(([id, n]) => el("span", {}, el("i", { class: "tone-" + (SITE_TONE[id] || "") }), `${n[0]} ${n}`)),
@@ -1437,11 +1440,12 @@
       return el("div", { class: "lrow" }, el("span", { class: "t" }, el("b", { text: range }), el("span", { class: "s", text: [o.reason, plural(days, "day")].filter(Boolean).join(" · ") })),
         el("span", { class: "pill " + st[1], text: st[0] }),
         // Only an admin can change time off that has already started.
-        ["requested", "approved"].includes(o.status) && o.to >= londonToday() && (mgr() || o.status === "requested" || o.from >= londonToday()) ? ghost("Cancel", async () => { if (await act(() => api("PATCH", "/api/rota/time-off/" + o.id, { status: "cancelled" }), "Cancelled")) render(); }, { class: "btn ghost sm" }) : null);
+        ["requested", "approved"].includes(o.status) && o.to >= londonToday() && (mgr() || o.status === "requested" || o.from >= londonToday()) ? ghost("Cancel", async () => { if (await act(() => api("PATCH", "/api/rota/time-off/" + o.id, { status: "cancelled", ifVersion:o.version }), "Cancelled")) render(); }, { class: "btn ghost sm" }) : null);
     }) : [el("div", { class: "empty", text: "No time off booked." })]));
   }
 
   function askTimeOff() {
+    if(R.me?.holidayManagement)return Leave.request();
     const t = londonToday();
     const from = el("input", { type: "date", id: "t_from", value: addDays(t, 14), min: t });
     const to = el("input", { type: "date", id: "t_to", value: addDays(t, 14), min: t });
@@ -1472,8 +1476,8 @@
       el("span", { class: "t" }, el("b", { text: t.name }), el("span", { class: "s", text: `${t.from === t.to ? shortM(t.from) : shortM(t.from) + " – " + shortM(t.to)}${t.reason ? " · " + t.reason : ""}` })),
       // Another manager or an admin decides a manager's own time off.
       t.userId === R.me.user.id && !isAdmin() ? el("span", { class: "acts note", text: "Another manager or an admin decides this" })
-        : el("span", { class: "acts" }, ghost("Decline", decide("/api/rota/time-off/" + t.id, { status: "declined" }, "Declined"), { class: "btn ghost sm" }),
-          btn("Approve", decide("/api/rota/time-off/" + t.id, { status: "approved" }, "Approved"), "btn sm")))))
+        : el("span", { class: "acts" }, ghost("Decline", decide("/api/rota/time-off/" + t.id, { status: "declined", ifVersion:t.version }, "Declined"), { class: "btn ghost sm" }),
+          btn("Review", () => Leave.review({...t,days:t.days||[]}), "btn sm")))))
       : el("section", { class: "panel" }, el("p", { class: "note", text: "No time off waiting." })));
     out.push(label("Pickups and covers"));
     const rows = r.requests.map((q) => {
@@ -1598,7 +1602,8 @@
     return out;
   }
 
-  const PAGE_RENDER = { week: renderWeek, day: renderDay, mine: renderMine, swaps: renderSwaps, avail: renderAvail, requests: renderRequests, more: renderMore, hours: renderHours, settings: renderSettings };
+  const Leave = SCLeave({el,btn,ghost,label,empty,api,get,openSheet,closeSheets,cancelLink,setHead,go,R,mgr,toast,render,fmt,shortM,addDays,monday,londonToday});
+  const PAGE_RENDER = {leave:Leave.dashboard, "leave-admin":Leave.admin, week: renderWeek, day: renderDay, mine: renderMine, swaps: renderSwaps, avail: renderAvail, requests: renderRequests, more: renderMore, hours: renderHours, settings: renderSettings };
 
   /* ---------- start ---------- */
 
@@ -1608,6 +1613,7 @@
   async function start() {
     try {
       const auth = await SC.startSession({ clear: () => {
+        renderSeq++; Leave.clear();
         R.me = null; R.auth = null; R.weekData = null; R.approvers = []; R.everyone = false; weekBody = null;
         for (const key of Object.keys(HUE.id)) delete HUE.id[key]; for (const key of Object.keys(HUE.name)) delete HUE.name[key];
         closeSheets(); for (const id of ["#page", "#sheet", "#peopleList", "#acctMenu", "#snav", "#tabbar", "#meBox"]) $(id)?.replaceChildren();

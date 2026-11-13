@@ -122,7 +122,7 @@ Training topics (`<topic>`): `hygiene`, `cross`, `cleaning`, `chilling`, `cookin
 
 ## Employee ownership and verification
 
-Only admins or the individual employee may access employee-private data. The manager role grants business management, never access to another employee’s hours, contracts, availability, leave, reasons, private contact/training/onboarding or request details. Full rota planning, assignments, actual-hour amendments and employee exports are admin-only.
+Only admins or the individual employee may access employee-private data. The explicitly authorised exception is the dedicated holiday calendar: authenticated employees may see only colleague names/dates of approved annual leave, never private records, notes, balances, other absence types or hours. The manager role grants business management, never access to another employee’s hours, contracts, availability, leave, reasons, private contact/training/onboarding or request details. Full rota planning, assignments, actual-hour amendments and employee exports are admin-only.
 
 Protected collections are `staff`, `contacts`, `onboarding` and `accidents` under every site prefix. A nonadmin read requires server-verified metadata: `employee_privacy_version === seq`. Verified training and accident book entries additionally require `data.ownerUserId === user.id` (`OWNED` in `src/employeePrivacy.ts`: no shared-business classification; nonadmins create them as their own and never delete them). Contacts/onboarding allow either `visibility: "shared-business"` or `visibility: "employee"` with matching `ownerUserId`. Unclassified or unverified legacy rows remain admin-only, even if their old JSON contains plausible ownership/classification fields. Admin responses clear unverified claims so the editor requests an explicit review/link; names never establish ownership.
 
@@ -255,3 +255,12 @@ No order or invoice snapshots change for the staff view. Its account signal aggr
 ### wholesale_order_emails (migration 19)
 
 One row (`id = 1`): `data` JSON `{enabled, to: [emails]}`, `version`, `updated_at`. No row means on, to sales@strangerscoffee.com.
+
+
+## Holiday and absence accounting (migration 24)
+
+`rota_time_off` remains the rota’s absence source. Migration 24 adds kind (`legacy`, `annual`, `sick`, `unpaid`, `unauthorised`), version, idempotency key/payload, optional single-day absence times and an opening-balance reconciliation flag. Old rows default to `legacy` and remain private.
+
+`rota_leave_allowances` holds employee/year dates, explicit days-based entitlement, exceptional carry-over, opening used/cut-off, daily charges, non-working dates and inclusive bank-holiday reservations/worked-credit history. `rota_leave_days` stores integer-hundredth charges per absence/date/year. `rota_leave_settings`, `rota_leave_blocks`, `rota_leave_events` and `rota_leave_state` hold versioned policy, scoped blackout dates, transactional audit history and the global optimistic write revision. All are included in admin-only backups.
+
+Detailed reads are employee/admin only; every administrative mutation and event read is admin-only. The calendar allowlist emits approved annual-leave names/dates and generic blocking information. Existing full/private rota endpoints retain their owner/admin filters. See [holiday setup, calculations, concurrency and reconciliation](leave-management.md).

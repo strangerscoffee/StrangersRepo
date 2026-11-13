@@ -134,3 +134,10 @@ Wholesale order packing lines use the approved rota-style hue stripe and soft la
 The separate view-only `/orders` screen follows the shared Liquid Glass theme and Strangers branding. The diary sidebar and More menu show Wholesale orders only for granted employees or admins. Search, status chips and an icon refresh lead to a compact list; order details use a native dialog with pinned title/close and Done footer. The shared Admin packing helper and stylesheet retain the same grind stripes, labelled pills, bag quantities and separate neutral Decaf tag.
 
 Overdue accounts show a red text-and-icon warning in the list and order details, directing staff to an admin before fulfilment. Uncertain accounting status uses a separate amber review warning. Colour never replaces text. Staff receive no payment edit, price, invoice or order mutation controls. Phone/tablet/desktop and light/dark layouts retain 44 px controls, keyboard focus and reduced-motion refresh states. Private content is shielded before fresh focus/restore verification.
+
+
+### Holidays and absence
+
+Rota Holidays is a primary staff destination on mobile and desktop. It shows current-year available/used/booked/pending days, explicit allowance details, a month calendar and the employee’s own history. The calendar uses the shared theme and accessible day controls; narrow screens scroll the calendar region without overflowing the page. Approved annual-leave names/dates are the only colleague data permitted here; sickness, other absence types, private notes and balances stay owner/admin-only.
+
+Admin Holiday management groups employee-year setup, requests, private history, blackouts and policy/capacity controls. Native themed sheets preserve drafts on validation/conflict errors. Half-day requests require actual absence times. Allowances and changes are reviewed/versioned; credited bank holidays release an already included day, with audited corrections. Historical time off remains private until explicitly classified, and opening-used reconciliation prevents charging it twice. See [leave management](leave-management.md).

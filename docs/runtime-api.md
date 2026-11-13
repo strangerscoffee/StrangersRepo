@@ -289,3 +289,20 @@ Each row includes order ID, approved business name, location name, received time
 Customer ordering uses `SC.startSession({scope:"wholesale",clear})` with `/api/wholesale/session` as its profile and proof endpoint. `x-sc-session-check:1` returns only `user:{id,role}` (plus the shared cookie domain for staff previews), never business details or a new cookie. Ordering requests bind `x-expected-ordering-id`/`x-expected-ordering-role` to the page identity; mismatches return 409 `session_changed` before customer data reads/writes or logout. These headers add a stale-page guard and never establish authentication themselves.
 
 Writes and live connections accept only exact current/configured app origins. Private API/download responses prohibit cross-origin embedding, and authenticated PDFs/uploaded catalogue images are no-store. The shared verification shield is a native modal so private dialogs cannot block Retry. See [security review](security-privacy-review-2026-11-13.md) for scope, encryption and remaining administrative checks.
+
+
+## Holiday management (`/api/rota/leave/…`)
+
+- `GET dashboard[?userId=]`: employee’s own leave years, balances and absence history; another employee requires admin.
+- `GET calendar?from=&to=`: authenticated staff; at most 93 days of approved annual-leave names/dates and generic blocking labels. No private employee records or other absence types.
+- `GET requests/:id`: owner/admin-only absence, affected balances and own assigned-shift conflicts; another employee gets a nonrevealing missing record.
+- `POST preview`, `POST requests`: own annual/unpaid requests; admin may target an active employee and record sick/unauthorised absence or mark a record approved. Creation needs a request key and exact reviewed annual charges.
+- `PATCH requests/:id`: owner cancellation subject to historical/type restrictions; admin approval/decline/cancellation. A record version is required.
+- `GET admin`, `PUT settings`, `PUT allowances`: admin-only setup and versioned policy/employee-year updates.
+- `POST credits`, `POST credits/reverse`: admin-only, versioned worked-bank-holiday release or audited correction; no duplicate active release for a date.
+- `POST blocks`, `DELETE blocks/:id`: admin-only scoped blackout dates with version checks on removal.
+- `PATCH requests/:id/classify`: admin-only explicit legacy reconciliation, including an opening-used coverage flag when appropriate.
+- `GET events?userId=`: admin-only transactional history.
+- `GET bank-holidays?from=&to=`: admin-only optional England/Wales public date lookup; fixed GOV.UK source, no employee data sent. Failure preserves the manual setup form.
+
+Every mutation uses the existing authentication/identity/origin/rate-limit boundary. Atomic revision checks cover legacy and new time-off writers, budgets and capacity. Conflicts require review rather than overwriting another decision. See [leave management](leave-management.md) for policy semantics and onboarding.

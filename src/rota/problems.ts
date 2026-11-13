@@ -32,7 +32,7 @@ export function namer(people: Map<string, Person>) {
   };
 }
 export const overlaps = (a: Shift, b: Shift) => a.day === b.day && mins(a.start) < mins(b.end) && mins(b.start) < mins(a.end);
-export const onTimeOff = (t: TimeOff[], uid: string, day: string) => t.find((x) => x.userId === uid && x.from <= day && x.to >= day);
+export const onTimeOff = (t: TimeOff[], uid: string, day: string, start?:string, end?:string) => t.find((x) => x.userId === uid && x.from <= day && x.to >= day && (!x.fromTime || !x.toTime || !start || !end || (x.fromTime < end && x.toTime > start)));
 
 export function availabilityIssue(p: Person, s: Shift): string | null {
   const pat = p.pattern?.[DAY_KEYS[dow(s.day)]];
@@ -68,7 +68,7 @@ export function computeProblems(ctx: Ctx): Problem[] {
         message: `A shift at ${siteName(s.site)} on ${day(s.day)}, ${s.start}–${s.end}, is with an account that's switched off` });
       continue;
     }
-    const off = onTimeOff(ctx.timeOff, s.userId, s.day);
+    const off = onTimeOff(ctx.timeOff, s.userId, s.day, s.start, s.end);
     if (off) {
       out.push({ kind: "time_off", severity: "error", day: s.day, site: s.site, userId: s.userId, shiftIds: [s.id],
         message: `${nm(s.userId)} has time off on ${day(s.day)} but is on at ${siteName(s.site)}` });
