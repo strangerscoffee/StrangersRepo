@@ -1,3 +1,4 @@
+import {openWholesaleAccount, openWholesaleAccountMenu} from './wholesale-ui-helpers.mjs';
 import {test,before,after} from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
@@ -11,16 +12,27 @@ async function account(name){const customer=(await api('POST','/api/admin/wholes
 async function useCookie(context,cookie){const[name,value]=cookie.split('=');await context.addCookies([{name,value,url:srv.base}])}
 before(async()=>{srv=await startServer({writeLimit:4000});ADMIN=cookieOf((await api('POST','/api/auth/setup',{name:'Privacy Owner',username:'owner',password:'privacy-owner-password',code:SETUP_CODE},null)).r);A=await account('privacy.alpha');B=await account('privacy.beta');browser=await chromium.launch(process.env.CHROMIUM_PATH?{executablePath:process.env.CHROMIUM_PATH}:{})});
 after(async()=>{await browser?.close();await srv?.stop()});
+test('mobile account popover stays hidden during verification and clears the previous business', {timeout:60000}, async()=>{
+ const context=await browser.newContext({viewport:{width:393,height:852}});await useCookie(context,A.cookie);const page=await context.newPage();let release,arrive,holding=false;const ready=new Promise(r=>arrive=r),gate=new Promise(r=>release=r);
+ try{
+  await page.goto(srv.base+'/wholesale-preview/');await page.locator('[data-product]').first().waitFor();await openWholesaleAccountMenu(page);assert.equal(await page.locator('#signed-in-name').isVisible(),true);
+  await page.route('**/api/wholesale/session',async route=>{const response=await route.fetch();if(holding&&route.request().headers()['x-sc-session-check']==='1'){arrive();await gate}await route.fulfill({response})});
+  await useCookie(context,B.cookie);holding=true;await page.evaluate(()=>dispatchEvent(new Event('focus')));await ready;
+  assert.equal(await page.locator('#signed-in-name').isVisible(),false);assert.equal(await page.locator('#sc-session-shield').isVisible(),true);
+  const opened=await page.evaluate(()=>{const menu=document.getElementById('wholesale-account');if(menu.matches(':popover-open'))menu.hidePopover();menu.showPopover();return menu.matches(':popover-open')});assert.equal(opened,false,'a locked page cannot open its private account popover');
+  holding=false;release();await page.waitForFunction(()=>document.getElementById('signed-in-name')?.textContent==='privacy.beta');await openWholesaleAccountMenu(page);assert.equal(await page.locator('#signed-in-name').innerText(),'privacy.beta');assert.ok(!(await page.locator('#wholesale-account').innerText()).includes('privacy.alpha'));
+ }finally{release?.();await context.close()}
+});
 for(const[device,viewport]of[['phone',{width:393,height:852}],['iPad',{width:1180,height:820}]])for(const colorScheme of['light','dark'])test(`customer privacy ${device} ${colorScheme}: focus shields private forms until the current business is verified`,{timeout:60000},async()=>{
  const context=await browser.newContext({viewport,colorScheme});await useCookie(context,A.cookie);const page=await context.newPage();let release,arrive,holding=false;const ready=new Promise(r=>arrive=r),gate=new Promise(r=>release=r);
  try{
-  await page.goto(srv.base+'/wholesale-preview/');await page.locator('[data-product]').first().waitFor();await page.locator('#my-account').click();await page.locator('#account-dialog[open]').waitFor();assert.equal(await page.locator('#account-form [name="contact"]').inputValue(),'Private contact privacy.alpha');
+  await page.goto(srv.base+'/wholesale-preview/');await page.locator('[data-product]').first().waitFor();await openWholesaleAccount(page);await page.locator('#account-dialog[open]').waitFor();assert.equal(await page.locator('#account-form [name="contact"]').inputValue(),'Private contact privacy.alpha');
   await page.route('**/api/wholesale/session',async route=>{const response=await route.fetch();if(holding&&route.request().headers()['x-sc-session-check']==='1'){arrive();await gate}await route.fulfill({response})});
   await useCookie(context,B.cookie);holding=true;await page.evaluate(()=>{dispatchEvent(new Event('blur'));dispatchEvent(new Event('focus'))});await ready;
   assert.equal(await page.locator('html').getAttribute('data-sc-session-locked'),'');assert.equal(await page.locator('#account-form [name="contact"]').isVisible(),false);assert.equal(await page.locator('#sc-session-shield').isVisible(),true);
   if(process.env.SECURITY_QA_DIR){await mkdir(process.env.SECURITY_QA_DIR,{recursive:true});await page.screenshot({path:`${process.env.SECURITY_QA_DIR}/${device}-${colorScheme}.png`})}
   holding=false;release();await page.waitForFunction(()=>document.getElementById('signed-in-name')?.textContent==='privacy.beta');assert.equal(await page.locator('#account-dialog').isVisible(),false);assert.ok(!(await page.locator('body').innerText()).includes('Private contact privacy.alpha'));
-  await page.locator('#my-account').click();await page.locator('#account-dialog[open]').waitFor();assert.equal(await page.locator('#account-form [name="contact"]').inputValue(),'Private contact privacy.beta');
+  await openWholesaleAccount(page);await page.locator('#account-dialog[open]').waitFor();assert.equal(await page.locator('#account-form [name="contact"]').inputValue(),'Private contact privacy.beta');
  }finally{release?.();await context.close()}
 });
 test('a held order-history response cannot restore a previous business after identity loss',{timeout:60000},async()=>{
@@ -38,7 +50,7 @@ test('a held order-history response cannot restore a previous business after ide
 test('offline identity verification keeps customer details hidden until Retry succeeds',{timeout:60000},async()=>{
  const context=await browser.newContext({viewport:{width:393,height:852}});await useCookie(context,A.cookie);const page=await context.newPage();let offline=false;
  try{
-  await page.goto(srv.base+'/wholesale-preview/');await page.locator('[data-product]').first().waitFor();await page.locator('#my-account').click();await page.locator('#account-dialog[open]').waitFor();
+  await page.goto(srv.base+'/wholesale-preview/');await page.locator('[data-product]').first().waitFor();await openWholesaleAccount(page);await page.locator('#account-dialog[open]').waitFor();
   await page.route('**/api/wholesale/session',route=>offline?route.abort('failed'):route.continue());offline=true;await page.evaluate(()=>{dispatchEvent(new Event('blur'));dispatchEvent(new Event('focus'))});await page.locator('#sc-session-shield button:not([hidden])').waitFor();assert.equal(await page.locator('#account-form [name="email"]').isVisible(),false);
   offline=false;await page.locator('#sc-session-shield button').click();await page.locator('html:not([data-sc-session-locked])').waitFor();assert.equal(await page.locator('#account-form [name="email"]').inputValue(),'privacy.alpha@example.test');
  }finally{await context.close()}

@@ -1,3 +1,4 @@
+import {openWholesaleAccount} from './wholesale-ui-helpers.mjs';
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
@@ -112,13 +113,8 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       assert.equal(await card.locator('[data-product-photo]').evaluate(image => getComputedStyle(image).objectFit), 'contain');
       await card.locator('[data-photo-step="-1"]').click();
       await buyer.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
-      await buyer.waitForFunction(() => {
-        const header = document.querySelector('.site-header'), row = document.querySelector('.header-account');
-        return window.scrollY <= 8 && !row.inert && !header.classList.contains('is-account-collapsed')
-          && getComputedStyle(row).visibility === 'visible' && getComputedStyle(row).opacity === '1'
-          && !row.getAnimations().some(animation => animation.playState === 'running');
-      });
-      await buyer.locator('#my-account').click();
+      await buyer.waitForFunction(() => window.scrollY <= 8);
+      await openWholesaleAccount(buyer);
       await buyer.locator('#account-dialog').waitFor();
       assert.equal(await buyer.locator('#account-payment-terms').textContent(), '30 days from invoice');
       assert.equal(await buyer.locator('#account-payment-note').textContent(), 'Please quote the invoice number.');

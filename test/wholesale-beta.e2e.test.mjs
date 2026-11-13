@@ -1,3 +1,4 @@
+import {openWholesaleAccount} from './wholesale-ui-helpers.mjs';
 // A lost checkout response must never become a second customer order.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -298,13 +299,8 @@ for (const restored of [true, false]) {
       const other = await buyerAccount(`beta.${suffix}.second`);
       await page.locator("#review-dialog .close-button").click();
       await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
-      await page.waitForFunction(() => {
-        const header = document.querySelector(".site-header"), row = document.querySelector(".header-account");
-        return window.scrollY <= 8 && row && !row.inert && !header.classList.contains("is-account-collapsed")
-          && getComputedStyle(row).visibility === "visible" && getComputedStyle(row).opacity === "1"
-          && !row.getAnimations().some(animation => animation.playState === "running");
-      });
-      await page.locator("#my-account").click();
+      await page.waitForFunction(() => window.scrollY <= 8);
+      await openWholesaleAccount(page);
       await page.locator("#account-dialog").waitFor();
       assert.equal(await page.locator('#account-business').textContent(), customer.business);
       assert.equal(await page.locator('#account-form input[name="business"]:not([readonly]):not([hidden])').count(), 0, 'the approved business name is read-only');

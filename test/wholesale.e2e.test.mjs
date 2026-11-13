@@ -1,3 +1,4 @@
+import {openWholesaleAccount, openWholesaleAccountMenu} from './wholesale-ui-helpers.mjs';
 // Staff ordering and native Admin → Wholesale, on phones and iPads in light and dark mode.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -52,7 +53,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       assert.equal(await page.locator('.beta-badge, .help-note, #help-dialog').count(), 0);
       const design = await page.evaluate(() => {
         const card = document.querySelector('#products article');
-        const controls = [...card.querySelectorAll('button, .pack-choice'), ...document.querySelectorAll('.filter, .basket-link, #my-orders, #preview-sign-out')];
+        const controls = [...card.querySelectorAll('button, .pack-choice'), ...document.querySelectorAll('.filter, .basket-link, #my-orders, #account-toggle, #preview-sign-out')].filter(control => control.getClientRects().length);
         const probe = document.createElement('span');
         probe.style.backgroundColor = 'var(--accent)'; document.body.append(probe);
         const accent = getComputedStyle(probe).backgroundColor; probe.remove();
@@ -119,7 +120,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       await page.locator(`[data-history-order="${order.id}"]`).waitFor();
       await assertDialogCloseClear(page, '#orders-dialog');
       await page.locator('#orders-dialog .close-button').click();
-      await page.locator('#admin-wholesale-link').click();
+      await openWholesaleAccountMenu(page); await page.locator('#admin-wholesale-link').click();
       await page.locator("#main h1", { hasText: "Wholesale" }).waitFor();
       if (device === "phone") {
         await page.locator('#tabBar [data-go="more"]').click();
@@ -174,7 +175,7 @@ test("wholesale staff: signed-out pages require login; staff cannot open the adm
     await page.waitForURL((url) => url.pathname === "/");
     await page.goto(srv.base + "/wholesale-preview/");
     await page.locator("#products article").first().waitFor();
-    await page.locator("#preview-sign-out").click();
+    await openWholesaleAccountMenu(page); await page.locator("#preview-sign-out").click();
     await page.waitForURL(/\/signin$/);
     assert.equal((await page.request.get(srv.base + "/api/wholesale/catalogue")).status(), 401);
   } finally { await signedOut.close(); await context.close(); }
@@ -224,7 +225,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       assert.equal(await page.locator('#signed-in-name').textContent(), business);
       assert.equal(await page.locator('#admin-wholesale-link').isHidden(), true);
       assert.equal(await page.locator('#staff-preview-notice').isHidden(), true);
-      await page.locator('#my-account').click();
+      await openWholesaleAccount(page);
       await page.locator('#account-dialog').waitFor();
       assert.equal(await page.locator('#account-business').textContent(), business, 'the approved business name is shown without an editable customer field');
       assert.equal(await page.locator('#account-form input[name="business"]:not([readonly]):not([hidden])').count(), 0);

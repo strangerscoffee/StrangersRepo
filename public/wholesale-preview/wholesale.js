@@ -715,6 +715,7 @@ async function start() {
   } finally { catalogueLoading = false; $("#products").setAttribute("aria-busy", "false"); }
 }
 $("#preview-sign-out").addEventListener("click", async () => {
+  closeAccountMenu();
   if (session?.me.role !== "wholesale") return SC.signOut();
   try { await api("/api/wholesale/auth/logout", {}); goSignIn(); }
   catch (error) { toast(error.message); }
@@ -725,10 +726,11 @@ window.addEventListener("pageshow", (event) => {
   // Shared session verification shields the restored page before proving its owner. Keep its
   // dialog open: reloading here races the guard's sign-in navigation after a session expires.
   document.querySelectorAll("dialog[open]:not(#sc-session-shield)").forEach(dialog => dialog.close());
-  closeSortMenu();
+  closeSortMenu(); closeAccountMenu();
 });
 
 async function openAccount() {
+  closeAccountMenu();
   try {
     const current = await api("/api/wholesale/session");
     if (current.me.id !== session.me.id) { location.reload(); return; }
@@ -935,7 +937,7 @@ function showHistorySection(section) {
   $("#orders-body").scrollTop = 0;
 }
 document.querySelectorAll("#my-orders,[data-order-history]").forEach(button => button.addEventListener("click", () => {
-  showHistorySection("orders"); $("#orders-dialog").showModal(); loadOrders();
+  closeAccountMenu(); showHistorySection("orders"); $("#orders-dialog").showModal(); loadOrders();
   if (session.customer) refreshInvoiceSwitch();
 }));
 $("#history-orders").addEventListener("click", () => showHistorySection("orders"));
@@ -1008,57 +1010,62 @@ $("#confirm-reorder").addEventListener("click", async () => {
   } catch (error) { $("#reorder-error").textContent = error.message; $("#reorder-error").hidden = false; }
   finally { reordering = false; $("#confirm-reorder").disabled = !reorderPlan?.added.packs; }
 });
-// Collapse only the mobile account row, keeping a stable sticky shell and any active control visible.
+// One compact mobile row; the same account controls become an anchored native popover.
 const mobileHeaderQuery = matchMedia("(max-width: 700px)");
-const mobileHeader = $(".site-header"), headerShell = $(".header-shell"), headerAccount = $(".header-account");
-let mobileHeaderFrame = 0, mobileHeaderNeedsMeasure = true, measuredHeaderWidth = 0;
-function scheduleMobileHeaderLayout(measure = false) {
-  mobileHeaderNeedsMeasure ||= measure;
-  if (mobileHeaderFrame) return;
-  mobileHeaderFrame = requestAnimationFrame(() => {
-    mobileHeaderFrame = 0;
-    let collapsed = mobileHeader.classList.contains("is-account-collapsed");
-    if (!mobileHeaderQuery.matches) {
-      collapsed = false;
-      headerShell.style.removeProperty("--header-expanded-height");
-      mobileHeader.style.removeProperty("--header-account-height");
-    } else {
-      const pageTop = Math.max(0, window.scrollY);
-      if (pageTop <= 8 || headerAccount.contains(document.activeElement)) collapsed = false;
-      else if (pageTop >= 64) collapsed = true;
-      if (mobileHeaderNeedsMeasure) {
-        // Measure the expanded state before painting, including after width or navigation changes.
-        mobileHeader.classList.add("is-measuring-header");
-        mobileHeader.classList.remove("is-account-collapsed");
-        mobileHeader.style.setProperty("--header-account-height", `${headerAccount.offsetHeight}px`);
-        headerShell.style.setProperty("--header-expanded-height", `${mobileHeader.offsetHeight}px`);
-        mobileHeader.classList.toggle("is-account-collapsed", collapsed);
-        void mobileHeader.offsetHeight;
-        mobileHeader.classList.remove("is-measuring-header");
-      }
-    }
-    mobileHeaderNeedsMeasure = false;
-    measuredHeaderWidth = mobileHeader.offsetWidth;
-    mobileHeader.classList.toggle("is-account-collapsed", collapsed);
-    headerAccount.inert = collapsed;
-    if (collapsed) headerAccount.setAttribute("aria-hidden", "true");
-    else headerAccount.removeAttribute("aria-hidden");
-  });
+const mobileHeader = $(".site-header"), headerAccount = $("#wholesale-account"), accountToggle = $("#account-toggle");
+const headerNavigation = mobileHeader.querySelector("nav"), accountActions = headerAccount.querySelector(".account-buttons");
+function closeAccountMenu() {
+  if (headerAccount.matches(":popover-open")) headerAccount.hidePopover();
 }
-window.addEventListener("scroll", () => scheduleMobileHeaderLayout(), { passive: true });
-window.addEventListener("resize", () => scheduleMobileHeaderLayout(true), { passive: true });
-window.addEventListener("pageshow", () => scheduleMobileHeaderLayout(true));
-mobileHeaderQuery.addEventListener("change", () => scheduleMobileHeaderLayout(true));
-headerAccount.addEventListener("focusin", () => scheduleMobileHeaderLayout());
-headerAccount.addEventListener("focusout", () => scheduleMobileHeaderLayout());
-if ("ResizeObserver" in window) {
-  const mobileHeaderObserver = new ResizeObserver(entries => {
-    const changedContent = entries.some(entry => entry.target !== mobileHeader);
-    scheduleMobileHeaderLayout(changedContent || mobileHeader.offsetWidth !== measuredHeaderWidth);
-  });
-  [mobileHeader, mobileHeader.querySelector("nav"), ...headerAccount.children].forEach(node => mobileHeaderObserver.observe(node));
+function positionAccountMenu() {
+  if (!mobileHeaderQuery.matches) return;
+  const rect = mobileHeader.getBoundingClientRect(), width = Math.min(224, innerWidth - 32);
+  const top = Math.max(8, rect.bottom + 8);
+  headerAccount.style.width = width + "px";
+  headerAccount.style.left = Math.max(16, Math.min(rect.right - width, innerWidth - width - 16)) + "px";
+  headerAccount.style.top = top + "px";
+  headerAccount.style.maxHeight = Math.max(44, innerHeight - top - 16) + "px";
 }
-scheduleMobileHeaderLayout(true);
+function configureAccountMenu() {
+  const restoreFocus = headerAccount.contains(document.activeElement) || document.activeElement === accountToggle;
+  closeAccountMenu();
+  const adminLink = $("#admin-wholesale-link");
+  if (mobileHeaderQuery.matches) {
+    headerAccount.setAttribute("popover", "auto");
+    accountActions.insertBefore(adminLink, $("#preview-sign-out"));
+  } else {
+    headerAccount.removeAttribute("popover");
+    headerNavigation.append(adminLink);
+    for (const property of ["width", "left", "top", "max-height"]) headerAccount.style.removeProperty(property);
+  }
+  accountToggle.setAttribute("aria-expanded", "false");
+  if (restoreFocus && !document.querySelector("dialog[open]") && !document.documentElement.hasAttribute("data-sc-session-locked")) {
+    const target = mobileHeaderQuery.matches ? accountToggle : [...headerAccount.querySelectorAll("button"), adminLink].find(node => !node.hidden);
+    target?.focus({ preventScroll: true });
+  }
+}
+headerAccount.addEventListener("beforetoggle", event => {
+  const opening = event.newState === "open";
+  if (opening && (!ready || document.documentElement.hasAttribute("data-sc-session-locked"))) { event.preventDefault(); return; }
+  accountToggle.setAttribute("aria-expanded", String(opening));
+  if (opening) positionAccountMenu();
+});
+headerAccount.addEventListener("toggle", event => {
+  if (event.newState === "open" && ready && !document.documentElement.hasAttribute("data-sc-session-locked") && headerAccount.matches(":popover-open")) [...headerAccount.querySelectorAll("button,a")].find(node => !node.hidden)?.focus({ preventScroll: true });
+});
+accountToggle.addEventListener("keydown", event => {
+  if (event.key === "ArrowDown") { event.preventDefault(); headerAccount.showPopover(); }
+});
+mobileHeaderQuery.addEventListener("change", configureAccountMenu);
+window.addEventListener("resize", () => { if (headerAccount.matches(":popover-open")) positionAccountMenu(); }, { passive: true });
+window.addEventListener("scroll", () => { if (headerAccount.matches(":popover-open")) positionAccountMenu(); }, { passive: true });
+window.addEventListener("blur", closeAccountMenu);
+window.addEventListener("pagehide", closeAccountMenu);
+$("#account-dialog").addEventListener("close", () => {
+  if (!ready || document.documentElement.hasAttribute("data-sc-session-locked") || document.querySelector("dialog[open]")) return;
+  (mobileHeaderQuery.matches ? accountToggle : $("#my-account")).focus({ preventScroll: true });
+});
+configureAccountMenu();
 
 // Fit the desktop basket to its actual position, including the first viewport before it sticks.
 let basketLayoutFrame = 0;
@@ -1086,6 +1093,7 @@ if ("IntersectionObserver" in window) {
   new IntersectionObserver(([entry]) => { orderVisible = entry.isIntersecting; updateMobileBasket(); }, { threshold: 0 }).observe($("#your-order"));
 }
 function clearOrderingSession() {
+  closeAccountMenu();
   ready = false; session = null; basket = []; history = []; pendingAttempt = null;
   accountLocations = []; customerInvoices = []; STORAGE_KEY = null;
   setCatalogue([]); photoIndexes.clear();
