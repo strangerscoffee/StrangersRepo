@@ -92,3 +92,42 @@ test("going home early on a phone", { timeout: 120000 }, async () => {
     assert.deepEqual(errors, []);
   } finally { await c.close(); }
 });
+
+test("Admin → Sickness: Bradford Factor by trigger point, a form's answers, and removing one", { timeout: 180000 }, async () => {
+  const u = await staff();
+  for (const d of [-200, -150, -100, -50, -10]) {
+    const r = await call("POST", "/api/rota/sickness", { userId: u.id, requestKey: crypto.randomUUID(), kind: "off", from: london(d), to: london(d), category: "Cold or flu", details: "Heavy cold", vomiting: false, doctor: false, workAccident: false, declared: true });
+    assert.equal(r.status, 200, r.text);
+  }
+  for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["ipad", { width: 820, height: 1180 }]]) for (const colorScheme of ["light", "dark"]) {
+    const { c, page: p, errors } = await context(viewport, colorScheme, ADMIN);
+    try {
+      await p.goto(srv.base + "/admin#sickness");
+      const row = p.locator(".sk-person", { hasText: u.name });
+      await row.waitFor();
+      assert.match(await row.innerText(), /5 spells · 5 days[\s\S]*125\s*Stage 1/);
+      assert.match(await row.innerText(), /written warning/);
+      await p.locator(".sk-scale summary").click();
+      assert.equal(await p.locator(".sk-band-row").count(), 5);
+      assert.equal(await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true, `${device} ${colorScheme}: no sideways scroll`);
+      await shot(p, `admin-${device}-${colorScheme}`);
+      await row.click();
+      await p.locator(".sk-score", { hasText: "5 × 5 × 5 =" }).waitFor();
+      await shot(p, `admin-person-${device}-${colorScheme}`);
+      assert.deepEqual(errors, []);
+    } finally { await c.close(); }
+  }
+  const { c, page: p, errors } = await context({ width: 1180, height: 820 }, "light", ADMIN);
+  try {
+    await p.goto(srv.base + "/admin#sickness");
+    await p.locator(".sk-person", { hasText: u.name }).click();
+    await p.locator('.sk-sheet [data-sheet="sk-open"]').first().click();
+    await p.locator(".sk-answers", { hasText: "Heavy cold" }).waitFor();
+    await p.locator('[data-sheet="sk-remove"]').click();
+    await p.locator('[data-sheet="sk-remove-now"]').click();
+    await p.locator(".sk-sheet").waitFor({ state: "detached" });
+    await p.locator(".sk-person", { hasText: u.name }).filter({ hasText: "4 spells" }).waitFor();
+    assert.match(await p.locator(".sk-person", { hasText: u.name }).innerText(), /64\s*Monitor/);
+    assert.deepEqual(errors, []);
+  } finally { await c.close(); }
+});
