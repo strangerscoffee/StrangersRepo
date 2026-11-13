@@ -4,6 +4,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
   const invoiceUI = window.WholesaleInvoices({ api, html, raw, svg, put, openSheet, closeSheet, reload, toast });
   const printUI = window.WholesalePrint({ api, html, raw, svg, put, openSheet, closeSheet, toast });
   const insightsUI = window.WholesaleInsights({ api, html, raw, svg, put, openSheet, closeSheet, reload, toast });
+  const tabsUI = window.WholesaleTabs({ api, html, raw, svg, put, openSheet, closeSheet, reload, toast });
   // Picking orders to print: while on, tapping an order ticks it instead of opening it.
   let picking = false; const picked = new Set();
   const money = (pence) => new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(pence / 100);
@@ -12,7 +13,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
   const date = (ms) => new Date(ms).toLocaleString("en-GB", { timeZone: "Europe/London", year: "numeric", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
   let tab = "orders", status = "all", approval = "all", query = "", data = null, timer, sequence = 0;
   let orderPages = 1, customerPages = 1, loadingMore = false;
-  const sections = [["orders", "Orders"], ["customers", "Customers"], ["catalogue", "Coffee catalogue"], ["custom", "Custom coffees"], ["invoices", "Invoicing"], ["insights", "Insights"]];
+  const sections = [["orders", "Orders"], ["customers", "Customers"], ["catalogue", "Coffee catalogue"], ["custom", "Custom coffees"], ["tabs", "Tabs"], ["invoices", "Invoicing"], ["insights", "Insights"]];
   const pendingReviews = () => data?.stats?.pendingAccounts ?? data?.accounts?.filter((row) => row.approvalStatus === "pending").length ?? 0;
   function navigation({ sidebar = false, active = true } = {}) {
     const pending = pendingReviews();
@@ -118,7 +119,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     return html`<div class="w-workspace">${head("Wholesale")}
       ${section === "orders" || section === "insights" ? "" : html`<div class="label w-overview-label">Wholesale at a glance</div>`}<div class="stats w-stats ${section === "orders" ? "w-stats-orders" : ""}" ${section === "insights" ? raw("hidden") : ""} role="group" aria-label="${section === "orders" ? "Order preparation overview" : "Wholesale overview"}">${metrics.map(([label, value, sub]) => html`<div class="stat glass"><span class="k">${label}</span><span class="v">${value}</span><span class="s">${sub}</span></div>`)}</div>
       <div id="wSectionsHost" class="w-sections-host" hidden></div>
-      <div class="w-content">${tab === "orders" ? orders() : tab === "customers" ? customers() : tab === "invoices" ? await invoiceUI.view() : tab === "insights" ? await insightsUI.view() : catalogue()}</div></div>`;
+      <div class="w-content">${tab === "orders" ? orders() : tab === "customers" ? customers() : tab === "invoices" ? await invoiceUI.view() : tab === "insights" ? await insightsUI.view() : tab === "tabs" ? await tabsUI.view() : catalogue()}</div></div>`;
   }
   function more(kind) {
     return data.nextCursor ? html`<div class="w-more"><button class="btn soft" type="button" data-act="wh-more" data-id="${kind}">Load more ${kind}</button></div>` : "";
@@ -517,7 +518,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
       ${row.preview === false ? html`<section class="w-order-section" aria-labelledby="wTermsTitle"><h3 id="wTermsTitle">Payment terms at order</h3><p>${row.paymentTerms?.label || "Not recorded on this order"}</p>${row.paymentTerms?.note ? html`<p class="w-address">${row.paymentTerms.note}</p>` : ""}</section>` : ""}
       ${invoiceUI.orderPanel(row)}
       ${row.preview === false && row.customerId ? html`<section class="w-order-section" aria-labelledby="wTabTitle"><div class="w-section-head"><h3 id="wTabTitle">Customer tab</h3>${row.tabClearedId ? "" : html`<button class="btn sm soft" type="button" data-sheet="tab-toggle">${row.tab ? "Take off tab" : "Put on tab"}</button>`}</div>
-        <p class="hint">${row.tabClearedId ? "On a tab that has been cleared." : row.tab ? `On this customer’s tab${row.tab.auto ? " (added automatically)" : row.tab.by ? ` (added by ${row.tab.by})` : ""}.` : "Not on a tab."} Tabs are cleared on the staff <a href="${(data.links?.diary || "").replace(/\/$/, "")}/orders#tabs">Wholesale orders page</a>.</p></section>` : ""}
+        <p class="hint">${row.tabClearedId ? "On a tab that has been cleared." : row.tab ? `On this customer’s tab${row.tab.auto ? " (added automatically)" : row.tab.by ? ` (added by ${row.tab.by})` : ""}.` : "Not on a tab."} Tabs are cleared in Wholesale → Tabs here, or on the staff <a href="${(data.links?.diary || "").replace(/\/$/, "")}/orders#tabs">Wholesale orders page</a>.</p></section>` : ""}
       ${row.preview === false ? scheduleSection(row, draft?.schedule) : ""}
       <section class="w-order-section w-order-management" aria-labelledby="wManageTitle"><h3 id="wManageTitle">Manage order</h3>${field("Order status", html`<select id="wStatus">${data.statuses.map((value) => html`<option ${value === (draft?.status ?? row.status) ? raw("selected") : ""}>${value}</option>`)}</select>`)}
       ${field("Customer", html`<select id="wCustomer" ${row.preview === false ? raw("disabled") : ""}><option value="">Not linked to a customer</option>${selectedCustomer && !customer(selectedCustomer) ? html`<option value="${selectedCustomer}" selected>${snapshot?.business || row.business}</option>` : ""}${data.customers.map((value) => html`<option value="${value.id}" ${value.id === selectedCustomer ? raw("selected") : ""}>${value.business}</option>`)}</select>`)}
@@ -661,7 +662,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
       ${customerChoiceField("Status", "wStatus", state.status, [{ value: "Active", label: "Active" }, { value: "On hold", label: "On hold" }])}
       <div class="checks w-minimum-check"><label><input id="wNoMinimum" type="checkbox" ${state.noMinimumOrder ? raw("checked") : ""}>No minimum order (invoice as they go)</label></div><p class="hint">Only Strangers sees this setting. Without it, orders must be at least ${minimumKg()} of coffee. The customer just won’t see a minimum.</p>
       <div class="checks w-minimum-check"><label><input id="wHidePrices" type="checkbox" ${state.hidePrices ? raw("checked") : ""}>Hide prices (our own shops)</label></div><p class="hint">Ordering shows no prices or totals to this business: bags and weights only. Orders still record their prices for Admin and invoices.</p>
-      <div class="checks w-minimum-check"><label><input id="wAutoTab" type="checkbox" ${state.autoTab ? raw("checked") : ""}>Put orders on a tab</label></div><p class="hint">Each new order goes on this business’s tab automatically. Tabs are cleared on the staff Wholesale orders page (Tabs) when they reach 6 kg, or sooner.</p></section>
+      <div class="checks w-minimum-check"><label><input id="wAutoTab" type="checkbox" ${state.autoTab ? raw("checked") : ""}>Put orders on a tab</label></div><p class="hint">Each new order goes on this business’s tab automatically. Tabs are cleared in Wholesale → Tabs, or on the staff Wholesale orders page, when they reach 6 kg, or sooner.</p></section>
       ${id ? ((own) => html`<section class="w-customer-card" aria-labelledby="wWlCustomerTitle"><h3 id="wWlCustomerTitle">Custom coffees</h3>${own.length ? html`<div class="group">${own.map((p) => html`<div class="item w-coffee-tone" style="${coffeeStyle(p)}"><span class="tx"><b><span class="w-coffee-swatch" aria-hidden="true"></span>${p.title}</b><span>${sizesText(p)}${p.active ? "" : " · Hidden"}</span>${p.recipe?.length ? html`<span>Made from ${p.recipe.map((r) => `${r.percent}% ${r.name}`).join(" · ")}</span>` : ""}</span></div>`)}</div>` : html`<p class="hint">None yet.</p>`}<p class="hint">These coffees are available to this business and any other selected customers. Manage access, prices and recipes in Custom coffees.</p></section>`)(data.products.filter((p) => p.whiteLabel?.includes(id))) : ""}
       ${id ? html`<section class="w-customer-card" aria-labelledby="wSigninTitle"><h3 id="wSigninTitle">Wholesale sign-in</h3><div class="kv"><span>Username</span><span>${accountFor(id)?.username || "Not created"}</span></div><button class="btn soft" type="button" data-sheet="account">${accountFor(id)?.approvalStatus === "pending" ? "Save and review sign-in" : accountFor(id) ? "Save and manage sign-in" : "Save and create sign-in"}</button>${accountFor(id) ? "" : html`<button class="btn soft" type="button" data-sheet="invite">${svg("mail")}${data.invites?.[id] && !data.invites[id].used ? "Save and send a new invite" : "Save and invite to order online"}</button><p class="hint">${inviteText(id)}. The invite emails a link to choose their own username and password.</p>`}</section>` : ""}
       <section class="w-customer-card" aria-labelledby="wInternalNoteTitle"><h3 id="wInternalNoteTitle">Internal notes</h3>${field("Internal account note", html`<textarea id="wNote" maxlength="1000">${state.note || ""}</textarea>`)}${note}</section></div></div>
@@ -957,6 +958,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     async act(name, id) {
       if (name.startsWith("wh-invoice-")) { await invoiceUI.act(name, id); return; }
       if (name.startsWith("wh-ins-")) { await insightsUI.act(name, id); return; }
+      if (name.startsWith("wh-tabs-")) { await tabsUI.act(name, id); return; }
       if (name === "wh-order-emails") { await openOrderEmails(); return; }
       if (name === "wh-print-new") { await printUI.printOrders(printUI.scopes.New); return; }
       if (name === "wh-totals") { await printUI.openTotals(picking ? [...picked] : []); return; }

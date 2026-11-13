@@ -123,3 +123,40 @@ test("on a phone and an iPad, light and dark", async () => {
     await ctx.close();
   }
 });
+
+test("Admin → Wholesale → Tabs: see every tab with £, and clear one", async () => {
+  await order(shop, 6); // ASG's automatic tab: ready
+  const adminPage = async (viewport, extra = {}) => {
+    const ctx = await b.newContext({ viewport, ...extra });
+    const [n, v] = ADMIN.split("="); await ctx.addCookies([{ name: n, value: v, url: srv.base }]);
+    const p = await ctx.newPage(), errors = []; p.on("pageerror", (e) => errors.push(String(e)));
+    await p.goto(srv.base + "/admin#wholesale");
+    await p.locator('[data-act="wh-tab"][data-id="tabs"]').first().click();
+    await p.locator(".w-tab-card").first().waitFor();
+    return { ctx, p, errors };
+  };
+  for (const [name, viewport] of [["phone", { width: 390, height: 844 }], ["ipad", { width: 820, height: 1180 }]]) for (const colorScheme of ["light", "dark"]) {
+    const { ctx, p, errors } = await adminPage(viewport, { colorScheme, isMobile: true, hasTouch: true });
+    const first = p.locator(".w-tab-card").first();
+    assert.match(await first.innerText(), /Strangers ASG[\s\S]*Ready to clear[\s\S]*6 kg[\s\S]*£/);
+    assert.equal(await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true, `${name} ${colorScheme}: no sideways scroll`);
+    await shot(p, `admin-${name}-${colorScheme}`);
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  }
+  const { ctx, p, errors } = await adminPage({ width: 1180, height: 820 });
+  await p.locator(".w-tab-card", { hasText: "Strangers ASG" }).click();
+  await p.locator(".w-tab-sheet").waitFor();
+  assert.match(await p.locator(".w-tab-sheet").innerText(), /Orders on the tab[\s\S]*Added automatically/);
+  await p.locator('[data-sheet="tab-clear"]').click();
+  await p.locator(".w-tab-confirm", { hasText: /^Clear [\d.]+ kg\?$/ }).waitFor();
+  await shot(p, "admin-confirm");
+  await p.locator('.w-tab-sheet button[type="submit"]').click();
+  await p.locator(".w-tab-sheet").waitFor({ state: "detached" });
+  await p.locator(".w-tab-card.ready", { hasText: "Strangers ASG" }).waitFor({ state: "detached" });
+  assert.match(await p.locator(".w-tabs-workspace .group").last().innerText(), /Strangers ASG[\s\S]*Cleared .* by Admin[\s\S]*kg[\s\S]*£/);
+  const tabs = (await call("GET", "/api/admin/wholesale/tabs")).body;
+  assert.ok(tabs.cleared.some((c) => c.business === "Strangers ASG" && c.clearedBy === "Admin" && c.grams >= 6000 && Number.isFinite(c.pence)));
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});

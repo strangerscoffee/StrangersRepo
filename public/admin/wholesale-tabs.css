@@ -1,0 +1,18 @@
+/* Admin → Wholesale → Tabs (public/admin/wholesale-tabs.js) */
+.w-tabs-workspace{display:grid;gap:14px;min-width:0}
+.w-tabs-head{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;gap:8px 16px}.w-tabs-head h2{margin:0 0 4px}.w-tabs-head .hint{max-width:62ch;margin:0}
+.w-tabs-count{margin:0;color:var(--muted)}.w-tabs-count b{color:var(--ok)}
+.w-tab-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
+.w-tab-card{display:grid;gap:8px;text-align:left;padding:16px;border-radius:20px;border:1px solid var(--line);background:var(--sunk);color:inherit;font:inherit;cursor:pointer;min-width:0}
+.w-tab-card:hover{border-color:var(--accent)}.w-tab-card.ready{border-color:var(--ok);box-shadow:inset 0 0 0 1px var(--ok)}
+.w-tab-top{display:flex;justify-content:space-between;align-items:center;gap:8px;min-width:0}.w-tab-top b{overflow-wrap:anywhere}
+.w-tab-card .pill,.w-tab-summary .pill{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}.w-tab-card .pill svg{width:14px;height:14px}
+.w-tab-kg{color:var(--muted)}.w-tab-kg strong{color:var(--fg);font-size:1.25em}.w-tab-kg.big strong{font-size:1.6em}
+.w-tab-bar{display:block;height:8px;border-radius:99px;background:var(--line);overflow:hidden}.w-tab-bar>span{display:block;height:100%;border-radius:inherit;background:var(--accent)}.w-tab-bar.ready>span{background:var(--ok)}
+.w-tab-meta{color:var(--muted);font-size:13.5px}
+.w-tab-summary{display:grid;gap:8px;padding:14px;border-radius:16px;background:var(--sunk);margin-bottom:6px}.w-tab-summary.ready{box-shadow:inset 0 0 0 1px var(--ok)}
+.w-tab-not-counted{opacity:.6}
+.w-tab-money{color:var(--muted);font-size:13px}
+.w-tab-sheet .w-actions{flex-wrap:wrap}.w-tab-confirm{flex:1 0 100%;font-weight:600}
+.w-tabs-sub{margin:10px 0 0}.w-tabs-empty{padding:14px;border:1px dashed var(--line);border-radius:16px}
+@media (max-width:520px){.w-tab-cards{grid-template-columns:1fr}}
