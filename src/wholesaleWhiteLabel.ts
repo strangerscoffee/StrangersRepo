@@ -8,7 +8,7 @@ import { invalid } from "./http";
 import { object, text } from "./wholesaleStore";
 
 export interface RecipePart { coffee?: string; name: string; percent: number }
-type WithLabel = { id: string; name: string; whiteLabel?: string[]; recipe?: RecipePart[] };
+type WithLabel = { id: string; name: string; whiteLabel?: string[]; customerOnly?: true; recipe?: RecipePart[] };
 
 export function editedWhiteLabel(value: unknown): string[] | undefined {
   if (value == null || (Array.isArray(value) && !value.length)) return undefined;
@@ -31,12 +31,13 @@ export function editedRecipe(value: unknown, ids: Set<string>, self: string | nu
 /** "60% Campo Santo · 40% Bom Jesus", for staff. */
 export const recipeText = (product: { recipe?: RecipePart[] }) => (product.recipe || []).map((p) => `${p.percent}% ${p.name}`).join(" · ");
 /** Whether this business (or a staff preview, customerId null) may see and order the coffee. */
-export const canOrder = (product: WithLabel, customerId: string | null) => !product.whiteLabel?.length || !customerId || product.whiteLabel.includes(customerId);
+export const isCustomCoffee = (product: Pick<WithLabel, "whiteLabel" | "customerOnly">) => product.customerOnly === true || !!product.whiteLabel?.length;
+export const canOrder = (product: WithLabel, customerId: string | null) => !isCustomCoffee(product) || customerId === null || !!product.whiteLabel?.includes(customerId);
 /** The catalogue as a customer sees it: their own white-label coffees first (marked `yours`), the rest of the range,
  *  no one else's white-label coffees and no recipes. Staff previews see everything, white-label coffees marked. */
 export function catalogueFor<T extends WithLabel>(coffees: T[], customerId: string | null) {
-  if (!customerId) return coffees.map(({ whiteLabel, ...c }) => ({ ...c, ...(whiteLabel?.length ? { whiteLabel: true } : {}) }));
-  const visible = coffees.filter((c) => canOrder(c, customerId)).map(({ whiteLabel, recipe, ...c }) => ({ ...c, ...(whiteLabel?.length ? { yours: true } : {}) }));
+  if (customerId === null) return coffees.map(({ whiteLabel, customerOnly, ...c }) => ({ ...c, ...(isCustomCoffee({ whiteLabel, customerOnly }) ? { whiteLabel: true } : {}) }));
+  const visible = coffees.filter((c) => canOrder(c, customerId)).map(({ whiteLabel, customerOnly, recipe, ...c }) => ({ ...c, ...(isCustomCoffee({ whiteLabel, customerOnly }) ? { yours: true } : {}) }));
   return [...visible.filter((c) => (c as any).yours), ...visible.filter((c) => !(c as any).yours)];
 }
 /** Order lines as a customer sees them: without the staff-only recipe. */

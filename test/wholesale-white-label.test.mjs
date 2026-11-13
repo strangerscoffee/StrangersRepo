@@ -1,5 +1,6 @@
 // White-label coffees: private to the businesses they're made for (seen, ordered and photographed only by them, listed
 // first), with their own prices; and recipes ("Made from") that staff see on orders and customers never see.
+import { readFile } from "node:fs/promises";
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { startServer, SETUP_CODE } from "./harness.mjs";
@@ -112,8 +113,13 @@ test("Edit bags can't add someone else's white label; it can add the business's 
   assert.ok(!JSON.stringify(seen).includes("100% Brazil"));
 });
 
-test("Taking the white label off puts it back in everyone's range", async () => {
-  const opened = await call("PUT", `/api/admin/wholesale/catalogue/${label.id}`, { title: label.title, name: label.name, origin: label.origin, process: label.process, notes: label.notes, categories: label.categories, prices: label.prices, active: true, inStock: true, ifVersion: label.version, whiteLabel: [] });
+test("Clearing customers keeps the coffee private; an explicit visibility change returns it to the general range", async () => {
+  const cleared = await call("PUT", `/api/admin/wholesale/catalogue/${label.id}`, { title: label.title, name: label.name, origin: label.origin, process: label.process, notes: label.notes, categories: label.categories, prices: label.prices, active: true, inStock: true, ifVersion: label.version, whiteLabel: [] });
+  assert.equal(cleared.status, 200, cleared.text); label = cleared.body.product;
+  assert.equal(label.customerOnly, true);
+  assert.equal((await products(A)).some(p => p.id === label.id), false);
+  assert.equal((await products(B)).some(p => p.id === label.id), false);
+  const opened = await call("PUT", `/api/admin/wholesale/catalogue/${label.id}`, { title: label.title, name: label.name, origin: label.origin, process: label.process, notes: label.notes, categories: label.categories, prices: label.prices, active: true, inStock: true, ifVersion: label.version, whiteLabel: [], customerOnly: false });
   assert.equal(opened.status, 200, opened.text);
   assert.equal(Object.hasOwn(opened.body.product, "whiteLabel"), false);
   assert.ok((await products(B)).some((p) => p.id === label.id && !p.yours));
@@ -148,4 +154,48 @@ test("A coffee can be sold in one bag size only: the other size can't be ordered
   const both = await call("PUT", `/api/admin/wholesale/catalogue/${kilo.id}`, { ...base, prices: { quarter: 600, kilo: 2100 }, packs: ["quarter", "kilo"], ifVersion: kept.body.product.version });
   assert.equal(both.status, 200, both.text);
   assert.equal(Object.hasOwn(both.body.product, "packs"), false);
+});
+
+
+test("custom coffees stay private without customers, support selected customers and revoke catalogue, orders and photos together", async () => {
+  const third = await customer("third.buyer", "Third Cafe");
+  const base = { title: "Private House Coffee", name: "Private House Coffee", origin: "Brazil", process: "Natural", notes: "Private tasting notes", categories: ["blend"], prices: { quarter: 600, kilo: 2200 }, active: true, inStock: true };
+  assert.equal((await call("POST", "/api/admin/wholesale/catalogue", { ...base, customerOnly: "true" })).status, 400);
+  for (const cookie of [A, B]) assert.ok([401, 403].includes((await call("POST", "/api/admin/wholesale/catalogue", { ...base, customerOnly: true }, cookie)).status));
+  assert.equal((await call("GET", "/api/wholesale/catalogue", undefined, null)).status, 401);
+  let saved = (await call("POST", "/api/admin/wholesale/catalogue", { ...base, customerOnly: true, whiteLabel: [] })).body.product;
+  const put = async (change) => {
+    const response = await call("PUT", `/api/admin/wholesale/catalogue/${saved.id}`, { ...base, ifVersion: saved.version, ...change });
+    assert.equal(response.status, 200, response.text); saved = response.body.product;
+  };
+  const seen = async cookie => (await products(cookie)).find(p => p.id === saved.id);
+  assert.equal(saved.customerOnly, true);
+  assert.equal(await seen(A), undefined); assert.equal(await seen(B), undefined);
+  assert.equal((await order(A, saved.id)).status, 400, "knowing its id does not allow an unassigned order");
+  await put({ whiteLabel: [idA, idB] });
+  for (const cookie of [A, B]) {
+    const coffee = await seen(cookie); assert.equal(coffee.yours, true);
+    for (const key of ["whiteLabel", "customerOnly", "recipe"]) assert.equal(Object.hasOwn(coffee, key), false, key + " stays private");
+    assert.equal((await order(cookie, saved.id)).status, 201);
+  }
+  assert.equal(await seen(third.cookie), undefined);
+  assert.equal((await call("GET", `/api/wholesale/catalogue?customerId=${idA}`, undefined, third.cookie)).body.products.some(p => p.id === saved.id), false, "query parameters cannot impersonate another customer");
+  assert.equal((await order(third.cookie, saved.id)).status, 400);
+  const photo = await fetch(srv.base + `/api/admin/wholesale/catalogue/${saved.id}/images?ifVersion=${saved.version}`, { method: "POST", headers: { cookie: ADMIN, "content-type": "image/webp", "x-file-name": "custom.webp" }, body: await readFile(new URL("../public/wholesale-preview/images/colombia.webp", import.meta.url)) });
+  assert.equal(photo.status, 201); saved = (await photo.json()).product;
+  const image = `/api/wholesale/images/${saved.images[0].slice(7)}`;
+  const imageStatus = async cookie => (await fetch(srv.base + image, {headers:{cookie},redirect:"manual"})).status;
+  assert.equal(await imageStatus(A), 200); assert.equal(await imageStatus(B), 200); assert.equal(await imageStatus(third.cookie), 404);
+  const stale = saved.version;
+  await put({ whiteLabel: [idA] });
+  assert.equal((await call("PUT", `/api/admin/wholesale/catalogue/${saved.id}`, { ...base, ifVersion: stale, customerOnly: false, whiteLabel: [] })).status, 409);
+  assert.equal(await seen(B), undefined); assert.equal(await imageStatus(B), 404); assert.equal((await order(B, saved.id)).status, 400);
+  await put({ whiteLabel: [] });
+  assert.equal(saved.customerOnly, true, "clearing the final selection keeps a custom coffee private");
+  assert.equal(await seen(A), undefined); assert.equal(await imageStatus(A), 404); assert.equal((await order(A, saved.id)).status, 400);
+  await put({ notes: "A private edit" });
+  assert.equal(saved.customerOnly, true, "ordinary edits preserve the visibility marker");
+  await put({ customerOnly: false, whiteLabel: [] });
+  assert.equal(Object.hasOwn(saved, "customerOnly"), false);
+  assert.ok(await seen(third.cookie), "an explicit admin switch can make it a general coffee");
 });

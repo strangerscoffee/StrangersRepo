@@ -4,7 +4,7 @@ import { newId } from "./auth";
 import { audit } from "./audit";
 import { ApiError, type Env, invalid, json, readJson } from "./http";
 import { list, object, save, text, version } from "./wholesaleStore";
-import { canOrder, editedRecipe, editedWhiteLabel } from "./wholesaleWhiteLabel";
+import { canOrder, editedRecipe, editedWhiteLabel, isCustomCoffee } from "./wholesaleWhiteLabel";
 
 import { defaultGrinds, validGrindId, type GrindOption } from "../public/wholesale-preview/grinds.js";
 
@@ -96,6 +96,10 @@ function edited(body: Record<string, any>, current: Coffee | null, ids: Set<stri
   if (typeof inStock !== "boolean") throw invalid("Choose whether this coffee is in stock.");
   const packs = body.packs === undefined ? current?.packs : packsFor(body.packs);
   const prices = pricesFor(body.prices, packsOf({ packs }), current?.prices);
+  if (body.customerOnly !== undefined && typeof body.customerOnly !== "boolean") throw invalid("Choose whether this coffee is for selected customers only.");
+  const whiteLabel = body.whiteLabel === undefined ? current?.whiteLabel : editedWhiteLabel(body.whiteLabel);
+  const customerOnly = body.customerOnly === undefined ? !!whiteLabel?.length || !!current && isCustomCoffee(current) : body.customerOnly;
+  if (body.customerOnly === false && whiteLabel?.length) throw invalid("Remove the selected customers before making this coffee available to everyone.");
   return {
     id: current?.id || "coffee-" + crypto.randomUUID(), title, name,
     origin: field("origin", 100), process: field("process", 120), notes: field("notes", 400), badge: field("badge", 60), categories: [...categories],
@@ -104,7 +108,8 @@ function edited(body: Record<string, any>, current: Coffee | null, ids: Set<stri
     images: current?.images || [], imageUrls: current?.imageUrls || [], version: current?.version || 0,
     ...coloursFor(body, current),
     ...(packs ? { packs } : {}),
-    ...((v) => (v ? { whiteLabel: v } : {}))(body.whiteLabel === undefined ? current?.whiteLabel : editedWhiteLabel(body.whiteLabel)),
+    ...(whiteLabel?.length ? { whiteLabel } : {}),
+    ...(customerOnly ? { customerOnly: true as const } : {}),
     ...((v) => (v ? { recipe: v } : {}))(body.recipe === undefined ? current?.recipe : editedRecipe(body.recipe, ids, current?.id || null)),
   };
 }
