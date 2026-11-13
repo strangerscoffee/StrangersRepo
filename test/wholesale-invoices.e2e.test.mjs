@@ -1,3 +1,4 @@
+import { openWholesaleOrders } from './wholesale-ui-helpers.mjs';
 // VAT invoicing in the native Admin and customer interfaces. Payment records never move money.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -152,7 +153,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["desk
       // The remaining customer/payment steps use the public hooks supplied by WholesaleInvoices.
       await customer.goto(srv.base + "/wholesale-preview/");
       await customer.locator("#products article").first().waitFor();
-      await customer.locator("#my-orders").click();
+      await openWholesaleOrders(customer);
       await customer.locator("#history-invoices").click();
       const card = customer.locator(`[data-customer-invoice="${issued.id}"]`);
       await card.waitFor();
@@ -183,7 +184,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["desk
 
       await other.goto(srv.base + "/wholesale-preview/");
       await other.locator("#products article").first().waitFor();
-      await other.locator("#my-orders").click(); await other.locator("#history-invoices").click();
+      await openWholesaleOrders(other); await other.locator("#history-invoices").click();
       await other.locator("#customer-invoices-list", { hasText: "Your issued invoices will appear here" }).waitFor();
       assert.equal(await other.locator("[data-customer-invoice]").count(), 0);
       const privateReads = await other.evaluate(async (id) => {

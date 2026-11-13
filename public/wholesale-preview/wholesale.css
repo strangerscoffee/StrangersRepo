@@ -21,7 +21,8 @@ h1 { font: 800 clamp(32px, 6vw, 42px)/1.08 var(--display); letter-spacing: -.035
 h2 { font: 700 22px/1.2 var(--display); letter-spacing: -.025em; }
 h3 { font: 650 17px/1.3 var(--display); letter-spacing: -.015em; }
 [hidden] { display: none !important; }
-:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; border-radius: 10px; }
+/* Keep account focus visible through its fill, without an outer ring after closing the account menu. */
+.account-toggle:focus-visible { outline: 0; background: var(--tint); }
 .wrap { width: min(1320px, calc(100% - 48px)); margin-inline: auto; padding: 0; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 .eyebrow { color: var(--muted); font-size: 12px; font-weight: 650; letter-spacing: .06em; line-height: 1.6; text-transform: uppercase; }
@@ -74,7 +75,7 @@ h3 { font: 650 17px/1.3 var(--display); letter-spacing: -.015em; }
 .search-field { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 160px; max-width: 250px; min-height: 48px; padding-inline: 12px; background: var(--sunk); border: 1px solid transparent; border-radius: var(--r); }
 .search-field svg { width: 20px; height: 20px; color: var(--muted); }
 .search-field input { width: 100%; min-height: 44px; padding: 8px 0; font-size: 16px; background: transparent; border: 0; border-radius: 0; outline-offset: 0; }
-.search-field:focus-within { border-color: var(--accent); background: var(--surface); box-shadow: 0 0 0 4px var(--tint); }
+.search-field:focus-within { border-color: var(--focus-ink); background: var(--surface); box-shadow: none; }
 .search-field input:focus { outline: 0; }
 input::placeholder { color: var(--muted); opacity: .8; }
 .catalogue-status { padding: 20px 4px; font-size: 15px; color: var(--muted); }
@@ -113,7 +114,7 @@ input::placeholder { color: var(--muted); opacity: .8; }
 .pack-choice input, .delivery-options input { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
 .pack-choice span { display: flex; align-items: center; justify-content: center; width: 100%; min-height: 44px; padding: 9px 4px; border: 1px solid transparent; border-radius: var(--r); background: var(--sunk); font-size: 13px; font-weight: 600; pointer-events: none; }
 .pack-choice input:checked + span { background: var(--tint); color: var(--accent); border-color: var(--accent); }
-.pack-choice input:focus-visible + span, .delivery-options input:focus-visible + span { outline: 3px solid var(--accent); outline-offset: 3px; }
+.pack-choice input:focus-visible + span, .delivery-options input:focus-visible + span { outline:var(--focus-ring-width) solid var(--focus-ink); outline-offset: 3px; }
 .grind-field { margin-top: 16px; }
 .grind-picker { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-height: 48px; padding: 12px 13px; border: 1px solid transparent; border-radius: var(--r); background: var(--sunk); color: var(--fg); font-size: 16px; text-align: left; }
 .grind-picker:hover { background: var(--tint); }
@@ -131,7 +132,7 @@ input::placeholder { color: var(--muted); opacity: .8; }
 .stepper input { width: 58px; min-height: 36px; padding: 0 4px; margin: 0 2px; background: var(--tint); color: var(--fg); border: 0; border-radius: 10px; text-align: center; font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; box-shadow: none; -moz-appearance: textfield; appearance: textfield; cursor: text; }
 /* The number is typed straight in (large orders); no browser spinners on top of it. */
 .stepper input::-webkit-outer-spin-button, .stepper input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-.stepper input:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
+.stepper input:focus-visible { outline:var(--focus-ring-width) solid var(--focus-ink); outline-offset: 0; }
 .stepper input[aria-invalid=true] { outline: 2px solid var(--bad); outline-offset: -2px; }
 .button { display: inline-flex; align-items: center; justify-content: center; gap: 9px; min-height: 46px; padding: 11px 17px; border: 1px solid transparent; border-radius: 99px; font-size: 14px; font-weight: 650; line-height: 1.3; text-align: center; transition: transform .15s, filter .15s; }
 .button:active:not(:disabled) { transform: scale(.97); }
@@ -206,7 +207,7 @@ dialog::backdrop { background: rgba(0,0,0,.3); -webkit-backdrop-filter: blur(6px
 .form-field { display: block; margin-top: 20px; font-size: 13px; font-weight: 600; }
 .form-field > span { color: var(--muted); font-weight: 400; }
 .form-field input, .form-field textarea { display: block; width: 100%; min-height: 48px; margin-top: 8px; padding: 12px 13px; border: 1px solid transparent; border-radius: var(--r); background: var(--sunk); color: var(--fg); font-size: 16px; }
-.form-field input:focus, .form-field textarea:focus { background: var(--surface); border-color: var(--accent); outline: 0; box-shadow: 0 0 0 4px var(--tint); }
+.form-field input:focus, .form-field textarea:focus { background: var(--surface); border-color: var(--focus-ink); outline: 0; box-shadow: none; }
 .form-field input[readonly] { color: var(--muted); }
 #review-form > .button, #account-form > .button, #account-password-form > .button { display: flex; width: 100%; margin-top: 16px; }
 #review-form > .quantity-error:not([hidden]) { margin-block: 14px; }
@@ -306,7 +307,7 @@ dialog::backdrop { background: rgba(0,0,0,.3); -webkit-backdrop-filter: blur(6px
 .grind-choices label { display: flex; align-items: center; gap: 13px; min-height: 70px; padding: 14px; border: 1px solid transparent; border-radius: var(--r); background: var(--sunk); cursor: pointer; }
 .grind-choices label:has(input:checked) { background: var(--tint); border-color: var(--accent); }
 .grind-choices input { width: 20px; height: 20px; flex-shrink: 0; margin: 0; accent-color: var(--accent); }
-.grind-choices label:has(input:focus-visible) { outline: 3px solid var(--accent); outline-offset: 3px; }
+.grind-choices label:has(input:focus-visible) { outline:var(--focus-ring-width) solid var(--focus-ink); outline-offset: 3px; }
 .grind-choices label > span { display: grid; gap: 4px; }
 .grind-choices strong { font-size: 15px; font-weight: 650; }
 .grind-choices span { display: grid; gap: 3px; }
@@ -342,7 +343,7 @@ dialog::backdrop { background: rgba(0,0,0,.3); -webkit-backdrop-filter: blur(6px
 .location-choices { display: grid; gap: 8px; margin: 24px 0 0; padding: 0; border: 0; }
 .location-choices label { display: flex; align-items: center; gap: 13px; min-height: 72px; padding: 14px; border: 1px solid transparent; border-radius: var(--r); background: var(--sunk); cursor: pointer; }
 .location-choices label:has(input:checked) { background: var(--tint); border-color: var(--accent); }
-.location-choices label:has(input:focus-visible) { outline: 3px solid var(--accent); outline-offset: 3px; }
+.location-choices label:has(input:focus-visible) { outline:var(--focus-ring-width) solid var(--focus-ink); outline-offset: 3px; }
 .location-choices input { width: 20px; height: 20px; margin: 0; flex-shrink: 0; accent-color: var(--accent); }
 .location-choices label > span { display: grid; gap: 5px; min-width: 0; overflow-wrap: anywhere; }
 .location-choices strong { font-size: 15px; }

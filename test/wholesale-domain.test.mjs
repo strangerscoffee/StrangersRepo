@@ -29,6 +29,9 @@ test("wholesale domain: customer-only sign-in and approval work without exposing
   const icon = await call("GET", "/favicon.ico"); assert.equal(icon.response.status,200); assert.match(icon.response.headers.get("content-type"),/^image\//);
   const signin = await call("GET", "/signin");
   assert.equal(signin.response.status, 200); assert.match(signin.text, /Wholesale sign-in/);
+  const focus = await call("GET", "/shared/focus.js");
+  assert.equal(focus.response.status, 200); assert.match(focus.response.headers.get("content-type"), /javascript/);
+  assert.match(focus.text, /data-sc-pointer/);
   const staff = await call("GET", "/wholesale-preview/staff-signin");
   const target = new URL(staff.response.headers.get("location"));
   assert.equal(target.origin, "https://staffstrangerscoffee.com"); assert.equal(target.pathname, "/signin"); assert.equal(target.searchParams.get("next"), `https://${legacy}/`);
@@ -47,6 +50,11 @@ test("wholesale domain: customer-only sign-in and approval work without exposing
   assert.equal(profile.data.customer.business, "Trade café"); assert.equal(profile.data.me.role, "wholesale"); assert.equal(profile.data.links.admin, undefined);
   assert.equal((await call("GET", "/", undefined, customerCookie)).response.status, 200);
   assert.equal((await call("GET", "/api/wholesale/catalogue", undefined, customerCookie)).data.products.length, 14);
+  for (const asset of ["catalogue.css", "catalogue-ui.js"]) {
+    const loaded = await call("GET", "/wholesale-preview/" + asset, undefined, customerCookie);
+    assert.equal(loaded.response.status, 200, asset);
+    assert.doesNotMatch(loaded.text, /<!doctype html>/i, asset + " serves code rather than a redirect page");
+  }
   for (const path of ["/api/auth/me", "/api/admin/wholesale", "/api/admin/users", "/api/db/get", "/api/rota/week", "/api/staff-orders/orders", "/api/live"]) {
     assert.equal((await call("GET", path, undefined, customerCookie)).response.status, 404, path);
   }

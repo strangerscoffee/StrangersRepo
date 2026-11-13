@@ -1,4 +1,4 @@
-import {openWholesaleAccount} from './wholesale-ui-helpers.mjs';
+import { chooseWholesalePack, openWholesaleBasket, openWholesaleAccount } from './wholesale-ui-helpers.mjs';
 // A lost checkout response must never become a second customer order.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -39,9 +39,9 @@ async function buyer(username, productId, reference) {
   await page.waitForURL(/\/wholesale-preview\/$/);
   const card = page.locator(`article[data-product="${productId}"]`);
   await card.waitFor();
-  await card.locator('input[name="pack"][value="kilo"]').check();
+  await chooseWholesalePack(page, card, 'kilo');
   await card.locator('button[type="submit"]').click();
-  await page.locator("#review-order").click();
+  await openWholesaleBasket(page); await page.locator("#review-order").click();
   await page.locator("#review-dialog").waitFor();
   await page.locator('#review-form [name="delivery"][value="collection"]').check();
   await page.locator('#review-form [name="reference"]').fill(reference);
@@ -139,9 +139,10 @@ test("checkout cart: confirmation preserves a newer different cart saved while i
     await page.locator("#submit-preview-order").click();
     const original = await saved;
     assert.equal(original.status, 201, JSON.stringify(original.body));
-    await editor.locator("#order-items [data-remove]").click();
+    await openWholesaleBasket(editor); await editor.locator("#order-items [data-remove]").click();
+    await editor.locator("#basket-dialog [data-close]").click();
     const coffee = editor.locator('article[data-product="colombia"]');
-    await coffee.locator('input[name="pack"][value="quarter"]').check();
+    await chooseWholesalePack(editor, coffee, 'quarter');
     await coffee.locator('button[type="submit"]').click();
     const newer = await editor.evaluate(key => localStorage.getItem(key), key);
     assert.deepEqual(JSON.parse(newer), [{ productId: "colombia", pack: "quarter", grind: "beans", quantity: 1 }]);
@@ -192,7 +193,7 @@ test("beta checkout: a saved order with a lost response is recovered after reloa
 
     await page.reload();
     await page.locator("#products article").first().waitFor();
-    await page.locator("#review-order").click();
+    await openWholesaleBasket(page); await page.locator("#review-order").click();
     await page.locator("#preview-complete").waitFor();
     assert.match(await page.locator("#complete-message").textContent(), new RegExp(saved.body.order.id));
     assert.equal(await page.locator("#complete-total").textContent(), "£18.00");
@@ -227,7 +228,7 @@ test("beta checkout: an unsent request survives reload and retries its exact rev
     assert.equal(await page.locator('article[data-product="colombia"] button[type="submit"]').isDisabled(), true);
     await page.reload();
     await page.locator("#products article").first().waitFor();
-    await page.locator("#review-order").click();
+    await openWholesaleBasket(page); await page.locator("#review-order").click();
     await page.locator("#review-dialog").waitFor();
     assert.equal(await page.locator('#review-form [name="reference"]').inputValue(), "BETA-FROZEN-REFERENCE");
     assert.equal(await page.locator('#review-form [name="reference"]').getAttribute("readonly"), "");
@@ -260,7 +261,7 @@ test("beta checkout: malformed success JSON preserves recovery of an order that 
     assert.equal((await ownOrders(customer.id)).length, 1);
     await page.reload();
     await page.locator("#products article").first().waitFor();
-    await page.locator("#review-order").click();
+    await openWholesaleBasket(page); await page.locator("#review-order").click();
     await page.locator("#preview-complete").waitFor();
     assert.match(await page.locator("#complete-message").textContent(), new RegExp(saved.body.order.id));
     assert.equal((await ownOrders(customer.id)).length, 1, "invalid confirmation data cannot discard the saved attempt and create a new order");
@@ -354,7 +355,7 @@ test("beta checkout: deleting a saved uncertain order prevents frozen retries fr
     await page.unroute("**/api/wholesale/orders", lostResponse);
     await page.reload();
     await page.locator("#products article").first().waitFor();
-    await page.locator("#review-order").click();
+    await openWholesaleBasket(page); await page.locator("#review-order").click();
     await page.locator("#review-dialog").waitFor();
     assert.equal(await page.locator('#review-form [name="reference"]').inputValue(), "BETA-DELETED-PENDING");
     const rejected = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/wholesale/orders");
@@ -368,7 +369,7 @@ test("beta checkout: deleting a saved uncertain order prevents frozen retries fr
     await page.locator("#review-form").evaluate((form) => form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
     assert.equal(postCount, 2, "the rejected review cannot submit again, including through a form submit event");
     await page.locator("#review-dialog .close-button").click();
-    await page.locator("#review-order").click();
+    await openWholesaleBasket(page); await page.locator("#review-order").click();
     // A closing dialog can still paint during its exit; wait for the newly reviewed checkout.
     await page.locator("#review-dialog[open]").waitFor();
     assert.equal(await page.locator("#submit-preview-order").isEnabled(), true, "a fresh review permits a genuinely new order");

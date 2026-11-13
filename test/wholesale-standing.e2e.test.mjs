@@ -1,3 +1,4 @@
+import { openWholesaleOrders } from './wholesale-ui-helpers.mjs';
 // Standing orders in a browser: Admin sets a dispatch day and a repeat on a customer order, edits its bags, marks it
 // dispatched and finds the next run; the customer sees the day, the schedule and the change on My orders. On a desktop,
 // and on a phone and an iPad in light and dark. Needs Playwright with Chromium.
@@ -92,7 +93,7 @@ test("Admin: dispatch day, standing order, edit bags, dispatch makes the next ru
   // The customer's My orders.
   const c = await page(A, { width: 390, height: 844 }, { isMobile: true, hasTouch: true });
   await c.p.goto(srv.base + "/wholesale-preview/"); await c.p.locator(".product-card").first().waitFor();
-  await c.p.locator("#my-orders").click();
+  await openWholesaleOrders(c.p);
   const card = c.p.locator(`[data-history-order="${orderId}"]`); await card.waitFor();
   assert.match(await card.innerText(), /Dispatch day: .*Standing order, every 2 weeks/);
   assert.match(await card.innerText(), /Updated by Strangers on/);

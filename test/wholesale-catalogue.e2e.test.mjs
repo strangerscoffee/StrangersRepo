@@ -1,4 +1,4 @@
-import {openWholesaleAccount} from './wholesale-ui-helpers.mjs';
+import { openWholesaleBasket, openWholesaleOrders, openWholesaleAccount } from './wholesale-ui-helpers.mjs';
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
@@ -122,7 +122,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       await buyer.locator('#account-dialog [data-close]').click();
       await card.locator('button[type="submit"]').click();
       await stock(false);
-      await buyer.locator('#review-order').click();
+      await openWholesaleBasket(buyer); await buyer.locator('#review-order').click();
       await card.locator('.product-stock.out').waitFor();
       assert.equal(await card.locator('button[type="submit"]').isDisabled(), true);
       assert.equal(await buyer.locator('#review-dialog').isVisible(), false);
@@ -142,7 +142,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       await card.locator('[data-photo-step="1"]').click();
       await photoReady();
       assert.equal(await card.locator('[data-photo-count]').textContent(), '2 / 2');
-      await buyer.locator('#review-order').click();
+      await openWholesaleBasket(buyer); await buyer.locator('#review-order').click();
       await buyer.locator('#review-dialog').waitFor();
       assert.match(await buyer.locator('#review-payment-terms').textContent(), /30 days from invoice/);
       await buyer.locator('#review-form [name="delivery"][value="collection"]').check();
@@ -151,7 +151,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       await buyer.locator('#preview-submit-error', { hasText: 'terms changed' }).waitFor();
       assert.equal(await buyer.locator("#submit-preview-order").isDisabled(), true, "changed agreement requires a new review before submitting again");
       await buyer.locator('#review-dialog .close-button').click();
-      await buyer.locator('#review-order').click();
+      await openWholesaleBasket(buyer); await buyer.locator('#review-order').click();
       // Visibility can include the previous exit frame; [open] means the fresh terms have loaded.
       await buyer.locator('#review-dialog[open]').waitFor();
       assert.match(await buyer.locator('#review-payment-terms').textContent(), /7 days from invoice/);
@@ -164,7 +164,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       assert.equal(orders.length, 1); assert.equal(orders[0].paymentTerms.id, 'net-7'); assert.equal(orders[0].pence, 4500);
       await buyer.locator('#preview-complete [data-close]').click();
       await editTerms('net-30', 'Future invoices only.');
-      await buyer.locator('#my-orders').click();
+      await openWholesaleOrders(buyer);
       const savedOrder = buyer.locator(`[data-history-order="${orders[0].id}"]`);
       await savedOrder.locator('.history-details summary').click();
       await savedOrder.locator('.payment-terms', { hasText: '7 days from invoice' }).waitFor();

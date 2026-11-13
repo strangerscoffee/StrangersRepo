@@ -1,3 +1,4 @@
+import { openWholesaleBasket } from './wholesale-ui-helpers.mjs';
 // Wholesale Coffee Order Terms and Conditions (public/wholesale-preview/terms.js): read from the sign-in page, the
 // footer, My account and the checkout note above Place order; the sign-in page shows the company logo, not a heading
 // or the small mark. On a phone and an iPad, light and dark. Needs Playwright with Chromium.
@@ -66,10 +67,10 @@ test("terms on the sign-in page, footer and checkout; logo on sign-in", async ()
     await d.getByRole("button", { name: "Done" }).click();
     const card = p.locator(".product-card").first();
     await card.locator("input[type=number]").fill("2"); await card.locator("button[type=submit]").click();
-    await p.locator("#mobile-basket:not([hidden])").waitFor();
-    await p.locator("#mobile-basket [data-basket]").click();
+    await p.locator("#basket-count").waitFor();
+    await openWholesaleBasket(p);
     await p.waitForFunction(() => !document.querySelector("#review-order").disabled);
-    await p.locator("#review-order").click(); await p.locator("#review-dialog[open]").waitFor();
+    await openWholesaleBasket(p); await p.locator("#review-order").click(); await p.locator("#review-dialog[open]").waitFor();
     const note = p.locator("#checkout-terms");
     assert.match(await note.innerText(), /By placing this order, you accept the payment terms and conditions set up for your account\./);
     const [noteBox, submitBox] = [await note.boundingBox(), await p.locator("#submit-preview-order").boundingBox()];
