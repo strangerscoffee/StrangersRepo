@@ -202,6 +202,8 @@ Existing Live payment observations continue while Sandbox is active. Exports ret
 
 ## Page loading
 
+The mobile wholesale header is one 64 px row with Coffee/Orders, cart and a native account popover. Existing account/sign-out actions and staff preview Admin access stay available in that menu; desktop retains inline controls. No migration or configuration is required.
+
 The wholesale footer is a compact logo/Terms/Website row using the existing theme. Terms still opens its native window; My orders and email links use the header action. No migration or configuration is required.
 
 The Strangers logo is centred on wholesale sign-in and registration screens, using the same existing image and light/dark styling.

@@ -23,10 +23,10 @@
   <div class="preview-banner" id="staff-preview-notice" hidden>Staff preview — orders from this staff login are for testing.</div>
   <div class="header-shell">
   <header class="site-header wrap">
-    <a class="brand" id="preview-home" href="/wholesale-preview/" aria-label="Strangers Coffee wholesale home"><img src="/wholesale-preview/images/logo.svg" width="116" height="65" alt="Strangers Coffee"><span class="brand-name">Wholesale<small>Strangers Coffee</small></span></a>
+    <a class="brand" id="preview-home" href="/wholesale-preview/" aria-label="Strangers Coffee wholesale home"><img class="brand-wordmark" src="/wholesale-preview/images/logo.svg" width="116" height="65" alt="Strangers Coffee"><img class="brand-mark" src="/mark.svg" width="28" height="28" alt=""><span class="brand-name">Wholesale<small>Strangers Coffee</small></span></a>
     <nav aria-label="Main navigation">
-      <a class="nav-link active" href="#coffee" aria-current="page">Order coffee</a>
-      <button class="nav-link" type="button" id="my-orders" data-order-history>My orders</button>
+      <a class="nav-link active" href="#coffee" aria-current="page" aria-label="Order coffee"><span class="desktop-nav-label">Order coffee</span><span class="mobile-nav-label" aria-hidden="true">Coffee</span></a>
+      <button class="nav-link" type="button" id="my-orders" data-order-history aria-label="My orders"><span class="desktop-nav-label">My orders</span><span class="mobile-nav-label" aria-hidden="true">Orders</span></button>
       <a class="nav-link" id="admin-wholesale-link" href="/admin#wholesale" hidden>Admin · Wholesale <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></a>
     </nav>
     <div class="header-tools">
@@ -34,7 +34,8 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 3h3l3 12h11l3-9H6M9 19a1 1 0 1 0 0 .01M18 19a1 1 0 1 0 0 .01"/></svg>
         <span class="basket-label">Your order</span><span class="basket-count" id="basket-count" hidden>0</span>
       </button>
-      <div class="header-account" role="group" aria-label="Wholesale account"><span class="identity-pill"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/></svg><strong id="signed-in-name">…</strong></span><div class="account-buttons"><button class="text-button" type="button" id="my-account" hidden>My account</button><button class="text-button" type="button" id="preview-sign-out">Sign out</button></div></div>
+      <button class="account-toggle" id="account-toggle" type="button" popovertarget="wholesale-account" aria-controls="wholesale-account" aria-expanded="false" aria-label="Your account"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/></svg></button>
+      <div class="header-account" id="wholesale-account" popover="auto" role="group" aria-label="Wholesale account"><span class="identity-pill"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/></svg><span class="account-caption">Signed in as</span><strong id="signed-in-name">…</strong></span><div class="account-buttons"><button class="text-button" type="button" id="my-account" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/></svg>My account</button><button class="text-button" type="button" id="preview-sign-out"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4H4v16h5M14 7l5 5-5 5M8 12h11"/></svg>Sign out</button></div></div>
     </div>
   </header>
   </div>

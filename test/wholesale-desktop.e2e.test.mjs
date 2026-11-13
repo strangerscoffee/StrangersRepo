@@ -1,3 +1,4 @@
+import {openWholesaleAccount} from './wholesale-ui-helpers.mjs';
 // Wide customer/admin editors and short desktop windows remain usable with real account/basket data.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -142,7 +143,7 @@ for (const [screen, viewport] of [["compact", { width: 1280, height: 720 }], ["l
       });
       assert.equal(header.overflowing, false); assert.deepEqual(header.overlapping, []); assert.deepEqual(header.small, []);
       await screenshot(page, `desktop-customer-header-${screen}-${color}`);
-      await page.locator("#my-account").click(); await page.locator("#account-dialog").waitFor();
+      await openWholesaleAccount(page); await page.locator("#account-dialog").waitFor();
       assert.equal(await page.locator("#save-account").getAttribute("form"), "account-form", "the footer save remains associated with its account form");
       await page.locator('#account-form [name="contact"]').fill("Customer desktop contact");
       for (const position of [0, Number.MAX_SAFE_INTEGER]) {
@@ -153,7 +154,7 @@ for (const [screen, viewport] of [["compact", { width: 1280, height: 720 }], ["l
       }
       await screenshot(page, `desktop-customer-account-${screen}-${color}`);
       await page.locator("#save-account").click(); await page.locator("#account-dialog").waitFor({ state: "hidden" });
-      assert.equal(await page.locator("#my-account").evaluate((node) => document.activeElement === node), true, "closing account details restores its opener");
+      assert.equal(await page.evaluate(() => document.activeElement === document.querySelector(matchMedia("(max-width:700px)").matches ? "#account-toggle" : "#my-account")), true, "closing account details restores its opener");
       const savedProfile = await page.evaluate(() => fetch("/api/wholesale/session").then((response) => response.json()).then((result) => result.customer));
       assert.equal(savedProfile.contact, "Customer desktop contact", "the external footer action submits the associated account form");
       assert.equal(savedProfile.business, business); assert.equal(savedProfile.defaultLocationId, riverside.id);

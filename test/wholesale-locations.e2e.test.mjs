@@ -1,3 +1,4 @@
+import {openWholesaleAccount} from './wholesale-ui-helpers.mjs';
 // Customer location drafts/defaults and immutable delivery snapshots across the native admin editor.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -74,7 +75,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       await page.locator("#username").fill(username); await page.locator("#password").fill(password);
       await page.locator("#login-submit").click(); await page.waitForURL(/\/wholesale-preview\/$/);
       await page.locator("#products article").first().waitFor();
-      await page.locator("#my-account").click(); await page.locator("#account-dialog").waitFor();
+      await openWholesaleAccount(page); await page.locator("#account-dialog").waitFor();
       assert.equal(await page.locator("#account-business").textContent(), business);
       assert.equal(await page.locator('#account-form input[name="business"]:not([readonly]):not([hidden])').count(), 0);
       assert.equal(await page.locator('[data-location-remove="primary"]').count(), 0, "the primary delivery location cannot be removed");
@@ -88,7 +89,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       let riverside = current.locations.find((location) => location.name === "Riverside café");
       assert.ok(uuid.test(riverside.id), "new delivery locations receive a persisted server UUID");
       assert.equal(current.locations[0].id, "primary");
-      await page.locator("#my-account").click();
+      await openWholesaleAccount(page);
       await page.locator(`[data-location-edit="${riverside.id}"]`).click();
       await customerLocation({ address: "22 Riverside Road\nNorwich", deliveryNotes: "Ring the side bell" });
       // A native blur/change must not replace the target between pointerdown and click.
