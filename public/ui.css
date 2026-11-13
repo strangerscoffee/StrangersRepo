@@ -202,7 +202,7 @@ html{scroll-padding-top:calc(env(safe-area-inset-top,0px) + 72px);scroll-padding
 .tf .lim{font-size:12px;color:var(--muted)}
 .tf .v{grid-row:1/3;grid-column:2;display:flex;align-items:center;gap:8px}
 .tf input{width:96px;height:48px;min-height:48px;border-radius:12px;border:1.5px solid transparent;background:var(--surface,var(--bg));font-family:var(--mono);font-size:22px;font-weight:600;text-align:right;padding:0 12px;color:var(--fg);box-sizing:border-box}
-.tf input:focus{border-color:var(--accent);box-shadow:0 0 0 4px var(--tint);outline:none}
+.tf input:focus{border-color:var(--focus-ink);box-shadow:none;outline:0}
 .tf.ok input{border-color:color-mix(in srgb,var(--ok) 55%,transparent);background:var(--ok-bg)}
 .tf.warn input{border-color:var(--warn);background:var(--warn-bg)}
 .tf.bad{background:var(--bad-bg)} .tf.bad input{border-color:var(--bad)}
@@ -317,7 +317,7 @@ html{scroll-padding-top:calc(env(safe-area-inset-top,0px) + 72px);scroll-padding
 .result[hidden]{display:none}
 
 .search input{width:100%;box-sizing:border-box;height:46px;padding:0 14px;border-radius:14px;font:inherit;font-size:16px;color:var(--fg);border:1px solid var(--glass-edge);background:var(--glass);box-shadow:var(--glass-hi)}
-.search input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 4px var(--tint)}
+.search input:focus{outline:none;border-color:var(--focus-ink);box-shadow:none}
 .chiprow{display:flex;gap:6px;overflow-x:auto;align-items:center;margin:-4px -16px;padding:4px 16px;scrollbar-width:none}
 .chiprow::-webkit-scrollbar{display:none}
 .chiprow .s{flex:none;font-weight:600;margin-right:2px}
@@ -398,7 +398,7 @@ section.panel.onlywide{display:none}
 .drop input[type=file]{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}
 .drop .pick{display:inline-flex;align-items:center;min-height:40px;padding:0 16px;border-radius:99px;background:var(--tint);color:var(--accent);font-weight:700}
 .drop.has .pick{background:var(--ok-bg);color:var(--ok)}
-.drop:focus-within{outline:2px solid var(--accent);outline-offset:2px}
+.drop:focus-within{outline:var(--focus-ring-width) solid var(--focus-ink);outline-offset:2px}
 
 /* Allergens a menu item contains: large toggle chips instead of small checkboxes. */
 .alg{display:flex;flex-wrap:wrap;gap:8px;grid-template-columns:none}
@@ -406,7 +406,7 @@ section.panel.onlywide{display:none}
 .alg label input{position:absolute;opacity:0;width:1px;height:1px;margin:0}
 .alg label:has(input:checked){background:var(--bad);color:#fff}
 .alg label:has(input:checked)::before{content:"✓";font-weight:800}
-.alg label:has(input:focus-visible){outline:2px solid var(--accent);outline-offset:2px}
+.alg label:has(input:focus-visible){outline:var(--focus-ring-width) solid var(--focus-ink);outline-offset:2px}
 
 /* Row subtitles may use two lines before they're cut off. */
 .xmain .t .s{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical}
@@ -551,7 +551,7 @@ table.rk-grid .rk-corner{font-size:10px;width:40px}
 .field .signin input{flex:1;min-width:0}
 .signin .minus{flex:none;width:40px;height:40px;border-radius:12px;border:1px solid var(--line);background:var(--surface,var(--bg));color:var(--fg);font-size:22px;font-weight:700;line-height:1;display:grid;place-items:center;cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
 .signin .minus:active{background:var(--tint)}
-.signin .minus:focus-visible{outline:none;box-shadow:0 0 0 4px var(--tint);border-color:var(--accent)}
+.signin .minus:focus-visible{outline:0;box-shadow:none;border-color:var(--focus-ink)}
 .signin:has(input:disabled) .minus{opacity:.4;pointer-events:none}
 .tf .signin .minus{height:48px;width:44px}
 .tlunit .signin{width:100%}

@@ -1,5 +1,6 @@
 import { availableGrinds, grindLabel, grindHint, isGrindAvailable } from "./grinds.js";
 import { shippingFor, SHIPPING_PENCE, FREE_SHIPPING_FROM_PENCE } from "./shipping.js";
+import { createCoffeeChoices, setupCatalogueSearch } from "./catalogue-ui.js";
 import { products, setCatalogue, isAvailable, packs, packsFor, sizeFor, lineOrderable, grinds, MAX_QUANTITY, money, weight, productFor, lineKey, unitPrice, validQuantity, sanitiseBasket, addToBasket, totals } from "./order.js";
 
 let STORAGE_KEY = null;
@@ -27,6 +28,10 @@ function refreshBusy(id, busy) {
 let orderVisible = false;
 let toastTimer;
 let history = [];
+let repeatOrder = null;
+const addedTimers = new Map();
+const catalogueSearch = setupCatalogueSearch();
+const coffeeChoices = createCoffeeChoices({ allowed: () => ready && !pendingAttempt && !saving && !document.documentElement.hasAttribute('data-sc-session-locked'), locked: () => !ready || document.documentElement.hasAttribute('data-sc-session-locked') });
 const photoIndexes = new Map();
 const canOrder = () => session?.customer?.status !== "On hold";
 // Strangers can hide prices from a business (its own shops): then the page shows bags and weights, never money.
@@ -162,15 +167,19 @@ function stepper(id, quantity, label, errorId) {
 }
 
 function renderProducts() {
+  coffeeChoices.close();
+  for (const timer of addedTimers.values()) clearTimeout(timer);
+  addedTimers.clear();
   $("#products").innerHTML = products.map((product, index) => `<article class="product-card${product.yours ? " yours" : ""}" data-product="${product.id}" aria-labelledby="name-${product.id}">
-    <div class="product-image"><div class="product-photo">${product.imageUrls.length ? `<img data-product-photo src="${escape(product.imageUrls[Math.min(photoIndexes.get(product.id) || 0, product.imageUrls.length - 1)])}" alt="${escape(product.title)}" width="722" height="511" ${index > 1 ? 'loading="lazy"' : 'fetchpriority="high"'}>` : '<div class="image-placeholder"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h12v7a6 6 0 0 1-12 0V7Zm12 1h2a3 3 0 0 1 0 6h-2M3 22h15M8 4V1M12 4V1"/></svg><span>Photo coming soon</span></div>'}</div>${product.badge ? `<span class="product-badge">${escape(product.badge)}</span>` : ""}</div>
+    <div class="product-gallery"><div class="product-image"><div class="product-photo">${product.imageUrls.length ? `<img data-product-photo src="${escape(product.imageUrls[Math.min(photoIndexes.get(product.id) || 0, product.imageUrls.length - 1)])}" alt="${escape(product.title)}" width="722" height="511" ${index > 1 ? 'loading="lazy"' : 'fetchpriority="high"'}>` : '<div class="image-placeholder"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h12v7a6 6 0 0 1-12 0V7Zm12 1h2a3 3 0 0 1 0 6h-2M3 22h15M8 4V1M12 4V1"/></svg><span>Photo coming soon</span></div>'}</div>${product.badge ? `<span class="product-badge">${escape(product.badge)}</span>` : ""}</div>
     ${product.imageUrls.length > 1 ? `<div class="photo-controls"><button type="button" data-photo-step="-1" aria-label="Previous photo of ${escape(product.name)}">Previous</button><span data-photo-count>${Math.min(photoIndexes.get(product.id) || 0, product.imageUrls.length - 1) + 1} / ${product.imageUrls.length}</span><button type="button" data-photo-step="1" aria-label="Next photo of ${escape(product.name)}">Next</button></div>` : ""}
-    <div class="product-info">${product.yours ? '<p class="product-yours">Your coffee</p>' : product.whiteLabel ? '<p class="product-yours">White label</p>' : ""}<p class="product-origin">${escape(product.origin)}</p><h3 class="product-name" id="name-${product.id}">${escape(product.name)}</h3><p class="product-process">${escape(product.process)}</p><p class="tasting-notes">${escape(product.notes)}</p><p class="product-stock ${product.inStock ? "" : "out"}">${product.inStock ? "In stock" : "Out of stock"}</p></div>
+    </div><div class="product-info">${product.yours ? '<p class="product-yours">Your coffee</p>' : product.whiteLabel ? '<p class="product-yours">White label</p>' : ""}<div class="product-meta"><p class="product-origin">${escape(product.origin)}</p><p class="product-stock ${product.inStock ? "" : "out"}">${product.inStock ? "In stock" : "Out of stock"}</p></div><h3 class="product-name" id="name-${product.id}">${escape(product.name)}</h3>${product.process && product.process !== product.badge ? `<p class="product-process">${escape(product.process)}</p>` : ''}<p class="tasting-notes">${escape(product.notes)}</p></div>
     <form class="product-config" data-product="${product.id}">
-      <fieldset class="pack-options${packsFor(product).length === 1 ? " one-size" : ""}"><legend>Pack size <span class="sr-only">for ${escape(product.name)}</span></legend>${packsFor(product).map(([id, pack]) => `<label class="pack-choice"><input type="radio" name="pack" value="${id}" ${id === sizeFor(product, bagSize) ? "checked" : ""}><span>${escape(pack.short)} bag${packsFor(product).length === 1 ? "s only" : ""}</span></label>`).join("")}</fieldset>
-      <div class="grind-field"><span class="field-label">Grind</span><select name="grind" hidden aria-label="Grind for ${escape(product.name)}">${availableGrinds(product).map(option => `<option value="${escape(option.id)}">${escape(option.label)}</option>`).join("")}</select><button class="grind-picker" type="button" data-grind-open aria-haspopup="dialog" aria-controls="grind-dialog" aria-label="Choose grind for ${escape(product.name)}"><span class="grind-current"><span data-grind-label>${escape(availableGrinds(product)[0]?.label || "Unavailable")}</span><small data-grind-hint>${escape(availableGrinds(product)[0]?.hint || "")}</small></span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 7 7-7 7"/></svg></button></div>
+      <fieldset class="pack-options${packsFor(product).length === 1 ? " one-size" : ""}" hidden><legend>Bag weight for ${escape(product.name)}</legend>${packsFor(product).map(([id, pack]) => `<input type="radio" name="pack" value="${id}" ${id === sizeFor(product, bagSize) ? "checked" : ""} aria-label="${escape(pack.label)}">`).join("")}</fieldset>
+      <div class="variant-fields"><button class="pack-picker" type="button" data-pack-open aria-haspopup="menu" aria-controls="coffee-choice-menu" aria-expanded="false" aria-label="Choose bag weight for ${escape(product.name)}" ${packsFor(product).length === 1 ? 'disabled' : ''}><span><small>Bag weight</small><strong data-pack-label>${escape(packs[sizeFor(product, bagSize)].short)} bag${packsFor(product).length === 1 ? 's only' : ''}</strong></span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+      <div class="grind-field"><select name="grind" hidden aria-label="Grind for ${escape(product.name)}">${availableGrinds(product).map(option => `<option value="${escape(option.id)}">${escape(option.label)}</option>`).join("")}</select><button class="grind-picker" type="button" data-grind-open aria-haspopup="menu" aria-controls="coffee-choice-menu" aria-expanded="false" aria-label="Choose grind for ${escape(product.name)}"><span class="grind-current"><small>Bean / grind</small><strong data-grind-label>${escape(availableGrinds(product)[0]?.label || "Unavailable")}</strong><span data-grind-hint hidden>${escape(availableGrinds(product)[0]?.hint || "")}</span></span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button></div></div>
       <div class="product-price"><strong data-price>${money(unitPrice(product, sizeFor(product, bagSize)))}</strong><span data-price-unit>per ${escape(packs[sizeFor(product, bagSize)].label)}</span></div>
-      <div class="add-row">${stepper(`qty-${product.id}`, 1, product.name, `error-${product.id}`)}<button class="button button-dark" type="submit" aria-label="Add ${escape(product.name)} to order" ${isAvailable(product) ? "" : "disabled"}>${product.inStock ? 'Add to order <span aria-hidden="true">+</span>' : "Out of stock"}</button></div>
+      <div class="add-row">${stepper(`qty-${product.id}`, 1, product.name, `error-${product.id}`)}<button class="button button-dark" type="submit" aria-label="Add ${escape(product.name)} to order" ${isAvailable(product) ? "" : "disabled"}><span data-add-label>${product.inStock ? 'Add' : 'Out of stock'}</span><span data-add-symbol aria-hidden="true">+</span></button></div>
       <p class="quantity-error" id="error-${product.id}" hidden role="status">Choose a whole number of packs, from 1 to ${MAX_QUANTITY}.</p>
     </form>
   </article>`).join("");
@@ -234,6 +243,7 @@ function setPackPrice(form) {
   const pack = form.elements.pack.value, product = productFor(form.dataset.product);
   form.querySelector("[data-price]").textContent = money(unitPrice(product, pack));
   form.querySelector("[data-price-unit]").textContent = `per ${packs[pack].label}`;
+  form.querySelector('[data-pack-label]').textContent = `${packs[pack].short} bag${packsFor(product).length === 1 ? 's only' : ''}`;
 }
 // Shows the chosen size on the switch, or neither when some coffees have been changed to the other size.
 function showBagSize() {
@@ -327,7 +337,6 @@ function renderBasket() {
   $("#mobile-packs").textContent = packText;
   $("#mobile-total").textContent = pricesShown() ? money(sum.pence) : weight(sum.grams);
   updateMobileBasket();
-  scheduleDesktopBasketLayout();
   if (focusId?.startsWith("line-qty-")) {
     const replacement = focusStep ? document.querySelector(`[data-for="${focusId}"][data-step="${focusStep}"]`) : document.getElementById(focusId);
     // At a limit the step button becomes disabled; keep keyboard focus in its quantity field instead.
@@ -360,29 +369,34 @@ $("#products").addEventListener("click", (event) => {
   card.querySelector("[data-photo-count]").textContent = `${next + 1} / ${length}`;
 });
 
-let grindProductId = null;
-$("#products").addEventListener("click", event => {
-  const button = event.target.closest("[data-grind-open]");
-  if (!button || !ready || pendingAttempt) return;
-  const form = button.closest(".product-config"), product = productFor(form.dataset.product);
+function openCoffeeChoice(button) {
+  if (!button || !ready || pendingAttempt || saving) return;
+  const form = button.closest('.product-config'), product = productFor(form.dataset.product), pack = button.hasAttribute('data-pack-open');
   if (!product) return;
-  grindProductId = product.id;
-  $("#grind-product-name").textContent = product.name;
-  $("#grind-choice-form .grind-choices").innerHTML = `<legend class="sr-only">Grind options</legend>${availableGrinds(product).map(option => `<label><input type="radio" name="grind-choice" value="${escape(option.id)}" ${option.id === form.elements.grind.value ? "checked" : ""}><span><strong>${escape(option.label)}</strong>${option.hint ? `<small>${escape(option.hint)}</small>` : ""}</span></label>`).join("")}`;
-  $("#grind-dialog").showModal();
-});
-$("#grind-choice-form").addEventListener("submit", event => {
-  event.preventDefault();
-  if (!ready || pendingAttempt) return;
-  const form = document.querySelector(`.product-config[data-product="${grindProductId}"]`);
-  const selected = $("#grind-choice-form").elements["grind-choice"].value;
-  if (!form || !isGrindAvailable(productFor(grindProductId), selected)) { $("#grind-dialog").close(); return; }
-  form.elements.grind.value = selected;
-  form.querySelector("[data-grind-label]").textContent = grindLabel(productFor(grindProductId), selected);
-  form.querySelector("[data-grind-hint]").textContent = grindHint(productFor(grindProductId), selected);
-  form.elements.grind.dispatchEvent(new Event("change", { bubbles: true }));
-  $("#grind-dialog").close();
-  form.querySelector("[data-grind-open]").focus({ preventScroll: true });
+  closeAccountMenu(); closeSortMenu();
+  coffeeChoices.open(button, {
+    title: `${pack ? 'Bag weight' : 'Bean / grind'} · ${product.name}`,
+    selected: form.elements[pack ? 'pack' : 'grind'].value,
+    options: pack ? packsFor(product).map(([id, value]) => ({ id, label: value.label, hint: pricesShown() ? `${money(unitPrice(product, id))} per bag` : '' })) : availableGrinds(product),
+    onChoose(id) {
+      if (pack) {
+        const input = [...form.querySelectorAll('input[name="pack"]')].find(input => input.value === id);
+        if (!input || !packsFor(product).some(([key]) => key === id)) return;
+        input.checked = true; input.dispatchEvent(new Event('change', { bubbles: true }));
+      } else {
+        if (!isGrindAvailable(productFor(product.id), id)) return;
+        form.elements.grind.value = id;
+        form.querySelector('[data-grind-label]').textContent = grindLabel(product, id);
+        form.querySelector('[data-grind-hint]').textContent = grindHint(product, id);
+        form.elements.grind.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    }
+  });
+}
+$('#products').addEventListener('click', event => openCoffeeChoice(event.target.closest('[data-pack-open],[data-grind-open]')));
+$('#products').addEventListener('keydown', event => {
+  const button = event.target.closest('[data-pack-open],[data-grind-open]');
+  if (button && event.key === 'ArrowDown') { event.preventDefault(); openCoffeeChoice(button); }
 });
 
 document.addEventListener("input", (event) => {
@@ -413,6 +427,10 @@ $("#products").addEventListener("submit", (event) => {
   basket = result.basket;
   changedBasket();
   if (!result.added) { toast(`This pack and grind already has the maximum of ${MAX_QUANTITY} packs.`); return; }
+  const addButton = form.querySelector('[type="submit"]');
+  clearTimeout(addedTimers.get(product.id));
+  addButton.dataset.added = ''; addButton.querySelector('[data-add-label]').textContent = 'Added';
+  addedTimers.set(product.id, setTimeout(() => { addedTimers.delete(product.id); if (addButton.isConnected) { delete addButton.dataset.added; addButton.querySelector('[data-add-label]').textContent = 'Add'; } }, 1400));
   toast(`${result.added} ${result.added === 1 ? "pack" : "packs"} of ${product.name} added${result.added < Number(quantity.value) ? ` — maximum ${MAX_QUANTITY} per pack and grind` : " to your order"}.`);
 });
 
@@ -449,11 +467,11 @@ $("#coffee-search").addEventListener("input", filterProducts);
 $("#reset-filters").addEventListener("click", () => {
   $("#coffee-search").value = "";
   $('[data-filter="all"]').click();
-  $("#coffee-search").focus();
+  catalogueSearch.open();
 });
 
 document.querySelectorAll("[data-basket]").forEach((button) => button.addEventListener("click", () => {
-  $("#your-order").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start" });
+  openBasket();
   $("#your-order").focus({ preventScroll: true });
 }));
 
@@ -553,7 +571,9 @@ function lockReview(locked) {
   $("#submit-preview-order").textContent = locked ? "Retry same order" : session?.preview ? "Save preview order" : "Place order";
 }
 function lockPendingUi() {
+  $('#repeat-last-order').disabled = !!pendingAttempt;
   if (!pendingAttempt) return;
+  coffeeChoices.close();
   for (const control of document.querySelectorAll('.product-config input,.product-config button,.product-config select,#order-items input,#order-items button')) control.disabled = true;
 }
 function showReceipt(result) {
@@ -574,6 +594,7 @@ function showReceipt(result) {
   saveAttempt(null);
   basket = []; requestId = null; reviewNeedsRefresh = false;
   renderBasket(); renderProducts(); filterProducts();
+  setRepeatOrder(result.order);
   try { basketChannel?.postMessage({ type: "order-confirmed", identity: attempt.identity, orderId: result.order.id, requestId: attempt.payload.requestId }); } catch {}
   $("#complete-message").textContent = result.preview ? `${result.order.id} was saved as a staff preview order.` : `${result.order.id} has been received by Strangers. Follow its progress in My orders.`;
   if (newerBasketKept) $("#complete-message").textContent += " A newer basket from another tab has been kept for your next order.";
@@ -657,13 +678,14 @@ $("#review-form").addEventListener("submit", async (event) => {
 const dialogBusy = (dialog) => (saving && dialog.id === "review-dialog") || (accountSaving && dialog.id === "account-dialog");
 document.querySelectorAll("[data-close]").forEach((button) => button.addEventListener("click", () => dialogBusy(button.closest("dialog")) || button.closest("dialog").close()));
 document.querySelectorAll("dialog").forEach((dialog) => {
+  dialog.addEventListener('beforetoggle', event => { if (event.newState === 'open') { closeAccountMenu(); closeSortMenu(); coffeeChoices.close(); } });
   dialog.addEventListener("cancel", event => { if (dialogBusy(dialog)) event.preventDefault(); });
   dialog.addEventListener("click", (event) => { if (event.target === dialog && !dialogBusy(dialog)) dialog.close(); });
   dialog.addEventListener("close", () => {
     if (dialog.id !== "review-dialog") return;
     $("#review-form").reset();
     requestAnimationFrame(() => {
-      if (document.querySelector("dialog[open]")) return;
+      if (document.querySelector('dialog[open]:not(#basket-dialog)')) return;
       reconcileStoredBasket();
       ($("#review-order").disabled ? $("#your-order") : $("#review-order")).focus({ preventScroll: true });
     });
@@ -720,6 +742,7 @@ async function start() {
     if (!await SC.startSession({scope:"wholesale",clear:clearOrderingSession})) return;
     applyCatalogue(await api("/api/wholesale/catalogue"), true);
     $("#catalogue-status").hidden = true; SC.reveal($("#products"));
+    loadRepeatOrder();
     // The order confirmation email's "See your orders" link (…/#orders) opens My orders once the page is ready.
     if (location.hash === "#orders") { window.history.replaceState(null, "", location.pathname + location.search); document.querySelector("[data-order-history]")?.click(); }
   } catch (error) {
@@ -985,24 +1008,43 @@ function renderReorderPlan(plan) {
   $("#confirm-reorder").disabled = !plan.added.packs;
   $("#reorder-error").hidden = true;
 }
-$("#order-history").addEventListener("click", async (event) => {
-  const button = event.target.closest("[data-reorder]");
-  if (!button || !ready || reordering) return;
+async function reviewReorder(order, button) {
+  if (!order || !button || !ready || reordering) return;
   if (pendingAttempt) { toast("Check your submitted order before building another basket."); return; }
-  const order = history.find(row => row.id === button.dataset.reorder);
-  if (!order) return;
   reordering = true; button.disabled = true;
   try {
     const fresh = await api("/api/wholesale/catalogue");
     if (fresh.me.id !== session.me.id) { location.reload(); return; }
-    if (!$("#orders-dialog").open || pendingAttempt) return;
+    if (!ready || pendingAttempt) return;
     applyCatalogue(fresh, false);
     renderReorderPlan(buildReorderPlan(order));
-    $("#orders-dialog").close();
+    if ($("#orders-dialog").open) $("#orders-dialog").close();
     $("#reorder-dialog").showModal();
   } catch (error) { toast(error.message); }
   finally { reordering = false; if (button.isConnected) button.disabled = !!pendingAttempt; }
+}
+$("#order-history").addEventListener('click', event => {
+  const button = event.target.closest('[data-reorder]');
+  if (button) reviewReorder(history.find(order => order.id === button.dataset.reorder), button);
 });
+function setRepeatOrder(order) {
+  repeatOrder = order || null;
+  $('#repeat-shortcut').hidden = !repeatOrder;
+  if (!repeatOrder) return;
+  const date = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'long', timeZone: 'Europe/London' }).format(new Date(order.createdAt));
+  $('#repeat-summary').textContent = `${bagCount(order.packs)} · ${date}`;
+  $('#repeat-last-order').disabled = !!pendingAttempt;
+}
+async function loadRepeatOrder() {
+  const identity = session?.me.id;
+  try {
+    const result = await api('/api/wholesale/orders');
+    if (!ready || !identity || session?.me.id !== identity) return;
+    const latest = result.orders.filter(order => order.status !== 'Cancelled').sort((a, b) => b.createdAt - a.createdAt)[0];
+    if (!repeatOrder || (latest && latest.createdAt >= repeatOrder.createdAt)) setRepeatOrder(latest);
+  } catch { /* A shortcut failure never blocks the catalogue or checkout. */ }
+}
+$('#repeat-last-order').addEventListener('click', event => reviewReorder(repeatOrder, event.currentTarget));
 $("#confirm-reorder").addEventListener("click", async () => {
   if (reordering || !reorderPlan?.added.packs || !ready) return;
   if (pendingAttempt) { $("#reorder-error").textContent = "Check your submitted order before building another basket."; $("#reorder-error").hidden = false; return; }
@@ -1018,121 +1060,79 @@ $("#confirm-reorder").addEventListener("click", async () => {
     basket = current.next; changedBasket();
     $("#reorder-dialog").close(); reorderPlan = null;
     toast(`${bagCount(current.added.packs)} added at current prices. Review your basket before placing the order.`);
-    $("#your-order").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start" });
+    openBasket();
     $("#your-order").focus({ preventScroll: true });
   } catch (error) { $("#reorder-error").textContent = error.message; $("#reorder-error").hidden = false; }
   finally { reordering = false; $("#confirm-reorder").disabled = !reorderPlan?.added.packs; }
 });
-// One compact mobile row; the same account controls become an anchored native popover.
-const mobileHeaderQuery = matchMedia("(max-width: 700px)");
-// Move the existing controls at the breakpoint so visual and keyboard order agree.
-// Keep their nodes: pack selections, search drafts and sort state survive resizing.
-const catalogueActions = $(".catalogue-actions"), catalogueTitle = $(".catalogue-title");
-const bagSizeControl = $(".bag-size"), productCount = $("#product-count");
-const coffeeSearch = $(".catalogue-tools .search-field"), coffeeCategories = $(".coffee-categories");
-const catalogueAnchors = [bagSizeControl, productCount, coffeeSearch].map(node => {
-  const anchor = document.createComment("catalogue desktop position");
-  node.before(anchor);
-  return { node, anchor };
-});
+// Reuse the same nodes at each breakpoint so drafts and selections survive resizing.
+const mobileHeaderQuery = matchMedia('(max-width:700px)');
+const catalogueActions = $('.catalogue-actions'), mobileCatalogueActions = $('.mobile-catalogue-actions');
+const bagSizeControl = $('.bag-size'), coffeeSearch = $('#catalogue-search'), coffeeCategories = $('.coffee-categories');
 function configureCatalogue() {
   const focused = document.activeElement;
-  const movingFocus = catalogueAnchors.some(({ node }) => node.contains(focused));
   if (mobileHeaderQuery.matches) {
-    catalogueTitle.append(productCount);
-    catalogueActions.insertBefore(bagSizeControl, sortButton);
+    mobileCatalogueActions.append(bagSizeControl, sortButton);
     coffeeCategories.before(coffeeSearch);
+    $('.section-heading').before($('#repeat-shortcut'));
   } else {
-    for (const { node, anchor } of catalogueAnchors) anchor.after(node);
+    catalogueActions.append(coffeeSearch, bagSizeControl, sortButton);
+    $('.section-heading').append($('#repeat-shortcut'));
   }
-  if (movingFocus && ready && !document.querySelector("dialog[open]") && !document.documentElement.hasAttribute("data-sc-session-locked")) focused.focus({ preventScroll: true });
-  if (sortMenu.matches(":popover-open")) positionSortMenu();
+  catalogueSearch.sync();
+  if (focused === $('#coffee-search') && !document.documentElement.hasAttribute('data-sc-session-locked')) catalogueSearch.open();
+  if (sortMenu.matches(':popover-open')) positionSortMenu();
 }
-mobileHeaderQuery.addEventListener("change", configureCatalogue);
-configureCatalogue();
+mobileHeaderQuery.addEventListener('change', configureCatalogue); configureCatalogue();
 
-const mobileHeader = $(".site-header"), headerAccount = $("#wholesale-account"), accountToggle = $("#account-toggle");
-const headerNavigation = mobileHeader.querySelector("nav"), accountActions = headerAccount.querySelector(".account-buttons");
-function closeAccountMenu() {
-  if (headerAccount.matches(":popover-open")) headerAccount.hidePopover();
-}
+const headerAccount = $('#wholesale-account'), accountToggle = $('#account-toggle');
+function closeAccountMenu() { if (headerAccount.matches(':popover-open')) headerAccount.hidePopover(); }
 function positionAccountMenu() {
-  if (!mobileHeaderQuery.matches) return;
-  const rect = mobileHeader.getBoundingClientRect(), width = Math.min(224, innerWidth - 32);
-  const top = Math.max(8, rect.bottom + 8);
-  headerAccount.style.width = width + "px";
-  headerAccount.style.left = Math.max(16, Math.min(rect.right - width, innerWidth - width - 16)) + "px";
-  headerAccount.style.top = top + "px";
-  headerAccount.style.maxHeight = Math.max(44, innerHeight - top - 16) + "px";
+  const rect = accountToggle.getBoundingClientRect(), width = Math.min(312, innerWidth - 24);
+  const top = Math.max(8, rect.bottom + 10);
+  headerAccount.style.width = width + 'px';
+  headerAccount.style.left = Math.max(12, Math.min(rect.right - width, innerWidth - width - 12)) + 'px';
+  headerAccount.style.top = top + 'px';
+  headerAccount.style.maxHeight = Math.max(44, innerHeight - top - 12) + 'px';
 }
-function configureAccountMenu() {
-  const restoreFocus = headerAccount.contains(document.activeElement) || document.activeElement === accountToggle;
-  closeAccountMenu();
-  const adminLink = $("#admin-wholesale-link");
-  if (mobileHeaderQuery.matches) {
-    headerAccount.setAttribute("popover", "auto");
-    accountActions.insertBefore(adminLink, $("#preview-sign-out"));
-  } else {
-    headerAccount.removeAttribute("popover");
-    headerNavigation.append(adminLink);
-    for (const property of ["width", "left", "top", "max-height"]) headerAccount.style.removeProperty(property);
-  }
-  accountToggle.setAttribute("aria-expanded", "false");
-  if (restoreFocus && !document.querySelector("dialog[open]") && !document.documentElement.hasAttribute("data-sc-session-locked")) {
-    const target = mobileHeaderQuery.matches ? accountToggle : [...headerAccount.querySelectorAll("button"), adminLink].find(node => !node.hidden);
-    target?.focus({ preventScroll: true });
-  }
+headerAccount.addEventListener('beforetoggle', event => {
+  const opening = event.newState === 'open';
+  if (opening && (!ready || document.documentElement.hasAttribute('data-sc-session-locked'))) { event.preventDefault(); return; }
+  accountToggle.setAttribute('aria-expanded', String(opening));
+  if (opening) { coffeeChoices.close(); closeSortMenu(); positionAccountMenu(); }
+});
+headerAccount.addEventListener('toggle', event => {
+  if (event.newState === 'open' && ready && !document.documentElement.hasAttribute('data-sc-session-locked') && headerAccount.matches(':popover-open')) headerAccount.querySelector('button:not([hidden])')?.focus({ preventScroll: true });
+});
+accountToggle.addEventListener('keydown', event => { if (event.key === 'ArrowDown') { event.preventDefault(); headerAccount.showPopover(); } });
+headerAccount.addEventListener('keydown', event => {
+  const items = [...headerAccount.querySelectorAll('button,a')].filter(node => !node.hidden), i = items.indexOf(document.activeElement);
+  const n = event.key === 'ArrowDown' ? (i + 1) % items.length : event.key === 'ArrowUp' ? (i + items.length - 1) % items.length : event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : null;
+  if (n !== null) { event.preventDefault(); items[n]?.focus(); }
+});
+window.addEventListener('resize', () => { if (headerAccount.matches(':popover-open')) positionAccountMenu(); }, { passive: true });
+window.addEventListener('scroll', () => { if (headerAccount.matches(':popover-open')) positionAccountMenu(); }, { passive: true });
+window.addEventListener('blur', closeAccountMenu); window.addEventListener('pagehide', closeAccountMenu);
+for (const id of ['#account-dialog', '#orders-dialog']) $(id).addEventListener('close', () => {
+  if (ready && !document.documentElement.hasAttribute('data-sc-session-locked') && !document.querySelector('dialog[open]')) accountToggle.focus({ preventScroll: true });
+});
+function openBasket() {
+  if (!ready || document.documentElement.hasAttribute('data-sc-session-locked')) return;
+  closeAccountMenu(); coffeeChoices.close(); closeSortMenu();
+  if (!$('#basket-dialog').open) $('#basket-dialog').showModal();
+  $('#your-order').focus({ preventScroll: true });
 }
-headerAccount.addEventListener("beforetoggle", event => {
-  const opening = event.newState === "open";
-  if (opening && (!ready || document.documentElement.hasAttribute("data-sc-session-locked"))) { event.preventDefault(); return; }
-  accountToggle.setAttribute("aria-expanded", String(opening));
-  if (opening) positionAccountMenu();
+$('#basket-dialog').addEventListener('close', () => {
+  if (ready && !document.documentElement.hasAttribute('data-sc-session-locked') && !document.querySelector('dialog[open]')) $('.site-header [data-basket]').focus({ preventScroll: true });
 });
-headerAccount.addEventListener("toggle", event => {
-  if (event.newState === "open" && ready && !document.documentElement.hasAttribute("data-sc-session-locked") && headerAccount.matches(":popover-open")) [...headerAccount.querySelectorAll("button,a")].find(node => !node.hidden)?.focus({ preventScroll: true });
-});
-accountToggle.addEventListener("keydown", event => {
-  if (event.key === "ArrowDown") { event.preventDefault(); headerAccount.showPopover(); }
-});
-mobileHeaderQuery.addEventListener("change", configureAccountMenu);
-window.addEventListener("resize", () => { if (headerAccount.matches(":popover-open")) positionAccountMenu(); }, { passive: true });
-window.addEventListener("scroll", () => { if (headerAccount.matches(":popover-open")) positionAccountMenu(); }, { passive: true });
-window.addEventListener("blur", closeAccountMenu);
-window.addEventListener("pagehide", closeAccountMenu);
-$("#account-dialog").addEventListener("close", () => {
-  if (!ready || document.documentElement.hasAttribute("data-sc-session-locked") || document.querySelector("dialog[open]")) return;
-  (mobileHeaderQuery.matches ? accountToggle : $("#my-account")).focus({ preventScroll: true });
-});
-configureAccountMenu();
 
-// Fit the desktop basket to its actual position, including the first viewport before it sticks.
-let basketLayoutFrame = 0;
-function scheduleDesktopBasketLayout() {
-  if (basketLayoutFrame) return;
-  basketLayoutFrame = requestAnimationFrame(() => {
-    basketLayoutFrame = 0;
-    const column = $("#your-order"), panel = column.querySelector(".order-panel"), header = $(".site-header");
-    if (!matchMedia("(min-width: 1101px)").matches) { column.style.removeProperty("--basket-top"); panel.style.removeProperty("--basket-height"); return; }
-    const inset = parseFloat(getComputedStyle(header).top) || 8;
-    const stickyTop = Math.ceil(header.offsetHeight + inset + 16);
-    column.style.setProperty("--basket-top", `${stickyTop}px`);
-    const top = Math.max(column.getBoundingClientRect().top, stickyTop);
-    panel.style.setProperty("--basket-height", `${Math.max(220, innerHeight - top - 20)}px`);
-  });
-}
-window.addEventListener("resize", scheduleDesktopBasketLayout, { passive: true });
-window.addEventListener("scroll", scheduleDesktopBasketLayout, { passive: true });
-if ("ResizeObserver" in window) {
-  const basketLayoutObserver = new ResizeObserver(scheduleDesktopBasketLayout);
-  basketLayoutObserver.observe($(".site-header"));
-}
-scheduleDesktopBasketLayout();
 if ("IntersectionObserver" in window) {
   new IntersectionObserver(([entry]) => { orderVisible = entry.isIntersecting; updateMobileBasket(); }, { threshold: 0 }).observe($("#your-order"));
 }
 function clearOrderingSession() {
-  closeAccountMenu();
+  coffeeChoices.clear(); catalogueSearch.close({ clear: true }); closeAccountMenu();
+  repeatOrder = null; $('#repeat-shortcut').hidden = true; $('#repeat-summary').replaceChildren();
+  for (const timer of addedTimers.values()) clearTimeout(timer); addedTimers.clear();
   ready = false; session = null; basket = []; history = []; pendingAttempt = null;
   accountLocations = []; customerInvoices = []; STORAGE_KEY = null;
   setCatalogue([]); photoIndexes.clear();

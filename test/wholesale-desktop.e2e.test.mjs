@@ -1,4 +1,4 @@
-import {openWholesaleAccount} from './wholesale-ui-helpers.mjs';
+import { openWholesaleBasket, openWholesaleAccount } from './wholesale-ui-helpers.mjs';
 // Wide customer/admin editors and short desktop windows remain usable with real account/basket data.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -154,7 +154,7 @@ for (const [screen, viewport] of [["compact", { width: 1280, height: 720 }], ["l
       }
       await screenshot(page, `desktop-customer-account-${screen}-${color}`);
       await page.locator("#save-account").click(); await page.locator("#account-dialog").waitFor({ state: "hidden" });
-      assert.equal(await page.evaluate(() => document.activeElement === document.querySelector(matchMedia("(max-width:700px)").matches ? "#account-toggle" : "#my-account")), true, "closing account details restores its opener");
+      assert.equal(await page.evaluate(() => document.activeElement === document.querySelector("#account-toggle")), true, "closing account details restores its opener");
       const savedProfile = await page.evaluate(() => fetch("/api/wholesale/session").then((response) => response.json()).then((result) => result.customer));
       assert.equal(savedProfile.contact, "Customer desktop contact", "the external footer action submits the associated account form");
       assert.equal(savedProfile.business, business); assert.equal(savedProfile.defaultLocationId, riverside.id);
@@ -164,6 +164,7 @@ for (const [screen, viewport] of [["compact", { width: 1280, height: 720 }], ["l
       const expectedTotal = new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP" }).format(catalogue.reduce((sum, product) => sum + product.prices.kilo, 0) / 100);
       assert.equal(await page.locator("#subtotal").textContent(), expectedTotal);
       await page.evaluate(() => window.scrollTo(0, 0)); await painted(page);
+      await openWholesaleBasket(page);
       const list = page.locator("#order-items");
       await list.focus(); await page.keyboard.press("End");
       await page.waitForFunction(() => document.querySelector("#order-items").scrollTop > 0);
@@ -174,7 +175,7 @@ for (const [screen, viewport] of [["compact", { width: 1280, height: 720 }], ["l
       assert.equal(await page.locator("#review-order").isEnabled(), true);
       assert.ok(await page.locator("#order-totals").evaluate((node) => { const box = node.getBoundingClientRect(); return box.top >= 0 && box.bottom <= innerHeight + 1; }), "coffee totals stay visible outside the scrolling list");
       await screenshot(page, `desktop-long-basket-${screen}-${color}`);
-      await page.locator("#review-order").click(); await page.locator("#review-dialog").waitFor();
+      await openWholesaleBasket(page); await page.locator("#review-order").click(); await page.locator("#review-dialog").waitFor();
       assert.equal(await page.locator("#review-total").textContent(), expectedTotal);
       await page.keyboard.press("Escape"); await page.locator("#review-dialog").waitFor({ state: "hidden" });
       await page.waitForFunction(() => document.activeElement === document.querySelector("#review-order"));

@@ -12,7 +12,9 @@
   <link rel="icon" href="/wholesale-preview/images/logo.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/theme.css">
   <link rel="stylesheet" href="/wholesale-preview/wholesale.css">
+  <link rel="stylesheet" href="/wholesale-preview/catalogue.css">
   <script src="/errors.js"></script>
+<script src="/shared/focus.js" defer></script>
   <script src="/shared/core.js"></script>
   <style>html[data-sc-session-locked] body>:not(#sc-session-shield),html[data-sc-session-locked] body>:not(#sc-session-shield) *{visibility:hidden!important;pointer-events:none!important}</style>
   <script src="/wholesale-preview/terms.js" defer></script>
@@ -23,19 +25,22 @@
   <div class="preview-banner" id="staff-preview-notice" hidden>Staff preview — orders from this staff login are for testing.</div>
   <div class="header-shell">
   <header class="site-header wrap">
-    <a class="brand" id="preview-home" href="/wholesale-preview/" aria-label="Strangers Coffee wholesale home"><img class="brand-wordmark" src="/wholesale-preview/images/logo.svg" width="116" height="65" alt="Strangers Coffee"><img class="brand-mark" src="/mark.svg" width="28" height="28" alt=""><span class="brand-name">Wholesale<small>Strangers Coffee</small></span></a>
-    <nav aria-label="Main navigation">
-      <a class="nav-link active" href="#coffee" aria-current="page" aria-label="Order coffee"><span class="desktop-nav-label">Order coffee</span><span class="mobile-nav-label" aria-hidden="true">Coffee</span></a>
-      <button class="nav-link" type="button" id="my-orders" data-order-history aria-label="My orders"><span class="desktop-nav-label">My orders</span><span class="mobile-nav-label" aria-hidden="true">Orders</span></button>
-      <a class="nav-link" id="admin-wholesale-link" href="/admin#wholesale" hidden>Admin · Wholesale <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></a>
-    </nav>
+    <a class="brand" id="preview-home" href="/wholesale-preview/" aria-label="Strangers Coffee wholesale home"><img class="brand-mark" src="/mark.svg" width="32" height="34" alt=""><span class="brand-name">Strangers<small>Wholesale coffee</small></span></a>
     <div class="header-tools">
       <button class="basket-link" type="button" data-basket aria-label="View your order, 0 bags">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 3h3l3 12h11l3-9H6M9 19a1 1 0 1 0 0 .01M18 19a1 1 0 1 0 0 .01"/></svg>
         <span class="basket-label">Your order</span><span class="basket-count" id="basket-count" hidden>0</span>
       </button>
-      <button class="account-toggle" id="account-toggle" type="button" popovertarget="wholesale-account" aria-controls="wholesale-account" aria-expanded="false" aria-label="Your account"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/></svg></button>
-      <div class="header-account" id="wholesale-account" popover="auto" role="group" aria-label="Wholesale account"><span class="identity-pill"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/></svg><span class="account-caption">Signed in as</span><strong id="signed-in-name">…</strong></span><div class="account-buttons"><button class="text-button" type="button" id="my-account" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/></svg>My account</button><button class="text-button" type="button" id="preview-sign-out"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4H4v16h5M14 7l5 5-5 5M8 12h11"/></svg>Sign out</button></div></div>
+      <button class="account-toggle" id="account-toggle" type="button" popovertarget="wholesale-account" aria-controls="wholesale-account" aria-expanded="false" aria-label="My account"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/></svg><span>My account</span></button>
+      <div class="header-account" id="wholesale-account" popover="auto" role="group" aria-label="My account">
+        <span class="identity-pill"><span class="account-caption">My account</span><strong id="signed-in-name">…</strong></span>
+        <div class="account-buttons">
+          <button class="text-button" type="button" id="my-orders" data-order-history aria-label="My orders"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h8l4 4v14H6zM14 3v5h4M9 12h6M9 16h6"/></svg><span><strong>Orders</strong><small>Track and reorder your coffee</small></span></button>
+          <button class="text-button" type="button" id="my-account" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/></svg><span><strong>Business details</strong><small>Contact and delivery information</small></span></button>
+          <a class="nav-link" id="admin-wholesale-link" href="/admin#wholesale" hidden>Admin · Wholesale <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></a>
+          <button class="text-button account-sign-out" type="button" id="preview-sign-out"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4H4v16h5M14 7l5 5-5 5M8 12h11"/></svg>Sign out</button>
+        </div>
+      </div>
     </div>
   </header>
   </div>
@@ -45,27 +50,30 @@
     <p class="account-hold" id="account-hold" role="status" hidden>Your account is on hold. Contact Strangers before placing an order.</p>
     <div class="shop-layout">
       <section class="catalogue" id="coffee" aria-labelledby="coffee-title">
-        <div class="section-heading"><div class="catalogue-title"><h2 id="coffee-title"><span class="desktop-catalogue-label">Coffee catalogue</span><span class="mobile-catalogue-label">Coffee</span></h2></div><div class="catalogue-actions"><span class="product-count" id="product-count" role="status"><span class="sc-sr-only">Loading coffees…</span></span><button class="text-button refresh-button sort-button" id="sort-coffee" type="button" popovertarget="sort-menu" aria-label="Sort coffee: Catalogue order" title="Sort coffee" aria-haspopup="menu" aria-controls="sort-menu" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M7 12h10M10 17h4"/></svg><span class="sr-only" id="sort-label">Catalogue order</span></button></div></div>
+        <div class="section-heading"><div class="catalogue-title"><h2 id="coffee-title">Coffee</h2><span class="product-count" id="product-count" role="status"><span class="sc-sr-only">Loading coffees…</span></span></div><div class="mobile-catalogue-actions"></div><div class="repeat-shortcut" id="repeat-shortcut" hidden><div class="repeat-copy"><strong><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8M21 3v5h-5"/></svg>Order again</strong><span id="repeat-summary"></span></div><button class="text-button" id="repeat-last-order" type="button">Review</button></div></div>
         <div class="catalogue-tools">
 
           <div id="sort-menu" class="sort-menu" popover role="menu" aria-label="Sort coffee"><p id="sort-basis">Sort by 1 kg bag price</p><button type="button" role="menuitemradio" aria-checked="true" data-sort="catalogue"><span>Catalogue order</span><span class="sort-check" aria-hidden="true">✓</span></button><button type="button" role="menuitemradio" aria-checked="false" data-sort="price-asc"><span>Price: low to high</span><span class="sort-check" aria-hidden="true">✓</span></button><button type="button" role="menuitemradio" aria-checked="false" data-sort="price-desc"><span>Price: high to low</span><span class="sort-check" aria-hidden="true">✓</span></button></div>
-          <div class="bag-size" role="group" aria-labelledby="bag-size-label"><span class="bag-size-label" id="bag-size-label">Bag size</span><div class="filters"><button class="filter" type="button" data-bag-size="quarter" aria-pressed="false"><span class="bag-size-prefix">All </span>250 g</button><button class="filter selected" type="button" data-bag-size="kilo" aria-pressed="true"><span class="bag-size-prefix">All </span>1 kg</button></div></div>
           <div class="filters coffee-categories" role="group" aria-label="Filter coffees">
             <button class="filter selected" type="button" data-filter="all" aria-pressed="true">All<span class="category-suffix"> coffee</span></button>
             <button class="filter" type="button" data-filter="single-origin" aria-pressed="false">Single origins</button>
             <button class="filter" type="button" data-filter="blend" aria-pressed="false">Blends</button>
             <button class="filter" type="button" data-filter="decaf" aria-pressed="false">Decaf</button>
           </div>
-          <label class="search-field"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><span class="sr-only">Search coffees, origins or tasting notes</span><input id="coffee-search" type="search" placeholder="Search coffee" autocomplete="off"></label>
+          <div class="catalogue-actions">
+            <div class="catalogue-search" id="catalogue-search"><button class="search-toggle" id="search-toggle" type="button" aria-label="Search coffee" aria-controls="coffee-search-field" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg></button><label class="search-field" id="coffee-search-field"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><span class="sr-only">Search coffees, origins or tasting notes</span><input id="coffee-search" type="search" placeholder="Search coffee" autocomplete="off"></label><button class="search-close" id="search-close" type="button" aria-label="Close search and clear filter" hidden>×</button></div>
+            <div class="bag-size" role="group" aria-label="Bag size for all coffees"><div class="filters"><button class="filter" type="button" data-bag-size="quarter" aria-pressed="false">250 g</button><button class="filter selected" type="button" data-bag-size="kilo" aria-pressed="true">1 kg</button></div></div>
+            <button class="text-button refresh-button sort-button" id="sort-coffee" type="button" popovertarget="sort-menu" aria-label="Sort coffee: Catalogue order" aria-haspopup="menu" aria-controls="sort-menu" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M7 12h10M10 17h4"/></svg><span class="sr-only" id="sort-label">Catalogue order</span></button>
+          </div>
         </div>
         <div class="catalogue-status" id="catalogue-status"><div class="sc-skeleton sc-skeleton-products" role="status" aria-label="Loading your coffee…"><span class="sc-sr-only">Loading your coffee…</span><div class="sc-sk-shapes" aria-hidden="true"><div class="sc-sk-card"><span class="sc-sk-bar sc-sk-photo"></span><div class="sc-sk-copy"><span class="sc-sk-bar sc-sk-title"></span><span class="sc-sk-bar sc-sk-line"></span><span class="sc-sk-bar sc-sk-short"></span></div></div><div class="sc-sk-card"><span class="sc-sk-bar sc-sk-photo"></span><div class="sc-sk-copy"><span class="sc-sk-bar sc-sk-title"></span><span class="sc-sk-bar sc-sk-line"></span><span class="sc-sk-bar sc-sk-short"></span></div></div></div></div></div><button class="text-button" id="retry-catalogue" type="button" hidden>Try loading again</button><div class="product-grid" id="products"></div>
         <div class="no-results" id="no-results" hidden><h3>No coffees found.</h3><p>Try another origin, name or tasting note.</p><button class="text-button" type="button" id="reset-filters">Show all coffee <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></button></div>
         <noscript><p class="no-results">Please enable JavaScript to browse coffee and place your order.</p></noscript>
       </section>
 
-      <aside class="order-column" id="your-order" aria-labelledby="order-title" tabindex="-1">
+      <dialog id="basket-dialog" aria-labelledby="order-title"><aside class="order-column" id="your-order" aria-labelledby="order-title" tabindex="-1">
         <div class="order-panel">
-          <div class="order-heading"><h2 id="order-title">Your order</h2><span class="order-count" id="order-count" hidden></span></div>
+          <div class="order-heading"><h2 id="order-title">Your order</h2><span class="order-count" id="order-count" hidden></span><button class="close-button" type="button" data-close aria-label="Close basket">×</button></div>
           <div id="order-items" tabindex="0" role="region" aria-label="Coffee in your order"></div>
           <div class="order-totals" id="order-totals" hidden>
             <div class="weight-total"><span>Total coffee</span><span id="total-weight">0 kg</span></div>
@@ -76,7 +84,7 @@
           <button class="button button-dark review-button" id="review-order" type="button" disabled>Review order <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></button>
           <div class="basket-meta"><span class="small-dot" aria-hidden="true"></span><span id="basket-storage-note">Your basket stays on this browser.</span></div>
         </div>
-      </aside>
+      </aside></dialog>
     </div>
   </main>
 
@@ -164,7 +172,6 @@
     <p class="quantity-error" id="reorder-error" role="alert" hidden></p>
     <div class="reorder-actions"><button class="button button-dark" id="confirm-reorder" type="button">Add to basket</button><button class="button button-outline" type="button" data-close>Keep current basket</button></div>
   </div></dialog>
-  <dialog id="grind-dialog" aria-labelledby="grind-title"><div class="dialog-inner"><div class="dialog-chrome"><button class="close-button" type="button" data-close aria-label="Close grind choices">×</button></div><p class="eyebrow">COFFEE PREPARATION</p><h2 id="grind-title">Choose your grind</h2><p class="dialog-intro" id="grind-product-name"></p><form id="grind-choice-form"><fieldset class="grind-choices"><legend class="sr-only">Grind options</legend><label><input type="radio" name="grind-choice" value="beans" checked><span><strong>Beans</strong><small>Whole beans, for your own grinder</small></span></label><label><input type="radio" name="grind-choice" value="espresso"><span><strong>Fine</strong><small>Commercial espresso machine</small></span></label><label><input type="radio" name="grind-choice" value="filter"><span><strong>Medium</strong><small>Filter</small></span></label><label><input type="radio" name="grind-choice" value="cafetiere"><span><strong>Coarse</strong><small>Cafetiere and batch brewers</small></span></label></fieldset><div class="grind-actions"><button class="button button-dark" id="confirm-grind" type="submit">Use this grind</button><button class="button button-outline" type="button" data-close>Keep current grind</button></div></form></div></dialog>
   <dialog id="location-dialog" aria-labelledby="location-title"><div class="dialog-inner">
     <div class="dialog-chrome"><button class="close-button" type="button" data-close aria-label="Close location editor">×</button></div>
     <p class="eyebrow">DELIVERY LOCATION</p><h2 id="location-title">Add location</h2><p class="dialog-intro">Save this location with your account details, then choose it when ordering.</p>

@@ -1,4 +1,4 @@
-import {openWholesaleAccount, openWholesaleAccountMenu} from './wholesale-ui-helpers.mjs';
+import { chooseWholesalePack, openWholesaleBasket, openWholesaleOrders, openWholesaleAccount, openWholesaleAccountMenu } from './wholesale-ui-helpers.mjs';
 // Staff ordering and native Admin → Wholesale, on phones and iPads in light and dark mode.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -68,7 +68,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       assert.equal(await page.locator("#admin-wholesale-link").getAttribute("href"), "/admin#wholesale");
       const card = page.locator('article[data-product="brazil"]');
       const photo = await card.locator('img').evaluate((img) => ({ width: img.getBoundingClientRect().width, height: img.getBoundingClientRect().height, naturalWidth: img.naturalWidth, naturalHeight: img.naturalHeight, fit: getComputedStyle(img).objectFit }));
-      assert.ok(Math.abs(photo.width / photo.height - photo.naturalWidth / photo.naturalHeight) < 0.02, "photo keeps the full source image proportions");
+      assert.ok(photo.width > 0 && photo.height > 0 && photo.naturalWidth > 0 && photo.naturalHeight > 0, "photo has a complete intrinsic source inside its contained frame");
       assert.equal(photo.fit, "contain");
       assert.equal(await page.locator('.intro').count(), 0, "requested marketing introduction is removed");
       assert.equal(await page.locator('#basket-count').isHidden(), true, 'an empty order has no zero badge');
@@ -77,21 +77,19 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       assert.equal(await page.locator('.session-strip').count(), 0, 'there is no separate account strip below the header');
       const otherCard = page.locator('article[data-product="colombia"]');
       await card.locator('[data-grind-open]').click();
-      await page.locator('#grind-dialog').waitFor();
-      await assertDialogCloseClear(page, '#grind-dialog');
-      await page.locator('#grind-choice-form [value="filter"]').check();
-      await page.locator('#grind-dialog [data-close]').last().click();
-      assert.equal(await card.locator('select[name="grind"]').inputValue(), 'beans', 'cancelling a grind choice preserves the card selection');
-      assert.equal(await card.locator('[data-grind-open]').evaluate((button) => document.activeElement === button), true, 'cancel returns focus to the grind picker');
+      await page.locator('#coffee-choice-menu:popover-open').waitFor();
+      await page.locator('#coffee-choice-menu [data-choice="filter"]').focus();
+      await page.keyboard.press('Escape');
+      assert.equal(await card.locator('select[name="grind"]').inputValue(), 'beans', 'dismissing a grind menu preserves the selection');
+      assert.equal(await card.locator('[data-grind-open]').evaluate(button => document.activeElement === button), true, 'dismissal returns focus to the picker');
       await card.locator('[data-grind-open]').click();
-      await page.locator('#grind-choice-form [value="espresso"]').check();
-      await page.locator('#confirm-grind').click();
+      await page.locator('#coffee-choice-menu [data-choice="espresso"]').click();
       assert.equal(await card.locator('select[name="grind"]').inputValue(), 'espresso');
       assert.equal(await card.locator('[data-grind-label]').textContent(), 'Fine');
       assert.equal(await card.locator('[data-grind-hint]').textContent(), 'Commercial espresso machine', 'the card says what the grind is for');
       assert.equal(await otherCard.locator('select[name="grind"]').inputValue(), 'beans', 'confirming grind changes only the chosen coffee card');
       assert.equal(await card.locator('[data-grind-open]').evaluate((button) => document.activeElement === button), true, 'confirmation returns focus to the updated card');
-      await card.locator('input[name="pack"][value="quarter"]').check();
+      await chooseWholesalePack(page, card, 'quarter');
       await card.locator('input[type="number"]').fill("2");
       await card.locator('button[type="submit"]').click();
       assert.equal(await page.locator("#subtotal").textContent(), "£10.00");
@@ -101,7 +99,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
         await mkdir(process.env.WHOLESALE_SCREENSHOT_DIR, { recursive: true });
         await page.screenshot({ path: `${process.env.WHOLESALE_SCREENSHOT_DIR}/ordering-${device}-${color}.png` });
       }
-      await page.locator("#review-order").click();
+      await openWholesaleBasket(page); await page.locator("#review-order").click();
       await page.locator("#review-dialog").waitFor();
       await assertDialogCloseClear(page, '#review-dialog');
       const business = `${device} ${color} Preview Café`;
@@ -115,7 +113,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       assert.equal(order.lines[0].grind, 'espresso', 'the saved order receives the confirmed picker value');
       await assertDialogCloseClear(page, '#review-dialog');
       await page.locator('#preview-complete [data-close]').click();
-      await page.locator('#my-orders').click();
+      await openWholesaleOrders(page);
       await page.locator('#orders-dialog').waitFor();
       await page.locator(`[data-history-order="${order.id}"]`).waitFor();
       await assertDialogCloseClear(page, '#orders-dialog');
@@ -242,7 +240,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       const card = page.locator('article[data-product="brazil"]');
       await card.locator('input[type="number"]').fill('2');
       await card.locator('button[type="submit"]').click();
-      await page.locator('#review-order').click();
+      await openWholesaleBasket(page); await page.locator('#review-order').click();
       await page.locator('#review-dialog').waitFor();
       assert.equal(await page.locator('#review-business').textContent(), business);
       assert.match(await page.locator('#delivery-summary').textContent(), /10 Coffee Street/);
@@ -267,7 +265,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       await admin.locator('#wNote').fill('Private admin note');
       await admin.locator('#sheet button[type="submit"]').click();
       await admin.locator('#scrim').waitFor({ state: 'hidden' });
-      await page.locator('#my-orders').click();
+      await openWholesaleOrders(page);
       await page.locator('#order-history .order-state', { hasText: 'Ready' }).waitFor();
       assert.equal(await page.locator('#history-count').textContent(), 'Showing 1 of 1 order');
       assert.equal(await page.locator('.history-progress [aria-current="step"]').textContent().then(value => value.includes('Ready')), true);
@@ -316,10 +314,10 @@ test('repeat order: current availability and prices, basket merge, cancellation 
   try {
     const page = await context.newPage(); await page.goto(srv.base + '/wholesale-preview/');
     const card = page.locator(`article[data-product="${filter.id}"]`); await card.waitFor();
-    await card.locator('[name="pack"][value="quarter"]').check(); await card.locator('button[type="submit"]').click();
+    await chooseWholesalePack(page, card, 'quarter'); await card.locator('button[type="submit"]').click();
     assert.equal(await page.locator('#basket-count').textContent(), '1');
     espresso = (await api('PUT', `/api/admin/wholesale/catalogue/${espresso.id}`, { ifVersion: espresso.version, prices: espresso.prices, active: true, inStock: false })).body.product;
-    await page.locator('#my-orders').click(); await page.locator('.order-state', { hasText: 'Cancelled' }).waitFor();
+    await openWholesaleOrders(page); await page.locator('.order-state', { hasText: 'Cancelled' }).waitFor();
     assert.equal(await page.locator('.history-progress').count(), 0, 'cancelled orders never imply completed preparation stages');
     assert.match(await page.locator('.history-cancelled').textContent(), /cancelled/);
     if (process.env.WHOLESALE_SCREENSHOT_DIR) { await mkdir(process.env.WHOLESALE_SCREENSHOT_DIR, { recursive: true }); await page.screenshot({ path: `${process.env.WHOLESALE_SCREENSHOT_DIR}/history-cancelled-phone-light.png` }); }
@@ -350,7 +348,7 @@ test('repeat order: current availability and prices, basket merge, cancellation 
     if (process.env.WHOLESALE_SCREENSHOT_DIR) await page.screenshot({ path: `${process.env.WHOLESALE_SCREENSHOT_DIR}/repeat-unavailable-phone-light.png` });
     await page.locator('#reorder-dialog [data-close]').last().click();
     espresso = (await api('PUT', `/api/admin/wholesale/catalogue/${espresso.id}`, { ifVersion: espresso.version, prices: { ...espresso.prices, kilo: 3300 }, active: true, inStock: true })).body.product;
-    await page.locator('#my-orders').click(); await page.locator('[data-reorder]').click(); await page.locator('#reorder-dialog').waitFor();
+    await openWholesaleOrders(page); await page.locator('[data-reorder]').click(); await page.locator('#reorder-dialog').waitFor();
     assert.match(await page.locator('#reorder-summary').textContent(), /3 bags available to add · £76.00/);
     espresso = (await api('PUT', `/api/admin/wholesale/catalogue/${espresso.id}`, { ifVersion: espresso.version, prices: { ...espresso.prices, kilo: 3400 }, active: true, inStock: true })).body.product;
     await page.locator('#confirm-reorder').click(); await page.locator('#reorder-error', { hasText: 'changed' }).waitFor();
@@ -361,11 +359,11 @@ test('repeat order: current availability and prices, basket merge, cancellation 
     assert.equal(await page.locator('#basket-count').textContent(), '4'); assert.equal(await page.locator('#subtotal').textContent(), '£88.00');
     assert.equal((await api('GET', '/api/wholesale/orders', undefined, buyerCookie)).body.orders.length, 1, 'confirming a repeat only builds the merged basket');
     await page.route('**/api/wholesale/orders', route => route.request().method() === 'POST' ? route.abort() : route.continue());
-    await page.locator('#review-order').click(); await page.locator('#review-dialog').waitFor();
+    await openWholesaleBasket(page); await page.locator('#review-order').click(); await page.locator('#review-dialog').waitFor();
     await page.locator('#review-form [name="delivery"][value="collection"]').check();
     await page.locator('#submit-preview-order').click(); await page.locator('#preview-submit-error', { hasText: 'couldn’t confirm' }).waitFor();
     await page.locator('#review-dialog .close-button').click();
-    await page.locator('#my-orders').click(); await page.locator('[data-reorder]').waitFor();
+    await openWholesaleOrders(page); await page.locator('[data-reorder]').waitFor();
     assert.equal(await page.locator('[data-reorder]').isDisabled(), true, 'an unresolved submission blocks repeat baskets');
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
   } finally { await context.close(); }

@@ -1,4 +1,4 @@
-import {openWholesaleAccount, openWholesaleAccountMenu} from './wholesale-ui-helpers.mjs';
+import { openWholesaleOrders, openWholesaleAccount, openWholesaleAccountMenu } from './wholesale-ui-helpers.mjs';
 import {test,before,after} from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
@@ -42,7 +42,7 @@ test('a held order-history response cannot restore a previous business after ide
   await page.goto(srv.base+'/wholesale-preview/');await page.locator('[data-product]').first().waitFor();
   await page.evaluate(()=>addEventListener('sc:session-invalid',()=>window.capturePrivacyState({locked:document.documentElement.hasAttribute('data-sc-session-locked'),history:document.getElementById('order-history').textContent,products:document.querySelectorAll('#products [data-product]').length,name:document.getElementById('signed-in-name').textContent})));
   await page.route('**/api/wholesale/orders',async route=>{const response=await route.fetch();arrive();await gate;try{await route.fulfill({response})}catch{}});
-  await page.locator('#my-orders').click();await ready;await useCookie(context,B.cookie);await page.evaluate(()=>{dispatchEvent(new Event('blur'));dispatchEvent(new Event('focus'))});
+  await openWholesaleOrders(page);await ready;await useCookie(context,B.cookie);await page.evaluate(()=>{dispatchEvent(new Event('blur'));dispatchEvent(new Event('focus'))});
   const state=await cleared;assert.equal(state.locked,true);assert.equal(state.products,0);assert.equal(state.name,'');assert.ok(!state.history.includes('PRIVATE-REFERENCE-privacy.alpha'));
   release();await page.waitForFunction(()=>document.getElementById('signed-in-name')?.textContent==='privacy.beta');assert.ok(!(await page.locator('body').innerText()).includes('PRIVATE-REFERENCE-privacy.alpha'));
  }finally{release?.();await context.close()}

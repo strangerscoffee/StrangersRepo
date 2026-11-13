@@ -1,4 +1,4 @@
-import {openWholesaleAccount} from './wholesale-ui-helpers.mjs';
+import { openWholesaleBasket, openWholesaleOrders, openWholesaleAccount } from './wholesale-ui-helpers.mjs';
 // Customer location drafts/defaults and immutable delivery snapshots across the native admin editor.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -111,7 +111,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
 
       const card = page.locator('article[data-product="brazil"]');
       await card.locator('button[type="submit"]').click();
-      await page.locator("#review-order").click(); await page.locator("#review-dialog").waitFor();
+      await openWholesaleBasket(page); await page.locator("#review-order").click(); await page.locator("#review-dialog").waitFor();
       assert.equal(await page.locator("#review-business").textContent(), business);
       assert.equal(await page.locator('#review-form [name="locationId"]').inputValue(), riverside.id, "checkout starts at the saved default location");
       assert.match(await page.locator("#delivery-summary").textContent(), /22 Riverside Road/);
@@ -166,7 +166,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       await admin.locator(`[data-act="wh-order"][data-id="${order.id}"]`).click();
       assert.match(await admin.locator("#sheet").textContent(), /Main café/);
       assert.match(await admin.locator("#sheet").textContent(), /10 Dove Street/);
-      await page.locator("#my-orders").click(); await page.locator(`[data-history-order="${order.id}"]`).waitFor();
+      await openWholesaleOrders(page); await page.locator(`[data-history-order="${order.id}"]`).waitFor();
       await page.locator(`[data-history-order="${order.id}"] summary`).click();
       const details = await page.locator(`[data-history-order="${order.id}"] .history-details`).textContent();
       assert.match(details, /Main café/); assert.match(details, /10 Dove Street/); assert.doesNotMatch(details, /11 Dove Street|Airport kiosk/);
