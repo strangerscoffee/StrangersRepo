@@ -1,0 +1,29 @@
+/* Admin → Sickness (public/admin/sickness.js). Each trigger point has its own colour, always with its name beside it. */
+:root{--sk-monitor:#7a5d00;--sk-monitor-bg:rgba(255,204,0,.24);--sk-stage1:#8a4b00;--sk-stage1-bg:rgba(255,149,0,.22);--sk-stage2:#a3330a;--sk-stage2-bg:rgba(255,95,31,.2)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--sk-monitor:#ffd84d;--sk-monitor-bg:rgba(255,214,10,.16);--sk-stage1:#ffb45c;--sk-stage1-bg:rgba(255,159,10,.18);--sk-stage2:#ff8a57;--sk-stage2-bg:rgba(255,105,40,.2)}}
+:root[data-theme="dark"]{--sk-monitor:#ffd84d;--sk-monitor-bg:rgba(255,214,10,.16);--sk-stage1:#ffb45c;--sk-stage1-bg:rgba(255,159,10,.18);--sk-stage2:#ff8a57;--sk-stage2-bg:rgba(255,105,40,.2)}
+.sk-page{display:grid;gap:14px;min-width:0}
+.sk-band{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:99px;font-size:13px;font-weight:650;white-space:nowrap}
+.sk-band b{font-variant-numeric:tabular-nums}
+.sk-none{background:var(--ok-bg);color:var(--ok)}.sk-monitor{background:var(--sk-monitor-bg);color:var(--sk-monitor)}.sk-stage1{background:var(--sk-stage1-bg);color:var(--sk-stage1)}.sk-stage2{background:var(--sk-stage2-bg);color:var(--sk-stage2)}.sk-stage3{background:var(--bad-bg);color:var(--bad)}
+.sk-scale{padding:14px 16px;border-radius:20px}
+.sk-scale summary{display:flex;flex-wrap:wrap;justify-content:space-between;gap:4px 12px;cursor:pointer;min-height:32px;align-items:center}.sk-scale summary span{color:var(--muted);font-size:14px}
+.sk-bands{display:grid;gap:8px;margin-top:10px}
+.sk-band-row{display:grid;grid-template-columns:150px 1fr;gap:12px;align-items:center;font-size:14px}
+.sk-band-row .sk-band{justify-content:space-between}
+.sk-filter{display:flex}
+.sk-person .tx{min-width:0}
+.sk-action{color:var(--fg);font-size:13px}
+.sk-h{margin:8px 0 0;font-size:18px}
+.sk-sheet h3{margin:16px 0 8px}
+.sk-score{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:14px 16px;border-radius:18px}
+.sk-score .sk-sum{font-size:15px}.sk-score>b{font-size:32px;line-height:1;font-variant-numeric:tabular-nums}
+.sk-score .sk-band{background:transparent;padding:0;font-size:15px}
+.sk-next{margin:10px 0 0;line-height:1.5}
+.sk-answers .kv span:last-child{text-align:right;overflow-wrap:anywhere}
+.sk-details{margin:6px 0 4px;padding:10px 12px;border-radius:14px;background:var(--sunk);white-space:pre-wrap;line-height:1.45}
+.sk-flag{margin:8px 0 0;padding:8px 12px;border-radius:12px;background:var(--warn-bg);color:var(--warn);font-weight:600;font-size:14px}
+.sk-confirm{flex:1 0 100%;font-weight:600}
+.sk-sheet .w-actions{flex-wrap:wrap}
+.btn.danger-fill{background:var(--bad);color:#fff}
+@media (max-width:560px){.sk-band-row{grid-template-columns:1fr;gap:4px}.sk-person .end{flex-direction:column;align-items:flex-end}}

@@ -19,6 +19,7 @@
     people: '<circle cx="9" cy="8" r="3.5"/><path d="M3 20c.8-3.5 3.2-5.5 6-5.5s5.2 2 6 5.5"/><circle cx="17" cy="9" r="2.5"/><path d="M16 14.6c2.4.3 4.2 2 5 5"/>',
     house: '<path d="M4 20V9l8-5 8 5v11"/><path d="M9 20v-6h6v6"/>',
     pulse: '<path d="M4 12h4l3-7 4 14 3-7h2"/>',
+    heart: '<path d="M14 14.76V5a2 2 0 0 0-4 0v9.76a4 4 0 1 0 4 0z"/><path d="M12 9v7"/>',
     shield: '<path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/>',
     db: '<ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"/>',
     cal: '<rect x="4" y="5" width="16" height="15" rx="3"/><path d="M4 10h16M9 3v4M15 3v4"/>',
@@ -140,9 +141,9 @@
   }
 
   /* ---------- navigation ---------- */
-  const NAV = [["overview", "Overview", "grid"], ["people", "People", "people"], ["sites", "Sites", "house"], ["wholesale", "Wholesale", "coffee"], ["activity", "Activity", "pulse"], ["security", "Security", "shield"], ["data", "Backups & exports", "db"]];
+  const NAV = [["overview", "Overview", "grid"], ["people", "People", "people"], ["sites", "Sites", "house"], ["wholesale", "Wholesale", "coffee"], ["sickness", "Sickness", "heart"], ["activity", "Activity", "pulse"], ["security", "Security", "shield"], ["data", "Backups & exports", "db"]];
   const TABS = [["overview", "Overview", "grid"], ["wholesale", "Wholesale", "coffee"], ["people", "People", "people"], ["activity", "Activity", "pulse"], ["more", "More", "more"]];
-  const PAGES = ["overview", "people", "sites", "wholesale", "activity", "security", "data", "more"];
+  const PAGES = ["overview", "people", "sites", "wholesale", "sickness", "activity", "security", "data", "more"];
   const desktopNav = matchMedia("(min-width:1024px)");
   let wholesaleExpanded = false;
   function renderNav() {
@@ -150,7 +151,7 @@
     if (desktopNav.matches) wholesale.syncNavigation(true);
     const badge = S.locked ? html`<span class="badge" aria-label="${plural(S.locked, "account")} locked">${S.locked}</span>` : "";
     put($("#sideNav"), html`${NAV.map(([id, t, ic]) => id === "wholesale" && desktopNav.matches ? html`<div class="nav-wholesale ${S.page === id ? "is-current" : ""}"><div class="nav-wholesale-heading"><button class="nav" type="button" data-go="wholesale" aria-current="${S.page === id ? "page" : "false"}">${svg(ic)}${t}</button><button class="nav-wholesale-toggle" type="button" data-act="wh-sidebar-toggle" aria-expanded="${wholesaleExpanded ? "true" : "false"}" aria-controls="wholesaleSubnav" aria-label="${wholesaleExpanded ? "Collapse" : "Expand"} Wholesale sections">${svg("chev")}</button></div><div id="wholesaleSubnav" class="nav-wholesale-subnav" role="group" aria-label="Wholesale sections" ${wholesaleExpanded ? "" : raw("hidden")}>${wholesale.navigation({ sidebar: true, active: S.page === "wholesale" })}</div></div>` : html`<button class="nav" type="button" data-go="${id}" aria-current="${S.page === id ? "page" : "false"}">${svg(ic)}${t}${id === "security" ? badge : ""}</button>`)}`);
-    const tab = S.page === "security" || S.page === "data" || S.page === "sites" ? "more" : S.page;
+    const tab = S.page === "security" || S.page === "data" || S.page === "sites" || S.page === "sickness" ? "more" : S.page;
     put($("#tabBar"), html`${TABS.map(([id, t, ic]) => html`<button type="button" data-go="${id}" aria-current="${tab === id ? "page" : "false"}">${svg(ic)}${t}${id === "more" ? badge : ""}</button>`)}`);
     if (!desktopNav.matches) wholesale.syncNavigation(false);
   }
@@ -184,6 +185,8 @@
   const VIEWS = {};
   const wholesale = window.WholesaleAdmin({ api, html, raw, svg, put, head, openSheet, closeSheet, reload, toast, onNavigationChange: () => { if (S.me) renderNav(); } });
   VIEWS.wholesale = wholesale.view;
+  const sickness = window.AdminSickness({ api, html, raw, svg, put, head, openSheet, closeSheet, reload, toast, links: () => S.links || {} });
+  VIEWS.sickness = sickness.view;
   let cache = {};
 
   VIEWS.overview = async () => {
@@ -418,6 +421,7 @@
     ${head("More", "")}
     <div class="group glass">
       <button class="item" type="button" data-go="sites"><span class="ic acc">${svg("house")}</span><span class="tx"><b>Sites</b><span>Site setup, diary settings and rota hours</span></span><span class="end"><span class="chev">${svg("chev")}</span></span></button>
+      <button class="item" type="button" data-go="sickness"><span class="ic warn">${svg("heart")}</span><span class="tx"><b>Sickness</b><span>Sickness forms and the Bradford Factor</span></span><span class="end"><span class="chev">${svg("chev")}</span></span></button>
       <button class="item" type="button" data-go="security"><span class="ic ${S.locked ? "bad" : "ok"}">${svg("shield")}</span><span class="tx"><b>Security</b><span>${S.locked ? `${plural(S.locked, "account")} locked` : "Sign-ins, PINs and protections"}</span></span><span class="end">${S.locked ? html`<span class="badge">${S.locked}</span>` : ""}<span class="chev">${svg("chev")}</span></span></button>
       <button class="item" type="button" data-go="data"><span class="ic mut">${svg("db")}</span><span class="tx"><b>Backups &amp; exports</b><span>Nightly backups, payroll hours and other downloads</span></span><span class="end"><span class="chev">${svg("chev")}</span></span></button>
     </div>
@@ -579,6 +583,7 @@
   }
 
   async function act(name, id, el) {
+    if (name.startsWith("sick-")) { await sickness.act(name, id); return; }
     if (name === "wh-sidebar-toggle") {
       wholesaleExpanded = !wholesaleExpanded; renderNav();
       $('#sideNav [data-act="wh-sidebar-toggle"]')?.focus({ preventScroll: true });

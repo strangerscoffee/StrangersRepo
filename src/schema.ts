@@ -2,6 +2,7 @@
 // migration step: first the tables (every statement idempotent), then any migrations not yet recorded in
 // schema_migrations (MIGRATIONS below). To change the schema, add a migration.
 import { migrateLeave } from "./rota/leave/schema";
+import { migrateSickness } from "./rota/sickness";
 import { migrateInvites } from "./wholesaleImport";
 import { migrateInsights } from "./insights";
 import { Env } from "./http";
@@ -290,6 +291,7 @@ const MIGRATIONS: Migration[] = [
     const changed = result.meta?.changes || 0;
     if (changed) await env.DB.prepare("INSERT INTO audit_log (at, kind, actor, text) VALUES (?, 'wholesale_terms_bulk', 'system', ?)").bind(now, `Payment terms set to 30 days from invoice for ${changed} wholesale ${changed === 1 ? "business" : "businesses"} that were on To be agreed.`).run();
   } },
+  { id: 26, name: "Self-certified sickness forms", run: migrateSickness },
 ];
 
 async function migrate(env: Env): Promise<void> {
