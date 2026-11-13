@@ -42,6 +42,8 @@ Data lives in a D1 database (`kitchen-diary`); allergen PDFs and uploaded catalo
 
 ## Changing the site
 
+The wholesale filter and order-history window use locally served motion adapted from the free Transitions.dev dropdown and modal examples. Native popover/dialog controls retain focus, Escape and session verification; reduced-motion and identity locks suppress decorative motion. No external runtime library, account, API key or new setup is required.
+
 Worker initialization caches completed schema readiness and resolved session-signing keys per database, never a pending promise created by another request. An interrupted cold request cannot trap later page/API loads. Existing persisted signing keys and database migrations are retained; this fix requires a normal redeploy and no setup or credential changes.
 
 **Custom coffees:** Admin → Wholesale → Custom coffees manages products for selected customers. Existing white-label assignments appear here automatically. New custom coffees start hidden and remain private when no customers are selected; access is enforced for catalogue responses, new orders and uploaded photos. General coffees remain in Coffee catalogue. These settings use the existing versioned catalogue records; no new migration, secret or setup is required.
