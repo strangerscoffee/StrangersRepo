@@ -6,7 +6,7 @@ import { MAX_QUANTITY, MINIMUM_ORDER_GRAMS } from "../public/wholesale-preview/l
 import { catalogueRetrievedAt } from "../public/wholesale-preview/catalogue.js";
 import type { User } from "./auth";
 import { object, text, version, decode, get, save, type Row, type Versioned } from "./wholesaleStore";
-import { catalogue, handleCatalogueAdmin, serveCatalogueImage } from "./wholesaleCatalogue";
+import { catalogue, handleCatalogueAdmin, serveCatalogueImage, packsOf } from "./wholesaleCatalogue";
 import { adminWholesalePage, adminWholesaleStats } from "./wholesaleAdminLists";
 import { audit } from "./audit";
 import { ApiError, type Env, invalid, json, readJson } from "./http";
@@ -136,6 +136,7 @@ async function createOrder(req: Request, env: Env, user: OrderingUser, links: Li
     if (!product || !canOrder(product, customer?.id || null)) throw invalid("Choose a listed coffee.");
     if (!product.inStock) throw new ApiError(409, "out_of_stock", `${product.name} is out of stock. Remove it from your basket to continue.`);
     if (!ORDERABLE_PACKS.includes(line.pack)) throw new ApiError(409, "pack_unavailable", `${PACKS[line.pack].label}s are no longer available. Remove the ${PACKS[line.pack].label} of ${product.name} from your basket and choose 250 g or 1 kg.`);
+    if (!packsOf(product).includes(line.pack as "quarter" | "kilo")) throw new ApiError(409, "pack_unavailable", `${product.name} is sold in ${PACKS[packsOf(product)[0]].label}s only. Remove the ${PACKS[line.pack].label} of ${product.name} from your basket and choose a ${PACKS[packsOf(product)[0]].label}.`);
     if (!product.active) throw new ApiError(409, "conflict", `${product.name} is no longer in the catalogue. Reload your basket.`);
     if (line.price !== product.prices[line.pack as "quarter" | "kilo"]) throw new ApiError(409, "conflict", "The prices have changed. Reload and review your order again.");
     const grind = product.grindOptions.find(option => option.id === line.grind && option.enabled);

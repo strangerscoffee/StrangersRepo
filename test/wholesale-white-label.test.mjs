@@ -118,3 +118,34 @@ test("Taking the white label off puts it back in everyone's range", async () => 
   assert.equal(Object.hasOwn(opened.body.product, "whiteLabel"), false);
   assert.ok((await products(B)).some((p) => p.id === label.id && !p.yours));
 });
+
+test("A coffee can be sold in one bag size only: the other size can't be ordered or added", async () => {
+  const base = { title: "Lune Kilo Blend", name: "Lune Kilo Blend", origin: "Brazil", process: "Natural", notes: "Cocoa", categories: ["blend"], active: true, inStock: true, whiteLabel: [idA] };
+  assert.equal((await call("POST", "/api/admin/wholesale/catalogue", { ...base, prices: { kilo: 2000 }, packs: [] })).status, 400);
+  assert.equal((await call("POST", "/api/admin/wholesale/catalogue", { ...base, prices: { kilo: 2000 }, packs: ["half"] })).status, 400);
+  assert.equal((await call("POST", "/api/admin/wholesale/catalogue", { ...base, prices: { quarter: 500 }, packs: ["kilo"] })).status, 400, "the size on sale needs a price");
+  const made = await call("POST", "/api/admin/wholesale/catalogue", { ...base, prices: { kilo: 2000 }, packs: ["kilo"] });
+  assert.equal(made.status, 201, made.text);
+  const kilo = made.body.product;
+  assert.deepEqual(kilo.packs, ["kilo"]);
+  assert.equal(kilo.prices.quarter, 500, "the size that's off keeps a worked-out price for later");
+  const seen = (await products(A)).find((p) => p.id === kilo.id);
+  assert.deepEqual(seen.packs, ["kilo"]);
+  const session = (await call("GET", "/api/wholesale/session", undefined, A)).body;
+  const quarter = await call("POST", "/api/wholesale/orders", { requestId: crypto.randomUUID(), lines: [{ productId: kilo.id, pack: "quarter", grind: "beans", quantity: 24, price: 500 }], delivery: "Roastery collection", reference: "", customerVersion: session.customer.version }, A);
+  assert.equal(quarter.status, 409);
+  assert.equal(quarter.body.code ?? quarter.body.error?.code ?? quarter.body.error, "pack_unavailable", quarter.text);
+  assert.match(quarter.text, /1 kg bags only/);
+  const ok = await order(A, kilo.id);
+  assert.equal(ok.status, 201, ok.text);
+  const own = ok.body.order;
+  const amend = await call("PUT", `/api/admin/wholesale/orders/${own.id}/lines`, { ifVersion: own.version, lines: [{ productId: kilo.id, pack: "kilo", grind: "beans", quantity: 6 }, { productId: kilo.id, pack: "quarter", grind: "beans", quantity: 4 }] });
+  assert.equal(amend.status, 400);
+  // Back to both sizes: a save without packs keeps one size; sending both clears it.
+  const kept = await call("PUT", `/api/admin/wholesale/catalogue/${kilo.id}`, { ...base, prices: { kilo: 2100 }, ifVersion: kilo.version });
+  assert.equal(kept.status, 200, kept.text);
+  assert.deepEqual(kept.body.product.packs, ["kilo"]);
+  const both = await call("PUT", `/api/admin/wholesale/catalogue/${kilo.id}`, { ...base, prices: { quarter: 600, kilo: 2100 }, packs: ["quarter", "kilo"], ifVersion: kept.body.product.version });
+  assert.equal(both.status, 200, both.text);
+  assert.equal(Object.hasOwn(both.body.product, "packs"), false);
+});

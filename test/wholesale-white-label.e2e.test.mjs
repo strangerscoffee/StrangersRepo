@@ -151,3 +151,40 @@ test("staff see what it's made from; the customer's Admin sheet lists it", async
   assert.deepEqual(errors, []);
   await ctx.close();
 });
+
+test("a coffee sold in 1 kg bags only: Admin turns 250 g off; the customer sees just 1 kg bags", async () => {
+  const { ctx, p, errors } = await page(ADMIN, { width: 390, height: 844 }, { isMobile: true, hasTouch: true });
+  await p.goto(srv.base + "/admin#wholesale");
+  await p.locator('[data-act="wh-tab"][data-id="catalogue"]').click();
+  await p.locator('[data-act="wh-coffee"]:not([data-id])').click();
+  await p.locator("#wCoffeeTitle").fill("Lune Kilo Blend");
+  await p.locator('[data-pack-on="quarter"]').uncheck();
+  assert.equal(await p.locator("#wPrice-quarter").isDisabled(), true);
+  await p.locator("#wPrice-kilo").fill("20.00");
+  await p.locator("#wWhiteLabel").check();
+  await p.locator("#wWlList label", { hasText: "Lune House" }).locator("input").check();
+  await p.locator('[data-pack-on="kilo"]').click();
+  assert.equal(await p.locator('[data-pack-on="kilo"]').isChecked(), true, "one size always stays on");
+  await shot(p, "sizes-editor");
+  await p.locator("#wCoffeeForm button[type=submit]").click();
+  await p.locator("#wPhotoFiles").waitFor();
+  const product = (await call("GET", "/api/admin/wholesale")).body.products.find((row) => row.title === "Lune Kilo Blend");
+  assert.deepEqual(product.packs, ["kilo"]);
+  assert.equal(product.prices.kilo, 2000);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+  for (const colorScheme of ["light", "dark"]) {
+    const { ctx, p, errors } = await page(lune.cookie, { width: 390, height: 844 }, { colorScheme, isMobile: true, hasTouch: true });
+    await p.goto(srv.base + "/wholesale-preview/"); await p.locator(".product-card").first().waitFor();
+    await p.locator('[data-bag-size="quarter"]').first().click();
+    const card = p.locator(".product-card", { hasText: "Lune Kilo Blend" });
+    assert.equal(await card.locator('input[name="pack"]').count(), 1);
+    assert.match(await card.locator(".pack-options").innerText(), /1 kg bags only/);
+    assert.match(await card.locator("[data-price]").innerText(), /£20\.00/);
+    assert.equal(await p.locator('[data-bag-size="quarter"]').first().getAttribute("aria-pressed"), "true", "the 250 g switch stays on for the rest of the range");
+    await card.scrollIntoViewIfNeeded();
+    await shot(p, `sizes-customer-${colorScheme}`);
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  }
+});

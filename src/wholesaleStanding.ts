@@ -7,7 +7,7 @@ import { addDays, ukDay } from "./insightsMath";
 import { shippingFor } from "../public/wholesale-preview/shipping.js";
 import { validGrindId } from "../public/wholesale-preview/grinds.js";
 import { MAX_QUANTITY } from "../public/wholesale-preview/limits.js";
-import { catalogue } from "./wholesaleCatalogue";
+import { catalogue, packsOf } from "./wholesaleCatalogue";
 import { object, get, save, version, type Versioned } from "./wholesaleStore";
 import { publicCustomer, wholesaleCustomer, paymentTermsFor } from "./wholesaleAccounts";
 import { customerLocations } from "./wholesaleCustomers";
@@ -110,6 +110,7 @@ export async function amendLines(env: Env, id: string, value: unknown, actor: st
     if (!product || !product.active || !canOrder(product, order.customerId || null)) throw invalid("Choose a coffee from the catalogue that this business can order.");
     const price = (product.prices as Record<string, number>)[line.pack];
     if (!Number.isInteger(price)) throw invalid("Choose a 250 g or 1 kg bag.");
+    if (!packsOf(product).includes(line.pack as "quarter" | "kilo")) throw invalid(`${product.name} is sold in ${LABELS[packsOf(product)[0]]}s only.`);
     const grind = product.grindOptions.find((option) => option.id === line.grind);
     if (!grind) throw invalid(`${product.name} doesn't offer that grind.`);
     lines.push({ productId: product.id, pack: line.pack, grind: grind.id, quantity: line.quantity, title: product.title, packLabel: LABELS[line.pack], grindLabel: grind.label, grindHint: grind.hint || "", decaf: product.categories.includes("decaf"), price, grams: GRAMS[line.pack], ...(product.recipe?.length ? { recipe: recipeText(product) } : {}) });
