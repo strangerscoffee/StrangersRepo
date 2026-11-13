@@ -722,10 +722,10 @@ $("#preview-sign-out").addEventListener("click", async () => {
 $("#retry-catalogue").addEventListener("click", start);
 window.addEventListener("pageshow", (event) => {
   if (!event.persisted) return;
-  // Cached dialogs contain private business data; restore against the current session and scoped storage.
-  document.querySelectorAll("dialog[open]").forEach(dialog => dialog.close());
+  // Shared session verification shields the restored page before proving its owner. Keep its
+  // dialog open: reloading here races the guard's sign-in navigation after a session expires.
+  document.querySelectorAll("dialog[open]:not(#sc-session-shield)").forEach(dialog => dialog.close());
   closeSortMenu();
-  location.reload();
 });
 
 async function openAccount() {
