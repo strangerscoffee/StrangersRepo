@@ -567,3 +567,7 @@ button.stat{cursor:pointer}
 @media (max-width:420px){.w-size{grid-template-columns:1fr;gap:4px}}
 
 .w-sheet .w-duplicate{margin:2px 0 10px}
+
+/* Accounts emails from QuickBooks */
+.w-ae-group{margin:10px 0}.w-ae-group summary{cursor:pointer;min-height:44px;display:flex;align-items:center;gap:6px}.w-ae-group .group{margin-top:6px}
+.w-ae-group .item .tx span{overflow-wrap:anywhere}

@@ -16,7 +16,7 @@ import { confirmToCustomer, dispatchToCustomer, handleOrderEmailsAdmin, notifyNe
 import { notifySlackNewOrder } from "./slackOrders";
 import { handleInsights } from "./insights";
 import { autoTabFor, clearTab, listTabs, setOnTab } from "./wholesaleTabs";
-import { importCustomers, inviteCustomer, inviteStates } from "./wholesaleImport";
+import { importCustomers, inviteCustomer, inviteStates, matchAccountsEmails } from "./wholesaleImport";
 import { canOrder, catalogueFor, customerLines, recipeText } from "./wholesaleWhiteLabel";
 import { amendLines, rollStanding, scheduleFields, type Standing } from "./wholesaleStanding";
 import { customersSeeInvoices, handleInvoiceAdmin, handleInvoiceCustomer, invoiceLinks } from "./wholesaleInvoices";
@@ -338,6 +338,7 @@ export async function handleWholesaleAdmin(req: Request, env: Env, route: string
   // QuickBooks customer import and invites to order online (src/wholesaleImport.ts).
   if (route === "customers/invites" && req.method === "GET") return json({ invites: await inviteStates(env) });
   if (route === "customers/import" && req.method === "POST") return json(await importCustomers(env, await readJson(req, 512 * 1024), user.name));
+  if (route === "customers/accounts-emails" && req.method === "POST") return json(await matchAccountsEmails(env, await readJson(req, 512 * 1024), user.name));
   const inviteOne = /^customers\/([a-f0-9-]{36})\/invite$/.exec(route);
   if ((inviteOne || route === "customers/invites") && req.method === "POST") {
     const ids: unknown = inviteOne ? [inviteOne[1]] : (await readJson<Record<string, unknown>>(req, 64 * 1024))?.customerIds;
