@@ -20,6 +20,8 @@ export interface SourceCoffee {
   packs?: ("quarter" | "kilo")[];
   /** White label: the businesses (customer ids) this coffee is private to (src/wholesaleWhiteLabel.ts). */
   whiteLabel?: string[];
+  /** Custom coffee: stays private even when no customers have been assigned. */
+  customerOnly?: true;
   /** What it's made from, for staff: coffees or named components with whole percentages adding to 100. */
   recipe?: { coffee?: string; name: string; percent: number }[];
 }

@@ -450,6 +450,12 @@ dialog::backdrop { background: rgba(0,0,0,.3); -webkit-backdrop-filter: blur(6px
 /* Compact actions and an anchored catalogue menu share the site theme. */
 .refresh-button { width: 44px; min-width: 44px; height: 44px; padding: 0; flex-shrink: 0; }
 .refresh-button svg { width: 21px; height: 21px; }
+/* History refresh is a clear circular action; the catalogue filter keeps its own style. */
+.history-toolbar .refresh-button { border: 1px solid transparent; border-radius: 50%; background: var(--tint); }
+.history-toolbar .refresh-button svg { width: 24px; height: 24px; stroke-width: 1.9; transform-origin: center; }
+.history-toolbar .refresh-button:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.history-toolbar .refresh-button:active:not(:disabled) { background: color-mix(in srgb, var(--accent) 25%, transparent); }
+@media (prefers-contrast: more) { .history-toolbar .refresh-button { border-color: var(--accent); } }
 .refresh-button[aria-busy="true"] svg { animation: refresh-spin .8s linear infinite; }
 @keyframes refresh-spin { to { transform: rotate(360deg); } }
 @media(prefers-reduced-motion:reduce) { .refresh-button[aria-busy="true"] svg { animation: none; } }
