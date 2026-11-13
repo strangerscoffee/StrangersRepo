@@ -1,3 +1,4 @@
+import { openWholesaleBasket } from './wholesale-ui-helpers.mjs';
 // A business Strangers hides prices from (its own shops) orders by bags and weights alone: no £ anywhere on the
 // catalogue, basket or review, on a phone and an iPad, light and dark. Needs Playwright with Chromium.
 import { test, before, after } from "node:test";
@@ -45,13 +46,13 @@ test("hidden prices: no money on the catalogue, basket or review; Admin has the 
     if (process.env.WHOLESALE_SCREENSHOT_DIR) await p.screenshot({ path: `${process.env.WHOLESALE_SCREENSHOT_DIR}/hide-prices-${name}-${colorScheme}-catalogue.png` });
     const card = p.locator(".product-card").first();
     await card.locator("input[type=number]").fill("6"); await card.locator("button[type=submit]").click();
-    await p.locator("#mobile-basket:not([hidden])").waitFor();
+    await p.locator("#basket-count").waitFor();
     assert.match(await p.locator("#mobile-total").textContent(), /kg/, "the mobile bar shows weight, not money");
     assert.doesNotMatch(await visibleText(p), /£/, `${name}: basket bar shows no prices`);
-    await p.locator("#mobile-basket [data-basket]").click();
+    await openWholesaleBasket(p);
     await p.waitForFunction(() => !document.querySelector("#review-order").disabled);
     assert.doesNotMatch(await visibleText(p), /£/, `${name}: basket shows no prices`);
-    await p.locator("#review-order").click(); await p.locator("#review-dialog[open]").waitFor();
+    await openWholesaleBasket(p); await p.locator("#review-order").click(); await p.locator("#review-dialog[open]").waitFor();
     assert.doesNotMatch(await p.locator("#review-dialog").evaluate((d) => d.innerText), /£/, `${name}: review shows no prices`);
     if (process.env.WHOLESALE_SCREENSHOT_DIR) await p.screenshot({ path: `${process.env.WHOLESALE_SCREENSHOT_DIR}/hide-prices-${name}-${colorScheme}-review.png` });
     assert.deepEqual(errors, []);

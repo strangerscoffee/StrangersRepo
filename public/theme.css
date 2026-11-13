@@ -13,6 +13,7 @@
   --body:-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,"Segoe UI",Roboto,sans-serif;
   --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
   --r:12px; --r-lg:22px;
+  --focus-ink:var(--muted); --focus-ring-width:2px;
 
   --glass:rgba(255,255,255,.6);
   --glass-thick:rgba(255,255,255,.8);
@@ -87,9 +88,15 @@ section.panel{border-radius:var(--r-lg);padding:20px;gap:14px}
 input[type=text],input[type=password],input[type=number],input[type=date],input[type=tel],input[type=email],textarea,select{
   background:var(--sunk);border:1px solid transparent;border-radius:var(--r);padding:11px 13px;font-size:16px;transition:border-color .15s,background-color .15s,box-shadow .15s}
 input[type=text]:focus,input[type=password]:focus,input[type=number]:focus,input[type=date]:focus,input[type=tel]:focus,input[type=email]:focus,textarea:focus,select:focus{
-  background:var(--surface);border-color:var(--accent);box-shadow:0 0 0 4px var(--tint);outline:none}
+  background:var(--surface);border-color:var(--focus-ink);box-shadow:none;outline:0}
 ::placeholder{color:var(--muted);opacity:.75}
-:focus-visible{outline:3px solid color-mix(in srgb,var(--accent) 70%,transparent);outline-offset:2px;border-radius:10px}
+/* Touch/mouse focus never paints a ring; keyboard users retain a neutral, control-sized cue.
+   Programmatically focused containers (for example Admin's main landmark) never get a page border. */
+:root[data-sc-pointer]{--focus-ring-width:0px}
+:focus-visible{outline:0}
+:where(a[href],button,input,textarea,select,summary,[role="button"],[role="tab"],[role="menuitem"],[tabindex]:not([tabindex="-1"])):focus-visible{
+  outline:var(--focus-ring-width) solid var(--focus-ink);outline-offset:2px}
+@media(forced-colors:active){:root{--focus-ink:CanvasText}}
 
 .seg{border:0;border-radius:99px;background:var(--sunk);padding:3px;gap:2px}
 .seg button{border-radius:99px;padding:6px 16px;color:var(--fg)}
@@ -203,7 +210,7 @@ th,td{border-bottom-color:var(--line)}
 @media (forced-colors:active){.brandlogo,.brandmark{background:CanvasText}}
 
 /* Shared branded loader: the privacy shield itself is also protected by inline critical styles. */
-.sc-loading{display:grid;justify-items:center;gap:20px;text-align:center}.sc-loading-logo{display:block;width:144px;height:86px;background:currentColor;forced-color-adjust:none;-webkit-mask:url(/logo.svg) center/contain no-repeat;mask:url(/logo.svg) center/contain no-repeat}.sc-loading p{margin:0;color:var(--muted,currentColor);font:14px/1.5 system-ui}.sc-loading-track{display:block;width:112px;height:3px;overflow:hidden;border-radius:4px;background:var(--line,#b9c2ce)}.sc-loading-track:before{content:"";display:block;height:100%;width:45%;border-radius:inherit;background:var(--accent,#0065cf);animation:sc-loading-progress 1.3s ease-in-out infinite}#sc-session-shield[data-phase=error] .sc-loading-track{visibility:hidden}#sc-session-shield button{min-height:44px;min-width:144px;padding:12px 20px;border:0;border-radius:999px;background:var(--accent,#0065cf);color:var(--accent-ink,#fff);font:600 14px system-ui}#sc-session-shield button:focus-visible{outline:3px solid var(--accent,#0065cf);outline-offset:4px}@keyframes sc-loading-progress{0%{transform:translateX(-110%)}100%{transform:translateX(330%)}}@media(prefers-reduced-motion:reduce){.sc-loading-track:before{animation:none;width:100%;opacity:.55}}
+.sc-loading{display:grid;justify-items:center;gap:20px;text-align:center}.sc-loading-logo{display:block;width:144px;height:86px;background:currentColor;forced-color-adjust:none;-webkit-mask:url(/logo.svg) center/contain no-repeat;mask:url(/logo.svg) center/contain no-repeat}.sc-loading p{margin:0;color:var(--muted,currentColor);font:14px/1.5 system-ui}.sc-loading-track{display:block;width:112px;height:3px;overflow:hidden;border-radius:4px;background:var(--line,#b9c2ce)}.sc-loading-track:before{content:"";display:block;height:100%;width:45%;border-radius:inherit;background:var(--accent,#0065cf);animation:sc-loading-progress 1.3s ease-in-out infinite}#sc-session-shield[data-phase=error] .sc-loading-track{visibility:hidden}#sc-session-shield button{min-height:44px;min-width:144px;padding:12px 20px;border:0;border-radius:999px;background:var(--accent,#0065cf);color:var(--accent-ink,#fff);font:600 14px system-ui}#sc-session-shield button:focus-visible{outline:var(--focus-ring-width) solid var(--focus-ink);outline-offset:4px}@keyframes sc-loading-progress{0%{transform:translateX(-110%)}100%{transform:translateX(330%)}}@media(prefers-reduced-motion:reduce){.sc-loading-track:before{animation:none;width:100%;opacity:.55}}
 @media(forced-colors:active){.sc-loading-logo{background:CanvasText}}
 
 

@@ -199,7 +199,7 @@ button.shc:hover{border-color:var(--accent)}
 .rswitch input::after{content:"";position:absolute;top:2px;left:2px;width:27px;height:27px;border-radius:50%;background:#fff;box-shadow:0 2px 4px rgba(0,0,0,.2);transition:left .2s}
 .rswitch input:checked{background:#30b158;box-shadow:none}
 .rswitch input:checked::after{left:22px}
-.rswitch input:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.rswitch input:focus-visible{outline:var(--focus-ring-width) solid var(--focus-ink);outline-offset:2px}
 .avtimes{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;padding:0 14px 14px 70px}
 .avtimes label{display:inline-flex;align-items:center;gap:6px;font-size:14px;color:var(--muted)}
 .avtimes input{min-height:40px;font-size:16px}

@@ -20,7 +20,7 @@
 .wi-switch[aria-checked=true] .wi-switch-track{background:var(--ok,#34c759)}
 .wi-switch[aria-checked=true] .wi-switch-thumb{transform:translateX(20px)}
 .wi-switch-label{min-width:2em}
-.wi-switch:focus-visible{outline:none}.wi-switch:focus-visible .wi-switch-track{box-shadow:0 0 0 3px var(--accent)}
+.wi-switch:focus-visible{outline:none}.wi-switch:focus-visible .wi-switch-track{box-shadow:none;outline:var(--focus-ring-width) solid var(--focus-ink);outline-offset:2px}
 @media(prefers-reduced-motion:reduce){.wi-switch-track,.wi-switch-thumb{transition:none}}
 @media(forced-colors:active){.wi-switch-track{border:1px solid CanvasText}.wi-switch[aria-checked=true] .wi-switch-track{background:Highlight}}
 .wi-invoice-row .end{flex-wrap:wrap;justify-content:flex-end;max-width:40%}

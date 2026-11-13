@@ -1,3 +1,4 @@
+import { openWholesaleOrders } from './wholesale-ui-helpers.mjs';
 // Native wholesale order handling: packing details, quick statuses, busy guards and concurrent edits.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -146,7 +147,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       const tracking = buyer.locator(`a[data-order-tracking="${order.id}"]`);
       async function refreshHistory(first = false) {
         const loaded = buyer.waitForResponse((response) => new URL(response.url()).pathname === "/api/wholesale/orders" && response.request().method() === "GET");
-        await buyer.locator(first ? "#my-orders" : "#refresh-orders").click();
+        if (first) await openWholesaleOrders(buyer); else await buyer.locator("#refresh-orders").click();
         await loaded;
         await buyer.waitForFunction(() => document.querySelector("#order-history")?.getAttribute("aria-busy") === "false");
         await historyRow.waitFor();

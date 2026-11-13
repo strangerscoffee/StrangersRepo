@@ -1,3 +1,4 @@
+import { chooseWholesalePack, fillWholesaleSearch, openWholesaleOrders } from './wholesale-ui-helpers.mjs';
 // Customer sorting retains configured coffee and refresh controls recover after failures.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -61,9 +62,9 @@ for (const [device, viewport] of [['phone', {width:393,height:852}], ['ipad', {w
       values = await prices(); assert.deepEqual(values, [...values].sort((a,b)=>b-a), 'sorted on 1 kg prices');
       // Changing one coffee's size, grind or quantity leaves the order alone (the card doesn't jump away).
       const before = await order(), card = page.locator('#products > article').nth(1), product = await card.getAttribute('data-product');
-      await card.locator('input[name="pack"][value="quarter"]').check();
+      await chooseWholesalePack(page, card, 'quarter');
       await card.locator('input[type="number"]').fill('3');
-      await card.locator('[data-grind-open]').click(); await page.locator('#grind-choice-form input[value="filter"]').check(); await page.locator('#confirm-grind').click();
+      await card.locator('[data-grind-open]').click(); await page.locator('#coffee-choice-menu [data-choice="filter"]').click();
       assert.deepEqual(await order(), before, 'one card changing size keeps the order');
       assert.equal(await page.locator('[data-bag-size][aria-pressed="true"]').count(), 0, 'mixed sizes: neither switch pressed');
       const retained = page.locator(`.product-config[data-product="${product}"]`);
@@ -76,8 +77,8 @@ for (const [device, viewport] of [['phone', {width:393,height:852}], ['ipad', {w
       await page.evaluate(() => { localStorage.removeItem('sc.wholesale.bagSize.v2'); localStorage.setItem('sc.wholesale.bagSize', 'quarter'); });
       await page.reload(); await page.locator('#products[aria-busy="false"]').waitFor();
       assert.deepEqual(await packsShown(), ['kilo'], 'old saved 250 g is ignored'); await page.locator('[data-bag-size="kilo"]').click();
-      await page.locator('#coffee-search').fill('brazil'); assert.ok(await page.locator('#products > article:visible').count());
-      await page.locator('#coffee-search').fill(''); await choose('catalogue');
+      await fillWholesaleSearch(page, 'brazil'); assert.ok(await page.locator('#products > article:visible').count());
+      await fillWholesaleSearch(page, ''); await choose('catalogue');
       assert.deepEqual(await page.locator('#products > article').evaluateAll(nodes => nodes.map(n=>n.dataset.product)), original);
       async function refresh(id, path, fail) {
         let entered; const started = new Promise(r => entered=r), gate = new Promise(r=>release=r);
@@ -92,7 +93,7 @@ for (const [device, viewport] of [['phone', {width:393,height:852}], ['ipad', {w
       assert.equal(await page.locator('#refresh-catalogue').count(),0);
       assert.ok(await page.locator('#sort-coffee').getAttribute('aria-label'));
       const iconButton = await page.locator('#sort-coffee').boundingBox(); assert.ok(iconButton.width >= 44 && iconButton.width <= 48, 'compact accessible icon button');
-      await page.locator('#my-orders').click(); await page.locator('#refresh-orders[aria-busy="false"]').waitFor();
+      await openWholesaleOrders(page); await page.locator('#refresh-orders[aria-busy="false"]').waitFor();
       await refresh('#refresh-orders','/api/wholesale/orders',false);
       await page.locator('#history-invoices').click(); await page.locator('#refresh-invoices[aria-busy="false"]').waitFor();
       await refresh('#refresh-invoices','/api/wholesale/invoices',true);

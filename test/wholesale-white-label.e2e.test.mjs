@@ -179,7 +179,7 @@ test("a coffee sold in 1 kg bags only: Admin turns 250 g off; the customer sees 
     await p.locator('[data-bag-size="quarter"]').first().click();
     const card = p.locator(".product-card", { hasText: "Lune Kilo Blend" });
     assert.equal(await card.locator('input[name="pack"]').count(), 1);
-    assert.match(await card.locator(".pack-options").innerText(), /1 kg bags only/);
+    assert.match(await card.locator("[data-pack-label]").innerText(), /1 kg bags only/);
     assert.match(await card.locator("[data-price]").innerText(), /£20\.00/);
     assert.equal(await p.locator('[data-bag-size="quarter"]').first().getAttribute("aria-pressed"), "true", "the 250 g switch stays on for the rest of the range");
     await card.scrollIntoViewIfNeeded();
@@ -286,25 +286,29 @@ test("Custom coffees section: private drafts, customer choices and safe removal 
 });
 
 test("cards in a row line up: same photo height and controls at the same place, with or without a photo label", async () => {
-  for (const [name, viewport] of [["ipad", { width: 820, height: 1180 }], ["desktop", { width: 1440, height: 900 }]]) for (const colorScheme of ["light", "dark"]) {
+  for (const [name, viewport] of [["ipad", { width: 820, height: 1180 }], ["desktop", { width: 1440, height: 900 }], ["wide desktop", { width: 1920, height: 1080 }]]) for (const colorScheme of ["light", "dark"]) {
     const { ctx, p, errors } = await page(lune.cookie, viewport, { colorScheme });
     await p.goto(srv.base + "/wholesale-preview/"); await p.locator(".product-card").nth(1).waitFor();
     const rows = await p.evaluate(() => {
       const cards = [...document.querySelectorAll("#products .product-card")].filter((c) => c.offsetParent);
       const byTop = new Map();
       for (const c of cards) { const top = Math.round(c.getBoundingClientRect().top); byTop.set(top, [...(byTop.get(top) || []), c]); }
-      return [...byTop.values()].filter((row) => row.length > 1).map((row) => row.map((c) => ({
+      return [...byTop.values()].map((row) => row.map((c) => ({
         badge: !!c.querySelector(".product-badge"),
         photo: Math.round(c.querySelector(".product-image").getBoundingClientRect().height),
-        config: Math.round(c.querySelector(".product-config").getBoundingClientRect().top),
+        config: Math.round(c.querySelector(".variant-fields").getBoundingClientRect().top),
+        add: Math.round(c.querySelector(".add-row").getBoundingClientRect().top),
         bottom: Math.round(c.getBoundingClientRect().bottom),
       })));
     });
-    assert.ok(rows.length, `${name}: some rows have more than one card`);
+    assert.ok(rows.length, `${name}: coffee cards are visible`);
+    if (viewport.width >= 1600) assert.ok(rows.some(row => row.length === 2), 'wide desktops show two horizontal cards per row');
+    else assert.ok(rows.every(row => row.length === 1), 'smaller desktops and tablets show one horizontal card per row');
     assert.ok(rows.some((row) => row.some((c) => c.badge) && row.some((c) => !c.badge)) || rows.flat().some((c) => c.badge), "a photo label is on the page");
     for (const row of rows) {
       assert.equal(new Set(row.map((c) => c.photo)).size, 1, `${name} ${colorScheme}: photos the same height ${JSON.stringify(row)}`);
       assert.equal(new Set(row.map((c) => c.bottom)).size, 1, `${name} ${colorScheme}: cards the same height ${JSON.stringify(row)}`);
+      assert.equal(new Set(row.map(c => c.add)).size, 1, `${name} ${colorScheme}: Add controls line up`);
       assert.ok(Math.max(...row.map((c) => c.config)) - Math.min(...row.map((c) => c.config)) <= 1, `${name} ${colorScheme}: controls line up ${JSON.stringify(row)}`);
     }
     await p.locator("#products .product-card:visible").first().scrollIntoViewIfNeeded();

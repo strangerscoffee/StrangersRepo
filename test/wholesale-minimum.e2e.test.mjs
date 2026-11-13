@@ -1,3 +1,4 @@
+import { openWholesaleBasket } from './wholesale-ui-helpers.mjs';
 // The basket explains the 6 kg minimum and holds Review order until it's met, on a phone and an iPad; an exempt
 // business sees no minimum at all. Needs Playwright with Chromium.
 import { test, before, after } from "node:test";
@@ -36,9 +37,10 @@ test("the basket shows the 6 kg minimum and an exempt business sees none", async
     await p.goto(srv.base + "/wholesale-preview/"); await p.locator(".product-card").first().waitFor();
     assert.match(await p.locator("#minimum-note").textContent(), /Minimum order 6 kg/, name);
     await p.locator(".product-card").first().locator("button[type=submit]").click();
-    if (isMobile) await p.locator("#mobile-basket [data-basket]").click();
+    await openWholesaleBasket(p);
     await p.waitForFunction(() => /Add 5 kg more to reach the 6 kg minimum/.test(document.querySelector("#minimum-note").textContent));
     assert.equal(await p.locator("#review-order").isDisabled(), true, `${name}: can't review below the minimum`);
+    await openWholesaleBasket(p);
     await p.locator("#order-items input").first().fill("6"); await p.locator("#order-items input").first().press("Tab");
     await p.waitForFunction(() => document.querySelector("#minimum-note").hidden);
     assert.equal(await p.locator("#review-order").isEnabled(), true, `${name}: 6 kg can be reviewed`);
@@ -55,7 +57,7 @@ test("the basket shows the 6 kg minimum and an exempt business sees none", async
   assert.equal(await p.locator("#minimum-note").isHidden(), true, "no minimum shown to an exempt business");
   assert.doesNotMatch(await p.locator("body").textContent(), /minimum/i);
   await p.locator(".product-card").first().locator("button[type=submit]").click();
-  await p.locator("#mobile-basket [data-basket]").click();
+  await openWholesaleBasket(p);
   await p.waitForFunction(() => !document.querySelector("#review-order").disabled);
   await ctx.close();
 });

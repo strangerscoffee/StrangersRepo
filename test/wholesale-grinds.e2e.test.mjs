@@ -1,3 +1,4 @@
+import { openWholesaleBasket } from './wholesale-ui-helpers.mjs';
 // Customer sorting retains configured coffee and refresh controls recover after failures.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -44,19 +45,19 @@ for (const [device, viewport] of [['phone',{width:393,height:852}],['ipad',{widt
       await buyer.goto(srv.base+'/wholesale-preview/');
       const card=buyer.locator(`article[data-product="${product.id}"]`);
       await card.locator('[data-grind-open]').click();
-      assert.deepEqual(await buyer.locator('#grind-choice-form strong').allTextContents(),['Whole beans','Coarse','Turkish / Extra fine']);
-      await buyer.locator(`#grind-choice-form input[value="${customId}"]`).check(); await buyer.locator('#confirm-grind').click();
+      assert.deepEqual(await buyer.locator('#coffee-choice-menu button strong').allTextContents(),['Whole beans','Coarse','Turkish / Extra fine']);
+      await buyer.locator(`#coffee-choice-menu [data-choice="${customId}"]`).click();
       await card.locator('button[type="submit"]').click();
       assert.match(await buyer.locator('#order-items').textContent(),/Turkish \/ Extra fine/);
       await edit(); await admin.locator(`[data-grind-id="${customId}"] [data-grind-enabled]`).uncheck(); await save();
-      await buyer.locator('#review-order').click();
+      await openWholesaleBasket(buyer); await buyer.locator('#review-order').click();
       await buyer.locator('#order-items').getByText(/Unavailable — remove to continue/).waitFor();
       await buyer.locator('#review-order:disabled').waitFor();
       assert.match(await buyer.locator('#order-items').textContent(),/Unavailable/);
       assert.equal(await buyer.locator('#review-dialog').isVisible(),false);
       assert.equal(await buyer.locator('#order-items .order-item').count(),1,'unavailable custom selection remains for review/removal');
       await edit(); await admin.locator(`[data-grind-id="${customId}"] [data-grind-enabled]`).check(); await save();
-      await buyer.reload(); await buyer.locator('#review-order:not(:disabled)').waitFor();
+      await buyer.reload(); await buyer.locator('#products[aria-busy="false"]').waitFor(); await openWholesaleBasket(buyer); await buyer.locator('#review-order:not(:disabled)').waitFor(); await buyer.locator('#basket-dialog [data-close]').click();
       await card.locator('[data-grind-open]').click();
       if(process.env.WHOLESALE_SCREENSHOT_DIR) await buyer.screenshot({path:`${process.env.WHOLESALE_SCREENSHOT_DIR}/grinds-${device}-${colorScheme}-customer.png`});
       assert.equal(await admin.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true);
