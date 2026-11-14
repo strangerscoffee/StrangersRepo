@@ -20,6 +20,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
   const shortId = (id) => id.slice(0, 20);
   const date = (ms) => new Date(ms).toLocaleString("en-GB", { timeZone: "Europe/London", year: "numeric", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
   let tab = "orders", status = "all", approval = "all", query = "", data = null, timer, sequence = 0;
+  let orderQueue = "";
   let orderPages = 1, customerPages = 1, loadingMore = false;
   const sections = [["orders", "Orders"], ["customers", "Customers"], ["catalogue", "Coffee catalogue"], ["custom", "Custom coffees"], ["tabs", "Tabs"], ["invoices", "Invoicing"], ["insights", "Insights"]];
   const pendingReviews = () => data?.stats?.pendingAccounts ?? data?.accounts?.filter((row) => row.approvalStatus === "pending").length ?? 0;
@@ -37,9 +38,11 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     // Keep the open section in view when the sections scroll sideways (Invoicing, Insights on a phone).
     if (!desktop) requestAnimationFrame(() => { const wrap = host.querySelector(".w-sections"), on = wrap?.querySelector('[aria-pressed="true"]'); if (wrap && on) { const r = on.getBoundingClientRect(), w = wrap.getBoundingClientRect(); if (r.left < w.left || r.right > w.right) wrap.scrollLeft += r.left - w.left - 12; } });
   }
-  function selectSection(id, { pending = false } = {}) {
+  function selectSection(id, { pending = false, queue = "", resetStatus = false } = {}) {
     if (!sections.some(([value]) => value === id)) return false;
     clearTimeout(timer); tab = id; query = ""; approval = pending && id === "customers" ? "pending" : "all"; orderPages = customerPages = 1;
+    orderQueue = id === "orders" && ["prepare", "ready"].includes(queue) ? queue : "";
+    if (orderQueue || resetStatus) status = "all";
     onNavigationChange(); return true;
   }
   const quickBusy = new Set(), orderErrors = new Map();
@@ -68,11 +71,12 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
   const search = (label, placeholder) => html`<label class="search">${svg("search")}<input id="wq" type="search" maxlength="120" aria-label="${label}" placeholder="${placeholder}" value="${query}"></label>`;
   const resultCount = (loaded, total, noun) => `${loaded < total ? loaded + " of " + total : total} ${total === 1 ? noun : noun + "s"}`;
   const emptyState = (icon, title, text, filtered = false) => html`<div class="w-empty"><span class="ic mut">${svg(icon)}</span><h3>${title}</h3><p>${text}</p>${filtered ? html`<button class="btn soft" type="button" data-act="wh-clear">Clear filters</button>` : ""}</div>`;
-  const listing = (id, title, count, tools, contents, footer, actions = "") => html`<section class="w-list-panel glass" aria-labelledby="${id}"><header class="w-list-header"><h2 id="${id}">${title}</h2><div class="w-header-actions"><span class="w-result-count">${count}</span>${actions}</div></header><div class="w-panel-tools">${tools}${query.trim() || (tab === "orders" && status !== "all") || (tab === "customers" && approval !== "all") ? html`<div class="w-active-filters"><span>Filtered results${query.trim() ? ` · “${query.trim()}”` : ""}</span><button class="btn sm soft" type="button" data-act="wh-clear">Clear filters</button></div>` : ""}</div><div class="group w-record-list">${contents}</div>${footer}</section>`;
+  const listing = (id, title, count, tools, contents, footer, actions = "") => html`<section class="w-list-panel glass" aria-labelledby="${id}"><header class="w-list-header"><h2 id="${id}">${title}</h2><div class="w-header-actions"><span class="w-result-count">${count}</span>${actions}</div></header><div class="w-panel-tools">${tools}${query.trim() || (tab === "orders" && (status !== "all" || orderQueue)) || (tab === "customers" && approval !== "all") ? html`<div class="w-active-filters"><span>Filtered results${orderQueue ? ` · Customer orders: ${orderQueue === "prepare" ? "to prepare" : "ready to dispatch"}` : ""}${query.trim() ? ` · “${query.trim()}”` : ""}</span><button class="btn sm soft" type="button" data-act="wh-clear">Clear filters</button></div>` : ""}</div><div class="group w-record-list">${contents}</div>${footer}</section>`;
   const merge = (first, next) => [...new Map([...first, ...next].map((row) => [row.id, row])).values()];
 
   async function pages(snapshot, kind, requested, filter) {
     const params = new URLSearchParams();
+    if (kind === "orders" && filter.queue) params.set("queue", filter.queue);
     if (filter.query.trim()) params.set("q", filter.query.trim());
     if (kind === "orders" && filter.status !== "all") params.set("status", filter.status);
     if (kind === "customers" && filter.approval !== "all") params.set("approval", filter.approval);
@@ -109,7 +113,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
   }
 
   async function view() {
-    const current = ++sequence, section = tab, filter = { query, status, approval };
+    const current = ++sequence, section = tab, filter = { query, status, approval, queue: orderQueue };
     const snapshot = await api("GET", "/api/admin/wholesale");
     if (section === "orders" || section === "customers") {
       const result = await pages(snapshot, section, section === "orders" ? orderPages : customerPages, filter);
@@ -133,7 +137,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     return data.nextCursor ? html`<div class="w-more"><button class="btn soft" type="button" data-act="wh-more" data-id="${kind}">Load more ${kind}</button></div>` : "";
   }
   function orders() {
-    const rows = data.orders, filtered = !!query.trim() || status !== "all";
+    const rows = data.orders, filtered = !!query.trim() || status !== "all" || !!orderQueue;
     const counts = data.stats?.statusCounts;
     const allCount = counts ? Object.values(counts).reduce((sum, n) => sum + n, 0) : data.counts.order;
     const hasNew = counts ? (counts.New || 0) > 0 : true;
@@ -983,10 +987,10 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
       if (name === "wh-accounts-emails") { openAccountsEmails(); return; }
       if (name === "wh-invite-customers") { await openInvites(); return; }
       if (name === "wh-tab" && selectSection(id)) await reload();
-      if (name === "wh-status" && ["all", ...data.statuses].includes(id)) { clearTimeout(timer); status = id; orderPages = 1; await reload(); }
+      if (name === "wh-status" && ["all", ...data.statuses].includes(id)) { clearTimeout(timer); orderQueue = ""; status = id; orderPages = 1; await reload(); }
       if (name === "wh-approval" && ["all", "pending"].includes(id)) { clearTimeout(timer); approval = id; customerPages = 1; await reload(); }
       if (name === "wh-pending") { selectSection("customers", { pending: true }); await reload(); }
-      if (name === "wh-clear") { clearTimeout(timer); query = ""; status = approval = "all"; orderPages = customerPages = 1; await reload(); $("#wq")?.focus({ preventScroll: true }); }
+      if (name === "wh-clear") { clearTimeout(timer); query = ""; orderQueue = ""; status = approval = "all"; orderPages = customerPages = 1; await reload(); $("#wq")?.focus({ preventScroll: true }); }
       if (name === "wh-more" && id === tab && data.nextCursor && !loadingMore) { loadingMore = true; const button = $(".w-more button"); if (button) { button.disabled = true; button.setAttribute("aria-busy", "true"); } try { if (id === "orders") orderPages++; else if (id === "customers") customerPages++; await reload(); } finally { loadingMore = false; } }
       if (name === "wh-next") await advanceOrder(id);
       if (name === "wh-refresh-orders") { orderErrors.delete(id); await reload(); (document.querySelector(`[data-act="wh-next"][data-id="${id}"]`) || document.querySelector(`[data-act="wh-order"][data-id="${id}"]`))?.focus({ preventScroll: true }); }

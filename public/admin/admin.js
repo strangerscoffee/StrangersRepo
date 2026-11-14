@@ -191,40 +191,11 @@
   VIEWS.sickness = sickness.view;
   let cache = {};
 
+  const overviewUI = window.AdminOverview({ html, raw, svg, openSheet, getData: () => cache.overview, links: () => S.links });
   VIEWS.overview = async () => {
     const d = await api("GET", "/api/admin/overview");
-    S.locked = d.stats.people.locked; renderNav();
-    const st = d.stats;
-    const attention = d.attention.length ? d.attention.map((a) => html`
-      <div class="item"><span class="ic ${a.tone}">${svg(a.icon)}</span><span class="tx"><b>${a.title}</b><span>${a.detail}</span></span>
-        <span class="end">${a.action.href ? html`<a class="btn sm soft" href="${a.action.href}">${a.action.label}</a>`
-          : html`<button class="btn sm soft" type="button" data-act="${a.action.act || "go"}" data-id="${a.action.id || a.action.go || ""}">${a.action.label}</button>`}
-          ${a.dismiss ? html`<button class="btn sm soft dismiss" type="button" data-act="dismiss" data-id="${a.dismiss}" aria-label="Dismiss" title="Dismiss">${svg("x")}</button>` : ""}</span></div>`)
-      : html`<div class="empty">${raw(`<span class="ic ok">${svg("ok")[RAW]}</span>`)}<span>Nothing needs attention.</span></div>`;
-    return html`
-      ${head("Overview", `The Kitchen Diary and the Rota at a glance. ${new Date().toLocaleDateString("en-GB", { ...LON, weekday: "long", day: "numeric", month: "long" })}.`)}
-      <div class="label">Needs attention <span class="count">${d.attention.length || ""}</span></div>
-      <div class="group glass">${attention}</div>
-      <div class="label">Today and this week</div>
-      <div class="stats">
-        <a class="stat glass" href="${S.links.diary}"><span class="k">${svg("cal")}Diary today</span><span class="v">${st.diary.done} of ${st.diary.open}</span><span class="s">sites signed off</span></a>
-        <a class="stat glass" href="${S.links.rota}"><span class="k">${svg("clock")}Rota hours</span><span class="v">${hrs(st.rota.hours)}</span><span class="s">${st.rota.overtime ? `${hrs(st.rota.overtime)} overtime` : st.rota.published ? "this week, published" : "this week, not published"}</span></a>
-        <button class="stat glass" type="button" data-go="people"><span class="k">${svg("people")}People</span><span class="v">${st.people.active}</span><span class="s">${[st.people.locked ? `${st.people.locked} locked` : "", st.people.notSignedIn ? `${st.people.notSignedIn} not signed in yet` : ""].filter(Boolean).join(", ") || "active accounts"}</span></button>
-        <button class="stat glass" type="button" data-go="data"><span class="k">${svg("db")}Last backup</span><span class="v">${st.backup ? hm(st.backup.at) : "None"}</span><span class="s">${st.backup ? `${cap(when(st.backup.at).replace(/ \d\d:\d\d$/, ""))}, ${st.backup.count} kept` : "Make one now"}</span></button>
-      </div>
-      <div class="pair">
-        <section class="panel glass" aria-labelledby="dtd"><h2 id="dtd">Diary today <a class="link" href="${S.links.diary}">Open</a></h2>
-          ${d.diaryToday.map((s) => html`<div class="siteline"><span class="nm"><span class="dot ${s.id}"></span>${s.name}</span>${meter(s.pct, s.pct < 100 && !s.closed ? "part" : "")}<span class="st">${s.status}</span></div>`)}
-        </section>
-        <section class="panel glass" aria-labelledby="rtw"><h2 id="rtw">Rota this week ${d.rotaPublished ? "" : html`<span class="pill warn">Not published</span>`}<a class="link" href="${S.links.rota}#week/${d.week}">Open</a></h2>
-          ${(() => { const max = Math.max(1, ...d.rotaWeek.map((s) => s.hours)); return d.rotaWeek.map((s) => html`<div class="siteline"><span class="nm"><span class="dot ${s.id}"></span>${s.name}</span>${meter((s.hours / max) * 100)}<span class="st num">${!s.inUse ? "Not set up" : s.hours || s.open ? `${hrs(s.hours)} · ${plural(s.people, "person", "people")}${s.open ? ` · ${s.open} open` : ""}` : "No shifts"}</span></div>`); })()}
-        </section>
-        ${d.emails ? html`<section class="panel glass" aria-labelledby="rem"><h2 id="rem">Rota emails ${d.emails.ready ? html`<span class="pill ok">On</span>` : html`<span class="pill warn">Not set up</span>`}</h2>
-          <p class="emline">${d.emails.ready ? `${plural(d.emails.sentToday, "email", "emails")} sent in the last day.` : "Add the RESEND_API_KEY secret in Cloudflare to start sending. Until then nothing is sent."}</p>
-          <p class="emline">${d.emails.withAddress} of ${d.emails.active} ${d.emails.active === 1 ? "person has" : "people have"} an email address. Add them in People → Edit.</p>
-          ${d.emails.ready ? html`<div class="email-actions"><button class="btn sm soft" type="button" data-act="testemail">Send me a test email</button><button class="btn sm soft" type="button" data-act="weeklytest">Send me this week's summary</button></div>` : ""}
-        </section>` : ""}
-      </div>`;
+    cache.overview = d; S.locked = d.stats.people.locked; renderNav();
+    return overviewUI.view(d);
   };
 
   VIEWS.people = async () => {
@@ -590,6 +561,11 @@
   }
 
   async function act(name, id, el) {
+    if (name === "overview-site") { overviewUI.site(id); return; }
+    if (name === "overview-wholesale") {
+      wholesale.selectSection(id === "invoices" ? "invoices" : "orders", { queue: id === "prepare" || id === "ready" ? id : "", resetStatus: true });
+      wholesaleExpanded = true; await show("wholesale"); return;
+    }
     if (name.startsWith("sick-")) { await sickness.act(name, id); return; }
     if (name === "wh-sidebar-toggle") {
       wholesaleExpanded = !wholesaleExpanded; renderNav();
@@ -737,6 +713,10 @@
      if so, redraw the page, unless a sheet is open or something is being typed. */
   const typing = () => document.activeElement && /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName);
   SC.watchChanges(15000, (c) => `${c.accounts}.${c.rota}.${S.page === "overview" || S.page === "activity" ? c.docs : ""}`, () => $("#scrim").hidden && !typing(), () => reload());
+  // Deadlines and the UK date can change without a write. Never refresh over an open editor.
+  setInterval(() => {
+    if (S.me && S.page === "overview" && !document.hidden && $("#scrim").hidden && !typing() && $("#main").getAttribute("aria-busy") !== "true") reload();
+  }, 60000);
 
   // Safari can bring the page back from memory after the session has ended: check, and go to sign-in if so.
   SC.recheckOnPageshow(() => goSignIn(location.pathname));

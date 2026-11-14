@@ -72,6 +72,7 @@ test("admin adds an address; publishing emails it; the person switches an email 
   await a.p.locator("#toast", { hasText: "Saved" }).waitFor();
   assert.equal((await call("GET", "/api/admin/people")).people.find((p) => p.id === alexId).email, "alex@example.com");
   await a.p.goto(srv.base + "/admin#overview");
+  await a.p.locator("#overview-system > summary").click();
   await a.p.locator("#rem", { hasText: "Rota emails" }).waitFor();
   assert.match(await a.p.locator("section[aria-labelledby=rem]").innerText(), /1 of 3 people have an email address/);
   await a.ctx.close();

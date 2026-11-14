@@ -55,7 +55,7 @@ test("staff journey on the real page", async () => {
 
   // The admin section: add a member of staff, with a temporary password created for them.
   await page.waitForURL(/\/admin(#\w+)?$/);
-  await page.locator(".pagehead h1", { hasText: "Overview" }).waitFor();
+  await page.locator(".ov-heading h1", { hasText: "Overview" }).waitFor();
   await page.goto(srv.base + "/admin#people");
   await page.locator("[data-person]", { hasText: "Sam Patel (you)" }).waitFor();
   await page.click("[data-act=add]");

@@ -11,6 +11,7 @@ import { ApiError, Env, invalid, json, readJson } from "./http";
 import { addDays, isDay, londonToday, mondayOf, rotaWeekSummary } from "./rota";
 import { diaryReminderReady, sendDiaryReminderTest } from "./slackDiary";
 import { SLACK_DIARY_SITES, timesText } from "./slackDiaryText";
+import { dailyBusiness, dailyOperations } from "./adminOverview";
 
 const SITES = [
   { id: "roastery", name: "Roastery", prefix: "", address: "10 Dove Street, Norwich, NR2 1DE" },
@@ -71,11 +72,12 @@ function dayProgress(settings: Doc | null, day: Doc | null, date: string) {
 export async function overview(env: Env, links: { rota: string; diary: string }) {
   const now = Date.now(), today = londonToday(), week = mondayOf(today), next = addDays(week, 7);
   const paths = SITES.flatMap((s) => [`${s.prefix}settings/main`, `${s.prefix}days/${today}`]);
-  const [users, thisW, nextW, docs, timeOff, requests, backups] = await Promise.all([
+  const [users, thisW, nextW, docs, timeOff, requests, backups, business] = await Promise.all([
     allUsers(env), rotaWeekSummary(env, week), rotaWeekSummary(env, next), docsByPath(env, paths),
     env.DB.prepare("SELECT t.from_day, t.to_day, u.name FROM rota_time_off t JOIN users u ON u.id = t.user_id WHERE t.status = 'requested' ORDER BY t.from_day").all<{ from_day: string; to_day: string; name: string }>(),
     env.DB.prepare("SELECT COUNT(*) AS n FROM rota_requests WHERE (kind = 'claim' AND status = 'open') OR (kind = 'cover' AND status = 'accepted')").first<{ n: number }>(),
     listBackups(env),
+    dailyBusiness(env, today, next),
   ]);
   const active = users.filter((u) => u.active);
   const diaryToday = SITES.map((s) => ({ id: s.id, name: s.name, ...dayProgress(docs.get(`${s.prefix}settings/main`) ?? null, docs.get(`${s.prefix}days/${today}`) ?? null, today) }));
@@ -144,8 +146,13 @@ export async function overview(env: Env, links: { rota: string; diary: string })
   const round = (n: number) => Math.round(n * 10) / 10;
   const sentToday = await env.DB.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE kind = 'email_sent' AND at > ?").bind(now - 864e5).first<{ n: number }>().catch(() => null);
   const open = diaryToday.filter((s) => s.setUp && !s.closed);
+  const operational = dailyOperations(today, now, thisW, diaryToday, links.rota);
+  if (backups[0] && now - backups[0].at > 36 * 3600000) operational.alerts.unshift({ tone: "bad", icon: "db", title: "Nightly backup is overdue", detail: "No completed backup in the last 36 hours.", action: { label: "View backups", act: "go", id: "data" } });
+  const serverErrors = await env.DB.prepare("SELECT COUNT(*) AS n FROM errors WHERE source='server' AND last_at>?").bind(Math.max(now - 3600000, dismissed.get("errors") || 0)).first<{ n: number }>();
+  if (serverErrors?.n) operational.alerts.unshift({ tone: "bad", icon: "warn", title: `${serverErrors.n} server error${serverErrors.n === 1 ? "" : "s"} in the last hour`, detail: "Review the affected requests in Activity.", action: { label: "See errors", act: "errors" } });
   return {
     today, week,
+    daily: { asOf: now, ...business, ...operational, shiftRequests: requests?.n || 0, nextWeek: { week: next, published: nextW.published, shifts: nextW.shifts.length, open: openShifts(nextW), problems: errors(nextW) }, thisWeekPublished: thisW.published },
     attention,
     stats: {
       diary: { done: open.filter((s) => s.pct === 100).length, open: open.length },
