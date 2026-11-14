@@ -32,6 +32,9 @@ for (const width of [320, 820, 1920]) for (const colorScheme of ['light', 'dark'
       await page.locator('#repeat-shortcut').waitFor();
       assert.equal(await page.locator('#account-greeting').textContent(), 'Hi, Buyer');
       assert.equal(await page.locator('#account-menu-greeting').textContent(), 'Hi, Buyer');
+      assert.equal(await page.locator('.brand-name').innerText(), 'Strangers Wholesale');
+      assert.equal(await page.locator('.brand-name').isVisible(), true);
+      assert.equal(await page.locator('.footer-brand strong').innerText(), 'Strangers Coffee Company');
       assert.equal(await page.locator('.site-header nav').count(), 0);
       assert.ok((await page.locator('.site-header').boundingBox()).height <= 120, 'header and order-history shortcut remain compact at every width');
       assert.equal(await page.locator('#basket-dialog').isVisible(), false);
@@ -108,6 +111,12 @@ test('contact greeting follows saved contact names, escapes text, handles long a
       assert.equal(await page.locator('#account-toggle').getAttribute('aria-label'), greeting + '. Account menu');
       assert.equal(await page.locator('#signed-in-name').textContent(), 'Catalogue Coffee Company');
       assert.equal(await page.locator('#account-menu-greeting > *').count(), 0, 'contact names render as text');
+      for (const width of [701, 820, 1440]) {
+        await page.setViewportSize({ width, height: 900 });
+        const boxes = await page.evaluate(() => Object.fromEntries(['.site-header', '.brand-name', '.orders-shortcut', '#account-toggle'].map(selector => [selector, document.querySelector(selector).getBoundingClientRect().toJSON()])));
+        assert.ok(boxes['.brand-name'].right <= boxes['.orders-shortcut'].left, `${width}: the brand stays clear of history with long contact names`);
+        assert.ok(boxes['#account-toggle'].right <= boxes['.site-header'].right, `${width}: the greeting stays inside the header`);
+      }
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     }
     await page.reload(); await page.locator('#products[aria-busy="false"]').waitFor();
