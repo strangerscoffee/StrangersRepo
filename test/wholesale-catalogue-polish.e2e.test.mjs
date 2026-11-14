@@ -26,7 +26,8 @@ for (const width of [320, 820, 1920]) for (const colorScheme of ['light', 'dark'
   test(`approved catalogue ${width} ${colorScheme}: account orders, animated choices, search, repeat and basket`, { timeout: 120000 }, async () => {
     const context = await browser.newContext({ viewport: { width, height: 1080 }, colorScheme });
     const [name, value] = customerCookie.split('='); await context.addCookies([{ name, value, url: server.base }]);
-    const page = await context.newPage(), errors = []; page.on('pageerror', error => errors.push(error.message));
+    const page = await context.newPage(), errors = [], orderWrites = []; page.on('pageerror', error => errors.push(error.message));
+    page.on('request', request => { if (request.method() === 'POST' && new URL(request.url()).pathname === '/api/wholesale/orders') orderWrites.push(request.url()); });
     try {
       await page.goto(server.base + '/wholesale/'); await page.locator('#products[aria-busy="false"]').waitFor();
       await page.locator('#repeat-shortcut').waitFor();
@@ -71,7 +72,14 @@ for (const width of [320, 820, 1920]) for (const colorScheme of ['light', 'dark'
       assert.equal(await card.locator('[data-grind-open]').evaluate(node => node === document.activeElement), true);
       await card.locator('input[type="number"]').fill('6'); await card.locator('[type="submit"]').click();
       assert.equal(await card.locator('[data-add-label]').textContent(), 'Added');
+      assert.equal(await card.locator('[data-add-check]').isVisible(), true);
+      assert.equal(await card.locator('[data-add-symbol]').isVisible(), false);
       assert.equal(await page.locator('#basket-count').textContent(), '6');
+      assert.deepEqual(orderWrites, [], 'Add changes the basket without submitting checkout');
+      await card.locator('[type="submit"]:not([data-added])').waitFor();
+      assert.equal(await card.locator('[data-add-label]').textContent(), 'Add');
+      assert.equal(await card.locator('[data-add-check]').isVisible(), false);
+      assert.equal(await card.locator('[data-add-symbol]').isVisible(), true);
       await page.locator('.site-header [data-basket]').click(); await page.locator('#basket-dialog[open]').waitFor();
       assert.equal(await page.locator('#order-items .order-item').count(), 1);
       await page.locator('#order-items input').fill('5'); await page.locator('#order-items input').press('Tab');
@@ -85,6 +93,11 @@ for (const width of [320, 820, 1920]) for (const colorScheme of ['light', 'dark'
       if (process.env.CATALOGUE_QA_DIR) { await mkdir(process.env.CATALOGUE_QA_DIR, { recursive: true }); await page.evaluate(() => scrollTo(0,0)); await page.screenshot({ path: `${process.env.CATALOGUE_QA_DIR}/catalogue-${width}-${colorScheme}.png`, fullPage: true }); }
       await page.emulateMedia({ reducedMotion: 'reduce' }); await card.locator('[data-grind-open]').click();
       assert.equal(await page.locator('#coffee-choice-menu').evaluate(node => getComputedStyle(node).transitionDuration), '0s');
+      await page.keyboard.press('Escape');
+      await card.locator('[type="submit"]').click();
+      assert.equal(await page.locator('#basket-count').evaluate(node => node.getAnimations().length), 0, 'reduced motion disables the basket pulse');
+      assert.equal(await card.locator('[data-add-check]').evaluate(node => node.getAnimations().length), 0, 'reduced motion disables check movement');
+      assert.deepEqual(orderWrites, []);
       assert.deepEqual(errors, []);
     } finally { await context.close(); }
   });
@@ -113,8 +126,8 @@ test('contact greeting follows saved contact names, escapes text, handles long a
       assert.equal(await page.locator('#account-menu-greeting > *').count(), 0, 'contact names render as text');
       for (const width of [701, 820, 1440]) {
         await page.setViewportSize({ width, height: 900 });
-        const boxes = await page.evaluate(() => Object.fromEntries(['.site-header', '.brand-name', '.orders-shortcut', '#account-toggle'].map(selector => [selector, document.querySelector(selector).getBoundingClientRect().toJSON()])));
-        assert.ok(boxes['.brand-name'].right <= boxes['.orders-shortcut'].left, `${width}: the brand stays clear of history with long contact names`);
+        const boxes = await page.evaluate(() => Object.fromEntries(['.site-header', '.brand-name', '.basket-link', '#account-toggle'].map(selector => [selector, document.querySelector(selector).getBoundingClientRect().toJSON()])));
+        assert.ok(boxes['.brand-name'].right <= boxes['.basket-link'].left, `${width}: the brand stays clear of the basket with long contact names`);
         assert.ok(boxes['#account-toggle'].right <= boxes['.site-header'].right, `${width}: the greeting stays inside the header`);
       }
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);

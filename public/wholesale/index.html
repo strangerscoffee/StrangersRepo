@@ -27,7 +27,6 @@
   <header class="site-header wrap">
     <a class="brand" id="preview-home" href="/wholesale/" aria-label="Strangers Wholesale home"><img class="brand-mark" src="/mark.svg" width="32" height="34" alt=""><span class="brand-name">Strangers Wholesale</span></a>
     <div class="header-tools">
-      <button class="orders-shortcut" type="button" data-order-history>Orders &amp; invoices</button>
       <button class="basket-link" type="button" data-basket aria-label="View your order, 0 bags">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 3h3l3 12h11l3-9H6M9 19a1 1 0 1 0 0 .01M18 19a1 1 0 1 0 0 .01"/></svg>
         <span class="basket-label">Your order</span><span class="basket-count" id="basket-count" hidden>0</span>
@@ -63,7 +62,7 @@
           </div>
           <div class="catalogue-actions">
             <div class="catalogue-search" id="catalogue-search"><button class="search-toggle" id="search-toggle" type="button" aria-label="Search coffee" aria-controls="coffee-search-field" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg></button><label class="search-field" id="coffee-search-field"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><span class="sr-only">Search coffees, origins or tasting notes</span><input id="coffee-search" type="search" placeholder="Search coffee, origin or tasting notes" autocomplete="off"></label><button class="search-close" id="search-close" type="button" aria-label="Close search and clear filter" hidden>×</button></div>
-            <div class="bag-size" role="group" aria-label="Bag size for all coffees"><span class="bag-size-label">Bag size</span><div class="filters"><button class="filter" type="button" data-bag-size="quarter" aria-pressed="false">250 g</button><button class="filter selected" type="button" data-bag-size="kilo" aria-pressed="true">1 kg</button></div></div>
+            <div class="bag-size" role="group" aria-label="Bag size for all coffees"><div class="filters"><button class="filter" type="button" data-bag-size="quarter" aria-pressed="false">250 g</button><button class="filter selected" type="button" data-bag-size="kilo" aria-pressed="true">1 kg</button></div></div>
             <button class="text-button refresh-button sort-button" id="sort-coffee" type="button" popovertarget="sort-menu" aria-label="Sort coffee: Catalogue order" aria-haspopup="menu" aria-controls="sort-menu" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M7 12h10M10 17h4"/></svg><span class="sr-only" id="sort-label">Catalogue order</span></button>
           </div>
         </div>

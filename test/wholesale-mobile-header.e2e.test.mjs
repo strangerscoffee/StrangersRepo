@@ -55,7 +55,7 @@ for (const colorScheme of ['light','dark']) test(`compact mobile header ${colorS
       await page.setViewportSize({width:1440,height:900});
       await page.locator('.catalogue-actions > .bag-size').waitFor();
       assert.equal(await page.locator('.brand-name').innerText(),'Strangers Wholesale');
-      assert.equal(await page.locator('.orders-shortcut').isVisible(),true, 'desktop retains its history shortcut');
+      assert.equal(await page.locator('.orders-shortcut').isVisible(),false, 'desktop orders stay in the account menu too');
       assert.equal(await page.locator('#coffee-search').inputValue(),'Brazil');
       assert.equal(await page.locator('.catalogue-actions > .bag-size').count(),1, 'desktop restores the original toolbar');
       await page.setViewportSize({width,height:852});
