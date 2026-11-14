@@ -1,0 +1,26 @@
+import{test,before,after}from'node:test';import assert from'node:assert/strict';import{createRequire}from'node:module';import{fileURLToPath}from'node:url';
+import{startServer,SETUP_CODE}from'./harness.mjs';import{seedOverview}from'./admin-overview-fixture.mjs';
+const {build}=createRequire(import.meta.url)('esbuild');const built=await build({entryPoints:[fileURLToPath(new URL('../src/adminOverview.ts',import.meta.url))],bundle:true,write:false,format:'esm',platform:'neutral',target:'es2022',logLevel:'silent'});const{dailySiteStatus,dailyOperations}=await import('data:text/javascript;base64,'+Buffer.from(built.outputFiles[0].text).toString('base64'));
+let srv,admin,fixture;
+before(async()=>{srv=await startServer();const r=await fetch(srv.base+'/api/auth/setup',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:'Overview Admin',username:'overview.admin',password:'admin-pass-123',code:SETUP_CODE})});assert.equal(r.status,200);admin=r.headers.getSetCookie().find(s=>/^sfbb_session=[\w-]/.test(s)).split(';')[0];fixture=await seedOverview(srv,admin,{history:210});});
+after(async()=>await srv?.stop());
+async function get(path,cookie=admin){const r=await fetch(srv.base+path,{headers:{cookie}});return{status:r.status,body:await r.json()};}
+test('daily overview counts all real records, keeps absence types separate and queues exclude previews/tombstones',async()=>{
+ const {status,body}=await get('/api/admin/overview');assert.equal(status,200);const x=body.daily;assert.equal(x.orders.toPrepare,2);assert.equal(x.orders.grams,3000);assert.equal(x.orders.ready,1);assert.equal(x.pendingAccounts,1);assert.deepEqual(x.leave,{annual:1,other:1});assert.equal(x.annualLeaveMonday,1,'annual leave counts people once and excludes sickness');assert.equal(x.invoices.overdueCount,1);assert.equal(x.invoices.overduePence,124000);
+ const clock=new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/London',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date(x.asOf));if(clock<'23:59')assert(x.alerts.some(a=>a.title==='Cover needed at Cafe'));assert(x.sites.some(s=>s.id==='asg'&&s.overdue));assert(!x.sites.some(s=>s.id==='factory'));assert.equal(x.nextWeek.week,fixture.next);
+ for(const [queue,count]of [['prepare',2],['ready',1]]){const r=await get('/api/admin/wholesale/orders?queue='+queue);assert.equal(r.status,200);assert.equal(r.body.count,count);assert.equal(r.body.orders.length,count);assert(r.body.orders.every(o=>o.preview===false&&!o.deletedAt));}
+ assert.equal((await get('/api/admin/wholesale/orders?queue=bad')).status,400);assert.equal((await get('/api/admin/overview','')).status,401);
+ for(const role of['staff','manager']){await fetch(srv.base+'/api/admin/users',{method:'POST',headers:{cookie:admin,'content-type':'application/json'},body:JSON.stringify({name:'Private '+role,username:'private.'+role,role,password:'temp-password-123'})});const login=await fetch(srv.base+'/api/auth/change',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'private.'+role,password:'temp-password-123',newPassword:'own-password-123'})});const cookie=login.headers.getSetCookie().find(s=>/^sfbb_session=[\w-]/.test(s))?.split(';')[0];assert(cookie);const denied=await get('/api/admin/overview',cookie);assert.equal(denied.status,403);assert(!JSON.stringify(denied.body).includes('overview-customer'));}
+});
+test('deadlines use London weekday hours including DST and never invent missing deadlines',()=>{
+ const site={id:'cafe',name:'Cafe',dayHours:{tue:{opensAt:'08:00',closesAt:'17:00'}},opensAt:'09:00',closesAt:'18:00'};
+ const diary={id:'cafe',name:'Cafe',setUp:true,closed:false,pct:50,status:'Closing checks to do'};
+ for(const [day,utc]of [['2026-07-14','2026-07-14T15:30:00Z'],['2026-01-13','2026-01-13T16:30:00Z']]){const s=dailySiteStatus(day,Date.parse(utc),[site],[diary])[0];assert.equal(s.dueAt,'17:00');assert.equal(s.overdue,false);assert.equal(dailySiteStatus(day,Date.parse(utc)+31*60000,[site],[diary])[0].overdue,true);}
+ assert.equal(dailySiteStatus('2026-07-14',Date.parse('2026-07-14T22:00Z'),[{...site,dayHours:{},opensAt:null,closesAt:null}],[diary])[0].dueAt,null);
+ assert.equal(dailySiteStatus('2026-07-14',Date.now(),[site],[{...diary,status:'Signed off'}])[0].overdue,false);
+ assert.equal(dailySiteStatus('2026-07-14',Date.now(),[site],[{...diary,closed:true}])[0].overdue,false);
+});
+test('draft and finished shifts never produce a live cover alert',()=>{
+ const today='2026-07-14',now=Date.parse('2026-07-14T15:30Z'),sites=[{id:'cafe',name:'Cafe',dayHours:{},opensAt:null,closesAt:null}],diaries=[{id:'cafe',name:'Cafe',setUp:true,closed:false,pct:50,status:'Closing checks to do'}];
+ const shift={id:'1',site:'cafe',day:today,start:'17:00',end:'20:00',userId:null};const week={sites,shifts:[shift],published:false};assert.equal(dailyOperations(today,now,week,diaries,'/rota/').alerts.length,0);const live=dailyOperations(today,now,{...week,published:true},diaries,'/rota/');assert.equal(live.alerts[0].eyebrow,'Starts in 30 minutes');assert.equal(live.alerts[0].action.href,'/rota/#day/cafe/2026-07-14');assert.equal(dailyOperations(today,now,{...week,published:true,shifts:[{...shift,end:'15:00'}]},diaries,'/rota/').alerts.length,0);
+});

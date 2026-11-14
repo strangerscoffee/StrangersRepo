@@ -86,6 +86,7 @@ test("an ordinary visit reports nothing; a page that throws reports it, and admi
   await a.addCookies([{ name, value, url: srv.base }]);
   const ap = await a.newPage();
   await ap.goto(srv.base + "/admin#overview");
+  await ap.locator("#overview-system > summary").click();
   await ap.locator(".item, .row", { hasText: /errors? on the site in the last day/ }).first().waitFor();
   await ap.locator("button", { hasText: "See errors" }).click();
   await ap.locator(".item", { hasText: "Test: something broke on Today" }).waitFor();

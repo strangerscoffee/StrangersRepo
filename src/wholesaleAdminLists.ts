@@ -10,6 +10,12 @@ function filters(kind: ListKind, query: URLSearchParams) {
   const where = ["kind = ?"];
   const values: (string | number)[] = [kind];
   if (kind === "order") where.push("json_extract(data, '$.deletedAt') IS NULL");
+  const queue = query.get("queue");
+  if (queue) {
+    if (kind !== "order" || !["prepare", "ready"].includes(queue)) throw invalid("Choose a listed order queue.");
+    where.push("json_extract(data, '$.preview') = 0");
+    where.push(queue === "prepare" ? "json_extract(data, '$.status') IN ('New','Preparing')" : "json_extract(data, '$.status') = 'Ready'");
+  }
   const q = (query.get("q") || "").trim();
   if (q.length > 120) throw invalid("Search can be up to 120 characters.");
   if (q) {
