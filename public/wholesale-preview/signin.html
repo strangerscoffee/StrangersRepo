@@ -11,55 +11,59 @@
   <link rel="stylesheet" href="/theme.css">
   <link rel="stylesheet" href="/wholesale-preview/wholesale.css">
   <script src="/errors.js"></script>
-<script src="/shared/focus.js" defer></script>
+  <script src="/shared/focus.js" defer></script>
   <script src="/shared/core.js"></script>
   <script src="/wholesale-preview/terms.js" defer></script>
   <script src="/wholesale-preview/signin.js" defer></script>
 </head>
 <body class="wholesale-login">
-  <main class="login-panel">
-    <p class="eyebrow">WHOLESALE</p>
-    <h1 class="login-logo"><img src="/wholesale-preview/images/logo.svg" width="160" height="90" alt="Strangers Coffee"><span id="login-title">Welcome back.</span></h1>
-    <p class="dialog-intro" id="login-intro">Sign in to order coffee for your business.</p>
-    <form id="wholesale-login">
-      <div id="registration-fields" hidden>
-        <label class="form-field">Business name<input name="business" maxlength="120" autocomplete="organization"></label>
-        <label class="form-field">Contact name<input name="contact" maxlength="120" autocomplete="name"></label>
-        <label class="form-field">Order email<input name="email" autocapitalize="none" spellcheck="false" type="email" maxlength="150" autocomplete="email"></label>
-        <label class="form-field">Accounts email <span>(optional, if different: for invoices)</span><input name="accountsEmail" autocapitalize="none" spellcheck="false" type="email" maxlength="150"></label>
-        <label class="form-field">Phone <span>(optional)</span><input name="phone" type="tel" maxlength="40" autocomplete="tel"></label>
+  <div class="login-layout">
+    <main class="login-panel" aria-labelledby="login-title">
+      <div class="login-logo"><img src="/wholesale-preview/images/logo.svg" width="130" height="78" alt="Strangers Coffee Company"></div>
+      <h1 id="login-title">Welcome back.</h1>
+      <p class="dialog-intro" id="login-intro" aria-live="polite">Sign in to your wholesale account.</p>
+      <noscript><p class="quantity-error">JavaScript is needed to sign in. Enable it and reload this page.</p></noscript>
+      <form id="wholesale-login" method="post">
+        <div id="registration-fields" hidden>
+          <label class="form-field">Business name<input name="business" maxlength="120" autocomplete="organization"></label>
+          <label class="form-field">Contact name<input name="contact" maxlength="120" autocomplete="name"></label>
+          <label class="form-field">Order email<input name="email" autocapitalize="none" spellcheck="false" type="email" maxlength="150" autocomplete="email"></label>
+          <label class="form-field">Accounts email <span>(optional, if different: for invoices)</span><input name="accountsEmail" autocapitalize="none" spellcheck="false" type="email" maxlength="150"></label>
+          <label class="form-field">Phone <span>(optional)</span><input name="phone" type="tel" maxlength="40" autocomplete="tel"></label>
+        </div>
+        <label class="form-field">Username<input id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="32" required></label>
+        <div class="form-field"><label for="password">Password</label><div class="password-entry"><input id="password" name="password" type="password" spellcheck="false" autocapitalize="none" autocorrect="off" autocomplete="current-password" minlength="8" maxlength="128" required><button class="password-toggle" type="button" data-password-toggle="password" aria-controls="password" aria-label="Show password" aria-pressed="false">Show</button></div></div>
+        <div class="form-field" id="invite-confirm" hidden><label for="invite-password2">Confirm password</label><div class="password-entry"><input id="invite-password2" type="password" spellcheck="false" autocapitalize="none" autocorrect="off" autocomplete="new-password" minlength="8" maxlength="128"><button class="password-toggle" type="button" data-password-toggle="invite-password2" aria-controls="invite-password2" aria-label="Show confirm password" aria-pressed="false">Show</button></div></div>
+        <div id="password-change" hidden>
+          <div class="form-field"><label for="new-password">New password</label><div class="password-entry"><input id="new-password" name="newPassword" type="password" spellcheck="false" autocapitalize="none" autocorrect="off" autocomplete="new-password" minlength="8" maxlength="128"><button class="password-toggle" type="button" data-password-toggle="new-password" aria-controls="new-password" aria-label="Show new password" aria-pressed="false">Show</button></div></div>
+          <div class="form-field"><label for="confirm-password">Confirm new password</label><div class="password-entry"><input id="confirm-password" type="password" spellcheck="false" autocapitalize="none" autocorrect="off" autocomplete="new-password" minlength="8" maxlength="128"><button class="password-toggle" type="button" data-password-toggle="confirm-password" aria-controls="confirm-password" aria-label="Show confirm new password" aria-pressed="false">Show</button></div></div>
+        </div>
+        <div class="login-recovery"><button class="text-button" type="button" id="forgot-toggle" data-auth-nav>Forgotten your details?</button></div>
+        <p class="quantity-error" id="login-error" role="alert" hidden></p>
+        <button class="button button-dark" id="login-submit" type="submit" disabled>Sign in</button>
+      </form>
+      <div id="registration-complete" hidden><h2>Thanks for registering.</h2><p class="dialog-intro">Your account is awaiting review by Strangers. You can sign in and order once an admin has approved it.</p></div>
+      <form id="forgot-form" method="post" hidden>
+        <label class="form-field">Username or business email<input id="forgot-identifier" name="identifier" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="150" required></label>
+        <p class="quantity-error" id="forgot-error" role="alert" hidden></p>
+        <button class="button button-dark" id="forgot-submit" type="submit" disabled>Email me a reset link</button>
+      </form>
+      <div id="forgot-complete" hidden>
+        <p id="forgot-sent" class="login-confirmation" role="status"></p>
+        <p class="login-detail">The link works once and expires after 1 hour. Check your junk folder too.</p>
       </div>
-      <label class="form-field">Username<input id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="32" required></label>
-      <label class="form-field">Password<input id="password" name="password" type="password" autocomplete="current-password" minlength="8" maxlength="128" required></label>
-      <label class="form-field" id="invite-confirm" hidden>Confirm password<input id="invite-password2" type="password" autocomplete="new-password" minlength="8" maxlength="128"></label>
-      <div id="password-change" hidden>
-        <p class="dialog-intro">Choose your own password to finish setting up your account.</p>
-        <label class="form-field">New password<input id="new-password" name="newPassword" type="password" autocomplete="new-password" minlength="8" maxlength="128"></label>
-        <label class="form-field">Confirm new password<input id="confirm-password" type="password" autocomplete="new-password" minlength="8" maxlength="128"></label>
-      </div>
-      <p class="quantity-error" id="login-error" role="alert" hidden></p>
-      <button class="button button-dark" id="login-submit" type="submit">Sign in</button>
-    </form>
-    <div id="registration-complete" hidden><h2>Thanks for registering.</h2><p class="dialog-intro">Your account is awaiting review by Strangers. You can sign in and order once an admin has approved it.</p></div>
-    <!-- Forgotten password: a one-time link emailed to the business's email address on file (src/wholesaleReset.ts). -->
-    <form id="forgot-form" hidden>
-      <p class="dialog-intro">Type your username or your business's email address. We'll email a link to choose a new password, and remind you of your username, to the email address we have for your business.</p>
-      <label class="form-field">Username or business email<input id="forgot-identifier" name="identifier" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="150" required></label>
-      <p class="quantity-error" id="forgot-error" role="alert" hidden></p>
-      <p class="login-sent" id="forgot-sent" role="status" hidden></p>
-      <button class="button button-dark" id="forgot-submit" type="submit">Email me a reset link</button>
-    </form>
-    <form id="reset-form" hidden>
-      <p class="dialog-intro" id="reset-intro">Choose a new password.</p>
-      <label class="form-field">New password <span>(at least 8 characters)</span><input id="reset-password" type="password" autocomplete="new-password" minlength="8" maxlength="128" required></label>
-      <label class="form-field">Confirm new password<input id="reset-password2" type="password" autocomplete="new-password" minlength="8" maxlength="128" required></label>
-      <p class="quantity-error" id="reset-error" role="alert" hidden></p>
-      <button class="button button-dark" id="reset-submit" type="submit">Save password and sign in</button>
-    </form>
-    <button class="text-button" type="button" id="registration-toggle">Request a wholesale account</button>
-    <button class="text-button" type="button" id="forgot-toggle">Forgotten your password or username?</button>
-    <p class="login-help" id="contact-help">Need help? <a id="contact-link" href="mailto:sales@strangerscoffee.com">Email the Strangers team</a></p>
-    <button class="text-button" type="button" data-terms>Terms and conditions</button>
-  </main>
+      <form id="reset-form" method="post" hidden>
+        <p class="dialog-intro" id="reset-intro">Choose a new password.</p>
+        <div class="form-field"><label for="reset-password">New password <span>(at least 8 characters)</span></label><div class="password-entry"><input id="reset-password" type="password" spellcheck="false" autocapitalize="none" autocorrect="off" autocomplete="new-password" minlength="8" maxlength="128" required><button class="password-toggle" type="button" data-password-toggle="reset-password" aria-controls="reset-password" aria-label="Show new password" aria-pressed="false">Show</button></div></div>
+        <div class="form-field"><label for="reset-password2">Confirm new password</label><div class="password-entry"><input id="reset-password2" type="password" spellcheck="false" autocapitalize="none" autocorrect="off" autocomplete="new-password" minlength="8" maxlength="128" required><button class="password-toggle" type="button" data-password-toggle="reset-password2" aria-controls="reset-password2" aria-label="Show confirm new password" aria-pressed="false">Show</button></div></div>
+        <p class="quantity-error" id="reset-error" role="alert" hidden></p>
+        <button class="button button-dark" id="reset-submit" type="submit" disabled>Save password and sign in</button>
+      </form>
+      <button class="text-button login-back" type="button" id="auth-back" data-auth-nav hidden>Back to sign-in</button>
+      <button class="text-button login-back" type="button" id="forgot-again" data-auth-nav hidden>Try different details</button>
+      <div class="login-new" id="login-new"><p id="login-new-label">New to Strangers?</p><button class="text-button" type="button" id="registration-toggle" data-auth-nav>Request a wholesale account</button></div>
+    </main>
+    <footer class="login-footer"><nav aria-label="Wholesale support"><a id="contact-link" href="mailto:sales@strangerscoffee.com" aria-label="Email the Strangers team">Help</a><button class="text-button" type="button" data-terms aria-label="Terms and conditions">Terms</button></nav><p>Strangers Coffee Company</p></footer>
+  </div>
 </body>
 </html>

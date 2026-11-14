@@ -126,6 +126,10 @@ Customer invoice cards show part-paid remaining amounts and payment checked time
 
 QuickBooks → App credentials and setup uses the existing native wide sheet: client ID, write-only client secret and optional webhook verifier for the selected Sandbox/Live connection; a second column provides copyable Intuit redirect/webhook addresses. On phones sections stack inside the scrolling body with pinned title/actions. Saved secret inputs are always empty, no draft enters browser storage, and a missing hosting encryption key gives one-time setup guidance. Auth credentials are locked until the environment is disconnected; removing overrides has a separate confirmation.
 
+### Customer sign-in and recovery
+
+The approved login and recovery pages use a shared 408 px panel, smaller centred Strangers logo, visible Welcome back / Reset your password headings, short copy and 50 px primary actions. Recovery and Back to sign-in links are centred. Password fields offer labelled Show/Hide controls and keep native password-manager hints; leaving a mode or restoring a page masks revealed passwords. New-account requests sit below a quiet divider, with Help and Terms and Strangers Coffee Company outside the panel. The recovery confirmation stays conditional for both matching and unknown accounts and explains the one-hour link expiry. Failed requests preserve the entered identifier, busy states prevent duplicates, and a cancelled link check cannot repaint a later view. Registration, invitation and temporary-password forms reuse the layout and their existing auth endpoints. The shared palette, neutral keyboard focus, touch sizes and reduced-motion/transparency rules remain.
+
 ## Branded loading
 
 The shared sign-in shield uses the full Strangers logo and a small indeterminate progress line, with light/dark and reduced-motion support. Retry is shown only after a verification failure. Its critical privacy-hide CSS remains inline so a missing stylesheet cannot expose private content. After sign-in verification, the wholesale catalogue uses product-shaped skeletons while its data loads. Staff pages preload the logo.
