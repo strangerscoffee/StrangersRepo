@@ -46,6 +46,8 @@ test("forgotten password: ask for a link, open it, choose a new password, signed
     await p.locator('#password').fill('unsent-preview-password');
     await p.getByRole('button', { name: 'Show password', exact: true }).click();
     assert.equal(await p.locator('#password').getAttribute('type'), 'text');
+    assert.equal(await p.locator('#password').evaluate(node => node.spellcheck), false, 'revealed passwords stay out of spellchecking');
+    assert.equal(await p.locator('#password').getAttribute('autocapitalize'), 'none');
     assert.equal(await p.getByRole('button', { name: 'Hide password', exact: true }).getAttribute('aria-pressed'), 'true');
     const centred = await p.locator('.login-recovery').evaluate(node => {
       const outer = node.getBoundingClientRect(), button = node.querySelector('button').getBoundingClientRect();
