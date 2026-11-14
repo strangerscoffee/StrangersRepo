@@ -28,7 +28,7 @@ for (const [device, viewport] of [['phone', {width:393,height:852}], ['ipad', {w
     const page = await context.newPage(), errors = []; page.on('pageerror', e => errors.push(e.message));
     let release = () => {};
     try {
-      await page.goto(srv.base + '/wholesale-preview/');
+      await page.goto(srv.base + '/wholesale/');
       await page.locator('.product-config').first().waitFor();
       await page.locator('#products[aria-busy="false"]').waitFor();
       await page.locator('#sort-coffee').click();

@@ -29,7 +29,7 @@ for (const colorScheme of ['light','dark']) test(`compact mobile header ${colorS
     const [name,value] = cookie.split('='); await context.addCookies([{name,value,url:srv.base}]);
     const page = await context.newPage(), errors = []; page.on('pageerror', error => errors.push(error.message));
     try {
-      await page.goto(srv.base+'/wholesale-preview/'); await page.locator('#products article').first().waitFor();
+      await page.goto(srv.base+'/wholesale/'); await page.locator('#products article').first().waitFor();
       const measure = () => page.locator('.site-header').evaluate(node => ({box:node.getBoundingClientRect().toJSON(), height:node.getBoundingClientRect().height, mainTop:document.querySelector('main').getBoundingClientRect().top+scrollY, overflow:document.documentElement.scrollWidth-innerWidth, targets:[...node.querySelectorAll('a,button')].map(n=>n.getBoundingClientRect()).filter(b=>b.width&&b.height).map(b=>b.toJSON())}));
       const before = await measure(); assert.equal(before.height,64, 'header stays in one compact row'); assert.equal(before.overflow,0); assert.equal(before.targets.length,3); assert.ok(before.targets.every(target=>target.width>=44&&target.height>=44));
       assert.ok(before.targets.every(target=>target.top>=before.box.top&&target.bottom<=before.box.bottom&&target.left>=before.box.left&&target.right<=before.box.right), 'brand, cart and account stay inside the header');
@@ -85,7 +85,7 @@ for (const colorScheme of ['light','dark']) test(`compact mobile header ${colorS
       await openWholesaleOrders(page); await page.locator('#orders-dialog[open]').waitFor(); await page.locator('#orders-dialog [data-close]').first().click();
       await openWholesaleAccountMenu(page);
       if (process.env.HEADER_QA_DIR) { await mkdir(process.env.HEADER_QA_DIR,{recursive:true}); await page.screenshot({path:`${process.env.HEADER_QA_DIR}/header-${width}-${colorScheme}.png`}); }
-      await page.locator('#preview-sign-out').click(); await page.waitForURL(/\/wholesale-preview\/signin$/);
+      await page.locator('#preview-sign-out').click(); await page.waitForURL(/\/wholesale\/signin$/);
       assert.deepEqual(errors,[]);
     } finally { await context.close(); }
   }

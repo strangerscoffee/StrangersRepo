@@ -10,8 +10,8 @@
 (() => {
   "use strict";
   const p = location.pathname, h = location.hostname;
-  const app = h.startsWith("rota.") || p.startsWith("/rota") ? "rota" : h.startsWith("admin.") || p.startsWith("/admin") ? "admin" : p.startsWith("/signin") ? "signin" : "diary";
-  const APP = { diary: "Kitchen Diary", rota: "Rota", admin: "Admin", signin: "Staff Login" };
+  const app = document.documentElement.dataset.scApp === "wholesale" ? "wholesale" : h.startsWith("rota.") || p.startsWith("/rota") ? "rota" : h.startsWith("admin.") || p.startsWith("/admin") ? "admin" : p.startsWith("/signin") ? "signin" : "diary";
+  const APP = { diary: "Kitchen Diary", rota: "Rota", admin: "Admin", signin: "Staff Login", wholesale: "Strangers Wholesale" };
   const seen = new Set();
   let sent = 0;
 
@@ -95,7 +95,7 @@
       const image = t.tagName === "IMG" || imageLink;
       // A dropped logo request must not interrupt sign-in. Retry the original element once at a fresh URL;
       // retain a quiet report if that retry also fails. Scripts/styles keep their existing visible errors.
-      if (image && /^\/(?:(?:logo|mark)\.svg|favicon\.ico|wholesale-preview\/images\/logo\.svg)$/.test(new URL(u).pathname) && !t.srcset && t.isConnected && navigator.onLine !== false && !retriedBranding.has(t)) {
+      if (image && /^\/(?:(?:logo|mark)\.svg|favicon\.ico|wholesale(?:-preview)?\/images\/logo\.svg)$/.test(new URL(u).pathname) && !t.srcset && t.isConnected && navigator.onLine !== false && !retriedBranding.has(t)) {
         retriedBranding.add(t);
         const retry = new URL(u); retry.searchParams.set("sc-asset-retry", "1");
         queueMicrotask(() => { if (t.isConnected) { if (t.tagName === "IMG") t.src = retry.href; else t.href = retry.href; } });

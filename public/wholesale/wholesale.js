@@ -36,7 +36,7 @@ const photoIndexes = new Map();
 const canOrder = () => session?.customer?.status !== "On hold";
 // Strangers can hide prices from a business (its own shops): then the page shows bags and weights, never money.
 const pricesShown = () => session?.showPrices !== false;
-const goSignIn = () => location.replace(location.pathname.startsWith("/wholesale-preview/") ? "/wholesale-preview/signin" : "/signin");
+const goSignIn = () => location.replace(location.pathname.startsWith("/wholesale/") ? "/wholesale/signin" : "/signin");
 
 const LOCATION_FIELDS = ["name", "contact", "phone", "address", "postcode", "deliveryNotes"];
 let accountLocations = [], accountDefaultLocation = "primary", editingLocation = null, removingLocation = null, accountSaving = false;

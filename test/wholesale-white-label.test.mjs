@@ -181,7 +181,7 @@ test("custom coffees stay private without customers, support selected customers 
   assert.equal(await seen(third.cookie), undefined);
   assert.equal((await call("GET", `/api/wholesale/catalogue?customerId=${idA}`, undefined, third.cookie)).body.products.some(p => p.id === saved.id), false, "query parameters cannot impersonate another customer");
   assert.equal((await order(third.cookie, saved.id)).status, 400);
-  const photo = await fetch(srv.base + `/api/admin/wholesale/catalogue/${saved.id}/images?ifVersion=${saved.version}`, { method: "POST", headers: { cookie: ADMIN, "content-type": "image/webp", "x-file-name": "custom.webp" }, body: await readFile(new URL("../public/wholesale-preview/images/colombia.webp", import.meta.url)) });
+  const photo = await fetch(srv.base + `/api/admin/wholesale/catalogue/${saved.id}/images?ifVersion=${saved.version}`, { method: "POST", headers: { cookie: ADMIN, "content-type": "image/webp", "x-file-name": "custom.webp" }, body: await readFile(new URL("../public/wholesale/images/colombia.webp", import.meta.url)) });
   assert.equal(photo.status, 201); saved = (await photo.json()).product;
   const image = `/api/wholesale/images/${saved.images[0].slice(7)}`;
   const imageStatus = async cookie => (await fetch(srv.base + image, {headers:{cookie},redirect:"manual"})).status;

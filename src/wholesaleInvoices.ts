@@ -1,5 +1,5 @@
 // VAT invoices are issued once from saved real orders. Payment recording never moves money.
-import { MAX_QUANTITY } from "../public/wholesale-preview/limits.js";
+import { MAX_QUANTITY } from "../public/wholesale/limits.js";
 import { audit } from "./audit";
 import { ApiError, type Env, invalid, json, readJson } from "./http";
 import { get, object, text, version } from "./wholesaleStore";

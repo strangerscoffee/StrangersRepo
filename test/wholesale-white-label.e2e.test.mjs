@@ -101,7 +101,7 @@ test("the coffee editor fits phones and iPads, light and dark", async () => {
 test("its business sees it first as Your coffee; another business never sees it", async () => {
   for (const [name, viewport] of [["phone", { width: 390, height: 844 }], ["ipad", { width: 820, height: 1180 }]]) for (const colorScheme of ["light", "dark"]) {
     const { ctx, p, errors } = await page(lune.cookie, viewport, { colorScheme, isMobile: true, hasTouch: true });
-    await p.goto(srv.base + "/wholesale-preview/"); await p.locator(".product-card").first().waitFor();
+    await p.goto(srv.base + "/wholesale/"); await p.locator(".product-card").first().waitFor();
     const first = p.locator(".product-card").first();
     assert.match(await first.innerText(), /Your coffee[\s\S]*Lune House Blend/);
     assert.match(await first.innerText(), /£21\.50/);
@@ -113,7 +113,7 @@ test("its business sees it first as Your coffee; another business never sees it"
     await ctx.close();
   }
   const { ctx, p } = await page(other.cookie, { width: 390, height: 844 });
-  await p.goto(srv.base + "/wholesale-preview/"); await p.locator(".product-card").first().waitFor();
+  await p.goto(srv.base + "/wholesale/"); await p.locator(".product-card").first().waitFor();
   assert.equal(await p.locator(".product-card", { hasText: "Lune House Blend" }).count(), 0);
   assert.equal(await p.locator(".product-yours").count(), 0);
   await ctx.close();
@@ -175,7 +175,7 @@ test("a coffee sold in 1 kg bags only: Admin turns 250 g off; the customer sees 
   await ctx.close();
   for (const colorScheme of ["light", "dark"]) {
     const { ctx, p, errors } = await page(lune.cookie, { width: 390, height: 844 }, { colorScheme, isMobile: true, hasTouch: true });
-    await p.goto(srv.base + "/wholesale-preview/"); await p.locator(".product-card").first().waitFor();
+    await p.goto(srv.base + "/wholesale/"); await p.locator(".product-card").first().waitFor();
     await p.locator('[data-bag-size="quarter"]').first().click();
     const card = p.locator(".product-card", { hasText: "Lune Kilo Blend" });
     assert.equal(await card.locator('input[name="pack"]').count(), 1);
@@ -288,7 +288,7 @@ test("Custom coffees section: private drafts, customer choices and safe removal 
 test("cards in a row line up: same photo height and controls at the same place, with or without a photo label", async () => {
   for (const [name, viewport] of [["ipad", { width: 820, height: 1180 }], ["desktop", { width: 1440, height: 900 }], ["wide desktop", { width: 1920, height: 1080 }]]) for (const colorScheme of ["light", "dark"]) {
     const { ctx, p, errors } = await page(lune.cookie, viewport, { colorScheme });
-    await p.goto(srv.base + "/wholesale-preview/"); await p.locator(".product-card").nth(1).waitFor();
+    await p.goto(srv.base + "/wholesale/"); await p.locator(".product-card").nth(1).waitFor();
     const rows = await p.evaluate(() => {
       const cards = [...document.querySelectorAll("#products .product-card")].filter((c) => c.offsetParent);
       const byTop = new Map();

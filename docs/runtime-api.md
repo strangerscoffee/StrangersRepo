@@ -188,7 +188,7 @@ Catalogue administration under `/api/admin/wholesale`:
 | `PATCH /catalogue/<id>/images` | `{ifVersion,remove:<image reference>}` unlinks/deletes a photo, or `{ifVersion,restore:true}` restores a bundled original. Returns `{product}`. The two operations cannot be combined. |
 | `GET /images/<32 hex id>` | Admin-session photo read. Customer/staff ordering reads use `GET /api/wholesale/images/<id>`. Both verify a current product reference, return the detected MIME type, `nosniff` and private revalidation headers, or 404 for missing/removed photos. |
 
-Bundled source photos retain `/wholesale-preview/images/<filename>` URLs. Uploads use the existing `FILES` KV binding and new references are committed using the catalogue's version check. Removing a bundled image only unlinks it; removing an upload deletes its KV bytes.
+Bundled source photos retain `/wholesale/images/<filename>` URLs. Uploads use the existing `FILES` KV binding and new references are committed using the catalogue's version check. Removing a bundled image only unlinks it; removing an upload deletes its KV bytes.
 
 Account administration: `POST .../customers/<uuid>/account` creates an approved temporary-password login; `PUT .../account` sends `username,active,approvalStatus,ifVersion`; `POST .../account/reset-password` sends `ifVersion`. Approval is pending/approved/rejected. Approving a pending registration activates its customer record. Creates/resets return a temporary password once. Username changes, disabling and resets revoke existing sessions. Staff/managers receive 403 on every management route. No endpoint automatically takes payment, emails or ships an order.
 

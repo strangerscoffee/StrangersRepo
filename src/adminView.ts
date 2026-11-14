@@ -307,7 +307,7 @@ export async function activity(env: Env, kind: string) {
   for (const l of log?.results || []) items.push({ kind: "account", at: l.at, text: l.text, where: l.kind === "backup" ? "Backups" : l.kind === "setup_copied" ? "Kitchen Diary" : l.kind.startsWith("email_") && l.kind !== "email_changed" ? "Rota emails" : l.kind === "clock_off" ? "Devices" : "Accounts" });
   // Errors: only on their own tab (they're for whoever looks after the site, not the day's activity).
   if (kind === "errors") {
-    const APP: Record<string, string> = { diary: "Kitchen Diary", rota: "Rota", admin: "Admin", signin: "Staff Login", worker: "Server" };
+    const APP: Record<string, string> = { diary: "Kitchen Diary", rota: "Rota", admin: "Admin", signin: "Staff Login", wholesale: "Strangers Wholesale", worker: "Server" };
     const uk = (ms: number) => new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", weekday: "short", day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(ms));
     for (const e of await recentErrors(env)) {
       const code = errorCode(e.key), at = whereOf(e.detail), device = e.ua ? deviceOf(e.ua) : "";

@@ -42,7 +42,7 @@ for (const [device, viewport] of [['phone',{width:393,height:852}],['ipad',{widt
       await added.locator('[data-grind-label]').fill('Turkish / Extra fine');
       if (process.env.WHOLESALE_SCREENSHOT_DIR) {await mkdir(process.env.WHOLESALE_SCREENSHOT_DIR,{recursive:true}); await admin.screenshot({path:`${process.env.WHOLESALE_SCREENSHOT_DIR}/grinds-${device}-${colorScheme}-admin.png`});}
       await save();
-      await buyer.goto(srv.base+'/wholesale-preview/');
+      await buyer.goto(srv.base+'/wholesale/');
       const card=buyer.locator(`article[data-product="${product.id}"]`);
       await card.locator('[data-grind-open]').click();
       assert.deepEqual(await buyer.locator('#coffee-choice-menu button strong').allTextContents(),['Whole beans','Coarse','Turkish / Extra fine']);

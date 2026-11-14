@@ -1,8 +1,11 @@
-import { test } from "node:test";
+import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { addToBasket, sanitiseBasket, totals, validQuantity, money, weight, setCatalogue, products, isAvailable, orderablePacks, lineOrderable } from "../public/wholesale-preview/order.js";
-import { shippingFor } from "../public/wholesale-preview/shipping.js";
-import { defaultGrinds } from "../public/wholesale-preview/grinds.js";
+import { addToBasket, sanitiseBasket, totals, validQuantity, money, weight, setCatalogue, products, isAvailable, orderablePacks, lineOrderable } from "../public/wholesale/order.js";
+import { shippingFor } from "../public/wholesale/shipping.js";
+import { defaultGrinds } from "../public/wholesale/grinds.js";
+import { products as sourceProducts } from "../src/wholesale/catalogue.js";
+
+beforeEach(() => setCatalogue(sourceProducts));
 
 const brazil = { productId: "brazil", pack: "kilo", grind: "beans" };
 

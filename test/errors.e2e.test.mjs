@@ -22,7 +22,7 @@ before(async () => {
 after(async () => { await browser?.close(); await srv?.stop(); });
 
 test('sign-in branding retries once; a persistent logo or favicon failure stays non-blocking and is reported', {timeout:45000}, async()=>{
-  for(const asset of ['/mark.svg','/favicon.ico','/wholesale-preview/images/logo.svg']) for(const kind of ['image','icon']) for(const recover of [true,false]){
+  for(const asset of ['/mark.svg','/favicon.ico','/wholesale/images/logo.svg']) for(const kind of ['image','icon']) for(const recover of [true,false]){
     const context=await browser.newContext(),page=await context.newPage();let requests=0;const reports=[];
     await page.route('**'+asset+'*',async route=>{if(!new URL(route.request().url()).searchParams.has('brand-test'))return route.continue();requests++;if(recover&&requests>1)await route.continue();else await route.fulfill({status:503,body:'temporarily unavailable'});});
     await page.route('**/api/errors',async route=>{reports.push(route.request().postDataJSON());await route.fulfill({status:200,contentType:'application/json',body:'{}'});});

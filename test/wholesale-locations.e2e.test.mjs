@@ -71,9 +71,9 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
         return profile();
       }
 
-      await page.goto(srv.base + "/wholesale-preview/signin");
+      await page.goto(srv.base + "/wholesale/signin");
       await page.locator("#username").fill(username); await page.locator("#password").fill(password);
-      await page.locator("#login-submit").click(); await page.waitForURL(/\/wholesale-preview\/$/);
+      await page.locator("#login-submit").click(); await page.waitForURL(/\/wholesale\/$/);
       await page.locator("#products article").first().waitFor();
       await openWholesaleAccount(page); await page.locator("#account-dialog").waitFor();
       assert.equal(await page.locator("#account-business").textContent(), business);

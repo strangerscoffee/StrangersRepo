@@ -1,9 +1,9 @@
 import { handleQuickBooks } from "./quickbooks/index";
 // Wholesale beta: real customer orders and isolated staff test orders. Payments and fulfilment are managed by the team.
-import { validGrindId } from "../public/wholesale-preview/grinds.js";
-import { shippingFor } from "../public/wholesale-preview/shipping.js";
-import { MAX_QUANTITY, MINIMUM_ORDER_GRAMS } from "../public/wholesale-preview/limits.js";
-import { catalogueRetrievedAt } from "../public/wholesale-preview/catalogue.js";
+import { validGrindId } from "../public/wholesale/grinds.js";
+import { shippingFor } from "../public/wholesale/shipping.js";
+import { MAX_QUANTITY, MINIMUM_ORDER_GRAMS } from "../public/wholesale/limits.js";
+import { catalogueRetrievedAt } from "./wholesale/catalogue.js";
 import type { User } from "./auth";
 import { object, text, version, decode, get, save, type Row, type Versioned } from "./wholesaleStore";
 import { catalogue, handleCatalogueAdmin, serveCatalogueImage, packsOf } from "./wholesaleCatalogue";
@@ -56,7 +56,7 @@ interface Order {
 type Links = { admin: string; diary: string; preview?: string };
 /** My orders on the customer ordering site, for links in customers' emails (…/#orders opens it). */
 export function customerOrdersUrl(env: Env, links: { preview?: string }, req: Request) {
-  const site = /^https?:\/\//.test(links.preview || "") ? links.preview! : env.PREVIEW_HOST ? `https://${env.PREVIEW_HOST}/` : new URL("/wholesale-preview/", req.url).href;
+  const site = /^https?:\/\//.test(links.preview || "") ? links.preview! : env.PREVIEW_HOST ? `https://${env.PREVIEW_HOST}/` : new URL("/wholesale/", req.url).href;
   return site.replace(/\/?$/, "/") + "#orders";
 }
 const denied = () => new ApiError(403, "permission_denied", "Only admins can manage wholesale ordering.");
@@ -193,7 +193,7 @@ export async function handleWholesale(req: Request, env: Env, route: string, use
   const invoiceResponse = await handleInvoiceCustomer(req, env, route, user);
   if (invoiceResponse) return invoiceResponse;
   const customer = user.role === "wholesale" ? await wholesaleCustomer(env, user.customerId) : null;
-  if ((route === "catalogue" || route === "session") && req.method === "GET") return json({ ...(route === "catalogue" ? { products: catalogueFor(await catalogue(env), user.role === "wholesale" ? user.customerId : null), sourceDate: catalogueRetrievedAt } : {}), stage: "beta", invoices: await customersSeeInvoices(env), minimumOrderGrams: minimumOrderGrams(env, customer), showPrices: !customer?.hidePrices, me: user, customer: customer ? publicCustomer(customer) : null, links: { ...(user.role === "wholesale" ? {} : links), preview: links.preview || "/wholesale-preview/" }, preview: user.role !== "wholesale" });
+  if ((route === "catalogue" || route === "session") && req.method === "GET") return json({ ...(route === "catalogue" ? { products: catalogueFor(await catalogue(env), user.role === "wholesale" ? user.customerId : null), sourceDate: catalogueRetrievedAt } : {}), stage: "beta", invoices: await customersSeeInvoices(env), minimumOrderGrams: minimumOrderGrams(env, customer), showPrices: !customer?.hidePrices, me: user, customer: customer ? publicCustomer(customer) : null, links: { ...(user.role === "wholesale" ? {} : links), preview: links.preview || "/wholesale/" }, preview: user.role !== "wholesale" });
   if (route === "account" && req.method === "PUT" && customer) {
     const body = object(await readJson(req, 64 * 1024));
     if (body.orderingIdentity !== undefined && body.orderingIdentity !== user.id) throw new ApiError(409, "account_changed", "The signed-in account changed. Reload ordering before saving business details.");
@@ -304,7 +304,7 @@ export async function handleWholesaleAdmin(req: Request, env: Env, route: string
       env.DB.prepare("SELECT kind, COUNT(*) AS n FROM wholesale_preview WHERE kind <> 'order' OR json_extract(data, '$.deletedAt') IS NULL GROUP BY kind").all<{ kind: string; n: number }>(),
       adminWholesaleStats(env),
     ]);
-    return json({ minimumOrderGrams: standardMinimum(env), orders: orderPage.records.map((order) => visibleOrder(order, true)), customers: customerPage.records.map(locationDefaults), orderCursor: orderPage.nextCursor, customerCursor: customerPage.nextCursor, stats: { ...stats, totalCustomers: customerPage.count, visibleCoffees: products.filter((product) => product.active).length, totalCoffees: products.length }, accounts: await wholesaleAccounts(env), products, paymentTermChoices: PAYMENT_TERMS, statuses: STATUSES, sourceDate: catalogueRetrievedAt, counts: Object.fromEntries(counts.results.map((row) => [row.kind, row.n])), links: { ...links, preview: links.preview || "/wholesale-preview/" }, preview: true, stage: "beta" });
+    return json({ minimumOrderGrams: standardMinimum(env), orders: orderPage.records.map((order) => visibleOrder(order, true)), customers: customerPage.records.map(locationDefaults), orderCursor: orderPage.nextCursor, customerCursor: customerPage.nextCursor, stats: { ...stats, totalCustomers: customerPage.count, visibleCoffees: products.filter((product) => product.active).length, totalCoffees: products.length }, accounts: await wholesaleAccounts(env), products, paymentTermChoices: PAYMENT_TERMS, statuses: STATUSES, sourceDate: catalogueRetrievedAt, counts: Object.fromEntries(counts.results.map((row) => [row.kind, row.n])), links: { ...links, preview: links.preview || "/wholesale/" }, preview: true, stage: "beta" });
   }
   // Orders to print (packing sheets and bag totals): customer orders by status, or the orders an admin picked.
   if (route === "orders/print" && req.method === "GET") {

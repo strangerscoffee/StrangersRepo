@@ -83,7 +83,7 @@ Wholesale customers register and sign in at **https://strangerscoffee.trade**. T
 
 **Coffee catalogue** adds and edits coffees, descriptions, categories, bag prices and photos. Admins can upload or remove photos, mark a coffee out of stock while keeping it visible, or hide it. Out-of-stock and hidden coffees cannot be ordered. **Customers** sets each business's payment terms and instructions; customers see them in My account, checkout and their saved orders. Prices, delivery details and payment terms are saved with each order so later edits preserve its original agreement.
 
-Existing staff can still use Staff sign-in for clearly marked preview orders. Orders and account details are shared in D1; payment, email and fulfilment integrations are not automatic. See [docs/wholesale-preview.md](docs/wholesale-preview.md).
+Existing staff can still use Staff sign-in for clearly marked preview orders. Orders and account details are shared in D1; payment, email and fulfilment integrations are not automatic. See [docs/wholesale.md](docs/wholesale.md).
 
 Wholesale uses the same Liquid Glass design system as the staff apps, including phone/iPad layouts, dark mode and accessibility preferences. Admin search and Load more reach older orders/customers; dashboard totals cover all customer orders. Interrupted checkout submissions are recovered or retried using the original request, including after reload.
 

@@ -38,8 +38,8 @@ test("wholesale: keeps the existing hostname and isolates customer and staff ord
   const links = appLinks(new URL(`https://${host}/`), "rota.staffstrangerscoffee.com", "admin.staffstrangerscoffee.com", host);
   assert.deepEqual(links, { rota: "https://rota.staffstrangerscoffee.com/", diary: "https://staffstrangerscoffee.com/", admin: "https://admin.staffstrangerscoffee.com/", preview: "/" });
   assert.equal(unifiedSignin(new URL(`https://${host}/signin?next=%2F%3Forder%3D1`), "staffstrangerscoffee.com"), `https://staffstrangerscoffee.com/signin?next=https%3A%2F%2F${host}%2F%3Forder%3D1`);
-  assert.ok(isPreviewFile("/wholesale-preview/wholesale.js") && isPreviewFile("/wholesale-preview/images/house.jpg") && isPreviewFile("/shared/core.js"));
-  for (const path of ["/wholesale-preview/", "/wholesale-preview/dashboard/index.html", "/diary/core.js", "/admin/admin.js"]) assert.equal(isPreviewFile(path), false, path);
+  assert.ok(isPreviewFile("/wholesale/wholesale.js") && isPreviewFile("/wholesale/images/house.jpg") && isPreviewFile("/shared/core.js"));
+  for (const path of ["/wholesale/", "/wholesale/dashboard/index.html", "/diary/core.js", "/admin/admin.js"]) assert.equal(isPreviewFile(path), false, path);
   // Wrangler rewrites the local request hostname to the first configured custom domain.
   const preview = await startServer({ vars: { PREVIEW_HOST: "staffstrangerscoffee.com" } });
   try {
@@ -53,22 +53,22 @@ test("wholesale: keeps the existing hostname and isolates customer and staff ord
     assert.equal(signedOut.status, 302); assert.equal(signedOut.headers.get("location"), "/signin");
     for (const path of ["/", "/index.html"]) {
       const page = await call("GET", path, undefined, owner, preview.base);
-      assert.equal(page.status, 200); assert.match(page.text, /<h1>Wholesale<\/h1>/); assert.doesNotMatch(page.text, /Wholesale Beta|beta-badge/); assert.doesNotMatch(page.text, /By the kilo/); assert.match(page.text, /\/wholesale-preview\/wholesale.js\?v=/);
+      assert.equal(page.status, 200); assert.match(page.text, /<h1>Wholesale<\/h1>/); assert.doesNotMatch(page.text, /Wholesale Beta|beta-badge/); assert.doesNotMatch(page.text, /By the kilo/); assert.match(page.text, /\/wholesale\/wholesale.js\?v=/);
       assert.equal(page.headers.get("cache-control"), "private, no-store");
     }
     for (const path of ["/api/db/get", "/api/rota/week", "/api/admin/wholesale"]) assert.equal((await call("GET", path, undefined, owner, preview.base)).status, 404, path);
     assert.equal((await call("GET", "/diary/core.js", undefined, owner, preview.base)).headers.get("location"), "/");
     assert.equal((await call("GET", "/api/wholesale/catalogue", undefined, owner, preview.base)).status, 200);
     assert.equal((await call("POST", "/api/wholesale/orders", payload(), owner, preview.base)).status, 201);
-    assert.equal((await call("GET", "/wholesale-preview/dashboard/", undefined, owner, preview.base)).headers.get("location"), "/admin#wholesale");
+    assert.equal((await call("GET", "/wholesale/dashboard/", undefined, owner, preview.base)).headers.get("location"), "/admin#wholesale");
   } finally { await preview.stop(); }
 });
 
 test("wholesale: catalogue, ordering pages and every management route require the right session", async () => {
-  const signin = await call("GET", "/wholesale-preview/signin", undefined, null);
+  const signin = await call("GET", "/wholesale/signin", undefined, null);
   assert.equal(signin.status, 200); assert.match(signin.text, /Request a wholesale account/);
-  assert.equal((await call("GET", "/wholesale-preview/staff-signin", undefined, null)).headers.get("location"), "/signin?next=%2Fwholesale-preview%2F");
-  for (const path of ["/wholesale-preview/", "/wholesale-preview/index.html"]) assert.equal((await call("GET", path, undefined, null)).status, 302);
+  assert.equal((await call("GET", "/wholesale/staff-signin", undefined, null)).headers.get("location"), "/signin?next=%2Fwholesale%2F");
+  for (const path of ["/wholesale/", "/wholesale/index.html"]) assert.equal((await call("GET", path, undefined, null)).status, 302);
   assert.equal((await call("GET", "/api/wholesale/catalogue", undefined, null)).status, 401);
   assert.equal((await call("POST", "/api/wholesale/orders", payload(), null)).status, 401);
   const data = (await call("GET", "/api/wholesale/catalogue", undefined, STAFF)).body;
@@ -81,9 +81,9 @@ test("wholesale: catalogue, ordering pages and every management route require th
     const result = await call(method, path, body, cookie);
     assert.equal(result.status, 403, `${method} ${path}`); assert.equal(result.body.code, "permission_denied");
   }
-  const old = await call("GET", "/wholesale-preview/dashboard/");
+  const old = await call("GET", "/wholesale/dashboard/");
   assert.equal(old.status, 302); assert.equal(old.headers.get("location"), "/admin#wholesale");
-  assert.equal((await call("GET", "/wholesale-preview/dashboard/", undefined, STAFF)).status, 403);
+  assert.equal((await call("GET", "/wholesale/dashboard/", undefined, STAFF)).status, 403);
   const foreign = await call("POST", "/api/wholesale/orders", payload(), STAFF, srv.base, { origin: "https://another.example" });
   assert.equal(foreign.status, 403); assert.equal(foreign.body.code, "bad_origin");
 });

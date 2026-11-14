@@ -1,6 +1,6 @@
 (() => {
   const $ = selector => document.querySelector(selector);
-  const home = location.pathname.startsWith('/wholesale-preview/') ? '/wholesale-preview/' : '/';
+  const home = location.pathname.startsWith('/wholesale/') ? '/wholesale/' : '/';
   const params = new URLSearchParams(location.search);
   let invite = params.get('invite'), reset = params.get('reset');
   let mode = 'login', busy = false, checkingLink = false, generation = 0;

@@ -34,7 +34,7 @@ test("the basket shows the 6 kg minimum and an exempt business sees none", async
     const ctx = await b.newContext({ viewport, isMobile, hasTouch: isMobile });
     const [n, v] = BUYER.split("="); await ctx.addCookies([{ name: n, value: v, url: srv.base }]);
     const p = await ctx.newPage();
-    await p.goto(srv.base + "/wholesale-preview/"); await p.locator(".product-card").first().waitFor();
+    await p.goto(srv.base + "/wholesale/"); await p.locator(".product-card").first().waitFor();
     assert.match(await p.locator("#minimum-note").textContent(), /Minimum order 6 kg/, name);
     await p.locator(".product-card").first().locator("button[type=submit]").click();
     await openWholesaleBasket(p);
@@ -53,7 +53,7 @@ test("the basket shows the 6 kg minimum and an exempt business sees none", async
   const ctx = await b.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   const [n, v] = BUYER.split("="); await ctx.addCookies([{ name: n, value: v, url: srv.base }]);
   const p = await ctx.newPage();
-  await p.goto(srv.base + "/wholesale-preview/"); await p.locator(".product-card").first().waitFor();
+  await p.goto(srv.base + "/wholesale/"); await p.locator(".product-card").first().waitFor();
   assert.equal(await p.locator("#minimum-note").isHidden(), true, "no minimum shown to an exempt business");
   assert.doesNotMatch(await p.locator("body").textContent(), /minimum/i);
   await p.locator(".product-card").first().locator("button[type=submit]").click();

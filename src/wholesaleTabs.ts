@@ -6,7 +6,7 @@
 // rows in migration 22's `wholesale_tabs`. Cancelled and removed orders don't count.
 import { ApiError, type Env, invalid } from "./http";
 import { object, version, get, save, decode, type Row, type Versioned } from "./wholesaleStore";
-import { MINIMUM_ORDER_GRAMS } from "../public/wholesale-preview/limits.js";
+import { MINIMUM_ORDER_GRAMS } from "../public/wholesale/limits.js";
 import { audit } from "./audit";
 
 /** The usual point to clear a tab: the wholesale minimum, 6 kg. */

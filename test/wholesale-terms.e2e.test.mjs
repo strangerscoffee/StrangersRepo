@@ -1,5 +1,5 @@
 import { openWholesaleBasket } from './wholesale-ui-helpers.mjs';
-// Wholesale Coffee Order Terms and Conditions (public/wholesale-preview/terms.js): read from the sign-in page, the
+// Wholesale Coffee Order Terms and Conditions (public/wholesale/terms.js): read from the sign-in page, the
 // footer, My account and the checkout note above Place order; the sign-in page shows the company logo, not a heading
 // or the small mark. On a phone and an iPad, light and dark. Needs Playwright with Chromium.
 import { test, before, after } from "node:test";
@@ -46,7 +46,7 @@ test("terms on the sign-in page, footer and checkout; logo on sign-in", async ()
     const shot = (what) => process.env.WHOLESALE_SCREENSHOT_DIR && p.screenshot({ path: `${process.env.WHOLESALE_SCREENSHOT_DIR}/terms-${what}-${name}-${colorScheme}.png` });
 
     // Sign-in and registration keep the logo and a clear page heading; terms stay available in the compact footer.
-    await p.goto(srv.base + "/wholesale-preview/signin");
+    await p.goto(srv.base + "/wholesale/signin");
     assert.equal(await p.locator(".login-mark").count(), 0, "no small mark");
     assert.equal(await p.locator(".login-logo img[alt='Strangers Coffee Company']").isVisible(), true);
     await p.locator("#registration-toggle").click();
@@ -58,9 +58,9 @@ test("terms on the sign-in page, footer and checkout; logo on sign-in", async ()
 
     // Ordering page: footer, My account, and the note above Place order.
     const [n, v] = BUYER.split("="); await ctx.addCookies([{ name: n, value: v, url: srv.base }]);
-    await p.goto(srv.base + "/wholesale-preview/"); await p.locator(".product-card").first().waitFor();
+    await p.goto(srv.base + "/wholesale/"); await p.locator(".product-card").first().waitFor();
     // The emails' "See your orders" link (…/#orders) opens My orders, then the address loses the #orders.
-    await p.goto("about:blank"); await p.goto(srv.base + "/wholesale-preview/#orders"); await p.locator("#orders-dialog[open]").waitFor();
+    await p.goto("about:blank"); await p.goto(srv.base + "/wholesale/#orders"); await p.locator("#orders-dialog[open]").waitFor();
     assert.equal(await p.evaluate(() => location.hash), "");
     await p.locator("#orders-dialog .close-button").click();
     d = await readTerms(p, p.locator(".footer-actions [data-terms]"), `${name} footer`);

@@ -46,3 +46,36 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
     } finally { await context.close(); }
   });
 }
+for (const legacyAssets of [false, true]) {
+  test(`wholesale module loading: session ends after HTML, ${legacyAssets ? "cached legacy" : "canonical"} modules still redirect cleanly`, async () => {
+    const context = await browser.newContext({ viewport: { width: 393, height: 852 }, isMobile: true, hasTouch: true });
+    try {
+      const page = await context.newPage(), errors = [], badScripts = [], snapshots = [];
+      page.on("pageerror", error => errors.push(error.message));
+      page.on("response", response => {
+        const path = new URL(response.url()).pathname;
+        if (/\/wholesale(?:-preview)?\/.*\.js$/.test(path) && (response.status() !== 200 || !/javascript/.test(response.headers()["content-type"] || ""))) badScripts.push(path);
+      });
+      page.on("request", request => { if (/\/catalogue\.js$/.test(new URL(request.url()).pathname)) snapshots.push(request.url()); });
+      await page.goto(srv.base + "/signin");
+      await page.locator("#username").fill("trade.browser"); await page.locator("#password").fill("trade-browser-password");
+      await page.locator("#login-submit").click(); await page.locator("#products article").first().waitFor();
+      let htmlLoaded = false, expired = false;
+      await page.route(srv.base + "/", async route => {
+        const response = await route.fetch(); assert.equal(response.status(), 200);
+        const body = await response.text(); htmlLoaded = true;
+        await route.fulfill({ response, body: legacyAssets ? body.replaceAll("/wholesale/", "/wholesale-preview/") : body });
+      });
+      await page.route(/\/wholesale(?:-preview)?\/wholesale\.js(?:\?|$)/, async route => {
+        assert.equal(htmlLoaded, true, "protected HTML was received with a valid session");
+        await context.clearCookies(); expired = true;
+        await route.continue();
+      });
+      await page.reload(); await page.waitForURL("**/signin");
+      await page.locator("#login-submit:enabled").waitFor();
+      assert.equal(expired, true);
+      assert.equal(await page.locator("#sc-error").count(), 0, "session expiry produces sign-in rather than a failed-script card");
+      assert.deepEqual(badScripts, []); assert.deepEqual(errors, []); assert.deepEqual(snapshots, [], "no source-price snapshot enters the module graph");
+    } finally { await context.close(); }
+  });
+}

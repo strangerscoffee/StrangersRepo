@@ -128,9 +128,9 @@ for (const [screen, viewport] of [["compact", { width: 1280, height: 720 }], ["l
       assert.equal(updated.locations.length, 11); assert.ok(updated.locations.some((location) => location.name === "Unsaved desktop branch" && location.id));
       assert.equal(updated.contact, "Desktop edited contact"); assert.equal(updated.address, "25 Edited Main Street");
 
-      await page.goto(srv.base + "/wholesale-preview/signin");
+      await page.goto(srv.base + "/wholesale/signin");
       await page.locator("#username").fill(username); await page.locator("#password").fill(password); await page.locator("#login-submit").click();
-      await page.waitForURL(/\/wholesale-preview\/$/); await page.locator("#products article").first().waitFor(); await painted(page);
+      await page.waitForURL(/\/wholesale\/$/); await page.locator("#products article").first().waitFor(); await painted(page);
       assert.equal(await page.locator("#signed-in-name").textContent(), business);
       const header = await page.locator(".site-header").evaluate((node) => {
         const controls = [...node.querySelectorAll("a,button")].map((control) => ({ name: control.getAttribute("aria-label") || control.textContent.trim(), box: control.getBoundingClientRect() })).filter(({ box }) => box.width && box.height);
