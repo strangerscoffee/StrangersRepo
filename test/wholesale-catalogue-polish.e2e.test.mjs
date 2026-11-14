@@ -32,6 +32,9 @@ for (const width of [320, 820, 1920]) for (const colorScheme of ['light', 'dark'
       await page.locator('#repeat-shortcut').waitFor();
       assert.equal(await page.locator('#account-greeting').textContent(), 'Hi, Buyer');
       assert.equal(await page.locator('#account-menu-greeting').textContent(), 'Hi, Buyer');
+      assert.equal(await page.locator('.brand-name').innerText(), 'Strangers Wholesale');
+      assert.equal(await page.locator('.brand-name').isVisible(), true);
+      assert.equal(await page.locator('.footer-brand strong').innerText(), 'Strangers Coffee Company');
       assert.equal(await page.locator('.site-header nav').count(), 0);
       assert.ok((await page.locator('.site-header').boundingBox()).height <= 120, 'header and order-history shortcut remain compact at every width');
       assert.equal(await page.locator('#basket-dialog').isVisible(), false);

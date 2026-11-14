@@ -23,20 +23,27 @@ before(async () => {
 });
 after(async () => { await browser?.close(); await srv?.stop(); });
 for (const colorScheme of ['light','dark']) test(`compact mobile header ${colorScheme}: navigation, native account menu, resize drafts and sign-out`, {timeout:120000}, async () => {
-  for (const width of [320,393]) {
+  for (const width of [320,393,430]) {
     const cookie = cookieOf((await api('POST','/api/wholesale/auth/login',{username,password},null)).response);
     const context = await browser.newContext({viewport:{width,height:852}, colorScheme});
     const [name,value] = cookie.split('='); await context.addCookies([{name,value,url:srv.base}]);
     const page = await context.newPage(), errors = []; page.on('pageerror', error => errors.push(error.message));
     try {
       await page.goto(srv.base+'/wholesale-preview/'); await page.locator('#products article').first().waitFor();
-      const measure = () => page.locator('.site-header').evaluate(node => ({height:node.getBoundingClientRect().height, mainTop:document.querySelector('main').getBoundingClientRect().top+scrollY, overflow:document.documentElement.scrollWidth-innerWidth, targets:[...node.querySelectorAll('a,button')].map(n=>n.getBoundingClientRect()).filter(b=>b.width&&b.height).map(b=>({width:b.width,height:b.height}))}));
-      const before = await measure(); assert.ok(before.height <= 120, "header accommodates the visible order-history shortcut"); assert.equal(before.overflow,0); assert.equal(before.targets.length,4); assert.ok(before.targets.every(target=>target.width>=44&&target.height>=44));
+      const measure = () => page.locator('.site-header').evaluate(node => ({box:node.getBoundingClientRect().toJSON(), height:node.getBoundingClientRect().height, mainTop:document.querySelector('main').getBoundingClientRect().top+scrollY, overflow:document.documentElement.scrollWidth-innerWidth, targets:[...node.querySelectorAll('a,button')].map(n=>n.getBoundingClientRect()).filter(b=>b.width&&b.height).map(b=>b.toJSON())}));
+      const before = await measure(); assert.equal(before.height,64, 'header stays in one compact row'); assert.equal(before.overflow,0); assert.equal(before.targets.length,3); assert.ok(before.targets.every(target=>target.width>=44&&target.height>=44));
+      assert.ok(before.targets.every(target=>target.top>=before.box.top&&target.bottom<=before.box.bottom&&target.left>=before.box.left&&target.right<=before.box.right), 'brand, cart and account stay inside the header');
+      assert.ok(before.targets.slice(1).every((target,index)=>target.left>=before.targets[index].right), 'header controls do not overlap');
+      assert.equal(await page.locator('.orders-shortcut').isVisible(),false, 'mobile orders remain in the account menu');
+      assert.equal(await page.locator('.brand-name').innerText(),'Strangers Wholesale');
+      assert.equal(await page.locator('.brand-name').isVisible(),true, 'the full brand stays visible even on small phones');
+      assert.equal(await page.locator('.bag-size-label').isVisible(),false);
       const toolbar = await page.locator('.catalogue').evaluate(node => {
         const box = selector => node.querySelector(selector).getBoundingClientRect().toJSON();
         return {heading:box('.section-heading'), search:box('.search-field'), categories:box('.coffee-categories'), firstCard:box('.product-card'), size:box('.bag-size'), sort:box('#sort-coffee'), targets:[...node.querySelectorAll('[data-bag-size], [data-filter], #sort-coffee')].map(n=>n.getBoundingClientRect().toJSON())};
       });
       assert.ok(toolbar.heading.bottom <= toolbar.search.top && toolbar.search.bottom <= toolbar.categories.top && toolbar.categories.bottom < toolbar.firstCard.top, 'three compact rows above the first coffee');
+      assert.ok(toolbar.heading.top>=before.box.bottom+12, 'catalogue heading and controls clear the header');
       assert.ok(toolbar.firstCard.top < 360, 'products start near the top of the phone');
       assert.ok(toolbar.size.y >= toolbar.heading.y && toolbar.size.bottom <= toolbar.heading.bottom && toolbar.sort.right <= width-12, 'size and sort stay in the heading row');
       assert.ok(toolbar.targets.every(target=>target.width>=44&&target.height>=44), 'catalogue controls retain touch targets');
@@ -47,6 +54,8 @@ for (const colorScheme of ['light','dark']) test(`compact mobile header ${colorS
       await fillWholesaleSearch(page, 'Brazil');
       await page.setViewportSize({width:1440,height:900});
       await page.locator('.catalogue-actions > .bag-size').waitFor();
+      assert.equal(await page.locator('.brand-name').innerText(),'Strangers Wholesale');
+      assert.equal(await page.locator('.orders-shortcut').isVisible(),true, 'desktop retains its history shortcut');
       assert.equal(await page.locator('#coffee-search').inputValue(),'Brazil');
       assert.equal(await page.locator('.catalogue-actions > .bag-size').count(),1, 'desktop restores the original toolbar');
       await page.setViewportSize({width,height:852});

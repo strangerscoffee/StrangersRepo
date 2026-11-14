@@ -73,7 +73,7 @@ test("rota tables from before day-by-day hours, amended shifts and contract rang
 test("migrations run once each, in order, and are recorded; the list indexes are used", async () => {
   await post("/api/auth/login", { username: "nobody", password: "x" }); // any API call sets the schema up
   const done = srv.sql("SELECT id, name FROM schema_migrations ORDER BY id");
-  assert.deepEqual(done.map((r) => r.id), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27]);
+  assert.deepEqual(done.map((r) => r.id), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28]);
   const legacy = srv.sql("SELECT path,data,employee_privacy_version FROM docs ORDER BY path");
   assert.equal(legacy.length, 2);
   assert.ok(legacy.every(row => row.employee_privacy_version === null), "migration never trusts historical owner/shared JSON claims");
@@ -83,6 +83,7 @@ test("migrations run once each, in order, and are recorded; the list indexes are
   assert.deepEqual(srv.sql("SELECT kind, id FROM wholesale_preview"), [], "the new preview table starts empty");
   assert.deepEqual(srv.sql("SELECT seq FROM wholesale_invoices"), [], "invoice migration does not issue documents");
   assert.deepEqual(srv.sql("SELECT id FROM wholesale_invoice_settings"), [], "seller and VAT details are not invented by migration");
+  assert.deepEqual(srv.sql("SELECT hash FROM wholesale_resets"), [], "reset storage is created without issuing any reset links");
   assert.ok(done.every((r) => r.name), "each has a name");
   // The older rota columns were added by migrations 1-3 on this old database.
   const shiftCols = srv.sql("SELECT name FROM pragma_table_info('rota_shifts')").map((r) => r.name);
