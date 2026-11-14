@@ -126,7 +126,7 @@ test("catalogue photos: types, size, gallery limits and restoring the original p
   const bad = await call("PATCH", "/api/admin/wholesale/catalogue/brazil/images", { ifVersion: brazil.version, restore: true, remove: coffee.images[0] });
   assert.equal(bad.status, 400, "restore cannot also delete another photo");
   const restored = await call("PATCH", "/api/admin/wholesale/catalogue/brazil/images", { ifVersion: brazil.version, restore: true });
-  assert.equal(restored.status, 200); assert.deepEqual(restored.body.product.imageUrls, ["/wholesale-preview/images/brazil.webp"]);
+  assert.equal(restored.status, 200); assert.deepEqual(restored.body.product.imageUrls, ["/wholesale/images/brazil.webp"]);
 });
 
 test("payment terms: only admins set terms; checkout checks the reviewed version and keeps immutable order terms", async () => {

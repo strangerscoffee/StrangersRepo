@@ -144,7 +144,7 @@ export async function handleWholesaleAuth(req: Request, env: Env, route: string,
   if (route === "invite") return handleInvite(req, env, async (accountId) => newSession(env, (await env.DB.prepare("SELECT * FROM wholesale_accounts WHERE id = ?").bind(accountId).first<Account>())!));
   // Forgotten password: a one-time link emailed to the business (src/wholesaleReset.ts), and how to contact Strangers.
   if (route === "forgot" || route === "reset" || route === "contact") {
-    const signinUrl = env.PREVIEW_HOST ? `https://${env.PREVIEW_HOST}/signin` : new URL("/wholesale-preview/signin", req.url).href;
+    const signinUrl = env.PREVIEW_HOST ? `https://${env.PREVIEW_HOST}/signin` : new URL("/wholesale/signin", req.url).href;
     return handleReset(req, env, route, { signinUrl, startSession: async (accountId) => newSession(env, (await env.DB.prepare("SELECT * FROM wholesale_accounts WHERE id = ?").bind(accountId).first<Account>())!), waitUntil: ctx ? (p) => ctx.waitUntil(p) : undefined });
   }
   if (route === "me" && req.method === "GET") return json({ user: await wholesaleSession(req, env) });

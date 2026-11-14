@@ -15,7 +15,7 @@ after(async()=>{await browser?.close();await srv?.stop()});
 test('mobile account popover stays hidden during verification and clears the previous business', {timeout:60000}, async()=>{
  const context=await browser.newContext({viewport:{width:393,height:852}});await useCookie(context,A.cookie);const page=await context.newPage();let release,arrive,holding=false;const ready=new Promise(r=>arrive=r),gate=new Promise(r=>release=r);
  try{
-  await page.goto(srv.base+'/wholesale-preview/');await page.locator('[data-product]').first().waitFor();await openWholesaleAccountMenu(page);assert.equal(await page.locator('#signed-in-name').isVisible(),true);
+  await page.goto(srv.base+'/wholesale/');await page.locator('[data-product]').first().waitFor();await openWholesaleAccountMenu(page);assert.equal(await page.locator('#signed-in-name').isVisible(),true);
   await page.route('**/api/wholesale/session',async route=>{const response=await route.fetch();if(holding&&route.request().headers()['x-sc-session-check']==='1'){arrive();await gate}await route.fulfill({response})});
   await useCookie(context,B.cookie);holding=true;await page.evaluate(()=>dispatchEvent(new Event('focus')));await ready;
   assert.equal(await page.locator('#signed-in-name').isVisible(),false);assert.equal(await page.locator('#sc-session-shield').isVisible(),true);
@@ -26,7 +26,7 @@ test('mobile account popover stays hidden during verification and clears the pre
 for(const[device,viewport]of[['phone',{width:393,height:852}],['iPad',{width:1180,height:820}]])for(const colorScheme of['light','dark'])test(`customer privacy ${device} ${colorScheme}: focus shields private forms until the current business is verified`,{timeout:60000},async()=>{
  const context=await browser.newContext({viewport,colorScheme});await useCookie(context,A.cookie);const page=await context.newPage();let release,arrive,holding=false;const ready=new Promise(r=>arrive=r),gate=new Promise(r=>release=r);
  try{
-  await page.goto(srv.base+'/wholesale-preview/');await page.locator('[data-product]').first().waitFor();await openWholesaleAccount(page);await page.locator('#account-dialog[open]').waitFor();assert.equal(await page.locator('#account-form [name="contact"]').inputValue(),'Private contact privacy.alpha');
+  await page.goto(srv.base+'/wholesale/');await page.locator('[data-product]').first().waitFor();await openWholesaleAccount(page);await page.locator('#account-dialog[open]').waitFor();assert.equal(await page.locator('#account-form [name="contact"]').inputValue(),'Private contact privacy.alpha');
   await page.route('**/api/wholesale/session',async route=>{const response=await route.fetch();if(holding&&route.request().headers()['x-sc-session-check']==='1'){arrive();await gate}await route.fulfill({response})});
   await useCookie(context,B.cookie);holding=true;await page.evaluate(()=>{dispatchEvent(new Event('blur'));dispatchEvent(new Event('focus'))});await ready;
   assert.equal(await page.locator('html').getAttribute('data-sc-session-locked'),'');assert.equal(await page.locator('#account-form [name="contact"]').isVisible(),false);assert.equal(await page.locator('#sc-session-shield').isVisible(),true);
@@ -39,7 +39,7 @@ test('a held order-history response cannot restore a previous business after ide
  const context=await browser.newContext({viewport:{width:1180,height:820}});await useCookie(context,A.cookie);const page=await context.newPage();let release,arrive,capture;const ready=new Promise(r=>arrive=r),gate=new Promise(r=>release=r),cleared=new Promise(r=>capture=r);
  try{
   await page.exposeFunction('capturePrivacyState',capture);
-  await page.goto(srv.base+'/wholesale-preview/');await page.locator('[data-product]').first().waitFor();
+  await page.goto(srv.base+'/wholesale/');await page.locator('[data-product]').first().waitFor();
   await page.evaluate(()=>addEventListener('sc:session-invalid',()=>window.capturePrivacyState({locked:document.documentElement.hasAttribute('data-sc-session-locked'),history:document.getElementById('order-history').textContent,products:document.querySelectorAll('#products [data-product]').length,name:document.getElementById('signed-in-name').textContent,greeting:document.getElementById('account-greeting').textContent,menuGreeting:document.getElementById('account-menu-greeting').textContent,accountLabel:document.getElementById('account-toggle').getAttribute('aria-label')})));
   await page.route('**/api/wholesale/orders',async route=>{const response=await route.fetch();arrive();await gate;try{await route.fulfill({response})}catch{}});
   await openWholesaleOrders(page);await ready;await useCookie(context,B.cookie);await page.evaluate(()=>{dispatchEvent(new Event('blur'));dispatchEvent(new Event('focus'))});
@@ -50,7 +50,7 @@ test('a held order-history response cannot restore a previous business after ide
 test('offline identity verification keeps customer details hidden until Retry succeeds',{timeout:60000},async()=>{
  const context=await browser.newContext({viewport:{width:393,height:852}});await useCookie(context,A.cookie);const page=await context.newPage();let offline=false;
  try{
-  await page.goto(srv.base+'/wholesale-preview/');await page.locator('[data-product]').first().waitFor();await openWholesaleAccount(page);await page.locator('#account-dialog[open]').waitFor();
+  await page.goto(srv.base+'/wholesale/');await page.locator('[data-product]').first().waitFor();await openWholesaleAccount(page);await page.locator('#account-dialog[open]').waitFor();
   await page.route('**/api/wholesale/session',route=>offline?route.abort('failed'):route.continue());offline=true;await page.evaluate(()=>{dispatchEvent(new Event('blur'));dispatchEvent(new Event('focus'))});await page.locator('#sc-session-shield button:not([hidden])').waitFor();assert.equal(await page.locator('#account-form [name="email"]').isVisible(),false);
   offline=false;await page.locator('#sc-session-shield button').click();await page.locator('html:not([data-sc-session-locked])').waitFor();assert.equal(await page.locator('#account-form [name="email"]').inputValue(),'privacy.alpha@example.test');
  }finally{await context.close()}

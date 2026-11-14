@@ -3,6 +3,18 @@
 
 export type App = "diary" | "rota" | "admin" | "preview";
 
+/** Old cached pages and emailed links keep working without a second copy of the app. */
+export function wholesalePath(path: string): string {
+  return path === "/wholesale-preview" || path.startsWith("/wholesale-preview/")
+    ? "/wholesale" + path.slice("/wholesale-preview".length) : path;
+}
+
+/** Data-free browser code can finish loading after a session expires. Prices come from the protected API. */
+export function isWholesaleCode(path: string): boolean {
+  return /^\/wholesale\/(?:wholesale|catalogue-ui|order|grinds|shipping|limits|signin|terms)\.js$/.test(path) ||
+    /^\/wholesale\/(?:wholesale|catalogue)\.css$/.test(path);
+}
+
 /** Which app a hostname serves: the rota on ROTA_HOST, the admin section on ADMIN_HOST, wholesale on its customer and legacy hosts, and the diary elsewhere. */
 export function appForHost(hostname: string, rotaHost: string | undefined, adminHost?: string, previewHost?: string, legacyPreviewHost?: string): App {
   const h = hostname.toLowerCase();
@@ -14,7 +26,7 @@ export function appForHost(hostname: string, rotaHost: string | undefined, admin
 
 /** Ordering preview assets only; this hostname never serves the diary, rota or admin app. */
 export function isPreviewFile(path: string): boolean {
-  return path === "/theme.css" || isSharedCode(path) || /^\/wholesale-preview\/(?:images\/[\w-]+\.(?:svg|png|webp|jpg)|[\w-]+\.(?:js|css))$/.test(path);
+  return path === "/theme.css" || isSharedCode(path) || /^\/wholesale\/(?:images\/[\w-]+\.(?:svg|png|webp|jpg)|[\w-]+\.(?:js|css))$/.test(path);
 }
 
 /** The helpers all three apps share (public/shared/*.js: code, no data). */
@@ -36,6 +48,8 @@ export function isRotaSharedFile(path: string): boolean {
  * Pages and every API still need sign-in; the admin section's files stay admin-only.
  */
 export function isPublicCode(app: string, path: string): boolean {
+  // The source-price snapshot is used by the server, never by the browser bootstrap.
+  if (path === "/wholesale/catalogue.js") return false;
   if (!/\.(js|css|svg|png|webmanifest)$/.test(path) || path.startsWith("/admin/")) return false;
   return app === "rota" ? isRotaSharedFile(path) : app === "diary";
 }
@@ -44,7 +58,7 @@ export function isPublicCode(app: string, path: string): boolean {
  * helpers all three apps share. */
 export function isAdminSharedFile(path: string): boolean {
   return path === "/theme.css" || path === "/robots.txt" || path === "/logo.svg" || path === "/mark.svg" || isSharedCode(path) ||
-    /^\/wholesale-preview\/images\/[\w-]+\.(svg|png|webp|jpg)$/.test(path) ||
+    /^\/wholesale\/images\/[\w-]+\.(svg|png|webp|jpg)$/.test(path) ||
     /^\/icon-\d+\.png$/.test(path) || (path.startsWith("/admin/") && path !== "/admin/" && path !== "/admin/index.html");
 }
 

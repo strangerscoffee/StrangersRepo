@@ -38,7 +38,7 @@ test("hidden prices: no money on the catalogue, basket or review; Admin has the 
     const ctx = await b.newContext({ viewport, isMobile, hasTouch: isMobile, colorScheme });
     const [n, v] = BUYER.split("="); await ctx.addCookies([{ name: n, value: v, url: srv.base }]);
     const p = await ctx.newPage(), errors = []; p.on("pageerror", (e) => errors.push(e.message));
-    await p.goto(srv.base + "/wholesale-preview/"); await p.locator(".product-card").first().waitFor();
+    await p.goto(srv.base + "/wholesale/"); await p.locator(".product-card").first().waitFor();
     await p.locator("#products[aria-busy=\"false\"]").waitFor();
     assert.doesNotMatch(await visibleText(p), /£/, `${name}: catalogue shows no prices`);
     assert.equal(await p.locator("#sort-coffee").isHidden(), true, "no price sorting");

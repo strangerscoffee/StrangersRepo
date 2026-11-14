@@ -4,9 +4,9 @@
 // amend the bags on any New or Preparing customer order that has no invoice yet. Everything is stored in the order's
 // own JSON (no migration); customers see the dispatch day, the schedule and that Strangers updated the order.
 import { addDays, ukDay } from "./insightsMath";
-import { shippingFor } from "../public/wholesale-preview/shipping.js";
-import { validGrindId } from "../public/wholesale-preview/grinds.js";
-import { MAX_QUANTITY } from "../public/wholesale-preview/limits.js";
+import { shippingFor } from "../public/wholesale/shipping.js";
+import { validGrindId } from "../public/wholesale/grinds.js";
+import { MAX_QUANTITY } from "../public/wholesale/limits.js";
 import { catalogue, packsOf } from "./wholesaleCatalogue";
 import { object, get, save, version, type Versioned } from "./wholesaleStore";
 import { publicCustomer, wholesaleCustomer, paymentTermsFor } from "./wholesaleAccounts";

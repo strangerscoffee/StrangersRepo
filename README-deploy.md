@@ -1,6 +1,6 @@
 # Deploying and running the Kitchen Diary
 
-**Wholesale:** customers register at **https://strangerscoffee.trade** and wait for admin approval. Manage registrations, customer accounts and orders in **Admin → Wholesale** at `https://admin.staffstrangerscoffee.com/#wholesale`. Wholesale credentials are separate from staff credentials. No new secret or external identity provider is required. See [docs/wholesale-preview.md](docs/wholesale-preview.md).
+**Wholesale:** customers register at **https://strangerscoffee.trade** and wait for admin approval. Manage registrations, customer accounts and orders in **Admin → Wholesale** at `https://admin.staffstrangerscoffee.com/#wholesale`. Wholesale credentials are separate from staff credentials. No new secret or external identity provider is required. See [docs/wholesale.md](docs/wholesale.md).
 
 The customer domain and `www.strangerscoffee.trade` are Worker custom domains declared in `wrangler.jsonc`; `www` redirects to the bare address. Deploying requires the purchased zone to be active in the same Cloudflare account as the Worker, with no conflicting DNS record on these names. Cloudflare provisions the custom-domain DNS records and TLS certificates. The staff, rota and Admin domains stay separate; QuickBooks OAuth/webhook URLs stay on Admin.
 
@@ -200,7 +200,9 @@ Under **Customers**, set payment terms and customer-facing instructions. Choices
 
 Catalogue and payment-term fields use the existing versioned JSON records; photos use the existing KV binding. This release adds no schema migration, secret, service or DNS change.
 
-For local development, use `npm run dev -- --var PREVIEW_HOST:` and open `/wholesale-preview/`, `/wholesale-preview/signin` or `/admin#wholesale`. Run both test suites before publishing. Source prices remain retail reference prices until edited by an admin; payment and fulfilment integrations remain manual.
+For local development, use `npm run dev -- --var PREVIEW_HOST:` and open `/wholesale/`, `/wholesale/signin` or `/admin#wholesale`. Run both test suites before publishing. Source prices remain retail reference prices until edited by an admin; payment and fulfilment integrations remain manual.
+
+Wholesale browser assets now ship from `public/wholesale/` at `/wholesale/`. Old `/wholesale-preview/` pages retain their queries when redirected, and old asset URLs resolve to the same deployed files for cached tabs. The client module graph is data-free and loads after session expiry; its catalogue still requires an authenticated API response. The source-price snapshot lives only under `src/wholesale/`. Keep the existing basket/pending-request storage keys, cookies, database names and host variables. This path change requires no migration, secret, DNS or service setup.
 
 Wholesale uses `strangerscoffee.trade` (`PREVIEW_HOST`), with `preview.staffstrangerscoffee.com` retained as `LEGACY_PREVIEW_HOST`. Records and asset paths stay the same; customers sign in again because cookies and browser storage stay with their original hostname. Customer and admin interfaces use the name Wholesale without Beta badges; the new custom domains use the existing Worker and require no new secret or service. Invoice storage is added by automatic migration 13. Shared `/theme.css` is available on the ordering host, including at sign-in. Checkout persists an unresolved submitted request in browser storage per identity before sending; keep that storage until its receipt is confirmed. Payment collection and fulfilment remain with the team; admins can issue invoices in the app under the recorded terms.
 

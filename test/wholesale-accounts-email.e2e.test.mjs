@@ -33,7 +33,7 @@ after(async () => { await b?.close(); await srv?.stop(); });
 test("applying for an account takes an accounts email if it's different", async () => {
   for (const colorScheme of ["light", "dark"]) {
     const { ctx, p, errors } = await page(null, { width: 390, height: 844 }, { colorScheme, isMobile: true, hasTouch: true });
-    await p.goto(srv.base + "/wholesale-preview/signin");
+    await p.goto(srv.base + "/wholesale/signin");
     await p.locator("#registration-toggle").click();
     const form = p.locator("#wholesale-login");
     await form.locator('[name="business"]').fill(`Lune House ${colorScheme}`);
@@ -74,7 +74,7 @@ test("Admin edits it on the customer, and the business sees it in My account", a
   assert.equal((await call("PUT", `/api/admin/wholesale/customers/${lune.id}/account`, { username: account.username, ifVersion: account.version, active: true, approvalStatus: "approved" })).status, 200);
   const cookie = (await call("POST", "/api/wholesale/auth/login", { username: "lune.light", password: "lune-password-1" }, null)).cookie;
   const { ctx, p, errors } = await page(cookie, { width: 390, height: 844 }, { isMobile: true, hasTouch: true });
-  await p.goto(srv.base + "/wholesale-preview/"); await p.locator(".product-card").first().waitFor();
+  await p.goto(srv.base + "/wholesale/"); await p.locator(".product-card").first().waitFor();
   await openWholesaleAccount(p); await p.locator("#account-dialog").waitFor();
   await p.locator('#account-form [name="accountsEmail"]').waitFor({ state: "visible" });
   assert.equal(await p.locator('#account-form [name="accountsEmail"]').inputValue(), "finance@lune.example");

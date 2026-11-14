@@ -46,7 +46,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       const page = await context.newPage();
       const errors = [];
       page.on("pageerror", (error) => errors.push(error.message));
-      await page.goto(srv.base + "/wholesale-preview/");
+      await page.goto(srv.base + "/wholesale/");
       await page.locator("#products article").first().waitFor();
       assert.equal(await page.locator('link[rel="stylesheet"][href^="/theme.css"]').count(), 1, 'ordering uses the shared staff/Admin theme');
       assert.equal(await page.locator('main h1').textContent(), 'Wholesale');
@@ -163,15 +163,15 @@ test("wholesale staff: signed-out pages require login; staff cannot open the adm
   const context = await contextFor({ width: 393, height: 852 }, "light", STAFF);
   try {
     const anonymous = await signedOut.newPage();
-    await anonymous.goto(srv.base + "/wholesale-preview/");
-    await anonymous.waitForURL(/\/wholesale-preview\/signin$/);
+    await anonymous.goto(srv.base + "/wholesale/");
+    await anonymous.waitForURL(/\/wholesale\/signin$/);
     const page = await context.newPage();
-    await page.goto(srv.base + "/wholesale-preview/");
+    await page.goto(srv.base + "/wholesale/");
     await page.locator("#products article").first().waitFor();
     assert.equal(await page.locator("#admin-wholesale-link").isHidden(), true);
     await page.goto(srv.base + "/admin#wholesale");
     await page.waitForURL((url) => url.pathname === "/");
-    await page.goto(srv.base + "/wholesale-preview/");
+    await page.goto(srv.base + "/wholesale/");
     await page.locator("#products article").first().waitFor();
     await openWholesaleAccountMenu(page); await page.locator("#preview-sign-out").click();
     await page.waitForURL(/\/signin$/);
@@ -191,7 +191,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       const errors = [];
       page.on("pageerror", (error) => errors.push(error.message));
       admin.on("pageerror", (error) => errors.push(error.message));
-      await page.goto(srv.base + "/wholesale-preview/signin");
+      await page.goto(srv.base + "/wholesale/signin");
       await page.locator('#registration-toggle').click();
       for (const [name, value] of Object.entries({ business, contact: "Coffee Buyer", email: username + "@example.com", username, password })) await page.locator(`#wholesale-login [name="${name}"]`).fill(value);
       await page.locator('#login-submit').click();
@@ -213,7 +213,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       await admin.locator('#sheet button[type="submit"]').click();
       await admin.locator('#scrim').waitFor({ state: 'hidden' });
       await page.locator('#login-submit').click();
-      await page.waitForURL(/\/wholesale-preview\/$/);
+      await page.waitForURL(/\/wholesale\/$/);
       await page.locator('#products article').first().waitFor();
       const photos = await page.locator('#products img').evaluateAll(async (images) => {
         for (const image of images) image.loading = 'eager';
@@ -289,7 +289,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       const logout = await context.request.post(srv.base + '/api/wholesale/auth/logout');
       assert.equal(logout.status(), 200);
       await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
-      await page.waitForURL(/\/wholesale-preview\/signin$/);
+      await page.waitForURL(/\/wholesale\/signin$/);
       assert.deepEqual(errors, []);
     } finally { await context.close(); await adminContext.close(); }
   });
@@ -312,7 +312,7 @@ test('repeat order: current availability and prices, basket merge, cancellation 
   order = (await api('PATCH', `/api/admin/wholesale/orders/${order.id}`, { ifVersion: order.version, status: 'Cancelled', customerId: customer.id, note: 'Internal only' })).body.order;
   const context = await contextFor({ width: 393, height: 852 }, 'light', buyerCookie);
   try {
-    const page = await context.newPage(); await page.goto(srv.base + '/wholesale-preview/');
+    const page = await context.newPage(); await page.goto(srv.base + '/wholesale/');
     const card = page.locator(`article[data-product="${filter.id}"]`); await card.waitFor();
     await chooseWholesalePack(page, card, 'quarter'); await card.locator('button[type="submit"]').click();
     assert.equal(await page.locator('#basket-count').textContent(), '1');

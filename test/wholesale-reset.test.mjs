@@ -50,7 +50,7 @@ test("the same answer whether or not anything matches; links go only to the busi
     assert.deepEqual(m.to, ["orders@lune.example"]);
     assert.equal(m.subject, "Reset your Strangers Coffee wholesale password");
     assert.match(m.text, /Your username: lune\.cafe/);
-    assert.match(m.text, /\/wholesale-preview\/signin\?reset=[a-f0-9]{64}/);
+    assert.match(m.text, /\/wholesale\/signin\?reset=[a-f0-9]{64}/);
     assert.match(m.text, /lasts an hour/);
   }
   // The accounts email gets its own link, at that address.

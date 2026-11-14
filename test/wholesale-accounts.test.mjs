@@ -49,7 +49,7 @@ test("wholesale registration: pending accounts cannot access until an admin appr
 });
 
 test("wholesale accounts: host-only cookies never grant staff, diary or admin access; foreign writes are refused", async () => {
-  const photo = await call("GET", "/wholesale-preview/images/brazil.webp", undefined, A);
+  const photo = await call("GET", "/wholesale/images/brazil.webp", undefined, A);
   assert.equal(photo.status, 200); assert.match(photo.headers.get("content-type"), /^image\//);
   for (const path of ["/api/admin/wholesale", "/api/admin/users", "/api/db/get", "/api/rota/week", "/api/live"]) assert.equal((await call("GET", path, undefined, A)).status, 401, path);
   const response = await call("POST", "/api/wholesale/auth/login", registration("buyer.a"), null);

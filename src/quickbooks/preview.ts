@@ -1,5 +1,5 @@
 // Pure invoice review and reconciliation. No network, writes or accounting side effects.
-import { MAX_QUANTITY } from "../../public/wholesale-preview/limits.js";
+import { MAX_QUANTITY } from "../../public/wholesale/limits.js";
 import type { InvoiceDocument, InvoiceLine } from "../wholesaleInvoices";
 
 export type Environment = "sandbox" | "production";

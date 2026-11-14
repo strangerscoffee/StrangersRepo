@@ -151,7 +151,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["desk
       const adminPdf = await pdfFrom(admin, await admin.locator("#wiDownloadPdf").getAttribute("href")); pdfCheck(adminPdf);
       assert.match(adminPdf.disposition, new RegExp(issued.number));
       // The remaining customer/payment steps use the public hooks supplied by WholesaleInvoices.
-      await customer.goto(srv.base + "/wholesale-preview/");
+      await customer.goto(srv.base + "/wholesale/");
       await customer.locator("#products article").first().waitFor();
       await openWholesaleOrders(customer);
       await customer.locator("#history-invoices").click();
@@ -182,7 +182,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["desk
       assert.equal(await noOverflow(customer), true);
       await screenshot(customer, `invoice-customer-overdue-${device}-${color}`);
 
-      await other.goto(srv.base + "/wholesale-preview/");
+      await other.goto(srv.base + "/wholesale/");
       await other.locator("#products article").first().waitFor();
       await openWholesaleOrders(other); await other.locator("#history-invoices").click();
       await other.locator("#customer-invoices-list", { hasText: "Your issued invoices will appear here" }).waitFor();

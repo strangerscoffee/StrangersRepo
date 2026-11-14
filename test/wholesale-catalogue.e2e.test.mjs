@@ -6,9 +6,9 @@ import { readFile, mkdir } from "node:fs/promises";
 import { startServer, SETUP_CODE } from "./harness.mjs";
 const { chromium } = createRequire(import.meta.url)("playwright");
 const photos = await Promise.all([
-  ["coffee.webp", "image/webp", "../public/wholesale-preview/images/colombia.webp"],
+  ["coffee.webp", "image/webp", "../public/wholesale/images/colombia.webp"],
   ["square.png", "image/png", "../public/icon-192.png"],
-  ["coffee.jpg", "image/jpeg", "../public/wholesale-preview/images/house.jpg"],
+  ["coffee.jpg", "image/jpeg", "../public/wholesale/images/house.jpg"],
 ].map(async ([name, mimeType, path]) => ({ name, mimeType, buffer: await readFile(new URL(path, import.meta.url)) })));
 let srv, browser, ADMIN;
 const cookieOf = (response) => (response.headers.getSetCookie().find((value) => /^sfbb_session=[\w-]/.test(value)) || "").split(";")[0];
@@ -91,10 +91,10 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
         await admin.locator('#scrim').waitFor({ state: 'hidden' });
       }
       await editTerms('net-30', 'Please quote the invoice number.');
-      await buyer.goto(srv.base + '/wholesale-preview/signin');
+      await buyer.goto(srv.base + '/wholesale/signin');
       await buyer.locator('#username').fill(username); await buyer.locator('#password').fill(username + '-password');
       await buyer.locator('#login-submit').click();
-      await buyer.waitForURL(/\/wholesale-preview\/$/);
+      await buyer.waitForURL(/\/wholesale\/$/);
       const card = buyer.locator(`article[data-product="${product.id}"]`);
       await card.waitFor();
       async function photoReady() {

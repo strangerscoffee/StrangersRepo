@@ -1,4 +1,4 @@
-// The customer sign-in page's "Forgotten your details?" (public/wholesale-preview/signin.js,
+// The customer sign-in page's "Forgotten your details?" (public/wholesale/signin.js,
 // src/wholesaleReset.ts): ask for a link, open it from the email (a stand-in for Resend), choose a new password and land
 // signed in on the ordering page; the contact link; no Staff sign-in link. Phone and iPad, light and dark.
 import { test, before, after } from "node:test";
@@ -39,7 +39,7 @@ test("forgotten password: ask for a link, open it, choose a new password, signed
     const ctx = await b.newContext({ viewport, isMobile: true, hasTouch: true, colorScheme });
     const p = await ctx.newPage(), errors = []; p.on("pageerror", (e) => errors.push(e.message));
     const shot = (what) => process.env.WHOLESALE_SCREENSHOT_DIR && p.screenshot({ path: `${process.env.WHOLESALE_SCREENSHOT_DIR}/reset-${what}-${name}-${colorScheme}.png`, fullPage: true });
-    await p.goto(srv.base + "/wholesale-preview/signin");
+    await p.goto(srv.base + "/wholesale/signin");
     assert.equal(await p.getByText("Staff sign-in").count(), 0, "no staff sign-in on the customer page");
     assert.equal(await p.locator("#contact-link").getAttribute("href"), "mailto:sales@strangerscoffee.com");
     assert.equal(await p.locator('#password').getAttribute('autocomplete'), 'current-password');
@@ -72,7 +72,7 @@ test("forgotten password: ask for a link, open it, choose a new password, signed
     await shot("sent");
     const mail = await nextMail();
     assert.ok(mail, "emailed");
-    const link = /(\/wholesale-preview\/signin\?reset=[a-f0-9]+)/.exec(mail.text)[1];
+    const link = /(\/wholesale\/signin\?reset=[a-f0-9]+)/.exec(mail.text)[1];
     await p.getByRole("button", { name: "Back to sign-in" }).click();
     await p.locator("#wholesale-login").waitFor();
 
@@ -101,7 +101,7 @@ test("forgotten password: ask for a link, open it, choose a new password, signed
 test('an unknown account gets the same recovery confirmation and retains its details for correction', async () => {
   const ctx = await b.newContext({ viewport: { width: 393, height: 852 } }), p = await ctx.newPage();
   try {
-    await p.goto(srv.base + '/wholesale-preview/signin');
+    await p.goto(srv.base + '/wholesale/signin');
     await p.locator('#forgot-toggle').click();
     await p.locator('#forgot-identifier').fill('nobody-here@example.test');
     await p.locator('#forgot-submit').click();
@@ -124,7 +124,7 @@ test('recovery blocks duplicate requests and preserves the input after a failed 
     else await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
   });
   try {
-    await p.goto(srv.base + '/wholesale-preview/signin'); await p.locator('#forgot-toggle').click();
+    await p.goto(srv.base + '/wholesale/signin'); await p.locator('#forgot-toggle').click();
     await p.locator('#forgot-identifier').fill('customer@example.test'); await p.locator('#forgot-submit').click();
     assert.equal(await p.locator('#forgot-submit').isDisabled(), true);
     assert.equal(await p.locator('#auth-back').isDisabled(), true);
@@ -143,12 +143,12 @@ test('temporary passwords still require a new password before opening the catalo
   const account = (await call('POST', `/api/admin/wholesale/customers/${customer.id}/account`, { username: 'temporary.buyer' })).body;
   const ctx = await b.newContext({ viewport: { width: 393, height: 852 }, colorScheme: 'dark' }), p = await ctx.newPage();
   try {
-    await p.goto(srv.base + '/wholesale-preview/signin'); await p.locator('#username').fill('temporary.buyer'); await p.locator('#password').fill(account.temporaryPassword); await p.locator('#login-submit').click();
+    await p.goto(srv.base + '/wholesale/signin'); await p.locator('#username').fill('temporary.buyer'); await p.locator('#password').fill(account.temporaryPassword); await p.locator('#login-submit').click();
     await p.locator('#password-change').waitFor(); assert.equal(await p.locator('#login-title').innerText(), 'Choose your own password.');
     await p.locator('#new-password').fill('new-temporary-buyer-password'); await p.locator('#confirm-password').fill('a-different-password'); await p.locator('#login-submit').click();
     await p.locator('#login-error', { hasText: 'do not match' }).waitFor();
     await p.locator('#confirm-password').fill('new-temporary-buyer-password'); await p.locator('#login-submit').click();
-    await p.waitForURL('**/wholesale-preview/'); await p.locator('#products article').first().waitFor();
+    await p.waitForURL('**/wholesale/'); await p.locator('#products article').first().waitFor();
     assert.equal((await call('POST', '/api/wholesale/auth/login', { username: 'temporary.buyer', password: 'new-temporary-buyer-password' }, null)).status, 200);
   } finally { await ctx.close(); }
 });
@@ -161,7 +161,7 @@ test('leaving reset-link verification prevents its late response from reopening 
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ username: 'late.username', business: 'Late Business' }) });
   });
   try {
-    await p.goto(srv.base + '/wholesale-preview/signin?reset=' + 'a'.repeat(64));
+    await p.goto(srv.base + '/wholesale/signin?reset=' + 'a'.repeat(64));
     await p.locator('#reset-form').waitFor(); assert.equal(await p.locator('#reset-submit').isDisabled(), true);
     assert.equal(new URL(p.url()).search, '');
     await p.locator('#auth-back').click();
@@ -178,7 +178,7 @@ test('a browser without JavaScript cannot submit credentials into the page URL',
   const ctx = await b.newContext({ javaScriptEnabled: false, viewport: { width: 393, height: 852 } }), p = await ctx.newPage();
   const requests = []; p.on('request', request => requests.push(request.url()));
   try {
-    await p.goto(srv.base + '/wholesale-preview/signin');
+    await p.goto(srv.base + '/wholesale/signin');
     await p.locator('#username').fill('unsent.user'); await p.locator('#password').fill('unsent-private-password');
     assert.equal(await p.locator('#login-submit').isDisabled(), true);
     await p.locator('#password').press('Enter');

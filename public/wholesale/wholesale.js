@@ -1,7 +1,9 @@
 import { availableGrinds, grindLabel, grindHint, isGrindAvailable } from "./grinds.js";
 import { shippingFor, SHIPPING_PENCE, FREE_SHIPPING_FROM_PENCE } from "./shipping.js";
 import { createCoffeeChoices, setupCatalogueSearch } from "./catalogue-ui.js";
-import { products, setCatalogue, isAvailable, packs, packsFor, sizeFor, lineOrderable, grinds, MAX_QUANTITY, money, weight, productFor, lineKey, unitPrice, validQuantity, sanitiseBasket, addToBasket, totals } from "./order.js";
+// A fresh module URL avoids reusing a cached pre-migration model that imported the price snapshot.
+// This is not a ?v= fingerprint: it retains the normal short revalidation period for future model changes.
+import { products, setCatalogue, isAvailable, packs, packsFor, sizeFor, lineOrderable, grinds, MAX_QUANTITY, money, weight, productFor, lineKey, unitPrice, validQuantity, sanitiseBasket, addToBasket, totals } from "./order.js?bootstrap=wholesale";
 
 let STORAGE_KEY = null;
 let session = null;
@@ -36,7 +38,7 @@ const photoIndexes = new Map();
 const canOrder = () => session?.customer?.status !== "On hold";
 // Strangers can hide prices from a business (its own shops): then the page shows bags and weights, never money.
 const pricesShown = () => session?.showPrices !== false;
-const goSignIn = () => location.replace(location.pathname.startsWith("/wholesale-preview/") ? "/wholesale-preview/signin" : "/signin");
+const goSignIn = () => location.replace(location.pathname.startsWith("/wholesale/") ? "/wholesale/signin" : "/signin");
 
 const LOCATION_FIELDS = ["name", "contact", "phone", "address", "postcode", "deliveryNotes"];
 let accountLocations = [], accountDefaultLocation = "primary", editingLocation = null, removingLocation = null, accountSaving = false;

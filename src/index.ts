@@ -25,6 +25,8 @@ import { handleWholesaleAuth, wholesaleSession } from "./wholesaleAccounts";
 import {handleWebhook} from "./quickbooks/webhooks";
 import {processEvents,runQuickBooksJobs} from "./quickbooks/jobs";
 import {trustedOrigin} from "./requestOrigins";
+import { isWholesaleCode, wholesalePath } from "./hosts";
+import { products as sourceCoffees, catalogueRetrievedAt } from "./wholesale/catalogue.js";
 export { LiveHub } from "./live";
 
 export default {
@@ -172,15 +174,23 @@ const pageRequest=(req:Request,target:URL|string=req.url)=>{const fresh=new Requ
 const rotaPage = (req: Request, env: Env, url: URL) => env.ASSETS.fetch(pageRequest(req,new URL("/rota/", url))).then(noStore).then((r) => withFingerprints(r, env, url));
 // The admin section's page. Served at / on its own host (ADMIN_HOST), and at /admin on the diary's when there's none.
 const adminPage = (req: Request, env: Env, url: URL) => env.ASSETS.fetch(pageRequest(req,new URL("/admin/", url))).then(noStore).then((r) => withFingerprints(r, env, url));
-const wholesalePage = (req: Request, env: Env, url: URL) => env.ASSETS.fetch(pageRequest(req,new URL("/wholesale-preview/", url))).then(noStore).then((r) => withFingerprints(r, env, url));
+const wholesalePage = (req: Request, env: Env, url: URL) => env.ASSETS.fetch(pageRequest(req,new URL("/wholesale/", url))).then(noStore).then((r) => withFingerprints(r, env, url));
 const ADMIN_PAGES = new Set(["/admin", "/admin/", "/admin.html", "/admin/index.html"]);
-const WHOLESALE_PAGES = new Set(["/wholesale-preview", "/wholesale-preview/", "/wholesale-preview/index.html"]);
-const OLD_WHOLESALE_DASHBOARD = new Set(["/wholesale-preview/dashboard", "/wholesale-preview/dashboard/", "/wholesale-preview/dashboard/index.html"]);
+const WHOLESALE_PAGES = new Set(["/wholesale", "/wholesale/", "/wholesale/index.html"]);
+const OLD_WHOLESALE_DASHBOARD = new Set(["/wholesale/dashboard", "/wholesale/dashboard/", "/wholesale/dashboard/index.html"]);
 
 async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): Promise<Response> {
+  const isGet = req.method === "GET" || req.method === "HEAD";
+  const canonical = wholesalePath(url.pathname);
+  if (isGet && canonical !== url.pathname) {
+    const target = new URL(url); target.pathname = canonical;
+    // Redirect old document links, retaining reset/invite/order queries. Serve old asset URLs directly so
+    // cached module imports keep their relative base, conditional headers and fingerprint query intact.
+    if (WHOLESALE_PAGES.has(canonical) || canonical === "/wholesale/signin" || canonical === "/wholesale/signin.html") return redirect(target.pathname + target.search);
+    req = new Request(target, req); url = target;
+  }
   const p = url.pathname;
   if(p.startsWith("/api/quickbooks/webhook/"))return handleWebhook(req,env,ctx,processEvents);
-  const isGet = req.method === "GET" || req.method === "HEAD";
   const app = appForHost(url.hostname, env.ROTA_HOST, env.ADMIN_HOST, env.PREVIEW_HOST, env.LEGACY_PREVIEW_HOST);
   const links = appLinks(url, env.ROTA_HOST, env.ADMIN_HOST, env.PREVIEW_HOST, env.LEGACY_PREVIEW_HOST);
   // A separate customer domain must not mint staff cookies or accept them for ordering.
@@ -189,19 +199,21 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
   const customerOnly = app === "preview" && !!staffDomain && url.hostname !== staffDomain && !url.hostname.endsWith("." + staffDomain);
   if (customerOnly && p.startsWith("/api/") && !p.startsWith("/api/wholesale/") && p !== "/api/errors") throw new ApiError(404, "not_found", "Not available on the ordering address.");
   const wholesaleHost = app === "preview" || app === "diary";
-  const wholesaleSignin = app === "preview" ? "/signin" : "/wholesale-preview/signin";
-  if (wholesaleHost && isGet && (p === "/wholesale-preview/signin" || p === "/wholesale-preview/signin.html" || (app === "preview" && (p === "/signin" || p === "/signin.html")))) {
-    const response = await env.ASSETS.fetch(pageRequest(req,new URL("/wholesale-preview/signin", url)));
+  const wholesaleSignin = app === "preview" ? "/signin" : "/wholesale/signin";
+  if (wholesaleHost && isGet && (p === "/wholesale/signin" || p === "/wholesale/signin.html" || (app === "preview" && (p === "/signin" || p === "/signin.html")))) {
+    const response = await env.ASSETS.fetch(pageRequest(req,new URL("/wholesale/signin", url)));
     return withFingerprints(noStore(response), env, url);
   }
-  if (wholesaleHost && isGet && p === "/wholesale-preview/staff-signin") {
-    if (app === "diary") return redirect("/signin?next=" + encodeURIComponent("/wholesale-preview/"));
+  if (wholesaleHost && isGet && p === "/wholesale/staff-signin") {
+    if (app === "diary") return redirect("/signin?next=" + encodeURIComponent("/wholesale/"));
     const target = new URL("signin", new URL(links.diary, url));
-    target.searchParams.set("next", customerOnly ? (env.LEGACY_PREVIEW_HOST ? `https://${env.LEGACY_PREVIEW_HOST}/` : new URL(links.admin, url).toString()) : new URL(app === "preview" ? "/" : "/wholesale-preview/", url).toString());
+    target.searchParams.set("next", customerOnly ? (env.LEGACY_PREVIEW_HOST ? `https://${env.LEGACY_PREVIEW_HOST}/` : new URL(links.admin, url).toString()) : new URL(app === "preview" ? "/" : "/wholesale/", url).toString());
     return redirect(target.toString());
   }
-  // The customer sign-in page's own files load signed out: its script and styles, the terms pop-up and the logo.
-  if (wholesaleHost && isGet && (["/wholesale-preview/signin.js", "/wholesale-preview/terms.js", "/wholesale-preview/wholesale.css", "/theme.css", "/shared/core.js", "/shared/focus.js"].includes(p) || /^\/wholesale-preview\/images\/logo\.svg$/.test(p))) return staticFile(req, env, p);
+  // App code must load even when the session ends between HTML and its module requests. Otherwise the
+  // browser receives sign-in HTML as JavaScript and cannot run its normal identity/redirect handling.
+  // The source-price snapshot, catalogue API, customer images and every private page remain protected.
+  if (wholesaleHost && isGet && (isWholesaleCode(p) || ["/theme.css", "/shared/core.js", "/shared/focus.js"].includes(p) || p === "/wholesale/images/logo.svg")) return staticFile(req, env, p);
   // One Staff Login for every address: the rota's sign-in page is the diary's (src/hosts.ts).
   if (isGet && (p === "/signin" || p === "/signin.html")) {
     const to = unifiedSignin(url, env.COOKIE_DOMAIN);
@@ -259,7 +271,7 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
   if (p.startsWith("/api/auth/")) return handleAuth(req, env, p.slice("/api/auth/".length), caller.kind === "user" ? caller.user : null);
 
   // Wholesale cookies have their own namespace and are never accepted by any staff route.
-  const wholesaleScope = app === "preview" || (app === "diary" && (p.startsWith("/api/wholesale/") || WHOLESALE_PAGES.has(p) || OLD_WHOLESALE_DASHBOARD.has(p) || (p.startsWith("/wholesale-preview/") && isPreviewFile(p))));
+  const wholesaleScope = app === "preview" || (app === "diary" && (p.startsWith("/api/wholesale/") || WHOLESALE_PAGES.has(p) || OLD_WHOLESALE_DASHBOARD.has(p) || (p.startsWith("/wholesale/") && isPreviewFile(p))));
   if (wholesaleScope) {
     if (p.startsWith("/api/wholesale/auth/")) {
       if (!isGet) await limitWrites(req, env, ctx);
@@ -285,7 +297,13 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
       if (user.role !== "admin") throw new ApiError(403, "permission_denied", "Only admins can open Wholesale in Admin.");
       return redirect(links.admin + "#wholesale");
     }
-    if ((app === "preview" && (p === "/" || p === "/index.html")) || (app === "diary" && WHOLESALE_PAGES.has(p))) return wholesalePage(req, env, url);
+    if ((app === "preview" && (p === "/" || p === "/index.html")) || WHOLESALE_PAGES.has(p)) return p === "/wholesale" ? redirect("/wholesale/" + url.search) : wholesalePage(req, env, url);
+    // Pre-migration cached order.js modules imported this snapshot. Preserve that authenticated import
+    // without putting the price file back in public/ or exposing it through the data-free code allowlist.
+    if (p === "/wholesale/catalogue.js") return noStore(new Response(
+      `export const catalogueRetrievedAt = ${JSON.stringify(catalogueRetrievedAt)};\nexport const products = ${JSON.stringify(sourceCoffees)};\n`,
+      { headers: { "content-type": "application/javascript; charset=utf-8" } },
+    ));
     if (isPreviewFile(p)) return staticFile(req, env, p);
     return redirect("/");
   }
@@ -424,7 +442,7 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
   }
   if (WHOLESALE_PAGES.has(p)) {
     if (env.PREVIEW_HOST) return redirect(`https://${env.PREVIEW_HOST}/${url.search}`);
-    return p === "/wholesale-preview" ? redirect("/wholesale-preview/" + url.search) : wholesalePage(req, env, url);
+    return p === "/wholesale" ? redirect("/wholesale/" + url.search) : wholesalePage(req, env, url);
   }
   // Pages behind sign-in must not be cached by shared devices' browsers or proxies.
   if (p === "/" || p === "/index.html") return withFingerprints(noStore(await env.ASSETS.fetch(pageRequest(req))), env, url);

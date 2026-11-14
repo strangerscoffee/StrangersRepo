@@ -28,7 +28,7 @@ for (const width of [320, 820, 1920]) for (const colorScheme of ['light', 'dark'
     const [name, value] = customerCookie.split('='); await context.addCookies([{ name, value, url: server.base }]);
     const page = await context.newPage(), errors = []; page.on('pageerror', error => errors.push(error.message));
     try {
-      await page.goto(server.base + '/wholesale-preview/'); await page.locator('#products[aria-busy="false"]').waitFor();
+      await page.goto(server.base + '/wholesale/'); await page.locator('#products[aria-busy="false"]').waitFor();
       await page.locator('#repeat-shortcut').waitFor();
       assert.equal(await page.locator('#account-greeting').textContent(), 'Hi, Buyer');
       assert.equal(await page.locator('#account-menu-greeting').textContent(), 'Hi, Buyer');
@@ -95,7 +95,7 @@ test('contact greeting follows saved contact names, escapes text, handles long a
   const [name, value] = customerCookie.split('='); await context.addCookies([{ name, value, url: server.base }]);
   const page = await context.newPage(), errors = []; page.on('pageerror', error => errors.push(error.message));
   try {
-    await page.goto(server.base + '/wholesale-preview/'); await page.locator('#products[aria-busy="false"]').waitFor();
+    await page.goto(server.base + '/wholesale/'); await page.locator('#products[aria-busy="false"]').waitFor();
     for (const contact of ['Will <Coffee & Co>', 'Will ' + 'Longcontactname '.repeat(6), '']) {
       await page.locator('#account-toggle').click(); await page.locator('#my-account').click();
       await page.locator('#account-dialog[open]').waitFor();

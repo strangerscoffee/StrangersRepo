@@ -141,7 +141,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       }, order.id);
       assert.equal(await quick.isEnabled(), true);
       assert.equal(await quick.evaluate((button) => document.activeElement === button), true, "refresh returns keyboard focus to the available next action");
-      await buyer.goto(srv.base + "/wholesale-preview/");
+      await buyer.goto(srv.base + "/wholesale/");
       await buyer.locator("#products article").first().waitFor();
       const historyRow = buyer.locator(`[data-history-order="${order.id}"]`);
       const tracking = buyer.locator(`a[data-order-tracking="${order.id}"]`);

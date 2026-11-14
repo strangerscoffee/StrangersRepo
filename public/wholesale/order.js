@@ -1,10 +1,10 @@
 import { validGrindId, isGrindAvailable } from "./grinds.js";
-// The source snapshot is a fallback; the signed-in API supplies the editable catalogue.
-import { products as sourceProducts } from "./catalogue.js";
-export let products = sourceProducts.map((product) => ({ ...product, prices: { ...product.prices } }));
+// Start empty: only the authenticated, customer-scoped API supplies products and prices.
+// Keeping the server's source snapshot out of this module graph lets session-expired pages load and redirect.
+export let products = [];
 export function setCatalogue(value) {
   if (!Array.isArray(value)) throw new Error("Could not load the coffee catalogue.");
-  products = value.map((product) => ({ ...product, prices: { ...product.prices }, inStock: product.inStock !== false, active: product.active !== false, imageUrls: Array.isArray(product.imageUrls) ? product.imageUrls.filter((url) => typeof url === "string" && url.startsWith("/") && !url.startsWith("//")) : product.image ? ["/wholesale-preview/images/" + product.image] : [] }));
+  products = value.map((product) => ({ ...product, prices: { ...product.prices }, inStock: product.inStock !== false, active: product.active !== false, imageUrls: Array.isArray(product.imageUrls) ? product.imageUrls.filter((url) => typeof url === "string" && url.startsWith("/") && !url.startsWith("//")) : product.image ? ["/wholesale/images/" + product.image] : [] }));
 }
 export const isAvailable = (product) => !!product && product.active !== false && product.inStock !== false;
 

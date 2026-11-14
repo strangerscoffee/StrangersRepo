@@ -1,12 +1,12 @@
 // Catalogue edits and raster photos share the existing D1 records and FILES KV binding.
-import { products as originals, type SourceCoffee } from "../public/wholesale-preview/catalogue.js";
+import { products as originals, type SourceCoffee } from "./wholesale/catalogue.js";
 import { newId } from "./auth";
 import { audit } from "./audit";
 import { ApiError, type Env, invalid, json, readJson } from "./http";
 import { list, object, save, text, version } from "./wholesaleStore";
 import { canOrder, editedRecipe, editedWhiteLabel, isCustomCoffee } from "./wholesaleWhiteLabel";
 
-import { defaultGrinds, validGrindId, type GrindOption } from "../public/wholesale-preview/grinds.js";
+import { defaultGrinds, validGrindId, type GrindOption } from "../public/wholesale/grinds.js";
 
 type Prices = SourceCoffee["prices"];
 interface Settings { grindOptions?: GrindOption[]; prices: Prices; active: boolean; inStock?: boolean; product?: SourceCoffee; images?: string[] }
@@ -26,7 +26,7 @@ function decorate(product: SourceCoffee, settings: Settings | null, version: num
   return {
     ...product, grindOptions: (settings?.grindOptions ?? defaultGrinds).map(option => ({ ...option })), prices: { ...prices }, price: prices.kilo,
     active: settings?.active ?? true, inStock: settings?.inStock ?? true, images, version,
-    imageUrls: images.map((id) => id.startsWith("source:") ? "/wholesale-preview/images/" + id.slice(7) : `/api/${admin ? "admin/" : ""}wholesale/images/` + id.slice(7)),
+    imageUrls: images.map((id) => id.startsWith("source:") ? "/wholesale/images/" + id.slice(7) : `/api/${admin ? "admin/" : ""}wholesale/images/` + id.slice(7)),
   };
 }
 export async function catalogue(env: Env, admin = false): Promise<Coffee[]> {

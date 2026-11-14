@@ -32,11 +32,11 @@ async function buyer(username, productId, reference) {
   const { customer, password } = await buyerAccount(username);
   const context = await browser.newContext({ viewport: { width: 393, height: 852 }, hasTouch: true, isMobile: true });
   const page = await context.newPage();
-  await page.goto(srv.base + "/wholesale-preview/signin");
+  await page.goto(srv.base + "/wholesale/signin");
   await page.locator("#username").fill(username);
   await page.locator("#password").fill(password);
   await page.locator("#login-submit").click();
-  await page.waitForURL(/\/wholesale-preview\/$/);
+  await page.waitForURL(/\/wholesale\/$/);
   const card = page.locator(`article[data-product="${productId}"]`);
   await card.waitFor();
   await chooseWholesalePack(page, card, 'kilo');
@@ -97,7 +97,7 @@ test("checkout cart: a confirmed order clears stale tabs and survives reload eve
     await context.addInitScript(rejectEmptyWrites);
     await page.evaluate(rejectEmptyWrites);
     const stale = await context.newPage();
-    await stale.goto(srv.base + "/wholesale-preview/");
+    await stale.goto(srv.base + "/wholesale/");
     await stale.locator("#products article").first().waitFor();
     assert.equal(await stale.locator("#basket-count").textContent(), "1", "another tab starts with the same unsubmitted cart");
     const otherKey = "strangers.wholesale-preview.v2.other-customer";
@@ -123,7 +123,7 @@ test("checkout cart: confirmation preserves a newer different cart saved while i
   try {
     const key = await cartKey(page);
     const editor = await context.newPage();
-    await editor.goto(srv.base + "/wholesale-preview/");
+    await editor.goto(srv.base + "/wholesale/");
     await editor.locator("#products article").first().waitFor();
     let persisted, sent;
     const saved = new Promise(resolve => { persisted = resolve; });
