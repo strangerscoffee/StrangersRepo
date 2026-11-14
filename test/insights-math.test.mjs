@@ -36,6 +36,63 @@ test("forecast: growth lifts it gently; a year of history brings in last year's 
   assert.ok(dec.grams > nov.grams * 1.4, `${dec.grams} vs ${nov.grams}`);
 });
 
+test("forecast: the same target week has the same prediction and range across a skipped unfinished week", () => {
+  const rows = weeksBack("2026-11-09", 24).map((week, i) => ({ week, grams: 20000 + i * 1100 }));
+  const twoSteps = forecastSeries(rows, "2026-11-09", 2).weeks[1];
+  assert.deepEqual(forecastSeries(rows, "2026-11-16", 1).weeks[0], twoSteps);
+});
+
+test("forecast: a regular fortnightly order is recovered from history and beats a flat average on unseen weeks", () => {
+  const next = "2026-11-16", history = weeksBack(next, 44).map((week, i) => ({ week, grams: i % 2 === 0 ? 40000 : 0 }));
+  const result = forecastSeries(history, next, 8), actual = Array.from({ length: 8 }, (_, i) => i % 2 === 0 ? 40000 : 0);
+  assert.equal(result.model, "cycle");
+  const error = result.weeks.reduce((sum, p, i) => sum + Math.abs(p.grams - actual[i]), 0) / 8;
+  const baseline = actual.reduce((sum, n) => sum + Math.abs(n - 20000), 0) / 8;
+  assert.equal(error, 0); assert(error < baseline);
+  assert(result.validation.origins >= 6); assert(result.validation.samples > 0);
+});
+
+test("forecast: a single extreme order does not turn a steady seller into a permanently huge weekly forecast", () => {
+  const next = "2026-11-16", rows = weeksBack(next, 52).map((week, i) => ({ week, grams: i === 51 ? 400000 : 40000 }));
+  const copy = JSON.stringify(rows), result = forecastSeries(rows, next, 8);
+  assert.equal(result.model, "robust");
+  assert(result.weeks.every(p => p.grams > 30000 && p.grams < 80000));
+  assert.equal(JSON.stringify(rows), copy, "real historical bulk volume is never edited away");
+});
+
+test("forecast: future outcomes cannot influence a forecast made before they happened", () => {
+  const next = "2026-11-16", rows = weeksBack(next, 32).map((week, i) => ({ week, grams: 20000 + i % 3 * 4000 }));
+  const result = forecastSeries(rows, next, 4);
+  const later = [{ week: next, grams: 1e9 }, { week: addDays(next, 7), grams: 0 }];
+  assert.deepEqual(forecastSeries([...rows, ...later], next, 4), result);
+});
+
+test("forecast: short histories are labelled limited and stopped demand can fall to zero", () => {
+  const next = "2026-11-16";
+  const short = forecastSeries([{ week: addDays(next, -7), grams: 30000 }], next, 8);
+  assert.equal(short.rangeBasis, "limited"); assert.equal(short.validation.maeGrams, null);
+  const stopped = forecastSeries(weeksBack(next, 52).map((week, i) => ({ week, grams: i < 40 ? 40000 : 0 })), next, 8);
+  assert(stopped.weeks.every(p => p.grams === 0));
+  for (const point of [...short.weeks, ...stopped.weeks]) {
+    assert([point.grams, point.low, point.high].every(Number.isSafeInteger));
+    assert(point.low >= 0 && point.low <= point.grams && point.high >= point.grams);
+  }
+});
+
+test("forecast: totals equal the displayed coffee forecasts and new coffees do not inherit pre-launch zeros", () => {
+  const today = "2026-11-12", weeks = weeksBack("2026-11-09", 70), lines = [];
+  for (const [i, week] of weeks.entries()) for (const [coffee, grams] of [["regular", 20000], ["fortnightly", i % 2 ? 0 : 40000], ["new", i >= 62 ? 6000 : 0]]) {
+    if (grams) lines.push({ day: week, customer: "Cafe", coffee, title: coffee, pack: "kilo", bags: grams / 1000, grams, pence: grams, source: "site", order: coffee + i });
+  }
+  const input = { today, lines, open: [], settings: { batchKg: 10, yieldKg: 8, historyUntil: null } }, result = buildInsights(input);
+  for (const [i, point] of result.forecast.total.weeks.entries()) assert.equal(point.grams, result.forecast.byCoffee.reduce((sum, c) => sum + c.weeks[i].grams, 0));
+  const newCoffee = result.forecast.byCoffee.find(c => c.key === "new");
+  assert.equal(newCoffee.basis, "recent");
+  assert.deepEqual(newCoffee.weeks, forecastSeries(weeks.slice(62).map(week => ({ week, grams: 6000 })), result.nextWeek, 8).weeks);
+  const partial = { day: "2026-11-10", customer: "Cafe", coffee: "regular", title: "regular", pack: "kilo", bags: 1000, grams: 1e6, pence: 1e6, source: "site", order: "current" };
+  assert.deepEqual(buildInsights({ ...input, lines: [...lines, partial] }).forecast, result.forecast, "this week's unfinished sales are displayed but never train the forecast");
+});
+
 test("roast plan: open orders plus next week's forecast, in whole 10 kg batches of 8 kg roasted", () => {
   const today = "2026-11-12", lines = [];
   for (const week of weeksBack("2026-11-09", 10)) lines.push({ day: addDays(week, 1), customer: "Café A", coffee: "brazil", title: "Brazil", pack: "kilo", bags: 12, grams: 12000, pence: 21600, source: "site", order: "o" + week });

@@ -83,6 +83,9 @@ test("QuickBooks history: imported in chunks, nothing counted twice, products gu
   const fcCampo = ins.forecast.byCoffee.find((c) => c.key === "campo");
   assert.ok(fcCampo.weeks[0].grams > 5000 && fcCampo.weeks[0].grams < 11000, String(fcCampo.weeks[0].grams));
   assert.equal(ins.forecast.total.basis, "recent");
+  assert.equal(ins.forecast.total.model, "coffee-mix");
+  assert.ok(ins.forecast.total.validation.samples > 0);
+  for (const [i, point] of ins.forecast.total.weeks.entries()) assert.equal(point.grams, ins.forecast.byCoffee.reduce((sum, c) => sum + c.weeks[i].grams, 0), "live API coffee forecasts reconcile exactly");
   assert.ok(ins.customers.some((c) => c.name === "Bakehouse" && c.usualDays === 14));
 
   // Confirm: Rosalina is really a 227 g retail bag here, and Delivery stays out.

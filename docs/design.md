@@ -171,3 +171,9 @@ The approved wholesale polish uses quieter neutral card borders and shadows, 18 
 ## Daily Admin overview
 
 Overview leads with one actionable operational alert; additional alerts expand below it. Wholesale, site checks, pending reviews and next-week planning appear once each, in a bounded two-column desktop layout and one column on phones. Rows are full touch targets with explicit labels and neutral borders. Completed sites show a tick and signed-off text; future deadlines stay quiet and overdue checks enter the alert list. Unknown deadlines retain their task description. System & accounts is collapsed by default and retains its open state during refresh; legacy setup/account/email notices and test actions remain available there. All private data is cleared by the existing identity guard. The snapshot refreshes on change and once a minute while visible, without refreshing over a sheet/editor.
+
+## Forecast evidence
+
+Insights separates completed sales, this week's partial sales and future predictions in the chart, with grouped legend labels that wrap on phones. The partial week is displayed but excluded from model training. Models are compared at rolling historical cutoffs with no future observations available to their selection. Seasonal factors are shrunk towards recent sales and require matching prior-year observations; repeating cycles need sustained regular evidence. Every future total is the sum of the per-coffee predictions.
+
+Ranges are estimates from past forecast errors, never advertised as guaranteed 80% coverage. Thin histories are labelled limited. Historical mean absolute error is shown in kg per weekly target, with model names available on coffee headings. Saved sales remain unchanged, including real bulk orders; only the forecast fit can limit their influence. The existing manual roast-stock and batch controls still operate on the forecast.

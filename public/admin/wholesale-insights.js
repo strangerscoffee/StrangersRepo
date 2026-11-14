@@ -69,14 +69,14 @@ window.WholesaleInsights = function ({ api, html, raw, svg, put, openSheet, clos
   function bars(points, fmt, label, forecast = []) {
     const all = [...points.map((p) => p.value), ...forecast.map((p) => p.high)], top = nice(Math.max(...all, 0));
     const every = Math.ceil((points.length + forecast.length) / 8);
-    const col = (p, i, kind) => html`<div class="ins-col ${kind}" title="${p.tip}: ${fmt(p.value)}${kind === "fc" ? ` (likely ${fmt(p.low)}–${fmt(p.high)})` : ""}">
+    const col = (p, i, kind) => html`<div class="ins-col ${kind}" title="${p.tip}: ${fmt(p.value)}${kind === "fc" ? ` (estimated ${fmt(p.low)}–${fmt(p.high)})` : ""}">
       ${kind === "fc" ? html`<span class="ins-range" style="bottom:${(p.low / top) * 100}%;height:${((p.high - p.low) / top) * 100}%"></span>` : ""}
       <span class="ins-bar" style="height:${Math.max(p.value > 0 ? 1.5 : 0, (p.value / top) * 100)}%"></span>
       <span class="ins-x ${i % every ? "hide" : ""}">${p.label}</span></div>`;
     return html`<figure class="ins-chart" aria-label="${label}"><div class="ins-plot">
       ${[1, 0.5].map((f) => html`<div class="ins-grid" style="bottom:${f * 100}%"><span>${fmt(top * f)}</span></div>`)}<div class="ins-grid base" style="bottom:0"><span>0</span></div>
-      <div class="ins-cols">${points.map((p, i) => col(p, i, ""))}${forecast.map((p, i) => col(p, points.length + i, "fc"))}</div></div>
-      ${forecast.length ? html`<figcaption class="ins-key"><span class="ins-swatch"></span>Sold<span class="ins-swatch fc"></span>Forecast, with its likely range</figcaption>` : ""}</figure>`;
+      <div class="ins-cols">${points.map((p, i) => col(p, i, p.partial ? "partial" : ""))}${forecast.map((p, i) => col(p, points.length + i, "fc"))}</div></div>
+      ${forecast.length ? html`<figcaption class="ins-key"><span class="ins-key-item"><span class="ins-swatch"></span>Sold</span>${points.some(p => p.partial) ? html`<span class="ins-key-item"><span class="ins-swatch partial"></span>This week so far</span>` : ""}<span class="ins-key-item"><span class="ins-swatch fc"></span>Forecast and estimated range</span></figcaption>` : ""}</figure>`;
   }
   // The coffee mix: one stacked bar per week (or month), each coffee in its packaging colour, the biggest at the bottom;
   // up to 7 coffees by name, the rest as Other coffees. The legend gives each coffee's total for the period.
@@ -131,13 +131,16 @@ window.WholesaleInsights = function ({ api, html, raw, svg, put, openSheet, clos
     const f = data.forecast, recent = data.weekly.filter((w) => w.week < data.thisWeek).slice(-12);
     if (!recent.length || f.total.basis === "none") return html`<section class="ins-section glass"><h3>Forecast</h3><p class="hint">The forecast starts once there's at least a week of sales.</p></section>`;
     const pts = recent.map((w) => ({ label: day(w.week), tip: `Week of ${longDay(w.week)}`, value: w.grams }));
+    const partial = data.weekly.find(w => w.week === data.thisWeek);
+    if (partial) pts.push({ label: day(partial.week), tip: `Week of ${longDay(partial.week)} (so far; excluded from training)`, value: partial.grams, partial: true });
     const fc = f.total.weeks.map((p) => ({ label: day(p.week), tip: `Week of ${longDay(p.week)} (forecast)`, value: p.grams, low: p.low, high: p.high }));
     const head4 = f.total.weeks.slice(0, 4);
     return html`<section class="ins-section glass" aria-labelledby="insFc"><header class="ins-head"><h3 id="insFc">Forecast: ${data.customer ? `${data.customer.name}'s coffee` : "coffee"} for the next ${f.total.weeks.length} weeks</h3></header>
-      <p class="hint">${f.total.basis === "seasonal" ? "From recent weeks, the trend and last year's pattern for the same weeks." : "From recent weeks and the trend. Last year's pattern (Christmas, summer) joins in once there's over a year of history."} An estimate: the shaded range is where most weeks land.</p>
+      <p class="hint">Models are compared against earlier completed weeks when enough history is available.${f.total.basis === "seasonal" ? " Last year's pattern also contributes where history supports it." : ""} This week's unfinished sales are shown separately and excluded from training. Shading shows an estimated range.</p>
+      <p class="hint ins-forecast-validation">${f.total.validation?.origins >= 6 ? `Average error in historical checks: ${kg(f.total.validation.maeGrams)} per week.` : "Limited completed history: these are rough planning estimates."}${f.total.rangeBasis === "limited" ? " There is limited evidence for the longer-range estimates." : " Ranges use past prediction errors."}</p>
       ${bars(pts, (g) => kg(g, 0), "Coffee sold in recent weeks and forecast for the coming weeks", fc)}
       <div class="ins-table-wrap"><table class="ins-table"><caption class="sr-only">Forecast by coffee, kg</caption><thead><tr><th scope="col">Coffee</th>${head4.map((p) => html`<th scope="col" class="num">w/c ${day(p.week)}</th>`)}<th scope="col" class="num">Recent weekly</th></tr></thead>
-      <tbody>${f.byCoffee.map((c) => html`<tr><th scope="row">${swatch(c.key, c.title)}${c.title}</th>${c.weeks.slice(0, 4).map((p) => html`<td class="num" title="Likely ${kg(p.low)}–${kg(p.high)}">${kgNum(p.grams)}</td>`)}<td class="num muted">${kgNum(c.recentWeekly)}</td></tr>`)}</tbody>
+      <tbody>${f.byCoffee.map((c) => html`<tr><th scope="row" title="${c.modelLabel || "Recent sales"}">${swatch(c.key, c.title)}${c.title}</th>${c.weeks.slice(0, 4).map((p) => html`<td class="num" title="Estimated ${kg(p.low)}–${kg(p.high)}">${kgNum(p.grams)}</td>`)}<td class="num muted">${kgNum(c.recentWeekly)}</td></tr>`)}</tbody>
       <tfoot><tr><th scope="row">All coffee</th>${head4.map((p) => html`<td class="num"><b>${kgNum(p.grams)}</b></td>`)}<td class="num muted">${kgNum(f.total.recentWeekly)}</td></tr></tfoot></table></div></section>`;
   }
   // Coffee colours: the packaging colour (or stripes) of each coffee, from what Admin saved, the packaging table or a

@@ -132,3 +132,9 @@
   .ins-periods .seg{display:flex;width:100%}
   .ins-periods .seg button{flex:1 1 0;padding-inline:8px}
 }
+
+/* Incomplete weeks have their own labelled mark and never train the forecast. */
+.ins-col.partial .ins-bar,.ins-swatch.partial{opacity:.45}
+.ins-forecast-validation{margin-top:8px}
+.ins-key-item{display:inline-flex;align-items:center;gap:6px}
+.ins-key .ins-swatch{margin:0;flex:none}

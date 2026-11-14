@@ -48,40 +48,178 @@ export function suggestMapping(product: string, coffees: { id: string; name: str
 
 /* ---------- forecasting ---------- */
 export interface WeekPoint { week: string; grams: number; low: number; high: number }
-export interface Forecast { weeks: WeekPoint[]; basis: "seasonal" | "recent" | "none"; recentWeekly: number }
-/**
- * Expected grams for each of the next `ahead` weeks from a weekly series (complete weeks only, oldest first, ending
- * the week before `nextWeek`). The level is an exponentially weighted average of the last 12 weeks; a gentle trend
- * (the last 8 weeks against the 8 before, capped at ±3% a week and fading out); and, with over a year of history,
- * last year's shape around the same weeks. The range is the typical miss of that level over recent weeks (about 80%).
- */
-export function forecastSeries(series: { week: string; grams: number }[], nextWeek: string, ahead: number): Forecast {
-  const weeks = Array.from({ length: ahead }, (_, i) => addDays(nextWeek, i * 7));
-  const values = series.map((s) => s.grams);
-  if (!values.some((v) => v > 0)) return { weeks: weeks.map((week) => ({ week, grams: 0, low: 0, high: 0 })), basis: "none", recentWeekly: 0 };
-  const recent = values.slice(-12), alpha = 0.3;
-  let level = mean(recent.slice(0, Math.min(4, recent.length))); const misses: number[] = [];
-  for (const v of recent) { misses.push(v - level); level = alpha * v + (1 - alpha) * level; }
-  const last8 = mean(values.slice(-8)), prev8 = values.length >= 16 ? mean(values.slice(-16, -8)) : 0;
-  const growth = prev8 > 0 && last8 > 0 ? Math.max(-0.03, Math.min(0.03, Math.pow(last8 / prev8, 1 / 8) - 1)) : 0;
-  const spread = Math.sqrt(mean(misses.map((m) => m * m))) * 1.28;
-  const byWeek = new Map(series.map((s) => [s.week, s.grams]));
-  const seasonal = series.length >= 60;
-  const avgAround = (centre: string, from: number, to: number) => { const xs: number[] = []; for (let i = from; i <= to; i++) xs.push(byWeek.get(addDays(centre, i * 7)) ?? 0); return mean(xs); };
-  const baseLastYear = seasonal ? avgAround(addDays(nextWeek, -364), -8, -1) : 0;
-  let basis: Forecast["basis"] = "recent";
-  const points = weeks.map((week, i) => {
-    let factor = 1;
-    for (let k = 1; k <= i + 1; k++) factor *= 1 + growth * Math.pow(0.9, k);
-    let season = 1;
-    if (seasonal && baseLastYear > 0) {
-      const then = avgAround(addDays(week, -364), -2, 2);
-      if (then > 0) { season = Math.max(0.5, Math.min(2.5, then / baseLastYear)); basis = "seasonal"; }
+type Model = "recent" | "average4" | "average8" | "robust" | "intermittent" | "cycle";
+interface Observation { week: string; tick: number; grams: number }
+interface Trial { origin: number; target: number; lead: number; actual: number; predicted: number; error: number }
+export interface ForecastValidation { samples: number; origins: number; maeGrams: number | null; biasGrams: number | null }
+export interface Forecast {
+  weeks: WeekPoint[]; basis: "seasonal" | "recent" | "none"; recentWeekly: number;
+  model: Model | "coffee-mix"; modelLabel: string; validation: ForecastValidation; rangeBasis: "backtest" | "limited";
+}
+const MODELS: Model[] = ["recent", "average4", "average8", "robust", "intermittent", "cycle"];
+const MODEL_LABELS = { recent: "Recent level and trend", average4: "Four-week average", average8: "Eight-week average", robust: "Outlier-resistant trend", intermittent: "Occasional ordering", cycle: "Repeating order pattern", "coffee-mix": "Combined coffee forecasts" };
+const ORIGINS = 16; // Bounded work per coffee; no training service or dependencies.
+const weekTick = (week: string) => Math.floor(toTime(week) / (7 * DAY));
+const clamp = (v: number, low: number, high: number) => Math.max(low, Math.min(high, v));
+const quantile = (values: number[], p: number) => {
+  const sorted = [...values].sort((a, b) => a - b), at = (sorted.length - 1) * p;
+  return sorted.length ? sorted[Math.floor(at)] + (sorted[Math.ceil(at)] - sorted[Math.floor(at)]) * (at % 1) : 0;
+};
+const smooth = (values: number[]) => {
+  let level = mean(values.slice(0, 4));
+  for (const v of values) level = 0.3 * v + 0.7 * level;
+  return level;
+};
+
+/** Every fit sees only its training prefix. Dates, not array positions, determine the lead. */
+function fitModels(rows: Observation[]) {
+  const coveredWeeks = rows.length;
+  rows = rows.slice(-104); // No candidate needs more than two years at a historical cutoff.
+  const values = rows.map(r => Math.max(0, r.grams)), recent = values.slice(-12), last = rows.at(-1)!.tick;
+  const level = smooth(recent), prev8 = values.length >= 16 ? mean(values.slice(-16, -8)) : 0;
+  const growth = prev8 > 0 && mean(values.slice(-8)) > 0 ? clamp(Math.pow(mean(values.slice(-8)) / prev8, 1 / 8) - 1, -0.03, 0.03) : 0;
+  const centre = median(recent), deviation = median(recent.map(v => Math.abs(v - centre)));
+  const radius = 3 * Math.max(deviation * 1.4826, centre * 0.2, 1);
+  const robust = recent.map(v => clamp(v, Math.max(0, centre - radius), centre + radius));
+  const exceptional = recent.filter((v, i) => v !== robust[i]).length;
+  const fallback: Model = recent.length >= 8 && recent.filter(v => v > 0).length / recent.length >= 0.75 && exceptional > 0 && exceptional <= 2 ? "robust" : "recent";
+  const robustLevel = smooth(robust), before = mean(robust.slice(-8, -4)), after = mean(robust.slice(-4));
+  const robustGrowth = before > 0 && after > 0 ? clamp(Math.pow(after / before, 1 / 4) - 1, -0.03, 0.03) : 0;
+  const positive = rows.filter(r => r.grams > 0).slice(-12);
+  const cycleSize = median(positive.map(r => r.grams));
+  const gaps = positive.slice(1).map((r, i) => r.tick - positive[i].tick), period = Math.round(median(gaps));
+  const cycle = positive.length >= 4 && period >= 2 && period <= 8 && gaps.every(g => g === period) && last - positive.at(-1)!.tick < 2 * period;
+  let probability = values.slice(-52).filter(v => v > 0).length / Math.min(52, values.length);
+  let orderSize = mean(values.slice(-52).filter(v => v > 0));
+  for (const value of values.slice(-52)) { probability = 0.15 * Number(value > 0) + 0.85 * probability; if (value > 0) orderSize = 0.2 * value + 0.8 * orderSize; }
+  const eligible = MODELS.filter(m => m !== "cycle" || cycle).filter(m => m !== "intermittent" || (positive.length >= 3 && values.slice(-26).filter(v => v === 0).length / Math.min(26, values.length) >= 0.35));
+  const lookup = new Map(rows.map(r => [r.tick, Math.max(0, r.grams)]));
+  const yearlyBase = Array.from({ length: 8 }, (_, i) => lookup.get(last - 52 - i));
+  const yearLevel = yearlyBase.every(v => v !== undefined) ? mean(yearlyBase as number[]) : 0;
+  const seasonal = rows.length >= 60 && yearlyBase.every(v => v !== undefined) && yearlyBase.filter(v => v! > 0).length >= 4 && yearLevel > 0;
+  const seasons = new Map<number, number>();
+  const season = (tick: number) => {
+    if (!seasonal) return 1;
+    if (seasons.has(tick)) return seasons.get(tick)!;
+    const around = Array.from({ length: 5 }, (_, i) => lookup.get(tick - 52 + i - 2));
+    if (around.some(v => v === undefined)) return 1;
+    const ratio = clamp(mean(around as number[]) / yearLevel, 0.5, 2.5);
+    // One yearly comparison is evidence, not certainty. Shrink its effect towards the recent level.
+    const value = 1 + (ratio - 1) * Math.min(0.85, 0.6 + (coveredWeeks - 60) / 208);
+    seasons.set(tick, value);
+    return value;
+  };
+  const rawPrediction = (model: Model, tick: number) => {
+    const lead = Math.max(1, tick - last);
+    if (model === "cycle" && cycle) return (tick - positive.at(-1)!.tick) % period === 0 ? cycleSize : 0;
+    let estimate = model === "average4" ? mean(values.slice(-4)) : model === "average8" ? mean(values.slice(-8)) : model === "intermittent" ? probability * orderSize : model === "robust" ? robustLevel : level;
+    if (model === "recent" || model === "robust") for (let k = 1; k <= Math.min(lead, 104); k++) estimate *= 1 + (model === "robust" ? robustGrowth : growth) * Math.pow(0.9, k);
+    return Math.max(0, estimate * season(tick));
+  };
+  const predictions: Partial<Record<Model, Map<number, number>>> = {};
+  const predict = (model: Model, tick: number) => {
+    const cached = predictions[model] ||= new Map();
+    if (!cached.has(tick)) cached.set(tick, rawPrediction(model, tick));
+    return cached.get(tick)!;
+  };
+  return { predict, eligible, season, fallback };
+}
+
+/** Select only on outcomes that were already observable at the historical cutoff. */
+function chooseModel(scores: Record<Model, Trial[]>, cutoff: number, eligible: Model[], fallback: Model): Model {
+  const scored = eligible.map(model => {
+    let origins = 0, lastOrigin = -Infinity, squaredError = 0, count = 0;
+    for (const trial of scores[model]) if (trial.target <= cutoff) {
+      if (lastOrigin !== trial.origin) { origins++; lastOrigin = trial.origin; }
+      squaredError += trial.error * trial.error; count++;
     }
-    const grams = Math.max(0, level * factor * season), width = spread * Math.sqrt(1 + i * 0.25) * season;
-    return { week, grams: Math.round(grams), low: Math.round(Math.max(0, grams - width)), high: Math.round(grams + width) };
+    // Expected production volume needs a mean forecast. MAE-only selection can reward
+    // predicting zero for occasional sellers; squared error penalises missed volume.
+    return { model, origins, error: count ? Math.sqrt(squaredError / count) : 0 };
   });
-  return { weeks: points, basis, recentWeekly: Math.round(mean(values.slice(-4))) };
+  const base = scored.find(s => s.model === fallback)!;
+  if (base.origins < 6) return fallback;
+  const best = scored.filter(s => s.origins >= 6).sort((a, b) => a.error - b.error)[0];
+  return best && best.error < base.error * 0.97 ? best.model : fallback;
+}
+const validationOf = (trials: Trial[]): ForecastValidation => ({ samples: trials.length, origins: new Set(trials.map(t => t.origin)).size,
+  maeGrams: trials.length ? Math.round(mean(trials.map(t => Math.abs(t.error)))) : null, biasGrams: trials.length ? Math.round(mean(trials.map(t => t.error))) : null });
+
+function predictionBand(grams: number, lead: number, trials: Trial[], typical: number) {
+  const atLead = trials.filter(t => t.lead === lead).map(t => t.error);
+  const floor = Math.max(100, Math.max(0, typical) * 0.05 * Math.sqrt(lead));
+  if (atLead.length >= 6) return { low: Math.round(Math.max(0, Math.min(grams, grams + quantile(atLead, 0.1)) - floor)), high: Math.round(Math.max(grams, grams + quantile(atLead, 0.9)) + floor), measured: true };
+  const near = trials.filter(t => t.lead === 1).map(t => t.error);
+  const width = Math.max(floor, (near.length ? Math.sqrt(mean(near.map(e => e * e))) * 1.28 : Math.max(grams, typical) * 0.4) * Math.sqrt(lead));
+  return { low: Math.round(Math.max(0, grams - width)), high: Math.round(grams + width), measured: false };
+}
+
+function forecastRun(series: { week: string; grams: number }[], nextWeek: string, ahead: number): { forecast: Forecast; trials: Trial[] } {
+  const rows = series.filter(r => r.week < nextWeek && Number.isFinite(r.grams)).map(r => ({ ...r, tick: weekTick(r.week) })).sort((a, b) => a.tick - b.tick);
+  const weeks = Array.from({ length: ahead }, (_, i) => addDays(nextWeek, i * 7));
+  const recentWeekly = Math.round(mean(rows.slice(-4).map(r => r.grams)));
+  if (!rows.some(r => r.grams > 0)) return { forecast: { weeks: weeks.map(week => ({ week, grams: 0, low: 0, high: 0 })), basis: "none", recentWeekly, model: "recent", modelLabel: MODEL_LABELS.recent, validation: validationOf([]), rangeBasis: "limited" }, trials: [] };
+  const lead = Math.max(1, weekTick(nextWeek) - rows.at(-1)!.tick), maxLead = Math.min(26, lead + ahead - 1);
+  const scores = Object.fromEntries(MODELS.map(m => [m, []])) as unknown as Record<Model, Trial[]>;
+  const trials: Trial[] = [];
+  for (let cut = Math.max(1, rows.length - ORIGINS); cut < rows.length; cut++) {
+    const fit = fitModels(rows.slice(0, cut)), origin = rows[cut - 1].tick;
+    const selected = chooseModel(scores, origin, fit.eligible, fit.fallback);
+    for (let target = cut; target < rows.length && rows[target].tick - origin <= maxLead; target++) {
+      const row = rows[target], horizon = row.tick - origin;
+      if (horizon <= 0) continue;
+      for (const model of MODELS) {
+        const predicted = Math.round(fit.predict(fit.eligible.includes(model) ? model : "recent", row.tick));
+        const trial = { origin, target: row.tick, lead: horizon, actual: Math.max(0, row.grams), predicted, error: Math.max(0, row.grams) - predicted };
+        scores[model].push(trial);
+        if (model === selected) trials.push(trial);
+      }
+    }
+  }
+  const fit = fitModels(rows), model = chooseModel(scores, rows.at(-1)!.tick, fit.eligible, fit.fallback), typical = Math.max(0, mean(rows.slice(-12).map(r => r.grams)));
+  let measured = true;
+  const points = weeks.map(week => {
+    const tick = weekTick(week), grams = Math.round(fit.predict(model, tick)), band = predictionBand(grams, tick - rows.at(-1)!.tick, trials, typical);
+    measured &&= band.measured;
+    return { week, grams, low: band.low, high: band.high };
+  });
+  return { forecast: { weeks: points, basis: weeks.some(w => model !== "cycle" && fit.season(weekTick(w)) !== 1) ? "seasonal" : "recent", recentWeekly, model, modelLabel: MODEL_LABELS[model], validation: validationOf(trials.filter(t => t.lead >= lead && t.lead < lead + ahead)), rangeBasis: measured ? "backtest" : "limited" }, trials };
+}
+
+/** Complete weeks only. A bounded rolling-origin evaluation chooses between six small models. */
+export function forecastSeries(series: { week: string; grams: number }[], nextWeek: string, ahead: number): Forecast {
+  return forecastRun(series, nextWeek, ahead).forecast;
+}
+
+/** Sum the coffee predictions, and measure the same bottom-up procedure at past cutoffs. */
+function combinedForecast(series: { week: string; grams: number }[], nextWeek: string, ahead: number, runs: { forecast: Forecast; trials: Trial[] }[]): Forecast {
+  const rows = series.map(r => ({ ...r, tick: weekTick(r.week) }));
+  const recentWeekly = Math.round(mean(rows.slice(-4).map(r => r.grams))), weeks = Array.from({ length: ahead }, (_, i) => addDays(nextWeek, i * 7));
+  if (!rows.length || (!rows.some(r => r.grams > 0) && !runs.some(r => r.forecast.weeks.some(p => p.grams > 0)))) return { weeks: weeks.map(week => ({ week, grams: 0, low: 0, high: 0 })), basis: "none", recentWeekly, model: "coffee-mix", modelLabel: MODEL_LABELS["coffee-mix"], validation: validationOf([]), rangeBasis: "limited" };
+  const firstLead = Math.max(1, weekTick(nextWeek) - rows.at(-1)!.tick), maxLead = Math.min(26, firstLead + ahead - 1);
+  const predicted = new Map<string, number>();
+  for (const run of runs) for (const trial of run.trials) {
+    const key = `${trial.origin}:${trial.target}`;
+    predicted.set(key, (predicted.get(key) || 0) + trial.predicted);
+  }
+  const trials: Trial[] = [];
+  for (let cut = Math.max(1, rows.length - ORIGINS); cut < rows.length; cut++) {
+    const origin = rows[cut - 1].tick;
+    for (let target = cut; target < rows.length && rows[target].tick - origin <= maxLead; target++) {
+      const row = rows[target], estimate = predicted.get(`${origin}:${row.tick}`) || 0;
+      // A coffee not yet launched at this cutoff contributes no invented historical prediction.
+      trials.push({ origin, target: row.tick, lead: row.tick - origin, actual: Math.max(0, row.grams), predicted: estimate, error: Math.max(0, row.grams) - estimate });
+    }
+  }
+  let measured = true;
+  const typical = Math.max(0, mean(rows.slice(-12).map(r => r.grams)));
+  const points = weeks.map((week, i) => {
+    const grams = runs.reduce((sum, r) => sum + (r.forecast.weeks[i]?.grams || 0), 0);
+    const band = predictionBand(grams, weekTick(week) - rows.at(-1)!.tick, trials, typical);
+    measured &&= band.measured;
+    return { week, grams, low: band.low, high: band.high };
+  });
+  return { weeks: points, basis: runs.some(r => r.forecast.basis === "seasonal") ? "seasonal" : "recent", recentWeekly, model: "coffee-mix", modelLabel: MODEL_LABELS["coffee-mix"], validation: validationOf(trials.filter(t => t.lead >= firstLead && t.lead < firstLead + ahead)), rangeBasis: measured ? "backtest" : "limited" };
 }
 
 /* ---------- everything for the page ---------- */
@@ -90,12 +228,14 @@ export function buildInsights(input: { today: string; lines: SaleLine[]; open: O
   const { today, lines, open, settings } = input, ahead = input.ahead ?? 8;
   const thisWeek = mondayOf(today), nextWeek = addDays(thisWeek, 7);
   const titles = new Map<string, string>();
+  const coffeeStarts = new Map<string, string>();
   const weeks = new Map<string, WeekRow & { orderSet: Set<string> }>();
   const customers = new Map<string, { name: string; days: Set<string>; orders: Set<string>; pence: number; grams: number; recentPence: number; recentGrams: number; coffees: Map<string, number> }>();
   let first: string | null = null;
   for (const l of lines) {
     if (l.day > today) continue;
     titles.set(l.coffee, l.title);
+    if (l.grams > 0 && (!coffeeStarts.has(l.coffee) || l.day < coffeeStarts.get(l.coffee)!)) coffeeStarts.set(l.coffee, l.day);
     if (!first || l.day < first) first = l.day;
     const w = mondayOf(l.day);
     const row = weeks.get(w) || { week: w, pence: 0, grams: 0, bags: 0, quarter: 0, kilo: 0, other: 0, orders: 0, byCoffee: {}, orderSet: new Set<string>() };
@@ -119,9 +259,13 @@ export function buildInsights(input: { today: string; lines: SaleLine[]; open: O
     weekly.push(row ? { week: w, pence: row.pence, grams: row.grams, bags: row.bags, quarter: row.quarter, kilo: row.kilo, other: row.other, orders: row.orderSet.size, byCoffee: row.byCoffee } : { week: w, pence: 0, grams: 0, bags: 0, quarter: 0, kilo: 0, other: 0, orders: 0, byCoffee: {} });
   }
   const complete = weekly.filter((w) => w.week < thisWeek);
-  const total = forecastSeries(complete.map((w) => ({ week: w.week, grams: w.grams })), nextWeek, ahead);
   const coffeeKeys = [...titles.keys()];
-  const byCoffee = coffeeKeys.map((key) => ({ key, title: titles.get(key)!, ...forecastSeries(complete.map((w) => ({ week: w.week, grams: w.byCoffee[key]?.[0] || 0 })), nextWeek, ahead) }))
+  const coffeeRuns = coffeeKeys.map(key => {
+    const start = coffeeStarts.has(key) ? mondayOf(coffeeStarts.get(key)!) : thisWeek;
+    return { key, ...forecastRun(complete.filter(w => w.week >= start).map(w => ({ week: w.week, grams: w.byCoffee[key]?.[0] || 0 })), nextWeek, ahead) };
+  });
+  const total = combinedForecast(complete.map(w => ({ week: w.week, grams: w.grams })), nextWeek, ahead, coffeeRuns);
+  const byCoffee = coffeeRuns.map(({ key, forecast }) => ({ key, title: titles.get(key)!, ...forecast }))
     .filter((f) => f.recentWeekly > 0 || f.weeks.some((p) => p.grams > 0)).sort((a, b) => b.weeks[0].grams - a.weeks[0].grams);
   // Roast plan for next week: what's ordered but not yet packed, plus what's expected next week, in whole batches.
   const openBy = new Map<string, OpenLine>();

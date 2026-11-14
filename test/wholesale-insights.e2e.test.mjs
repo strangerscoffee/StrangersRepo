@@ -81,7 +81,11 @@ test("import QuickBooks history, confirm products, then read the insights and pl
   await p.locator(".ins-tiles").waitFor();
   const text = await p.locator(".ins-workspace").innerText();
   assert.match(text, /QuickBooks history 2 Jun 2025 to/);
-  assert.match(text, /last year's pattern for the same weeks/, "over a year of history: seasonal forecast");
+  assert.match(text, /Models are compared against earlier completed weeks/, "history is tested before choosing a forecasting method");
+  const forecast = (await call("GET", "/api/admin/wholesale/insights")).body.forecast;
+  if (forecast.total.basis === "seasonal") assert.match(text, /Last year's pattern also contributes/);
+  assert.equal(await p.locator('section[aria-labelledby="insFc"] .ins-col.partial').count(), 1, "the unfinished week has its own labelled bar");
+  assert.match(await p.locator('.ins-forecast-validation').innerText(), /historical checks|Limited completed history/);
   assert.match(text, /Roast plan · week of/);
   assert.match(text, /Bakehouse Norwich/);
   const campo = p.locator('[data-roast="campo"]');
@@ -154,6 +158,7 @@ test("on a phone and an iPad, light and dark", async () => {
     const overflow = await p.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     assert.ok(overflow <= 1, `${name} ${colorScheme}: the page doesn't scroll sideways (${overflow}px)`);
     if (process.env.WHOLESALE_SCREENSHOT_DIR) await p.screenshot({ path: `${process.env.WHOLESALE_SCREENSHOT_DIR}/insights-${name}-${colorScheme}.png`, fullPage: true });
+    if (process.env.WHOLESALE_SCREENSHOT_DIR) await p.locator('section[aria-labelledby="insFc"]').screenshot({ path: `${process.env.WHOLESALE_SCREENSHOT_DIR}/forecast-${name}-${colorScheme}.png` });
     await p.locator('[data-act="wh-ins-pick"]').click(); await p.locator(".ins-pick-row").first().waitFor();
     if (process.env.WHOLESALE_SCREENSHOT_DIR) await p.screenshot({ path: `${process.env.WHOLESALE_SCREENSHOT_DIR}/insights-picker-${name}-${colorScheme}.png` });
     await p.locator(".ins-pick-row").first().click(); await p.locator("#insCustTitle").waitFor();

@@ -312,3 +312,7 @@ Custom catalogue records may set `customerOnly: true` alongside the existing `wh
 ### Daily Admin overview
 
 Admin-only `GET /api/admin/overview` retains its existing fields and adds `daily`: server `asOf`, real customer order aggregates, invoice overdue/review summary, pending account/annual/other-absence/shift counts, approved annual-leave people on next Monday, current site deadlines, operational alerts and next-week publication summary. No private data moves to public assets or nonadmin endpoints. `GET /api/admin/wholesale/orders?queue=prepare|ready` uses the existing keyset pagination/search with real-customer and nondeleted-record filters, applied before counting and paging. This read-only filter never updates order status.
+
+### Forecast diagnostics
+
+Existing admin-only Insights responses retain `forecast.total` and `forecast.byCoffee` with integer-gram week points and add `model`, `modelLabel`, `validation` (`samples`, `origins`, `maeGrams`, signed `biasGrams`) and `rangeBasis` (`backtest` or `limited`). Positive bias means recorded demand exceeded the historical prediction. Diagnostics describe bounded rolling-origin checks of the forecasting process, not promised future accuracy. Internal historical trials are not returned. Customer-filtered Insights use only that customer's sales for models, calibration and totals, while the existing admin customer picker remains available.
