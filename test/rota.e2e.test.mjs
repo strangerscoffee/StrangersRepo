@@ -296,3 +296,36 @@ for (const [label, viewport] of [["phone", { width: 393, height: 852 }], ["iPad"
     } finally { await m.ctx.close(); await a.ctx.close(); }
   });
 }
+
+for (const [label, viewport] of [["phone", { width: 393, height: 852 }], ["iPad", { width: 1180, height: 820 }]]) for (const scheme of ["light", "dark"]) {
+  test(`Hours by month for payroll on a ${label} (${scheme})`, async () => {
+    const today = londonToday();
+    const month = today.slice(0, 7);
+    await call("PUT", "/api/rota/people/" + ALEX_ID, { contractHours: 30 });
+    if (!(await call("GET", "/api/rota/week?start=" + today)).shifts.some((s) => s.userId === ALEX_ID && s.day === today))
+      await call("POST", "/api/rota/shifts", { site: "cafe", day: today, start: "08:00", end: "16:30", breakMins: 30, job: "", userId: ALEX_ID });
+    const m = await pageFor(viewport);
+    await m.page.emulateMedia({ colorScheme: scheme });
+    await m.page.goto(srv.base + "/rota/#hours");
+    await m.page.locator(".htable").waitFor();
+    await m.page.locator(".hmode").getByRole("button", { name: "Month", exact: true }).click();
+    await m.page.locator(".mtable").waitFor();
+    const title = new Date(month + "-01T12:00:00Z").toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
+    assert.match(await m.page.locator("body").innerText(), new RegExp(title + " · all sites · for payroll"));
+    const row = m.page.locator(".mtable tbody tr", { hasText: "Alex Brown" });
+    assert.match(await row.innerText(), /Alex Brown\s+\d+(\.\d+)?\*?/, "Alex has hours this month");
+    assert.equal(await m.page.locator(`a[href="/api/rota/hours?month=${month}&format=csv"]`).count(), 1);
+    assert.equal(await m.page.locator(`a[href="/api/rota/hours?month=${month}&format=shifts"]`).count(), 1);
+    assert.equal(await m.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "no sideways scrolling");
+    const csv = await m.page.evaluate(async (u) => (await fetch(u)).text(), `/api/rota/hours?month=${month}&format=csv`);
+    assert.match(csv, /^Name,Hours worked,Basic hours,Overtime hours/);
+    if (process.env.SHOT_DIR) await m.page.screenshot({ path: `${process.env.SHOT_DIR}/month-${label}-${scheme}.png`, fullPage: true });
+    // Back to the week, and the previous month.
+    await m.page.getByRole("button", { name: "Previous month" }).click();
+    await m.page.waitForFunction((t) => !document.body.innerText.includes(t + " · all sites"), title);
+    await m.page.locator(".hmode").getByRole("button", { name: "Week", exact: true }).click();
+    await m.page.locator(".htable:not(.mtable)").waitFor();
+    assert.deepEqual(m.errors, []);
+    await m.ctx.close();
+  });
+}

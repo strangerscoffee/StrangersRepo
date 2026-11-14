@@ -153,7 +153,7 @@ test("security: staff can't use manager or admin features, managers can't use ad
     ["POST", "shifts", { site: "cafe", day: "2026-12-01", start: "09:00", end: "17:00" }], ["PATCH", "shifts/x", { start: "08:00" }],
     ["DELETE", "shifts/x"], ["PUT", "shifts/x/actual", { start: "09:00", end: "12:00" }], ["POST", "week/copy", { from: "2026-11-23", to: "2026-11-30" }],
     ["POST", "week/publish", { week: "2026-11-30" }], ["POST", "week/publish", { week: "2026-11-30", email: true }], ["GET", "week/emails?week=2026-11-30"], ["GET", "suggest?shift=x"], ["GET", "hours?start=2026-11-30"],
-    ["GET", "hours?start=2026-11-30&format=csv"], ["PUT", `people/${someone.id}`, {}], ["PUT", `people/${someone.id}`, { contractMax: 60 }], ["PUT", "me/availability", { sites: ["cafe"] }],
+    ["GET", "hours?start=2026-11-30&format=csv"], ["GET", "hours?month=2026-11"], ["GET", "hours?month=2026-11&format=csv"], ["GET", "hours?month=2026-11&format=shifts"], ["PUT", `people/${someone.id}`, {}], ["PUT", `people/${someone.id}`, { contractMax: 60 }], ["PUT", "me/availability", { sites: ["cafe"] }],
     ["POST", "time-off", { userId: other.id, from: "2026-12-01", to: "2026-12-02", reason: "x" }],
     ["GET", "sickness"], ["DELETE", "sickness/x"], ["GET", `sickness/preview?userId=${other.id}&kind=off&from=2026-12-01&to=2026-12-01`],
     ["POST", "sickness", { userId: other.id, requestKey: "security-probe-1", kind: "off", from: "2026-12-01", to: "2026-12-01", category: "Other", details: "x", vomiting: false, doctor: false, workAccident: false, declared: true }],
