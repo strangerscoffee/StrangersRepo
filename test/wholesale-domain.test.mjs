@@ -93,6 +93,14 @@ test("wholesale domain: customer-only sign-in and approval work without exposing
   assert.equal(profile.data.customer.business, "Trade café"); assert.equal(profile.data.me.role, "wholesale"); assert.equal(profile.data.links.admin, undefined);
   assert.equal((await call("GET", "/", undefined, customerCookie)).response.status, 200);
   assert.equal((await call("GET", "/api/wholesale/catalogue", undefined, customerCookie)).data.products.length, 14);
+  for (const prefix of ["/wholesale/", "/wholesale-preview/"]) {
+    const source = await call("GET", prefix + "catalogue.js", undefined, customerCookie);
+    assert.equal(source.response.status, 200, "old cached module imports still work with a valid session");
+    assert.match(source.response.headers.get("content-type"), /javascript/);
+    assert.match(source.response.headers.get("cache-control"), /private.*no-store/);
+    assert.match(source.text, /export const products = /);
+    assert.match(source.text, /"id":"brazil"/);
+  }
   for (const asset of ["catalogue.css", "catalogue-ui.js"]) {
     const loaded = await call("GET", "/wholesale/" + asset, undefined, customerCookie);
     assert.equal(loaded.response.status, 200, asset);

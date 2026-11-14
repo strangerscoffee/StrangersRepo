@@ -26,6 +26,7 @@ import {handleWebhook} from "./quickbooks/webhooks";
 import {processEvents,runQuickBooksJobs} from "./quickbooks/jobs";
 import {trustedOrigin} from "./requestOrigins";
 import { isWholesaleCode, wholesalePath } from "./hosts";
+import { products as sourceCoffees, catalogueRetrievedAt } from "./wholesale/catalogue.js";
 export { LiveHub } from "./live";
 
 export default {
@@ -297,6 +298,12 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
       return redirect(links.admin + "#wholesale");
     }
     if ((app === "preview" && (p === "/" || p === "/index.html")) || WHOLESALE_PAGES.has(p)) return p === "/wholesale" ? redirect("/wholesale/" + url.search) : wholesalePage(req, env, url);
+    // Pre-migration cached order.js modules imported this snapshot. Preserve that authenticated import
+    // without putting the price file back in public/ or exposing it through the data-free code allowlist.
+    if (p === "/wholesale/catalogue.js") return noStore(new Response(
+      `export const catalogueRetrievedAt = ${JSON.stringify(catalogueRetrievedAt)};\nexport const products = ${JSON.stringify(sourceCoffees)};\n`,
+      { headers: { "content-type": "application/javascript; charset=utf-8" } },
+    ));
     if (isPreviewFile(p)) return staticFile(req, env, p);
     return redirect("/");
   }

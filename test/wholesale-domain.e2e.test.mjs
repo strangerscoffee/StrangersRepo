@@ -35,6 +35,9 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       await page.locator("#products article").first().waitFor();
       assert.equal(await page.locator("main h1").textContent(), "Wholesale");
       assert.equal(await page.locator("#products article").count(), 14);
+      // Old cached models can still import their source snapshot, with authentication. The new app never
+      // imports it (covered by the session-expiry cases below).
+      assert.equal(await page.evaluate(async () => (await import('/wholesale-preview/catalogue.js')).products[0].id), "brazil");
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
       await page.reload(); await page.locator("#products article").first().waitFor();
       const profile = await page.evaluate(async () => (await fetch("/api/wholesale/session")).json());

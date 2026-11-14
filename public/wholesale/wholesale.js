@@ -1,7 +1,9 @@
 import { availableGrinds, grindLabel, grindHint, isGrindAvailable } from "./grinds.js";
 import { shippingFor, SHIPPING_PENCE, FREE_SHIPPING_FROM_PENCE } from "./shipping.js";
 import { createCoffeeChoices, setupCatalogueSearch } from "./catalogue-ui.js";
-import { products, setCatalogue, isAvailable, packs, packsFor, sizeFor, lineOrderable, grinds, MAX_QUANTITY, money, weight, productFor, lineKey, unitPrice, validQuantity, sanitiseBasket, addToBasket, totals } from "./order.js";
+// A fresh module URL avoids reusing a cached pre-migration model that imported the price snapshot.
+// This is not a ?v= fingerprint: it retains the normal short revalidation period for future model changes.
+import { products, setCatalogue, isAvailable, packs, packsFor, sizeFor, lineOrderable, grinds, MAX_QUANTITY, money, weight, productFor, lineKey, unitPrice, validQuantity, sanitiseBasket, addToBasket, totals } from "./order.js?bootstrap=wholesale";
 
 let STORAGE_KEY = null;
 let session = null;
