@@ -40,6 +40,12 @@ const canOrder = () => session?.customer?.status !== "On hold";
 const pricesShown = () => session?.showPrices !== false;
 const goSignIn = () => location.replace(location.pathname.startsWith("/wholesale/") ? "/wholesale/signin" : "/signin");
 
+// Elevation follows the real scroll position without changing the header's size or focus.
+const updateHeaderElevation = () => $(".site-header").toggleAttribute("data-scrolled", window.scrollY > 8);
+window.addEventListener("scroll", updateHeaderElevation, { passive: true });
+window.addEventListener("pageshow", updateHeaderElevation);
+updateHeaderElevation();
+
 const LOCATION_FIELDS = ["name", "contact", "phone", "address", "postcode", "deliveryNotes"];
 let accountLocations = [], accountDefaultLocation = "primary", editingLocation = null, removingLocation = null, accountSaving = false;
 const locationKey = (location) => location.id || location.draftKey;
@@ -181,7 +187,7 @@ function renderProducts() {
       <div class="variant-fields"><button class="pack-picker" type="button" data-pack-open aria-haspopup="menu" aria-controls="coffee-choice-menu" aria-expanded="false" aria-label="Choose bag weight for ${escape(product.name)}" ${packsFor(product).length === 1 ? 'disabled' : ''}><span><small>Bag weight</small><strong data-pack-label>${escape(packs[sizeFor(product, bagSize)].short)} bag${packsFor(product).length === 1 ? 's only' : ''}</strong></span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
       <div class="grind-field"><select name="grind" hidden aria-label="Grind for ${escape(product.name)}">${availableGrinds(product).map(option => `<option value="${escape(option.id)}">${escape(option.label)}</option>`).join("")}</select><button class="grind-picker" type="button" data-grind-open aria-haspopup="menu" aria-controls="coffee-choice-menu" aria-expanded="false" aria-label="Choose grind for ${escape(product.name)}"><span class="grind-current"><small>Bean / grind</small><strong data-grind-label>${escape(availableGrinds(product)[0]?.label || "Unavailable")}</strong><span data-grind-hint hidden>${escape(availableGrinds(product)[0]?.hint || "")}</span></span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button></div></div>
       <div class="product-price"><strong data-price>${money(unitPrice(product, sizeFor(product, bagSize)))}</strong><span data-price-unit>per ${escape(packs[sizeFor(product, bagSize)].label)}</span></div>
-      <div class="add-row">${stepper(`qty-${product.id}`, 1, product.name, `error-${product.id}`)}<button class="button button-dark" type="submit" aria-label="Add ${escape(product.name)} to order" ${isAvailable(product) ? "" : "disabled"}><span data-add-label>${product.inStock ? 'Add' : 'Out of stock'}</span><span data-add-symbol aria-hidden="true">+</span></button></div>
+      <div class="add-row">${stepper(`qty-${product.id}`, 1, product.name, `error-${product.id}`)}<button class="button button-dark" type="submit" aria-label="Add ${escape(product.name)} to order" ${isAvailable(product) ? "" : "disabled"}><span data-add-label>${product.inStock ? 'Add' : 'Out of stock'}</span><span data-add-symbol aria-hidden="true">+</span><svg data-add-check viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg></button></div>
       <p class="quantity-error" id="error-${product.id}" hidden role="status">Choose a whole number of packs, from 1 to ${MAX_QUANTITY}.</p>
     </form>
   </article>`).join("");
@@ -435,6 +441,11 @@ $("#products").addEventListener("submit", (event) => {
   basket = result.basket;
   changedBasket();
   if (!result.added) { toast(`This pack and grind already has the maximum of ${MAX_QUANTITY} packs.`); return; }
+  const badge = $("#basket-count");
+  badge.getAnimations?.().forEach(animation => animation.cancel());
+  if (!matchMedia("(prefers-reduced-motion: reduce)").matches) badge.animate?.([
+    { transform: "scale(1)" }, { transform: "scale(1.14)" }, { transform: "scale(1)" },
+  ], { duration: 250, easing: "cubic-bezier(.22,1,.36,1)" });
   const addButton = form.querySelector('[type="submit"]');
   clearTimeout(addedTimers.get(product.id));
   addButton.dataset.added = ''; addButton.querySelector('[data-add-label]').textContent = 'Added';
@@ -1148,6 +1159,7 @@ if ("IntersectionObserver" in window) {
   new IntersectionObserver(([entry]) => { orderVisible = entry.isIntersecting; updateMobileBasket(); }, { threshold: 0 }).observe($("#your-order"));
 }
 function clearOrderingSession() {
+  $("#basket-count").getAnimations?.().forEach(animation => animation.cancel());
   coffeeChoices.clear(); catalogueSearch.close({ clear: true }); closeAccountMenu();
   repeatOrder = null; $('#repeat-shortcut').hidden = true; $('#repeat-summary').replaceChildren();
   for (const timer of addedTimers.values()) clearTimeout(timer); addedTimers.clear();
