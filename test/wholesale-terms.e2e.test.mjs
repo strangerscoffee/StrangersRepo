@@ -45,14 +45,14 @@ test("terms on the sign-in page, footer and checkout; logo on sign-in", async ()
     const p = await ctx.newPage(), errors = []; p.on("pageerror", (e) => errors.push(e.message));
     const shot = (what) => process.env.WHOLESALE_SCREENSHOT_DIR && p.screenshot({ path: `${process.env.WHOLESALE_SCREENSHOT_DIR}/terms-${what}-${name}-${colorScheme}.png` });
 
-    // Sign-in and registration: the logo in place of the heading, no small mark; the terms are there to read first.
+    // Sign-in and registration keep the logo and a clear page heading; terms stay available in the compact footer.
     await p.goto(srv.base + "/wholesale-preview/signin");
     assert.equal(await p.locator(".login-mark").count(), 0, "no small mark");
-    assert.equal(await p.locator("h1.login-logo img[alt='Strangers Coffee']").isVisible(), true);
+    assert.equal(await p.locator(".login-logo img[alt='Strangers Coffee Company']").isVisible(), true);
     await p.locator("#registration-toggle").click();
     assert.equal(await p.locator("#login-title").textContent(), "Join us.", "screen readers still get the heading");
     await shot("signin");
-    let d = await readTerms(p, p.locator(".login-panel [data-terms]"), `${name} sign-in`);
+    let d = await readTerms(p, p.locator(".login-footer [data-terms]"), `${name} sign-in`);
     await shot("dialog");
     await d.locator(".close-button").click(); await p.locator("#terms-dialog[open]").waitFor({ state: "detached" });
 

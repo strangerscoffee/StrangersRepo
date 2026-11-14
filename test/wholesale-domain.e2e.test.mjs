@@ -26,7 +26,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       // Signed out, every file the sign-in page needs loads: the logo shows and the terms open.
       await page.waitForFunction(() => document.querySelector(".login-logo img")?.complete);
       assert.ok(await page.evaluate(() => document.querySelector(".login-logo img").naturalWidth > 0), "the logo loads signed out");
-      await page.locator(".login-panel [data-terms]").click(); await page.locator("#terms-dialog[open]").waitFor();
+      await page.locator(".login-footer [data-terms]").click(); await page.locator("#terms-dialog[open]").waitFor();
       await page.locator("#terms-dialog .close-button").click();
       assert.deepEqual(failed, [], "no file on the sign-in page fails to load");
       assert.equal(await page.locator("#sc-error").count(), 0, "no error card");

@@ -1,160 +1,175 @@
 (() => {
-  const $ = (selector) => document.querySelector(selector);
-  const local = location.pathname.startsWith('/wholesale-preview/');
-  const home = local ? '/wholesale-preview/' : '/';
-  let changing = false;
-  let registering = false;
-  // An invite from Strangers (…/signin?invite=…): choose a username and password to set up the business's account.
-  let invite = new URLSearchParams(location.search).get('invite');
-  if (invite) {
-    history.replaceState(null, '', location.pathname);
-    const showError = (message) => { $('#login-error').textContent = message; $('#login-error').hidden = false; };
-    fetch('/api/wholesale/auth/invite?token=' + encodeURIComponent(invite), { cache: 'no-store' }).then(async (response) => {
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) { invite = null; showError(result.message || 'This invite link could not be opened. Ask Strangers for a new one.'); return; }
-      $('#login-title').textContent = 'Set up your account.';
-      $('#login-intro').textContent = `Set up your account to order coffee for ${result.business}. Choose a username and password you'll use to sign in.`;
-      $('#login-submit').textContent = 'Set up account';
-      $('#password').autocomplete = 'new-password';
-      $('#invite-confirm').hidden = false; $('#invite-password2').required = true;
-      $('#registration-toggle').hidden = true;
-      $('#username').focus();
-    }).catch(() => { invite = null; showError('Check your connection, then open the invite link again.'); });
+  const $ = selector => document.querySelector(selector);
+  const home = location.pathname.startsWith('/wholesale-preview/') ? '/wholesale-preview/' : '/';
+  const params = new URLSearchParams(location.search);
+  let invite = params.get('invite'), reset = params.get('reset');
+  let mode = 'login', busy = false, checkingLink = false, generation = 0;
+  let linkBusiness = '', resetUsername = '';
+  const say = (selector, message) => { $(selector).textContent = message; $(selector).hidden = !message; };
+  const connection = error => error.message === 'Failed to fetch' ? 'Check your connection and try again.' : error.message;
+  const toggles = [...document.querySelectorAll('[data-password-toggle]')];
+  for (const button of toggles) button.dataset.passwordLabel = button.getAttribute('aria-label').replace(/^Show /, '');
+  function hidePasswords(clear = false) {
+    for (const button of toggles) {
+      const input = document.getElementById(button.dataset.passwordToggle);
+      input.type = 'password';
+      if (clear) input.value = '';
+      button.textContent = 'Show';
+      button.setAttribute('aria-label', 'Show ' + button.dataset.passwordLabel);
+      button.setAttribute('aria-pressed', 'false');
+    }
   }
-  // Forgotten password or username: a one-time link emailed to the business (src/wholesaleReset.ts). The answer is
-  // the same whether or not anything matched. A link from that email (…/signin?reset=…) opens the new-password form.
-  const views = ['#wholesale-login', '#forgot-form', '#reset-form', '#registration-complete'];
-  const only = (shown) => { for (const v of views) $(v).hidden = v !== shown; $('#registration-toggle').hidden = shown !== '#wholesale-login' && shown !== '#registration-complete'; };
-  const say = (box, message) => { $(box).textContent = message; $(box).hidden = !message; };
-  const connection = (error) => (error.message === 'Failed to fetch' ? 'Check your connection and try again.' : error.message);
-  fetch('/api/wholesale/auth/contact', { cache: 'no-store' }).then((r) => r.ok ? r.json() : null).then((r) => { if (r && /^[^\s@]+@[^\s@]+$/.test(r.email || '')) $('#contact-link').href = 'mailto:' + r.email; }).catch(() => {});
-  let forgetting = false;
-  $('#forgot-toggle').addEventListener('click', () => {
-    forgetting = !forgetting;
-    if (registering) $('#registration-toggle').click();
-    only(forgetting ? '#forgot-form' : '#wholesale-login');
-    $('#login-title').textContent = forgetting ? 'Reset your password.' : 'Welcome back.';
-    $('#login-intro').textContent = forgetting ? 'Forgotten your password or username?' : 'Sign in to order coffee for your business.';
-    $('#forgot-toggle').textContent = forgetting ? 'Back to sign-in' : 'Forgotten your password or username?';
-    say('#forgot-error', ''); say('#forgot-sent', '');
-    $('#forgot-submit').hidden = false;
-    if (forgetting) { $('#forgot-identifier').value = $('#username').value; $('#forgot-identifier').focus(); }
+  for (const button of toggles) button.addEventListener('click', () => {
+    const input = document.getElementById(button.dataset.passwordToggle), visible = input.type === 'password';
+    input.type = visible ? 'text' : 'password';
+    button.textContent = visible ? 'Hide' : 'Show';
+    button.setAttribute('aria-label', (visible ? 'Hide ' : 'Show ') + button.dataset.passwordLabel);
+    button.setAttribute('aria-pressed', String(visible));
   });
-  $('#forgot-form').addEventListener('submit', async (event) => {
+  function updateBusy() {
+    for (const button of document.querySelectorAll('.login-panel button[type="submit"]')) button.disabled = busy || checkingLink;
+    for (const button of document.querySelectorAll('[data-auth-nav]')) button.disabled = busy;
+    for (const form of document.querySelectorAll('.login-panel form')) form.setAttribute('aria-busy', String((busy || checkingLink) && !form.hidden));
+  }
+  function render(next) {
+    mode = next;
+    document.body.dataset.authView = next;
+    hidePasswords();
+    const loginForm = ['login', 'register', 'changing', 'invite'].includes(next);
+    $('#wholesale-login').hidden = !loginForm;
+    $('#registration-fields').hidden = next !== 'register';
+    for (const name of ['business', 'contact', 'email']) $('#wholesale-login').elements[name].required = next === 'register';
+    $('#password-change').hidden = next !== 'changing';
+    $('#new-password').required = $('#confirm-password').required = next === 'changing';
+    $('#invite-confirm').hidden = next !== 'invite';
+    $('#invite-password2').required = next === 'invite';
+    $('#password').autocomplete = ['register', 'invite'].includes(next) ? 'new-password' : 'current-password';
+    $('#forgot-toggle').hidden = next !== 'login';
+    $('#registration-complete').hidden = next !== 'registered';
+    $('#forgot-form').hidden = next !== 'forgot';
+    $('#forgot-complete').hidden = next !== 'sent';
+    $('#reset-form').hidden = next !== 'reset';
+    $('#login-new').hidden = !['login', 'register', 'registered'].includes(next);
+    $('#login-new-label').hidden = next !== 'login';
+    $('#login-new').classList.toggle('is-return', next !== 'login');
+    $('#registration-toggle').textContent = next === 'register' ? 'Already have an account? Sign in' : next === 'registered' ? 'Back to sign-in' : 'Request a wholesale account';
+    $('#auth-back').hidden = ['login', 'register', 'registered'].includes(next);
+    $('#auth-back').className = next === 'sent' ? 'button button-dark login-back' : 'text-button login-back';
+    $('#forgot-again').hidden = next !== 'sent';
+    const titles = { login: 'Welcome back.', register: 'Join us.', registered: 'Request received.', changing: 'Choose your own password.', invite: 'Set up your account.', forgot: 'Reset your password.', sent: 'Check your inbox.', reset: 'Choose a new password.' };
+    $('#login-title').textContent = titles[next];
+    const intros = {
+      login: 'Sign in to your wholesale account.',
+      register: 'Request a wholesale account. Strangers will review your business before you can access ordering.',
+      registered: '', changing: 'Finish setting up your wholesale account.',
+      invite: checkingLink ? 'Checking your invitation…' : `Set up your account to order coffee for ${linkBusiness}. Choose a username and password you'll use to sign in.`,
+      forgot: "We'll email a reset link and your username to the address saved on your account.", sent: '',
+      reset: checkingLink ? 'Checking your reset link…' : `Choose a new password for ${linkBusiness || 'your business'}.`,
+    };
+    say('#login-intro', intros[next]);
+    if (next === 'reset' && !checkingLink) $('#reset-intro').textContent = `Your username is ${resetUsername}. Your new password works straight away, and you'll be signed out everywhere else.`;
+    $('#login-submit').textContent = next === 'register' ? 'Request account' : next === 'invite' ? 'Set up account' : next === 'changing' ? 'Set password and sign in' : 'Sign in';
+    updateBusy();
+  }
+  function navigate(next) {
+    if (busy) return;
+    generation++;
+    invite = reset = null;
+    checkingLink = false;
+    hidePasswords(true);
+    for (const selector of ['#login-error', '#forgot-error', '#reset-error']) say(selector, '');
+    render(next);
+    const focus = next === 'forgot' ? '#forgot-identifier' : next === 'register' ? '#registration-fields [name=business]' : '#username';
+    $(focus).focus({ preventScroll: true });
+  }
+  $('#forgot-toggle').addEventListener('click', () => {
+    if (!$('#forgot-identifier').value) $('#forgot-identifier').value = $('#username').value;
+    navigate('forgot');
+  });
+  $('#auth-back').addEventListener('click', () => navigate('login'));
+  $('#forgot-again').addEventListener('click', () => navigate('forgot'));
+  $('#registration-toggle').addEventListener('click', () => navigate(mode === 'login' ? 'register' : 'login'));
+  fetch('/api/wholesale/auth/contact', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).then(result => {
+    if (result && /^[^\s@]+@[^\s@]+$/.test(result.email || '')) $('#contact-link').href = 'mailto:' + result.email;
+  }).catch(() => {});
+  async function resultOf(response, fallback) {
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.message || fallback);
+    return result;
+  }
+  $('#forgot-form').addEventListener('submit', async event => {
     event.preventDefault();
-    say('#forgot-error', ''); say('#forgot-sent', '');
-    $('#forgot-submit').disabled = true;
+    if (busy || mode !== 'forgot') return;
+    say('#forgot-error', ''); busy = true; updateBusy();
     try {
       const response = await fetch('/api/wholesale/auth/forgot', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ identifier: $('#forgot-identifier').value }) });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.message || 'Could not send a reset link. Try again.');
-      say('#forgot-sent', result.message);
-      $('#forgot-submit').hidden = true;
+      await resultOf(response, 'Could not send a reset link. Try again.');
+      // Keep confirmation independent of whether any account matched, as on the API.
+      $('#forgot-sent').textContent = "If those details match an account, we'll email a reset link and your username.";
+      busy = false; render('sent');
+      $('#auth-back').focus({ preventScroll: true });
     } catch (error) { say('#forgot-error', connection(error)); }
-    finally { $('#forgot-submit').disabled = false; }
+    finally { busy = false; updateBusy(); }
   });
-  let reset = new URLSearchParams(location.search).get('reset');
-  if (reset) {
-    history.replaceState(null, '', location.pathname);
-    only('#reset-form');
-    $('#forgot-toggle').hidden = true;
-    $('#login-title').textContent = 'Choose a new password.';
-    $('#login-intro').textContent = 'Checking your reset link…';
-    $('#reset-submit').disabled = true;
-    fetch('/api/wholesale/auth/reset?token=' + encodeURIComponent(reset), { cache: 'no-store' }).then(async (response) => {
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.message || 'This reset link could not be opened. Ask for a new one.');
-      $('#login-intro').textContent = `Choose a new password for ${result.business || 'your business'}.`;
-      $('#reset-intro').textContent = `Your username is ${result.username}. Your new password works straight away, and you'll be signed out everywhere else.`;
-      $('#reset-submit').disabled = false;
-      $('#reset-password').focus();
-    }).catch((error) => {
-      reset = null;
-      $('#login-intro').textContent = connection(error);
-      only('#wholesale-login'); $('#forgot-toggle').hidden = false;
-    });
-  }
-  $('#reset-form').addEventListener('submit', async (event) => {
+  $('#wholesale-login').addEventListener('submit', async event => {
     event.preventDefault();
-    say('#reset-error', '');
-    if ($('#reset-password').value !== $('#reset-password2').value) { say('#reset-error', 'The passwords do not match.'); return; }
-    $('#reset-submit').disabled = true;
+    if (busy || checkingLink || !['login', 'register', 'changing', 'invite'].includes(mode)) return;
+    const submittedMode = mode;
+    say('#login-error', '');
+    if (mode === 'invite' && $('#password').value !== $('#invite-password2').value) { say('#login-error', 'The passwords do not match.'); return; }
+    if (mode === 'changing' && $('#new-password').value !== $('#confirm-password').value) { say('#login-error', 'The new passwords do not match.'); return; }
+    const form = $('#wholesale-login');
+    const payload = { username: $('#username').value, password: $('#password').value,
+      ...(mode === 'invite' ? { token: invite } : {}), ...(mode === 'changing' ? { newPassword: $('#new-password').value } : {}),
+      ...(mode === 'register' ? Object.fromEntries(['business', 'contact', 'email', 'accountsEmail', 'phone'].map(name => [name, form.elements[name].value])) : {}),
+    };
+    const route = mode === 'invite' ? 'invite' : mode === 'register' ? 'register' : mode === 'changing' ? 'change-password' : 'login';
+    busy = true; updateBusy();
     try {
-      const response = await fetch('/api/wholesale/auth/reset', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: reset, password: $('#reset-password').value }) });
+      const response = await fetch('/api/wholesale/auth/' + route, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
       const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.message || 'Could not save your new password. Try again.');
-      location.replace(home);
-    } catch (error) { say('#reset-error', connection(error)); $('#reset-submit').disabled = false; }
-  });
-  $('#registration-toggle').addEventListener('click', () => {
-    registering = $('#registration-complete').hidden ? !registering : false;
-    changing = false;
-    if (forgetting) { forgetting = false; $('#forgot-form').hidden = true; $('#forgot-toggle').textContent = 'Forgotten your password or username?'; }
-    $('#forgot-toggle').hidden = registering;
-    $('#wholesale-login').hidden = false;
-    $('#registration-complete').hidden = true;
-    $('#password-change').hidden = true;
-    $('#new-password').required = $('#confirm-password').required = false;
-    $('#registration-fields').hidden = !registering;
-    for (const name of ['business', 'contact', 'email']) $('#wholesale-login').elements[name].required = registering;
-    $('#login-title').textContent = registering ? 'Join us.' : 'Welcome back.';
-    $('#login-intro').textContent = registering ? 'Request a wholesale account. Strangers will review your business before you can access ordering.' : 'Sign in to order coffee for your business.';
-    $('#login-submit').textContent = registering ? 'Request account' : 'Sign in';
-    $('#registration-toggle').textContent = registering ? 'Already have an account? Sign in' : 'Request a wholesale account';
-    $('#password').autocomplete = registering ? 'new-password' : 'current-password';
-    $('#password').value = '';
-    $('#login-error').hidden = true;
-  });
-  $('#wholesale-login').addEventListener('submit', async (event) => {
-    event.preventDefault();
-    $('#login-error').hidden = true;
-    if (invite) {
-      if ($('#password').value !== $('#invite-password2').value) { $('#login-error').textContent = 'The passwords do not match.'; $('#login-error').hidden = false; return; }
-      $('#login-submit').disabled = true;
-      try {
-        const response = await fetch('/api/wholesale/auth/invite', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: invite, username: $('#username').value, password: $('#password').value }) });
-        const result = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(result.message || 'Could not set up your account. Try again.');
-        location.replace(home);
-      } catch (error) {
-        $('#login-error').textContent = error.message === 'Failed to fetch' ? 'Check your connection and try again.' : error.message;
-        $('#login-error').hidden = false;
-      } finally { $('#login-submit').disabled = false; }
-      return;
-    }
-    if (changing && $('#new-password').value !== $('#confirm-password').value) {
-      $('#login-error').textContent = 'The new passwords do not match.';
-      $('#login-error').hidden = false;
-      return;
-    }
-    $('#login-submit').disabled = true;
-    try {
-      const form = $('#wholesale-login');
-      const response = await fetch('/api/wholesale/auth/' + (registering ? 'register' : changing ? 'change-password' : 'login'), {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ username: $('#username').value, password: $('#password').value, ...(changing ? { newPassword: $('#new-password').value } : {}), ...(registering ? Object.fromEntries(['business', 'contact', 'email', 'accountsEmail', 'phone'].map(name => [name, form.elements[name].value])) : {}) }),
-      });
-      const result = await response.json();
-      if (result.code === 'password_change_required') {
-        changing = true;
-        $('#password-change').hidden = false;
-        $('#new-password').required = $('#confirm-password').required = true;
-        $('#login-submit').textContent = 'Set password and sign in';
-        $('#new-password').focus();
-        return;
+      if (submittedMode === 'login' && result.code === 'password_change_required') {
+        render('changing'); $('#new-password').focus(); return;
       }
       if (!response.ok) throw new Error(result.message || 'Could not sign in. Try again.');
-      if (registering) {
-        form.reset();
-        form.hidden = true;
-        $('#registration-complete').hidden = false;
-        $('#registration-toggle').textContent = 'Back to sign-in';
-        return;
-      }
+      if (submittedMode === 'register') { busy = false; form.reset(); hidePasswords(true); render('registered'); $('#registration-toggle').focus({ preventScroll: true }); return; }
       location.replace(home);
-    } catch (error) {
-      $('#login-error').textContent = error.message === 'Failed to fetch' ? 'Check your connection and try again.' : error.message;
-      $('#login-error').hidden = false;
-    } finally { $('#login-submit').disabled = false; }
+    } catch (error) { say('#login-error', connection(error)); }
+    finally { busy = false; updateBusy(); }
   });
+  $('#reset-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    if (busy || checkingLink || mode !== 'reset' || !reset) return;
+    say('#reset-error', '');
+    if ($('#reset-password').value !== $('#reset-password2').value) { say('#reset-error', 'The passwords do not match.'); return; }
+    busy = true; updateBusy();
+    try {
+      const response = await fetch('/api/wholesale/auth/reset', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: reset, password: $('#reset-password').value }) });
+      await resultOf(response, 'Could not save your new password. Try again.');
+      location.replace(home);
+    } catch (error) { say('#reset-error', connection(error)); }
+    finally { busy = false; updateBusy(); }
+  });
+  async function checkLink(kind, token) {
+    const started = ++generation;
+    checkingLink = true; render(kind);
+    try {
+      const result = await resultOf(await fetch('/api/wholesale/auth/' + kind + '?token=' + encodeURIComponent(token), { cache: 'no-store' }), 'This link could not be opened. Ask for a new one.');
+      if (generation !== started) return;
+      linkBusiness = result.business || 'your business'; resetUsername = result.username || '';
+      checkingLink = false; render(kind);
+      $(kind === 'reset' ? '#reset-password' : '#username').focus();
+    } catch (error) {
+      if (generation !== started) return;
+      invite = reset = null; checkingLink = false; render('login'); say('#login-intro', connection(error));
+    }
+  }
+  window.addEventListener('pagehide', () => hidePasswords());
+  window.addEventListener('pageshow', () => hidePasswords());
+  render('login');
+  if (invite || reset) {
+    history.replaceState(null, '', location.pathname);
+    if (invite) { reset = null; checkLink('invite', invite); }
+    else checkLink('reset', reset);
+  }
 })();

@@ -566,7 +566,39 @@ html[data-sc-session-locked] #orders-dialog, html[data-sc-session-locked] #order
 .catalogue-status .sc-sk-shapes { grid-template-columns:repeat(2,minmax(0,1fr)); }
 @media(max-width:700px) { .catalogue-status .sc-sk-shapes { grid-template-columns:1fr; } }
 
-/* Sign-in, registration and recovery share a visible page title and focus treatment. */
-.login-logo #login-title { display:block; margin-top:18px; font-size:25px; line-height:1.2; letter-spacing:-.025em; }
-.wholesale-login button:focus-visible,.wholesale-login a:focus-visible,.wholesale-login input:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
-@media(max-width:700px) { .wholesale-login input { font-size:16px; } .wholesale-login .text-button { min-height:44px; } }
+/* Customer authentication: approved compact login and recovery layouts. */
+.wholesale-login { display:block; min-height:100dvh; padding:max(34px,env(safe-area-inset-top)) max(20px,env(safe-area-inset-right)) max(22px,env(safe-area-inset-bottom)) max(20px,env(safe-area-inset-left)); }
+.login-layout { width:100%; max-width:408px; margin-inline:auto; }
+.wholesale-login .login-panel { max-width:none; padding:28px; border-radius:30px; }
+.wholesale-login .login-logo { margin:0 0 24px; }
+.wholesale-login .login-logo img { width:130px; height:auto; }
+.wholesale-login #login-title { margin:0; font-size:27px; line-height:1.2; font-weight:750; letter-spacing:-.045em; }
+.wholesale-login #login-intro { margin:9px 0 23px; color:var(--muted); font-size:14px; line-height:1.6; overflow-wrap:anywhere; }
+.wholesale-login .form-field { margin-top:18px; font-size:13px; }
+#wholesale-login>#registration-fields[hidden]+.form-field,#registration-fields>.form-field:first-child,#forgot-form>.form-field:first-child { margin-top:0; }
+.wholesale-login .form-field input { min-height:50px; border-radius:15px; font-size:16px; }
+.wholesale-login .form-field label>span { color:var(--muted); font-weight:400; }
+.password-entry { display:flex; align-items:center; margin-top:8px; border:1px solid transparent; border-radius:15px; background:var(--sunk); }
+.wholesale-login .password-entry input { flex:1; width:0; min-height:48px; margin:0; border:0; background:transparent; }
+.password-entry:focus-within { background:var(--surface); border-color:var(--focus-ink); }
+.password-toggle { flex:none; min-width:54px; min-height:46px; padding:0 12px; border:0; border-radius:14px; background:transparent; color:var(--muted); font-size:12px; font-weight:600; }
+.login-recovery { display:flex; justify-content:center; }
+.wholesale-login .login-panel .text-button { min-height:44px; font-size:13px; font-weight:550; }
+.wholesale-login .login-panel .text-button:hover { background:transparent; text-decoration:underline; text-underline-offset:3px; }
+.wholesale-login .login-panel .button { min-height:50px; margin-top:24px; font-size:14px; }
+body[data-auth-view=login] #login-submit { margin-top:3px; }
+.login-new { margin-top:24px; padding-top:20px; border-top:1px solid var(--line); text-align:center; }
+.login-new p { color:var(--muted); font-size:13px; }
+.wholesale-login .login-new .text-button { font-size:14px; padding-inline:0; }
+.login-new.is-return { margin-top:7px; padding-top:0; border:0; }
+.wholesale-login .login-panel .login-back { display:flex; width:100%; margin-top:7px; }
+.wholesale-login .login-panel .login-back.button { margin-top:24px; }
+.wholesale-login .login-confirmation { margin:12px 0 0; color:var(--muted); font-size:14px; line-height:1.6; }
+.login-detail { margin-top:16px; color:var(--muted); font-size:13px; line-height:1.6; }
+.wholesale-login #reset-intro { margin-top:14px; color:var(--muted); font-size:13px; line-height:1.6; overflow-wrap:anywhere; }
+.wholesale-login .quantity-error { margin-top:12px; line-height:1.5; }
+.login-footer nav { display:flex; justify-content:center; flex-wrap:wrap; gap:12px; margin-top:6px; }
+.login-footer a,.wholesale-login .login-footer .text-button { display:inline-flex; align-items:center; justify-content:center; min-width:44px; min-height:44px; padding:8px 4px; border:0; background:transparent; color:var(--muted); font-size:12px; font-weight:550; }
+.login-footer p { margin:0; color:var(--muted); font-size:11px; line-height:1.6; text-align:center; }
+@media(min-width:701px) { .wholesale-login { display:grid; place-items:center; } }
+@media(max-width:360px) { .wholesale-login { padding: max(22px,env(safe-area-inset-top)) 12px max(22px,env(safe-area-inset-bottom)); } .wholesale-login .login-panel { padding:24px 20px; } .wholesale-login #login-title { font-size:25px; } }
