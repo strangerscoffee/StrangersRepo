@@ -210,3 +210,6 @@ html[data-sc-session-locked] .coffee-choice-menu,html[data-sc-session-locked] .h
 .history-count:empty { display:none; }
 #orders-dialog .history-toolbar p { line-height:1.5; }
 #location-dialog .dialog-intro { line-height:1.6; }
+
+@media(max-width:700px) { .site-header .brand { min-width:44px; min-height:44px; } }
+@media(max-width:360px) { .site-header .brand-name { display:none; } }

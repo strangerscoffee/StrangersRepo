@@ -1201,7 +1201,7 @@ async function loadInvoices(append = false) {
     $("#customer-invoice-summary").innerHTML = `<div><span>${summary.reviewCount ? "Saved outstanding*" : "Outstanding"}</span><strong>${money(summary.outstandingPence)}</strong></div><div><span>Overdue</span><strong>${money(summary.overduePence)}</strong></div>${summary.reviewCount ? `<p class="invoice-review-note">${summary.reviewCount} ${summary.reviewCount === 1 ? "invoice is" : "invoices are"} being checked. Totals include saved balances until confirmed.</p>` : ""}`;
     $("#history-invoice-note").hidden = !summary.outstandingPence;
     $("#history-invoice-note").textContent = `${money(summary.outstandingPence)} outstanding${summary.overdueCount ? " · " + summary.overdueCount + " overdue" : ""} · View invoices`;
-    $("#customer-invoices-list").innerHTML = customerInvoices.length ? customerInvoices.map(invoice => customerInvoiceCard(invoice, expanded)).join("") : '<div class="history-empty"><h3>No invoices yet</h3><p>Issued invoices will appear here. Contact Strangers if you need an invoice for an order.</p></div>';
+    $("#customer-invoices-list").innerHTML = customerInvoices.length ? customerInvoices.map(invoice => customerInvoiceCard(invoice, expanded)).join("") : '<div class="history-empty"><h3>No invoices yet</h3><p>Your issued invoices will appear here. Contact Strangers if you need an invoice for an order.</p></div>';
     $("#invoice-count").textContent = invoiceTotal ? `Showing ${customerInvoices.length} of ${invoiceTotal} ${invoiceTotal === 1 ? "invoice" : "invoices"}` : "";
     $("#invoice-more").hidden = !invoiceCursor;
   } catch (error) {
