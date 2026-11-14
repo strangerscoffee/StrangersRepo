@@ -54,9 +54,10 @@ export async function adminWholesalePage<T>(env: Env, kind: ListKind, query = ne
 }
 
 export async function adminWholesaleStats(env: Env) {
-  const [orders, pending] = await Promise.all([
+  const [orders, pending, statuses] = await Promise.all([
     env.DB.prepare("SELECT COALESCE(SUM(CASE WHEN json_extract(data, '$.status') IN ('New', 'Preparing', 'Ready') THEN 1 ELSE 0 END), 0) AS openOrders, COALESCE(SUM(CASE WHEN json_extract(data, '$.status') IN ('New', 'Preparing') THEN json_extract(data, '$.grams') ELSE 0 END), 0) AS gramsToPrepare FROM wholesale_preview WHERE kind = 'order' AND json_extract(data, '$.preview') = 0 AND json_extract(data, '$.deletedAt') IS NULL").first<{ openOrders: number; gramsToPrepare: number }>(),
     env.DB.prepare("SELECT COUNT(*) AS n FROM wholesale_accounts WHERE approval_status = 'pending'").first<{ n: number }>(),
+    env.DB.prepare("SELECT json_extract(data, '$.status') AS status, COUNT(*) AS n FROM wholesale_preview WHERE kind = 'order' AND json_extract(data, '$.deletedAt') IS NULL GROUP BY json_extract(data, '$.status')").all<{ status: string; n: number }>(),
   ]);
-  return { openOrders: orders?.openOrders || 0, gramsToPrepare: orders?.gramsToPrepare || 0, pendingAccounts: pending?.n || 0 };
+  return { statusCounts: Object.fromEntries(statuses.results.map(row => [row.status, row.n])), openOrders: orders?.openOrders || 0, gramsToPrepare: orders?.gramsToPrepare || 0, pendingAccounts: pending?.n || 0 };
 }

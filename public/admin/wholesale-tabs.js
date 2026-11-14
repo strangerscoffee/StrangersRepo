@@ -11,18 +11,18 @@ window.WholesaleTabs = function ({ api, html, raw, svg, put, openSheet, closeShe
 
   async function view() {
     try { data = await api("GET", "/api/admin/wholesale/tabs"); }
-    catch (error) { return html`<div class="w-tabs-workspace"><p class="err" role="alert">Tabs could not be loaded: ${error.message}</p></div>`; }
+    catch (error) { return html`<section class="w-tabs-workspace w-list-panel glass" aria-label="Customer tabs"><p class="err" role="alert">Tabs could not be loaded: ${error.message}</p></section>`; }
     const open = data.open, ready = open.filter((t) => t.ready).length;
-    return html`<div class="w-tabs-workspace">
+    return html`<section class="w-tabs-workspace w-list-panel glass" aria-label="Customer tabs">
       <div class="w-tabs-head"><div><h2>Customer tabs</h2><p class="hint">A running tally of a customer's orders. Clear the tab once it reaches ${weight(data.threshold)}, or sooner. Orders on a tab are packed and dispatched as usual. Put an order on a tab from the order, or tick "Put orders on a tab" on the customer.</p></div>${open.length ? html`<p class="w-tabs-count">${open.length} ${open.length === 1 ? "tab" : "tabs"}${ready ? html` · <b>${ready} ready to clear</b>` : ""}</p>` : ""}</div>
       ${open.length ? html`<div class="w-tab-cards">${open.map((t) => html`<button class="w-tab-card ${t.ready ? "ready" : ""}" type="button" data-act="wh-tabs-open" data-id="${t.customerId}">
           <span class="w-tab-top"><b>${t.business}</b>${t.ready ? html`<span class="pill ok">${svg("ok")}Ready to clear</span>` : t.autoTab ? html`<span class="pill">Automatic</span>` : ""}</span>
           <span class="w-tab-kg"><strong>${weight(t.grams)}</strong> of ${weight(data.threshold)}</span>${bar(t)}
           <span class="w-tab-meta">${t.orders.length ? `${counted(t)} ${counted(t) === 1 ? "order" : "orders"} · ${t.packs} ${t.packs === 1 ? "bag" : "bags"} · ${money(t.pence)}${t.ready ? "" : ` · ${weight(t.toGo)} to go`}` : "Nothing on the tab yet"}</span>
-        </button>`)}</div>` : html`<p class="hint w-tabs-empty">No open tabs. Open an order and choose Put on tab, or tick "Put orders on a tab" on a customer.</p>`}
+        </button>`)}</div>` : html`<div class="w-empty"><span class="ic mut">${svg("coffee")}</span><h3>No open tabs</h3><p>Open an order and choose Put on tab, or enable automatic tabs in a customer’s settings.</p></div>`}
       <h3 class="w-tabs-sub">Recently cleared</h3>
       ${data.cleared.length ? html`<div class="group">${data.cleared.map((c) => html`<div class="item"><span class="tx"><b>${c.business}</b><span>Cleared ${date(c.clearedAt)} by ${c.clearedBy}</span></span><span class="end"><strong class="num">${weight(c.grams)}</strong>${Number.isFinite(c.pence) ? html`<span class="w-tab-money">${money(c.pence)}</span>` : ""}${c.early ? html`<span class="pill">Early</span>` : ""}</span></div>`)}</div>` : html`<p class="hint">No tabs cleared yet.</p>`}
-    </div>`;
+    </section>`;
   }
 
   function openTab(customerId, confirm = false, error = "") {

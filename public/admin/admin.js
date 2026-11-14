@@ -390,8 +390,8 @@
       </div>
       <div class="label">For everyone</div>
       <div class="group glass">
-        <div class="item"><span class="ic warn">${svg("key")}</span><span class="tx"><b>Reset all quick PINs</b><span>For example when an iPad is lost. People set a new PIN after signing in with their password.</span></span><span class="end"><button class="btn sm soft" type="button" data-act="resetpins">Reset</button></span></div>
-        <div class="item"><span class="ic bad">${svg("out")}</span><span class="tx"><b>Sign everyone out</b><span>Ends every session on every device, including yours.</span></span><span class="end"><button class="btn sm bad" type="button" data-act="signoutall">Sign out all</button></span></div>
+        <div class="item"><span class="ic warn">${svg("key")}</span><span class="tx"><b>Reset all quick PINs</b><span>For example when an iPad is lost. People set a new PIN after signing in with their password.</span></span><span class="end"><button class="btn sm soft" type="button" data-act="resetpins">Reset quick PINs</button></span></div>
+        <div class="item"><span class="ic bad">${svg("out")}</span><span class="tx"><b>Sign everyone out</b><span>Ends every session on every device, including yours.</span></span><span class="end"><button class="btn sm bad" type="button" data-act="signoutall">Sign everyone out</button></span></div>
       </div>`;
   };
 
@@ -413,12 +413,12 @@
       <div class="group glass">
         <div class="item"><span class="ic acc">${svg("clock")}</span><span class="tx"><b>Hours for payroll</b><span>Rota · CSV per person and site for a week, with overtime</span>
           <span class="inline"><label class="fl" for="hoursWeek">Week of</label><select id="hoursWeek">${weeks.map((w, i) => html`<option value="${w}">${isoShort(w)}${i === 0 ? " (this week)" : i === 1 ? " (last week)" : ""}</option>`)}</select></span></span>
-          <span class="end"><button class="btn sm soft" type="button" data-act="hours">${svg("dl")}CSV</button></span></div>
+          <span class="end"><button class="btn sm soft" type="button" data-act="hours" aria-label="Download payroll hours CSV">${svg("dl")}CSV</button></span></div>
         <div class="item"><span class="ic acc">${svg("clock")}</span><span class="tx"><b>All shifts</b><span>Rota · CSV, planned and as worked</span>
           <span class="inline"><input type="date" id="shFrom" value="${monthAgo}" aria-label="From"><span>to</span><input type="date" id="shTo" value="${today}" aria-label="To"></span></span>
-          <span class="end"><button class="btn sm soft" type="button" data-act="shifts">${svg("dl")}CSV</button></span></div>
+          <span class="end"><button class="btn sm soft" type="button" data-act="shifts" aria-label="Download all shifts CSV">${svg("dl")}CSV</button></span></div>
         <div class="item"><span class="ic warn">${svg("people")}</span><span class="tx"><b>People</b><span>Accounts · CSV of names, roles, sites and contracted hours. Never passwords.</span></span>
-          <span class="end"><a class="btn sm soft" href="/api/admin/export/people.csv" download>${svg("dl")}CSV</a></span></div>
+          <span class="end"><a class="btn sm soft" href="/api/admin/export/people.csv" aria-label="Download people CSV" download>${svg("dl")}CSV</a></span></div>
         <div class="item"><span class="ic ok">${svg("cal")}</span><span class="tx"><b>EHO inspection pack</b><span>Kitchen Diary · a PDF for a period and a site, from EHO inspection mode</span></span>
           <span class="end"><a class="btn sm soft" href="${S.links.diary}#inspect">Open</a></span></div>
       </div>`;

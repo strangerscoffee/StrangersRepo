@@ -19,14 +19,14 @@
 <body class="wholesale-login">
   <main class="login-panel">
     <p class="eyebrow">WHOLESALE</p>
-    <h1 class="login-logo"><img src="/wholesale-preview/images/logo.svg" width="160" height="90" alt="Strangers Coffee"><span class="sr-only" id="login-title">Welcome back.</span></h1>
+    <h1 class="login-logo"><img src="/wholesale-preview/images/logo.svg" width="160" height="90" alt="Strangers Coffee"><span id="login-title">Welcome back.</span></h1>
     <p class="dialog-intro" id="login-intro">Sign in to order coffee for your business.</p>
     <form id="wholesale-login">
       <div id="registration-fields" hidden>
         <label class="form-field">Business name<input name="business" maxlength="120" autocomplete="organization"></label>
         <label class="form-field">Contact name<input name="contact" maxlength="120" autocomplete="name"></label>
-        <label class="form-field">Order email<input name="email" type="email" maxlength="150" autocomplete="email"></label>
-        <label class="form-field">Accounts email <span>(optional, if different: for invoices)</span><input name="accountsEmail" type="email" maxlength="150"></label>
+        <label class="form-field">Order email<input name="email" autocapitalize="none" spellcheck="false" type="email" maxlength="150" autocomplete="email"></label>
+        <label class="form-field">Accounts email <span>(optional, if different: for invoices)</span><input name="accountsEmail" autocapitalize="none" spellcheck="false" type="email" maxlength="150"></label>
         <label class="form-field">Phone <span>(optional)</span><input name="phone" type="tel" maxlength="40" autocomplete="tel"></label>
       </div>
       <label class="form-field">Username<input id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="32" required></label>
