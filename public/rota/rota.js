@@ -1514,7 +1514,7 @@
     const row = (t, sub, ic, tile, fn) => el("button", { class: "lrow", type: "button", onclick: fn }, el("span", { class: "tile " + tile }, svgi(ICON[ic])),
       el("span", { class: "t" }, el("b", { text: t }), sub ? el("span", { class: "s", text: sub }) : null), el("span", { class: "chev" }, svgi(ICON.chevR)));
     return [el("div", { class: "list glass" },
-        isAdmin() ? row("Hours", "Rota hours against contracts, CSV download", "hours", "blue", () => go("hours")) : null,
+        isAdmin() ? row("Hours", "Weekly hours against contracts, monthly hours for payroll", "hours", "blue", () => go("hours")) : null,
         row(isAdmin() ? "Rota settings" : "Site rota settings", isAdmin() ? "Opening times, minimum cover and contract hours" : "Opening times and minimum cover", "setup", "grey", () => go("settings"))),
       label("Your own shifts"),
       el("div", { class: "list glass" }, row("Open shifts & cover", "Pick up shifts, ask for cover", "swap", "teal", () => go("swaps")),
@@ -1526,7 +1526,13 @@
         el("span", { class: "tile " + (danger ? "red" : "grey") }, svgi(ICON[ic])), el("span", { class: "t" }, el("b", { text: t }), danger ? el("span", { class: "s", text: "Signed in as " + R.me.user.name }) : null))))];
   }
 
+  // Hours: a week (against contracts) or a calendar month for payroll (src/rota/payroll.ts), with CSVs.
+  const monthAdd = (m, n) => { const d = new Date(Date.UTC(Number(m.slice(0, 4)), Number(m.slice(5, 7)) - 1 + n, 1)); return d.toISOString().slice(0, 7); };
+  const monthLabel = (m) => fmt(m + "-01", { month: "long", year: "numeric" });
+  const hoursSwitch = () => el("div", { class: "row hmode" }, seg([["week", "Week"], ["month", "Month"]], R.hoursMode || "week", (v) => { R.hoursMode = v; render(); }, "Show hours for"));
+
   async function renderHours() {
+    if (R.hoursMode === "month") return renderMonthHours();
     const w = R.hoursWeek || (R.hoursWeek = R.week);
     const r = await get("/api/rota/hours?start=" + w);
     setHead("hours", "Hours", `${weekLabel(r.week)} · all sites${r.published ? "" : " · draft"}`, {
@@ -1543,9 +1549,45 @@
         el("td", { class: "n", text: contractLabel(p) || "–" }),
         el("td", { class: "n" + (p.overtime ? " over" : p.shortOfMin ? " short" : ""), text: p.overtime ? `+${hrs(p.overtime)}` : p.shortOfMin ? `−${hrs(p.shortOfMin)}` : "–", title: p.overtime ? "Overtime" : p.shortOfMin ? "Short of their minimum" : "" })))),
       el("tfoot", {}, el("tr", {}, el("th", { scope: "row", text: "Total" }), el("td", { class: "n", text: hrs(r.total) }), el("td"), el("td", { class: "n" + (r.overtime ? " over" : ""), text: r.overtime ? `+${hrs(r.overtime)}` : "–" }))));
-    return [stats, el("section", { class: "panel tablepanel" }, table),
+    return [hoursSwitch(), stats, el("section", { class: "panel tablepanel" }, table),
       el("p", { class: "note", text: `Paid hours on the rota (unpaid breaks taken off), including changes not yet published. Overtime (+) is anything over someone's maximum contracted hours; − is hours short of their minimum.${r.people.some((p) => p.amended) ? " * Includes shifts amended on the day." : ""}${r.openHours ? ` ${hrs(r.openHours)} hours of open shifts aren't counted.` : ""}` }),
       el("div", { class: "row" }, el("a", { class: "btn ghost", href: `/api/rota/hours?start=${r.week}&format=csv`, download: `rota-hours-${r.week}.csv` }, "Download CSV"))];
+  }
+
+  async function renderMonthHours() {
+    const m = R.hoursMonth || (R.hoursMonth = londonToday().slice(0, 7));
+    const r = await get("/api/rota/hours?month=" + m);
+    setHead("hours", "Hours", `${monthLabel(r.month)} · all sites · for payroll`, {
+      back: ["More", "more"],
+      actions: [el("button", { type: "button", class: "iconbtn", "aria-label": "Previous month", onclick: () => { R.hoursMonth = monthAdd(r.month, -1); render(); } }, svgi(ICON.chevL)),
+        el("button", { type: "button", class: "iconbtn", "aria-label": "Next month", onclick: () => { R.hoursMonth = monthAdd(r.month, 1); render(); } }, svgi(ICON.chevR))],
+    });
+    const names = { roastery: "Roastery", cafe: "Cafe", asg: "ASG", factory: "Factory" };
+    const stats = el("div", { class: "stat3 hstats" }, ...Object.entries(r.siteTotals).filter(([id, h]) => h || id !== "factory").map(([id, h]) => el("div", { class: "stat glass" }, el("b", { text: hrs(h) }), el("span", { text: names[id] }))));
+    const days = (n) => `${hrs(n)} ${n === 1 ? "day" : "days"}`;
+    const away = (p) => [p.holidayDays || p.holidayHours ? `${p.holidayHours && !p.holidayDays ? hrs(p.holidayHours) + "h" : days(p.holidayDays)} holiday` : "",
+      p.sickDays ? `${days(p.sickDays)} sick` : "", p.unpaidDays ? `${days(p.unpaidDays)} unpaid` : "", p.unauthorisedDays ? `${days(p.unauthorisedDays)} unauthorised` : "", p.otherDays ? `${days(p.otherDays)} other (to check)` : ""].filter(Boolean);
+    const table = el("table", { class: "htable mtable" },
+      el("thead", {}, el("tr", {}, el("th", { scope: "col", text: "Person" }), el("th", { scope: "col", class: "n", text: "Hours" }), el("th", { scope: "col", class: "n", text: "Overtime" }), el("th", { scope: "col", text: "Time off" }))),
+      el("tbody", {}, ...r.people.map((p) => el("tr", {},
+        el("th", { scope: "row" }, el("span", { text: p.name }), p.active ? null : el("span", { class: "s", text: "No longer here" })),
+        el("td", { class: "n", text: hrs(p.hours) + (p.amended ? "*" : ""), title: p.amended ? `Planned ${hrs(p.plannedHours)}h; ${plural(p.amended, "shift")} amended on the day` : "" }),
+        el("td", { class: "n" + (p.overtime ? " over" : ""), text: p.overtime ? `+${hrs(p.overtime)}` : "–" }),
+        el("td", { class: "away" }, ...(away(p).length ? away(p).map((t) => el("span", { text: t })) : [el("span", { class: "s", text: "–" })]))))),
+      el("tfoot", {}, el("tr", {}, el("th", { scope: "row", text: "Total" }), el("td", { class: "n", text: hrs(r.total) }), el("td", { class: "n" + (r.overtime ? " over" : ""), text: r.overtime ? `+${hrs(r.overtime)}` : "–" }), el("td"))));
+    const notes = [];
+    if (r.draftWeeks.length) notes.push(el("div", { class: "alert rp warn", role: "note" }, el("span", { class: "ic" }, svgi(ICON.warn)), el("span", { class: "t" }, el("b", { text: `${plural(r.draftWeeks.length, "week")} not published` }),
+      el("span", { text: `${r.draftWeeks.length === 1 ? "Week" : "Weeks"} of ${r.draftWeeks.map((w) => fmt(w, { day: "numeric", month: "short" })).join(", ")}: hours as they stand on the rota now.` }))));
+    if (r.toCome) notes.push(el("div", { class: "alert rp info", role: "note" }, el("span", { class: "ic" }, svgi(ICON.warn)), el("span", { class: "t" }, el("b", { text: "The month isn't over" }),
+      el("span", { text: `Shifts from ${fmt(r.toCome, { weekday: "short", day: "numeric", month: "short" })} are planned, not worked yet. Amend hours on the day if anyone goes home early or stays late.` }))));
+    if (r.otherDays) notes.push(el("div", { class: "alert rp warn", role: "note" }, el("span", { class: "ic" }, svgi(ICON.warn)), el("span", { class: "t" }, el("b", { text: "Time off to check" }),
+      el("span", { text: "Some older time off hasn't been marked as holiday, sickness or unpaid yet. It shows as \u201cother\u201d: classify it in Holiday management before running payroll." }))));
+    return [hoursSwitch(), ...notes, stats, el("section", { class: "panel tablepanel" }, r.people.length ? table : el("p", { class: "empty", text: "No shifts or time off this month." })),
+      el("p", { class: "note", text: `Paid hours worked from ${fmt(r.from, { day: "numeric", month: "short" })} to ${fmt(r.to, { day: "numeric", month: "short" })} (unpaid breaks taken off, amended hours where shifts changed on the day). Overtime is worked out a week at a time against each person's maximum contracted hours and counted in the month the week ends in, so a week across two months is paid once.${r.people.some((p) => p.amended) ? " * Includes shifts amended on the day." : ""}${r.openHours ? ` ${hrs(r.openHours)} hours of open shifts aren't counted.` : ""}` }),
+      el("div", { class: "row hdl" },
+        el("a", { class: "btn", href: `/api/rota/hours?month=${r.month}&format=csv`, download: `payroll-hours-${r.month}.csv` }, "Download payroll CSV"),
+        el("a", { class: "btn ghost", href: `/api/rota/hours?month=${r.month}&format=shifts`, download: `shifts-${r.month}.csv` }, "Every shift (CSV)")),
+      el("p", { class: "note", text: "The payroll CSV has one row a person: hours worked, basic and overtime hours, holiday, sick, unpaid, unauthorised and other time off with their dates, and hours by site. Every shift lists each shift's planned and actual times, for checking." })];
   }
 
   async function renderSettings() {

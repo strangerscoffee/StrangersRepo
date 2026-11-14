@@ -8,6 +8,7 @@ import { weekView } from "../views";
 import { addDays, conflict, dow, isDay, londonToday, mondayOf, nowMs, round2 } from "../util";
 import { actor, planWeek, sendWeek } from "../../email/rota";
 import { emailReady } from "../../email/send";
+import { monthHours } from "../payroll";
 
 export async function weekRoutes(r: RotaRequest): Promise<Response | null> {
   const { env, exec, user, route, m, q, needMgr, body, mailLinks } = r;
@@ -82,6 +83,7 @@ export async function weekRoutes(r: RotaRequest): Promise<Response | null> {
 
   if (route === "hours" && m === "GET") {
     needMgr();
+    if (q("month") != null) return monthHours(env, q("month") || "", q("format"));
     const start = q("start") || londonToday();
     if (!isDay(start)) throw invalid("Choose a real date.");
     const week = mondayOf(start);

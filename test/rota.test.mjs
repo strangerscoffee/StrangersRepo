@@ -127,6 +127,7 @@ test("only admins plan: staff and managers cannot change assigned shifts, publis
       await rota("POST", "week/copy", { from: WEEK, to: day(7) }, cookie),
       await rota("GET", "hours?start=" + WEEK, undefined, cookie),
       await rota("GET", `hours?start=${WEEK}&format=csv`, undefined, cookie),
+      await rota("GET", "hours?month=2030-01&format=csv", undefined, cookie),
       await rota("GET", "suggest?shift=" + s.id, undefined, cookie),
       await rota("PUT", "people/" + ids.Alex, { contractHours: 40 }, cookie),
     ];
@@ -339,6 +340,51 @@ test("hours and the CSV", async () => {
   const lines = csv.text.trim().split(/\r\n/);
   assert.equal(lines[0], "name,role,contract_min,contract_max,planned_hours,rota_hours,overtime,short_of_min,roastery,cafe,asg,factory");
   assert.ok(lines.includes("Alex Brown,staff,10,10,11.5,11.5,1.5,0,0,7.5,4,0"), csv.text);
+});
+
+test("a month's hours for payroll: weekly overtime in the month its week ends, time off, and the CSVs", async () => {
+  // October 2030: Tuesday 1st to Thursday 31st. The week of Mon 30 Sep ends in October (its overtime is October's);
+  // the week of Mon 28 Oct ends on 3 Nov (November's).
+  await rota("PUT", "people/" + ids.Priya, { contractHours: 8 }, ADMIN);
+  await addShift({ site: "asg", day: "2030-09-30", start: "09:00", end: "15:00", userId: ids.Priya, breakMins: 0 }); // 6h, September
+  await addShift({ site: "cafe", day: "2030-10-01", start: "09:00", end: "14:00", userId: ids.Priya, breakMins: 0 }); // 5h: week 11h → 3h overtime
+  await addShift({ site: "cafe", day: "2030-10-29", start: "08:00", end: "18:30", userId: ids.Priya, breakMins: 30 }); // 10h: week ends in November
+  const now = Date.now();
+  srv.sql(`INSERT INTO rota_time_off(id,user_id,from_day,to_day,reason,status,created_at,kind,from_time,to_time) VALUES
+    ('mo-sick','${ids.Priya}','2030-10-07','2030-10-09','','approved',${now},'sick',NULL,NULL),
+    ('mo-hol','${ids.Priya}','2030-10-14','2030-10-15','','approved',${now},'annual',NULL,NULL),
+    ('mo-old','${ids.Sam}','2030-10-30','2030-11-02','','approved',${now},'legacy',NULL,NULL),
+    ('mo-no','${ids.Priya}','2030-10-20','2030-10-20','','declined',${now},'unpaid',NULL,NULL)`);
+  srv.sql(`INSERT INTO rota_leave_days(time_off_id,day,units,unit,year_start) VALUES ('mo-hol','2030-10-14',100,'days','2030-04-01'),('mo-hol','2030-10-15',50,'days','2030-04-01')`);
+  const r = await rota("GET", "hours?month=2030-10", undefined, ADMIN);
+  assert.equal(r.status, 200, r.text);
+  assert.equal(r.body.from, "2030-10-01"); assert.equal(r.body.to, "2030-10-31");
+  const priya = r.body.people.find((p) => p.userId === ids.Priya);
+  assert.equal(priya.hours, 15);
+  assert.equal(priya.overtime, 3, "the week ending 6 Oct, counted whole; the week ending 3 Nov isn't October's");
+  assert.equal(priya.basicHours, 12);
+  assert.deepEqual(priya.sites, { roastery: 0, cafe: 15, asg: 0, factory: 0 });
+  assert.equal(priya.sickDays, 3); assert.equal(priya.sickDates, "7–9 Oct");
+  assert.equal(priya.holidayDays, 1.5, "the saved holiday charges");
+  assert.equal(priya.unpaidDays, 0, "declined time off doesn't count");
+  const sam = r.body.people.find((p) => p.userId === ids.Sam);
+  assert.equal(sam.holidayDays, 0, "older, unclassified time off isn't assumed to be holiday");
+  assert.equal(sam.otherDays, 2); assert.equal(sam.otherDates, "30–31 Oct");
+  assert.equal(r.body.otherDays, 2);
+  assert.equal(r.body.toCome, "2030-10-01", "a month still to come is all planned");
+  assert.ok(r.body.draftWeeks.length > 0);
+  assert.equal((await rota("GET", "hours?month=2030-13", undefined, ADMIN)).status, 400);
+
+  const csv = await rota("GET", "hours?month=2030-10&format=csv", undefined, ADMIN);
+  assert.match(csv.headers.get("content-disposition"), /payroll-hours-2030-10\.csv/);
+  const lines = csv.text.trim().split(/\r\n/);
+  assert.equal(lines[0], "Name,Hours worked,Basic hours,Overtime hours,Holiday days,Holiday hours,Holiday dates,Sick days,Sick dates,Unpaid days,Unpaid dates,Unauthorised days,Unauthorised dates,Other time off days,Other time off dates,Shifts,Shifts amended,Roastery hours,Cafe hours,ASG hours,Factory hours,Contract hours a week,Still employed");
+  assert.ok(lines.includes("Priya Shah,15,12,3,1.5,0,14–15 Oct,3,7–9 Oct,0,,0,,0,,2,0,0,15,0,0,8,Yes"), csv.text);
+  const shifts = await rota("GET", "hours?month=2030-10&format=shifts", undefined, ADMIN);
+  const rows = shifts.text.trim().split(/\r\n/);
+  assert.equal(rows[0], "Date,Name,Site,Planned start,Planned finish,Planned break (min),Actual start,Actual finish,Actual break (min),Paid hours,Amended because");
+  assert.ok(rows.includes("2030-10-29,Priya Shah,Cafe,08:00,18:30,30,08:00,18:30,30,10,"), shifts.text);
+  assert.ok(!rows.some((l) => l.startsWith("2030-09-30")), "September's shift isn't in October's list");
 });
 
 test("opening hours by day: Sundays and Saturdays can differ, and cover is checked against them", async () => {
