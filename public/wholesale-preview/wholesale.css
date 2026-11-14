@@ -565,3 +565,8 @@ html[data-sc-session-locked] #orders-dialog, html[data-sc-session-locked] #order
 
 .catalogue-status .sc-sk-shapes { grid-template-columns:repeat(2,minmax(0,1fr)); }
 @media(max-width:700px) { .catalogue-status .sc-sk-shapes { grid-template-columns:1fr; } }
+
+/* Sign-in, registration and recovery share a visible page title and focus treatment. */
+.login-logo #login-title { display:block; margin-top:18px; font-size:25px; line-height:1.2; letter-spacing:-.025em; }
+.wholesale-login button:focus-visible,.wholesale-login a:focus-visible,.wholesale-login input:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+@media(max-width:700px) { .wholesale-login input { font-size:16px; } .wholesale-login .text-button { min-height:44px; } }

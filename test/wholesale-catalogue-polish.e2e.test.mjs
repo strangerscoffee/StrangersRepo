@@ -33,7 +33,7 @@ for (const width of [320, 820, 1920]) for (const colorScheme of ['light', 'dark'
       assert.equal(await page.locator('#account-greeting').textContent(), 'Hi, Buyer');
       assert.equal(await page.locator('#account-menu-greeting').textContent(), 'Hi, Buyer');
       assert.equal(await page.locator('.site-header nav').count(), 0);
-      assert.ok((await page.locator('.site-header').boundingBox()).height < 90, 'header stays on one compact row at every width');
+      assert.ok((await page.locator('.site-header').boundingBox()).height <= 120, 'header and order-history shortcut remain compact at every width');
       assert.equal(await page.locator('#basket-dialog').isVisible(), false);
       assert.equal(await page.locator('#my-orders').isVisible(), false);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
@@ -47,7 +47,7 @@ for (const width of [320, 820, 1920]) for (const colorScheme of ['light', 'dark'
         await page.keyboard.press('Escape'); assert.equal(await page.locator('#coffee-search').inputValue(), '');
         assert.equal(await page.locator('#search-toggle').getAttribute('aria-expanded'), 'false');
       } else {
-        assert.equal(Math.round((await page.locator('.site-header').boundingBox()).height), 64);
+        assert.ok((await page.locator('.site-header').boundingBox()).height <= 120);
         await page.locator('#coffee-search').fill('brazil'); assert.equal(await page.locator('#products>article:visible').count(), 1);
         await page.locator('#coffee-search').fill('');
       }

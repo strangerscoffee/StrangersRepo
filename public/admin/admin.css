@@ -570,3 +570,52 @@ button.stat{cursor:pointer}
 /* Accounts emails from QuickBooks */
 .w-ae-group{margin:10px 0}.w-ae-group summary{cursor:pointer;min-height:44px;display:flex;align-items:center;gap:6px}.w-ae-group .group{margin-top:6px}
 .w-ae-group .item .tx span{overflow-wrap:anywhere}
+
+.w-status-count { display:inline-block; margin-left:6px; min-width:18px; padding:1px 5px; border-radius:8px; background:var(--sunk); font-size:11px; font-variant-numeric:tabular-nums; }
+.w-print-bar button:disabled { opacity:.38; cursor:default; }
+@media(max-width:700px) { .w-workspace .w-sections,.w-order-toolbar .w-filters { padding-bottom:6px; scrollbar-width:thin; scrollbar-color:var(--accent) transparent; mask-image:linear-gradient(to right,#000 calc(100% - 22px),transparent); } .w-workspace .w-sections .seg,.w-order-toolbar .w-filters .seg { padding-right:28px; } }
+@media(min-width:701px) and (max-width:1499px) { .w-panel-tools .w-order-toolbar { grid-template-columns:minmax(0,1fr); } .w-order-toolbar>.w-filters { justify-self:start; } }
+
+/* Keep filtered lists understandable and catalogue rows easy to scan. */
+.w-active-filters { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:12px; padding:8px 12px; border-radius:14px; background:var(--tint); font-size:13px; }
+.w-active-filters>span { min-width:0; overflow-wrap:anywhere; }
+.w-active-filters>button { flex:none; min-height:44px; }
+.w-coffee .tx { gap:5px; }
+.w-coffee .tx>b { line-height:1.4; }
+.w-coffee .end>.btn { min-width:64px; min-height:44px; }
+.w-workspace button:focus-visible,.w-sheet button:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+@media(max-width:700px) { .w-sheet input,.w-sheet textarea,.w-sheet select { font-size:16px; } }
+
+/* Page audit: consistent keyboard access and touch sizes across all admin sections. */
+button:focus-visible,a:focus-visible,summary:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+.w-tabs-workspace.w-list-panel { padding:22px; }
+.w-tabs-workspace .w-tabs-head .hint { padding:0; max-width:72ch; line-height:1.6; }
+.w-tabs-workspace .w-empty { border-top:1px solid var(--line); border-bottom:1px solid var(--line); }
+@media(max-width:700px) { .btn.sm,.btn.dismiss { min-height:44px; } .btn.dismiss { min-width:44px; } .sheet input:not([type=checkbox]):not([type=radio]):not([type=color]),.sheet select,.sheet textarea { font-size:16px; } .w-tabs-workspace.w-list-panel { padding:16px; } }
+
+/* Orders: search first, quiet filters, grouped preparation actions. */
+.w-header-actions { display:flex; align-items:center; gap:18px; }
+.w-panel-tools .w-order-toolbar { grid-template-columns:minmax(0,1fr); gap:16px; }
+.w-order-toolbar>.toolbar { width:100%; }
+.w-order-toolbar>.toolbar .search { width:100%; max-width:none; flex:1; }
+.w-order-toolbar>.w-filters { justify-self:start; }
+.w-order-toolbar .w-filters .seg { background:var(--sunk); box-shadow:none; }
+.w-order-toolbar .w-filters button { color:var(--muted); }
+.w-order-toolbar .w-filters button[aria-pressed=true] { color:var(--fg); background:var(--glass-thick); box-shadow:var(--lift); }
+.w-print-bar { gap:10px; }
+.w-print-bar button:disabled { opacity:1; background:var(--sunk); color:var(--muted); box-shadow:none; }
+.w-print-menu { position:relative; }
+.w-print-menu summary { list-style:none; user-select:none; }
+.w-print-menu summary::-webkit-details-marker { display:none; }
+.w-print-menu summary>span { margin-left:10px; }
+.w-print-options { position:absolute; z-index:10; top:calc(100% + 8px); left:0; min-width:210px; display:grid; gap:5px; padding:8px; border:1px solid var(--line); border-radius:18px; background:var(--surface); box-shadow:var(--float); }
+.w-print-options .btn { justify-content:flex-start; }
+@media(max-width:700px) { .w-header-actions { gap:8px; } .w-alerts-button { padding-inline:10px; font-size:12px; } .w-header-actions .w-result-count { display:none; } }
+/* Keep order filters and preparation actions together when space allows. */
+@media(min-width:1100px) {
+  .w-panel-tools .w-order-toolbar { grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:14px 16px; }
+  .w-order-toolbar>.toolbar { grid-column:1/-1; }
+  .w-order-toolbar>.w-filters { min-width:0; max-width:100%; }
+  .w-order-toolbar>.w-print-bar { grid-column:2; grid-row:2; margin:0; flex-wrap:nowrap; }
+  .w-order-toolbar>.w-picking { grid-column:1/-1; grid-row:3; flex-wrap:wrap; }
+}

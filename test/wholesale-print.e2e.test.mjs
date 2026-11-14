@@ -55,12 +55,14 @@ test("print new orders, pick orders to print, and see the bags to process", asyn
     assert.match(await p.locator(".wp-body").innerText(), /To pack: by coffee, size and grind/);
     await p.locator('[data-sheet="close"]').first().click();
 
+    await p.locator(".w-print-menu summary").click();
     await p.locator('[data-act="wh-print-new"]').click(); await p.waitForFunction(() => window.__printed);
     const printed = await p.evaluate(() => window.__printed);
     assert.match(printed, /Bags to process/); assert.match(printed, /Own labels/); assert.equal((printed.match(/Packed by/g) || []).length, 2, `${name}: a packing sheet per new order`);
     assert.doesNotMatch(printed, /£/, "packing sheets carry no prices");
 
     await p.evaluate(() => { window.__printed = ""; });
+    await p.locator(".w-print-menu summary").click();
     await p.locator('[data-act="wh-pick-start"]').click(); await p.locator('[data-act="wh-pick"]').first().click();
     assert.equal(await p.locator(".w-picked-count").textContent(), "1 selected");
     assert.equal(await p.locator('[data-act="wh-pick"]').first().getAttribute("aria-pressed"), "true");

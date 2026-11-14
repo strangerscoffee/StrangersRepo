@@ -184,3 +184,29 @@ html[data-sc-session-locked] .coffee-choice-menu,html[data-sc-session-locked] .h
 @media(prefers-reduced-motion:reduce) { .catalogue-search,.coffee-choice-menu,.coffee-choice-menu:popover-open,.header-account,.header-account:popover-open,.variant-fields svg { transition:none; transform:none; } }
 @media(prefers-reduced-transparency:reduce),(prefers-contrast:more) { .coffee-choice-menu,.header-account[popover],.repeat-shortcut,.catalogue-search,#sort-coffee { background:var(--surface); -webkit-backdrop-filter:none; backdrop-filter:none; } }
 @media(forced-colors:active) { .coffee-choice-menu,.variant-fields,.catalogue-search { border:1px solid ButtonText; } .coffee-choice-menu button[aria-checked=true] { outline:1px solid Highlight; outline-offset:-2px; } }
+
+/* Quick access and clearer basket costs. */
+.orders-shortcut { min-height:44px; padding:0 14px; border:0; border-radius:24px; color:var(--accent); background:var(--tint); font:inherit; font-size:13px; font-weight:650; white-space:nowrap; }
+.catalogue-actions .bag-size-label,.mobile-catalogue-actions .bag-size-label { position:static; width:auto; height:auto; margin:0; overflow:visible; clip-path:none; }
+.price-summary { display:flex; justify-content:space-between; gap:16px; margin-top:14px; font-size:14px; }
+.basket-estimate { padding-top:16px; border-top:1px solid var(--line); font-weight:650; }
+.basket-estimate strong { font-size:24px; }
+.hide-prices .price-summary { display:none; }
+@media(min-width:701px) { .product-card { min-height:292px; gap:14px 24px; padding:20px; } .product-photo { height:250px; } }
+@media(max-width:700px) { .site-header { grid-template-columns:minmax(0,1fr) auto; } .header-tools { flex-wrap:wrap; justify-content:flex-end; } .orders-shortcut { order:3; flex-basis:100%; min-height:32px; font-size:12px; padding:0 8px; } .mobile-catalogue-actions .bag-size { gap:5px; } .mobile-catalogue-actions .bag-size-label { font-size:11px; } }
+
+/* Audit refinements: filter recovery, focus and comfortable touch targets. */
+.active-filter-bar { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:0 0 16px; padding:8px 14px; border-radius:16px; background:var(--tint); font-size:13px; }
+.active-filter-bar[hidden] { display:none; }
+.active-filter-bar>span { min-width:0; overflow-wrap:anywhere; }
+.active-filter-bar button { flex:none; min-height:44px; }
+.orders-shortcut:focus-visible,.catalogue-search:focus-within { outline:2px solid var(--accent); outline-offset:3px; }
+#account-form input[name=postcode],#location-form input[name=postcode] { text-transform:uppercase; }
+@media(max-width:700px) { .orders-shortcut { min-height:44px; } .mobile-catalogue-actions .bag-size { flex-direction:column; gap:2px; } .catalogue .section-heading { align-items:center; } .form-field input,.form-field textarea { font-size:16px; } }
+
+.history-empty { display:grid; justify-items:center; gap:10px; text-align:center; padding:36px 20px; margin:16px 0 0; border:1px solid var(--line); border-radius:22px; background:var(--sunk); }
+.history-empty h3 { margin:0; font-size:19px; }
+.history-empty p { margin:0; max-width:46ch; color:var(--muted); font-size:14px; line-height:1.6; }
+.history-count:empty { display:none; }
+#orders-dialog .history-toolbar p { line-height:1.5; }
+#location-dialog .dialog-intro { line-height:1.6; }

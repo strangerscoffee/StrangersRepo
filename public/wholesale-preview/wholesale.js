@@ -282,6 +282,9 @@ function filterProducts() {
   countNoun.textContent = count === 1 ? " coffee" : " coffees";
   $("#product-count").replaceChildren(String(count), countNoun);
   $("#no-results").hidden = count !== 0;
+  $("#active-filter-bar").hidden = !query && currentFilter === "all";
+  const category = currentFilter === "all" ? "All coffee" : document.querySelector(`[data-filter="${currentFilter}"]`).textContent.trim();
+  $("#active-filter-summary").textContent = `${category}${query ? ` · “${$("#coffee-search").value.trim()}”` : ""} · ${count} ${count === 1 ? "result" : "results"}`;
   showBagSize();
   sortProducts();
 }
@@ -323,8 +326,11 @@ function renderBasket() {
   $("#order-totals").hidden = !basket.length;
   $("#total-weight").textContent = weight(sum.grams);
   $("#subtotal").textContent = pricesShown() ? money(sum.pence) : "";
-  $("#delivery-note").textContent = !pricesShown() ? "" : sum.pence >= FREE_SHIPPING_FROM_PENCE ? "Free delivery on this order (£250 or more). No charge for roastery collection."
-    : `Delivery ${money(SHIPPING_PENCE)} including VAT, free on orders of ${money(FREE_SHIPPING_FROM_PENCE)} or more: add ${money(FREE_SHIPPING_FROM_PENCE - sum.pence)} more for free delivery. No charge for roastery collection.`;
+  const delivery = sum.pence >= FREE_SHIPPING_FROM_PENCE ? 0 : SHIPPING_PENCE;
+  $("#basket-delivery").textContent = pricesShown() ? delivery ? money(delivery) : "Free" : "";
+  $("#basket-estimate").textContent = pricesShown() ? money(sum.pence + delivery) : "";
+  $("#delivery-note").textContent = !pricesShown() ? "" : sum.pence >= FREE_SHIPPING_FROM_PENCE ? "Free delivery included. Roastery collection is also free."
+    : `Add ${money(FREE_SHIPPING_FROM_PENCE - sum.pence)} more for free delivery. Delivery includes VAT. Choose free roastery collection at review.`;
   // The minimum order (6 kg of any coffees and bag sizes) unless Strangers has exempted this business.
   const minimum = minimumGrams(), short = Math.max(0, minimum - sum.grams);
   $("#minimum-note").hidden = !minimum || (basket.length && !short);
@@ -953,8 +959,8 @@ async function loadOrders(append = false) {
     history = append ? [...new Map([...history, ...result.orders].map(order => [order.id, order])).values()] : result.orders;
     historyTotal = Number.isSafeInteger(result.count) ? result.count : history.length;
     historyCursor = typeof result.nextCursor === "string" && result.nextCursor ? result.nextCursor : null;
-    $("#order-history").innerHTML = history.length ? history.map(order => historyCard(order, expanded)).join("") : '<p class="dialog-intro">Your orders will appear here once you place one.</p>';
-    $("#history-count").textContent = `Showing ${history.length} of ${historyTotal} ${historyTotal === 1 ? "order" : "orders"}`;
+    $("#order-history").innerHTML = history.length ? history.map(order => historyCard(order, expanded)).join("") : '<div class="history-empty"><h3>No orders yet</h3><p>Your orders will appear here once you place one. You can then track progress or order again.</p></div>';
+    $("#history-count").textContent = historyTotal ? `Showing ${history.length} of ${historyTotal} ${historyTotal === 1 ? "order" : "orders"}` : "";
     $("#history-more").hidden = !historyCursor;
   } catch (error) { if (!append) $("#order-history").textContent = error.message; $("#history-count").textContent = append ? "Couldn’t load earlier orders. Try again." : ""; }
   finally { historyLoading = false; $("#order-history").setAttribute("aria-busy", "false"); refreshBusy("#refresh-orders", false); $("#history-more").disabled = false; }
@@ -1195,8 +1201,8 @@ async function loadInvoices(append = false) {
     $("#customer-invoice-summary").innerHTML = `<div><span>${summary.reviewCount ? "Saved outstanding*" : "Outstanding"}</span><strong>${money(summary.outstandingPence)}</strong></div><div><span>Overdue</span><strong>${money(summary.overduePence)}</strong></div>${summary.reviewCount ? `<p class="invoice-review-note">${summary.reviewCount} ${summary.reviewCount === 1 ? "invoice is" : "invoices are"} being checked. Totals include saved balances until confirmed.</p>` : ""}`;
     $("#history-invoice-note").hidden = !summary.outstandingPence;
     $("#history-invoice-note").textContent = `${money(summary.outstandingPence)} outstanding${summary.overdueCount ? " · " + summary.overdueCount + " overdue" : ""} · View invoices`;
-    $("#customer-invoices-list").innerHTML = customerInvoices.length ? customerInvoices.map(invoice => customerInvoiceCard(invoice, expanded)).join("") : '<p class="dialog-intro">Your issued invoices will appear here. Contact Strangers if you need an invoice for an order.</p>';
-    $("#invoice-count").textContent = `Showing ${customerInvoices.length} of ${invoiceTotal} ${invoiceTotal === 1 ? "invoice" : "invoices"}`;
+    $("#customer-invoices-list").innerHTML = customerInvoices.length ? customerInvoices.map(invoice => customerInvoiceCard(invoice, expanded)).join("") : '<div class="history-empty"><h3>No invoices yet</h3><p>Issued invoices will appear here. Contact Strangers if you need an invoice for an order.</p></div>';
+    $("#invoice-count").textContent = invoiceTotal ? `Showing ${customerInvoices.length} of ${invoiceTotal} ${invoiceTotal === 1 ? "invoice" : "invoices"}` : "";
     $("#invoice-more").hidden = !invoiceCursor;
   } catch (error) {
     if (error.code === "invoices_unavailable") { session.invoices = false; applyInvoiceSwitch(); return; }
@@ -1209,3 +1215,8 @@ async function loadInvoices(append = false) {
 }
 $("#refresh-invoices").addEventListener("click", () => loadInvoices());
 $("#invoice-more").addEventListener("click", () => { if (invoiceCursor) loadInvoices(true); });
+
+document.querySelector('[data-clear-coffee]').addEventListener('click', () => {
+  $('#reset-filters').click();
+  $('#coffee-search').focus({ preventScroll: true });
+});
