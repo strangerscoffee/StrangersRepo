@@ -181,9 +181,9 @@ for (const [label, viewport] of [["phone", { width: 393, height: 852 }], ["iPad"
     const today = londonToday(), week = addDays(today, -((new Date(today + "T12:00:00Z").getUTCDay() + 6) % 7));
     await call("PUT", `/api/rota/people/${id}`, { contractMin: 14, contractMax: 19, pattern: { mon: "off" }, sites: ["roastery"] });
     const ownShift = (await call("POST", "/api/rota/shifts", { userId: id, site: "roastery", day: today, start: "08:15", end: "13:15", breakMins: 0, note: "Your private planned shift note" })).shift;
-    await call("PUT", `/api/rota/shifts/${ownShift.id}/actual`, { start: "08:15", end: "12:45", breakMins: 0, note: "Your private actual-hours note" });
+    await call("PUT", `/api/rota/shifts/${ownShift.id}/actual`, { ifUpdatedAt: ownShift.updatedAt, start: "08:15", end: "12:45", breakMins: 0, note: "Your private actual-hours note" });
     const otherShift = (await call("POST", "/api/rota/shifts", { userId: ALEX_ID, site: "roastery", day: today, start: "17:05", end: "19:55", breakMins: 0, note: "COLLEAGUE_PRIVATE_SHIFT" })).shift;
-    await call("PUT", `/api/rota/shifts/${otherShift.id}/actual`, { start: "17:05", end: "18:35", breakMins: 0, note: "COLLEAGUE_PRIVATE_ACTUAL" });
+    await call("PUT", `/api/rota/shifts/${otherShift.id}/actual`, { ifUpdatedAt: otherShift.updatedAt, start: "17:05", end: "18:35", breakMins: 0, note: "COLLEAGUE_PRIVATE_ACTUAL" });
     await call("POST", "/api/rota/week/publish", { week });
     await call("POST", "/api/db/set", { path: `staff/legacy-${suffix}`, data: { name, start: "2024-01-03", topics: { hygiene: { date: "2026-10-01", by: "web:Will Owner" } }, notes: "Your legacy training note", at: Date.now() } });
     await call("POST", "/api/db/set", { path: `staff/other-${suffix}`, data: { name: "Alex Brown", ownerUserId: ALEX_ID, topics: {}, notes: "COLLEAGUE_PRIVATE_TRAINING", at: Date.now() } });
@@ -337,8 +337,8 @@ for (const [label, viewport] of [["phone", { width: 393, height: 852 }], ["iPad"
     for (const s of (await call("GET", "/api/rota/week?start=" + week)).shifts) await call("DELETE", "/api/rota/shifts/" + s.id);
     const add = async (start, end) => (await call("POST", "/api/rota/shifts", { site: "cafe", day: today, start, end, breakMins: 0, job: "", userId: ALEX_ID })).shift;
     const sick = await add("06:00", "08:00"), late = await add("08:30", "12:00"), plain = await add("13:00", "15:00");
-    await call("PUT", `/api/rota/shifts/${sick.id}/actual`, { start: "06:00", end: "06:00", breakMins: 0, note: "Off sick (self-certified)" });
-    await call("PUT", `/api/rota/shifts/${late.id}/actual`, { start: "08:50", end: "12:00", breakMins: 0, note: "Late" });
+    await call("PUT", `/api/rota/shifts/${sick.id}/actual`, { ifUpdatedAt: sick.updatedAt, start: "06:00", end: "06:00", breakMins: 0, note: "Off sick (self-certified)" });
+    await call("PUT", `/api/rota/shifts/${late.id}/actual`, { ifUpdatedAt: late.updatedAt, start: "08:50", end: "12:00", breakMins: 0, note: "Late" });
     const m = await pageFor(viewport);
     await m.page.emulateMedia({ colorScheme: scheme });
     await m.page.goto(srv.base + "/rota/");

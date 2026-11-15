@@ -37,9 +37,14 @@ export async function shiftRoutes(r: RotaRequest): Promise<Response | null> {
     if (!cur.userId) throw invalid("Give the shift to someone before amending their hours.");
     if (cur.day > londonToday()) throw invalid("Shifts can be amended from the day they're on.");
     const b = await body();
+    if (!Number.isSafeInteger(b.ifUpdatedAt) || cur.updatedAt === undefined || b.ifUpdatedAt !== cur.updatedAt) {
+      throw new ApiError(409, "conflict", "These hours changed. Reload the shift before saving.", { shift: visibleShift(cur, user) });
+    }
+    const at = Math.max(nowMs(), cur.updatedAt + 1);
+    let changed: D1Result;
     if (b.clear === true) {
-      await env.DB.prepare("UPDATE rota_shifts SET actual_start = NULL, actual_end = NULL, actual_break = NULL, adjust_note = '', adjusted_by = ?, adjusted_at = ? WHERE id = ?")
-        .bind(user.id, nowMs(), cur.id).run();
+      changed = await env.DB.prepare("UPDATE rota_shifts SET actual_start=NULL,actual_end=NULL,actual_break=NULL,adjust_note='',adjusted_by=?,adjusted_at=?,updated_at=?,updated_by=? WHERE id=? AND updated_at=? AND user_id=?")
+        .bind(user.id, at, at, user.id, cur.id, cur.updatedAt, cur.userId).run();
     } else {
       if (!isTime(b.start) || !isTime(b.end)) throw invalid("Times are HH:MM, for example 07:30.");
       if (mins(b.end) < mins(b.start)) throw invalid("They can't finish before they start.");
@@ -47,9 +52,10 @@ export async function shiftRoutes(r: RotaRequest): Promise<Response | null> {
       if (!Number.isInteger(brk) || brk < 0 || brk > 180) throw invalid("The unpaid break is 0 to 180 minutes.");
       if (brk > mins(b.end) - mins(b.start)) throw invalid("The break can't be longer than the time they were there.");
       const note = text(b.note, "The reason", 200);
-      await env.DB.prepare("UPDATE rota_shifts SET actual_start = ?, actual_end = ?, actual_break = ?, adjust_note = ?, adjusted_by = ?, adjusted_at = ? WHERE id = ?")
-        .bind(b.start, b.end, brk, note, user.id, nowMs(), cur.id).run();
+      changed = await env.DB.prepare("UPDATE rota_shifts SET actual_start=?,actual_end=?,actual_break=?,adjust_note=?,adjusted_by=?,adjusted_at=?,updated_at=?,updated_by=? WHERE id=? AND updated_at=? AND user_id=?")
+        .bind(b.start, b.end, brk, note, user.id, at, at, user.id, cur.id, cur.updatedAt, cur.userId).run();
     }
+    if (!changed.meta.changes) throw new ApiError(409, "conflict", "These hours changed. Reload the shift before saving.");
     return json({ shift: visibleShift(await getShift(env, cur.id), user), ...(await afterWrite(env, cur.day, withProblems, user)) });
   }
 
@@ -77,7 +83,7 @@ export async function shiftRoutes(r: RotaRequest): Promise<Response | null> {
       note: has("note") ? b.note : has("userId") && b.userId !== cur.userId ? "" : cur.note,
     });
     const stmts = [
-      env.DB.prepare("UPDATE rota_shifts SET site = ?, day = ?, start = ?, end = ?, break_mins = ?, job = ?, user_id = ?, note = ?, updated_at = ?, updated_by = ? WHERE id = ?")
+      env.DB.prepare("UPDATE rota_shifts SET site = ?, day = ?, start = ?, end = ?, break_mins = ?, job = ?, user_id = ?, note = ?, updated_at = MAX(updated_at+1,?), updated_by = ? WHERE id = ?")
         .bind(v.site, v.day, v.start, v.end, v.breakMins, v.job, v.userId, v.note, nowMs(), user.id, cur.id),
       touchWeek(env, mondayOf(cur.day)),
     ];

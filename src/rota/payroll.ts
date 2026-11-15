@@ -4,13 +4,15 @@
 // payroll, and every shift for checking it.
 //
 // Overtime is worked out a week at a time against the person's weekly maximum, as on the week's Hours page, and
-// counted in the month the week ends in (its Sunday): a week that runs from one month into the next is paid once,
-// with the later month. A month's basic hours are its hours worked less that overtime.
+// allocated to the shifts where it was worked. Whole-week context crosses month boundaries,
+// but each shift's basic and overtime hours belong to its own calendar month.
 import type { Env } from "../http";
 import { invalid, json } from "../http";
 import { loadPeople, loadShifts } from "./load";
 import { ROTA_SITES, Shift } from "./types";
 import { addDays, dateOf, isoOf, londonToday, mondayOf, round2 } from "./util";
+import { markOvertime } from "./shift";
+import { csvCell } from "../../public/shared/csv.js";
 
 export const isMonth = (s: unknown): s is string => typeof s === "string" && /^\d{4}-(0[1-9]|1[0-2])$/.test(s);
 
@@ -22,10 +24,10 @@ export function monthRange(month: string): { from: string; to: string } {
   return { from: month + "-01", to: isoOf(d) };
 }
 
-/** The Mondays of the weeks whose Sunday falls in the month: their overtime belongs to it. */
+/** All working weeks intersecting the month; preceding days establish the overtime threshold. */
 export function payWeeks(from: string, to: string): string[] {
   const out: string[] = [];
-  for (let w = mondayOf(from); addDays(w, 6) <= to; w = addDays(w, 7)) if (addDays(w, 6) >= from) out.push(w);
+  for (let w = mondayOf(from); w <= to; w = addDays(w, 7)) out.push(w);
   return out;
 }
 
@@ -52,7 +54,7 @@ export async function monthHours(env: Env, month: string, format: string | null)
   if (!isMonth(month)) throw invalid("Choose a real month.");
   const { from, to } = monthRange(month);
   const weeks = payWeeks(from, to);
-  const loadFrom = weeks[0] && weeks[0] < from ? weeks[0] : from;
+  const loadFrom = mondayOf(from);
   const [people, shifts, users, offs, charges, published] = await Promise.all([
     loadPeople(env),
     loadShifts(env, loadFrom, to),
@@ -64,6 +66,7 @@ export async function monthHours(env: Env, month: string, format: string | null)
     env.DB.prepare("SELECT week FROM rota_weeks WHERE published_at IS NOT NULL AND week BETWEEN ? AND ?").bind(mondayOf(from), to).all<{ week: string }>(),
   ]);
   const inMonth = (s: Shift) => s.day >= from && s.day <= to;
+  markOvertime(shifts, people);
   const worked = shifts.filter((s) => s.userId && inMonth(s));
 
   // Absence by person and kind: the days (1, or ½ for part of a day) and, for holiday, the charge taken.
@@ -99,10 +102,7 @@ export async function monthHours(env: Env, month: string, format: string | null)
     const contractMax = p?.contractMax ?? null;
     const mine = worked.filter((s) => s.userId === id);
     const hours = round2(mine.reduce((h, s) => h + s.hours, 0));
-    const overtime = contractMax == null ? 0 : round2(weeks.reduce((o, w) => {
-      const h = shifts.filter((s) => s.userId === id && s.day >= w && s.day <= addDays(w, 6)).reduce((t, s) => t + s.hours, 0);
-      return o + Math.max(0, h - contractMax);
-    }, 0));
+    const overtime = round2(mine.reduce((n, s) => n + (s.overtime || 0), 0));
     const a = absence.get(id);
     const days = (k: Kind) => round2(a ? [...a[k].days.values()].reduce((t, n) => t + n, 0) : 0);
     const dates = (k: Kind) => (a ? runsText(a[k].days) : "");
@@ -128,7 +128,7 @@ export async function monthHours(env: Env, month: string, format: string | null)
   const draftWeeks = weeksInMonth.filter((w) => !pub.has(w) && shifts.some((s) => s.day >= w && s.day <= addDays(w, 6) && inMonth(s)));
 
   if (format === "csv" || format === "shifts") {
-    const cell = (v: unknown) => { const t = v == null ? "" : String(v); return /[",\n\r]/.test(t) || /^[=+\-@]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
+    const cell = (value: unknown) => csvCell(value);
     const lines: string[] = [];
     if (format === "csv") {
       lines.push(["Name", "Hours worked", "Basic hours", "Overtime hours", "Holiday days", "Holiday hours", "Holiday dates", "Sick days", "Sick dates",

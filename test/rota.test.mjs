@@ -365,13 +365,12 @@ test("hours and the CSV", async () => {
   assert.ok(lines.includes("Alex Brown,staff,10,10,11.5,11.5,1.5,0,0,7.5,4,0,0"), csv.text);
 });
 
-test("a month's hours for payroll: weekly overtime in the month its week ends, time off, and the CSVs", async () => {
-  // October 2030: Tuesday 1st to Thursday 31st. The week of Mon 30 Sep ends in October (its overtime is October's);
-  // the week of Mon 28 Oct ends on 3 Nov (November's).
+test("a month's hours for payroll: weekly overtime allocated to the dates worked, time off, and the CSVs", async () => {
+  // Whole-week context establishes overtime, then each shift belongs to its calendar month.
   await rota("PUT", "people/" + ids.Priya, { contractHours: 8 }, ADMIN);
   await addShift({ site: "asg", day: "2030-09-30", start: "09:00", end: "15:00", userId: ids.Priya, breakMins: 0 }); // 6h, September
   await addShift({ site: "cafe", day: "2030-10-01", start: "09:00", end: "14:00", userId: ids.Priya, breakMins: 0 }); // 5h: week 11h → 3h overtime
-  await addShift({ site: "cafe", day: "2030-10-29", start: "08:00", end: "18:30", userId: ids.Priya, breakMins: 30 }); // 10h: week ends in November
+  await addShift({ site: "cafe", day: "2030-10-29", start: "08:00", end: "18:30", userId: ids.Priya, breakMins: 30 }); // 10h, including 2h overtime worked in October
   const now = Date.now();
   srv.sql(`INSERT INTO rota_time_off(id,user_id,from_day,to_day,reason,status,created_at,kind,from_time,to_time) VALUES
     ('mo-sick','${ids.Priya}','2030-10-07','2030-10-09','','approved',${now},'sick',NULL,NULL),
@@ -384,8 +383,8 @@ test("a month's hours for payroll: weekly overtime in the month its week ends, t
   assert.equal(r.body.from, "2030-10-01"); assert.equal(r.body.to, "2030-10-31");
   const priya = r.body.people.find((p) => p.userId === ids.Priya);
   assert.equal(priya.hours, 15);
-  assert.equal(priya.overtime, 3, "the week ending 6 Oct, counted whole; the week ending 3 Nov isn't October's");
-  assert.equal(priya.basicHours, 12);
+  assert.equal(priya.overtime, 5, "3h on 1 Oct plus 2h on 29 Oct; weekly thresholds include preceding days");
+  assert.equal(priya.basicHours, 10);
   assert.deepEqual(priya.sites, { roastery: 0, cafe: 15, asg: 0, factory: 0, office: 0 });
   assert.equal(priya.sickDays, 3); assert.equal(priya.sickDates, "7–9 Oct");
   assert.equal(priya.holidayDays, 1.5, "the saved holiday charges");
@@ -402,7 +401,7 @@ test("a month's hours for payroll: weekly overtime in the month its week ends, t
   assert.match(csv.headers.get("content-disposition"), /payroll-hours-2030-10\.csv/);
   const lines = csv.text.trim().split(/\r\n/);
   assert.equal(lines[0], "Name,Hours worked,Basic hours,Overtime hours,Holiday days,Holiday hours,Holiday dates,Sick days,Sick dates,Unpaid days,Unpaid dates,Unauthorised days,Unauthorised dates,Other time off days,Other time off dates,Shifts,Shifts amended,Roastery hours,Cafe hours,ASG hours,Factory hours,Office hours,Contract hours a week,Still employed");
-  assert.ok(lines.includes("Priya Shah,15,12,3,1.5,0,14–15 Oct,3,7–9 Oct,0,,0,,0,,2,0,0,15,0,0,0,8,Yes"), csv.text);
+  assert.ok(lines.includes("Priya Shah,15,10,5,1.5,0,14–15 Oct,3,7–9 Oct,0,,0,,0,,2,0,0,15,0,0,0,8,Yes"), csv.text);
   const shifts = await rota("GET", "hours?month=2030-10&format=shifts", undefined, ADMIN);
   const rows = shifts.text.trim().split(/\r\n/);
   assert.equal(rows[0], "Date,Name,Site,Planned start,Planned finish,Planned break (min),Actual start,Actual finish,Actual break (min),Paid hours,Amended because");
@@ -482,25 +481,27 @@ test("amending a shift on the day: start and finish as worked, with a reason; th
   assert.equal(s.hours, 7.5);
   assert.equal(s.adjusted, false);
 
-  assert.equal((await rota("PUT", `shifts/${s.id}/actual`, { start: "08:00", end: "11:00" }, ALEX)).status, 403, "staff can't amend hours");
-  assert.equal((await rota("PUT", `shifts/${s.id}/actual`, { start: "11:00", end: "08:00" }, ADMIN)).status, 400);
+  assert.equal((await rota("PUT", `shifts/${s.id}/actual`, { ifUpdatedAt: s.updatedAt, start: "08:00", end: "11:00" }, ALEX)).status, 403, "staff can't amend hours");
+  assert.equal((await rota("PUT", `shifts/${s.id}/actual`, { ifUpdatedAt: s.updatedAt, start: "11:00", end: "08:00" }, ADMIN)).status, 400);
   const later = (await addShift({ site: "asg", day: tomorrow, start: "08:00", end: "16:00", userId: ids.Alex })).shift;
-  assert.equal((await rota("PUT", `shifts/${later.id}/actual`, { start: "08:00", end: "11:00" }, ADMIN)).status, 400, "not before the day");
+  assert.equal((await rota("PUT", `shifts/${later.id}/actual`, { ifUpdatedAt: later.updatedAt, start: "08:00", end: "11:00" }, ADMIN)).status, 400, "not before the day");
   await rota("DELETE", "shifts/" + later.id, undefined, ADMIN);
 
-  const r = await rota("PUT", `shifts/${s.id}/actual?with=problems`, { start: "08:00", end: "11:00", breakMins: 0, note: "Went home sick" }, ADMIN);
+  const r = await rota("PUT", `shifts/${s.id}/actual?with=problems`, { ifUpdatedAt: s.updatedAt, start: "08:00", end: "11:00", breakMins: 0, note: "Went home sick" }, ADMIN);
   assert.equal(r.status, 200, r.text);
+  s.updatedAt = r.body.shift.updatedAt;
   assert.deepEqual([r.body.shift.start, r.body.shift.end, r.body.shift.actualStart, r.body.shift.actualEnd], ["08:00", "16:00", "08:00", "11:00"]);
   assert.deepEqual([r.body.shift.hours, r.body.shift.plannedHours, r.body.shift.adjustNote], [3, 7.5, "Went home sick"]);
   assert.ok(r.body.problems.some((p) => p.kind === "short_cover" && p.site === "asg" && p.day === today && /11:00–16:00/.test(p.message)), "cover counts who's actually there");
   // The break defaults to the planned one, cut to fit.
-  const r2 = await rota("PUT", `shifts/${s.id}/actual`, { start: "08:00", end: "17:30" }, ADMIN);
+  const r2 = await rota("PUT", `shifts/${s.id}/actual`, { ifUpdatedAt: s.updatedAt, start: "08:00", end: "17:30" }, ADMIN);
+  s.updatedAt = r2.body.shift.updatedAt;
   assert.deepEqual([r2.body.shift.actualBreakMins, r2.body.shift.hours], [30, 9]);
   const h = (await rota("GET", "hours?start=" + today, undefined, ADMIN)).body.people.find((x) => x.userId === ids.Alex);
   assert.ok(h.amended >= 1);
   assert.equal(r2 && h.rotaHours - h.plannedHours, 1.5);
   // Other employees cannot see either the shift or its actual hours/reason.
-  await rota("PUT", `shifts/${s.id}/actual`, { start: "08:00", end: "11:00", breakMins: 0, note: "Went home sick" }, ADMIN);
+  s.updatedAt = (await rota("PUT", `shifts/${s.id}/actual`, { ifUpdatedAt: s.updatedAt, start: "08:00", end: "11:00", breakMins: 0, note: "Went home sick" }, ADMIN)).body.shift.updatedAt;
   await rota("POST", "week/publish", { week: today }, ADMIN);
   const sam = await signInAgain("sam");
   const seen = (await rota("GET", "week?start=" + today, undefined, sam)).body.shifts.find((x) => x.id === s.id);
@@ -509,7 +510,7 @@ test("amending a shift on the day: start and finish as worked, with a reason; th
   const td = (await rota("GET", `today?site=asg&day=${today}`, undefined, sam)).body.shifts.find((x) => x.name === "Alex Brown");
   assert.equal(td, undefined);
   // Back to the plan.
-  const back = await rota("PUT", `shifts/${s.id}/actual`, { clear: true }, ADMIN);
+  const back = await rota("PUT", `shifts/${s.id}/actual`, { ifUpdatedAt: s.updatedAt, clear: true }, ADMIN);
   assert.deepEqual([back.body.shift.adjusted, back.body.shift.hours, back.body.shift.actualEnd], [false, 7.5, null]);
   await rota("DELETE", "shifts/" + s.id, undefined, ADMIN);
 });
@@ -522,7 +523,7 @@ test("rest after amended hours uses the actual finishing shift and keeps the emp
   const uid = identity.user.id;
   const late = (await addShift({ site: "asg", day: yesterday, start: "08:00", end: "16:00", userId: uid, breakMins: 0 })).shift;
   const early = (await addShift({ site: "asg", day: today, start: "03:00", end: "07:00", userId: uid, breakMins: 0 })).shift;
-  const amended = await rota("PUT", "shifts/" + late.id + "/actual", { start: "08:00", end: "18:00", breakMins: 0, note: "Late finish" }, ADMIN);
+  const amended = await rota("PUT", "shifts/" + late.id + "/actual", { ifUpdatedAt: late.updatedAt, start: "08:00", end: "18:00", breakMins: 0, note: "Late finish" }, ADMIN);
   assert.equal(amended.status, 200, amended.text);
   const adminWeek = await rota("GET", "week?start=" + today, undefined, ADMIN);
   assert.equal(adminWeek.status, 200, adminWeek.text);
@@ -581,7 +582,7 @@ test("privacy: staff and managers receive only their own personal rota data acro
   for (const p of cases) {
     assert.equal((await rota("PUT", "people/" + p.id, { contractMin: p.contract[0], contractMax: p.contract[1], sites: ["asg"], pattern: {} }, ADMIN)).status, 200);
     const s = (await addShift({ site: "asg", day: today, start: p.start, end: p.end, breakMins: 0, userId: p.id, note: p.label + "_PRIVATE_SHIFT" })).shift;
-    assert.equal((await rota("PUT", "shifts/" + s.id + "/actual", { start: p.start, end: p.end, breakMins: 0, note: p.label + "_PRIVATE_ACTUAL" }, ADMIN)).status, 200);
+    assert.equal((await rota("PUT", "shifts/" + s.id + "/actual", { ifUpdatedAt: s.updatedAt, start: p.start, end: p.end, breakMins: 0, note: p.label + "_PRIVATE_ACTUAL" }, ADMIN)).status, 200);
     const off = await rota("POST", "time-off", { userId: p.id, from: today, to: today, reason: p.label + "_PRIVATE_LEAVE" }, ADMIN);
     assert.equal(off.status, 200, off.text);
     own.set(p.id, s.id);
@@ -667,7 +668,7 @@ test("privacy: requests retain own state without colleague identities, messages 
 test("privacy: direct IDs and stale writes cannot reveal private records; reassignment clears predecessor details", async () => {
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
   const s = (await addShift({ site: "asg", day: today, start: "22:00", end: "23:00", breakMins: 0, userId: ids.Sam, note: "SAM_TRANSFER_PRIVATE_NOTE" })).shift;
-  const amended = await rota("PUT", "shifts/" + s.id + "/actual", { start: "22:00", end: "22:30", breakMins: 0, note: "SAM_TRANSFER_PRIVATE_ACTUAL" }, ADMIN);
+  const amended = await rota("PUT", "shifts/" + s.id + "/actual", { ifUpdatedAt: s.updatedAt, start: "22:00", end: "22:30", breakMins: 0, note: "SAM_TRANSFER_PRIVATE_ACTUAL" }, ADMIN);
   assert.equal(amended.status, 200, amended.text);
   const ownOff = await rota("POST", "time-off", { from: "2032-03-01", to: "2032-03-02", reason: "SAM_DIRECT_PRIVATE_LEAVE" }, SAM);
   assert.equal(ownOff.status, 200, ownOff.text);

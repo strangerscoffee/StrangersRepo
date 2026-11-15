@@ -316,3 +316,13 @@ Admin-only `GET /api/admin/overview` retains its existing fields and adds `daily
 ### Forecast diagnostics
 
 Existing admin-only Insights responses retain `forecast.total` and `forecast.byCoffee` with integer-gram week points and add `model`, `modelLabel`, `validation` (`samples`, `origins`, `maeGrams`, signed `biasGrams`) and `rangeBasis` (`backtest` or `limited`). Positive bias means recorded demand exceeded the historical prediction. Diagnostics describe bounded rolling-origin checks of the forecasting process, not promised future accuracy. Internal historical trials are not returned. Customer-filtered Insights use only that customer's sales for models, calibration and totals, while the existing admin customer picker remains available.
+
+### Production audit corrections
+
+`GET /wholesale/catalogue.js` and its legacy alias remain module-compatible but use the authenticated customer's current filtered catalogue. Customer recipe/allowlist fields remain excluded; source image reads apply the same scope and no-store.
+
+`PUT /api/rota/shifts/<id>/actual` requires the reviewed `ifUpdatedAt` for amendments and `{clear:true}`; missing/stale revisions return 409, with atomic checks and a strictly advanced `updatedAt`. Role/privacy checks remain first. Sickness amendments/removal also advance the revision. Monthly payroll allocates weekly overtime onto actual shift dates before month filtering. CSV consumers receive safe text cells and unchanged numeric values.
+
+`GET /api/staff-orders/orders/<WS-id>/receipt` requires current wholesale staff access and matching immutable `createdBy`; other creators get 404. It returns only the existing unpriced staff projection, or 410 for an owned deleted record. It never creates an order. Frozen pending submissions are retained per original staff identity and UUID, not replayed automatically.
+
+Order bag changes and standing skips atomically check the reviewed order revision and invoice absence. Standing parent/child rollover is atomic; the five-minute cron provides bounded recovery for missing next runs. Existing next rows, including tombstones, remain authoritative. Roast rows add `backlogGrams`, `committedGrams` and `additionalForecastGrams`; `forecastGrams` remains the model total, and `neededGrams` reconciles committed demand. `roast.laterGrams` reports excluded later dispatches.

@@ -1,6 +1,7 @@
 // Strangers Coffee Kitchen Diary staff site.
 // Serves the diary page (public/index.html) and the API it uses through claude-shim.js, and, on its own
 // hostname (ROTA_HOST), the staff rota (public/rota/, src/rota.ts). One Worker, one database, one set of accounts.
+import { repairStandingRuns } from "./wholesaleStanding";
 import { deliverSlackPosts } from "./slackOrders";
 import { deliverDiaryReminders } from "./slackDiary";
 import { appForHost, appLinks, authorize, isAdminSharedFile, isPreviewFile, isPublicAsset, isPublicCode, isRotaManager, isRotaSharedFile, limitWrites, recordId, requireUser, unifiedSignin } from "./access";
@@ -26,7 +27,9 @@ import {handleWebhook} from "./quickbooks/webhooks";
 import {processEvents,runQuickBooksJobs} from "./quickbooks/jobs";
 import {trustedOrigin} from "./requestOrigins";
 import { isWholesaleCode, wholesalePath } from "./hosts";
-import { products as sourceCoffees, catalogueRetrievedAt } from "./wholesale/catalogue.js";
+import { catalogueRetrievedAt } from "./wholesale/catalogue.js";
+import { catalogue } from "./wholesaleCatalogue";
+import { catalogueFor } from "./wholesaleWhiteLabel";
 export { LiveHub } from "./live";
 
 export default {
@@ -80,6 +83,7 @@ export default {
     if(event.cron === "*/5 * * * *"){
       ctx.waitUntil(ensureSchema(env).then(async()=>{
         // App credentials can be saved in Admin instead of Worker vars. Keep idle cron runs small.
+        await repairStandingRuns(env);
         await deliverSlackPosts(env).catch(() => {}); // new-order posts held for 07:50, and retries
         await deliverDiaryReminders(env).catch(() => {}); // each site's morning and end-of-day diary reminder
         if(env.QUICKBOOKS_CLIENT_ID||env.QUICKBOOKS_PRODUCTION_CLIENT_ID||await env.DB.prepare('SELECT 1 FROM quickbooks_app_settings WHERE data IS NOT NULL LIMIT 1').first())await runQuickBooksJobs(env);
@@ -301,9 +305,13 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
     // Pre-migration cached order.js modules imported this snapshot. Preserve that authenticated import
     // without putting the price file back in public/ or exposing it through the data-free code allowlist.
     if (p === "/wholesale/catalogue.js") return noStore(new Response(
-      `export const catalogueRetrievedAt = ${JSON.stringify(catalogueRetrievedAt)};\nexport const products = ${JSON.stringify(sourceCoffees)};\n`,
+      `export const catalogueRetrievedAt = ${JSON.stringify(catalogueRetrievedAt)};\nexport const products = ${JSON.stringify(catalogueFor(await catalogue(env), user.role === "wholesale" ? user.customerId : null))};\n`,
       { headers: { "content-type": "application/javascript; charset=utf-8" } },
     ));
+    if (/^\/wholesale\/images\/[\w-]+\.(webp|jpg|png)$/.test(p)) {
+      if (user.role === "wholesale" && !catalogueFor(await catalogue(env), user.customerId).some(c => c.active && c.imageUrls.includes(p))) throw new ApiError(404, "not_found", "Coffee or photo not found.");
+      return noStore(await env.ASSETS.fetch(req));
+    }
     if (isPreviewFile(p)) return staticFile(req, env, p);
     return redirect("/");
   }

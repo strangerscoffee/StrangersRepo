@@ -284,3 +284,13 @@ The forecast engine can compare recent averages, damped trends, an outlier-resis
 Each coffee starts at its first positive recorded sale; pre-launch calendar zeros do not become its trading history. Forecast lead lengths use actual week dates, including the unfinished-week gap. Total predicted grams equal the sum of the coffee predictions. Estimated ranges use historical prediction errors from the same bottom-up process, with a limited-history fallback. Insights labels the current week as partial and keeps it out of training, reports historical test error and avoids an unverified 80% coverage claim.
 
 Existing report totals, imports, saved orders, invoice records, source cutover and open-order/stock/batch planning rules remain in place. Unknown import coverage and ambiguous accounting/order matches cannot be inferred by the statistical model. The normal API/browser suites and phone/iPad light/dark checks remain required before publication.
+
+## Production audit corrections — 15 November 2026
+
+This release fixes customer-specific legacy catalogue/photo access, standing-order stock checks and failure recovery, staff order duplicate recovery, invoice/amendment concurrency, actual-hours concurrency, monthly payroll reconciliation, roast dispatch timing and spreadsheet-safe CSV exports. No migration, dependency, secret, DNS or service change is required.
+
+Monthly overtime still uses weekly contract thresholds but is assigned to the dates worked. Calendar-month worked hours now equal basic plus overtime, including month boundaries. Saved shifts, issued invoices and payments are not rewritten. Re-download payroll CSVs when reviewing historic month boundaries. The rota's actual-hours form sends the reviewed revision; a stale or old cached editor must reload before saving.
+
+The existing five-minute cron can recover up to three closed standing runs with missing next deliveries per invocation, including older dangling claims. It preserves the claimed ID where present and never recreates existing or deleted child records. Healthy orders are unaffected. Future dispatches are excluded from next week's roast demand; already booked next-week volume is reconciled with the forecast.
+
+Staff order recovery persists the original, identity-bound business payload before sending. After a lost response or reload, Check submitted order retrieves only that staff member's owned receipt, or retries exactly the same request. Closing the window retains recovery. Browser storage failure prevents submission; user-controlled browser-profile storage is not encryption. Other accounts cannot automatically replay or see that attempt through the app. Live release verification uses reads only.

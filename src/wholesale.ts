@@ -289,7 +289,7 @@ export async function handleWholesale(req: Request, env: Env, route: string, use
     const body = await readJson(req, 32 * 1024), id = changeMatch[1], by = { customerId: user.customerId, minimumGrams: minimumOrderGrams(env, owner) };
     const saved = changeMatch[2] === "lines"
       ? await amendLines(env, id, body, user.name, by)
-      : await skipRun(env, id, body, user.name, by, (b) => updateOrderStatus(env, id, b, user.name, { customerOnly: true }));
+      : await skipRun(env, id, body, user.name, by);
     await notifyCustomerChange(env, ctx, saved as any, changeMatch[2] === "skip" ? "skipped" : (body as any).scope === "once" ? "once" : "ongoing", links.diary);
     return json({ order: visibleOrder(saved as Order & Versioned) });
   }
@@ -452,7 +452,7 @@ export async function handleWholesaleAdmin(req: Request, env: Env, route: string
   const linesMatch = /^orders\/(WS-[A-F0-9]{32})\/lines$/.exec(route);
   if (linesMatch && req.method === "PUT") return json({ order: visibleOrder(await amendLines(env, linesMatch[1], body, user.name) as Order & Versioned, true) });
   const skipMatch = /^orders\/(WS-[A-F0-9]{32})\/skip$/.exec(route);
-  if (skipMatch && req.method === "POST") return json({ order: visibleOrder(await skipRun(env, skipMatch[1], body, user.name, {}, (b) => updateOrderStatus(env, skipMatch[1], b, user.name, { customerOnly: true })) as Order & Versioned, true) });
+  if (skipMatch && req.method === "POST") return json({ order: visibleOrder(await skipRun(env, skipMatch[1], body, user.name, {}) as Order & Versioned, true) });
   if (orderMatch && req.method === "PATCH") {
     const updated = await updateOrderStatus(env, orderMatch[1], body, user.name, { allowRelink: true, allowSchedule: true, notify: { ctx, ordersUrl: customerOrdersUrl(env, links, req) } });
     return json({ order: visibleOrder(updated, true) });

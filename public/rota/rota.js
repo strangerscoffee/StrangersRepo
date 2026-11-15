@@ -1039,7 +1039,7 @@
     const sum = el("span", { class: "amsum", "aria-live": "polite" });
     const save = btn("Save", null, "btn sm");
     const reset = x.adjusted ? ghost("As planned", async () => {
-      if (await act(() => api("PUT", `/api/rota/shifts/${x.id}/actual`, { clear: true }), `${first(nm)}'s shift is back to ${x.start}–${x.end}`)) { if (R.weekData) R.weekData._at = 0; onSaved?.(); }
+      if (await act(() => api("PUT", `/api/rota/shifts/${x.id}/actual`, { ifUpdatedAt: x.updatedAt, clear: true }), `${first(nm)}'s shift is back to ${x.start}–${x.end}`)) { if (R.weekData) R.weekData._at = 0; onSaved?.(); }
     }, { class: "btn ghost sm" }) : null;
     const quick = el("label", { class: "amwhy" }, el("span", { text: "Why" }), reasonSel);
     const changed = () => st !== mins(effS(x)) || en !== mins(effE(x)) || Number(brkIn.value || 0) !== brk || reason() !== (x.adjustNote || "");
@@ -1059,11 +1059,11 @@
     reasonSel.onchange = () => { picked = true; draw(); if (reasonSel.value === "other") why.focus(); };
     save.onclick = async () => {
       if (st === ps && en === pe && Number(brkIn.value || 0) === x.breakMins) {
-        if (await act(() => api("PUT", `/api/rota/shifts/${x.id}/actual`, { clear: true }), "Back to the plan")) { if (R.weekData) R.weekData._at = 0; onSaved?.(); }
+        if (await act(() => api("PUT", `/api/rota/shifts/${x.id}/actual`, { ifUpdatedAt: x.updatedAt, clear: true }), "Back to the plan")) { if (R.weekData) R.weekData._at = 0; onSaved?.(); }
         return;
       }
       if (reasonSel.value === "other" && !why.value.trim()) { why.focus(); toast("Type the reason, or choose one from the list."); return; }
-      if (await act(() => api("PUT", `/api/rota/shifts/${x.id}/actual`, { start: hhmm(st), end: hhmm(en), breakMins: Number(brkIn.value || 0), note: reason() }),
+      if (await act(() => api("PUT", `/api/rota/shifts/${x.id}/actual`, { ifUpdatedAt: x.updatedAt, start: hhmm(st), end: hhmm(en), breakMins: Number(brkIn.value || 0), note: reason() }),
         `${first(nm)}: ${hhmm(st)}–${hhmm(en)} saved`)) { if (R.weekData) R.weekData._at = 0; onSaved?.(); }
     };
     draw();
@@ -1611,7 +1611,7 @@
     if (r.otherDays) notes.push(el("div", { class: "alert rp warn", role: "note" }, el("span", { class: "ic" }, svgi(ICON.warn)), el("span", { class: "t" }, el("b", { text: "Time off to check" }),
       el("span", { text: "Some older time off hasn't been marked as holiday, sickness or unpaid yet. It shows as \u201cother\u201d: classify it in Holiday management before running payroll." }))));
     return [hoursSwitch(), ...notes, stats, el("section", { class: "panel tablepanel" }, r.people.length ? table : el("p", { class: "empty", text: "No shifts or time off this month." })),
-      el("p", { class: "note", text: `Paid hours worked from ${fmt(r.from, { day: "numeric", month: "short" })} to ${fmt(r.to, { day: "numeric", month: "short" })} (unpaid breaks taken off, amended hours where shifts changed on the day). Overtime is worked out a week at a time against each person's maximum contracted hours and counted in the month the week ends in, so a week across two months is paid once.${r.people.some((p) => p.amended) ? " * Includes shifts amended on the day." : ""}${r.openHours ? ` ${hrs(r.openHours)} hours of open shifts aren't counted.` : ""}` }),
+      el("p", { class: "note", text: `Paid hours worked from ${fmt(r.from, { day: "numeric", month: "short" })} to ${fmt(r.to, { day: "numeric", month: "short" })} (unpaid breaks taken off, amended hours where shifts changed on the day). Overtime is worked out a week at a time against each person's maximum contracted hours then allocated to the dates worked. Basic and overtime hours always add up to the month's worked hours.${r.people.some((p) => p.amended) ? " * Includes shifts amended on the day." : ""}${r.openHours ? ` ${hrs(r.openHours)} hours of open shifts aren't counted.` : ""}` }),
       el("div", { class: "row hdl" },
         el("a", { class: "btn", href: `/api/rota/hours?month=${r.month}&format=csv`, download: `payroll-hours-${r.month}.csv` }, "Download payroll CSV"),
         el("a", { class: "btn ghost", href: `/api/rota/hours?month=${r.month}&format=shifts`, download: `shifts-${r.month}.csv` }, "Every shift (CSV)")),

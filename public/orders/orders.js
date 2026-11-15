@@ -1,11 +1,31 @@
 // The staff wholesale orders page, for accounts an admin has given wholesale orders access: orders and packing
 // details, status / internal note / tracking changes (version-checked, online only, never queued), printing orders
 // and bags to process, and customers' contact and delivery details (read-only). No prices. Nothing is stored
-// locally, and everything is cleared or hidden when the session can't be verified.
+// locally except an identity-bound, frozen pending order used to recover uncertain submissions.
+// Private views are cleared or hidden when the session can't be verified.
 (()=>{
  'use strict';
  const {el,svgi}=SC,{grindFor,decafLine,iconPaths,coffeeStyle}=SCWholesalePreparation,packing=SCWholesalePacking;
  const $=id=>document.getElementById(id);
+ let orderingIdentity=null;
+ const pendingPrefix=()=>orderingIdentity?'sc.staffOrders.pending.'+orderingIdentity+'.':null;
+ const pendingKey=p=>pendingPrefix()+p.payload.requestId;
+ function savedAttempts(){
+  const prefix=pendingPrefix(),found=[];if(!prefix)return found;
+  for(let i=0;i<localStorage.length;i++){
+   const key=localStorage.key(i);if(!key?.startsWith(prefix))continue;
+   const p=JSON.parse(localStorage.getItem(key));
+   if(p?.identity!==orderingIdentity||typeof p.business!=='string'||!p.payload||!/^[a-f0-9-]{36}$/i.test(p.payload.requestId)||!Array.isArray(p.payload.lines)||!p.payload.lines.length||key!==prefix+p.payload.requestId)throw new Error('Saved order recovery data needs checking. Ask an admin to check recent orders before placing another.');
+   found.push(p);
+  }
+  return found.sort((a,b)=>(a.at||0)-(b.at||0));
+ }
+ function retainAttempt(p){localStorage.setItem(pendingKey(p),JSON.stringify(p));}
+ function removeAttempt(p){
+  if(p.identity!==orderingIdentity)return;
+  const key=pendingKey(p),saved=JSON.parse(localStorage.getItem(key)||'null');
+  if(saved?.identity===p.identity&&saved.payload?.requestId===p.payload.requestId)localStorage.removeItem(key);
+ }
  const paths={chev:'<path d="m9 6 6 6-6 6"/>',warn:'<path d="m12 3 10 18H2zM12 9v5M12 17h.01"/>',info:'<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/>',coffee:'<path d="M5 8h12v7a6 6 0 0 1-12 0V8ZM17 9h2a3 3 0 0 1 0 6h-2"/>',doc:'<path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5M10 13h6M10 17h6"/>',ok:'<path d="m5 12 5 5 9-10"/>',user:'<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',...iconPaths};
  const svg=key=>svgi(paths[key]||paths.coffee);
  const filters=[['open','Open orders'],['New','New'],['Preparing','Preparing'],['Ready','Ready'],['Dispatched','Dispatched'],['all','All orders']];
@@ -311,6 +331,10 @@
   return data;
  }
  function newOrder(customer){
+  try{
+   const p=savedAttempts()[0];
+   if(p){draft={customer:{id:p.payload.customerId,business:p.business},pending:{...p,uncertain:true},sending:false,error:''};drawNewOrder();$('newOrderDialog').showModal();return;}
+  }catch(e){draft={blockedRecovery:true,error:e.message||'Browser storage is unavailable. Enable it before placing orders, so an interrupted order can be recovered.',sending:false};drawNewOrder();$('newOrderDialog').showModal();return;}
   draft={customer:customer||null,catalogue:null,lines:[],source:'Email',onTab:false,delivery:'Roastery collection',locationId:null,reference:'',note:'',emailCustomer:true,requestId:crypto.randomUUID(),sending:false,error:'',search:'',found:[]};
   drawNewOrder();$('newOrderDialog').showModal();
   if(customer)chooseCustomer(customer);else $('newOrderForm').querySelector('input')?.focus();
@@ -347,6 +371,15 @@
  }
  function drawNewOrder(keepFocus=false){
   if(!draft)return;
+  if(draft.pending||draft.blockedRecovery){
+   const p=draft.pending;
+   $('newOrderForm').replaceChildren(el('h3',{},p?'Check submitted order':'Order recovery unavailable'),
+    p?el('p',{},`${p.business} · ${p.payload.lines.reduce((n,l)=>n+l.quantity,0)} bags`):null,
+    el('p',{class:'hint'},p?'The submitted bags and request stay fixed until we confirm the outcome. Check the same order again; closing this window or reloading keeps its recovery details for this account.':'Recovery details could not be verified. Check recent orders before trying to place another.'),
+    draft.error?el('p',{class:'edit-error',role:'alert'},draft.error):null);
+   $('newOrderFoot').replaceChildren(el('span',{}),el('div',{class:'edit-actions'},el('button',{type:'button',class:'btn soft',onclick:()=>$('newOrderDialog').close()},'Keep for later'),p?el('button',{type:'button',class:'btn',id:'placeOrder',disabled:draft.sending,onclick:draft.removedConfirmed?()=>{try{removeAttempt(p);draft=null;$('newOrderDialog').close();toast('Removed order acknowledged. You can start a new order.');}catch{draft.error='Recovery details could not be cleared. Try again.';drawNewOrder();}}:placeNewOrder},draft.removedConfirmed?'Acknowledge removal':draft.sending?'Checking…':'Check submitted order'):null));
+   return;
+  }
   const form=$('newOrderForm'),c=draft.customer,active=keepFocus?document.activeElement?.id:null;
   const parts=[];
   if(!c){
@@ -387,22 +420,46 @@
  }
  async function placeNewOrder(){
   if(!draft?.customer||draft.sending)return;
-  const lines=draft.lines.filter(l=>productOf(l.productId)&&l.quantity>0).map(l=>({productId:l.productId,pack:l.pack,grind:l.grind,quantity:l.quantity}));
-  if(!lines.length){draft.error='Add at least one bag.';drawNewOrder();return;}
-  draft.sending=true;draft.error='';drawNewOrder();
-  try{
-   const {order}=await staffJson('POST','orders',{requestId:draft.requestId,customerId:draft.customer.id,source:draft.source,emailCustomer:draft.emailCustomer,onTab:draft.onTab,lines,delivery:draft.delivery,locationId:draft.locationId||'primary',reference:draft.reference.trim(),customerNote:draft.note.trim()});
-   const business=draft.customer.business;
-   draft=null;$('newOrderDialog').close();toast(`Order placed for ${business}`);
+  const current=draft;
+  if(!current.pending){
+   const lines=current.lines.filter(l=>productOf(l.productId)&&l.quantity>0).map(l=>({productId:l.productId,pack:l.pack,grind:l.grind,quantity:l.quantity}));
+   if(!lines.length){current.error='Add at least one bag.';drawNewOrder();return;}
+   try{
+    if(savedAttempts().length){newOrder(current.customer);return;}
+    current.pending={identity:orderingIdentity,business:current.customer.business,at:Date.now(),uncertain:false,payload:{requestId:current.requestId,customerId:current.customer.id,source:current.source,emailCustomer:current.emailCustomer,onTab:current.onTab,lines,delivery:current.delivery,locationId:current.locationId||'primary',reference:current.reference.trim(),customerNote:current.note.trim()}};
+    retainAttempt(current.pending); // Persist before POST. Failure here must never create an order.
+   }catch{current.pending=null;current.error='This browser could not save order recovery details. Enable browser storage, then try again.';drawNewOrder();return;}
+  }
+  const attempt=current.pending,wasUncertain=attempt.uncertain;
+  const receiptPath='orders/WS-'+attempt.payload.requestId.replaceAll('-','').toUpperCase()+'/receipt';
+  current.sending=true;current.error='';drawNewOrder();
+  const finish=async order=>{
+   if(!order||order.id!=='WS-'+attempt.payload.requestId.replaceAll('-','').toUpperCase())throw new Error('The saved order receipt could not be verified. Check the same submitted order again.');
+   if(!started||attempt.identity!==orderingIdentity)return;
+   try{removeAttempt(attempt);}catch{current.error='Order confirmed, but recovery details could not be cleared. Check the same order again before starting another.';current.sending=false;if(draft===current)drawNewOrder();return;}
+   if(draft?.pending?.payload.requestId!==attempt.payload.requestId)return;
+   draft=null;$('newOrderDialog').close();toast(`Order placed for ${attempt.business}`);
    status='open';$('search').value='';if(view!=='orders')showView('orders');await load();if(rows.some(r=>r.id===order.id))openOrder(order.id);
+  };
+  try{
+   if(wasUncertain){
+    try{const {order}=await staffJson('GET',receiptPath);await finish(order);return;}
+    catch(e){if(e.status!==404)throw e;}
+   }
+   const {order}=await staffJson('POST','orders',attempt.payload);await finish(order);
   }catch(e){
-   if(e.quiet||!draft)return;
-   draft.sending=false;
-   // A refusal means nothing was placed: a fresh ID for the corrected order. An unknown outcome keeps the same ID,
-   // so placing it again returns the order if it went through.
-   if(e.status&&e.status<500)draft.requestId=crypto.randomUUID();
-   draft.error=e.status?e.message:'The order may not have been placed: check your connection, then press Place order again (it won\'t be placed twice).';
-   drawNewOrder();
+   if(e.quiet||!started||attempt.identity!==orderingIdentity)return;
+   current.sending=false;
+   if(e.status===410&&e.code==='order_deleted'){current.removedConfirmed=true;current.error=e.message;if(draft===current)drawNewOrder();return;}
+   // A conflict never proves that nothing was placed. Only a first, definitive
+   // refusal plus an owned receipt miss permits an editable corrected attempt.
+   let absent=false;
+   if(e.status&&e.status<500)try{const {order}=await staffJson('GET',receiptPath);await finish(order);return;}catch(check){if(check.quiet)return;absent=check.status===404;}
+   if(absent&&!wasUncertain&&e.status<500&&e.status!==403&&e.code!=='conflict'){
+    try{removeAttempt(attempt);current.pending=null;current.requestId=crypto.randomUUID();}catch{}
+   }else{attempt.uncertain=true;try{retainAttempt(attempt);}catch{}}
+   current.error=e.status?e.message:'The result is not confirmed. Check the submitted order again to recover it, or retry the identical request.';
+   if(draft===current)drawNewOrder();
   }
  }
  async function loadCustomers(){
@@ -479,5 +536,5 @@
  document.addEventListener('visibilitychange',()=>{if(document.hidden){sequence++;lock()}else if(started)load({reverify:true})});
  addEventListener('pageshow',event=>{if(event.persisted&&started)load({reverify:true})});addEventListener('online',()=>load({reverify:true}));
  SC.recheckOnPageshow();
- (async()=>{const me=await SC.startSession({clear:()=>{sequence++;started=false;clearInterval(timer);lock(true)}});if(!me)return;$('signedIn').textContent=me.user.name;started=true;await load({reverify:true});await openFromLink();timer=setInterval(()=>{if(started&&!document.hidden&&!editing&&!busy.size)load()},15000)})();
+ (async()=>{const me=await SC.startSession({clear:()=>{sequence++;started=false;orderingIdentity=null;clearInterval(timer);lock(true)}});if(!me)return;orderingIdentity=me.user.id;$('signedIn').textContent=me.user.name;started=true;await load({reverify:true});if(started){try{if(savedAttempts().length)newOrder(null);else await openFromLink();}catch{newOrder(null);}}timer=setInterval(()=>{if(started&&!document.hidden&&!editing&&!busy.size)load()},15000)})();
 })();

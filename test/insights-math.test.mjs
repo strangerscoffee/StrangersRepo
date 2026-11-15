@@ -106,6 +106,17 @@ test("roast plan: open orders plus next week's forecast, in whole 10 kg batches 
   assert.equal(r.weekly.length, 11, "every week from the first sale to this one");
 });
 
+test('roast planning separates backlog, next-week commitments and later deliveries without double-counting',()=>{
+ const lines=Array.from({length:24},(_,i)=>({day:addDays('2026-05-25',i*7),customer:'Cafe',coffee:'campo',title:'Campo',pack:'kilo',bags:20,grams:20000,pence:40000,source:'site',order:'wk-'+i}));
+ const result=buildInsights({today:'2026-11-15',lines,open:[
+  {coffee:'campo',title:'Campo',grams:5000,bags:5},
+  {coffee:'campo',title:'Campo',grams:12000,bags:12,dispatchDate:'2026-11-18'},
+  {coffee:'campo',title:'Campo',grams:100000,bags:100,dispatchDate:'2026-12-01'},
+ ],settings:{batchKg:10,yieldKg:8,historyUntil:null}});
+ const row=result.roast.rows.find(r=>r.key==='campo');assert.equal(row.openGrams,17000);assert.equal(row.backlogGrams,5000);assert.equal(row.committedGrams,12000);assert.equal(result.roast.laterGrams,100000);
+ assert.equal(row.neededGrams,5000+Math.max(12000,row.forecastGrams));assert.equal(row.additionalForecastGrams,Math.max(0,row.forecastGrams-12000));
+});
+
 test("customers: their usual gap between orders, and whether they're due, overdue or quiet", () => {
   const today = "2026-11-12";
   const at = (customer, days) => days.map((d, i) => ({ day: d, customer, coffee: "brazil", title: "Brazil", pack: "kilo", bags: 6, grams: 6000, pence: 10800, source: "site", order: customer + i }));

@@ -165,12 +165,12 @@ window.WholesaleInsights = function ({ api, html, raw, svg, put, openSheet, clos
     const rows = data.roast.rows.map(roastRow), totalBatches = rows.reduce((t, r) => t + r.batches, 0), green = rows.reduce((t, r) => t + r.green, 0);
     return html`<section class="ins-section glass ins-roast" aria-labelledby="insRoast"><header class="ins-head"><h3 id="insRoast">${data.customer ? `${data.customer.name}'s share of the roast` : "Roast plan"} · week of ${longDay(data.roast.week)}</h3>
       <div class="row"><button class="btn sm soft" type="button" data-act="wh-ins-batch">${svg("pen")}${data.roast.batchKg} kg batches → ${data.roast.yieldKg} kg</button><button class="btn sm soft" type="button" data-act="wh-ins-print-roast" ${rows.length ? "" : raw("disabled")}>${svg("doc")}Print</button></div></header>
-      <p class="hint">Coffee already ordered but not yet packed, plus next week's forecast, in whole batches. Add roasted coffee already in stock to take it off.</p>
-      ${rows.length ? html`<div class="ins-table-wrap"><table class="ins-table" id="insRoastTable"><thead><tr><th scope="col">Coffee</th><th scope="col" class="num">Ordered, not packed</th><th scope="col" class="num">Expected next week</th><th scope="col" class="num">In stock (kg)</th><th scope="col" class="num">Batches</th><th scope="col" class="num">Green coffee</th></tr></thead>
-        <tbody>${rows.map((r) => html`<tr data-roast="${r.key}"><th scope="row">${swatch(r.key, r.title)}${r.title}</th><td class="num">${kg(r.openGrams)}</td><td class="num">${kg(r.forecastGrams)}</td>
+      <p class="hint">Unpacked orders due by next week, including backlog, plus forecast demand not already booked for next week. Later scheduled deliveries are excluded. Add roasted coffee already in stock to take it off.</p>
+      ${rows.length ? html`<div class="ins-table-wrap"><table class="ins-table" id="insRoastTable"><thead><tr><th scope="col">Coffee</th><th scope="col" class="num">Ordered, not packed</th><th scope="col" class="num">Additional expected</th><th scope="col" class="num">In stock (kg)</th><th scope="col" class="num">Batches</th><th scope="col" class="num">Green coffee</th></tr></thead>
+        <tbody>${rows.map((r) => html`<tr data-roast="${r.key}"><th scope="row">${swatch(r.key, r.title)}${r.title}</th><td class="num">${kg(r.openGrams)}</td><td class="num">${kg(r.additionalForecastGrams ?? r.forecastGrams)}</td>
           <td class="num"><input class="ins-stock" type="number" inputmode="decimal" min="0" step="0.5" value="${stock[r.key] || ""}" placeholder="0" data-ins-stock="${r.key}" aria-label="Roasted ${r.title} in stock, kg"></td>
           <td class="num"><b data-batches>${r.batches}</b></td><td class="num" data-green>${r.green} kg</td></tr>`)}</tbody>
-        <tfoot><tr><th scope="row">Total</th><td class="num">${kg(rows.reduce((t, r) => t + r.openGrams, 0))}</td><td class="num">${kg(rows.reduce((t, r) => t + r.forecastGrams, 0))}</td><td></td><td class="num"><b id="insBatches">${totalBatches}</b></td><td class="num" id="insGreen">${green} kg</td></tr></tfoot></table></div>`
+        <tfoot><tr><th scope="row">Total</th><td class="num">${kg(rows.reduce((t, r) => t + r.openGrams, 0))}</td><td class="num">${kg(rows.reduce((t, r) => t + (r.additionalForecastGrams ?? r.forecastGrams), 0))}</td><td></td><td class="num"><b id="insBatches">${totalBatches}</b></td><td class="num" id="insGreen">${green} kg</td></tr></tfoot></table></div>`
         : html`<p class="hint">Nothing ordered or expected next week yet.</p>`}</section>`;
   }
   function updateRoast(key, value) {
@@ -248,7 +248,7 @@ window.WholesaleInsights = function ({ api, html, raw, svg, put, openSheet, clos
     await load();
     const s = data.sources, cut = slice();
     const sourceText = [s.siteOrders ? `${n(s.siteOrders)} site ${s.siteOrders === 1 ? "order" : "orders"} since ${longDay(s.firstSiteOrder)}` : "no site orders yet", s.historyRows ? `QuickBooks history ${longDay(s.historyFirst)} to ${longDay(s.historyUntil && s.historyUntil <= s.historyLast ? s.historyUntil : s.historyLast)}` : "no QuickBooks history imported"].join(" · ");
-    const empty = !data.weekly.length;
+    const empty = !data.weekly.length && !data.roast.rows.length;
     return html`<section class="ins-workspace" aria-labelledby="insTitle"><div class="toolbar"><div><h2 id="insTitle">Insights</h2><p class="hint">${sourceText}</p></div>
       <div class="row ins-actions"><button class="btn soft" type="button" data-act="wh-ins-import">${svg("plus")}Import QuickBooks history</button>${s.historyRows ? html`<button class="btn soft" type="button" data-act="wh-ins-products">QuickBooks products${s.unreviewedProducts ? html` <span class="badge">${s.unreviewedProducts}</span>` : ""}</button>` : ""}${empty ? "" : html`<button class="btn soft" type="button" data-act="wh-ins-csv">${svg("dl")}Download CSV</button>`}</div></div>
       ${s.unreviewedProducts ? html`<div class="ins-note group"><p><b>${s.unreviewedProducts} QuickBooks ${s.unreviewedProducts === 1 ? "product needs" : "products need"} checking.</b> The site guessed which coffee and bag size each one is; check them so the history counts the right coffee.</p><button class="btn sm soft" type="button" data-act="wh-ins-products">Check products</button></div>` : ""}
@@ -259,13 +259,17 @@ window.WholesaleInsights = function ({ api, html, raw, svg, put, openSheet, clos
   }
 
   /* ---------- CSV ---------- */
-  function downloadCsv() {
-    const q = (v) => /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v);
+  async function downloadCsv() {
+    let cell;
+    try { ({ csvCell: cell } = await import("/shared/csv.js")); }
+    catch { toast("The CSV helper could not load. Try again."); return; }
+    if (!data) return;
+    const q = value => cell(value);
     const title = (k) => data.coffees.find((c) => c.key === k)?.title || k;
     const lines = [["Week starting", "Coffee", "Coffee (kg)", "250 g bags", "1 kg bags", "Sales (£)"]];
-    for (const w of data.weekly) for (const [k, v] of Object.entries(w.byCoffee)) lines.push([w.week, title(k), (v[0] / 1000).toFixed(2), v[2], v[3], (v[1] / 100).toFixed(2)]);
+    for (const w of data.weekly) for (const [k, v] of Object.entries(w.byCoffee)) lines.push([w.week, title(k), Number((v[0] / 1000).toFixed(2)), v[2], v[3], Number((v[1] / 100).toFixed(2))]);
     lines.push([], ["Forecast week starting", "Coffee", "Expected (kg)", "Low (kg)", "High (kg)"]);
-    for (const c of data.forecast.byCoffee) for (const p of c.weeks) lines.push([p.week, c.title, (p.grams / 1000).toFixed(2), (p.low / 1000).toFixed(2), (p.high / 1000).toFixed(2)]);
+    for (const c of data.forecast.byCoffee) for (const p of c.weeks) lines.push([p.week, c.title, Number((p.grams / 1000).toFixed(2)), Number((p.low / 1000).toFixed(2)), Number((p.high / 1000).toFixed(2))]);
     const blob = new Blob([lines.map((l) => l.map(q).join(",")).join("\r\n")], { type: "text/csv" });
     const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: `strangers-wholesale-insights-${data.customer ? data.customer.key.replace(/\s+/g, "-") + "-" : ""}${data.today}.csv` });
     document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);

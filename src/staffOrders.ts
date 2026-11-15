@@ -10,7 +10,7 @@ import {wholesaleCustomer} from "./wholesaleAccounts";
 import {catalogue,packsOf} from "./wholesaleCatalogue";
 import {catalogueFor} from "./wholesaleWhiteLabel";
 import {customerLocations} from "./wholesaleCustomers";
-import {object} from "./wholesaleStore";
+import {get,object} from "./wholesaleStore";
 import {clearTab,listTabs,setOnTab} from "./wholesaleTabs";
 import {amendLines,skipRun} from "./wholesaleStanding";
 import {requireStaffOrders} from "./staffOrdersAccess";
@@ -65,6 +65,14 @@ async function customers(req:Request,env:Env){
 }
 export async function handleStaffOrders(req:Request,env:Env,route:string,user:User,links:{preview?:string;diary?:string}={},ctx?:ExecutionContext):Promise<Response>{
   await requireStaffOrders(env,user);
+  const receipt=/^orders\/(WS-[A-F0-9]{32})\/receipt$/.exec(route);
+  if(receipt&&req.method==="GET"){
+    const order=await get<Record<string,any>>(env,"order",receipt[1]);
+    if(!order||order.createdBy!==user.id||!order.takenFor||order.preview!==false)throw new ApiError(404,"not_found","No submitted order found for this account.");
+    if(order.deletedAt!=null)throw new ApiError(410,"order_deleted","This order was removed by an admin. Check with them before starting another order.");
+    await requireStaffOrders(env,user);
+    return json({order:staffView(order)});
+  }
   const orderMatch=/^orders\/((?:PREVIEW|WS)-[A-F0-9]{32})$/.exec(route);
   if(orderMatch){
     if(req.method!=="PATCH")return json({code:"method_not_allowed",message:"Use PATCH to change an order."},405,{Allow:"PATCH"});
@@ -78,7 +86,7 @@ export async function handleStaffOrders(req:Request,env:Env,route:string,user:Us
   const change=/^orders\/(WS-[A-F0-9]{32})\/(lines|skip)$/.exec(route);
   if(change&&((change[2]==="lines"&&req.method==="PUT")||(change[2]==="skip"&&req.method==="POST"))){
     const body=await readJson(req,32*1024),id=change[1];
-    const saved=change[2]==="lines"?await amendLines(env,id,body,user.name):await skipRun(env,id,body,user.name,{},b=>updateOrderStatus(env,id,b,user.name,{customerOnly:true}));
+    const saved=change[2]==="lines"?await amendLines(env,id,body,user.name):await skipRun(env,id,body,user.name,{});
     await requireStaffOrders(env,user);
     return json({order:staffView(saved as any)});
   }

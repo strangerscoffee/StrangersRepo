@@ -12,6 +12,7 @@ import { addDays, isDay, londonToday, mondayOf, rotaWeekSummary } from "./rota";
 import { diaryReminderReady, sendDiaryReminderTest } from "./slackDiary";
 import { SLACK_DIARY_SITES, timesText } from "./slackDiaryText";
 import { dailyBusiness, dailyOperations } from "./adminOverview";
+import { csvCell } from "../public/shared/csv.js";
 
 const SITES = [
   { id: "roastery", name: "Roastery", prefix: "", address: "10 Dove Street, Norwich, NR2 1DE" },
@@ -362,11 +363,7 @@ export async function security(env: Env) {
 /* ---------- exports ---------- */
 
 /** One CSV cell: quoted, and with a leading quote on anything a spreadsheet would run as a formula. */
-const cell = (v: unknown) => {
-  let s = v == null ? "" : String(v);
-  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
-  return `"${s.replace(/"/g, '""')}"`;
-};
+const cell = (v: unknown) => csvCell(v, true);
 const csv = (name: string, rows: unknown[][]) => new Response(rows.map((r) => r.map(cell).join(",")).join("\r\n") + "\r\n", {
   headers: { "content-type": "text/csv; charset=utf-8", "content-disposition": `attachment; filename="${name}"`, "cache-control": "private, no-store" },
 });

@@ -9,6 +9,7 @@ import { addDays, conflict, dow, isDay, londonToday, mondayOf, nowMs, round2 } f
 import { actor, planWeek, sendWeek } from "../../email/rota";
 import { emailReady } from "../../email/send";
 import { monthHours } from "../payroll";
+import { csvCell } from "../../../public/shared/csv.js";
 
 export async function weekRoutes(r: RotaRequest): Promise<Response | null> {
   const { env, exec, user, route, m, q, needMgr, body, mailLinks } = r;
@@ -105,7 +106,7 @@ export async function weekRoutes(r: RotaRequest): Promise<Response | null> {
     const siteTotals = Object.fromEntries(ROTA_SITES.map((s) => [s.id, round2(shifts.filter((x) => x.site === s.id && x.userId).reduce((h, x) => h + x.hours, 0))]));
     const openHours = round2(shifts.filter((s) => !s.userId).reduce((h, s) => h + s.hours, 0));
     if (q("format") === "csv") {
-      const cell = (v: unknown) => { const t = v == null ? "" : String(v); return /[",\n\r]/.test(t) || /^[=+\-@]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
+      const cell = (value: unknown) => csvCell(value);
       const lines = [["name", "role", "contract_min", "contract_max", "planned_hours", "rota_hours", "overtime", "short_of_min", ...ROTA_SITES.map((s) => s.id)].join(",")];
       for (const r of rows) lines.push([r.name, r.role, r.contractMin, r.contractMax, r.plannedHours, r.rotaHours, r.overtime, r.shortOfMin, ...ROTA_SITES.map((s) => r.sites[s.id])].map(cell).join(","));
       return new Response(lines.join("\r\n") + "\r\n", {

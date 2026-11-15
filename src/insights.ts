@@ -29,19 +29,20 @@ async function settings(env: Env) {
   return { ...DEFAULTS, ...saved, version: row?.version || 0 };
 }
 
-interface StoredOrder { business?: string; customerSnapshot?: { name?: string }; status: string; date?: string; createdAt: number; lines: { productId: string; title: string; pack: Pack; quantity: number; grams: number; price: number }[] }
+interface StoredOrder { business?: string; customerSnapshot?: { name?: string }; status: string; date?: string; dispatchDate?: string; previousRunId?: string; createdAt: number; lines: { productId: string; title: string; pack: Pack; quantity: number; grams: number; price: number }[] }
 async function siteOrders(env: Env) {
   const rows = await env.DB.prepare("SELECT id, data FROM wholesale_preview WHERE kind = 'order' AND json_extract(data, '$.preview') = 0 AND json_extract(data, '$.deletedAt') IS NULL AND json_extract(data, '$.status') <> 'Cancelled'").all<{ id: string; data: string }>();
   const lines: SaleLine[] = [], open: OpenLine[] = [];
   let first: string | null = null;
   for (const row of rows.results) {
     let o: StoredOrder; try { o = JSON.parse(row.data); } catch { continue; }
-    const day = o.date || ukDay(o.createdAt), customer = o.business || o.customerSnapshot?.name || "Unknown";
-    if (!first || day < first) first = day;
+    const day = (o.previousRunId && o.dispatchDate) || o.date || ukDay(o.createdAt), customer = o.business || o.customerSnapshot?.name || "Unknown";
+    const futureRun = !!o.previousRunId && day > ukDay(Date.now());
+    if (!futureRun && (!first || day < first)) first = day;
     for (const l of o.lines || []) {
       const bags = Number(l.quantity) || 0, grams = (Number(l.grams) || 0) * bags;
-      lines.push({ day, customer, coffee: l.productId, title: l.title, pack: (["quarter", "kilo", "half"].includes(l.pack) ? l.pack : "other") as Pack, bags, grams, pence: (Number(l.price) || 0) * bags, source: "site", order: row.id });
-      if (o.status === "New" || o.status === "Preparing") open.push({ coffee: l.productId, title: l.title, grams, bags, customer });
+      if (!futureRun) lines.push({ day, customer, coffee: l.productId, title: l.title, pack: (["quarter", "kilo", "half"].includes(l.pack) ? l.pack : "other") as Pack, bags, grams, pence: (Number(l.price) || 0) * bags, source: "site", order: row.id });
+      if (o.status === "New" || o.status === "Preparing") open.push({ coffee: l.productId, title: l.title, grams, bags, customer, ...(o.dispatchDate ? { dispatchDate: o.dispatchDate } : {}) });
     }
   }
   return { lines, open, first, count: rows.results.length };

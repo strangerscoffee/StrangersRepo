@@ -143,7 +143,7 @@ export async function requestRoutes(r: RotaRequest): Promise<Response | null> {
         if (stop) throw conflict(stop.message);
         await env.DB.batch([
           // Notes, worked hours and amendment attribution belong to the previous assignee, not the new one.
-          env.DB.prepare("UPDATE rota_shifts SET user_id = ?, note = '', actual_start = NULL, actual_end = NULL, actual_break = NULL, adjust_note = '', adjusted_by = NULL, adjusted_at = NULL, updated_at = ?, updated_by = ? WHERE id = ?").bind(r.taker, nowMs(), user.id, shift.id),
+          env.DB.prepare("UPDATE rota_shifts SET user_id = ?, note = '', actual_start = NULL, actual_end = NULL, actual_break = NULL, adjust_note = '', adjusted_by = NULL, adjusted_at = NULL, updated_at = MAX(updated_at+1,?), updated_by = ? WHERE id = ?").bind(r.taker, nowMs(), user.id, shift.id),
           set("approved", { decided: true }),
           env.DB.prepare("UPDATE rota_requests SET status = 'cancelled', decided_by = ?, decided_at = ? WHERE shift_id = ? AND id <> ? AND status IN ('open', 'accepted')").bind(user.id, nowMs(), shift.id, r.id),
           touchWeek(env, mondayOf(shift.day)),

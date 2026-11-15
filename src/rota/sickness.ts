@@ -133,8 +133,8 @@ export async function sicknessRoutes(r: RotaRequest): Promise<Response | null> {
         .bind(toId, p.uid, p.from, p.to, "", user.id, now, now, p.kind === "early" ? p.leftAt : null, untilTime),
       env.DB.prepare("INSERT INTO rota_sickness(id,user_id,time_off_id,kind,from_day,to_day,left_at,data,amended,status,created_at,created_by,request_key) VALUES(?,?,?,?,?,?,?,?,?,'active',?,?,?)")
         .bind(id, p.uid, toId, p.kind, p.from, p.to, p.leftAt, JSON.stringify(data), JSON.stringify(p.changes), now, user.id, key),
-      ...p.changes.map((c) => env.DB.prepare("UPDATE rota_shifts SET actual_start=?, actual_end=?, actual_break=?, adjust_note=?, adjusted_by=?, adjusted_at=? WHERE id=? AND user_id=?")
-        .bind(c.set.start, c.set.end, c.set.breakMins, p.kind === "early" ? `Went home sick at ${p.leftAt} (self-certified)` : "Off sick (self-certified)", user.id, now, c.shiftId, p.uid)),
+      ...p.changes.map((c) => env.DB.prepare("UPDATE rota_shifts SET actual_start=?, actual_end=?, actual_break=?, adjust_note=?, adjusted_by=?, adjusted_at=?,updated_at=MAX(updated_at+1,?),updated_by=? WHERE id=? AND user_id=?")
+        .bind(c.set.start, c.set.end, c.set.breakMins, p.kind === "early" ? `Went home sick at ${p.leftAt} (self-certified)` : "Off sick (self-certified)", user.id, now, now, user.id, c.shiftId, p.uid)),
       event(env, p.uid, toId, "sickness_reported", user.id, { from: p.from, to: p.to, kind: p.kind }),
       ...weeks.map((w) => touchWeek(env, w)),
     ]);
@@ -168,8 +168,8 @@ export async function sicknessRoutes(r: RotaRequest): Promise<Response | null> {
       env.DB.prepare("UPDATE rota_sickness SET status='removed', removed_at=?, removed_by=? WHERE id=? AND status='active'").bind(now, user.id, row.id),
       env.DB.prepare("UPDATE rota_time_off SET status='cancelled', decided_by=?, decided_at=?, version=version+1 WHERE id=?").bind(user.id, now, row.time_off_id),
       // Only shifts still showing exactly what the form set go back; anything changed since is left as it is.
-      ...changes.map((c) => env.DB.prepare("UPDATE rota_shifts SET actual_start=?, actual_end=?, actual_break=?, adjust_note=?, adjusted_by=?, adjusted_at=? WHERE id=? AND actual_start IS ? AND actual_end IS ? AND actual_break IS ?")
-        .bind(c.before.actual_start, c.before.actual_end, c.before.actual_break, c.before.adjust_note ?? "", c.before.adjusted_by, c.before.adjusted_at, c.shiftId, c.set.start, c.set.end, c.set.breakMins)),
+      ...changes.map((c) => env.DB.prepare("UPDATE rota_shifts SET actual_start=?, actual_end=?, actual_break=?, adjust_note=?, adjusted_by=?, adjusted_at=?,updated_at=MAX(updated_at+1,?),updated_by=? WHERE id=? AND actual_start IS ? AND actual_end IS ? AND actual_break IS ?")
+        .bind(c.before.actual_start, c.before.actual_end, c.before.actual_break, c.before.adjust_note ?? "", c.before.adjusted_by, c.before.adjusted_at, now, user.id, c.shiftId, c.set.start, c.set.end, c.set.breakMins)),
       event(env, row.user_id, row.time_off_id, "sickness_removed", user.id, {}),
       ...weeks.map((w) => touchWeek(env, w)),
     ]);

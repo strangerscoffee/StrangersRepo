@@ -8,7 +8,7 @@ export interface SaleLine {
   day: string; customer: string; coffee: string; title: string; pack: Pack; bags: number; grams: number; pence: number;
   source: "site" | "history"; order: string;
 }
-export interface OpenLine { coffee: string; title: string; grams: number; bags: number; customer?: string }
+export interface OpenLine { coffee: string; title: string; grams: number; bags: number; customer?: string; dispatchDate?: string }
 export interface InsightSettings { batchKg: number; yieldKg: number; historyUntil: string | null }
 
 const DAY = 864e5;
@@ -268,14 +268,22 @@ export function buildInsights(input: { today: string; lines: SaleLine[]; open: O
   const byCoffee = coffeeRuns.map(({ key, forecast }) => ({ key, title: titles.get(key)!, ...forecast }))
     .filter((f) => f.recentWeekly > 0 || f.weeks.some((p) => p.grams > 0)).sort((a, b) => b.weeks[0].grams - a.weeks[0].grams);
   // Roast plan for next week: what's ordered but not yet packed, plus what's expected next week, in whole batches.
-  const openBy = new Map<string, OpenLine>();
-  for (const o of open) { const e = openBy.get(o.coffee) || { coffee: o.coffee, title: o.title, grams: 0, bags: 0 }; e.grams += o.grams; e.bags += o.bags; openBy.set(o.coffee, e); titles.set(o.coffee, o.title); }
+  const openBy = new Map<string, { backlog: number; committed: number }>();
+  let laterGrams = 0;
+  for (const o of open) {
+    if (o.dispatchDate && o.dispatchDate > addDays(nextWeek, 6)) { laterGrams += o.grams; continue; }
+    const e = openBy.get(o.coffee) || { backlog: 0, committed: 0 };
+    if (o.dispatchDate && o.dispatchDate >= nextWeek) e.committed += o.grams; else e.backlog += o.grams;
+    openBy.set(o.coffee, e); titles.set(o.coffee, o.title);
+  }
   const yieldG = Math.max(1, settings.yieldKg * 1000);
   const roastKeys = new Set([...openBy.keys(), ...byCoffee.map((f) => f.key)]);
   const roast = [...roastKeys].map((key) => {
-    const openGrams = openBy.get(key)?.grams || 0, forecastGrams = byCoffee.find((f) => f.key === key)?.weeks[0]?.grams || 0;
-    const needed = openGrams + forecastGrams, batches = Math.ceil(needed / yieldG - 1e-9);
-    return { key, title: titles.get(key) || key, openGrams, forecastGrams, neededGrams: needed, batches, greenKg: batches * settings.batchKg, roastedKg: batches * settings.yieldKg };
+    const booked = openBy.get(key) || { backlog: 0, committed: 0 };
+    const openGrams = booked.backlog + booked.committed, forecastGrams = byCoffee.find((f) => f.key === key)?.weeks[0]?.grams || 0;
+    const additionalForecastGrams = Math.max(0, forecastGrams - booked.committed);
+    const needed = openGrams + additionalForecastGrams, batches = Math.ceil(needed / yieldG - 1e-9);
+    return { key, title: titles.get(key) || key, openGrams, forecastGrams, additionalForecastGrams, backlogGrams: booked.backlog, committedGrams: booked.committed, neededGrams: needed, batches, greenKg: batches * settings.batchKg, roastedKg: batches * settings.yieldKg };
   }).filter((r) => r.neededGrams > 0).sort((a, b) => b.neededGrams - a.neededGrams || a.title.localeCompare(b.title));
   // Each customer's usual rhythm: the median gap between order days, and whether they're due or overdue.
   const customerRows = [...customers.values()].map((c) => {
@@ -292,6 +300,6 @@ export function buildInsights(input: { today: string; lines: SaleLine[]; open: O
     coffees: coffeeKeys.map((key) => ({ key, title: titles.get(key)! })).sort((a, b) => a.title.localeCompare(b.title)),
     weekly, customers: customerRows,
     forecast: { total, byCoffee },
-    roast: { week: nextWeek, batchKg: settings.batchKg, yieldKg: settings.yieldKg, rows: roast, batches: roast.reduce((t, r) => t + r.batches, 0), greenKg: roast.reduce((t, r) => t + r.greenKg, 0) },
+    roast: { week: nextWeek, laterGrams, batchKg: settings.batchKg, yieldKg: settings.yieldKg, rows: roast, batches: roast.reduce((t, r) => t + r.batches, 0), greenKg: roast.reduce((t, r) => t + r.greenKg, 0) },
   };
 }

@@ -126,7 +126,7 @@ test("sickness on the shift isn't a clash before publishing; sickness with the s
   assert.ok(p, "still a must-fix");
   assert.match(p.message, /Beth is off sick on .* but still has the planned shift at Cafe: amend their hours/);
   // Amending the hours (didn't come in) settles it.
-  assert.equal((await call("PUT", `/api/rota/shifts/${t.id}/actual`, { start: "08:00", end: "08:00", breakMins: 0, note: "Off sick" })).status, 200);
+  assert.equal((await call("PUT", `/api/rota/shifts/${t.id}/actual`, { ifUpdatedAt: t.updatedAt, start: "08:00", end: "08:00", breakMins: 0, note: "Off sick" })).status, 200);
   week = (await call("GET", `/api/rota/week?start=${day2}`)).body;
   assert.ok(!week.problems.some((x) => x.kind === "time_off" && x.shiftIds.includes(t.id)));
   // Holiday is still a clash, amended or not.
