@@ -12,6 +12,7 @@ import {catalogueFor} from "./wholesaleWhiteLabel";
 import {customerLocations} from "./wholesaleCustomers";
 import {object} from "./wholesaleStore";
 import {clearTab,listTabs,setOnTab} from "./wholesaleTabs";
+import {amendLines,skipRun} from "./wholesaleStanding";
 import {requireStaffOrders} from "./staffOrdersAccess";
 
 const today=()=>new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/London",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date());
@@ -42,6 +43,9 @@ function staffView(o:any,account?:{overdue:boolean;review:boolean}){
     deliveryNotes:o.locationSnapshot?.deliveryNotes??o.deliveryNotes??'',customerNote:o.customerNote||'',note:o.note||'',takenSource:o.takenFor?.source||'',trackingUrl:o.trackingUrl||'',dispatchDate:o.dispatchDate||'',standingEvery:o.standing?.every||0,onTab:!!o.tab&&!o.tabClearedId,customerId:o.customerId||null,packs:o.packs,grams:o.grams,
     lines:o.lines.map((l:any)=>({productId:l.productId,title:l.title,pack:l.pack,packLabel:l.packLabel,grind:l.grind,grindLabel:l.grindLabel,grindHint:l.grindHint,decaf:l.decaf,quantity:l.quantity,grams:l.grams,...(l.recipe?{recipe:l.recipe}:{})})),
     account:account||{overdue:false,review:false},
+    // Changes to the bags and skipped deliveries: whether the customer did it themselves, never which staff member.
+    changed:o.amendedAt?{at:o.amendedAt,byCustomer:!!o.amendedByCustomer,thisDeliveryOnly:!!o.repeatLines}:null,
+    skipped:o.skipped?{at:o.skipped.at,byCustomer:!!o.skipped.customer}:null,
   };
 }
 /** A customer's contact and delivery details, read-only for staff with orders access. */
@@ -68,6 +72,15 @@ export async function handleStaffOrders(req:Request,env:Env,route:string,user:Us
     const updated=await updateOrderStatus(env,orderMatch[1],{ifVersion:body.ifVersion,status:body.status,note:body.note,trackingUrl:body.trackingUrl},user.name,{customerOnly:true,notify:{ctx,ordersUrl:customerOrdersUrl(env,links,req)}});
     await requireStaffOrders(env,user);
     return json({order:staffView(updated)});
+  }
+  // Changing the bags on an order (and, on a standing order, for this delivery only or from now on) and skipping a
+  // standing delivery: the same rules as Admin. Bags only here; the server prices them.
+  const change=/^orders\/(WS-[A-F0-9]{32})\/(lines|skip)$/.exec(route);
+  if(change&&((change[2]==="lines"&&req.method==="PUT")||(change[2]==="skip"&&req.method==="POST"))){
+    const body=await readJson(req,32*1024),id=change[1];
+    const saved=change[2]==="lines"?await amendLines(env,id,body,user.name):await skipRun(env,id,body,user.name,{},b=>updateOrderStatus(env,id,b,user.name,{customerOnly:true}));
+    await requireStaffOrders(env,user);
+    return json({order:staffView(saved as any)});
   }
   // Customer tabs: kg and bags only here (no money); the same checks as Admin.
   const tabOrder=/^orders\/(WS-[A-F0-9]{32})\/tab$/.exec(route),tabClear=/^tabs\/([a-f0-9-]{36})\/clear$/.exec(route);

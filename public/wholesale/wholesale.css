@@ -602,3 +602,26 @@ body[data-auth-view=login] #login-submit { margin-top:3px; }
 .login-footer p { margin:0; color:var(--muted); font-size:11px; line-height:1.6; text-align:center; }
 @media(min-width:701px) { .wholesale-login { display:grid; place-items:center; } }
 @media(max-width:360px) { .wholesale-login { padding: max(22px,env(safe-area-inset-top)) 12px max(22px,env(safe-area-inset-bottom)); } .wholesale-login .login-panel { padding:24px 20px; } .wholesale-login #login-title { font-size:25px; } }
+
+/* Changing or skipping a standing order delivery (My orders) */
+.standing-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.standing-hint{font-size:13px;color:var(--muted);margin:6px 0 0}
+#standing-dialog .dialog-inner{max-width:620px}
+.standing-lines{display:grid;gap:8px;margin:12px 0}
+.standing-line{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border-radius:14px;background:var(--sunk)}
+.standing-line>span{display:grid;gap:2px;min-width:0}
+.standing-line small{color:var(--muted);font-size:13px}
+.standing-line input{width:78px;min-height:44px;text-align:center;font:inherit;border-radius:12px;border:1px solid var(--line);background:var(--surface);color:var(--fg)}
+.standing-empty{color:var(--muted);font-size:14px}
+.standing-add,.standing-scope{border:1px solid var(--line);border-radius:16px;padding:12px 14px;margin:12px 0;display:grid;gap:10px;min-width:0}
+.standing-add legend,.standing-scope legend{font-weight:650;font-size:14px;padding:0 4px}
+.standing-add{grid-template-columns:minmax(0,2fr) minmax(0,1fr) minmax(0,1.4fr) auto;align-items:end}
+.standing-add label{display:grid;gap:4px;font-size:13px;color:var(--muted);min-width:0}
+.standing-add select{min-height:44px;width:100%;min-width:0;border-radius:12px;border:1px solid var(--line);background:var(--surface);color:var(--fg);font:inherit;padding:0 8px}
+.standing-scope label{display:flex;gap:10px;align-items:flex-start;cursor:pointer}
+.standing-scope label span{display:grid;gap:2px}
+.standing-scope small{color:var(--muted);font-size:13px}
+.standing-scope input{margin-top:4px;width:18px;height:18px;flex:none}
+.standing-total{font-weight:650;margin:8px 0}
+.standing-short{color:var(--warn);font-weight:600}
+@media (max-width:640px){.standing-add{grid-template-columns:1fr 1fr}.standing-add label:first-of-type{grid-column:1/-1}.standing-add button{grid-column:1/-1}}

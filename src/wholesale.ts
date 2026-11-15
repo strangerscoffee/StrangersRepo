@@ -12,13 +12,13 @@ import { audit } from "./audit";
 import { ApiError, type Env, invalid, json, readJson } from "./http";
 import { manageWholesaleAccount, publicCustomer, wholesaleAccounts, wholesaleCustomer, paymentTermsFor, PAYMENT_TERMS, type Customer, type OrderingUser } from "./wholesaleAccounts";
 import { customerLocations, editedCustomerLocations, locationDefaults, validLocationId, type CustomerLocation } from "./wholesaleCustomers";
-import { confirmToCustomer, dispatchToCustomer, handleOrderEmailsAdmin, notifyNewOrder, orderEmailSettings } from "./email/orders";
+import { notifyCustomerChange, confirmToCustomer, dispatchToCustomer, handleOrderEmailsAdmin, notifyNewOrder, orderEmailSettings } from "./email/orders";
 import { notifySlackNewOrder } from "./slackOrders";
 import { handleInsights } from "./insights";
 import { autoTabFor, clearTab, listTabs, setOnTab } from "./wholesaleTabs";
 import { importCustomers, inviteCustomer, inviteStates, matchAccountsEmails } from "./wholesaleImport";
 import { canOrder, catalogueFor, customerLines, recipeText } from "./wholesaleWhiteLabel";
-import { amendLines, rollStanding, scheduleFields, type Standing } from "./wholesaleStanding";
+import { amendLines, rollStanding, scheduleFields, skipRun, type Standing } from "./wholesaleStanding";
 import { customersSeeInvoices, handleInvoiceAdmin, handleInvoiceCustomer, invoiceLinks } from "./wholesaleInvoices";
 
 type Pack = "quarter" | "half" | "kilo";
@@ -35,6 +35,11 @@ interface Order {
   createdBy: string; createdName: string; business: string; reference: string; delivery: string;
   customerId: string | null; status: string; note: string; date: string; createdAt: number;
   requestKey: string; lines: Line[]; pence: number; grams: number; packs: number;
+  /** Skipped (a standing delivery): by whom (a name, admin only) and whether the customer did it. */
+  skipped?: { by: string; customer: boolean; at: number };
+  /** Standing order changed for one delivery only: the usual bags, which the next run goes back to. */
+  repeatLines?: Line[];
+  amendedByCustomer?: boolean;
   /** Taken by staff for the customer (it came by email, phone or in person); who took it is createdName. */
   takenFor?: { source: string; at: number };
   /** Delivery charge in pence including VAT, fixed when the order was placed (absent on orders from before it was automatic). */
@@ -64,8 +69,15 @@ export function customerOrdersUrl(env: Env, links: { preview?: string }, req: Re
 const denied = () => new ApiError(403, "permission_denied", "Only admins can manage wholesale ordering.");
 export function visibleOrder(order: Order & Versioned, admin = false) {
   const { requestKey, note, tab, tabClearedId, amendedBy, ...visible } = order;
-  if (!admin && order.takenFor) { const { createdBy, createdName, ...rest } = visible as typeof visible & { createdBy?: string; createdName?: string }; return { ...rest, lines: customerLines(rest.lines)!, ...(rest.originalLines ? { originalLines: customerLines(rest.originalLines) } : {}), trackingUrl: order.trackingUrl || "" }; }
-  return admin ? { ...visible, trackingUrl: order.trackingUrl || "", note, ...(tab ? { tab } : {}), ...(tabClearedId ? { tabClearedId } : {}), ...(amendedBy ? { amendedBy } : {}) } : { ...visible, lines: customerLines(visible.lines)!, ...(visible.originalLines ? { originalLines: customerLines(visible.originalLines) } : {}), trackingUrl: order.trackingUrl || "" };
+  if (admin) return { ...visible, trackingUrl: order.trackingUrl || "", note, ...(tab ? { tab } : {}), ...(tabClearedId ? { tabClearedId } : {}), ...(amendedBy ? { amendedBy } : {}) };
+  // Customers never see which member of staff took, changed or skipped an order: only whether they did it themselves.
+  const { createdBy, createdName, skipped, ...rest } = visible as typeof visible & { createdBy?: string; createdName?: string; skipped?: { customer?: boolean; at?: number } };
+  const own = order.takenFor ? rest : { ...rest, ...(createdBy !== undefined ? { createdBy } : {}), ...(createdName !== undefined ? { createdName } : {}) };
+  return {
+    ...own, lines: customerLines(rest.lines)!, ...(rest.originalLines ? { originalLines: customerLines(rest.originalLines) } : {}),
+    ...((rest as any).repeatLines ? { repeatLines: customerLines((rest as any).repeatLines) } : {}),
+    ...(skipped ? { skipped: { customer: !!skipped.customer, at: skipped.at } } : {}), trackingUrl: order.trackingUrl || "",
+  };
 }
 function trackingUrl(value: unknown): string {
   if (typeof value !== "string" || /[\u0000-\u001f\u007f]/.test(value) || /%(?:0[0-9a-f]|1[0-9a-f]|7f)/i.test(value)) throw invalid("Use a tracking link without control characters.");
@@ -269,6 +281,18 @@ export async function handleWholesale(req: Request, env: Env, route: string, use
   }
   if (/^images\/[a-f0-9]{32}$/.test(route) && req.method === "GET") return serveCatalogueImage(env, route.slice("images/".length), user.role === "wholesale" ? user.customerId : null);
   if (route === "orders" && req.method === "POST") return createOrder(req, env, user, links, ctx);
+  // A customer changes or skips a delivery of their own standing order while it's still New.
+  const changeMatch = /^orders\/(WS-[A-F0-9]{32})\/(lines|skip)$/.exec(route);
+  if (changeMatch && user.role === "wholesale" && ((changeMatch[2] === "lines" && req.method === "PUT") || (changeMatch[2] === "skip" && req.method === "POST"))) {
+    const owner = await wholesaleCustomer(env, user.customerId);
+    if (!owner || owner.status === "On hold") throw new ApiError(403, "account_on_hold", "Your account is on hold. Contact Strangers about this order.");
+    const body = await readJson(req, 32 * 1024), id = changeMatch[1], by = { customerId: user.customerId, minimumGrams: minimumOrderGrams(env, owner) };
+    const saved = changeMatch[2] === "lines"
+      ? await amendLines(env, id, body, user.name, by)
+      : await skipRun(env, id, body, user.name, by, (b) => updateOrderStatus(env, id, b, user.name, { customerOnly: true }));
+    await notifyCustomerChange(env, ctx, saved as any, changeMatch[2] === "skip" ? "skipped" : (body as any).scope === "once" ? "once" : "ongoing", links.diary);
+    return json({ order: visibleOrder(saved as Order & Versioned) });
+  }
   const match = /^orders\/((?:PREVIEW|WS)-[A-F0-9]{32})$/.exec(route);
   if (match && req.method === "GET") {
     const order = await get<Order>(env, "order", match[1]);
@@ -427,6 +451,8 @@ export async function handleWholesaleAdmin(req: Request, env: Env, route: string
   }
   const linesMatch = /^orders\/(WS-[A-F0-9]{32})\/lines$/.exec(route);
   if (linesMatch && req.method === "PUT") return json({ order: visibleOrder(await amendLines(env, linesMatch[1], body, user.name) as Order & Versioned, true) });
+  const skipMatch = /^orders\/(WS-[A-F0-9]{32})\/skip$/.exec(route);
+  if (skipMatch && req.method === "POST") return json({ order: visibleOrder(await skipRun(env, skipMatch[1], body, user.name, {}, (b) => updateOrderStatus(env, skipMatch[1], b, user.name, { customerOnly: true })) as Order & Versioned, true) });
   if (orderMatch && req.method === "PATCH") {
     const updated = await updateOrderStatus(env, orderMatch[1], body, user.name, { allowRelink: true, allowSchedule: true, notify: { ctx, ordersUrl: customerOrdersUrl(env, links, req) } });
     return json({ order: visibleOrder(updated, true) });

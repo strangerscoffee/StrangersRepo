@@ -909,7 +909,9 @@ function historySchedule(order) {
   if (typeof order.dispatchDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(order.dispatchDate)) parts.push(`Dispatch day: ${escape(new Date(order.dispatchDate + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" }))}`);
   const every = order.standing?.every;
   if ([1, 2, 4].includes(every)) parts.push(`Standing order, ${every === 1 ? "every week" : `every ${every} weeks`}`);
-  const amended = Number.isSafeInteger(order.amendedAt) ? `<p class="history-amended">Updated by Strangers on ${escape(new Date(order.amendedAt).toLocaleDateString("en-GB", { day: "numeric", month: "long", timeZone: "Europe/London" }))}. The bags below are the updated order.</p>` : "";
+  const on = (at) => escape(new Date(at).toLocaleDateString("en-GB", { day: "numeric", month: "long", timeZone: "Europe/London" }));
+  const once = Array.isArray(order.repeatLines) && order.repeatLines.length ? " This delivery only: the next one goes back to your usual bags." : "";
+  const amended = Number.isSafeInteger(order.amendedAt) ? `<p class="history-amended">${order.amendedByCustomer ? "You changed the bags" : "Updated by Strangers"} on ${on(order.amendedAt)}. The bags below are the updated order.${once}</p>` : "";
   return (parts.length ? `<p class="history-schedule">${parts.join(" · ")}</p>` : "") + amended;
 }
 function historyStatus(order) {
@@ -922,6 +924,7 @@ function historyStatus(order) {
   };
   const status = Object.hasOwn(descriptions, order.status) ? order.status : "Status unavailable";
   const badge = `<span class="order-state status-${status.toLowerCase().replaceAll(" ", "-")}">${escape(status)}</span>`;
+  if (status === "Cancelled" && order.skipped) return `<span class="order-state status-cancelled">Skipped</span><p class="history-cancelled">${order.skipped.customer ? "You skipped this delivery." : "Strangers skipped this delivery."} Your standing order carries on with the next one.</p>`;
   if (status === "Cancelled") return `${badge}<p class="history-cancelled">This order was cancelled. No further preparation updates are expected.</p>`;
   return `<div class="history-status">${badge}<p>${descriptions[status] || "Contact Strangers for an update."}</p></div>${current >= 0 ? `<ol class="history-progress" aria-label="Order progress">${states.map((step, i) => `<li ${i < current ? 'class="done"' : ""} ${i === current ? 'aria-current="step"' : ""}><span class="progress-marker" aria-hidden="true">${i < current ? "✓" : i + 1}</span><span>${step === "New" ? "Received" : step}<span class="sr-only">${i < current ? ", completed" : i === current ? ", current stage" : ", not reached"}</span></span></li>`).join("")}</ol>` : ""}`;
 }
@@ -953,6 +956,7 @@ function historyCard(order, expanded) {
   return `<article class="history-card" data-history-order="${escape(order.id)}"><div class="history-card-head"><h3>${date}</h3>${pricesShown() ? `<strong>${money(orderTotal(order))}</strong>` : ""}</div><p class="history-summary">${bagCount(order.packs)} · ${escape(order.delivery)}</p>${order.reference ? `<p class="history-summary">Reference: ${escape(order.reference)}</p>` : ""}${historySchedule(order)}${historyStatus(order)}
     ${trackingUrl ? `<a class="button button-outline history-tracking" data-order-tracking="${escape(order.id)}" href="${escape(trackingUrl)}" target="_blank" rel="noopener noreferrer">Track delivery <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg><span class="sr-only">(opens in a new tab)</span></a>` : ""}
     <details class="history-details" ${expanded.has(order.id) ? "open" : ""}><summary>Order details · ${bagCount(order.packs)}</summary><p class="history-id">${escape(order.id)}</p><ul class="history-lines">${order.lines.map(line => `<li><span>${line.quantity} × ${escape(line.title)}</span><small>${escape(line.packLabel)} · ${escape(line.grindLabel)}</small>${pricesShown() ? `<strong>${money(line.price * line.quantity)}</strong>` : ""}</li>`).join("")}${Number.isSafeInteger(order.deliveryPence) && pricesShown() ? `<li><span>${order.delivery === "Delivery" ? "Delivery" : "Roastery collection"}</span><small>${order.deliveryPence ? "Including VAT" : order.delivery === "Delivery" ? "Free on orders of £250 or more" : "No delivery charge"}</small><strong>${order.deliveryPence ? money(order.deliveryPence) : "Free"}</strong></li>` : ""}</ul>${order.customerNote ? `<p class="history-address"><b>Your comments</b><br>${escape(order.customerNote)}</p>` : ""}${order.locationSnapshot ? `<p class="history-address"><b>Location at order</b><br>${escape(order.locationSnapshot.name)}</p>` : ""}${snapshot?.address && order.delivery === "Delivery" ? `<p class="history-address"><b>Delivery address at order</b><br>${escape(snapshot.address)}<br>${escape(snapshot.postcode || "")}</p>` : ""}${order.deliveryNotes ? `<p class="history-address">${escape(order.deliveryNotes)}</p>` : ""}${order.paymentTerms ? `<p class="payment-terms">Payment terms: ${escape(order.paymentTerms.label)}${order.paymentTerms.note ? `<br>${escape(order.paymentTerms.note)}` : ""}</p>` : ""}</details>
+    ${standingChangeable(order) ? `<div class="standing-actions"><button class="button button-dark" type="button" data-standing-change="${escape(order.id)}">Change bags</button><button class="button button-outline" type="button" data-standing-skip="${escape(order.id)}">Skip this delivery</button></div><p class="standing-hint">You can change or skip this delivery until Strangers starts preparing it.</p>` : ""}
     <button class="button button-outline history-reorder" type="button" data-reorder="${escape(order.id)}" ${pendingAttempt ? "disabled" : ""}>Order again</button></article>`;
 }
 let historyCursor = null;
@@ -1055,7 +1059,105 @@ async function reviewReorder(order, button) {
 $("#order-history").addEventListener('click', event => {
   const button = event.target.closest('[data-reorder]');
   if (button) reviewReorder(history.find(order => order.id === button.dataset.reorder), button);
+  const change = event.target.closest('[data-standing-change]'), skip = event.target.closest('[data-standing-skip]');
+  if (change) openStanding(history.find(order => order.id === change.dataset.standingChange), "change");
+  if (skip) openStanding(history.find(order => order.id === skip.dataset.standingSkip), "skip");
 });
+
+// A delivery of the customer's own standing order can be changed or skipped while it's New (before Strangers starts
+// preparing it): the server checks the same, and the minimum order still applies to changed bags.
+const standingChangeable = (order) => !!session?.customer && !!order?.standing && order.status === "New" && !order.preview;
+const standingDay = (order) => /^\d{4}-\d{2}-\d{2}$/.test(order?.dispatchDate || "") ? new Date(order.dispatchDate + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" }) : "";
+let standing = null; // { order, lines, mode, busy }
+function openStanding(order, mode) {
+  if (!standingChangeable(order)) return;
+  standing = { order, mode, busy: false, lines: order.lines.map(l => ({ productId: l.productId, pack: l.pack, grind: l.grind, quantity: l.quantity, title: l.title, packLabel: l.packLabel, grindLabel: l.grindLabel, price: l.price })) };
+  const day = standingDay(order);
+  $("#standing-title").textContent = mode === "skip" ? "Skip this delivery?" : "Change this delivery";
+  $("#standing-summary").textContent = mode === "skip"
+    ? `Nothing will be sent${day ? ` on ${day}` : ""}. Your standing order carries on with the delivery after it, with your usual bags.`
+    : `${day ? `Dispatch day: ${day}. ` : ""}Change how many bags, remove a coffee (set it to 0) or add one.`;
+  $("#standing-form").hidden = mode === "skip"; $("#standing-skip").hidden = mode !== "skip";
+  $("#standing-error").hidden = true; $("#standing-skip-error").hidden = true;
+  $("#standing-form").elements.scope.value = "once";
+  if (mode === "change") { fillStandingCoffees(); drawStanding(); }
+  if ($("#orders-dialog").open) $("#orders-dialog").close();
+  $("#standing-dialog").showModal();
+}
+function fillStandingCoffees() {
+  const choices = products.filter(isAvailable);
+  $("#standing-coffee").innerHTML = choices.map(p => `<option value="${escape(p.id)}">${escape(p.title)}${p.yours ? " (your coffee)" : ""}</option>`).join("");
+  fillStandingOptions();
+}
+function fillStandingOptions() {
+  const product = productFor($("#standing-coffee").value);
+  $("#standing-pack").innerHTML = packsFor(product).map(([id, pack]) => `<option value="${id}">${escape(pack.short)}${pricesShown() ? ` · ${money(unitPrice(product, id))}` : ""}</option>`).join("");
+  $("#standing-grind").innerHTML = availableGrinds(product).map(g => `<option value="${escape(g.id)}">${escape(g.label)}</option>`).join("");
+}
+function standingSums() {
+  let grams = 0, pence = 0, bags = 0;
+  for (const l of standing.lines) { grams += (packs[l.pack]?.grams || 0) * l.quantity; pence += (l.price || 0) * l.quantity; bags += l.quantity; }
+  return { grams, pence, bags };
+}
+function drawStanding() {
+  $("#standing-lines").innerHTML = standing.lines.map((l, i) => `<div class="standing-line"><span><b>${escape(l.title)}</b><small>${escape(l.packLabel)} · ${escape(l.grindLabel)}${pricesShown() && l.price ? ` · ${money(l.price)} each` : ""}</small></span><label><span class="sr-only">Bags of ${escape(l.title)}, ${escape(l.packLabel)}, ${escape(l.grindLabel)}</span><input type="number" inputmode="numeric" min="0" max="${MAX_QUANTITY}" step="1" value="${l.quantity}" data-standing-line="${i}"></label></div>`).join("") || '<p class="standing-empty">No bags yet: add a coffee below.</p>';
+  const { grams, pence, bags } = standingSums(), min = minimumGrams();
+  const short = min && grams < min;
+  $("#standing-total").innerHTML = `${bagCount(bags)} · ${escape(weight(grams))}${pricesShown() ? ` · ${money(pence)} of coffee` : ""}${short ? `<br><span class="standing-short">The minimum order is ${escape(weight(min))}: add ${escape(weight(min - grams))} more.</span>` : ""}`;
+  $("#standing-save").disabled = standing.busy || !bags || !!short;
+}
+$("#standing-coffee").addEventListener("change", fillStandingOptions);
+$("#standing-lines").addEventListener("input", (event) => {
+  const input = event.target.closest("[data-standing-line]"); if (!input || !standing) return;
+  const n = Math.max(0, Math.min(MAX_QUANTITY, Math.floor(Number(input.value) || 0)));
+  standing.lines[Number(input.dataset.standingLine)].quantity = n;
+  const { grams, pence, bags } = standingSums(), min = minimumGrams(), short = min && grams < min;
+  $("#standing-total").innerHTML = `${bagCount(bags)} · ${escape(weight(grams))}${pricesShown() ? ` · ${money(pence)} of coffee` : ""}${short ? `<br><span class="standing-short">The minimum order is ${escape(weight(min))}: add ${escape(weight(min - grams))} more.</span>` : ""}`;
+  $("#standing-save").disabled = standing.busy || !bags || !!short;
+});
+$("#standing-add").addEventListener("click", () => {
+  const product = productFor($("#standing-coffee").value); if (!product || !standing) return;
+  const line = { productId: product.id, pack: $("#standing-pack").value, grind: $("#standing-grind").value };
+  const same = standing.lines.find(l => lineKey(l) === lineKey(line));
+  if (same) same.quantity = Math.min(MAX_QUANTITY, same.quantity + 1);
+  else standing.lines.push({ ...line, quantity: 1, title: product.title, packLabel: packs[line.pack].label, grindLabel: grindLabel(product, line.grind), price: unitPrice(product, line.pack) });
+  drawStanding();
+  document.querySelector(`[data-standing-line="${standing.lines.findIndex(l => lineKey(l) === lineKey(line))}"]`)?.focus();
+});
+$("#standing-form").addEventListener("submit", async (event) => {
+  event.preventDefault(); if (!standing || standing.busy) return;
+  const lines = standing.lines.filter(l => l.quantity > 0).map(({ productId, pack, grind, quantity }) => ({ productId, pack, grind, quantity }));
+  standing.busy = true; drawStanding(); $("#standing-error").hidden = true;
+  try {
+    await api(`/api/wholesale/orders/${encodeURIComponent(standing.order.id)}/lines`, { ifVersion: standing.order.version, lines, scope: $("#standing-form").elements.scope.value }, "PUT");
+    const once = $("#standing-form").elements.scope.value === "once";
+    standing = null; $("#standing-dialog").close();
+    toast(once ? "Saved: this delivery only." : "Saved: these are now your usual bags.");
+    await openOrdersAgain();
+  } catch (error) {
+    if (!standing) return;
+    standing.busy = false; drawStanding();
+    $("#standing-error").textContent = error.code === "conflict" ? "This delivery was changed somewhere else. Close this and open it again to see the latest." : error.message;
+    $("#standing-error").hidden = false;
+  }
+});
+$("#standing-skip-confirm").addEventListener("click", async () => {
+  if (!standing || standing.busy) return;
+  standing.busy = true; $("#standing-skip-confirm").disabled = true; $("#standing-skip-error").hidden = true;
+  try {
+    await api(`/api/wholesale/orders/${encodeURIComponent(standing.order.id)}/skip`, { ifVersion: standing.order.version });
+    standing = null; $("#standing-dialog").close(); toast("Delivery skipped.");
+    await openOrdersAgain();
+  } catch (error) {
+    if (standing) standing.busy = false;
+    $("#standing-skip-error").textContent = error.message; $("#standing-skip-error").hidden = false;
+  } finally { $("#standing-skip-confirm").disabled = false; }
+});
+$("#standing-dialog").addEventListener("close", () => { if (standing && !standing.busy) standing = null; });
+async function openOrdersAgain() {
+  if (!$("#orders-dialog").open) $("#orders-dialog").showModal();
+  await loadOrders();
+}
 function setRepeatOrder(order) {
   repeatOrder = order || null;
   $('#repeat-shortcut').hidden = !repeatOrder;

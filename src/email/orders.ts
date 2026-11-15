@@ -221,6 +221,30 @@ export async function notifyNewOrder(env: Env, ctx: ExecutionContext | undefined
   if (ctx) ctx.waitUntil(run); else await run;
 }
 
+/** When a customer changes or skips a standing delivery themselves, the Order alerts addresses hear about it (the
+ *  roastery may already be planning it). Background, never throws; failures are email_failed like new orders. */
+export async function notifyCustomerChange(env: Env, ctx: ExecutionContext | undefined, order: MailOrder & { dispatchDate?: string }, change: "skipped" | "once" | "ongoing", diaryBase: string) {
+  if (!emailReady(env)) return;
+  const business = order.business || "A customer";
+  const day = order.dispatchDate ? new Date(order.dispatchDate + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" }) : "";
+  const what = change === "skipped" ? `skipped their standing order delivery${day ? ` for ${day}` : ""}` : `changed the bags on their standing order${day ? ` for ${day}` : ""}${change === "once" ? " (this delivery only)" : " (every delivery from now on)"}`;
+  const url = ordersPageUrl(diaryBase, order.id);
+  const lines = change === "skipped" ? [] : order.lines.map((l) => `${l.quantity} × ${l.title}, ${packName[l.pack] || l.packLabel || l.pack}, ${l.grindLabel || ""}`);
+  const subject = `${business} ${change === "skipped" ? "skipped a standing order delivery" : "changed a standing order"}`;
+  const text = [`${business} ${what}.`, order.id, "", ...lines, ...(lines.length ? [""] : []), `Open the order: ${url}`].join("\n");
+  const html = `<!doctype html><html><body style="margin:0;background:#f4f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#14181f;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:20px 0;"><tr><td align="center"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:620px;background:#fff;border-radius:14px;border:1px solid #e3e6eb;"><tr><td style="padding:22px 24px;"><div style="font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#5d6675;">Standing order ${change === "skipped" ? "skipped" : "changed"}</div><h1 style="margin:4px 0 8px;font-size:20px;">${esc(business)}</h1><p style="font-size:15px;margin:0 0 10px;">${esc(business)} ${esc(what)}.</p>${lines.length ? `<ul style="font-size:14px;padding-left:18px;">${lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : ""}<a href="${esc(url)}" style="display:inline-block;background:#0062cc;color:#fff;text-decoration:none;font-weight:600;padding:11px 18px;border-radius:10px;">Open the order</a></td></tr></table></td></tr></table></body></html>`;
+  const run = (async () => {
+    try {
+      const settings = await orderEmailSettings(env);
+      if (!settings.enabled) return;
+      for (const to of settings.to) await send(env, { to: { id: "orders", name: to, email: to, email_prefs: "{}", active: 1 }, kind: "order", mail: { subject, text, html }, about: `standing order change ${order.id} (${business})`, from: FROM(env), replyTo: order.customerSnapshot?.email || undefined });
+    } catch (error) {
+      await audit(env, "email_failed", null, `Couldn't email a standing order change ${order.id}: ${String((error as Error)?.message || error).slice(0, 160)}`).catch(() => {});
+    }
+  })();
+  if (ctx) ctx.waitUntil(run); else await run;
+}
+
 /** Admin: GET/PUT order-emails ({ifVersion, enabled, to}) and POST order-emails/test. */
 export async function handleOrderEmailsAdmin(req: Request, env: Env, route: string, actor: string, diaryBase: string): Promise<Response | null> {
   if (route === "order-emails" && req.method === "GET") return json(await orderEmailSettings(env));

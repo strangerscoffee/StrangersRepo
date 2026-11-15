@@ -71,7 +71,7 @@
  }
  const kv=(label,value)=>el('div',{class:'kv'},el('span',{},label),el('span',{},value||'None supplied'));
  function renderDetail(row){
-  $('orderDetail').replaceChildren(el('div',{class:'business-title'},el('h3',{},row.business),pill(row.status)),el('p',{class:'detail-id'},row.id),warning(row.account,true),el('div',{class:'details'},kv('Location',row.locationName),kv('Received',date(row.createdAt)),...(dispatchText(row)?[kv('Dispatch',dispatchText(row))]:[]),kv('Reference',row.reference),kv('Delivery preference',row.delivery),...(row.takenSource?[kv('Came in',row.takenSource)]:[])),el('h3',{class:'packing-heading'},'Packing list'),el('div',{class:'w-packing-list'},...row.lines.map(line=>{const grind=grindFor(line);return el('div',{class:'item w-packing-line w-grind-tone w-coffee-tone',style:`--w-grind-h:${grind.hue};${coffeeStyle(line)}`},el('span',{class:'w-pack-quantity'},el('b',{},String(line.quantity)),el('span',{},line.quantity===1?'bag':'bags')),el('span',{class:'tx'},el('b',{class:'w-pack-coffee'},el('span',{class:'w-coffee-swatch','aria-hidden':'true'}),line.title,decafLine(line)?el('span',{class:'w-decaf-label'},'Decaf'):null),line.recipe?el('span',{class:'w-recipe'},`Made from ${line.recipe}`):null,el('span',{class:'w-pack-size'},line.packLabel),el('span',{class:'w-grind-details'},el('span',{class:'w-grind-badge'},svg(grind.icon),grind.label),grind.hint?el('span',{class:'w-grind-hint'},grind.hint):null)))})),el('p',{class:'packing-total'},`${row.packs} ${row.packs===1?'bag':'bags'} · ${weight(row.grams)} total`));
+  $('orderDetail').replaceChildren(el('div',{class:'business-title'},el('h3',{},row.business),pill(row.status)),el('p',{class:'detail-id'},row.id),warning(row.account,true),el('div',{class:'details'},kv('Location',row.locationName),kv('Received',date(row.createdAt)),...(dispatchText(row)?[kv('Dispatch',dispatchText(row))]:[]),kv('Reference',row.reference),kv('Delivery preference',row.delivery),...(row.takenSource?[kv('Came in',row.takenSource)]:[]),...(row.changed?[kv('Bags changed',`${row.changed.byCustomer?'By the customer':'By Strangers'}, ${date(row.changed.at)}${row.changed.thisDeliveryOnly?' (this delivery only)':''}`)]:[]),...(row.skipped?[kv('Skipped',`${row.skipped.byCustomer?'By the customer':'By Strangers'}, ${date(row.skipped.at)}`)]:[])),el('h3',{class:'packing-heading'},'Packing list'),el('div',{class:'w-packing-list'},...row.lines.map(line=>{const grind=grindFor(line);return el('div',{class:'item w-packing-line w-grind-tone w-coffee-tone',style:`--w-grind-h:${grind.hue};${coffeeStyle(line)}`},el('span',{class:'w-pack-quantity'},el('b',{},String(line.quantity)),el('span',{},line.quantity===1?'bag':'bags')),el('span',{class:'tx'},el('b',{class:'w-pack-coffee'},el('span',{class:'w-coffee-swatch','aria-hidden':'true'}),line.title,decafLine(line)?el('span',{class:'w-decaf-label'},'Decaf'):null),line.recipe?el('span',{class:'w-recipe'},`Made from ${line.recipe}`):null,el('span',{class:'w-pack-size'},line.packLabel),el('span',{class:'w-grind-details'},el('span',{class:'w-grind-badge'},svg(grind.icon),grind.label),grind.hint?el('span',{class:'w-grind-hint'},grind.hint):null)))})),el('p',{class:'packing-total'},`${row.packs} ${row.packs===1?'bag':'bags'} · ${weight(row.grams)} total`));
   if(row.delivery==='Delivery'&&(row.address||row.postcode))$('orderDetail').append(el('h3',{class:'packing-heading'},'Delivery address'),el('p',{class:'address'},[row.address,row.postcode].filter(Boolean).join('\n')));
   for(const [label,text]of[['Delivery notes',row.deliveryNotes],['Customer comments',row.customerNote]])if(text)$('orderDetail').append(el('div',{class:'detail-note'},el('b',{},label),text));
   if(row.trackingUrl){try{const url=new URL(row.trackingUrl);if(['http:','https:'].includes(url.protocol)&&!url.username&&!url.password)$('orderDetail').append(el('a',{href:url.href,target:'_blank',rel:'noopener noreferrer',class:'tracking'},'Track delivery ↗'))}catch{}}
@@ -93,8 +93,74 @@
    el('div',{class:'edit-actions'},
     el('button',{type:'button',class:'btn soft',onclick:()=>printOne(row.id)},svg('doc'),'Print'),
     row.customerId?el('button',{type:'button',class:'btn soft',id:'tabToggle',onclick:()=>toggleTab(row.id)},row.onTab?'Take off tab':'Put on tab'):null,
+    row.customerId&&OPEN_STATUSES.includes(row.status)?el('button',{type:'button',class:'btn soft',id:'changeBags',onclick:()=>openAmend(row)},'Change bags'):null,
+    row.standingEvery&&OPEN_STATUSES.includes(row.status)?el('button',{type:'button',class:'btn soft',id:'skipDelivery',onclick:()=>askSkip(row)},'Skip this delivery'):null,
     next?el('button',{type:'button',class:'btn soft',onclick:()=>{statusSelect.value=next[0];trackingField.hidden=!(next[0]==='Dispatched'||tracking.value);save(row.id)}},next[1]):null,
     el('button',{type:'button',class:'btn',id:'saveOrder',onclick:()=>save(row.id)},'Save')));
+ }
+ // Changing the bags (New or Preparing, no invoice: the server checks) and skipping a standing delivery. Bags only:
+ // the server prices them. On a standing order, the change is for this delivery or every one from now on.
+ const OPEN_STATUSES=['New','Preparing'];
+ let amend=null;
+ async function openAmend(row){
+  editing=true;
+  amend={row,catalogue:null,lines:row.lines.map(l=>({productId:l.productId,pack:l.pack,grind:l.grind,quantity:l.quantity})),scope:'once',busy:false,error:''};
+  drawAmend();
+  try{
+   const data=await staffJson('GET','catalogue?customer='+encodeURIComponent(row.customerId));
+   if(!amend||amend.row.id!==row.id)return;
+   // Coffees already on the order stay choosable even if no longer listed (they keep their saved price).
+   for(const l of row.lines)if(!data.products.some(p=>p.id===l.productId))data.products.unshift({id:l.productId,title:l.title,packs:[l.pack],grinds:[{id:l.grind,label:l.grindLabel}],inStock:true});
+   amend.catalogue=data;drawAmend();
+  }catch(e){if(!e.quiet&&amend){amend.error=e.message;drawAmend();}}
+ }
+ const amendBags=()=>amend.lines.reduce((n,l)=>n+(Number(l.quantity)||0),0);
+ const amendGrams=()=>amend.lines.reduce((n,l)=>n+(PACK[l.pack]?.grams||0)*(Number(l.quantity)||0),0);
+ function amendTotals(){const box=$('amendTotals');if(box)box.textContent=`${amendBags()} ${amendBags()===1?'bag':'bags'} · ${weight(amendGrams())}`;const b=$('saveAmend');if(b)b.disabled=amend.busy||!amendBags();}
+ function drawAmend(){
+  if(!amend)return;const row=amend.row;
+  const parts=[el('h3',{class:'packing-heading'},'Change bags')];
+  if(!amend.catalogue)parts.push(amend.error?null:SC.skeleton({label:'Loading coffees…',rows:2}));
+  else{
+   parts.push(el('div',{class:'no-lines'},...amend.lines.map((l,i)=>lineRow(l,i,amend,drawAmend,amendTotals))),
+    el('button',{type:'button',class:'btn soft sm',onclick:()=>{amend.lines.push(blankLine(amend));drawAmend()}},'Add another coffee'),
+    el('p',{class:'no-totals',id:'amendTotals','aria-live':'polite'}));
+   if(row.standingEvery)parts.push(el('fieldset',{class:'field no-seg'},el('legend',{},'Change'),el('div',{class:'filters seg',role:'group'},...[['once','Just this delivery'],['ongoing','Every delivery from now on']].map(([v,t])=>el('button',{type:'button','aria-pressed':String(amend.scope===v),onclick:()=>{amend.scope=v;drawAmend()}},t))),
+    el('small',{class:'hint'},amend.scope==='once'?'The next delivery goes back to the usual bags.':'These become the usual bags for this standing order.')));
+  }
+  parts.push(el('p',{class:'edit-error',role:'alert',hidden:!amend.error},amend.error||''),
+   el('div',{class:'edit-actions'},el('button',{type:'button',class:'btn soft',onclick:closeAmend},'Cancel'),
+    amend.catalogue?el('button',{type:'button',class:'btn',id:'saveAmend',onclick:saveAmend},amend.busy?'Saving…':'Save bags'):null));
+  $('orderEdit').replaceChildren(...parts.filter(Boolean));amendTotals();
+ }
+ function closeAmend(){const row=amend&&rows.find(r=>r.id===amend.row.id);amend=null;editing=false;if(row)renderEdit(row);}
+ async function saveAmend(){
+  if(!amend||amend.busy)return;
+  const row=amend.row,lines=amend.lines.filter(l=>l.productId&&l.quantity>0).map(({productId,pack,grind,quantity})=>({productId,pack,grind,quantity}));
+  if(!lines.length){amend.error='Keep at least one bag. To stop this delivery, skip it or cancel the order.';drawAmend();return;}
+  amend.busy=true;amend.error='';drawAmend();
+  try{
+   const {order}=await staffJson('PUT','orders/'+encodeURIComponent(row.id)+'/lines',{ifVersion:row.version,lines,...(row.standingEvery?{scope:amend.scope}:{})});
+   const once=row.standingEvery&&amend.scope==='once';
+   amend=null;editing=false;const i=rows.findIndex(r=>r.id===row.id);if(i>=0)rows[i]={...rows[i],...order};draw();renderDetail(rows[i]||order);
+   toast(`${order.business}: bags changed${once?' for this delivery':''}`);
+  }catch(e){
+   if(e.quiet||!amend)return;amend.busy=false;
+   if(e.code==='conflict'){amend=null;editing=false;await load();const r=rows.find(x=>x.id===row.id);if(r){renderDetail(r);const box=$('editError');if(box){box.textContent='Someone else changed this order. It has been reloaded: check it and change the bags again.';box.hidden=false;}}return;}
+   amend.error=e.message;drawAmend();
+  }
+ }
+ function askSkip(row){
+  editing=true;
+  const day=row.dispatchDate?new Date(row.dispatchDate+'T12:00:00Z').toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long',timeZone:'UTC'}):'';
+  $('orderEdit').replaceChildren(el('div',{class:'detail-note'},el('b',{},'Skip this delivery?'),`Nothing goes out${day?' on '+day:''}. It's marked skipped and the next delivery is made with the usual bags.`),
+   el('p',{class:'edit-error',id:'skipError',role:'alert',hidden:true}),
+   el('div',{class:'edit-actions'},el('button',{type:'button',class:'btn soft',onclick:()=>{editing=false;renderEdit(row)}},'Keep it'),el('button',{type:'button',class:'btn',id:'confirmSkip',onclick:()=>skipDelivery(row)},'Skip this delivery')));
+ }
+ async function skipDelivery(row){
+  const button=$('confirmSkip');if(button.disabled)return;button.disabled=true;button.textContent='Skipping…';
+  try{const {order}=await staffJson('POST','orders/'+encodeURIComponent(row.id)+'/skip',{ifVersion:row.version});editing=false;$('orderDialog').close();toast(`${order.business}: delivery skipped`);await load();}
+  catch(e){if(e.quiet)return;const box=$('skipError');if(box){box.textContent=e.code==='conflict'?'Someone else changed this order. Close it and open it again.':e.message;box.hidden=false;}button.disabled=false;button.textContent='Skip this delivery';}
  }
  function openOrder(id){const row=rows.find(row=>row.id===id);if(!row)return;selected=id;editing=false;renderDetail(row);$('orderDialog').showModal();}
  async function patch(row,changes){
@@ -259,19 +325,19 @@
   try{const data=await staffJson('GET','catalogue?customer='+encodeURIComponent(c.id));if(!draft||draft.customer?.id!==c.id)return;draft.catalogue=data;draft.lines=[blankLine()];drawNewOrder();}
   catch(e){if(!e.quiet&&draft){draft.error=e.message;drawNewOrder();}}
  }
- function blankLine(){const p=draft.catalogue?.products.find(p=>p.inStock);return {productId:p?.id||'',pack:p?.packs.includes('kilo')?'kilo':p?.packs[0]||'kilo',grind:p?.grinds[0]?.id||'beans',quantity:1};}
- const productOf=id=>draft.catalogue?.products.find(p=>p.id===id);
+ function blankLine(st=draft){const p=st.catalogue?.products.find(p=>p.inStock);return {productId:p?.id||'',pack:p?.packs.includes('kilo')?'kilo':p?.packs[0]||'kilo',grind:p?.grinds[0]?.id||'beans',quantity:1};}
+ const productOf=(id,st=draft)=>st?.catalogue?.products.find(p=>p.id===id);
  const draftGrams=()=>draft.lines.reduce((sum,l)=>sum+(productOf(l.productId)?(PACK[l.pack]?.grams||0)*(Number(l.quantity)||0):0),0);
  const draftBags=()=>draft.lines.reduce((sum,l)=>sum+(productOf(l.productId)?Number(l.quantity)||0:0),0);
- function lineRow(line,i){
-  const p=productOf(line.productId);
-  const coffee=el('select',{'aria-label':`Coffee ${i+1}`,onchange:()=>{line.productId=coffee.value;const np=productOf(line.productId);if(np){if(!np.packs.includes(line.pack))line.pack=np.packs[0];if(!np.grinds.some(g=>g.id===line.grind))line.grind=np.grinds[0]?.id||'beans';}drawNewOrder();}},
-   ...draft.catalogue.products.map(x=>el('option',{value:x.id,disabled:!x.inStock,...(x.id===line.productId?{selected:true}:{})},x.title+(x.yours?' (their coffee)':'')+(x.decaf?' · decaf':'')+(x.inStock?'':' · out of stock'))));
-  const size=el('select',{'aria-label':`Bag size for coffee ${i+1}`,onchange:()=>{line.pack=size.value;drawTotals()}},...(p?.packs||['kilo']).map(k=>el('option',{value:k,...(k===line.pack?{selected:true}:{})},PACK[k].label)));
+ function lineRow(line,i,st=draft,redraw=drawNewOrder,changed=drawTotals){
+  const p=productOf(line.productId,st);
+  const coffee=el('select',{'aria-label':`Coffee ${i+1}`,onchange:()=>{line.productId=coffee.value;const np=productOf(line.productId,st);if(np){if(!np.packs.includes(line.pack))line.pack=np.packs[0];if(!np.grinds.some(g=>g.id===line.grind))line.grind=np.grinds[0]?.id||'beans';}redraw();}},
+   ...st.catalogue.products.map(x=>el('option',{value:x.id,disabled:!x.inStock,...(x.id===line.productId?{selected:true}:{})},x.title+(x.yours?' (their coffee)':'')+(x.decaf?' · decaf':'')+(x.inStock?'':' · out of stock'))));
+  const size=el('select',{'aria-label':`Bag size for coffee ${i+1}`,onchange:()=>{line.pack=size.value;changed()}},...(p?.packs||['kilo']).map(k=>el('option',{value:k,...(k===line.pack?{selected:true}:{})},PACK[k].label)));
   const grind=el('select',{'aria-label':`Grind for coffee ${i+1}`,onchange:()=>{line.grind=grind.value}},...(p?.grinds||[]).map(g=>el('option',{value:g.id,...(g.id===line.grind?{selected:true}:{}),...(g.hint?{title:g.hint}:{})},g.label)));
-  const qty=el('input',{type:'number',min:'1',max:'999',step:'1',inputmode:'numeric',value:String(line.quantity),'aria-label':`Bags of coffee ${i+1}`,oninput:()=>{line.quantity=Math.max(0,Math.min(999,Math.floor(Number(qty.value)||0)));drawTotals()}});
+  const qty=el('input',{type:'number',min:'1',max:'999',step:'1',inputmode:'numeric',value:String(line.quantity),'aria-label':`Bags of coffee ${i+1}`,oninput:()=>{line.quantity=Math.max(0,Math.min(999,Math.floor(Number(qty.value)||0)));changed()}});
   return el('div',{class:'no-line'},el('label',{class:'field no-coffee'},el('span',{},'Coffee'),coffee),el('label',{class:'field'},el('span',{},'Bag'),size),el('label',{class:'field no-grind'},el('span',{},'Grind'),grind),el('label',{class:'field no-qty'},el('span',{},'Bags'),qty),
-   draft.lines.length>1?el('button',{type:'button',class:'btn soft sm no-remove','aria-label':`Remove coffee ${i+1}`,onclick:()=>{draft.lines.splice(i,1);drawNewOrder()}},'Remove'):null);
+   st.lines.length>1?el('button',{type:'button',class:'btn soft sm no-remove','aria-label':`Remove coffee ${i+1}`,onclick:()=>{st.lines.splice(i,1);redraw()}},'Remove'):null);
  }
  function drawTotals(){
   const box=$('noTotals');if(!box||!draft?.catalogue)return;
@@ -296,7 +362,7 @@
    parts.push(seg('How it came in',[['Email','Email'],['In person','In person'],['Phone','Phone'],['Other','Other']],draft.source,v=>{draft.source=v;draft.emailCustomer=!!c.email&&v==='Email'}));
    if(!draft.catalogue)parts.push(SC.skeleton({label:'Loading coffees…',rows:2}));
    else{
-    parts.push(el('h3',{class:'packing-heading'},'Coffee'),el('div',{class:'no-lines'},...draft.lines.map(lineRow)),
+    parts.push(el('h3',{class:'packing-heading'},'Coffee'),el('div',{class:'no-lines'},...draft.lines.map((l,i)=>lineRow(l,i))),
      el('button',{type:'button',class:'btn soft sm',onclick:()=>{draft.lines.push(blankLine());drawNewOrder()}},'Add another coffee'),
      el('div',{class:'no-totals',id:'noTotals','aria-live':'polite'}));
     parts.push(seg('Delivery',[['Roastery collection','Collection'],['Delivery','Delivery']],draft.delivery,v=>{draft.delivery=v}));
@@ -399,7 +465,7 @@
  $('customerSearch').oninput=()=>{clearTimeout(customerTimer);customerTimer=setTimeout(loadCustomers,250)};
  for(const b of $('viewTabs').querySelectorAll('button'))b.onclick=()=>showView(b.dataset.view);
  $('closeOrder').onclick=$('doneOrder').onclick=()=>{$('orderDialog').close()};
- $('orderDialog').addEventListener('close',()=>{selected=null;editing=false;$('orderEdit').replaceChildren()});
+ $('orderDialog').addEventListener('close',()=>{selected=null;editing=false;amend=null;$('orderEdit').replaceChildren()});
  $('closeCustomer').onclick=$('doneCustomer').onclick=()=>$('customerDialog').close();
  $('refreshTabs').onclick=()=>load({reverify:true});$('closeTab').onclick=()=>$('tabDialog').close();$('tabDialog').addEventListener('close',()=>{tabSelected=null;tabConfirm=false;});
  $('closeTotals').onclick=()=>$('totalsDialog').close();

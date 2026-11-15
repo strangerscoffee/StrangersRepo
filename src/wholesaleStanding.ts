@@ -60,7 +60,8 @@ export async function rollStanding(env: Env, saved: AnyOrder, actor: string): Pr
   try { await save(env, "order", saved.id, { ...strip(saved), nextRunId: id }, saved.version); }
   catch (error) { if (error instanceof ApiError && error.code === "conflict") return null; throw error; }
   const coffees = await catalogue(env, true);
-  const lines = saved.lines.map((line: any) => {
+  // A change made for one delivery only leaves the usual bags in repeatLines: the next run goes back to them.
+  const lines = (Array.isArray(saved.repeatLines) && saved.repeatLines.length ? saved.repeatLines : saved.lines).map((line: any) => {
     const product = coffees.find((p) => p.id === line.productId), price = product?.active ? (product.prices as Record<string, number>)[line.pack] : undefined;
     const { recipe, ...rest } = line, now = product?.recipe?.length ? recipeText(product) : product ? "" : recipe;
     return { ...rest, price: Number.isInteger(price) ? price : line.price, ...(now ? { recipe: now } : {}) };
@@ -73,7 +74,7 @@ export async function rollStanding(env: Env, saved: AnyOrder, actor: string): Pr
     Object.assign(fresh, { business: customer.business, customerSnapshot: { ...profile, contact: location.contact, phone: location.phone, address: location.address, postcode: location.postcode, deliveryNotes: location.deliveryNotes }, deliveryNotes: location.deliveryNotes, paymentTerms: paymentTermsFor(customer), locationId: location.id, locationSnapshot: { ...location } });
   }
   // A new run starts clean: no emails sent yet, not on a (possibly cleared) tab, no changes, no tracking or notes.
-  const now = Date.now(), { nextRunId, amendedAt, amendedBy, originalLines, trackingUrl, note, dispatchEmailedAt, tab, tabClearedId, ...base } = strip(saved);
+  const now = Date.now(), { nextRunId, amendedAt, amendedBy, amendedByCustomer, originalLines, repeatLines, skipped, trackingUrl, note, dispatchEmailedAt, tab, tabClearedId, ...base } = strip(saved);
   const next = {
     ...base, ...fresh, status: "New", note: "", trackingUrl: "", createdAt: now, date: ukDay(now), requestKey: `standing:${id}`, lines,
     ...totals(lines, saved.delivery),
@@ -82,19 +83,42 @@ export async function rollStanding(env: Env, saved: AnyOrder, actor: string): Pr
     ...autoTabFor(customer), // on the customer's tab if they're set to use one
   };
   await save(env, "order", id, next, 0);
-  await audit(env, "wholesale_standing_run", actor, `Standing order ${saved.standing.seriesId}: ${actor} ${saved.status === "Cancelled" ? "skipped" : "dispatched"} ${saved.id}; next run ${id} is due for dispatch on ${next.dispatchDate}.`);
+  await audit(env, "wholesale_standing_run", actor, `Standing order ${saved.standing.seriesId}: ${saved.skipped?.by || actor} ${saved.status === "Cancelled" ? "skipped" : "dispatched"} ${saved.id}; next run ${id} is due for dispatch on ${next.dispatchDate}.`);
   return id;
 }
 
-/** Admin amends the bags on a New or Preparing customer order with no invoice: kept lines keep their saved price;
- * added ones take today's catalogue price. Totals and the delivery charge are worked out again. */
-export async function amendLines(env: Env, id: string, value: unknown, actor: string): Promise<AnyOrder> {
-  const body = object(value);
+/** Who is changing an order: Strangers (admins, staff with wholesale orders access) or the customer themselves, who
+ *  may change and skip only their own standing deliveries, and only while New (before Strangers starts preparing). */
+export interface Changer { customerId?: string; minimumGrams?: number }
+async function changeable(env: Env, id: string, by: Changer) {
   const order = await get<Record<string, any>>(env, "order", id);
-  if (!order || order.deletedAt != null) throw new ApiError(404, "not_found", "Order not found.");
+  if (!order || order.deletedAt != null || (by.customerId && order.customerId !== by.customerId)) throw new ApiError(404, "not_found", "Order not found.");
   if (order.preview !== false) throw invalid("Only customer orders can be amended.");
-  if (!OPEN.includes(order.status)) throw new ApiError(409, "order_closed", "Only New or Preparing orders can be amended.");
-  if (await env.DB.prepare("SELECT 1 FROM wholesale_invoices WHERE order_id = ?").bind(id).first()) throw new ApiError(409, "invoiced", "This order has an invoice, so its bags can't be changed.");
+  if (by.customerId && !order.standing) throw new ApiError(409, "not_standing", "Only standing orders can be changed here. Contact Strangers about this order.");
+  if (by.customerId ? order.status !== "New" : !OPEN.includes(order.status)) throw new ApiError(409, "order_closed", by.customerId ? "Strangers has started preparing this delivery, so it can't be changed here now. Contact Strangers." : "Only New or Preparing orders can be amended.");
+  if (await env.DB.prepare("SELECT 1 FROM wholesale_invoices WHERE order_id = ?").bind(id).first()) throw new ApiError(409, "invoiced", by.customerId ? "This delivery has been invoiced, so it can't be changed here. Contact Strangers." : "This order has an invoice, so its bags can't be changed.");
+  return order;
+}
+
+/** Skip one delivery of a standing order: the run is Cancelled (marked who skipped it) and the next run is made. */
+export async function skipRun(env: Env, id: string, value: unknown, actor: string, by: Changer, cancel: (body: Record<string, any>) => Promise<AnyOrder>): Promise<AnyOrder> {
+  const body = object(value);
+  const order = await changeable(env, id, by);
+  if (!order.standing) throw invalid("Only a standing order's delivery can be skipped. To stop a one-off order, cancel it.");
+  const { id: _id, version: _v, updatedAt, ...current } = order;
+  const marked = await save(env, "order", id, { ...current, skipped: { by: by.customerId ? order.business || "The customer" : actor, customer: !!by.customerId, at: Date.now() } }, version(body.ifVersion));
+  return cancel({ status: "Cancelled", ifVersion: marked.version, note: order.note || "" });
+}
+
+/** Amends the bags on a New or Preparing customer order with no invoice: kept lines keep their saved price; added
+ * ones take today's catalogue price. Totals and the delivery charge are worked out again. On a standing order the
+ * change is for every delivery from now on (`scope: "ongoing"`, the default) or just this one (`"once"`: the usual
+ * bags are kept in repeatLines for the next run). */
+export async function amendLines(env: Env, id: string, value: unknown, actor: string, by: Changer = {}): Promise<AnyOrder> {
+  const body = object(value);
+  const order = await changeable(env, id, by);
+  if (body.scope !== undefined && body.scope !== "once" && body.scope !== "ongoing") throw invalid("Choose this delivery only, or every delivery from now on.");
+  const once = body.scope === "once" && !!order.standing;
   if (!Array.isArray(body.lines) || !body.lines.length || body.lines.length > 150) throw invalid("Keep from 1 to 150 coffee lines on the order.");
   const coffees = await catalogue(env, true), lines: any[] = [];
   for (const raw of body.lines) {
@@ -116,8 +140,14 @@ export async function amendLines(env: Env, id: string, value: unknown, actor: st
     lines.push({ productId: product.id, pack: line.pack, grind: grind.id, quantity: line.quantity, title: product.title, packLabel: LABELS[line.pack], grindLabel: grind.label, grindHint: grind.hint || "", decaf: product.categories.includes("decaf"), price, grams: GRAMS[line.pack], ...(product.recipe?.length ? { recipe: recipeText(product) } : {}) });
   }
   lines.sort((a, b) => `${a.productId}:${a.pack}:${a.grind}`.localeCompare(`${b.productId}:${b.pack}:${b.grind}`));
-  const current = strip(order as AnyOrder);
-  const updated = await save(env, "order", id, { ...current, lines, ...totals(lines, order.delivery), originalLines: order.originalLines || order.lines, amendedAt: Date.now(), amendedBy: actor }, version(body.ifVersion));
-  await audit(env, "wholesale_order_amended", actor, `${actor} amended the bags on wholesale order ${id}.`);
+  const sum = totals(lines, order.delivery);
+  if (by.minimumGrams && sum.grams < by.minimumGrams) throw new ApiError(409, "below_minimum", `The minimum order is ${by.minimumGrams / 1000} kg of coffee. Add ${(by.minimumGrams - sum.grams) / 1000} kg more.`);
+  const { repeatLines, ...current } = strip(order as AnyOrder);
+  const updated = await save(env, "order", id, {
+    ...current, lines, ...sum, originalLines: order.originalLines || order.lines, amendedAt: Date.now(),
+    amendedBy: by.customerId ? order.business || "The customer" : actor, ...(by.customerId ? { amendedByCustomer: true } : { amendedByCustomer: false }),
+    ...(once ? { repeatLines: repeatLines || order.lines } : {}),
+  }, version(body.ifVersion));
+  await audit(env, "wholesale_order_amended", actor, `${actor} amended the bags on wholesale order ${id}${order.standing ? (once ? " (this delivery only)" : " (every delivery from now on)") : ""}.`);
   return updated as AnyOrder;
 }

@@ -165,6 +165,31 @@
     <section id="invoices-panel" aria-label="Your invoices" hidden><div class="history-toolbar"><p>View invoices, payment terms and outstanding balances.</p><button class="text-button refresh-button" id="refresh-invoices" type="button" aria-label="Refresh invoices" title="Refresh invoices" aria-busy="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg></button></div><div class="customer-invoice-summary" id="customer-invoice-summary"></div><p class="history-count" id="invoice-count" role="status"></p><div id="customer-invoices-list"></div><button class="button button-outline history-more" id="invoice-more" type="button" hidden>Load earlier invoices</button></section>
     </div>
   </div></dialog>
+  <dialog id="standing-dialog" aria-labelledby="standing-title"><div class="dialog-inner">
+    <div class="dialog-chrome"><button class="close-button" type="button" data-close aria-label="Close standing order changes">×</button></div>
+    <p class="eyebrow">STANDING ORDER</p><h2 id="standing-title">Change this delivery</h2>
+    <p class="dialog-intro" id="standing-summary"></p>
+    <form id="standing-form" novalidate>
+      <div id="standing-lines" class="standing-lines"></div>
+      <fieldset class="standing-add"><legend>Add a coffee</legend>
+        <label><span>Coffee</span><select id="standing-coffee"></select></label>
+        <label><span>Bag</span><select id="standing-pack"></select></label>
+        <label><span>Grind</span><select id="standing-grind"></select></label>
+        <button class="button button-outline" type="button" id="standing-add">Add</button>
+      </fieldset>
+      <fieldset class="standing-scope"><legend>Change</legend>
+        <label><input type="radio" name="scope" value="once" checked> <span><b>Just this delivery</b><small>Your next delivery goes back to your usual bags.</small></span></label>
+        <label><input type="radio" name="scope" value="ongoing"> <span><b>This and every delivery after it</b><small>These become your usual bags.</small></span></label>
+      </fieldset>
+      <p class="standing-total" id="standing-total" aria-live="polite"></p>
+      <p class="quantity-error" id="standing-error" role="alert" hidden></p>
+      <div class="reorder-actions"><button class="button button-dark" id="standing-save" type="submit">Save changes</button><button class="button button-outline" type="button" data-close>Cancel</button></div>
+    </form>
+    <div id="standing-skip" hidden>
+      <p class="quantity-error" id="standing-skip-error" role="alert" hidden></p>
+      <div class="reorder-actions"><button class="button button-dark" id="standing-skip-confirm" type="button">Skip this delivery</button><button class="button button-outline" type="button" data-close>Keep it</button></div>
+    </div>
+  </div></dialog>
   <dialog id="reorder-dialog" aria-labelledby="reorder-title"><div class="dialog-inner">
     <div class="dialog-chrome"><button class="close-button" type="button" data-close aria-label="Close repeat order">×</button></div>
     <p class="eyebrow">REPEAT ORDER</p><h2 id="reorder-title">Build a repeat basket</h2>
