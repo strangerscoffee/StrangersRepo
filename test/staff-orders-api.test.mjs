@@ -27,7 +27,8 @@ test('staff order access is default-deny, admin-granted and versioned; it does n
  const me=(await ok('GET','/api/auth/me',undefined,STAFF)).body;assert.equal(me.capabilities.staffOrders,true);
  const proof=(await call('GET','/api/auth/me',undefined,STAFF,{'x-sc-session-check':'1'})).body;assert.deepEqual(Object.keys(proof).sort(),['cookieDomain','user']);
  for(const path of ['/api/admin/users','/api/admin/people','/api/admin/wholesale'])assert.equal((await call('GET',path,undefined,STAFF)).status,403);
- for(const method of ['POST','PUT','PATCH','DELETE'])assert.equal((await call(method,'/api/staff-orders/orders',{},STAFF)).status,405);
+ for(const method of ['PUT','PATCH','DELETE'])assert.equal((await call(method,'/api/staff-orders/orders',{},STAFF)).status,405);
+ assert.equal((await call('POST','/api/staff-orders/orders',{},STAFF)).status,400,'taking an order for a customer needs a customer and coffee (staff-orders-take.test.mjs)');
  assert.equal((await call('GET','/api/staff-orders/orders',undefined,STAFF,{'x-expected-user-id':managerId,'x-expected-user-role':'manager'})).status,409);
 });
 test('staff order projection excludes previews, personal/internal and financial fields, while retaining fulfilment details',async()=>{

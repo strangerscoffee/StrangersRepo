@@ -5,7 +5,10 @@
 // exemption or login details).
 import type {User} from "./auth";
 import {ApiError,type Env,invalid,json,readJson} from "./http";
-import {customerOrdersUrl,ordersToPrint,updateOrderStatus} from "./wholesale";
+import {customerOrdersUrl,minimumOrderGrams,ordersToPrint,takeOrderFor,TAKEN_SOURCES,updateOrderStatus} from "./wholesale";
+import {wholesaleCustomer} from "./wholesaleAccounts";
+import {catalogue,packsOf} from "./wholesaleCatalogue";
+import {catalogueFor} from "./wholesaleWhiteLabel";
 import {customerLocations} from "./wholesaleCustomers";
 import {object} from "./wholesaleStore";
 import {clearTab,listTabs,setOnTab} from "./wholesaleTabs";
@@ -36,7 +39,7 @@ function staffView(o:any,account?:{overdue:boolean;review:boolean}){
     id:o.id,version:o.version,business:o.business,reference:o.reference,status:o.status,delivery:o.delivery,createdAt:o.createdAt,
     locationName:o.locationSnapshot?.name||'Main location',
     address:o.locationSnapshot?.address??o.customerSnapshot?.address??'',postcode:o.locationSnapshot?.postcode??o.customerSnapshot?.postcode??'',
-    deliveryNotes:o.locationSnapshot?.deliveryNotes??o.deliveryNotes??'',customerNote:o.customerNote||'',note:o.note||'',trackingUrl:o.trackingUrl||'',dispatchDate:o.dispatchDate||'',standingEvery:o.standing?.every||0,onTab:!!o.tab&&!o.tabClearedId,customerId:o.customerId||null,packs:o.packs,grams:o.grams,
+    deliveryNotes:o.locationSnapshot?.deliveryNotes??o.deliveryNotes??'',customerNote:o.customerNote||'',note:o.note||'',takenSource:o.takenFor?.source||'',trackingUrl:o.trackingUrl||'',dispatchDate:o.dispatchDate||'',standingEvery:o.standing?.every||0,onTab:!!o.tab&&!o.tabClearedId,customerId:o.customerId||null,packs:o.packs,grams:o.grams,
     lines:o.lines.map((l:any)=>({productId:l.productId,title:l.title,pack:l.pack,packLabel:l.packLabel,grind:l.grind,grindLabel:l.grindLabel,grindHint:l.grindHint,decaf:l.decaf,quantity:l.quantity,grams:l.grams,...(l.recipe?{recipe:l.recipe}:{})})),
     account:account||{overdue:false,review:false},
   };
@@ -56,7 +59,7 @@ async function customers(req:Request,env:Env){
   const rows=await env.DB.prepare(`SELECT id,data FROM wholesale_preview WHERE ${where.join(' AND ')} ORDER BY json_extract(data,'$.business') COLLATE NOCASE,id LIMIT 501`).bind(...values).all<{id:string;data:string}>();
   return {customers:rows.results.slice(0,500).map(staffCustomer),more:rows.results.length>500};
 }
-export async function handleStaffOrders(req:Request,env:Env,route:string,user:User,links:{preview?:string}={},ctx?:ExecutionContext):Promise<Response>{
+export async function handleStaffOrders(req:Request,env:Env,route:string,user:User,links:{preview?:string;diary?:string}={},ctx?:ExecutionContext):Promise<Response>{
   await requireStaffOrders(env,user);
   const orderMatch=/^orders\/((?:PREVIEW|WS)-[A-F0-9]{32})$/.exec(route);
   if(orderMatch){
@@ -71,7 +74,24 @@ export async function handleStaffOrders(req:Request,env:Env,route:string,user:Us
   if(tabOrder&&req.method==="PUT"){const saved=await setOnTab(env,tabOrder[1],await readJson(req,4096),user.name);await requireStaffOrders(env,user);return json({order:staffView(saved)});}
   if(tabClear&&req.method==="POST"){const cleared=await clearTab(env,tabClear[1],await readJson(req,64*1024),user.name);await requireStaffOrders(env,user);return json({cleared});}
   if(route==="tabs"&&req.method==="GET"){const tabs=await listTabs(env);await requireStaffOrders(env,user);return json(tabs);}
+  // Taking an order for a customer (by email, phone or at the door): the same checks as the ordering site, at
+  // today's catalogue prices, which this page never shows.
+  if(route==="orders"&&req.method==="POST"){
+    const placed=await takeOrderFor(req,env,{id:user.id,name:user.name},{admin:"",diary:links.diary||"",preview:links.preview},ctx);
+    await requireStaffOrders(env,user);
+    return json({order:staffView(placed.order),created:placed.created},placed.created?201:200);
+  }
   if(req.method!=="GET")return json({code:"method_not_allowed",message:"Only order status and notes can be changed here."},405,{Allow:"GET"});
+  // What a customer can order: their own coffees first, then the range; sizes and grinds, no prices.
+  if(route==="catalogue"){
+    const id=new URL(req.url).searchParams.get('customer')||'';
+    const customer=/^[a-f0-9-]{36}$/.test(id)?await wholesaleCustomer(env,id):null;
+    if(!customer)throw new ApiError(404,"not_found","Choose a customer from the list.");
+    const products=catalogueFor((await catalogue(env)).filter(p=>p.active),customer.id).map((p:any)=>({id:p.id,title:p.title,yours:!!p.yours,inStock:!!p.inStock,decaf:(p.categories||[]).includes("decaf"),packs:packsOf(p),
+      grinds:p.grindOptions.filter((g:any)=>g.enabled).map((g:any)=>({id:g.id,label:g.label,hint:g.hint||""}))}));
+    await requireStaffOrders(env,user);
+    return json({products,minimumOrderGrams:minimumOrderGrams(env,customer),sources:TAKEN_SOURCES,customer:{id:customer.id,business:customer.business,status:customer.status,email:customer.email||''}});
+  }
   if(route==="print"){
     const orders=(await ordersToPrint(env,new URL(req.url).searchParams,{customerOnly:true})).map(o=>staffView(o));
     await requireStaffOrders(env,user);

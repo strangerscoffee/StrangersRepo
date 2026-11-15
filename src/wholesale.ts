@@ -35,6 +35,8 @@ interface Order {
   createdBy: string; createdName: string; business: string; reference: string; delivery: string;
   customerId: string | null; status: string; note: string; date: string; createdAt: number;
   requestKey: string; lines: Line[]; pence: number; grams: number; packs: number;
+  /** Taken by staff for the customer (it came by email, phone or in person); who took it is createdName. */
+  takenFor?: { source: string; at: number };
   /** Delivery charge in pence including VAT, fixed when the order was placed (absent on orders from before it was automatic). */
   deliveryPence?: number; totalPence?: number;
   preview?: boolean; customerSnapshot?: Omit<ReturnType<typeof publicCustomer>, "locations" | "defaultLocationId">; deliveryNotes?: string;
@@ -62,6 +64,7 @@ export function customerOrdersUrl(env: Env, links: { preview?: string }, req: Re
 const denied = () => new ApiError(403, "permission_denied", "Only admins can manage wholesale ordering.");
 export function visibleOrder(order: Order & Versioned, admin = false) {
   const { requestKey, note, tab, tabClearedId, amendedBy, ...visible } = order;
+  if (!admin && order.takenFor) { const { createdBy, createdName, ...rest } = visible as typeof visible & { createdBy?: string; createdName?: string }; return { ...rest, lines: customerLines(rest.lines)!, ...(rest.originalLines ? { originalLines: customerLines(rest.originalLines) } : {}), trackingUrl: order.trackingUrl || "" }; }
   return admin ? { ...visible, trackingUrl: order.trackingUrl || "", note, ...(tab ? { tab } : {}), ...(tabClearedId ? { tabClearedId } : {}), ...(amendedBy ? { amendedBy } : {}) } : { ...visible, lines: customerLines(visible.lines)!, ...(visible.originalLines ? { originalLines: customerLines(visible.originalLines) } : {}), trackingUrl: order.trackingUrl || "" };
 }
 function trackingUrl(value: unknown): string {
@@ -75,7 +78,7 @@ function trackingUrl(value: unknown): string {
   if (!["http:", "https:"].includes(url.protocol) || !url.hostname || url.username || url.password || authority.includes("@") || url.href.length > 2000) throw invalid("Use a tracking link without a username or password.");
   return url.href;
 }
-function orderBody(value: unknown) {
+function orderBody(value: unknown, priced = true) {
   const body = object(value);
   if (typeof body.requestId !== "string" || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(body.requestId)) throw invalid("Send a unique requestId for this order.");
   if (!Array.isArray(body.lines) || !body.lines.length || body.lines.length > 150) throw invalid("Choose from 1 to 150 coffee variants.");
@@ -84,7 +87,9 @@ function orderBody(value: unknown) {
     const line = object(value);
     if ((typeof line.productId !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(line.productId)) || typeof line.pack !== "string" || !Object.hasOwn(PACKS, line.pack) || typeof line.grind !== "string" || !validGrindId(line.grind)) throw invalid("Choose a listed coffee, bag size and grind.");
     if (!Number.isInteger(line.quantity) || line.quantity < 1 || line.quantity > MAX_QUANTITY) throw invalid(`Choose a whole number of bags from 1 to ${MAX_QUANTITY}.`);
-    if (!Number.isInteger(line.price) || line.price < 1 || line.price > 1000000) throw invalid("Check the quoted coffee price.");
+    // Orders staff take for a customer carry no prices (the staff page shows none): the catalogue's prices apply.
+    if (!priced) line.price = 0;
+    else if (!Number.isInteger(line.price) || line.price < 1 || line.price > 1000000) throw invalid("Check the quoted coffee price.");
     const previous = lines.find((item) => item.productId === line.productId && item.pack === line.pack && item.grind === line.grind);
     if (previous) {
       if (previous.price !== line.price || previous.quantity + line.quantity > MAX_QUANTITY) throw invalid(`Each coffee, weight and grind can have at most ${MAX_QUANTITY} bags at one price.`);
@@ -104,30 +109,51 @@ function orderBody(value: unknown) {
     ...(customerNote ? { customerNote } : {}),
   };
 }
-async function createOrder(req: Request, env: Env, user: OrderingUser, links: Links, ctx?: ExecutionContext): Promise<Response> {
+/** How an order taken by staff for a customer reached Strangers. */
+export const TAKEN_SOURCES = ["Email", "In person", "Phone", "Other"] as const;
+/** An order staff take for a customer (it came by email, phone or at the door): a real customer order. */
+interface TakenFor { customerId: string; source: string; emailCustomer: boolean }
+
+async function createOrder(req: Request, env: Env, user: OrderingUser, links: Links, ctx?: ExecutionContext, takenFor?: TakenFor): Promise<Response> {
+  const saved = await placeOrder(req, env, user, links, ctx, takenFor);
+  return json({ order: visibleOrder(saved.order), preview: saved.order.preview !== false }, saved.created ? 201 : 200);
+}
+
+/** Staff with wholesale orders access (and admins) take an order for a customer. */
+export async function takeOrderFor(req: Request, env: Env, staff: { id: string; name: string }, links: Links, ctx?: ExecutionContext) {
   const submitted = object(await readJson(req, 32 * 1024));
-  if (submitted.orderingIdentity !== undefined && submitted.orderingIdentity !== user.id) throw new ApiError(409, "account_changed", "The signed-in account changed. Reload ordering before placing an order.");
-  const body = orderBody(submitted);
-  const customer = user.role === "wholesale" ? await wholesaleCustomer(env, user.customerId) : null;
-  if (user.role === "wholesale") {
-    if (!customer) throw new ApiError(403, "permission_denied", "Your wholesale account is unavailable. Contact Strangers.");
+  const customerId = text(submitted.customerId, "customer", 36, true);
+  const source = TAKEN_SOURCES.find((s) => s === submitted.source);
+  if (!source) throw invalid("Choose how the order came in: email, in person, phone or other.");
+  if (submitted.emailCustomer !== undefined && typeof submitted.emailCustomer !== "boolean") throw invalid("Choose whether to email the customer.");
+  return placeOrder(req, env, { id: staff.id, name: staff.name, role: "staff" } as OrderingUser, links, ctx, { customerId, source, emailCustomer: submitted.emailCustomer === true }, submitted);
+}
+
+async function placeOrder(req: Request, env: Env, user: OrderingUser, links: Links, ctx: ExecutionContext | undefined, takenFor?: TakenFor, already?: Record<string, any>): Promise<{ order: Order & Versioned; created: boolean }> {
+  const submitted = already || object(await readJson(req, 32 * 1024));
+  if (!takenFor && submitted.orderingIdentity !== undefined && submitted.orderingIdentity !== user.id) throw new ApiError(409, "account_changed", "The signed-in account changed. Reload ordering before placing an order.");
+  const body = orderBody(submitted, !takenFor);
+  const customer = takenFor ? await wholesaleCustomer(env, takenFor.customerId) : user.role === "wholesale" ? await wholesaleCustomer(env, user.customerId) : null;
+  if (takenFor && !customer) throw new ApiError(404, "not_found", "That customer wasn't found. Reload the customer list.");
+  if (user.role === "wholesale" && !customer) throw new ApiError(403, "permission_denied", "Your wholesale account is unavailable. Contact Strangers.");
+  if (customer) {
     body.id = body.id.replace("PREVIEW-", "WS-");
     body.business = customer.business;
   }
   // Retrying a customer request still finds its original snapshot if business details changed meanwhile.
-  const request = user.role === "wholesale" ? { ...body, business: user.customerId } : body;
+  const request = takenFor ? { ...body, business: takenFor.customerId, takenBy: user.id, source: takenFor.source } : user.role === "wholesale" ? { ...body, business: user.customerId } : body;
   const requestKey = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(request))))].map((n) => n.toString(16).padStart(2, "0")).join("");
   const existing = await get<Order>(env, "order", body.id);
   if (existing) {
     if (existing.createdBy !== user.id || existing.requestKey !== requestKey) throw new ApiError(409, "conflict", "That requestId has already been used for another order.");
     if (existing.deletedAt != null) throw new ApiError(410, "order_deleted", "This order was removed by Strangers. Close this review and review your basket before placing a new order.");
-    return json({ order: visibleOrder(existing), preview: existing.preview !== false });
+    return { order: existing, created: false };
   }
-  if (customer?.status === "On hold") throw new ApiError(403, "account_on_hold", "Your account is on hold. Contact Strangers before placing an order.");
-  const location = customer ? customerLocations(customer).find((location) => location.id === (body.locationId || "primary")) : null;
-  if (customer && location && body.delivery === "Delivery" && (!location.address.trim() || !location.postcode.trim())) throw invalid("Add the selected location's delivery address and postcode in My account before ordering delivery.");
-  if (customer && !Number.isSafeInteger(submitted.customerVersion)) throw new ApiError(409, "account_changed", "Reload the page to update ordering, then review your basket again.");
-  if (customer && submitted.customerVersion !== customer.version) throw new ApiError(409, "account_changed", "Your business details or payment terms changed. Close this review and review your basket again.");
+  if (customer?.status === "On hold") throw new ApiError(403, "account_on_hold", takenFor ? `${customer.business} is on hold. An admin can take them off hold in Admin → Wholesale → Customers.` : "Your account is on hold. Contact Strangers before placing an order.");
+  const location = customer ? customerLocations(customer).find((location) => location.id === (body.locationId || (takenFor ? customer.defaultLocationId || "primary" : "primary"))) || (takenFor && !body.locationId ? customerLocations(customer)[0] : null) : null;
+  if (customer && location && body.delivery === "Delivery" && (!location.address.trim() || !location.postcode.trim())) throw invalid(takenFor ? `${location.name} has no delivery address and postcode saved. Choose collection, or ask an admin to add the address.` : "Add the selected location's delivery address and postcode in My account before ordering delivery.");
+  if (customer && !takenFor && !Number.isSafeInteger(submitted.customerVersion)) throw new ApiError(409, "account_changed", "Reload the page to update ordering, then review your basket again.");
+  if (customer && !takenFor && submitted.customerVersion !== customer.version) throw new ApiError(409, "account_changed", "Your business details or payment terms changed. Close this review and review your basket again.");
   if (customer && !location) throw invalid("Choose a location saved to your business.");
   if (!customer && body.locationId !== undefined) throw invalid("Saved locations are available for wholesale customer accounts.");
   const coffees = await catalogue(env);
@@ -138,14 +164,14 @@ async function createOrder(req: Request, env: Env, user: OrderingUser, links: Li
     if (!ORDERABLE_PACKS.includes(line.pack)) throw new ApiError(409, "pack_unavailable", `${PACKS[line.pack].label}s are no longer available. Remove the ${PACKS[line.pack].label} of ${product.name} from your basket and choose 250 g or 1 kg.`);
     if (!packsOf(product).includes(line.pack as "quarter" | "kilo")) throw new ApiError(409, "pack_unavailable", `${product.name} is sold in ${PACKS[packsOf(product)[0]].label}s only. Remove the ${PACKS[line.pack].label} of ${product.name} from your basket and choose a ${PACKS[packsOf(product)[0]].label}.`);
     if (!product.active) throw new ApiError(409, "conflict", `${product.name} is no longer in the catalogue. Reload your basket.`);
-    if (line.price !== product.prices[line.pack as "quarter" | "kilo"]) throw new ApiError(409, "conflict", "The prices have changed. Reload and review your order again.");
+    if (!takenFor && line.price !== product.prices[line.pack as "quarter" | "kilo"]) throw new ApiError(409, "conflict", "The prices have changed. Reload and review your order again.");
     const grind = product.grindOptions.find(option => option.id === line.grind && option.enabled);
     if (!grind) throw new ApiError(409, "grind_unavailable", `${product.name} no longer offers this grind. Remove it from your basket and choose an available option.`);
     return { ...line, title: product.title, packLabel: PACKS[line.pack].label, grindLabel: grind.label, grindHint: grind.hint || "", decaf: product.categories.includes("decaf"), price: product.prices[line.pack as "quarter" | "kilo"], grams: PACKS[line.pack].grams, ...(product.recipe?.length ? { recipe: recipeText(product) } : {}) };
   });
   // After the retry check above, so an order already placed is still returned if the minimum changes later.
   const minimum = minimumOrderGrams(env, customer), grams = lines.reduce((sum, line) => sum + line.grams * line.quantity, 0);
-  if (grams < minimum) throw new ApiError(409, "below_minimum", `The minimum order is ${kg(minimum)} of coffee. Add ${kg(minimum - grams)} more to your basket.`);
+  if (grams < minimum) throw new ApiError(409, "below_minimum", takenFor ? `The minimum order is ${kg(minimum)} of coffee: add ${kg(minimum - grams)} more. An admin can turn off the minimum for ${customer!.business} in Admin → Wholesale → Customers.` : `The minimum order is ${kg(minimum)} of coffee. Add ${kg(minimum - grams)} more to your basket.`);
   const at = Date.now();
   const customerSnapshot = customer && location ? (() => {
     const { locations, defaultLocationId, ...profile } = publicCustomer(customer);
@@ -155,6 +181,7 @@ async function createOrder(req: Request, env: Env, user: OrderingUser, links: Li
     createdBy: user.id, createdName: user.name, business: body.business, reference: body.reference, delivery: body.delivery,
     customerId: customer?.id || null, status: "New", note: "", trackingUrl: "", preview: !customer, ...(customer && location ? { customerSnapshot, deliveryNotes: location.deliveryNotes, paymentTerms: paymentTermsFor(customer), locationId: location.id, locationSnapshot: { ...location } } : {}), date: new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone: "Europe/London" }).format(new Date(at)),
     createdAt: at, requestKey, lines, ...(body.customerNote ? { customerNote: body.customerNote } : {}), ...autoTabFor(customer),
+    ...(takenFor ? { takenFor: { source: takenFor.source, at } } : {}),
     pence: lines.reduce((sum, line) => sum + line.price * line.quantity, 0), grams: lines.reduce((sum, line) => sum + line.grams * line.quantity, 0), packs: lines.reduce((sum, line) => sum + line.quantity, 0),
   };
   order.deliveryPence = shippingFor(order.delivery, order.pence);
@@ -166,16 +193,20 @@ async function createOrder(req: Request, env: Env, user: OrderingUser, links: Li
     const raced = await get<Order>(env, "order", body.id);
     if (!raced || raced.createdBy !== user.id || raced.requestKey !== requestKey) throw error;
     if (raced.deletedAt != null) throw new ApiError(410, "order_deleted", "This order was removed by Strangers. Close this review and review your basket before placing a new order.");
-    return json({ order: visibleOrder(raced), preview: raced.preview !== false });
+    return { order: raced, created: false };
   }
-  await audit(env, customer ? "wholesale_order" : "wholesale_preview_order", user.name, `${user.name} placed ${customer ? "wholesale" : "staff preview"} order ${body.id}.`);
-  // A new customer order (never a staff preview or a retry, which returned above) is emailed to Strangers.
+  await audit(env, customer ? "wholesale_order" : "wholesale_preview_order", user.name, takenFor
+    ? `${user.name} took order ${body.id} for ${customer!.business} (${takenFor.source.toLowerCase()}).`
+    : `${user.name} placed ${customer ? "wholesale" : "staff preview"} order ${body.id}.`);
+  // A new customer order (never a staff preview or a retry, which returned above) is emailed to Strangers and posted
+  // to Slack. One staff took themselves isn't emailed to the team, but still goes to Slack for packing.
   if (customer) {
-    await notifyNewOrder(env, ctx, saved, links.diary); await notifySlackNewOrder(env, ctx, saved, links.diary);
-    // And the customer gets their own confirmation, linking back to My orders on the ordering site.
-    await confirmToCustomer(env, ctx, saved, { showPrices: !customer.hidePrices, ordersUrl: customerOrdersUrl(env, links, req) });
+    if (!takenFor) await notifyNewOrder(env, ctx, saved, links.diary);
+    await notifySlackNewOrder(env, ctx, saved, links.diary);
+    // The customer gets their own confirmation, linking back to My orders (for a taken order, only when asked).
+    if (!takenFor || takenFor.emailCustomer) await confirmToCustomer(env, ctx, saved, { showPrices: !customer.hidePrices, ordersUrl: customerOrdersUrl(env, links, req) });
   }
-  return json({ order: visibleOrder(saved), preview: !customer }, 201);
+  return { order: saved, created: true };
 }
 
 /** All staff can browse the signed-in catalogue and save preview orders. They cannot read others' records. */
