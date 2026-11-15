@@ -591,3 +591,15 @@ body[data-page="leave"] .stat b { font-variant-numeric:tabular-nums; }
 .mtable td.away span{display:block}
 .hdl{flex-wrap:wrap;gap:10px}
 @media (max-width:600px){.mtable td.away{font-size:12px}.hdl .btn{flex:1 1 100%}}
+
+/* Shifts amended on the day, with why: off sick / went home sick (sickness, not a clash) and late. */
+.shc.why-sick{border:1.5px dashed var(--muted);background:color-mix(in srgb,var(--muted) 10%,transparent)}
+.shc.why-sick[class*="tone-"]{border:1.5px dashed var(--muted)}
+.shc.why-sick small,.shc.why-sick .jb{color:var(--fg);font-weight:700}
+.shc.why-sick.pc{opacity:.85}
+.shc.gone .tm{text-decoration:line-through;text-decoration-thickness:1.5px;color:var(--muted)}
+.shc.why-late small,.shc.why-late .jb{color:var(--warn);font-weight:700}
+.tl-bar.why-sick{border:1.5px dashed var(--muted);opacity:.85}
+.sw.sick{border:1.5px dashed var(--muted);background:color-mix(in srgb,var(--muted) 10%,transparent)}
+.amwhy{display:inline-flex;align-items:center;gap:8px;font-size:14px}
+.amwhy select{min-height:40px;border-radius:10px;padding:0 10px;border:1px solid var(--line);background:var(--surface);color:var(--fg);font:inherit}

@@ -108,3 +108,29 @@ test("removing a record cancels the absence and puts the hours back", async () =
   assert.equal((await call("GET", "/api/rota/sickness")).body.records.some((x) => x.id === rec.id), false);
   assert.equal((await call("DELETE", `/api/rota/sickness/${rec.id}`)).status, 404);
 });
+
+test("sickness on the shift isn't a clash before publishing; sickness with the shift still as planned is", async () => {
+  const day = london(-2);
+  const s = await shift(ids.Alex, day, "08:00", "17:00");
+  const saved = await call("POST", "/api/rota/sickness", form({ kind: "early", from: day, leftAt: "14:30", category: "Stomach upset" }), ALEX);
+  assert.equal(saved.status, 200, saved.text);
+  let week = (await call("GET", `/api/rota/week?start=${day}`)).body;
+  assert.ok(!week.problems.some((p) => p.kind === "time_off" && p.shiftIds.includes(s.id)), JSON.stringify(week.problems));
+  assert.match(week.shifts.find((x) => x.id === s.id).adjustNote, /^Went home sick at 14:30/);
+  // Sickness recorded with the shift left as planned still has to be fixed (amend the hours).
+  const day2 = london(-3);
+  const t = await shift(ids.Beth, day2, "08:00", "17:00");
+  srv.sql(`INSERT INTO rota_time_off(id,user_id,from_day,to_day,reason,status,created_at,kind) VALUES ('sick-admin','${ids.Beth}','${day2}','${day2}','','approved',${Date.now()},'sick')`);
+  week = (await call("GET", `/api/rota/week?start=${day2}`)).body;
+  const p = week.problems.find((x) => x.kind === "time_off" && x.shiftIds.includes(t.id));
+  assert.ok(p, "still a must-fix");
+  assert.match(p.message, /Beth is off sick on .* but still has the planned shift at Cafe: amend their hours/);
+  // Amending the hours (didn't come in) settles it.
+  assert.equal((await call("PUT", `/api/rota/shifts/${t.id}/actual`, { start: "08:00", end: "08:00", breakMins: 0, note: "Off sick" })).status, 200);
+  week = (await call("GET", `/api/rota/week?start=${day2}`)).body;
+  assert.ok(!week.problems.some((x) => x.kind === "time_off" && x.shiftIds.includes(t.id)));
+  // Holiday is still a clash, amended or not.
+  srv.sql(`UPDATE rota_time_off SET kind='annual' WHERE id='sick-admin'`);
+  week = (await call("GET", `/api/rota/week?start=${day2}`)).body;
+  assert.ok(week.problems.some((x) => x.kind === "time_off" && x.shiftIds.includes(t.id)));
+});

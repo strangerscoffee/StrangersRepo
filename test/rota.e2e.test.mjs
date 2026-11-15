@@ -125,7 +125,7 @@ for (const [label, viewport] of [["phone", { width: 393, height: 852 }], ["iPad"
     await row.waitFor();
     await row.locator('input[type=range]').nth(1).evaluate((r) => { r.value = "720"; r.dispatchEvent(new Event("input", { bubbles: true })); });
     assert.equal(await row.locator("output").nth(1).innerText(), "12:00");
-    await row.locator(".fchip", { hasText: "Went home sick" }).click();
+    await row.locator(".amwhy select").selectOption("Went home sick");
     await row.locator(".btn", { hasText: "Save" }).click();
     await m.page.locator("#toast", { hasText: "Alex: 00:30–12:00 saved" }).waitFor();
     w = await call("GET", "/api/rota/week?start=" + week);
@@ -325,6 +325,46 @@ for (const [label, viewport] of [["phone", { width: 393, height: 852 }], ["iPad"
     await m.page.waitForFunction((t) => !document.body.innerText.includes(t + " · all sites"), title);
     await m.page.locator(".hmode").getByRole("button", { name: "Week", exact: true }).click();
     await m.page.locator(".htable:not(.mtable)").waitFor();
+    assert.deepEqual(m.errors, []);
+    await m.ctx.close();
+  });
+}
+
+for (const [label, viewport] of [["phone", { width: 393, height: 852 }], ["iPad", { width: 1180, height: 820 }]]) for (const scheme of ["light", "dark"]) {
+  test(`amended shifts say why on a ${label} (${scheme}): off sick and late, not a clash; Late is the default reason`, async () => {
+    const today = londonToday();
+    const week = addDays(today, -((new Date(today + "T12:00:00Z").getUTCDay() + 6) % 7));
+    for (const s of (await call("GET", "/api/rota/week?start=" + week)).shifts) await call("DELETE", "/api/rota/shifts/" + s.id);
+    const add = async (start, end) => (await call("POST", "/api/rota/shifts", { site: "cafe", day: today, start, end, breakMins: 0, job: "", userId: ALEX_ID })).shift;
+    const sick = await add("06:00", "08:00"), late = await add("08:30", "12:00"), plain = await add("13:00", "15:00");
+    await call("PUT", `/api/rota/shifts/${sick.id}/actual`, { start: "06:00", end: "06:00", breakMins: 0, note: "Off sick (self-certified)" });
+    await call("PUT", `/api/rota/shifts/${late.id}/actual`, { start: "08:50", end: "12:00", breakMins: 0, note: "Late" });
+    const m = await pageFor(viewport);
+    await m.page.emulateMedia({ colorScheme: scheme });
+    await m.page.goto(srv.base + "/rota/");
+    const offCard = m.page.locator(".shc.why-sick", { hasText: "Off sick" }).first();
+    await offCard.waitFor();
+    assert.match(await offCard.innerText(), /06:00–08:00/, "the planned times, struck through");
+    assert.match(await m.page.locator(".shc.why-late").first().innerText(), /08:50–12:00[\s\S]*Late|Late[\s\S]*08:50–12:00/i);
+    assert.equal(await m.page.locator(".shc.clash").count(), 0);
+    if (process.env.SHOT_DIR) await m.page.screenshot({ path: `${process.env.SHOT_DIR}/why-week-${label}-${scheme}.png` });
+    // On the day: the reason list starts on Late, Other lets you type one.
+    await m.page.goto(srv.base + `/rota/#day/cafe/${today}`);
+    assert.equal(await m.page.locator(".amrow", { hasText: "Planned 06:00–08:00" }).locator(".amwhy select").inputValue(), "Off sick", "the sickness form's note picks Off sick");
+    const row = m.page.locator(".amrow", { hasText: "Planned 13:00–15:00" });
+    await row.waitFor();
+    const sel = row.locator(".amwhy select");
+    assert.equal(await sel.inputValue(), "Late");
+    assert.equal(await row.locator('input[placeholder="Type the reason"]').isHidden(), true);
+    await sel.selectOption("other");
+    await row.locator('input[placeholder="Type the reason"]').fill("Bus cancelled");
+    await row.locator('input[type="range"]').first().fill(String(13 * 60 + 20));
+    await row.locator('input[type="range"]').first().dispatchEvent("input");
+    await row.getByRole("button", { name: "Save" }).click();
+    await m.page.waitForFunction(() => /Bus cancelled/.test(document.body.innerText));
+    assert.equal((await call("GET", "/api/rota/week?start=" + week)).shifts.find((s) => s.id === plain.id).adjustNote, "Bus cancelled");
+    assert.equal(await m.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+    if (process.env.SHOT_DIR) await m.page.screenshot({ path: `${process.env.SHOT_DIR}/why-day-${label}-${scheme}.png`, fullPage: true });
     assert.deepEqual(m.errors, []);
     await m.ctx.close();
   });

@@ -69,9 +69,13 @@ export function computeProblems(ctx: Ctx): Problem[] {
       continue;
     }
     const off = onTimeOff(ctx.timeOff, s.userId, s.day, s.start, s.end);
-    if (off) {
+    // Sickness whose hours are already on the shift (the self-certified form amends them, or an admin did) isn't a
+    // clash: the shift shows they were off sick or went home sick. Sickness with the shift still as planned is.
+    if (off && !(off.kind === "sick" && s.adjusted)) {
       out.push({ kind: "time_off", severity: "error", day: s.day, site: s.site, userId: s.userId, shiftIds: [s.id],
-        message: `${nm(s.userId)} has time off on ${day(s.day)} but is on at ${siteName(s.site)}` });
+        message: off.kind === "sick"
+          ? `${nm(s.userId)} is off sick on ${day(s.day)} but still has the planned shift at ${siteName(s.site)}: amend their hours`
+          : `${nm(s.userId)} has time off on ${day(s.day)} but is on at ${siteName(s.site)}` });
     }
     if (mins(s.end) - mins(s.start) > BREAK_AFTER_MINS && s.breakMins < BREAK_MINS) {
       out.push({ kind: "break", severity: "info", day: s.day, site: s.site, userId: s.userId, shiftIds: [s.id],

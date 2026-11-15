@@ -53,6 +53,20 @@
   const effS = (s) => s.actualStart || s.start;
   const effE = (s) => s.actualEnd || s.end;
   const span = (s) => `${effS(s)}–${effE(s)}`;
+  // Why a shift's hours were amended on the day, from its note: the sickness form writes "Off sick (self-certified)" or
+  // "Went home sick at …"; the amend form writes one of AMEND_REASONS or the reason typed under Other.
+  const AMEND_REASONS = ["Late", "Left early", "Went home sick", "Off sick", "Stayed late"];
+  const amendWhy = (s) => {
+    if (!s.userId || !s.adjusted) return null;
+    const n = String(s.adjustNote || "").trim();
+    if (/^off sick/i.test(n)) return { key: "sick", small: "Off sick", text: "Off sick" };
+    if (/^went home sick/i.test(n)) return { key: "sick", small: "Home sick", text: n.replace(/\s*\(self-certified\)/i, "") };
+    if (/^(late|came in late)\b/i.test(n)) return { key: "late", small: "Late", text: "Late" };
+    return { key: "amended", small: "Amended", text: n ? `Amended: ${n}` : "Amended" };
+  };
+  // A shift nobody worked (off sick): show the planned times struck through, not "08:00–08:00".
+  const notWorked = (s) => s.adjusted && effS(s) === effE(s);
+  const shownSpan = (s) => (notWorked(s) ? `${s.start}–${s.end}` : span(s));
   // Contracted hours as a range: "16–24", "20", "up to 24", "at least 16" (hours a week).
   const contractLabel = (p) => {
     const a = p.contractMin, b = p.contractMax;
@@ -476,23 +490,24 @@
     const nm = nameOf(d, s.userId);
     const h = s.userId ? personOf(d, s.userId)?.hue ?? HUE.id[s.userId] : null;
     const tinted = h != null && !showSite; // by site: each person's colour; by person, the row already says who
-    const cls = "shc" + (tinted ? " pc" : "") + (!s.userId ? " open" : "") + (clash ? " clash" : "") + (s.overtime > 0 ? " ot" : "") + (s.adjusted ? " amended" : "") + (showSite ? " tone-" + (SITE_TONE[s.site] || "") : "");
+    const why = amendWhy(s);
+    const cls = "shc" + (tinted ? " pc" : "") + (!s.userId ? " open" : "") + (clash ? " clash" : "") + (s.overtime > 0 ? " ot" : "") + (s.adjusted ? " amended" : "") + (why && !clash && why.key !== "amended" ? " why-" + why.key : "") + (notWorked(s) ? " gone" : "") + (showSite ? " tone-" + (SITE_TONE[s.site] || "") : "");
     const site = d.sites.find((x) => x.id === s.site);
     const ot = s.overtime > 0;
-    const tag = !s.userId ? [jobWord(s.job), "Fill"].filter(Boolean).join(" · ") : clash ? "Clash" : [jobWord(s.job), s.adjusted ? "Amended" : ""].filter(Boolean).join(" · ");
-    const aria = `${effS(s)} to ${effE(s)}${s.adjusted ? ` (amended, planned ${s.start} to ${s.end})` : ""}, ${nm || "open shift"}${s.job ? ", " + s.job : ""}${clash ? ", clash" : ""}${ot ? `, ${hrs(s.overtime)} hours overtime` : ""}${showSite ? ", " + site.name : ""}`;
+    const tag = !s.userId ? [jobWord(s.job), "Fill"].filter(Boolean).join(" · ") : clash ? "Clash" : [jobWord(s.job), why ? why.text : ""].filter(Boolean).join(" · ");
+    const aria = `${notWorked(s) ? `didn't work, planned ${s.start} to ${s.end}` : `${effS(s)} to ${effE(s)}${s.adjusted ? ` (amended, planned ${s.start} to ${s.end})` : ""}`}, ${nm || "open shift"}${s.job ? ", " + s.job : ""}${clash ? ", clash" : why ? ", " + why.text.toLowerCase() : ""}${ot ? `, ${hrs(s.overtime)} hours overtime` : ""}${showSite ? ", " + site.name : ""}`;
     const dim = R.focusPerson && s.userId !== R.focusPerson ? " dim" : "";
     if (compact) {
       // The planner grid: the time on one line, then the name with one small tag (Fill, Clash, Overtime, Opens…).
-      const small = !s.userId ? "Fill" : clash ? "Clash" : ot ? "Overtime" : s.adjusted ? "Amended" : jobWord(s.job);
+      const small = !s.userId ? "Fill" : clash ? "Clash" : why && why.key !== "amended" ? why.small : ot ? "Overtime" : why ? why.small : jobWord(s.job);
       const who = el("span", { class: "w" }, tinted ? el("span", { class: "pci", "aria-hidden": "true", text: initials(nm) }) : null,
-        el("span", { class: "nm", text: showSite && !showName ? site.name : nm ? first(nm) : "Open" }), small ? el("small", { class: ot && s.userId && !clash ? "o" : "", text: small }) : null);
+        el("span", { class: "nm", text: showSite && !showName ? site.name : nm ? first(nm) : "Open" }), small ? el("small", { class: ot && s.userId && !clash && !(why && why.key !== "amended") ? "o" : "", text: small }) : null);
       // By site, who it is comes first (the times are often all the same); by person, the time does.
-      const k = tinted ? [who, el("b", { class: "tm", text: span(s) })] : [el("b", { class: "tm", text: span(s) }), who];
+      const k = tinted ? [who, el("b", { class: "tm", text: shownSpan(s) })] : [el("b", { class: "tm", text: shownSpan(s) }), who];
       const st = hueStyle(tinted ? h : null);
       return ro ? el("div", { class: cls + " cmp" + dim, style: st, "aria-label": aria }, ...k) : el("button", { type: "button", class: cls + " cmp" + dim, style: st, "aria-label": aria, onclick: (e) => { e.stopPropagation(); openShift(s, d); } }, ...k);
     }
-    const kids = [el("b", { class: "tm", text: span(s) }),
+    const kids = [el("b", { class: "tm", text: shownSpan(s) }),
       showName ? el("span", { class: "nm" }, tinted ? el("span", { class: "pci", "aria-hidden": "true", text: initials(nm) }) : null, nm ? first(nm) : "Open shift") : null,
       showSite ? el("span", { class: "nm", text: site.name }) : null,
       tag ? el("span", { class: "jb", text: tag }) : null,
@@ -677,7 +692,7 @@
   function weekBodyKids(d) {
     if (!wide.matches) return phoneDay(d, false);
     const legend = el("div", { class: "legend rlegend" }, el("span", { class: "lg" }, el("i", { class: "sw" }), "Shift"), el("span", { class: "lg" }, el("i", { class: "sw open" }), "Open shift"),
-      el("span", { class: "lg" }, el("i", { class: "sw clash" }), "Clash"), el("span", { class: "lg" }, el("i", { class: "sw ot" }), "Overtime"), el("span", { text: "Tap a shift to change, move or copy it. The + adds one." }));
+      el("span", { class: "lg" }, el("i", { class: "sw clash" }), "Clash"), el("span", { class: "lg" }, el("i", { class: "sw ot" }), "Overtime"), el("span", { class: "lg" }, el("i", { class: "sw sick" }), "Off sick"), el("span", { text: "Tap a shift to change, move or copy it. The + adds one." }));
     if (R.view === "person") return [personGrid(d), legend];
     return [el("div", { class: "split" }, el("div", { class: "stack" }, siteGrid(d, false), legend), peoplePanel(d))];
   }
@@ -944,10 +959,10 @@
           ...other.map((o) => el("span", { class: "tl-bar ghost", style: `left:${pos(Math.max(a, mins(o.start)))}%;width:${pos(Math.min(b, mins(o.end))) - pos(Math.max(a, mins(o.start)))}%` }, `At ${d.sites.find((z) => z.id === o.site).name} till ${o.end}`)),
           // Amended: the plan stays as an outline behind what was worked.
           x.adjusted ? el("span", { class: "tl-plan", "aria-hidden": "true", style: `left:${pos(mins(x.start))}%;width:${pos(mins(x.end)) - pos(mins(x.start))}%` }) : null,
-          el("button", { type: "button", class: "tl-bar" + (!x.userId ? " open" : "") + (clashes.has(x.id) ? " clash" : "") + (x.overtime > 0 ? " ot" : "") + (x.adjusted ? " amended" : ""),
+          el("button", { type: "button", class: "tl-bar" + (!x.userId ? " open" : "") + (clashes.has(x.id) ? " clash" : "") + (x.overtime > 0 ? " ot" : "") + (x.adjusted ? " amended" : "") + (amendWhy(x)?.key === "sick" && !clashes.has(x.id) ? " why-sick" : ""),
             style: `left:${pos(xs)}%;width:${pos(xe) - pos(xs)}%`,
             onclick: () => openShift(x, d), "aria-label": `${nm || "Open shift"} ${span(x)}${x.adjusted ? `, amended from ${x.start} to ${x.end}` : ""}${x.job ? ", " + x.job : ""}${clashes.has(x.id) ? ", clash" : ""}${x.overtime > 0 ? ", overtime" : ""}` },
-          `${span(x)}${x.job ? " · " + jobWord(x.job) : ""}${x.adjusted ? " · Amended" : ""}${x.overtime > 0 ? " · Overtime" : ""}${clashes.has(x.id) ? " · Clash" : ""}`)));
+          `${shownSpan(x)}${x.job ? " · " + jobWord(x.job) : ""}${amendWhy(x) ? " · " + amendWhy(x).small : ""}${x.overtime > 0 ? " · Overtime" : ""}${clashes.has(x.id) ? " · Clash" : ""}`)));
     });
     rows.push(el("div", { class: "tl-row" }, el("span", { class: "tl-name", text: "Add" }),
       el("button", { type: "button", class: "tl-track tl-add", "data-w": "", "aria-label": `Add a shift at ${s.name} on ${longD(day)}`, onclick: () => newShift(d, site, day) })));
@@ -969,7 +984,7 @@
     const staffed = list.filter((x) => x.userId);
     const amend = day <= londonToday() && staffed.length
       ? el("section", { class: "stack amendbox" }, label("Amend hours on the day"), el("div", { class: "list glass" }, ...staffed.map((x) => amendRow(d, x, { onSaved: () => render() }))),
-        el("p", { class: "note", text: "Slide when someone actually started or finished, for example if they went home sick or stayed late. The planned shift is kept; hours, overtime and cover use the amended times." }))
+        el("p", { class: "note", text: "Slide when someone actually started or finished and say why: late, left early, went home sick, off sick, stayed late, or type another reason. The planned shift is kept; hours, overtime and cover use the amended times." }))
       : null;
 
     // Problems for this day, with a one-tap fix where there's an obvious one.
@@ -1010,18 +1025,29 @@
     const endR = el("input", { type: "range", id: id + "_e", min: ps, max: Math.min(23 * 60 + 55, pe + 240), step: 5, value: en, "aria-label": `${first(nm)} finished at` });
     const sOut = el("output", { for: startR.id }), eOut = el("output", { for: endR.id });
     const brkIn = el("input", { type: "number", min: 0, max: 180, step: 5, value: String(brk), inputmode: "numeric", "aria-label": `${first(nm)}'s unpaid break in minutes` });
-    const why = el("input", { type: "text", maxlength: 200, value: x.adjustNote || "", placeholder: "Reason, e.g. went home sick", "aria-label": `Why ${first(nm)}'s hours changed` });
+    // Why: Late by default; the usual reasons, or Other to type one.
+    // A note that starts with a listed reason picks it ("Off sick (self-certified)", "Went home sick at 14:30") and
+    // keeps its full wording while that reason stays chosen.
+    const oldNote = String(x.adjustNote || "").trim();
+    const known = AMEND_REASONS.find((r) => oldNote.toLowerCase().startsWith(r.toLowerCase())) || (/^came in late/i.test(oldNote) ? "Late" : null);
+    const reasonSel = el("select", { "aria-label": `Why ${first(nm)}'s hours changed` },
+      ...AMEND_REASONS.map((r) => el("option", { value: r, text: r })), el("option", { value: "other", text: "Other…" }));
+    reasonSel.value = x.adjustNote ? known || "other" : "Late";
+    let picked = !!x.adjustNote; // once someone chooses, the sliders stop suggesting a reason
+    const why = el("input", { type: "text", maxlength: 200, value: known ? "" : x.adjustNote || "", placeholder: "Type the reason", "aria-label": `Other reason ${first(nm)}'s hours changed` });
+    const reason = () => (reasonSel.value === "other" ? why.value.trim() : reasonSel.value === known ? oldNote : reasonSel.value);
     const sum = el("span", { class: "amsum", "aria-live": "polite" });
     const save = btn("Save", null, "btn sm");
     const reset = x.adjusted ? ghost("As planned", async () => {
       if (await act(() => api("PUT", `/api/rota/shifts/${x.id}/actual`, { clear: true }), `${first(nm)}'s shift is back to ${x.start}–${x.end}`)) { if (R.weekData) R.weekData._at = 0; onSaved?.(); }
     }, { class: "btn ghost sm" }) : null;
-    const quick = el("span", { class: "amquick" }, ...["Went home sick", "Left early", "Came in late", "Stayed late"].map((t) =>
-      el("button", { type: "button", class: "fchip", onclick: () => { why.value = t; draw(); } }, t)));
-    const changed = () => st !== mins(effS(x)) || en !== mins(effE(x)) || Number(brkIn.value || 0) !== brk || why.value.trim() !== (x.adjustNote || "");
+    const quick = el("label", { class: "amwhy" }, el("span", { text: "Why" }), reasonSel);
+    const changed = () => st !== mins(effS(x)) || en !== mins(effE(x)) || Number(brkIn.value || 0) !== brk || reason() !== (x.adjustNote || "");
     function draw() {
       st = Number(startR.value); en = Number(endR.value);
       if (en < st) { en = st; endR.value = String(en); }
+      if (!picked) reasonSel.value = en === st ? "Off sick" : st > ps ? "Late" : en < pe ? "Left early" : en > pe ? "Stayed late" : "Late";
+      why.hidden = reasonSel.value !== "other";
       sOut.textContent = hhmm(st); eOut.textContent = hhmm(en);
       const paid = r2(Math.max(0, en - st - Number(brkIn.value || 0)) / 60);
       const diff = r2(paid - x.plannedHours);
@@ -1030,12 +1056,14 @@
       save.disabled = !changed() || (st === ps && en === pe && !x.adjusted);
     }
     startR.oninput = draw; endR.oninput = draw; brkIn.oninput = draw; why.oninput = draw;
+    reasonSel.onchange = () => { picked = true; draw(); if (reasonSel.value === "other") why.focus(); };
     save.onclick = async () => {
-      if (st === ps && en === pe && Number(brkIn.value || 0) === x.breakMins && !why.value.trim()) {
+      if (st === ps && en === pe && Number(brkIn.value || 0) === x.breakMins) {
         if (await act(() => api("PUT", `/api/rota/shifts/${x.id}/actual`, { clear: true }), "Back to the plan")) { if (R.weekData) R.weekData._at = 0; onSaved?.(); }
         return;
       }
-      if (await act(() => api("PUT", `/api/rota/shifts/${x.id}/actual`, { start: hhmm(st), end: hhmm(en), breakMins: Number(brkIn.value || 0), note: why.value.trim() }),
+      if (reasonSel.value === "other" && !why.value.trim()) { why.focus(); toast("Type the reason, or choose one from the list."); return; }
+      if (await act(() => api("PUT", `/api/rota/shifts/${x.id}/actual`, { start: hhmm(st), end: hhmm(en), breakMins: Number(brkIn.value || 0), note: reason() }),
         `${first(nm)}: ${hhmm(st)}–${hhmm(en)} saved`)) { if (R.weekData) R.weekData._at = 0; onSaved?.(); }
     };
     draw();
@@ -1044,7 +1072,7 @@
         el("span", { class: "s", text: `Planned ${x.start}–${x.end}${x.adjusted ? ` · amended${x.adjustNote ? ": " + x.adjustNote : ""}` : ""}` })), sum),
       el("label", { class: "amslide", for: startR.id }, el("span", { text: "Started" }), startR, sOut),
       el("label", { class: "amslide", for: endR.id }, el("span", { text: "Finished" }), endR, eOut),
-      el("div", { class: "amfoot" }, el("label", { class: "chours" }, el("span", { text: "Break" }), brkIn, el("span", { text: "min" })), why, quick, el("span", { class: "row" }, reset, save)));
+      el("div", { class: "amfoot" }, el("label", { class: "chours" }, el("span", { text: "Break" }), brkIn, el("span", { text: "min" })), quick, why, el("span", { class: "row" }, reset, save)));
   }
 
   /* ---------- my shifts (everyone) ---------- */
