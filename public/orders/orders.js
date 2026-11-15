@@ -376,8 +376,12 @@
    $('newOrderForm').replaceChildren(el('h3',{},p?'Check submitted order':'Order recovery unavailable'),
     p?el('p',{},`${p.business} · ${p.payload.lines.reduce((n,l)=>n+l.quantity,0)} bags`):null,
     el('p',{class:'hint'},p?'The submitted bags and request stay fixed until we confirm the outcome. Check the same order again; closing this window or reloading keeps its recovery details for this account.':'Recovery details could not be verified. Check recent orders before trying to place another.'),
+    draft.closePrompt?el('p',{class:'detail-note'},'If this order was already saved, it will be recovered. Otherwise the unplaced request will be closed so a delayed copy cannot arrive later. You can then review a new order.'):'',
     draft.error?el('p',{class:'edit-error',role:'alert'},draft.error):null);
-   $('newOrderFoot').replaceChildren(el('span',{}),el('div',{class:'edit-actions'},el('button',{type:'button',class:'btn soft',onclick:()=>$('newOrderDialog').close()},'Keep for later'),p?el('button',{type:'button',class:'btn',id:'placeOrder',disabled:draft.sending,onclick:draft.removedConfirmed?()=>{try{removeAttempt(p);draft=null;$('newOrderDialog').close();toast('Removed order acknowledged. You can start a new order.');}catch{draft.error='Recovery details could not be cleared. Try again.';drawNewOrder();}}:placeNewOrder},draft.removedConfirmed?'Acknowledge removal':draft.sending?'Checking…':'Check submitted order'):null));
+   const actions=[el('button',{type:'button',class:'btn soft',onclick:()=>$('newOrderDialog').close()},'Keep for later')];
+   if(p&&!draft.removedConfirmed)actions.push(el('button',{type:'button',class:'btn soft',disabled:draft.sending,onclick:()=>{draft.closePrompt=!draft.closePrompt;drawNewOrder();}},draft.closePrompt?'Keep checking':'Close if unplaced'));
+   if(p)actions.push(el('button',{type:'button',class:'btn',id:'placeOrder',disabled:draft.sending,onclick:draft.removedConfirmed?()=>{try{removeAttempt(p);draft=null;$('newOrderDialog').close();toast('Removed order acknowledged. You can start a new order.');}catch{draft.error='Recovery details could not be cleared. Try again.';drawNewOrder();}}:draft.closePrompt?closeUnplacedAttempt:placeNewOrder},draft.removedConfirmed?'Acknowledge removal':draft.sending?'Checking…':draft.closePrompt?'Confirm close if unplaced':'Check submitted order'));
+   $('newOrderFoot').replaceChildren(el('span',{}),el('div',{class:'edit-actions'},...actions));
    return;
   }
   const form=$('newOrderForm'),c=draft.customer,active=keepFocus?document.activeElement?.id:null;
@@ -418,6 +422,18 @@
   drawTotals();
   if(active)$(active)?.focus();
  }
+ async function closeUnplacedAttempt(){
+  const current=draft,p=current?.pending;if(!p||current.sending||p.identity!==orderingIdentity)return;
+  current.sending=true;current.error='';drawNewOrder();
+  try{
+   const id='WS-'+p.payload.requestId.replaceAll('-','').toUpperCase();
+   const result=await staffJson('POST','attempts/'+id+'/close',{customerId:p.payload.customerId});
+   if(!started||p.identity!==orderingIdentity)return;
+   if(result.order){current.sending=false;current.closePrompt=false;p.uncertain=true;if(draft?.pending?.payload.requestId===p.payload.requestId)await placeNewOrder();return;}
+   if(result.closed!==true)throw new Error('The outcome could not be verified. Check the submitted order again.');
+   removeAttempt(p);if(draft?.pending?.payload.requestId===p.payload.requestId){draft=null;$('newOrderDialog').close();toast('Unplaced request closed. You can review a new order.');}
+  }catch(e){if(e.quiet||!started||p.identity!==orderingIdentity)return;current.sending=false;current.closePrompt=false;current.error=e.message;if(draft===current)drawNewOrder();}
+ }
  async function placeNewOrder(){
   if(!draft?.customer||draft.sending)return;
   const current=draft;
@@ -434,7 +450,7 @@
   const receiptPath='orders/WS-'+attempt.payload.requestId.replaceAll('-','').toUpperCase()+'/receipt';
   current.sending=true;current.error='';drawNewOrder();
   const finish=async order=>{
-   if(!order||order.id!=='WS-'+attempt.payload.requestId.replaceAll('-','').toUpperCase())throw new Error('The saved order receipt could not be verified. Check the same submitted order again.');
+   if(!order||order.id!=='WS-'+attempt.payload.requestId.replaceAll('-','').toUpperCase()||order.customerId!==attempt.payload.customerId)throw new Error('The saved order receipt could not be verified. Check the same submitted order again.');
    if(!started||attempt.identity!==orderingIdentity)return;
    try{removeAttempt(attempt);}catch{current.error='Order confirmed, but recovery details could not be cleared. Check the same order again before starting another.';current.sending=false;if(draft===current)drawNewOrder();return;}
    if(draft?.pending?.payload.requestId!==attempt.payload.requestId)return;
@@ -451,13 +467,10 @@
    if(e.quiet||!started||attempt.identity!==orderingIdentity)return;
    current.sending=false;
    if(e.status===410&&e.code==='order_deleted'){current.removedConfirmed=true;current.error=e.message;if(draft===current)drawNewOrder();return;}
-   // A conflict never proves that nothing was placed. Only a first, definitive
-   // refusal plus an owned receipt miss permits an editable corrected attempt.
-   let absent=false;
-   if(e.status&&e.status<500)try{const {order}=await staffJson('GET',receiptPath);await finish(order);return;}catch(check){if(check.quiet)return;absent=check.status===404;}
-   if(absent&&!wasUncertain&&e.status<500&&e.status!==403&&e.code!=='conflict'){
-    try{removeAttempt(attempt);current.pending=null;current.requestId=crypto.randomUUID();}catch{}
-   }else{attempt.uncertain=true;try{retainAttempt(attempt);}catch{}}
+   // Even a refused retry cannot exclude an older in-flight POST in another tab.
+   // Only an owned receipt or atomic close-if-unplaced resolves the original ID.
+   if(e.status&&e.status<500)try{const {order}=await staffJson('GET',receiptPath);await finish(order);return;}catch(check){if(check.quiet)return;if(check.status===410){current.removedConfirmed=true;current.error=check.message;if(draft===current)drawNewOrder();return;}}
+   attempt.uncertain=true;try{retainAttempt(attempt);}catch{}
    current.error=e.status?e.message:'The result is not confirmed. Check the submitted order again to recover it, or retry the identical request.';
    if(draft===current)drawNewOrder();
   }

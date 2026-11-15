@@ -80,6 +80,7 @@ for(const [mode,viewport,colorScheme] of [['lost',{width:390,height:844},'light'
   await dialog.locator('#noSearch').fill('Lune');await dialog.locator('.order-row',{hasText:'Lune Café'}).click();
   await dialog.locator('.no-line input[type="number"]').first().fill('3');await dialog.locator('#noRef').fill(reference);await dialog.locator('#placeOrder').click();
   await dialog.getByRole('alert').waitFor();assert.equal(await dialog.locator('input,select,textarea').count(),0,'uncertain payload cannot be edited');
+  assert.doesNotMatch(await dialog.innerText(),/\bnull\b/,'optional recovery controls render no placeholder text');
   if(process.env.SHOT_DIR)await page.screenshot({path:`${process.env.SHOT_DIR}/pending-${mode}-${colorScheme}.png`,fullPage:true});
   assert.equal(await page.evaluate(()=>Object.keys(localStorage).filter(k=>k.startsWith('sc.staffOrders.pending.')).length),1);
   await page.reload();await page.locator('#newOrderDialog[open]').waitFor();await dialog.getByRole('heading',{name:'Check submitted order'}).waitFor();
@@ -120,4 +121,19 @@ test('an owned deleted pending order is acknowledged without recreating it',asyn
   const order=(await call('GET','/api/admin/wholesale')).body.orders.find(o=>o.reference===reference);await call('DELETE','/api/admin/wholesale/orders/'+order.id,{ifVersion:order.version});
   await page.reload();await page.locator('#newOrderDialog[open]').waitFor();await d.getByRole('button',{name:'Check submitted order',exact:true}).click();await d.getByRole('button',{name:'Acknowledge removal'}).click();assert.equal(posts,1);assert.equal(await page.evaluate(()=>Object.keys(localStorage).filter(k=>k.startsWith('sc.staffOrders.pending.')).length),0);
  }finally{await ctx.close();}
+});
+
+test('an unsent request rejected after stock changes can be closed without a late duplicate',async()=>{
+ const ctx=await b.newContext({viewport:{width:390,height:844}}),[name,value]=STAFF.split('=');await ctx.addCookies([{name,value,url:srv.base}]);const page=await ctx.newPage();let submitted,drop=true,changed;
+ try{
+  await page.route('**/api/staff-orders/orders',async route=>{if(route.request().method()!=='POST'){await route.continue();return;}submitted=route.request().postDataJSON();if(drop){drop=false;await route.abort('failed');}else await route.continue();});
+  await page.goto(srv.base+'/orders');await page.locator('#newOrder').click();const d=page.locator('#newOrderDialog');await d.locator('#noSearch').fill('Lune');await d.locator('.order-row',{hasText:'Lune Café'}).click();await d.locator('#placeOrder').click();await d.getByRole('alert').waitFor();
+  const product=(await call('GET','/api/admin/wholesale')).body.products.find(p=>p.id===submitted.lines[0].productId);changed=(await call('PUT','/api/admin/wholesale/catalogue/'+product.id,{ifVersion:product.version,prices:product.prices,active:true,inStock:false})).body.product;
+  await d.getByRole('button',{name:'Check submitted order',exact:true}).click();await d.getByRole('alert').filter({hasText:'out of stock'}).waitFor();
+  await d.getByRole('button',{name:'Close if unplaced',exact:true}).click();await d.getByRole('button',{name:'Confirm close if unplaced',exact:true}).click();await page.locator('#newOrderDialog').waitFor({state:'hidden'});
+  await call('PUT','/api/admin/wholesale/catalogue/'+changed.id,{ifVersion:changed.version,prices:changed.prices,active:true,inStock:true});changed=null;
+  const late=await fetch(srv.base+'/api/staff-orders/orders',{method:'POST',headers:{'content-type':'application/json',cookie:STAFF},body:JSON.stringify(submitted)});assert.equal(late.status,409);
+  assert.equal(await page.evaluate(()=>Object.keys(localStorage).filter(k=>k.startsWith('sc.staffOrders.pending.')).length),0);
+  await page.locator('#newOrder').click();await d.locator('#noSearch').waitFor();assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+ }finally{if(changed)await call('PUT','/api/admin/wholesale/catalogue/'+changed.id,{ifVersion:changed.version,prices:changed.prices,active:true,inStock:true});await ctx.close();}
 });

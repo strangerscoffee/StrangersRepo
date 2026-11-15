@@ -11,6 +11,7 @@ import {catalogue,packsOf} from "./wholesaleCatalogue";
 import {catalogueFor} from "./wholesaleWhiteLabel";
 import {customerLocations} from "./wholesaleCustomers";
 import {get,object} from "./wholesaleStore";
+import {audit} from "./audit";
 import {clearTab,listTabs,setOnTab} from "./wholesaleTabs";
 import {amendLines,skipRun} from "./wholesaleStanding";
 import {requireStaffOrders} from "./staffOrdersAccess";
@@ -65,11 +66,28 @@ async function customers(req:Request,env:Env){
 }
 export async function handleStaffOrders(req:Request,env:Env,route:string,user:User,links:{preview?:string;diary?:string}={},ctx?:ExecutionContext):Promise<Response>{
   await requireStaffOrders(env,user);
+  const closeAttempt=/^attempts\/(WS-[A-F0-9]{32})\/close$/.exec(route);
+  if(closeAttempt&&req.method==="POST"){
+    const body=object(await readJson(req,2048));
+    if(typeof body.customerId!=="string"||!/^[a-f0-9-]{36}$/.test(body.customerId))throw invalid("Choose the original customer.");
+    const at=Date.now(),id=closeAttempt[1];
+    // Competes atomically with the original INSERT. Never cancels an existing
+    // order: a saved order wins and is recovered; otherwise a tombstone prevents
+    // any delayed original request from arriving after the user starts again.
+    const marker={preview:false,customerId:body.customerId,createdBy:user.id,createdName:user.name,takenFor:{source:"Other",at},unplacedAttempt:true,requestKey:"closed-attempt:"+user.id,status:"Cancelled",deletedAt:at,deletedBy:user.name,createdAt:at,date:today(),lines:[],pence:0,grams:0,packs:0};
+    const inserted=await env.DB.prepare("INSERT INTO wholesale_preview(kind,id,data,version,updated_at) VALUES('order',?,?,1,?) ON CONFLICT(kind,id) DO NOTHING").bind(id,JSON.stringify(marker),at).run();
+    const order=await get<Record<string,any>>(env,"order",id);
+    if(!order||order.createdBy!==user.id||!order.takenFor||order.preview!==false)throw new ApiError(404,"not_found","This request belongs to another account.");
+    await requireStaffOrders(env,user);
+    if(order.deletedAt==null)return json({closed:false,order:staffView(order)});
+    if(inserted.meta.changes)await audit(env,"staff_order_attempt_closed",user.name,`${user.name} closed unplaced wholesale request ${id}. No customer order was cancelled.`);
+    return json({closed:true});
+  }
   const receipt=/^orders\/(WS-[A-F0-9]{32})\/receipt$/.exec(route);
   if(receipt&&req.method==="GET"){
     const order=await get<Record<string,any>>(env,"order",receipt[1]);
     if(!order||order.createdBy!==user.id||!order.takenFor||order.preview!==false)throw new ApiError(404,"not_found","No submitted order found for this account.");
-    if(order.deletedAt!=null)throw new ApiError(410,"order_deleted","This order was removed by an admin. Check with them before starting another order.");
+    if(order.deletedAt!=null)throw new ApiError(410,"order_deleted","This order or request is closed. Acknowledge the outcome before starting another order.");
     await requireStaffOrders(env,user);
     return json({order:staffView(order)});
   }

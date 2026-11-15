@@ -3,7 +3,7 @@ import {test,before,after} from 'node:test';
 import assert from 'node:assert/strict';
 import {startServer,SETUP_CODE} from './harness.mjs';
 import {addDays,ukDay} from '../src/insightsMath.ts';
-let srv,ADMIN,A,B;
+let srv,ADMIN,A,B,OTHER;
 const cookieOf=r=>(r.headers.getSetCookie().find(c=>/^sf(?:bb|_wholesale)_session=[\w-]/.test(c))||'').split(';')[0];
 async function call(method,path,body,cookie=ADMIN){const r=await fetch(srv.base+path,{method,redirect:'manual',headers:{'content-type':'application/json',...(cookie?{cookie}:{})},body:body===undefined?undefined:JSON.stringify(body)});const text=await r.text();let data;try{data=JSON.parse(text);}catch{}return{status:r.status,data,text,cookie:cookieOf(r),headers:r.headers};}
 async function ok(...args){const r=await call(...args);assert.ok(r.status>=200&&r.status<300,`${args[0]} ${args[1]}: ${r.status} ${r.text}`);return r;}
@@ -87,9 +87,26 @@ test('staff recovery receipts are creator-scoped, unpriced and never recreate re
  const other=(await ok('POST','/api/admin/users',{name:'Other Packer',username:'audit.packer',role:'staff',password:'audit-temp-password-5555'})).data.user;
  await ok('PUT',`/api/admin/users/${other.id}/orders-access`,{ifVersion:0,enabled:true});
  const cookie=(await ok('POST','/api/auth/change',{username:'audit.packer',password:'audit-temp-password-5555',newPassword:'audit-other-own-password'},null)).cookie;
+ OTHER=cookie;
  assert.equal((await call('GET',`/api/staff-orders/orders/${placed.id}/receipt`,undefined,cookie)).status,404);
  assert.equal((await call('GET',`/api/staff-orders/orders/${placed.id}/receipt`,undefined,B.cookie)).status,401);
  await ok('DELETE',`/api/admin/wholesale/orders/${placed.id}`,{ifVersion:placed.version});
  assert.equal((await call('GET',`/api/staff-orders/orders/${placed.id}/receipt`)).status,410);
  assert.equal((await call('POST','/api/staff-orders/orders',body)).status,410);
+});
+
+test('closing an unplaced request prevents late creation, recovers saved orders and cannot cancel another creator',async()=>{
+ const bodyFor=()=>({requestId:crypto.randomUUID(),customerId:B.id,source:'Phone',emailCustomer:false,lines:[{productId:'campo',pack:'kilo',grind:'beans',quantity:1}],delivery:'Roastery collection'});
+ const body=bodyFor(),id='WS-'+body.requestId.replaceAll('-','').toUpperCase();
+ assert.equal((await ok('POST',`/api/staff-orders/attempts/${id}/close`,{customerId:B.id})).data.closed,true);
+ assert.equal((await call('POST','/api/staff-orders/orders',body)).status,409,'a delayed original POST cannot create after closure');
+ assert.equal((await call('POST',`/api/staff-orders/attempts/${id}/close`,{customerId:B.id},OTHER)).status,404);
+ assert.equal((await call('GET',`/api/staff-orders/orders/${id}/receipt`)).status,410);
+ const placed=(await ok('POST','/api/staff-orders/orders',bodyFor())).data.order;
+ const saved=await ok('POST',`/api/staff-orders/attempts/${placed.id}/close`,{customerId:B.id});assert.equal(saved.data.closed,false);assert.equal(saved.data.order.id,placed.id);assert.equal((await order(placed.id)).status,'New');
+ for(let i=0;i<3;i++){
+  const concurrent=bodyFor(),cid='WS-'+concurrent.requestId.replaceAll('-','').toUpperCase();
+  const [create,close]=await Promise.all([call('POST','/api/staff-orders/orders',concurrent),ok('POST',`/api/staff-orders/attempts/${cid}/close`,{customerId:B.id})]);
+  if(close.data.closed){assert.ok(create.status>=400);assert.equal(await order(cid),undefined);}else{assert.equal(create.status,201);assert.ok(await order(cid));}
+ }
 });
