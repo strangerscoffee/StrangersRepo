@@ -426,8 +426,8 @@ button.stat{cursor:pointer}
 
 /* Wholesale keeps compact controls above a full-width, grouped work list. */
 .w-content{min-width:0}
-.w-list-panel{display:grid;align-content:start;min-width:0;overflow:hidden;border-radius:20px}
-.w-list-header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:18px 20px 14px}
+.w-list-panel{display:grid;grid-template-columns:minmax(0,1fr);align-content:start;min-width:0;overflow:hidden;border-radius:20px}
+.w-list-header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;min-width:0;gap:12px;padding:18px 20px 14px}
 .w-list-header h2{font-size:19px;font-weight:650;letter-spacing:-.02em}
 .w-result-count{font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
 .w-panel-tools{display:grid;gap:12px;min-width:0;padding:0 20px 18px;border-bottom:1px solid var(--line)}
@@ -594,7 +594,7 @@ button:focus-visible,a:focus-visible,summary:focus-visible,input:focus-visible,s
 @media(max-width:700px) { .btn.sm,.btn.dismiss { min-height:44px; } .btn.dismiss { min-width:44px; } .sheet input:not([type=checkbox]):not([type=radio]):not([type=color]),.sheet select,.sheet textarea { font-size:16px; } .w-tabs-workspace.w-list-panel { padding:16px; } }
 
 /* Orders: search first, quiet filters, grouped preparation actions. */
-.w-header-actions { display:flex; align-items:center; gap:18px; }
+.w-header-actions { display:flex; align-items:center; flex-wrap:wrap; min-width:0; max-width:100%; gap:18px; }
 .w-panel-tools .w-order-toolbar { grid-template-columns:minmax(0,1fr); gap:16px; }
 .w-order-toolbar>.toolbar { width:100%; }
 .w-order-toolbar>.toolbar .search { width:100%; max-width:none; flex:1; }
@@ -610,7 +610,16 @@ button:focus-visible,a:focus-visible,summary:focus-visible,input:focus-visible,s
 .w-print-menu summary>span { margin-left:10px; }
 .w-print-options { position:absolute; z-index:10; top:calc(100% + 8px); left:0; min-width:210px; display:grid; gap:5px; padding:8px; border:1px solid var(--line); border-radius:18px; background:var(--surface); box-shadow:var(--float); }
 .w-print-options .btn { justify-content:flex-start; }
-@media(max-width:700px) { .w-header-actions { gap:8px; } .w-alerts-button { padding-inline:10px; font-size:12px; } .w-header-actions .w-result-count { display:none; } }
+@media(max-width:700px) {
+  .w-header-actions { gap:8px; }
+  .w-header-actions .w-alerts-button { padding-inline:10px; font-size:12px; }
+  .w-header-actions .w-result-count { display:none; }
+  /* Keep the primary action beside the title, with both settings visible below it. */
+  .w-list-header:has(.w-new-order) { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px 8px; }
+  .w-list-header:has(.w-new-order)>.w-header-actions { display:contents; }
+  .w-list-header .w-new-order { grid-column:2; grid-row:1; justify-self:end; }
+  .w-list-header .w-alerts-button { min-width:0; }
+}
 /* Keep order filters and preparation actions together when space allows. */
 @media(min-width:1100px) {
   .w-panel-tools .w-order-toolbar { grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:14px 16px; }

@@ -31,6 +31,39 @@ before(async () => {
 });
 after(async () => { await b?.close(); await srv?.stop(); });
 
+for (const [screen, viewport] of [["small phone", { width: 320, height: 844 }], ["phone", { width: 393, height: 852 }], ["compact tablet", { width: 701, height: 1024 }], ["tablet", { width: 820, height: 1180 }], ["desktop", { width: 1440, height: 900 }]]) for (const colorScheme of ["light", "dark"]) {
+  test(`wholesale order controls stay inside the panel on ${screen} ${colorScheme}`, async () => {
+    const ctx = await b.newContext({ viewport, colorScheme, isMobile: viewport.width < 600, hasTouch: viewport.width < 1024 });
+    const [name, value] = ADMIN.split("="); await ctx.addCookies([{ name, value, url: srv.base }]);
+    const p = await ctx.newPage(), errors = []; p.on("pageerror", e => errors.push(e.message));
+    try {
+      await p.goto(srv.base + "/admin#wholesale"); await p.locator('[data-act="wh-order"]').first().waitFor();
+      const panel = p.locator('.w-list-panel[aria-labelledby="wOrdersTitle"]');
+      const geometry = await panel.evaluate(node => {
+        const bounds = node.getBoundingClientRect();
+        const elements = [...node.querySelectorAll('.w-list-header .btn,.search,.w-print-menu summary,[data-act="wh-totals"],.w-order,.w-order .end,[data-act="wh-next"]')];
+        return { overflow: node.scrollWidth - node.clientWidth, outside: elements.filter(e => { const r = e.getBoundingClientRect(); return r.left < bounds.left - 1 || r.right > bounds.right + 1; }).map(e => e.className + ': ' + e.textContent.trim()) };
+      });
+      assert.ok(geometry.overflow <= 1, `the panel must not clip its contents: ${JSON.stringify(geometry)}`);
+      assert.deepEqual(geometry.outside, [], 'actions, prices and order rows fit inside the panel');
+      for (const action of ['wh-announcement', 'wh-order-emails']) {
+        const button = p.locator(`[data-act="${action}"]`); await button.scrollIntoViewIfNeeded();
+        const target = await button.evaluate(node => { const r = node.getBoundingClientRect(), hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2); return { width: r.width, height: r.height, overflow: node.scrollWidth - node.clientWidth, exposed: hit === node || node.contains(hit) }; });
+        assert.ok(target.width >= 44 && target.height >= 44 && target.overflow <= 1 && target.exposed, `${action} is a visible touch target with its label inside`);
+        await button.click(); await p.locator(action === 'wh-announcement' ? '#wAnnForm' : '#wOrderEmailsForm').waitFor();
+        await p.locator('#sheet [data-sheet="close"]').first().click(); await p.locator('#scrim').waitFor({ state: 'hidden' });
+      }
+      const lastFilter = p.locator('[data-act="wh-status"]').last(), lastStatus = await lastFilter.getAttribute('data-id'); await lastFilter.scrollIntoViewIfNeeded(); await lastFilter.click();
+      await p.locator(`[data-act="wh-status"][data-id="${lastStatus}"][aria-pressed="true"]`).waitFor();
+      assert.equal(await lastFilter.getAttribute('aria-pressed'), 'true', 'the last status remains reachable in its own scroller');
+      await p.locator('[data-act="wh-status"][data-id="all"]').click(); await p.locator('[data-act="wh-order"]').first().waitFor();
+      assert.equal(await p.evaluate(() => document.documentElement.scrollWidth - innerWidth), 0);
+      if (process.env.WHOLESALE_SCREENSHOT_DIR) { await panel.evaluate(node => node.scrollIntoView({ block: 'start' })); await p.screenshot({ path: `${process.env.WHOLESALE_SCREENSHOT_DIR}/orders-${screen}-${colorScheme}.png` }); }
+      assert.deepEqual(errors, []);
+    } finally { await ctx.close(); }
+  });
+}
+
 test("print new orders, pick orders to print, and see the bags to process", async () => {
   for (const [name, viewport, isMobile] of [["phone", { width: 390, height: 844 }, true], ["iPad", { width: 1180, height: 820 }, false]]) {
     const ctx = await b.newContext({ viewport, isMobile, hasTouch: isMobile });
