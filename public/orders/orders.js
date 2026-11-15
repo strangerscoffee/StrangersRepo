@@ -374,10 +374,10 @@
   if(draft.pending||draft.blockedRecovery){
    const p=draft.pending;
    $('newOrderForm').replaceChildren(el('h3',{},p?'Check submitted order':'Order recovery unavailable'),
-    p?el('p',{},`${p.business} · ${p.payload.lines.reduce((n,l)=>n+l.quantity,0)} bags`):null,
+    p?el('p',{},`${p.business} · ${p.payload.lines.reduce((n,l)=>n+l.quantity,0)} bags`):'',
     el('p',{class:'hint'},p?'The submitted bags and request stay fixed until we confirm the outcome. Check the same order again; closing this window or reloading keeps its recovery details for this account.':'Recovery details could not be verified. Check recent orders before trying to place another.'),
     draft.closePrompt?el('p',{class:'detail-note'},'If this order was already saved, it will be recovered. Otherwise the unplaced request will be closed so a delayed copy cannot arrive later. You can then review a new order.'):'',
-    draft.error?el('p',{class:'edit-error',role:'alert'},draft.error):null);
+    draft.error?el('p',{class:'edit-error',role:'alert'},draft.error):'');
    const actions=[el('button',{type:'button',class:'btn soft',onclick:()=>$('newOrderDialog').close()},'Keep for later')];
    if(p&&!draft.removedConfirmed)actions.push(el('button',{type:'button',class:'btn soft',disabled:draft.sending,onclick:()=>{draft.closePrompt=!draft.closePrompt;drawNewOrder();}},draft.closePrompt?'Keep checking':'Close if unplaced'));
    if(p)actions.push(el('button',{type:'button',class:'btn',id:'placeOrder',disabled:draft.sending,onclick:draft.removedConfirmed?()=>{try{removeAttempt(p);draft=null;$('newOrderDialog').close();toast('Removed order acknowledged. You can start a new order.');}catch{draft.error='Recovery details could not be cleared. Try again.';drawNewOrder();}}:draft.closePrompt?closeUnplacedAttempt:placeNewOrder},draft.removedConfirmed?'Acknowledge removal':draft.sending?'Checking…':draft.closePrompt?'Confirm close if unplaced':'Check submitted order'));
