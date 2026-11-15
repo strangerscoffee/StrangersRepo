@@ -625,3 +625,16 @@ body[data-auth-view=login] #login-submit { margin-top:3px; }
 .standing-total{font-weight:650;margin:8px 0}
 .standing-short{color:var(--warn);font-weight:600}
 @media (max-width:640px){.standing-add{grid-template-columns:1fr 1fr}.standing-add label:first-of-type{grid-column:1/-1}.standing-add button{grid-column:1/-1}}
+
+/* Announcement bar (set in Admin → Wholesale → Orders → Announcement) */
+.announcement{display:flex;gap:12px;align-items:flex-start;margin:4px 0 18px;padding:14px 14px 14px 16px;border-radius:18px;border:1px solid color-mix(in srgb,var(--accent) 35%,transparent);background:color-mix(in srgb,var(--accent) 10%,var(--surface,transparent));color:var(--fg)}
+.announcement[hidden]{display:none}
+.announcement.important{border-color:color-mix(in srgb,var(--warn) 55%,transparent);background:var(--warn-bg)}
+.announcement-icon{width:22px;height:22px;flex:none;margin-top:2px;color:var(--accent)}
+.announcement.important .announcement-icon{color:var(--warn)}
+.announcement-text{flex:1;min-width:0;display:grid;gap:3px}
+.announcement-text strong{font-size:16px}
+.announcement-text strong[hidden]{display:none}
+.announcement-text p{margin:0;white-space:pre-line;line-height:1.45;overflow-wrap:anywhere}
+.announcement-close{flex:none;width:36px;height:36px;margin:-6px -4px 0 0;border:0;border-radius:50%;background:transparent;color:var(--muted);font-size:22px;line-height:1;cursor:pointer}
+.announcement-close:hover,.announcement-close:focus-visible{background:color-mix(in srgb,var(--fg) 8%,transparent);color:var(--fg)}

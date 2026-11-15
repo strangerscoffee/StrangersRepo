@@ -757,6 +757,7 @@ function applyCatalogue(fresh, initial) {
   $("#submit-preview-order").textContent = session.preview ? "Save preview order" : "Place order";
   $("#account-hold").hidden = canOrder();
   showPaymentTerms();
+  showAnnouncement();
   ready = true;
   renderProducts(); filterProducts(); renderBasket();
   if (pendingAttempt) toast("An order is awaiting confirmation. Choose Check submitted order.");
@@ -1260,12 +1261,30 @@ $('#basket-dialog').addEventListener('close', () => {
 if ("IntersectionObserver" in window) {
   new IntersectionObserver(([entry]) => { orderVisible = entry.isIntersecting; updateMobileBasket(); }, { threshold: 0 }).observe($("#your-order"));
 }
+// The announcement Strangers sets in Admin (Christmas dispatch dates and the like). Closing it hides that message on
+// this device until a new one is saved (its key changes).
+const ANNOUNCEMENT_KEY = "sc.wholesale.announcement.closed";
+function showAnnouncement() {
+  const a = session?.announcement, bar = $("#announcement");
+  let closed = null; try { closed = localStorage.getItem(ANNOUNCEMENT_KEY); } catch {}
+  if (!a || closed === a.key) { bar.hidden = true; return; }
+  $("#announcement-title").textContent = a.title || "";
+  $("#announcement-title").hidden = !a.title;
+  $("#announcement-message").textContent = a.message;
+  bar.classList.toggle("important", a.tone === "important");
+  bar.hidden = false;
+}
+$("#announcement-close").addEventListener("click", () => {
+  const key = session?.announcement?.key;
+  try { if (key) localStorage.setItem(ANNOUNCEMENT_KEY, key); } catch {}
+  $("#announcement").hidden = true;
+});
 function clearOrderingSession() {
   $("#basket-count").getAnimations?.().forEach(animation => animation.cancel());
   coffeeChoices.clear(); catalogueSearch.close({ clear: true }); closeAccountMenu();
   repeatOrder = null; $('#repeat-shortcut').hidden = true; $('#repeat-summary').replaceChildren();
   for (const timer of addedTimers.values()) clearTimeout(timer); addedTimers.clear();
-  ready = false; session = null; basket = []; history = []; pendingAttempt = null;
+  ready = false; session = null; basket = []; history = []; pendingAttempt = null; $("#announcement").hidden = true;
   accountLocations = []; customerInvoices = []; STORAGE_KEY = null;
   setCatalogue([]); photoIndexes.clear();
   for (const id of ["#products","#order-items","#review-items","#order-history","#customer-invoices-list","#customer-invoice-summary","#history-invoice-note","#account-locations","#signed-in-name","#account-business","#account-payment-terms","#account-payment-note","#review-business","#review-location-name","#delivery-summary","#review-payment-terms","#review-total","#review-grand","#complete-message","#complete-total","#complete-note","#complete-location","#complete-payment-terms","#reorder-items","#reorder-skipped-items","#reorder-summary","#reorder-existing","#location-choices","#location-remove-summary","#grind-product-name",".grind-choices"]) $(id)?.replaceChildren();

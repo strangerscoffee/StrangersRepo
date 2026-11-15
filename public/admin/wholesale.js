@@ -148,7 +148,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
         : html`<div class="w-print-bar">${hasNew || rows.length ? html`<details class="w-print-menu"><summary class="btn sm ${hasNew ? "" : "soft"}">${svg("doc")}Print<span aria-hidden="true">⌄</span></summary><div class="w-print-options"><button class="btn sm soft" type="button" data-act="wh-print-new" ${hasNew ? "" : raw("disabled")}>Print new orders</button><button class="btn sm soft" type="button" data-act="wh-pick-start" ${rows.length ? "" : raw("disabled")}>Select to print</button></div></details>` : html`<button class="btn sm" type="button" disabled>${svg("doc")}Print<span aria-hidden="true">⌄</span></button>`}<button class="btn sm soft" type="button" data-act="wh-totals" ${hasPreparation ? "" : raw("disabled")}>Bag totals</button></div>`}</div>`;
     return listing("wOrdersTitle", "Orders", resultCount(rows.length, data.matchingCount, "order"), tools,
       rows.length ? rows.map(orderRow) : emptyState(filtered ? "search" : "coffee", filtered ? "No matching orders" : "No orders yet", filtered ? "Try another search or status, or clear your filters to see all orders." : "Customer orders will appear here when they’re placed.", filtered),
-      html`${more("orders")}<p class="hint">Coffee subtotals are saved with each order. Delivery and invoicing are managed separately.</p>`, html`<a class="btn sm w-new-order" href="${(data.links?.diary || "").replace(/\/$/, "")}/orders#new"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>New order</a> <button class="btn sm soft w-alerts-button" type="button" data-act="wh-order-emails"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>Order alerts</button>`);
+      html`${more("orders")}<p class="hint">Coffee subtotals are saved with each order. Delivery and invoicing are managed separately.</p>`, html`<a class="btn sm w-new-order" href="${(data.links?.diary || "").replace(/\/$/, "")}/orders#new"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>New order</a> <button class="btn sm soft w-alerts-button" type="button" data-act="wh-announcement"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1zM15.5 8.5a5 5 0 0 1 0 7"/></svg>Announcement</button> <button class="btn sm soft w-alerts-button" type="button" data-act="wh-order-emails"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>Order alerts</button>`);
   }
   function orderRow(row) {
     const next = nextStatus(row), busy = quickBusy.has(row.id), problem = orderErrors.get(row.id);
@@ -187,6 +187,48 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
         catch (error) { fail(error); }
       }
     });
+  }
+  // The ordering page's announcement bar: a heading, a message, Information or Important, optional dates, on or off.
+  async function openAnnouncement() {
+    let a = await api("GET", "/api/admin/wholesale/announcement");
+    const fmtDay = (d) => d ? new Date(d + "T12:00:00Z").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }) : "";
+    const state = () => !a.enabled ? "Off: customers don’t see it." : a.showing ? `Showing on the ordering page now${a.until ? `, until the end of ${fmtDay(a.until)}` : ""}.` : a.from ? `Switched on: shows from ${fmtDay(a.from)}${a.until ? ` to ${fmtDay(a.until)}` : ""}.` : "Switched on, but its dates have passed.";
+    const view = () => html`<div class="w-sheet wp-sheet"><div class="wp-sheet-head"><div><h2 id="sheetTitle" tabindex="-1">Announcement</h2><p class="hint">A message at the top of the wholesale ordering page, such as Christmas dispatch dates or a closure. Customers can close it; a new message shows again.</p></div><button class="btn soft" type="button" data-sheet="close" aria-label="Close">${svg("x")}</button></div>
+      <p class="hint w-ann-state" id="wAnnState">${state()}</p>
+      <form id="wAnnForm" class="w-ann" novalidate>
+        <div class="checks"><label><input id="wAnnOn" type="checkbox" ${a.enabled ? raw("checked") : ""}>Show it to customers</label></div>
+        <label class="field"><span class="fl">Heading (optional)</span><input id="wAnnTitle" maxlength="80" value="${a.title}" placeholder="Christmas dispatch dates"></label>
+        <label class="field"><span class="fl">Message</span><textarea id="wAnnMessage" rows="5" maxlength="500" placeholder="Last dispatch before Christmas: Friday 19 December. We reopen on Monday 5 January.">${a.message}</textarea></label>
+        <p class="hint"><span id="wAnnCount">${a.message.length}</span> of 500 characters. New lines are kept.</p>
+        <fieldset class="field w-ann-tone"><legend class="fl">Style (see the preview)</legend><div class="checks"><label><input type="radio" name="wAnnTone" value="info" ${a.tone !== "important" ? raw("checked") : ""}>Information</label><label><input type="radio" name="wAnnTone" value="important" ${a.tone === "important" ? raw("checked") : ""}>Important</label></div></fieldset>
+        <div class="w-ann-dates"><label class="field"><span class="fl">Show from (optional)</span><input id="wAnnFrom" type="date" value="${a.from}"></label><label class="field"><span class="fl">Until the end of (optional)</span><input id="wAnnUntil" type="date" value="${a.until}"></label></div>
+        <h3>Preview</h3>
+        <div class="w-ann-preview" id="wAnnPreview" aria-live="polite"></div>
+        <p class="err" id="wAnnErr" role="alert" hidden></p>
+      </form>
+      <div class="row w-actions"><button class="btn" type="button" data-sheet="save">Save</button></div></div>`;
+    const preview = () => {
+      const box = $("#wAnnPreview"); if (!box) return;
+      const title = $("#wAnnTitle").value.trim(), message = $("#wAnnMessage").value.trim(), important = $('input[name="wAnnTone"]:checked')?.value === "important";
+      $("#wAnnCount").textContent = String($("#wAnnMessage").value.length);
+      box.className = `w-ann-preview${important ? " important" : ""}`;
+      box.replaceChildren(...(message ? [Object.assign(document.createElement("strong"), { textContent: title, hidden: !title }), Object.assign(document.createElement("p"), { textContent: message })] : [Object.assign(document.createElement("p"), { className: "hint", textContent: "Write a message to see it here." })]));
+    };
+    const fail = (error) => { const box = $("#wAnnErr"); if (box) { box.textContent = error.message; box.hidden = false; } };
+    openSheet(view(), async (action) => {
+      if (action === "close") { closeSheet(); return; }
+      if (action !== "save") return;
+      $("#wAnnErr").hidden = true;
+      try {
+        a = await api("PUT", "/api/admin/wholesale/announcement", { ifVersion: a.version, enabled: $("#wAnnOn").checked, title: $("#wAnnTitle").value, message: $("#wAnnMessage").value, tone: $('input[name="wAnnTone"]:checked')?.value || "info", from: $("#wAnnFrom").value, until: $("#wAnnUntil").value });
+        closeSheet(); toast(a.showing ? "Announcement showing on the ordering page" : a.enabled ? "Announcement saved: it shows on its start date" : "Announcement switched off");
+      } catch (error) {
+        if (error.code === "conflict") { a = await api("GET", "/api/admin/wholesale/announcement"); }
+        fail(error);
+      }
+    });
+    preview();
+    $("#wAnnForm").addEventListener("input", preview);
   }
   function refreshPicks() {
     document.querySelectorAll('[data-act="wh-pick"]').forEach((button) => {
@@ -988,6 +1030,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
       if (name.startsWith("wh-ins-")) { await insightsUI.act(name, id); return; }
       if (name.startsWith("wh-tabs-")) { await tabsUI.act(name, id); return; }
       if (name === "wh-order-emails") { await openOrderEmails(); return; }
+      if (name === "wh-announcement") { await openAnnouncement(); return; }
       if (name === "wh-print-new") { await printUI.printOrders(printUI.scopes.New); return; }
       if (name === "wh-totals") { await printUI.openTotals(picking ? [...picked] : []); return; }
       if (name === "wh-pick-start" || name === "wh-pick-done") { picking = name === "wh-pick-start"; picked.clear(); await reload(); return; }

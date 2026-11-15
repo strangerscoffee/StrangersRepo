@@ -619,3 +619,13 @@ button:focus-visible,a:focus-visible,summary:focus-visible,input:focus-visible,s
   .w-order-toolbar>.w-print-bar { grid-column:2; grid-row:2; margin:0; flex-wrap:nowrap; }
   .w-order-toolbar>.w-picking { grid-column:1/-1; grid-row:3; flex-wrap:wrap; }
 }
+
+/* Wholesale → Orders → Announcement: the editor and a preview of the bar customers see. */
+.w-ann{display:grid;gap:12px}
+.w-ann-tone{border:0;padding:0;margin:0}
+.w-ann-dates{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr));gap:12px}
+.w-ann-state{font-weight:600}
+.w-ann-preview{display:grid;gap:3px;padding:14px 16px;border-radius:18px;border:1px solid color-mix(in srgb,var(--accent) 35%,transparent);background:color-mix(in srgb,var(--accent) 10%,transparent)}
+.w-ann-preview.important{border-color:color-mix(in srgb,var(--warn) 55%,transparent);background:var(--warn-bg)}
+.w-ann-preview p{margin:0;white-space:pre-line;line-height:1.45;overflow-wrap:anywhere}
+.w-ann-preview strong[hidden]{display:none}
