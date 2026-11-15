@@ -28,7 +28,7 @@ before(async () => {
 });
 after(async () => { await b?.close(); await srv?.stop(); });
 
-for (const [name, viewport, isMobile] of [["phone", { width: 390, height: 844 }, true], ["iPad", { width: 1180, height: 820 }, false]]) for (const scheme of ["light", "dark"]) {
+for (const [name, viewport, isMobile] of [["small phone", { width: 360, height: 740 }, true], ["phone", { width: 390, height: 844 }, true], ["iPad", { width: 1180, height: 820 }, false]]) for (const scheme of ["light", "dark"]) {
   test(`staff take an order for a customer on a ${name} (${scheme})`, async () => {
     const ctx = await b.newContext({ viewport, isMobile, hasTouch: isMobile, colorScheme: scheme });
     const [n, v] = STAFF.split("=");
@@ -42,6 +42,11 @@ for (const [name, viewport, isMobile] of [["phone", { width: 390, height: 844 },
     await dialog.locator("#noSearch").fill("Lune");
     await dialog.locator(".order-row", { hasText: "Lune Café" }).click();
     await dialog.locator(".no-line select").first().waitFor();
+    // The "How it came in" choices sit inside their track, don't overlap, and show their whole word.
+    const boxes = await dialog.locator(".no-seg").first().evaluate((f) => { const t = f.querySelector(".seg").getBoundingClientRect(); return [...f.querySelectorAll(".seg button")].map((b) => { const r = b.getBoundingClientRect(); return { r: [r.left, r.top, r.right, r.bottom], whole: b.scrollWidth <= b.clientWidth, inside: r.left >= t.left - 0.5 && r.right <= t.right + 0.5 && r.top >= t.top - 0.5 && r.bottom <= t.bottom + 0.5 }; }); });
+    const overlap = (a, b) => a.r[0] < b.r[2] - 0.5 && b.r[0] < a.r[2] - 0.5 && a.r[1] < b.r[3] - 0.5 && b.r[1] < a.r[3] - 0.5;
+    assert.ok(boxes.every((b, i) => b.inside && b.whole && boxes.every((c, j) => i === j || !overlap(b, c))), JSON.stringify(boxes));
+    if (process.env.SHOT_DIR) await page.screenshot({ path: `${process.env.SHOT_DIR}/take-top-${name}-${scheme}.png` });
     await dialog.getByRole("button", { name: "In person" }).click();
     await dialog.locator('.no-line input[type="number"]').first().fill("3");
     await dialog.getByRole("button", { name: "Add another coffee" }).click();

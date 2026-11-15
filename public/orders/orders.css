@@ -94,7 +94,9 @@
 .no-found{max-height:320px;overflow:auto}
 .no-seg{border:0;padding:0;margin:0;display:grid;gap:6px;min-width:0}
 .no-seg legend{padding:0;font-size:13px;color:var(--muted);margin-bottom:6px}
-.no-seg .seg{flex-wrap:wrap}
+/* The choices sit in equal columns on one line inside their rounded track, never wrapping out of it. */
+.no-seg .seg{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:4px;margin:0;padding:4px;border-radius:16px;overflow:visible;flex-wrap:nowrap}
+.no-seg .seg button{min-width:0;padding:9px 6px;overflow:hidden;text-overflow:ellipsis;border-radius:12px}
 .no-lines{display:grid;gap:10px}
 .no-line{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,.8fr) minmax(0,1.3fr) 80px auto;gap:8px;align-items:end;padding:10px;border-radius:14px;background:var(--sunk)}
 .no-line select,.no-line input{width:100%;min-width:0}
@@ -102,3 +104,5 @@
 .no-short{color:var(--warn)}
 .new-order .check{display:flex;gap:10px;align-items:flex-start}
 @media (max-width:640px){.no-line{grid-template-columns:1fr 1fr}.no-coffee,.no-grind{grid-column:1/-1}.no-remove{grid-column:1/-1}}
+@media (max-width:640px){#newOrderFoot{flex-direction:column;align-items:stretch;gap:8px}#newOrderFoot .edit-actions{display:flex;gap:8px}#newOrderFoot .edit-actions .btn{flex:1;white-space:nowrap}}
+@media (max-width:420px){.no-seg .seg{grid-auto-flow:row;grid-template-columns:repeat(2,minmax(0,1fr))}}
