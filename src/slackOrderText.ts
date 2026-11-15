@@ -45,7 +45,7 @@ export function buildSlackOrder(order: SlackOrder, ordersUrl: string, held: bool
   const business = order.business || "A customer";
   const bags = { quarter: 0, kilo: 0, all: 0 };
   for (const l of order.lines) { if (l.pack === "quarter" || l.pack === "kilo") bags[l.pack] += l.quantity; bags.all += l.quantity; }
-  const place = order.locationSnapshot?.name && order.locationSnapshot.name !== "Main location" ? order.locationSnapshot.name : "";
+  const place = order.locationSnapshot?.name && order.locationSnapshot.name !== "Main location" && order.locationSnapshot.name !== order.business ? order.locationSnapshot.name : "";
   const postcode = order.locationSnapshot?.postcode || order.customerSnapshot?.postcode || "";
   const fulfil = order.delivery === "Delivery" ? `Delivery${[place, postcode].filter(Boolean).length ? ` to ${[place, postcode].filter(Boolean).join(", ")}` : ""}` : "Roastery collection";
   const sizes = [bags.quarter ? `${bags.quarter} × 250 g` : "", bags.kilo ? `${bags.kilo} × 1 kg` : ""].filter(Boolean).join(" + ");

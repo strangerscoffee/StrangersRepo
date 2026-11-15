@@ -634,7 +634,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
   }
   const locationKeys = ["contact", "phone", "address", "postcode", "deliveryNotes"];
   function customerLocations(row) {
-    return row.locations?.length ? row.locations.map((location) => ({ ...location })) : [{ id: "primary", name: "Main location", ...Object.fromEntries(locationKeys.map((key) => [key, row[key] || ""])) }];
+    return row.locations?.length ? row.locations.map((location) => ({ ...location })) : [{ id: "primary", name: row.business || "Main location", ...Object.fromEntries(locationKeys.map((key) => [key, row[key] || ""])) }];
   }
   function customerChoiceField(label, id, value, options) {
     const selected = options.find((option) => option.value === value) || options[0];

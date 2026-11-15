@@ -44,7 +44,7 @@ after(async () => { await srv?.stop(); });
 test("wholesale locations: legacy primary is stable, customer business names are admin-controlled and legacy profile writes stay compatible", async () => {
   const raw = JSON.parse(srv.sql(`SELECT data FROM wholesale_preview WHERE kind='customer' AND id='${A.customer.id}'`)[0].data);
   assert.equal(raw.locations, undefined, "legacy records need no migration");
-  assert.deepEqual(A.customer.locations, [{ id: "primary", name: "Main location", contact: "locations.a buyer", phone: "", address: "", postcode: "", deliveryNotes: "" }]);
+  assert.deepEqual(A.customer.locations, [{ id: "primary", name: A.customer.business, contact: "locations.a buyer", phone: "", address: "", postcode: "", deliveryNotes: "" }]);
   assert.equal(A.customer.defaultLocationId, "primary");
   const denied = await profile({ business: "A different legal business" });
   assert.equal(denied.status, 403); assert.equal(denied.body.code, "permission_denied");
@@ -151,3 +151,24 @@ test("wholesale locations: 20-location address books fit existing JSON storage a
   assert.equal((await profile({ locations: [{ ...primary, name: "Renamed main" }], defaultLocationId: "primary" })).status, 200);
   assert.equal(A.customer.locations.length, 1); assert.equal(A.customer.locations[0].id, "primary"); assert.equal(A.customer.locations[0].name, "Renamed main");
 });
+
+test("the main location is called after the business, follows a rename, and keeps a name of its own", async () => {
+  await refresh(B);
+  assert.equal(B.customer.locations[0].name, B.customer.business, "named after the business, with no change to the record");
+  // Saving the profile (as the page sends it, with the business name on the main location) keeps it following.
+  assert.equal((await profile({ locations: B.customer.locations.map((l, i) => (i ? { ...l } : { ...l, address: "5 Quay Side\nNorwich", postcode: "NR3 1RU" })) }, B)).status, 200);
+  const stored = () => JSON.parse(srv.sql(`SELECT data FROM wholesale_preview WHERE kind='customer' AND id='${B.customer.id}'`)[0].data);
+  assert.equal(stored().locations[0].name, "Main location");
+  assert.equal((await adminEdit({ business: "Riverside Roasters Ltd" }, B)).status, 200);
+  assert.equal(B.customer.locations[0].name, "Riverside Roasters Ltd", "follows the new business name");
+  // An order's delivery snapshot carries the name.
+  const order = await call("POST", "/api/wholesale/orders", { ...orderPayload({ customerVersion: B.customer.version }), locationId: "primary" }, B.cookie);
+  assert.equal(order.status, 201, JSON.stringify(order.body));
+  assert.equal(order.body.order.locationSnapshot.name, "Riverside Roasters Ltd");
+  // A name of its own stays, even when the business is renamed.
+  const current = (await call("GET", "/api/admin/wholesale")).body.customers.find((row) => row.id === B.customer.id);
+  assert.equal((await adminEdit({ locations: current.locations.map((l, i) => (i ? l : { ...l, name: "Head office" })) }, B)).status, 200);
+  assert.equal((await adminEdit({ business: "Riverside Group" }, B)).status, 200);
+  assert.equal(B.customer.locations[0].name, "Head office");
+});
+

@@ -10,10 +10,15 @@ export interface CustomerLocation {
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 export const validLocationId = (id: string) => id === "primary" || UUID.test(id);
 
+/** The main location is called after the business ("Café Lune"), and follows it if the business is renamed, unless
+ *  someone has given it a name of its own. Stored as "Main location" (or no name) while it follows. */
+export const MAIN_LOCATION = "Main location";
+const mainName = (customer: Customer, saved?: string) => (saved && saved !== MAIN_LOCATION ? saved : String(customer.business || "").trim() || MAIN_LOCATION);
+
 export function customerLocations(customer: Customer): CustomerLocation[] {
   const saved = Array.isArray(customer.locations) ? customer.locations : [];
   const primary = saved.find((location) => location.id === "primary");
-  return [{ id: "primary", name: primary?.name || "Main location", contact: customer.contact || "", phone: customer.phone || "", address: customer.address || "", postcode: customer.postcode || "", deliveryNotes: customer.deliveryNotes || "" }, ...saved.filter((location) => location.id !== "primary").map((location) => ({ ...location }))];
+  return [{ id: "primary", name: mainName(customer, primary?.name), contact: customer.contact || "", phone: customer.phone || "", address: customer.address || "", postcode: customer.postcode || "", deliveryNotes: customer.deliveryNotes || "" }, ...saved.filter((location) => location.id !== "primary").map((location) => ({ ...location }))];
 }
 
 export function locationDefaults<T extends Customer>(customer: T) {
@@ -23,7 +28,7 @@ export function locationDefaults<T extends Customer>(customer: T) {
 }
 
 /** Explicit location arrays replace the address book; older clients may keep editing the flat primary fields. */
-export function editedCustomerLocations(customer: Customer, body: Record<string, any>): Customer {
+export function editedCustomerLocations(customer: Customer, body: Record<string, any>, previousBusiness?: string): Customer {
   let locations = customerLocations(customer);
   if (body.locations !== undefined) {
     if (!Array.isArray(body.locations) || body.locations.length < 1 || body.locations.length > 20) throw invalid("Keep between one and 20 business locations, including the main location.");
@@ -47,5 +52,8 @@ export function editedCustomerLocations(customer: Customer, body: Record<string,
     defaultLocationId = "primary";
   }
   const primary = locations[0];
+  // A main location still called after the business (as it was shown, or renamed in this same save) keeps following it.
+  const names = [customer.business, body.business, previousBusiness].filter((v) => typeof v === "string" && v.trim()).map((v) => String(v).trim());
+  if (names.includes(primary.name)) locations[0] = { ...primary, name: MAIN_LOCATION };
   return { ...customer, contact: primary.contact, phone: primary.phone, address: primary.address, postcode: primary.postcode, deliveryNotes: primary.deliveryNotes, locations, defaultLocationId };
 }

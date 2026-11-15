@@ -412,7 +412,7 @@ export async function handleWholesaleAdmin(req: Request, env: Env, route: string
     if (oldCustomer?.quickbooksName) data.quickbooksName = oldCustomer.quickbooksName;
     data.paymentNote = body.paymentNote === undefined ? oldCustomer?.paymentNote || "" : text(body.paymentNote, "payment instructions", 500);
     if (paymentTerms === "custom" && !data.paymentNote.trim()) throw invalid("Add the agreed custom payment terms in payment instructions.");
-    const customer = await save(env, "customer", customerMatch?.[1] || crypto.randomUUID(), editedCustomerLocations(data, body), expected);
+    const customer = await save(env, "customer", customerMatch?.[1] || crypto.randomUUID(), editedCustomerLocations(data, body, oldCustomer?.business), expected);
     await audit(env, "wholesale_preview_customer", user.name, `${user.name} ${customerMatch ? "updated" : "added"} wholesale customer ${business}.`);
     return json({ customer: locationDefaults(customer) }, customerMatch ? 200 : 201);
   }

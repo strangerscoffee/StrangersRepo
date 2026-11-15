@@ -51,7 +51,7 @@ let accountLocations = [], accountDefaultLocation = "primary", editingLocation =
 const locationKey = (location) => location.id || location.draftKey;
 function locationsFor(customer = session?.customer) {
   if (!customer) return [];
-  return (customer.locations?.length ? customer.locations : [{ id: "primary", name: "Main location", ...Object.fromEntries(["contact", "phone", "address", "postcode", "deliveryNotes"].map(key => [key, customer[key] || ""])) }]).map(location => ({ ...location }));
+  return (customer.locations?.length ? customer.locations : [{ id: "primary", name: customer.business || "Main location", ...Object.fromEntries(["contact", "phone", "address", "postcode", "deliveryNotes"].map(key => [key, customer[key] || ""])) }]).map(location => ({ ...location }));
 }
 function locationSummary(location) {
   return [location?.contact, location?.phone, location?.address, location?.postcode, location?.deliveryNotes].filter(Boolean).join(" · ");
