@@ -7,19 +7,24 @@ import { addDays, cleanDayHours, mondayOf, notFound, nowMs, parseJson } from "./
 /* ---------- loading what the checks need ---------- */
 
 export async function loadSites(env: Env): Promise<Map<string, SiteInfo>> {
-  const paths = ROTA_SITES.map((s) => s.prefix + "settings/main");
+  const paths = ROTA_SITES.filter((s) => s.prefix != null).map((s) => s.prefix + "settings/main");
   const docs = await env.DB.prepare(`SELECT path, data FROM docs WHERE deleted = 0 AND path IN (${paths.map(() => "?").join(",")})`)
     .bind(...paths).all<{ path: string; data: string }>();
   const rows = await env.DB.prepare("SELECT site, opens_at, closes_at, min_people, day_hours FROM rota_sites")
     .all<{ site: string; opens_at: string | null; closes_at: string | null; min_people: number; day_hours: string | null }>();
   const out = new Map<string, SiteInfo>();
   for (const s of ROTA_SITES) {
-    const doc = docs.results.find((d) => d.path === s.prefix + "settings/main");
+    const doc = s.prefix == null ? null : docs.results.find((d) => d.path === s.prefix + "settings/main");
     let data: any = null;
     try { data = doc ? JSON.parse(doc.data) : null; } catch { data = null; }
     const r = rows.results.find((x) => x.site === s.id);
+    if (s.adHoc) {
+      // Used as needed: on the rota every day, whether or not it has a diary, with no hours or cover to check.
+      out.set(s.id, { id: s.id, name: s.name, inUse: true, adHoc: true, closedDays: [], trainingOff: [], opensAt: null, closesAt: null, minPeople: 0, dayHours: {} });
+      continue;
+    }
     out.set(s.id, {
-      id: s.id, name: s.name, inUse: !!data,
+      id: s.id, name: s.name, inUse: !!data, adHoc: false,
       closedDays: Array.isArray(data?.closedDays) ? data.closedDays.filter((n: unknown) => Number.isInteger(n)) : [],
       trainingOff: Array.isArray(data?.trainingOff) ? data.trainingOff : [],
       opensAt: r?.opens_at ?? null, closesAt: r?.closes_at ?? null, minPeople: r?.min_people ?? 1,
@@ -31,7 +36,7 @@ export async function loadSites(env: Env): Promise<Map<string, SiteInfo>> {
 
 /** Days marked closed in the diary (Today → closed, or Setup → Closures & holidays), by site: {day: reason}. */
 export async function loadClosures(env: Env, from: string, to: string): Promise<Map<string, Record<string, string>>> {
-  const cols = ROTA_SITES.map((s) => s.prefix + "days");
+  const cols = ROTA_SITES.filter((s) => s.prefix != null && !s.adHoc).map((s) => s.prefix + "days");
   const r = await env.DB.prepare(
     `SELECT collection, doc_id, json_extract(data, '$.closed.reason') AS reason FROM docs
      WHERE deleted = 0 AND collection IN (${cols.map(() => "?").join(",")}) AND doc_id BETWEEN ? AND ?
@@ -40,7 +45,7 @@ export async function loadClosures(env: Env, from: string, to: string): Promise<
   const out = new Map<string, Record<string, string>>();
   for (const s of ROTA_SITES) out.set(s.id, {});
   for (const row of r.results) {
-    const site = ROTA_SITES.find((s) => s.prefix + "days" === row.collection);
+    const site = ROTA_SITES.find((s) => s.prefix != null && s.prefix + "days" === row.collection);
     if (site) out.get(site.id)![row.doc_id] = row.reason || "Closed";
   }
   return out;

@@ -4,13 +4,18 @@ import { Env } from "../http";
 
 /* ---------- constants ---------- */
 
-export const ROTA_SITES = [
-  { id: "roastery", name: "Roastery", prefix: "" },
-  { id: "cafe", name: "Cafe", prefix: "sites/cafe/" },
-  { id: "asg", name: "ASG", prefix: "sites/asg/" },
-  { id: "factory", name: "Factory", prefix: "sites/factory/" },
-] as const;
-export type SiteId = (typeof ROTA_SITES)[number]["id"];
+// Where people work. The diary's sites (prefix: where its documents live) open on the days their Setup says, with
+// opening hours and minimum cover. Ad hoc places (adHoc) are used as needed: always open on the rota, no opening
+// hours, no minimum cover and no diary needed. The Factory has a diary prefix but isn't open to the public; the
+// Office is a space for paperwork away from the other sites and has no diary at all.
+export const ROTA_SITES: readonly { id: string; name: string; prefix: string | null; adHoc: boolean }[] = [
+  { id: "roastery", name: "Roastery", prefix: "", adHoc: false },
+  { id: "cafe", name: "Cafe", prefix: "sites/cafe/", adHoc: false },
+  { id: "asg", name: "ASG", prefix: "sites/asg/", adHoc: false },
+  { id: "factory", name: "Factory", prefix: "sites/factory/", adHoc: true },
+  { id: "office", name: "Office", prefix: null, adHoc: true },
+];
+export type SiteId = string;
 export const SITE_IDS = new Set<string>(ROTA_SITES.map((s) => s.id));
 export const JOBS = new Set(["", "opens", "closes"]);
 export const DAY_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
@@ -48,6 +53,8 @@ export interface Person {
 export type Hours = { opensAt: string | null; closesAt: string | null };
 export interface SiteInfo {
   id: string; name: string; inUse: boolean; closedDays: number[]; trainingOff: string[];
+  /** Used as needed (Factory, Office): always open, no opening hours or minimum cover. */
+  adHoc: boolean;
   opensAt: string | null; closesAt: string | null; minPeople: number;
   /** Days of the week with other opening hours than the usual ones, by mon…sun. */
   dayHours: Record<string, { opensAt: string; closesAt: string }>;

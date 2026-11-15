@@ -10,12 +10,14 @@
   --site-green:rgba(52,199,89,.17);--site-green-ink:#17733a;
   --site-orange:rgba(255,159,10,.2);--site-orange-ink:#835000;
   --site-purple:rgba(175,82,222,.15);--site-purple-ink:#7a2fa3;
+  --site-teal:rgba(48,176,199,.16);--site-teal-ink:#0c6879;
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
   --site-blue:rgba(10,132,255,.22);--site-blue-ink:#7cbcff;
   --site-green:rgba(48,209,88,.2);--site-green-ink:#6fe08f;
   --site-orange:rgba(255,159,10,.2);--site-orange-ink:#ffc35c;
   --site-purple:rgba(191,90,242,.22);--site-purple-ink:#d9a4f5;
+  --site-teal:rgba(64,200,224,.2);--site-teal-ink:#7fdced;
 }}
 
 .vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
@@ -603,3 +605,12 @@ body[data-page="leave"] .stat b { font-variant-numeric:tabular-nums; }
 .sw.sick{border:1.5px dashed var(--muted);background:color-mix(in srgb,var(--muted) 10%,transparent)}
 .amwhy{display:inline-flex;align-items:center;gap:8px;font-size:14px}
 .amwhy select{min-height:40px;border-radius:10px;padding:0 10px;border:1px solid var(--line);background:var(--surface);color:var(--fg);font:inherit}
+
+/* The Office (used as needed): teal, like the other sites' tones. */
+:root[data-theme="dark"]{--site-teal:rgba(64,200,224,.2);--site-teal-ink:#7fdced}
+.shc.tone-teal{background:var(--site-teal);border-color:transparent}.shc.tone-teal .nm{color:var(--site-teal-ink)}
+.shc.clash.tone-teal{border:2px solid var(--warn)}
+.spill.teal{background:var(--site-teal);color:var(--site-teal-ink)}
+.sq.tone-teal{background:#30b0c7}
+.blk.shift.tone-teal{background:var(--site-teal);border-color:transparent}.blk.shift.tone-teal .site{color:var(--site-teal-ink)}
+.mlegend i.tone-teal{background:#30b0c7}

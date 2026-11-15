@@ -8,7 +8,7 @@ import { isDay, isTime, mins, round2, text } from "./util";
 /* ---------- validation ---------- */
 
 export async function checkShift(env: Env, v: ShiftInput): Promise<ShiftInput> {
-  if (!SITE_IDS.has(v.site)) throw invalid("Choose one of the four sites.");
+  if (!SITE_IDS.has(v.site)) throw invalid("Choose a site from the list.");
   if (!isDay(v.day)) throw invalid("Choose a real date.");
   if (!isTime(v.start) || !isTime(v.end)) throw invalid("Times are HH:MM, for example 07:30.");
   if (mins(v.end) <= mins(v.start)) throw invalid("A shift has to end after it starts (overnight shifts aren't supported).");

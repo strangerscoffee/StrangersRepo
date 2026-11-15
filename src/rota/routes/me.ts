@@ -47,7 +47,7 @@ export async function meRoutes(r: RotaRequest): Promise<Response | null> {
 
   if (route === "today" && m === "GET") {
     const site = q("site") || "";
-    if (!SITE_IDS.has(site)) throw invalid("Choose one of the four sites.");
+    if (!SITE_IDS.has(site)) throw invalid("Choose a site from the list.");
     const day = q("day") && isDay(q("day")) ? q("day")! : londonToday();
     const row = await weekRow(env, mondayOf(day));
     if (!row?.published_at) return json({ site, day, published: false, shifts: [], rotaUrl: links.rota });

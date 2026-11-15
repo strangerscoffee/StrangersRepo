@@ -369,3 +369,34 @@ for (const [label, viewport] of [["phone", { width: 393, height: 852 }], ["iPad"
     await m.ctx.close();
   });
 }
+
+for (const [label, viewport] of [["phone", { width: 393, height: 852 }], ["iPad", { width: 1180, height: 820 }]]) for (const scheme of ["light", "dark"]) {
+  test(`the Factory and the Office are on the rota on a ${label} (${scheme}): used as needed, no minimum`, async () => {
+    const today = londonToday();
+    const week = addDays(today, -((new Date(today + "T12:00:00Z").getUTCDay() + 6) % 7));
+    for (const s of (await call("GET", "/api/rota/week?start=" + week)).shifts) await call("DELETE", "/api/rota/shifts/" + s.id);
+    await call("POST", "/api/rota/shifts", { site: "office", day: today, start: "09:00", end: "13:00", breakMins: 0, job: "", userId: ALEX_ID });
+    await call("POST", "/api/rota/shifts", { site: "factory", day: today, start: "14:00", end: "17:00", breakMins: 0, job: "", userId: ALEX_ID });
+    const m = await pageFor(viewport);
+    await m.page.emulateMedia({ colorScheme: scheme });
+    await m.page.goto(srv.base + "/rota/");
+    await m.page.locator(".shc", { hasText: "09:00–13:00" }).first().waitFor();
+    const body = await m.page.locator("body").innerText();
+    assert.match(body, /Office/);
+    assert.match(body, /Factory/);
+    assert.doesNotMatch(body, /Factory aren't set up|Factory isn't set up/);
+    if (viewport.width >= 1024) {
+      const office = m.page.locator(".gsite", { hasText: "Office" });
+      assert.match(await office.innerText(), /Used as needed/);
+      assert.doesNotMatch(await office.innerText(), /Min \d/);
+    }
+    assert.equal(await m.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+    if (process.env.SHOT_DIR) await m.page.screenshot({ path: `${process.env.SHOT_DIR}/office-${label}-${scheme}.png` });
+    // A new shift can go at the Office.
+    await m.page.goto(srv.base + `/rota/#day/office/${today}`);
+    await m.page.locator(".tl-row", { hasText: "Alex" }).first().waitFor();
+    assert.match(await m.page.locator("body").innerText(), /Office is used as needed/);
+    assert.deepEqual(m.errors, []);
+    await m.ctx.close();
+  });
+}

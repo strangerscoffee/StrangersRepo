@@ -33,7 +33,7 @@
     hand: '<path d="M8 13V6a1.5 1.5 0 013 0v5M11 11V4.5a1.5 1.5 0 013 0V11M14 11V6a1.5 1.5 0 013 0v7a6 6 0 01-6 6h-1a6 6 0 01-5-3l-2-3a1.5 1.5 0 012.5-1.6L8 13"/>',
   };
   const ROLE = { admin: "Admin", manager: "Manager", staff: "Staff" };
-  const SITE_TONE = { roastery: "blue", cafe: "green", asg: "orange", factory: "purple" };
+  const SITE_TONE = { roastery: "blue", cafe: "green", asg: "orange", factory: "purple", office: "teal" };
   const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
   const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
@@ -544,8 +544,8 @@
       g.append(el("div", { class: "gsite", role: "rowheader" },
         el("b", {}, el("i", { class: "sq tone-" + (SITE_TONE[site.id] || ""), "aria-hidden": "true" }), site.name),
         siteHours(site) ? el("span", { text: siteHours(site) }) : null,
-        el("span", { text: openDays(site.open.map((o, i) => o || !!site.closedWhy[i])) }),
-        site.minPeople ? el("span", { text: `Min ${site.minPeople} on shift` }) : null));
+        el("span", { text: site.adHoc ? "Used as needed" : openDays(site.open.map((o, i) => o || !!site.closedWhy[i])) }),
+        site.minPeople && !site.adHoc ? el("span", { text: `Min ${site.minPeople} on shift` }) : null));
       d.days.forEach((day, i) => {
         if (!site.open[i]) {
           const here = d.shifts.filter((s) => s.site === site.id && s.day === day);
@@ -978,7 +978,7 @@
     }
     const tl = el("section", { class: "panel timeline" }, axis, ...rows,
       el("div", { class: "tl-row" }, el("span", { class: "tl-name", text: "On shift" }), bars),
-      el("p", { class: "note", text: oh.opensAt && oh.closesAt ? `Each bar shows how many people are on that hour. Red bars are below the ${plural(s.minPeople, "person", "people")} ${s.name} needs from ${oh.opensAt} to ${oh.closesAt} on ${DAY_NAMES[dow(day)]}s.` : "Set opening hours and minimum cover in Rota settings to check cover." }));
+      el("p", { class: "note", text: s.adHoc ? `Each bar shows how many people are on that hour. The ${s.name} is used as needed, so there's no minimum cover.` : oh.opensAt && oh.closesAt ? `Each bar shows how many people are on that hour. Red bars are below the ${plural(s.minPeople, "person", "people")} ${s.name} needs from ${oh.opensAt} to ${oh.closesAt} on ${DAY_NAMES[dow(day)]}s.` : "Set opening hours and minimum cover in Rota settings to check cover." }));
 
     // On the day: a slider per person to amend when they started and finished (sent home sick, stayed late).
     const staffed = list.filter((x) => x.userId);
@@ -1623,7 +1623,7 @@
     const [sites, wk] = await Promise.all([get("/api/rota/sites"), isAdmin() ? loadWeek(R.week, true) : Promise.resolve(null)]);
     const out = [label("Sites")];
     const dayAb = (n) => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][n];
-    out.push(el("div", { class: "list glass" }, ...sites.sites.map((s) => {
+    out.push(el("div", { class: "list glass" }, ...sites.sites.filter((s) => !s.adHoc).map((s) => {
       const o = el("input", { type: "time", value: s.opensAt || "", "aria-label": `${s.name} opens at` });
       const c = el("input", { type: "time", value: s.closesAt || "", "aria-label": `${s.name} closes at` });
       const n = el("input", { type: "number", value: String(s.minPeople), min: 0, max: 20, inputmode: "numeric", "aria-label": `${s.name} minimum people on shift` });
@@ -1655,6 +1655,8 @@
         dayGrid);
     })));
     out.push(el("p", { class: "note", text: "Cover is checked hour by hour between opening and closing, using each day's own hours where it has them. Which days each site opens comes from the diary's Setup, and planned closures from Closures & holidays." }));
+    const adHoc = sites.sites.filter((s) => s.adHoc);
+    if (adHoc.length) out.push(el("p", { class: "note", text: `${joinAnd(adHoc.map((s) => "the " + s.name)).replace(/^t/, "T")} ${adHoc.length === 1 ? "is" : "are"} used as needed: you can put people there any day, with no opening hours or minimum cover to check.` }));
     if (isAdmin()) {
     out.push(label("Contracted hours a week"));
     out.push(el("div", { class: "list glass" }, ...wk.people.map((p) => {

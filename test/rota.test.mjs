@@ -145,7 +145,6 @@ test("validation: bad site, date, times, closed day, unknown person", async () =
     { site: "cafe", day: MON, start: "12:00", end: "09:00" },
     { site: "cafe", day: MON, start: "9am", end: "12:00" },
     { site: "cafe", day: SUN, start: "09:00", end: "12:00" }, // the Cafe is closed on Sundays
-    { site: "factory", day: MON, start: "09:00", end: "12:00" }, // not in use
     { site: "cafe", day: MON, start: "09:00", end: "12:00", userId: "nobody" },
     { site: "cafe", day: MON, start: "09:00", end: "12:00", breakMins: 400 },
     { site: "cafe", day: MON, start: "09:00", end: "12:00", job: "sweeps" },
@@ -171,8 +170,32 @@ test("validation: bad site, date, times, closed day, unknown person", async () =
   const cafe = w.body.sites.find((x) => x.id === "cafe");
   assert.equal(cafe.open[1], false);
   assert.equal(cafe.closedWhy[1], "Boiler repair");
-  assert.equal(w.body.sites.find((x) => x.id === "factory").inUse, false);
+  assert.deepEqual([w.body.sites.find((x) => x.id === "factory").inUse, w.body.sites.find((x) => x.id === "factory").adHoc], [true, true], "the Factory needs no diary");
   await req("POST", "/api/db/set", { path: `sites/cafe/days/${TUE}`, data: { date: TUE, closed: null } });
+});
+
+test("the Factory and the Office: shifts any day, no diary, no opening hours or minimum cover", async () => {
+  const W = "2030-03-04"; // Mon; the Cafe is closed on Sundays, these aren't
+  const sun = "2030-03-10";
+  const f = await addShift({ site: "factory", day: sun, start: "07:00", end: "15:00", userId: ids.Priya });
+  const o = await addShift({ site: "office", day: W, start: "09:00", end: "13:00", userId: ids.Priya, breakMins: 0 });
+  assert.ok(f.shift && o.shift);
+  const w = (await rota("GET", "week?start=" + W, undefined, ADMIN)).body;
+  for (const id of ["factory", "office"]) {
+    const site = w.sites.find((x) => x.id === id);
+    assert.deepEqual([site.inUse, site.adHoc, site.minPeople, site.open.every(Boolean)], [true, true, 0, true], id);
+  }
+  assert.equal(w.sites.find((x) => x.id === "office").name, "Office");
+  assert.ok(!w.problems.some((p) => ["closed", "short_cover"].includes(p.kind) && ["factory", "office"].includes(p.site)), JSON.stringify(w.problems));
+  // No opening hours or minimum to set for them.
+  assert.equal((await rota("PUT", "sites/office", { opensAt: "09:00", closesAt: "17:00", minPeople: 1 }, ADMIN)).status, 400);
+  const sites = (await rota("GET", "sites", undefined, ADMIN)).body.sites;
+  assert.deepEqual(sites.filter((s) => s.adHoc).map((s) => s.id), ["factory", "office"]);
+  // Hours count them like any other site.
+  const h = (await rota("GET", "hours?start=" + W, undefined, ADMIN)).body;
+  assert.equal(h.people.find((p) => p.userId === ids.Priya).sites.office, 4);
+  assert.equal(h.siteTotals.factory, 7.5);
+  for (const x of [f, o]) await rota("DELETE", "shifts/" + x.shift.id, undefined, ADMIN);
 });
 
 test("checks: every kind of problem", async () => {
@@ -332,14 +355,14 @@ test("hours and the CSV", async () => {
   assert.equal(alex.overtime, 1.5);
   assert.equal(alex.contractMin, 10);
   assert.equal(alex.contractMax, 10);
-  assert.deepEqual(alex.sites, { roastery: 0, cafe: 7.5, asg: 4, factory: 0 });
+  assert.deepEqual(alex.sites, { roastery: 0, cafe: 7.5, asg: 4, factory: 0, office: 0 });
   assert.equal(r.body.siteTotals.asg, 4);
   assert.equal(r.body.openHours, 4);
   const csv = await rota("GET", `hours?start=${W}&format=csv`, undefined, ADMIN);
   assert.match(csv.headers.get("content-type"), /text\/csv/);
   const lines = csv.text.trim().split(/\r\n/);
-  assert.equal(lines[0], "name,role,contract_min,contract_max,planned_hours,rota_hours,overtime,short_of_min,roastery,cafe,asg,factory");
-  assert.ok(lines.includes("Alex Brown,staff,10,10,11.5,11.5,1.5,0,0,7.5,4,0"), csv.text);
+  assert.equal(lines[0], "name,role,contract_min,contract_max,planned_hours,rota_hours,overtime,short_of_min,roastery,cafe,asg,factory,office");
+  assert.ok(lines.includes("Alex Brown,staff,10,10,11.5,11.5,1.5,0,0,7.5,4,0,0"), csv.text);
 });
 
 test("a month's hours for payroll: weekly overtime in the month its week ends, time off, and the CSVs", async () => {
@@ -363,7 +386,7 @@ test("a month's hours for payroll: weekly overtime in the month its week ends, t
   assert.equal(priya.hours, 15);
   assert.equal(priya.overtime, 3, "the week ending 6 Oct, counted whole; the week ending 3 Nov isn't October's");
   assert.equal(priya.basicHours, 12);
-  assert.deepEqual(priya.sites, { roastery: 0, cafe: 15, asg: 0, factory: 0 });
+  assert.deepEqual(priya.sites, { roastery: 0, cafe: 15, asg: 0, factory: 0, office: 0 });
   assert.equal(priya.sickDays, 3); assert.equal(priya.sickDates, "7–9 Oct");
   assert.equal(priya.holidayDays, 1.5, "the saved holiday charges");
   assert.equal(priya.unpaidDays, 0, "declined time off doesn't count");
@@ -378,8 +401,8 @@ test("a month's hours for payroll: weekly overtime in the month its week ends, t
   const csv = await rota("GET", "hours?month=2030-10&format=csv", undefined, ADMIN);
   assert.match(csv.headers.get("content-disposition"), /payroll-hours-2030-10\.csv/);
   const lines = csv.text.trim().split(/\r\n/);
-  assert.equal(lines[0], "Name,Hours worked,Basic hours,Overtime hours,Holiday days,Holiday hours,Holiday dates,Sick days,Sick dates,Unpaid days,Unpaid dates,Unauthorised days,Unauthorised dates,Other time off days,Other time off dates,Shifts,Shifts amended,Roastery hours,Cafe hours,ASG hours,Factory hours,Contract hours a week,Still employed");
-  assert.ok(lines.includes("Priya Shah,15,12,3,1.5,0,14–15 Oct,3,7–9 Oct,0,,0,,0,,2,0,0,15,0,0,8,Yes"), csv.text);
+  assert.equal(lines[0], "Name,Hours worked,Basic hours,Overtime hours,Holiday days,Holiday hours,Holiday dates,Sick days,Sick dates,Unpaid days,Unpaid dates,Unauthorised days,Unauthorised dates,Other time off days,Other time off dates,Shifts,Shifts amended,Roastery hours,Cafe hours,ASG hours,Factory hours,Office hours,Contract hours a week,Still employed");
+  assert.ok(lines.includes("Priya Shah,15,12,3,1.5,0,14–15 Oct,3,7–9 Oct,0,,0,,0,,2,0,0,15,0,0,0,8,Yes"), csv.text);
   const shifts = await rota("GET", "hours?month=2030-10&format=shifts", undefined, ADMIN);
   const rows = shifts.text.trim().split(/\r\n/);
   assert.equal(rows[0], "Date,Name,Site,Planned start,Planned finish,Planned break (min),Actual start,Actual finish,Actual break (min),Paid hours,Amended because");

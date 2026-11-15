@@ -136,7 +136,7 @@ The staff rota (`src/rota/`, at `ROTA_HOST`) uses separate D1 tables. Only admin
 
 | Table | Columns |
 |---|---|
-| `rota_shifts` | `id, site (roastery\|cafe\|asg\|factory), day, start, end (after start, same day), break_mins (unpaid, 0–180), job ('opens'\|'closes'\|''), user_id (NULL = open shift), note, updated_at, updated_by, actual_start, actual_end, actual_break (as worked when amended on the day; NULL = as planned), adjust_note (why), adjusted_by, adjusted_at` |
+| `rota_shifts` | `id, site (roastery\|cafe\|asg\|factory\|office), day, start, end (after start, same day), break_mins (unpaid, 0–180), job ('opens'\|'closes'\|''), user_id (NULL = open shift), note, updated_at, updated_by, actual_start, actual_end, actual_break (as worked when amended on the day; NULL = as planned), adjust_note (why), adjusted_by, adjusted_at` |
 | `rota_weeks` | `week (Monday), published_at (NULL = draft), published_by, changed_at, changes (shift changes since it was last published), emailed (JSON: what each person was last emailed about the week, {people:{<userId>:[{id,day,start,end,site,job,hours}]}, open:[shiftIds]}; NULL until first emailed)` |
 | `rota_sites` | `site, opens_at, closes_at (the usual hours; NULL = not set), min_people (default 1), day_hours (JSON {"sat"\|"sun"\|…: {"opensAt","closesAt"}}: weekdays with their own hours)` |
 | `rota_people` | `user_id, contract_min, contract_max (contracted hours a week, a range; NULL = none; hours over the max are overtime), contract_hours (kept equal to contract_max for older pages), sites (JSON site ids they can get to; [] = any), pattern (JSON {"mon":"any"\|"off"\|{"from","to"}, …}; a missing day = any), updated_at` |

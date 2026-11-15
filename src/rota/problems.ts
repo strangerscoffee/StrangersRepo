@@ -11,6 +11,7 @@ export function hoursOn(site: SiteInfo, day: string): Hours {
 /** Whether a site is open on a day: in use (has a Setup), not a usual closed day, not a planned closure. */
 export function openState(ctx: Pick<Ctx, "sites" | "closures">, site: string, day: string): { open: boolean; reason?: string } {
   const s = ctx.sites.get(site)!;
+  if (s.adHoc) return { open: true };
   if (!s.inUse) return { open: false, reason: `${s.name} isn't set up in the diary yet` };
   if (s.closedDays.includes(dateOf(day).getUTCDay())) return { open: false, reason: `${s.name} is closed on ${dayName(day)}s` };
   const reason = ctx.closures.get(site)?.[day];

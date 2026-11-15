@@ -21,7 +21,7 @@ export async function weekView(env: Env, week: string, user: User) {
     publishedAt: row?.published_at ?? null,
     changesSincePublish: published ? row?.changes ?? 0 : 0,
     sites: [...ctx.sites.values()].map((s) => ({
-      id: s.id, name: s.name, inUse: s.inUse, opensAt: s.opensAt, closesAt: s.closesAt, minPeople: s.minPeople, dayHours: s.dayHours,
+      id: s.id, name: s.name, inUse: s.inUse, adHoc: s.adHoc, opensAt: s.opensAt, closesAt: s.closesAt, minPeople: s.minPeople, dayHours: s.dayHours,
       hours: ctx.days.map((d) => hoursOn(s, d)),
       open: ctx.days.map((d) => openState(ctx, s.id, d).open),
       closedWhy: ctx.days.map((d) => { const st = openState(ctx, s.id, d); return st.open ? null : ctx.closures.get(s.id)?.[d] || null; }),

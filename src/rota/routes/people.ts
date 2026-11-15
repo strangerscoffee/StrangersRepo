@@ -1,7 +1,7 @@
 // Rota routes for people (contracts, availability) and sites (opening hours, cover).
 import { invalid, json } from "../../http";
 import { activeUser, loadSites } from "../load";
-import { DAY_KEYS, RotaRequest, SITE_IDS } from "../types";
+import { DAY_KEYS, ROTA_SITES, RotaRequest, SITE_IDS } from "../types";
 import { checkContract, checkPattern, checkSites } from "../validate";
 import { isTime, mins, nowMs, parseJson } from "../util";
 
@@ -33,12 +33,13 @@ export async function peopleRoutes(r: RotaRequest): Promise<Response | null> {
 
   if (route === "sites" && m === "GET") {
     const sites = await loadSites(env);
-    return json({ sites: [...sites.values()].map((s) => ({ id: s.id, name: s.name, inUse: s.inUse, closedDays: s.closedDays, opensAt: s.opensAt, closesAt: s.closesAt, minPeople: s.minPeople, dayHours: s.dayHours })) });
+    return json({ sites: [...sites.values()].map((s) => ({ id: s.id, name: s.name, inUse: s.inUse, adHoc: s.adHoc, closedDays: s.closedDays, opensAt: s.opensAt, closesAt: s.closesAt, minPeople: s.minPeople, dayHours: s.dayHours })) });
   }
 
   if (seg[0] === "sites" && seg.length === 2 && m === "PUT") {
     needSiteManager();
-    if (!SITE_IDS.has(seg[1])) throw invalid("Choose one of the four sites.");
+    if (!SITE_IDS.has(seg[1])) throw invalid("Choose a site from the list.");
+    if (ROTA_SITES.find((x) => x.id === seg[1])?.adHoc) throw invalid("The Factory and the Office are used as needed: they have no opening hours or minimum cover.");
     const b = await body();
     const t = (v: unknown, label: string) => { if (v == null || v === "") return null; if (!isTime(v)) throw invalid(`${label} is HH:MM, for example 07:00.`); return v; };
     const opensAt = t(b.opensAt, "Opening time"), closesAt = t(b.closesAt, "Closing time");
