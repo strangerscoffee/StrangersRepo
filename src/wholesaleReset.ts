@@ -28,10 +28,16 @@ export async function migrateResets(env: Env) {
   ]);
 }
 
+/** Counted per clock window, and the window before counts too, so a burst either side of the hour can't get twice
+ *  the allowance (and never more than `max` in any one window's length). */
 async function limit(env: Env, key: string, windowMs: number, max: number) {
   const window = Math.floor(Date.now() / windowMs) * windowMs;
-  const r = await env.DB.prepare("INSERT INTO rate_limits(ip, window, n) VALUES (?, ?, 1) ON CONFLICT(ip, window) DO UPDATE SET n = n + 1 RETURNING n").bind(key, window).first<{ n: number }>();
-  return (r?.n || 0) <= max;
+  const [r, before] = await env.DB.batch([
+    env.DB.prepare("INSERT INTO rate_limits(ip, window, n) VALUES (?, ?, 1) ON CONFLICT(ip, window) DO UPDATE SET n = n + 1 RETURNING n").bind(key, window),
+    env.DB.prepare("SELECT n FROM rate_limits WHERE ip = ? AND window = ?").bind(key, window - windowMs),
+  ]);
+  const n = ((r.results[0] as { n?: number } | undefined)?.n || 0) + ((before.results[0] as { n?: number } | undefined)?.n || 0);
+  return n <= max;
 }
 
 /** Where to reach Strangers, for the sign-in page's "Need help?" (the first Order alerts address). */

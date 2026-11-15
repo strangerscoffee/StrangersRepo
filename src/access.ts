@@ -152,7 +152,9 @@ export async function limitWrites(req: Request, env: Env, ctx: ExecutionContext,
   ).bind(key, window).first<{ n: number }>();
   const [mine, all] = await Promise.all([userId ? take("user:" + userId) : Promise.resolve(null), take(ip)]);
   if (Math.random() < 0.02) {
-    ctx.waitUntil(env.DB.prepare("DELETE FROM rate_limits WHERE window < ?").bind(window - WINDOW_MS).run());
+    // Some limits count by the hour (wholesale registration, invites and password resets, which also look at the
+    // hour before), so keep two hours of counts: clearing anything over 15 minutes old reset them mid-hour.
+    ctx.waitUntil(env.DB.prepare("DELETE FROM rate_limits WHERE window < ?").bind(window - 2 * 3600000).run());
   }
   if ((mine && mine.n > limit) || (all && all.n > (userId ? limit * 5 : limit))) {
     throw new ApiError(429, "rate_limited", "Too many changes in a short time. Wait a few minutes and try again.");
