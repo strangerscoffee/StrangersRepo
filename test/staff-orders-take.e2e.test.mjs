@@ -47,13 +47,15 @@ for (const [name, viewport, isMobile] of [["phone", { width: 390, height: 844 },
     await dialog.getByRole("button", { name: "Add another coffee" }).click();
     assert.equal(await dialog.locator(".no-line").count(), 2);
     await dialog.locator('.no-line input[type="number"]').nth(1).fill("2");
-    assert.match(await dialog.locator("#noTotals").innerText(), /^5 bags · 5 kg$/);
+    assert.match(await dialog.locator("#noTotals").innerText(), /^5 bags · 5 kg/);
+    await dialog.locator("#noTab").check();
     assert.ok(!/£/.test(await dialog.innerText()), "no prices");
     assert.equal(await page.evaluate(() => { const d = document.querySelector("#newOrderDialog"); return d.scrollWidth <= d.clientWidth + 1; }), true, "no sideways scrolling");
     if (process.env.SHOT_DIR) await page.screenshot({ path: `${process.env.SHOT_DIR}/take-${name}-${scheme}.png` });
     await dialog.locator("#placeOrder").click();
     await page.locator("#orderDialog[open]").waitFor();
     assert.match(await page.locator("#orderDetail").innerText(), /Lune Café[\s\S]*Came in\s*In person/);
+    assert.match(await page.locator("#tabToggle").innerText(), /Take off tab/);
     assert.deepEqual(errors, []);
     await ctx.close();
   });

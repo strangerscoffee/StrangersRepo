@@ -5,7 +5,7 @@
 // exemption or login details).
 import type {User} from "./auth";
 import {ApiError,type Env,invalid,json,readJson} from "./http";
-import {customerOrdersUrl,minimumOrderGrams,ordersToPrint,takeOrderFor,TAKEN_SOURCES,updateOrderStatus} from "./wholesale";
+import {customerOrdersUrl,ordersToPrint,takeOrderFor,TAKEN_SOURCES,updateOrderStatus} from "./wholesale";
 import {wholesaleCustomer} from "./wholesaleAccounts";
 import {catalogue,packsOf} from "./wholesaleCatalogue";
 import {catalogueFor} from "./wholesaleWhiteLabel";
@@ -90,7 +90,7 @@ export async function handleStaffOrders(req:Request,env:Env,route:string,user:Us
     const products=catalogueFor((await catalogue(env)).filter(p=>p.active),customer.id).map((p:any)=>({id:p.id,title:p.title,yours:!!p.yours,inStock:!!p.inStock,decaf:(p.categories||[]).includes("decaf"),packs:packsOf(p),
       grinds:p.grindOptions.filter((g:any)=>g.enabled).map((g:any)=>({id:g.id,label:g.label,hint:g.hint||""}))}));
     await requireStaffOrders(env,user);
-    return json({products,minimumOrderGrams:minimumOrderGrams(env,customer),sources:TAKEN_SOURCES,customer:{id:customer.id,business:customer.business,status:customer.status,email:customer.email||''}});
+    return json({products,sources:TAKEN_SOURCES,autoTab:!!customer.autoTab,customer:{id:customer.id,business:customer.business,status:customer.status,email:customer.email||''}});
   }
   if(route==="print"){
     const orders=(await ordersToPrint(env,new URL(req.url).searchParams,{customerOnly:true})).map(o=>staffView(o));

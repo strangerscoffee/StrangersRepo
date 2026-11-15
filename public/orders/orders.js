@@ -245,7 +245,7 @@
   return data;
  }
  function newOrder(customer){
-  draft={customer:customer||null,catalogue:null,lines:[],source:'Email',delivery:'Roastery collection',locationId:null,reference:'',note:'',emailCustomer:true,requestId:crypto.randomUUID(),sending:false,error:'',search:'',found:[]};
+  draft={customer:customer||null,catalogue:null,lines:[],source:'Email',onTab:false,delivery:'Roastery collection',locationId:null,reference:'',note:'',emailCustomer:true,requestId:crypto.randomUUID(),sending:false,error:'',search:'',found:[]};
   drawNewOrder();$('newOrderDialog').showModal();
   if(customer)chooseCustomer(customer);else $('newOrderForm').querySelector('input')?.focus();
  }
@@ -275,9 +275,9 @@
  }
  function drawTotals(){
   const box=$('noTotals');if(!box||!draft?.catalogue)return;
-  const grams=draftGrams(),min=draft.catalogue.minimumOrderGrams||0,short=min&&grams<min;
-  box.replaceChildren(...[el('b',{},`${draftBags()} ${draftBags()===1?'bag':'bags'} · ${kgText(grams)}`),short?el('span',{class:'no-short'},`The minimum order is ${kgText(min)}: ${kgText(min-grams)} more needed.`):null].filter(Boolean));
-  const place=$('placeOrder');if(place)place.disabled=draft.sending||!draftBags()||!!short;
+  const grams=draftGrams();
+  box.replaceChildren(el('b',{},`${draftBags()} ${draftBags()===1?'bag':'bags'} · ${kgText(grams)}`),el('span',{class:'hint'},'No minimum for orders you take.'));
+  const place=$('placeOrder');if(place)place.disabled=draft.sending||!draftBags();
  }
  function drawNewOrder(keepFocus=false){
   if(!draft)return;
@@ -307,6 +307,8 @@
     parts.push(el('label',{class:'field'},el('span',{},'Their reference (optional)'),ref),el('label',{class:'field'},el('span',{},'Comments from the customer (optional)'),note,el('small',{},'Shown on the order and to the customer. For notes only staff see, add an internal note after placing it.')));
     const mail=el('input',{type:'checkbox',id:'noEmail',disabled:!c.email,...(draft.emailCustomer&&c.email?{checked:true}:{}),onchange:()=>{draft.emailCustomer=mail.checked}});
     parts.push(el('label',{class:'check'},mail,el('span',{},c.email?`Email ${c.business} a confirmation (${c.email})`:'No email saved, so no confirmation can be sent')));
+    const tab=el('input',{type:'checkbox',id:'noTab',disabled:!!draft.catalogue.autoTab,...(draft.onTab||draft.catalogue.autoTab?{checked:true}:{}),onchange:()=>{draft.onTab=tab.checked}});
+    parts.push(el('label',{class:'check'},tab,el('span',{},draft.catalogue.autoTab?`Goes on ${c.business}'s tab (their orders always do)`:`Put it on ${c.business}'s tab`)));
    }
   }
   if(draft.error)parts.push(el('p',{class:'edit-error',role:'alert'},draft.error));
@@ -323,7 +325,7 @@
   if(!lines.length){draft.error='Add at least one bag.';drawNewOrder();return;}
   draft.sending=true;draft.error='';drawNewOrder();
   try{
-   const {order}=await staffJson('POST','orders',{requestId:draft.requestId,customerId:draft.customer.id,source:draft.source,emailCustomer:draft.emailCustomer,lines,delivery:draft.delivery,locationId:draft.locationId||'primary',reference:draft.reference.trim(),customerNote:draft.note.trim()});
+   const {order}=await staffJson('POST','orders',{requestId:draft.requestId,customerId:draft.customer.id,source:draft.source,emailCustomer:draft.emailCustomer,onTab:draft.onTab,lines,delivery:draft.delivery,locationId:draft.locationId||'primary',reference:draft.reference.trim(),customerNote:draft.note.trim()});
    const business=draft.customer.business;
    draft=null;$('newOrderDialog').close();toast(`Order placed for ${business}`);
    status='open';$('search').value='';if(view!=='orders')showView('orders');await load();if(rows.some(r=>r.id===order.id))openOrder(order.id);

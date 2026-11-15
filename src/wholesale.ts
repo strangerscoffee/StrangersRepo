@@ -112,7 +112,7 @@ function orderBody(value: unknown, priced = true) {
 /** How an order taken by staff for a customer reached Strangers. */
 export const TAKEN_SOURCES = ["Email", "In person", "Phone", "Other"] as const;
 /** An order staff take for a customer (it came by email, phone or at the door): a real customer order. */
-interface TakenFor { customerId: string; source: string; emailCustomer: boolean }
+interface TakenFor { customerId: string; source: string; emailCustomer: boolean; onTab: boolean }
 
 async function createOrder(req: Request, env: Env, user: OrderingUser, links: Links, ctx?: ExecutionContext, takenFor?: TakenFor): Promise<Response> {
   const saved = await placeOrder(req, env, user, links, ctx, takenFor);
@@ -126,7 +126,8 @@ export async function takeOrderFor(req: Request, env: Env, staff: { id: string; 
   const source = TAKEN_SOURCES.find((s) => s === submitted.source);
   if (!source) throw invalid("Choose how the order came in: email, in person, phone or other.");
   if (submitted.emailCustomer !== undefined && typeof submitted.emailCustomer !== "boolean") throw invalid("Choose whether to email the customer.");
-  return placeOrder(req, env, { id: staff.id, name: staff.name, role: "staff" } as OrderingUser, links, ctx, { customerId, source, emailCustomer: submitted.emailCustomer === true }, submitted);
+  if (submitted.onTab !== undefined && typeof submitted.onTab !== "boolean") throw invalid("Choose whether to put the order on the customer's tab.");
+  return placeOrder(req, env, { id: staff.id, name: staff.name, role: "staff" } as OrderingUser, links, ctx, { customerId, source, emailCustomer: submitted.emailCustomer === true, onTab: submitted.onTab === true }, submitted);
 }
 
 async function placeOrder(req: Request, env: Env, user: OrderingUser, links: Links, ctx: ExecutionContext | undefined, takenFor?: TakenFor, already?: Record<string, any>): Promise<{ order: Order & Versioned; created: boolean }> {
@@ -141,7 +142,7 @@ async function placeOrder(req: Request, env: Env, user: OrderingUser, links: Lin
     body.business = customer.business;
   }
   // Retrying a customer request still finds its original snapshot if business details changed meanwhile.
-  const request = takenFor ? { ...body, business: takenFor.customerId, takenBy: user.id, source: takenFor.source } : user.role === "wholesale" ? { ...body, business: user.customerId } : body;
+  const request = takenFor ? { ...body, business: takenFor.customerId, takenBy: user.id, source: takenFor.source, onTab: takenFor.onTab } : user.role === "wholesale" ? { ...body, business: user.customerId } : body;
   const requestKey = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(request))))].map((n) => n.toString(16).padStart(2, "0")).join("");
   const existing = await get<Order>(env, "order", body.id);
   if (existing) {
@@ -170,8 +171,9 @@ async function placeOrder(req: Request, env: Env, user: OrderingUser, links: Lin
     return { ...line, title: product.title, packLabel: PACKS[line.pack].label, grindLabel: grind.label, grindHint: grind.hint || "", decaf: product.categories.includes("decaf"), price: product.prices[line.pack as "quarter" | "kilo"], grams: PACKS[line.pack].grams, ...(product.recipe?.length ? { recipe: recipeText(product) } : {}) };
   });
   // After the retry check above, so an order already placed is still returned if the minimum changes later.
-  const minimum = minimumOrderGrams(env, customer), grams = lines.reduce((sum, line) => sum + line.grams * line.quantity, 0);
-  if (grams < minimum) throw new ApiError(409, "below_minimum", takenFor ? `The minimum order is ${kg(minimum)} of coffee: add ${kg(minimum - grams)} more. An admin can turn off the minimum for ${customer!.business} in Admin → Wholesale → Customers.` : `The minimum order is ${kg(minimum)} of coffee. Add ${kg(minimum - grams)} more to your basket.`);
+  // Orders staff take for a customer skip the minimum (the owner's decision): a few bags at the door are fine.
+  const minimum = takenFor ? 0 : minimumOrderGrams(env, customer), grams = lines.reduce((sum, line) => sum + line.grams * line.quantity, 0);
+  if (grams < minimum) throw new ApiError(409, "below_minimum", `The minimum order is ${kg(minimum)} of coffee. Add ${kg(minimum - grams)} more to your basket.`);
   const at = Date.now();
   const customerSnapshot = customer && location ? (() => {
     const { locations, defaultLocationId, ...profile } = publicCustomer(customer);
@@ -181,6 +183,8 @@ async function placeOrder(req: Request, env: Env, user: OrderingUser, links: Lin
     createdBy: user.id, createdName: user.name, business: body.business, reference: body.reference, delivery: body.delivery,
     customerId: customer?.id || null, status: "New", note: "", trackingUrl: "", preview: !customer, ...(customer && location ? { customerSnapshot, deliveryNotes: location.deliveryNotes, paymentTerms: paymentTermsFor(customer), locationId: location.id, locationSnapshot: { ...location } } : {}), date: new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone: "Europe/London" }).format(new Date(at)),
     createdAt: at, requestKey, lines, ...(body.customerNote ? { customerNote: body.customerNote } : {}), ...autoTabFor(customer),
+    // Staff may put an order they take straight on the customer's tab (a customer set to go on automatically already is).
+    ...(takenFor?.onTab && !customer?.autoTab ? { tab: { at: Date.now(), by: user.name } } : {}),
     ...(takenFor ? { takenFor: { source: takenFor.source, at } } : {}),
     pence: lines.reduce((sum, line) => sum + line.price * line.quantity, 0), grams: lines.reduce((sum, line) => sum + line.grams * line.quantity, 0), packs: lines.reduce((sum, line) => sum + line.quantity, 0),
   };
