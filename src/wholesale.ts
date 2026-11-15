@@ -18,6 +18,7 @@ import { handleInsights } from "./insights";
 import { autoTabFor, clearTab, listTabs, setOnTab } from "./wholesaleTabs";
 import { importCustomers, inviteCustomer, inviteStates, matchAccountsEmails } from "./wholesaleImport";
 import { canOrder, catalogueFor, customerLines, recipeText } from "./wholesaleWhiteLabel";
+import { activeAnnouncement, handleAnnouncementAdmin } from "./wholesaleAnnouncement";
 import { amendLines, rollStanding, scheduleFields, skipRun, type Standing } from "./wholesaleStanding";
 import { customersSeeInvoices, handleInvoiceAdmin, handleInvoiceCustomer, invoiceLinks } from "./wholesaleInvoices";
 
@@ -240,7 +241,7 @@ export async function handleWholesale(req: Request, env: Env, route: string, use
   const invoiceResponse = await handleInvoiceCustomer(req, env, route, user);
   if (invoiceResponse) return invoiceResponse;
   const customer = user.role === "wholesale" ? await wholesaleCustomer(env, user.customerId) : null;
-  if ((route === "catalogue" || route === "session") && req.method === "GET") return json({ ...(route === "catalogue" ? { products: catalogueFor(await catalogue(env), user.role === "wholesale" ? user.customerId : null), sourceDate: catalogueRetrievedAt } : {}), stage: "beta", invoices: await customersSeeInvoices(env), minimumOrderGrams: minimumOrderGrams(env, customer), showPrices: !customer?.hidePrices, me: user, customer: customer ? publicCustomer(customer) : null, links: { ...(user.role === "wholesale" ? {} : links), preview: links.preview || "/wholesale/" }, preview: user.role !== "wholesale" });
+  if ((route === "catalogue" || route === "session") && req.method === "GET") return json({ ...(route === "catalogue" ? { products: catalogueFor(await catalogue(env), user.role === "wholesale" ? user.customerId : null), sourceDate: catalogueRetrievedAt } : {}), stage: "beta", invoices: await customersSeeInvoices(env), minimumOrderGrams: minimumOrderGrams(env, customer), showPrices: !customer?.hidePrices, announcement: await activeAnnouncement(env), me: user, customer: customer ? publicCustomer(customer) : null, links: { ...(user.role === "wholesale" ? {} : links), preview: links.preview || "/wholesale/" }, preview: user.role !== "wholesale" });
   if (route === "account" && req.method === "PUT" && customer) {
     const body = object(await readJson(req, 64 * 1024));
     if (body.orderingIdentity !== undefined && body.orderingIdentity !== user.id) throw new ApiError(409, "account_changed", "The signed-in account changed. Reload ordering before saving business details.");
@@ -353,6 +354,8 @@ export async function handleWholesaleAdmin(req: Request, env: Env, route: string
   if (user.role !== "admin") throw denied();
   const invoiceResponse = await handleInvoiceAdmin(req, env, route, user.name);
   if (invoiceResponse) return invoiceResponse;
+  const announcement = await handleAnnouncementAdmin(req, env, route, user.name);
+  if (announcement) return announcement;
   const orderEmails = await handleOrderEmailsAdmin(req, env, route, user.name, links.diary);
   if (orderEmails) return orderEmails;
   const insightsResponse = await handleInsights(req, env, route, user.name);
