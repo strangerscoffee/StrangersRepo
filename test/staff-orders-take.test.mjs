@@ -26,7 +26,7 @@ const order = (fields = {}) => ({ requestId: crypto.randomUUID(), customerId: C.
 before(async () => {
   mock = createServer((rq, rs) => { let b = ""; rq.on("data", (d) => (b += d)); rq.on("end", () => { try { sent.push(JSON.parse(b)); } catch {} rs.writeHead(200, { "content-type": "application/json" }).end('{"id":"x"}'); }); });
   await new Promise((r) => mock.listen(0, "127.0.0.1", r));
-  srv = await startServer({ writeLimit: 3000, vars: { RESEND_API_KEY: "re_test_key", RESEND_API_URL: `http://127.0.0.1:${mock.address().port}/emails` } });
+  srv = await startServer({ writeLimit: 3000, vars: { WHOLESALE_MINIMUM_ORDER_GRAMS: "6000", RESEND_API_KEY: "re_test_key", RESEND_API_URL: `http://127.0.0.1:${mock.address().port}/emails` } });
   ADMIN = (await ok("POST", "/api/auth/setup", { name: "Owner", username: "owner", password: "owner-password", code: SETUP_CODE }, null)).cookie;
   const staff = await person("staff", "packer"); STAFF = staff.cookie; staffId = staff.id;
   OTHER = (await person("staff", "other")).cookie;
@@ -76,6 +76,24 @@ test("staff take an order for a customer: a real order at today's prices, emaile
   assert.equal(emailed.status, 201, emailed.text);
   const end = Date.now() + 4000; while (Date.now() < end && !sent.some((m) => (m.to || []).includes("dee@door.example"))) await wait(100);
   assert.ok(sent.some((m) => (m.to || []).includes("dee@door.example")), "confirmation sent");
+});
+
+test("no minimum for orders staff take (the customer's own checkout keeps it); straight on their tab when ticked", async () => {
+  // 2 kg is under the 6 kg minimum: fine when staff take it.
+  const small = await call("POST", "/api/staff-orders/orders", order({ onTab: true }), STAFF);
+  assert.equal(small.status, 201, small.text);
+  assert.equal(small.body.order.onTab, true);
+  const saved = (await ok("GET", "/api/admin/wholesale")).body.orders.find((o) => o.id === small.body.order.id);
+  assert.equal(saved.tab.by, "Pat Packer");
+  const tabs = (await ok("GET", "/api/staff-orders/tabs", undefined, STAFF)).body;
+  assert.ok(tabs.open.find((t) => t.customerId === C.id)?.orders.some((o) => o.id === small.body.order.id));
+  const plain = await call("POST", "/api/staff-orders/orders", order({ onTab: false }), STAFF);
+  assert.equal(plain.body.order.onTab, false);
+  assert.equal((await call("POST", "/api/staff-orders/orders", order({ onTab: "yes" }), STAFF)).status, 400);
+  // The customer ordering themselves still needs 6 kg.
+  const session = (await ok("GET", "/api/wholesale/session", undefined, CUSTOMER)).body;
+  const own = await call("POST", "/api/wholesale/orders", { requestId: crypto.randomUUID(), lines: [{ productId: "brazil", pack: "kilo", grind: "beans", quantity: 2, price: session.customer && (await ok("GET", "/api/wholesale/catalogue", undefined, CUSTOMER)).body.products.find((p) => p.id === "brazil").prices.kilo }], delivery: "Roastery collection", customerVersion: session.customer.version }, CUSTOMER);
+  assert.equal(own.status, 409); assert.equal(own.body.code, "below_minimum");
 });
 
 test("the same checks as the ordering site; only staff with access and admins", async () => {
