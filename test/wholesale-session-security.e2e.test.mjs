@@ -10,6 +10,9 @@ async function api(method,path,body,cookie=ADMIN){const r=await fetch(srv.base+p
 const cookieOf=r=>(r.headers.getSetCookie().find(v=>/^sf(?:bb|_wholesale)_session=[\w-]/.test(v))||'').split(';')[0];
 async function account(name){const customer=(await api('POST','/api/admin/wholesale/customers',{business:name,contact:'Private contact '+name,email:name+'@example.test',address:'Private street '+name,postcode:'NR1 1AA',status:'Active'})).data.customer;const invitation=(await api('POST',`/api/admin/wholesale/customers/${customer.id}/account`,{username:name})).data;const cookie=cookieOf((await api('POST','/api/wholesale/auth/change-password',{username:name,password:invitation.temporaryPassword,newPassword:name+'-own-password'},null)).r);await api('POST','/api/wholesale/orders',{requestId:crypto.randomUUID(),customerVersion:customer.version,delivery:'Delivery',reference:'PRIVATE-REFERENCE-'+name,lines:[{productId:'brazil',pack:'kilo',grind:'beans',quantity:1,price:1800}]},cookie);return{cookie,customer}}
 async function useCookie(context,cookie){const[name,value]=cookie.split('=');await context.addCookies([{name,value,url:srv.base}])}
+// Release held callbacks and finish intercepted requests before disposing their context.
+// Test assertions and in-flight request errors still fail normally.
+async function closeContext(page,context,release){release?.();await page.unrouteAll({behavior:'wait'});await context.close()}
 before(async()=>{srv=await startServer({writeLimit:4000});ADMIN=cookieOf((await api('POST','/api/auth/setup',{name:'Privacy Owner',username:'owner',password:'privacy-owner-password',code:SETUP_CODE},null)).r);A=await account('privacy.alpha');B=await account('privacy.beta');browser=await chromium.launch(process.env.CHROMIUM_PATH?{executablePath:process.env.CHROMIUM_PATH}:{})});
 after(async()=>{await browser?.close();await srv?.stop()});
 test('mobile account popover stays hidden during verification and clears the previous business', {timeout:60000}, async()=>{
@@ -21,7 +24,7 @@ test('mobile account popover stays hidden during verification and clears the pre
   assert.equal(await page.locator('#signed-in-name').isVisible(),false);assert.equal(await page.locator('#sc-session-shield').isVisible(),true);
   const opened=await page.evaluate(()=>{const menu=document.getElementById('wholesale-account');if(menu.matches(':popover-open'))menu.hidePopover();menu.showPopover();return menu.matches(':popover-open')});assert.equal(opened,false,'a locked page cannot open its private account popover');
   holding=false;release();await page.waitForFunction(()=>document.getElementById('signed-in-name')?.textContent==='privacy.beta');await openWholesaleAccountMenu(page);assert.equal(await page.locator('#signed-in-name').innerText(),'privacy.beta');assert.ok(!(await page.locator('#wholesale-account').innerText()).includes('privacy.alpha'));
- }finally{release?.();await context.close()}
+ }finally{await closeContext(page,context,release)}
 });
 for(const[device,viewport]of[['phone',{width:393,height:852}],['iPad',{width:1180,height:820}]])for(const colorScheme of['light','dark'])test(`customer privacy ${device} ${colorScheme}: focus shields private forms until the current business is verified`,{timeout:60000},async()=>{
  const context=await browser.newContext({viewport,colorScheme});await useCookie(context,A.cookie);const page=await context.newPage();let release,arrive,holding=false;const ready=new Promise(r=>arrive=r),gate=new Promise(r=>release=r);
@@ -33,7 +36,7 @@ for(const[device,viewport]of[['phone',{width:393,height:852}],['iPad',{width:118
   if(process.env.SECURITY_QA_DIR){await mkdir(process.env.SECURITY_QA_DIR,{recursive:true});await page.screenshot({path:`${process.env.SECURITY_QA_DIR}/${device}-${colorScheme}.png`})}
   holding=false;release();await page.waitForFunction(()=>document.getElementById('signed-in-name')?.textContent==='privacy.beta');assert.equal(await page.locator('#account-dialog').isVisible(),false);assert.ok(!(await page.locator('body').innerText()).includes('Private contact privacy.alpha'));
   await openWholesaleAccount(page);await page.locator('#account-dialog[open]').waitFor();assert.equal(await page.locator('#account-form [name="contact"]').inputValue(),'Private contact privacy.beta');
- }finally{release?.();await context.close()}
+ }finally{await closeContext(page,context,release)}
 });
 test('a held order-history response cannot restore a previous business after identity loss',{timeout:60000},async()=>{
  const context=await browser.newContext({viewport:{width:1180,height:820}});await useCookie(context,A.cookie);const page=await context.newPage();let release,arrive,capture;const ready=new Promise(r=>arrive=r),gate=new Promise(r=>release=r),cleared=new Promise(r=>capture=r);
@@ -45,7 +48,7 @@ test('a held order-history response cannot restore a previous business after ide
   await openWholesaleOrders(page);await ready;await useCookie(context,B.cookie);await page.evaluate(()=>{dispatchEvent(new Event('blur'));dispatchEvent(new Event('focus'))});
   const state=await cleared;assert.equal(state.locked,true);assert.equal(state.products,0);assert.equal(state.name,'');assert.equal(state.greeting,'Account');assert.equal(state.menuGreeting,'Hi');assert.equal(state.accountLabel,'Account menu');assert.ok(!state.history.includes('PRIVATE-REFERENCE-privacy.alpha'));
   release();await page.waitForFunction(()=>document.getElementById('signed-in-name')?.textContent==='privacy.beta');assert.ok(!(await page.locator('body').innerText()).includes('PRIVATE-REFERENCE-privacy.alpha'));
- }finally{release?.();await context.close()}
+ }finally{await closeContext(page,context,release)}
 });
 test('offline identity verification keeps customer details hidden until Retry succeeds',{timeout:60000},async()=>{
  const context=await browser.newContext({viewport:{width:393,height:852}});await useCookie(context,A.cookie);const page=await context.newPage();let offline=false;
@@ -53,5 +56,5 @@ test('offline identity verification keeps customer details hidden until Retry su
   await page.goto(srv.base+'/wholesale/');await page.locator('[data-product]').first().waitFor();await openWholesaleAccount(page);await page.locator('#account-dialog[open]').waitFor();
   await page.route('**/api/wholesale/session',route=>offline?route.abort('failed'):route.continue());offline=true;await page.evaluate(()=>{dispatchEvent(new Event('blur'));dispatchEvent(new Event('focus'))});await page.locator('#sc-session-shield button:not([hidden])').waitFor();assert.equal(await page.locator('#account-form [name="email"]').isVisible(),false);
   offline=false;await page.locator('#sc-session-shield button').click();await page.locator('html:not([data-sc-session-locked])').waitFor();assert.equal(await page.locator('#account-form [name="email"]').inputValue(),'privacy.alpha@example.test');
- }finally{await context.close()}
+ }finally{await closeContext(page,context)}
 });
