@@ -219,10 +219,17 @@ button.shc:hover{border-color:var(--accent)}
 .htable td.over{color:var(--bad);font-weight:700}
 .htable tfoot th,.htable tfoot td{font-weight:750;border-bottom:0}
 .setrow{display:grid!important;gap:10px}
-.setf{display:grid;grid-template-columns:1fr 1fr 80px auto;gap:8px;align-items:end;min-width:0}
-@media (max-width:600px){.setf{grid-template-columns:1fr 1fr 70px}.setf .btn{grid-column:1/-1;justify-self:start}}
-.setf label{display:grid;gap:2px;font-size:12px;color:var(--muted);font-weight:600}
-.setf input{min-height:40px;font-size:16px;width:100%;min-width:0;box-sizing:border-box}
+.setf{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) 88px auto;gap:10px;align-items:end;min-width:0}
+.setf label{display:grid;gap:4px;font-size:12px;color:var(--muted);font-weight:600;min-width:0;white-space:nowrap}
+.setf input{min-height:44px;font-size:16px;width:100%;min-width:0;box-sizing:border-box}
+/* iOS gives time boxes a fixed natural width that spills out of narrow columns: let them shrink to the column. */
+.setf input[type=time],.dhrow input[type=time]{display:block;min-width:0;max-width:100%;text-align:center}
+.setf input[type=time]::-webkit-date-and-time-value,.dhrow input[type=time]::-webkit-date-and-time-value{text-align:center}
+/* Phones: opens and closes side by side, then minimum people and Save on a row of their own. */
+@media (max-width:600px){
+  .setf{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+  .setf .btn{justify-self:end;align-self:end;min-height:44px;min-width:96px}
+}
 .chours{display:inline-flex;align-items:center;gap:6px;font-size:14px;color:var(--muted)}
 .chours input{width:76px;min-height:40px;font-size:16px;text-align:right;box-sizing:border-box}
 
@@ -266,8 +273,9 @@ a.btn{text-decoration:none;display:inline-flex;align-items:center}
 .dayhours summary{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:baseline;cursor:pointer;min-height:36px;align-content:center}
 .dayhours summary .s{font-size:13.5px;color:var(--muted)}
 .dhgrid{display:grid;gap:6px;margin:8px 0}
-.dhrow{display:grid;grid-template-columns:96px 1fr 1fr;gap:8px;align-items:center}
-.dhrow.closed{grid-template-columns:96px 1fr 1fr 1fr;opacity:.6}
+.dhrow{display:grid;grid-template-columns:96px minmax(0,1fr) minmax(0,1fr);gap:8px;align-items:center}
+.dhrow.closed{grid-template-columns:96px auto minmax(0,1fr) minmax(0,1fr);opacity:.6}
+@media (max-width:600px){.dhrow{grid-template-columns:76px minmax(0,1fr) minmax(0,1fr)}.dhrow.closed{grid-template-columns:76px auto minmax(0,1fr) minmax(0,1fr)}}
 .dhrow .dn{font-weight:600;font-size:15px}
 .dhrow input{min-height:40px;font-size:16px;width:100%;min-width:0;box-sizing:border-box}
 .crow{flex-wrap:wrap}

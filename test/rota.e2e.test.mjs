@@ -154,6 +154,17 @@ for (const [label, viewport] of [["phone", { width: 393, height: 852 }], ["iPad"
     await a.page.locator(".btn", { hasText: "Ask for time off" }).waitFor();
     await call("PUT", "/api/rota/people/" + ALEX_ID, { pattern: {}, sites: [] });
     await m.page.goto(srv.base + "/rota/#settings");
+    await m.page.locator(".setf").first().waitFor();
+    // Opening times, minimum people and Save never overlap or spill out of their card, phone or iPad.
+    const overlaps = await m.page.locator(".setrow").evaluateAll((rows) => rows.flatMap((row) => {
+      const box = row.getBoundingClientRect(), parts = [...row.querySelectorAll(".setf > label, .setf > .btn")].map((e) => e.getBoundingClientRect());
+      const bad = [];
+      parts.forEach((r, i) => { if (r.left < box.left - 1 || r.right > box.right + 1) bad.push(`part ${i} outside its card`);
+        parts.slice(i + 1).forEach((o, j) => { if (r.left < o.right - 1 && o.left < r.right - 1 && r.top < o.bottom - 1 && o.top < r.bottom - 1) bad.push(`parts ${i} and ${i + j + 1} overlap`); }); });
+      return bad;
+    }));
+    assert.deepEqual(overlaps, []);
+    if (process.env.SHOT_DIR) await m.page.screenshot({ path: `${process.env.SHOT_DIR}/rota-settings-${viewport.width}.png`, fullPage: true });
     await m.page.locator(".lrow", { hasText: "Change in Admin" }).click();
     await m.page.waitForURL(/\/admin#people$/);
     await m.page.locator("[data-person]", { hasText: "Alex Brown" }).click();
