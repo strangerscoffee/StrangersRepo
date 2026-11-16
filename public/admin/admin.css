@@ -309,6 +309,8 @@ button.stat{cursor:pointer}
 .w-order-feedback{flex:1 1 100%;display:grid;justify-items:start;gap:8px;padding:10px 12px;border-radius:12px;background:var(--warn-bg);font-size:13.5px;color:var(--fg);overflow-wrap:anywhere}
 .w-order-feedback p{margin:0}
 .w-order-feedback .btn{min-height:44px}
+.w-order-feedback,#wLegacyDispatch{min-width:0;max-width:100%}
+.w-order-feedback .btn,#wLegacyDispatch .btn{min-width:0;max-width:100%;white-space:normal;overflow-wrap:anywhere}
 .w-order-heading{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .w-order-heading h3{flex:1 1 100%;font-size:20px;font-weight:650;letter-spacing:-.02em;overflow-wrap:anywhere}
 .w-order-section{display:grid;gap:10px;padding-top:16px;border-top:1px solid var(--line);min-width:0}

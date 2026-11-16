@@ -65,7 +65,7 @@ test('permission loss during a batch clears private data and stops without an un
 for(const [screen,viewport,isMobile] of [['phone',{width:393,height:852},true],['iPad',{width:1180,height:820},false]])for(const colorScheme of ['light','dark']){
  test(`admin notification recovery preserves drafts on ${screen} (${colorScheme})`,async()=>{
   const ctx=await browser.newContext({viewport,isMobile,hasTouch:isMobile,colorScheme}),[name,value]=ADMIN.split('=');await ctx.addCookies([{name,value,url:srv.base}]);const page=await ctx.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));let retried=false;
-  await page.route('**/api/admin/wholesale/order-emails',async route=>{const response=await route.fetch(),data=await response.json();await route.fulfill({response,json:{...data,delivery:{email:{pending:0,failed:0,unknown:1},slack:{pending:0,failed:1,unknown:0},legacyDispatch:[]}}});});
+  await page.route('**/api/admin/wholesale/order-emails',async route=>{const response=await route.fetch(),data=await response.json();await route.fulfill({response,json:{...data,delivery:{email:{pending:0,failed:0,unknown:1},slack:{pending:0,failed:1,unknown:0},legacyDispatch:[{id:blockedStanding.id,business:'VeryLongBusinessName'.repeat(6)}]}}});});
   await page.route('**/api/admin/wholesale/order-emails/email-retry',async route=>{assert.equal(route.request().postDataJSON().acknowledgeUnknown,true);retried=true;await route.fulfill({json:{queued:1,delivery:{email:{pending:1,failed:0,unknown:0},slack:{pending:0,failed:1,unknown:0},legacyDispatch:[]}}});});
   try{
    await page.goto(srv.base+'/admin#wholesale');await page.locator('[data-act="wh-tab"][data-id="orders"]').click();
@@ -77,6 +77,7 @@ for(const [screen,viewport,isMobile] of [['phone',{width:393,height:852},true],[
    assert.match(await page.locator('#wRetryConfirm').innerText(),/may send a duplicate/);assert.ok(await page.locator('#wRetryConfirm').evaluate(e=>e.getBoundingClientRect().bottom<=innerHeight+1),'review confirmation is visible without an extra scroll');
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth-innerWidth),0);
    assert.ok(await page.locator('#sheet').evaluate(e=>e.scrollWidth<=e.clientWidth+1),'notification sheet fits');
+   assert.ok(await page.locator('#wLegacyDispatch .btn').evaluate(e=>e.getBoundingClientRect().right<=e.parentElement.getBoundingClientRect().right+1),'long business name fits the recovery section');
    if(process.env.SHOT_DIR)await page.screenshot({path:process.env.SHOT_DIR+`/notification-recovery-${screen}-${colorScheme}.png`,fullPage:true});
    await page.locator('[data-sheet="retry-reviewed"]').click();await page.getByText('1 notifications queued for retry').waitFor();assert.equal(retried,true);assert.equal(await page.locator('#wOrderEmailsTo').inputValue(),'unsaved-draft@example.invalid');assert.deepEqual(errors,[]);
   }finally{await page.unrouteAll({behavior:'wait'});await ctx.close();}
