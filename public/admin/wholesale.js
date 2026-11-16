@@ -146,7 +146,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     const allCount = counts ? Object.values(counts).reduce((sum, n) => sum + n, 0) : data.counts.order;
     const hasNew = counts ? (counts.New || 0) > 0 : true;
     const hasPreparation = counts ? (counts.New || 0) + (counts.Preparing || 0) > 0 : true;
-    const tools = html`<div class="w-order-toolbar"><div class="toolbar">${search("Search wholesale orders", "Search order, reference or customer")}</div>
+    const tools = html`${data.standingIssues?.length ? html`<div class="w-order-feedback" role="status"><b>${data.standingIssues[0].count} standing ${data.standingIssues[0].count === 1 ? "delivery needs" : "deliveries need"} review</b><p>The next delivery is paused. Check the business account and available coffee, size and grind before retrying.</p><div class="toolbar">${data.standingIssues.slice(0, 5).map(issue => html`<button class="btn sm soft" type="button" data-act="wh-standing-review" data-id="${issue.id}">Review ${issue.business || "standing order"}</button>`)}</div></div>` : ""}<div class="w-order-toolbar"><div class="toolbar">${search("Search wholesale orders", "Search order, reference or customer")}</div>
       <div class="segwrap w-filters"><div class="seg" role="group" aria-label="Order status">${["all", ...data.statuses].map((value) => html`<button type="button" data-act="wh-status" data-id="${value}" aria-pressed="${status === value}">${value === "all" ? "All orders" : value}${counts && (value === "all" ? allCount : counts[value]) > 0 ? html`<span class="w-status-count">${value === "all" ? allCount : counts[value] || 0}</span>` : ""}</button>`)}</div></div>
       ${picking ? html`<div class="w-print-bar w-picking" role="region" aria-label="Choose orders"><span class="w-picked-count" aria-live="polite">${picked.size ? `${picked.size} selected` : "Tap orders to select them"}</span><button class="btn sm soft" type="button" data-act="wh-pick-all">Select all shown</button><button class="btn sm soft" type="button" data-act="wh-totals" ${picked.size ? "" : raw("disabled")}>Bag totals</button><button class="btn sm" type="button" data-act="wh-print-picked" ${picked.size ? "" : raw("disabled")}>${svg("doc")}Print selected</button><button class="btn sm soft" type="button" data-act="wh-pick-done">Done</button><div class="w-batch" id="wBatch" role="group" aria-label="Change the selected orders">${batchControls()}</div></div>`
         : html`<div class="w-print-bar">${hasNew || rows.length ? html`<details class="w-print-menu"><summary class="btn sm ${hasNew ? "" : "soft"}">${svg("doc")}Print<span aria-hidden="true">⌄</span></summary><div class="w-print-options"><button class="btn sm soft" type="button" data-act="wh-print-new" ${hasNew ? "" : raw("disabled")}>Print new orders</button><button class="btn sm soft" type="button" data-act="wh-pick-start" ${rows.length ? "" : raw("disabled")}>Select to print</button></div></details>` : html`<button class="btn sm" type="button" disabled>${svg("doc")}Print<span aria-hidden="true">⌄</span></button>`}<button class="btn sm soft" type="button" data-act="wh-pick-start" ${rows.length ? "" : raw("disabled")}>Select</button><button class="btn sm soft" type="button" data-act="wh-totals" ${hasPreparation ? "" : raw("disabled")}>Bag totals</button></div>`}</div>`;
@@ -173,10 +173,23 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
       <div class="row w-actions"><button class="btn soft" type="button" data-sheet="test" ${settings.sending ? "" : raw("disabled")}>Send a test email</button><button class="btn" type="button" data-sheet="save">Save</button></div>
       <h3>Slack</h3><p class="hint" id="wSlackState">${settings.slack ? "Each new order is posted to the orders channel: straight away from 07:45 to 16:45 (Sunday 10:00 to 15:30), otherwise at 07:50 (Sunday 10:00)." : "Not set up: add the SLACK_ORDERS_WEBHOOK_URL secret in Cloudflare (README-deploy.md)."}</p>
       <div class="row w-actions"><button class="btn soft" type="button" data-sheet="slack-test" ${settings.slack ? "" : raw("disabled")}>Send a test to Slack</button></div></div>`;
+    const deliveryView = () => html`<section class="w-order-section" aria-label="Notification delivery"><h3>Notification delivery</h3>${["email", "slack"].map(channel => { const counts = settings.delivery?.[channel] || {pending:0,failed:0,unknown:0}; return html`<p id="wDelivery-${channel}" class="hint">${channel === "email" ? "Dispatch emails" : "Slack posts"}: ${counts.pending} waiting · ${counts.failed} retrying or failed · ${counts.unknown} need review</p><div class="toolbar">${counts.failed ? html`<button class="btn sm soft" type="button" data-sheet="retry-${channel}">Retry failed ${channel === "email" ? "emails" : "posts"}</button>` : ""}${counts.unknown ? html`<button class="btn sm soft" type="button" data-sheet="review-${channel}">Review uncertain ${channel === "email" ? "emails" : "posts"}</button>` : ""}</div>`; })}<div id="wLegacyDispatch">${(settings.delivery?.legacyDispatch || []).map(row => html`<button class="btn sm soft" type="button" data-sheet="review-legacy" data-id="${row.id}">Review previous failed dispatch: ${row.business}</button>`)}</div><div id="wRetryConfirm" class="w-order-feedback" hidden><p>Check whether these notifications already arrived. Retrying an uncertain delivery may send a duplicate.</p><div class="toolbar"><button class="btn sm" type="button" data-sheet="retry-reviewed">Retry after checking</button><button class="btn sm soft" type="button" data-sheet="retry-cancel">Cancel</button></div></div></section>`;
+    let reviewedChannel = null, reviewedOrder = null, retrying = false;
     const fail = (error) => { const box = $("#wOrderEmailsErr"); if (box) { box.textContent = error.message; box.hidden = false; } };
-    openSheet(view(), async (action) => {
+    openSheet(view(), async (action, button) => {
       if (action === "close") { closeSheet(); return; }
       $("#wOrderEmailsErr").hidden = true;
+      if (action === "retry-cancel") { reviewedChannel = null; $("#wRetryConfirm").hidden = true; return; }
+      if (action.startsWith("review-")) { reviewedChannel = action.slice(7); reviewedOrder = button?.dataset.id || null; $("#wRetryConfirm").hidden = false; $("#wRetryConfirm").scrollIntoView({ block: "nearest" }); return; }
+      if (action.startsWith("retry-") && action !== "retry-cancel") {
+        if (retrying) return;
+        const unknown = action === "retry-reviewed", channel = unknown ? reviewedChannel : action.slice(6);
+        if (!["email", "slack", "legacy"].includes(channel)) return;
+        retrying = true;
+        try { const result = await api("POST", `/api/admin/wholesale/order-emails/${channel}-retry`, { acknowledgeUnknown: unknown, ...(channel === "legacy" ? { orderId: reviewedOrder } : {}) }); settings.delivery = result.delivery; reviewedChannel = null; reviewedOrder = null; put(deliveryHost, deliveryView()); toast(`${result.queued} notifications queued for retry`); }
+        catch (error) { fail(error); } finally { retrying = false; }
+        return;
+      }
       if (action === "save") {
         const to = $("#wOrderEmailsTo").value.split(/[\s,;]+/).map((value) => value.trim()).filter(Boolean);
         try { settings = await api("PUT", "/api/admin/wholesale/order-emails", { ifVersion: settings.version, enabled: $("#wOrderEmailsOn").checked, to, confirmCustomers: $("#wConfirmCustomers").checked }); closeSheet(); toast(settings.enabled ? "Order emails saved" : "Order emails switched off"); }
@@ -191,6 +204,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
         catch (error) { fail(error); }
       }
     });
+    const deliveryHost = document.createElement("div"); put(deliveryHost, deliveryView()); $("#sheet .w-sheet").append(deliveryHost);
   }
   // The ordering page's announcement bar: a heading, a message, Information or Important, optional dates, on or off.
   async function openAnnouncement() {
@@ -248,19 +262,22 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
   }
   function refreshBatch() { const box = $("#wBatch"); if (box) put(box, batchControls()); }
   async function runBatch(to) {
-    const targets = data.orders.filter((row) => picked.has(row.id) && movable(row, to));
+    const targets = data.orders.filter((row) => picked.has(row.id) && movable(row, to)).map(row => ({ ...row }));
     if (!targets.length || batch?.running) return;
-    batch = { running: true, done: 0, total: targets.length }; refreshBatch();
+    const operation = { running: true, done: 0, total: targets.length };
+    batch = operation; refreshBatch();
     let saved = 0, failed = 0, conflict = false;
     for (const row of targets) {
+      if (batch !== operation) return;
       try {
         const result = await api("PATCH", `/api/admin/wholesale/orders/${row.id}`, { ifVersion: row.version, status: to, customerId: row.customerId, note: row.note || "", trackingUrl: row.trackingUrl || "" });
-        if (result.order?.status !== to) throw new Error("The status update could not be confirmed.");
+        if (batch !== operation) return;
+        if (result.order?.id !== row.id || result.order.status !== to || !Number.isSafeInteger(result.order.version) || result.order.version <= row.version) throw new Error("The status update could not be confirmed.");
         saved++; picked.delete(row.id);
-      } catch (error) { failed++; if (error.code === "conflict") conflict = true; }
-      batch.done++; refreshBatch();
+      } catch (error) { if (batch !== operation || error.code === "session_changed" || error.code === "session_unverified" || error.status === 401 || error.status === 403) { if (batch === operation) batch = null; return; } failed++; if (error.code === "conflict") conflict = true; }
+      operation.done++; refreshBatch();
     }
-    batch = null;
+    if (batch !== operation) return; batch = null;
     await reload();
     const word = to.toLowerCase();
     toast(failed ? `${saved} marked ${word}. ${failed} couldn't be saved${conflict ? " (changed elsewhere)" : ""}; they're still selected.` : `${saved} ${saved === 1 ? "order" : "orders"} marked ${word}.`);
@@ -1056,6 +1073,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     drawPhotos();
   }
   return {
+    clear() { sequence++; data = null; batch = null; picked.clear(); picking = false; clearTimeout(timer); },
     view,
     navigation,
     syncNavigation,
@@ -1065,6 +1083,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
       if (name.startsWith("wh-invoice-")) { await invoiceUI.act(name, id); return; }
       if (name.startsWith("wh-ins-")) { await insightsUI.act(name, id); return; }
       if (name.startsWith("wh-tabs-")) { await tabsUI.act(name, id); return; }
+      if (name === "wh-standing-review") { selectSection("orders"); query = id; status = "all"; orderQueue = ""; await reload(); editOrder(id); return; }
       if (name === "wh-order-emails") { await openOrderEmails(); return; }
       if (name === "wh-announcement") { await openAnnouncement(); return; }
       if (name === "wh-print-new") { await printUI.printOrders(printUI.scopes.New); return; }

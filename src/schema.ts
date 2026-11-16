@@ -301,6 +301,16 @@ const MIGRATIONS: Migration[] = [
   } },
   { id: 28, name: "Wholesale password reset links", run: migrateResets },
   { id: 29, name: "Wholesale ordering page announcement", run: migrateAnnouncement },
+  { id: 30, name: "Recoverable wholesale notification delivery", run: async env => {
+    await env.DB.batch([
+      env.DB.prepare("CREATE TABLE IF NOT EXISTS wholesale_email_outbox (event_key TEXT PRIMARY KEY,order_id TEXT NOT NULL,payload TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'queued',attempts INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,next_attempt_at INTEGER NOT NULL,attempted_at INTEGER,first_attempt_at INTEGER,lease_until INTEGER,claim_token TEXT,uncertain INTEGER NOT NULL DEFAULT 0,sent_at INTEGER,last_error TEXT)"),
+      env.DB.prepare("CREATE INDEX IF NOT EXISTS wholesale_email_outbox_due ON wholesale_email_outbox(state,next_attempt_at,lease_until)"),
+      env.DB.prepare("CREATE TABLE IF NOT EXISTS slack_order_delivery (order_id TEXT PRIMARY KEY,state TEXT NOT NULL,claim_token TEXT,lease_until INTEGER,attempted_at INTEGER,updated_at INTEGER NOT NULL,last_error TEXT)"),
+      // Preserve historical sent markers: legacy acknowledged sends and interrupted claims cannot be distinguished.
+      env.DB.prepare("INSERT OR IGNORE INTO slack_order_delivery(order_id,state,updated_at,last_error) SELECT order_id,CASE WHEN sent_at IS NOT NULL THEN 'sent' WHEN attempts>=6 THEN 'failed' ELSE 'queued' END,created_at,last_error FROM slack_order_posts"),
+      env.DB.prepare("CREATE INDEX IF NOT EXISTS slack_order_delivery_lease ON slack_order_delivery(state,lease_until)"),
+    ]);
+  } },
 ];
 
 async function migrate(env: Env): Promise<void> {

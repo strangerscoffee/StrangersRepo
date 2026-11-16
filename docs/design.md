@@ -181,3 +181,7 @@ Ranges are estimates from past forecast errors, never advertised as guaranteed 8
 ### Staff order recovery
 
 An uncertain staff submission opens a compact recovery window with business/bag summary, Check submitted order and Keep for later. The original payload stays frozen across closing/reloading and only the verified original account can recover it. Close if unplaced requires an inline confirmation: it recovers any saved order or safely closes the unused request ID before a corrected new order can be reviewed. A confirmed removed order can be acknowledged before beginning a new one. No editable duplicate draft or fresh UUID is offered while the outcome is uncertain. Standard light/dark, touch targets, session shield and keyboard focus rules apply. The roast table labels its residual forecast as Additional expected and explains that later dispatches are excluded.
+
+## Wholesale operational recovery
+
+A paused standing delivery appears in the Orders tools with a business-specific Review action; the customer history gives a generic contact-Strangers message. The action searches the exact order and opens its existing versioned editor. Order alerts adds notification counts and separate known-failure and uncertain-delivery controls. The latter opens an inline confirmation explaining possible duplicates. Refreshing delivery status updates only that section and preserves unsaved notification settings. Controls wrap within the existing phone/iPad sheet in light and dark themes.

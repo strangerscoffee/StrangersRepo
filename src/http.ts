@@ -57,6 +57,29 @@ export function errorResponse(e: ApiError): Response {
   return json({ ...(e.extra || {}), code: e.code, message: e.message }, e.status);
 }
 
+/** Bound binary uploads while reading, including requests without Content-Length. */
+export async function readBytes(req: Request, maxBytes: number, message: string): Promise<Uint8Array> {
+  if (Number(req.headers.get("content-length") || 0) > maxBytes) throw new ApiError(413, "too_large", message);
+  const reader = req.body?.getReader(), chunks: Uint8Array[] = [];
+  let length = 0;
+  if (reader) try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      length += value.byteLength;
+      if (length > maxBytes) {
+        void reader.cancel().catch(() => {});
+        throw new ApiError(413, "too_large", message);
+      }
+      chunks.push(value);
+    }
+  } finally { reader.releaseLock(); }
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+  return bytes;
+}
+
 /** Reads a JSON request body, capped at `maxBytes`. */
 export async function readJson<T = any>(req: Request, maxBytes: number): Promise<T> {
   const len = Number(req.headers.get("content-length") || 0);

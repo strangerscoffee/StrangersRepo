@@ -4,10 +4,12 @@
 // with no RESEND_API_KEY send nothing. Failures go in audit_log as email_failed, like the rota's.
 import { audit } from "../audit";
 import { ApiError, Env, invalid, json, readJson } from "../http";
-import { object } from "../wholesaleStore";
-import { cleanEmail, emailReady, send } from "./send";
+import { object, get } from "../wholesaleStore";
+import { notificationStatus } from "../notificationStatus";
+import { deliverDispatchEmails, retryDispatchEmails, dispatchEvent } from "./outbox";
+import { cleanEmail, emailReady, send, type Outgoing } from "./send";
 import { esc } from "./templates";
-import { sendSlackTest, slackReady } from "../slackOrders";
+import { sendSlackTest, slackReady, retrySlackPosts, deliverSlackPosts } from "../slackOrders";
 
 export const DEFAULT_ORDER_EMAIL = "sales@strangerscoffee.com";
 const FROM = (env: Env) => env.ORDER_EMAIL_FROM || "Strangers Coffee Orders <orders@staffstrangerscoffee.com>";
@@ -188,21 +190,14 @@ ${order.lines.map((l) => `<tr><td style="${cell}font-weight:700;width:40px;">${l
   return { subject, html, text };
 }
 
-/** Emails the customer that their order went out (background; never throws). Same switch as the confirmation. */
-export async function dispatchToCustomer(env: Env, ctx: ExecutionContext | undefined, order: MailOrder, ordersUrl: string) {
+/** Freeze a dispatch notification before committing its durable event with the status change. */
+export async function prepareDispatchEmail(env: Env, order: MailOrder, ordersUrl: string): Promise<Outgoing | null> {
   const email = cleanEmail(order.customerSnapshot?.email);
-  if (!emailReady(env) || !email) return;
-  const run = (async () => {
-    try {
-      const settings = await orderEmailSettings(env);
-      if (!settings.confirmCustomers) return;
-      const mail = buildDispatchEmail(order, ordersUrl), name = order.business || "a wholesale customer";
-      await send(env, { to: { id: "customer", name, email, email_prefs: "{}", active: 1 }, kind: "order", mail, about: `${order.delivery === "Delivery" ? "shipped" : "collected"} email for ${order.id} to ${name}`, from: FROM(env), replyTo: settings.to[0] || DEFAULT_ORDER_EMAIL });
-    } catch (error) {
-      await audit(env, "email_failed", null, `Couldn't email the dispatch of wholesale order ${order.id}: ${String((error as Error)?.message || error).slice(0, 160)}`).catch(() => {});
-    }
-  })();
-  if (ctx) ctx.waitUntil(run); else await run;
+  if (!emailReady(env) || !email) return null;
+  const settings = await orderEmailSettings(env);
+  if (!settings.confirmCustomers) return null;
+  const mail = buildDispatchEmail(order, ordersUrl), name = order.business || "a wholesale customer";
+  return { to: { id: "customer", name, email, email_prefs: "{}", active: 1 }, kind: "order", mail, about: `${order.delivery === "Delivery" ? "shipped" : "collected"} email for ${order.id} to ${name}`, from: FROM(env), replyTo: settings.to[0] || DEFAULT_ORDER_EMAIL };
 }
 
 /** The customer hears when Strangers changes the bags on, or skips, a delivery of their standing order for them
@@ -308,8 +303,33 @@ export async function notifyCustomerChange(env: Env, ctx: ExecutionContext | und
 }
 
 /** Admin: GET/PUT order-emails ({ifVersion, enabled, to}) and POST order-emails/test. */
-export async function handleOrderEmailsAdmin(req: Request, env: Env, route: string, actor: string, diaryBase: string): Promise<Response | null> {
-  if (route === "order-emails" && req.method === "GET") return json(await orderEmailSettings(env));
+export async function handleOrderEmailsAdmin(req: Request, env: Env, route: string, actor: string, diaryBase: string, ctx?: ExecutionContext): Promise<Response | null> {
+  if (route === "order-emails" && req.method === "GET") return json({ ...await orderEmailSettings(env), delivery: await notificationStatus(env) });
+  if (route === "order-emails/legacy-retry" && req.method === "POST") {
+    const body = object(await readJson(req, 2048));
+    if (body.acknowledgeUnknown !== true) throw new ApiError(409, "delivery_unknown", "Check whether the dispatch email arrived before explicitly retrying it.");
+    if (typeof body.orderId !== "string" || !/^WS-[A-F0-9]{32}$/.test(body.orderId)) throw invalid("Choose the failed dispatch order.");
+    const eligible = (await notificationStatus(env)).legacyDispatch.some(row => row.id === body.orderId);
+    const order = eligible ? await get<MailOrder & {status?: string; preview?: boolean; deletedAt?: number}>(env, "order", body.orderId) : null;
+    if (!order || order.status !== "Dispatched" || order.preview || order.deletedAt) throw new ApiError(409, "delivery_changed", "This legacy failure is no longer available to retry. Reload the delivery list.");
+    const outgoing = await prepareDispatchEmail(env, order, (env.PREVIEW_HOST ? `https://${env.PREVIEW_HOST}/` : new URL("/wholesale/", req.url).href) + "#orders");
+    if (!outgoing) throw new ApiError(409, "email_off", "Customer emails must be configured and enabled before retrying.");
+    const inserted = await dispatchEvent(env, order.id, order.version, outgoing).run();
+    if (!inserted.meta.changes) throw new ApiError(409, "delivery_changed", "The order changed or its notification is already tracked. Reload before retrying.");
+    await audit(env, "wholesale_email_retry", actor, `${actor} reviewed and retried the legacy dispatch email for ${order.id}.`);
+    const delivery = deliverDispatchEmails(env, "dispatch:" + order.id).catch(() => {});
+    if (ctx) ctx.waitUntil(delivery); else await delivery;
+    return json({ queued: 1, delivery: await notificationStatus(env) });
+  }
+  const retry = /^order-emails\/(email|slack)-retry$/.exec(route);
+  if (retry && req.method === "POST") {
+    const body = object(await readJson(req, 2048));
+    if (body.acknowledgeUnknown !== undefined && typeof body.acknowledgeUnknown !== "boolean") throw invalid("Explicitly confirm whether uncertain delivery was reviewed.");
+    const queued = retry[1] === "email" ? await retryDispatchEmails(env, actor, body.acknowledgeUnknown === true) : await retrySlackPosts(env, actor, body.acknowledgeUnknown === true);
+    const delivery = (retry[1] === "email" ? deliverDispatchEmails(env) : deliverSlackPosts(env)).catch(() => {});
+    if (ctx) ctx.waitUntil(delivery); else await delivery;
+    return json({ queued, delivery: await notificationStatus(env) });
+  }
   if (route === "order-emails" && req.method === "PUT") {
     const body = object(await readJson(req, 4096));
     const expected = body.ifVersion;

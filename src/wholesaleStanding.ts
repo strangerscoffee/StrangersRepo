@@ -25,6 +25,12 @@ const OPEN = ["New", "Preparing", "Ready"];
 type AnyOrder = Record<string, any> & Versioned;
 const strip = ({ id, version, updatedAt, ...rest }: AnyOrder) => rest;
 const isDay = (value: unknown): value is string => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) && addDays(value, 0) === value;
+async function deferStanding(env: Env, saved: AnyOrder, actor: string, code = "catalogue_changed") {
+  const now = Date.now(), data = { ...strip(saved), standingIssue: { code, at: now }, standingRetryAt: now + 15 * 60000 };
+  const result = await env.DB.prepare("UPDATE wholesale_preview SET data=?,version=version+1,updated_at=? WHERE kind='order' AND id=? AND version=?")
+    .bind(JSON.stringify(data), now, saved.id, saved.version).run();
+  if (result.meta.changes && saved.standingIssue?.code !== code) await audit(env, "wholesale_standing_blocked", actor, `Standing order ${saved.id}: the next delivery needs review. No unavailable coffee or private price was copied.`);
+}
 const totals = (lines: any[], delivery: string) => {
   const pence = lines.reduce((sum, line) => sum + line.price * line.quantity, 0), deliveryPence = shippingFor(delivery, pence);
   return { pence, grams: lines.reduce((sum, line) => sum + line.grams * line.quantity, 0), packs: lines.reduce((sum, line) => sum + line.quantity, 0), deliveryPence, totalPence: pence + deliveryPence };
@@ -60,13 +66,21 @@ export async function rollStanding(env: Env, saved: AnyOrder, actor: string): Pr
   const id = saved.nextRunId || "WS-" + crypto.randomUUID().replaceAll("-", "").toUpperCase();
   if (!/^WS-[A-F0-9]{32}$/.test(id)) throw invalid("This standing order's next delivery reference needs admin review.");
   const coffees = await catalogue(env, true);
+  const customer = saved.customerId ? await wholesaleCustomer(env, saved.customerId) : null;
+  const usual = Array.isArray(saved.repeatLines) && saved.repeatLines.length ? saved.repeatLines : saved.lines;
+  // A new delivery must still be eligible for this business. Validate before reading any new private price.
+  if (!customer || customer.status === "On hold" || !Array.isArray(usual) || !usual.length || usual.some((line: any) => {
+    const product = coffees.find(p => p.id === line.productId);
+    return !product || !product.active || !product.inStock || !canOrder(product, saved.customerId) ||
+      !["quarter", "kilo"].includes(line.pack) || !packsOf(product).includes(line.pack) ||
+      !product.grindOptions.some(g => g.id === line.grind && g.enabled) || !Number.isSafeInteger((product.prices as Record<string, number>)[line.pack]);
+  })) { await deferStanding(env, saved, actor); return null; }
   // A change made for one delivery only leaves the usual bags in repeatLines: the next run goes back to them.
-  const lines = (Array.isArray(saved.repeatLines) && saved.repeatLines.length ? saved.repeatLines : saved.lines).map((line: any) => {
+  const lines = usual.map((line: any) => {
     const product = coffees.find((p) => p.id === line.productId), price = product?.active ? (product.prices as Record<string, number>)[line.pack] : undefined;
     const { recipe, ...rest } = line, now = product?.recipe?.length ? recipeText(product) : product ? "" : recipe;
     return { ...rest, price: Number.isInteger(price) ? price : line.price, ...(now ? { recipe: now } : {}) };
   });
-  const customer = saved.customerId ? await wholesaleCustomer(env, saved.customerId) : null;
   const fresh: Record<string, unknown> = {};
   if (customer) {
     const location = customerLocations(customer).find((l) => l.id === (saved.locationId || "primary")) || customerLocations(customer)[0];
@@ -74,7 +88,7 @@ export async function rollStanding(env: Env, saved: AnyOrder, actor: string): Pr
     Object.assign(fresh, { business: customer.business, customerSnapshot: { ...profile, contact: location.contact, phone: location.phone, address: location.address, postcode: location.postcode, deliveryNotes: location.deliveryNotes }, deliveryNotes: location.deliveryNotes, paymentTerms: paymentTermsFor(customer), locationId: location.id, locationSnapshot: { ...location } });
   }
   // A new run starts clean: no emails sent yet, not on a (possibly cleared) tab, no changes, no tracking or notes.
-  const now = Date.now(), { nextRunId, amendedAt, amendedBy, amendedByCustomer, originalLines, repeatLines, skipped, trackingUrl, note, dispatchEmailedAt, tab, tabClearedId, ...base } = strip(saved);
+  const now = Date.now(), { nextRunId, amendedAt, amendedBy, amendedByCustomer, originalLines, repeatLines, skipped, trackingUrl, note, dispatchEmailedAt, standingIssue, standingRetryAt, tab, tabClearedId, ...base } = strip(saved);
   const next = {
     ...base, ...fresh, status: "New", note: "", trackingUrl: "", createdAt: now, date: ukDay(now), requestKey: `standing:${id}`, lines,
     ...totals(lines, saved.delivery),
@@ -84,7 +98,8 @@ export async function rollStanding(env: Env, saved: AnyOrder, actor: string): Pr
   };
   // D1 batches are atomic: an insertion failure rolls the claim back too. The
   // exact parent JSON and revision tie the INSERT to this update, even in a race.
-  const parent = JSON.stringify({ ...strip(saved), nextRunId: id });
+  const parentData = strip(saved); delete parentData.standingIssue; delete parentData.standingRetryAt;
+  const parent = JSON.stringify({ ...parentData, nextRunId: id });
   const results = await env.DB.batch([
     env.DB.prepare("UPDATE wholesale_preview SET data=?,version=version+1,updated_at=? WHERE kind='order' AND id=? AND version=? AND NOT EXISTS(SELECT 1 FROM wholesale_preview WHERE kind='order' AND id=?)")
       .bind(parent, now, saved.id, saved.version, id),
@@ -99,12 +114,13 @@ export async function rollStanding(env: Env, saved: AnyOrder, actor: string): Pr
 /** Bounded repair for interrupted older rollovers, and closed runs that need a retry.
  * Existing next orders, including tombstones, are never replaced or recreated. */
 export async function repairStandingRuns(env: Env, limit = 3) {
-  const rows = await env.DB.prepare("SELECT id,data,version,updated_at FROM wholesale_preview p WHERE kind='order' AND json_extract(data,'$.preview')=0 AND json_extract(data,'$.deletedAt') IS NULL AND json_extract(data,'$.standing.every') IN (1,2,4) AND json_extract(data,'$.status') IN ('Dispatched','Cancelled') AND (json_extract(data,'$.nextRunId') IS NULL OR NOT EXISTS(SELECT 1 FROM wholesale_preview n WHERE n.kind='order' AND n.id=json_extract(p.data,'$.nextRunId'))) ORDER BY updated_at,id LIMIT ?")
-    .bind(Math.max(1, Math.min(10, limit))).all<{id:string;data:string;version:number;updated_at:number}>();
+  const rows = await env.DB.prepare("SELECT id,data,version,updated_at FROM wholesale_preview p WHERE kind='order' AND json_extract(data,'$.preview')=0 AND json_extract(data,'$.deletedAt') IS NULL AND json_extract(data,'$.standing.every') IN (1,2,4) AND json_extract(data,'$.status') IN ('Dispatched','Cancelled') AND COALESCE(json_extract(data,'$.standingRetryAt'),0)<=? AND (json_extract(data,'$.nextRunId') IS NULL OR NOT EXISTS(SELECT 1 FROM wholesale_preview n WHERE n.kind='order' AND n.id=json_extract(p.data,'$.nextRunId'))) ORDER BY updated_at,id LIMIT ?")
+    .bind(Date.now(), Math.max(1, Math.min(10, limit))).all<{id:string;data:string;version:number;updated_at:number}>();
   let repaired = 0;
   for (const row of rows.results) try {
     if (await rollStanding(env, { ...JSON.parse(row.data), id:row.id, version:row.version, updatedAt:row.updated_at }, "System recovery")) repaired++;
   } catch {
+    await deferStanding(env, { ...JSON.parse(row.data), id: row.id, version: row.version, updatedAt: row.updated_at }, "System recovery", "retry_needed").catch(() => {});
     await audit(env, "wholesale_standing_failed", null, `Standing order ${row.id} needs next-delivery recovery.`).catch(() => {});
   }
   return repaired;
@@ -138,8 +154,8 @@ export async function skipRun(env: Env, id: string, value: unknown, actor: strin
   if (!order.standing) throw invalid("Only a standing order's delivery can be skipped. To stop a one-off order, cancel it.");
   const marked = await saveChange(env, order, { ...strip(order), status: "Cancelled", skipped: { by: by.customerId ? order.business || "The customer" : actor, customer: !!by.customerId, at: Date.now() } }, version(body.ifVersion), by);
   await audit(env, "wholesale_preview_status", actor, `${actor} skipped wholesale standing delivery ${id}.`);
-  if (await rollStanding(env, marked, actor)) return (await get(env, "order", id))!;
-  return marked;
+  await rollStanding(env, marked, actor);
+  return (await get(env, "order", id)) || marked;
 }
 
 /** Amends the bags on a New, Preparing or Ready customer order with no invoice: kept lines keep their saved price; added

@@ -12,7 +12,8 @@ import { audit } from "./audit";
 import { ApiError, type Env, invalid, json, readJson } from "./http";
 import { manageWholesaleAccount, publicCustomer, wholesaleAccounts, wholesaleCustomer, paymentTermsFor, PAYMENT_TERMS, type Customer, type OrderingUser } from "./wholesaleAccounts";
 import { customerLocations, editedCustomerLocations, locationDefaults, validLocationId, type CustomerLocation } from "./wholesaleCustomers";
-import { notifyCustomerChange, standingChangeToCustomer, confirmToCustomer, dispatchToCustomer, handleOrderEmailsAdmin, notifyNewOrder, orderEmailSettings } from "./email/orders";
+import { notifyCustomerChange, standingChangeToCustomer, confirmToCustomer, prepareDispatchEmail, handleOrderEmailsAdmin, notifyNewOrder, orderEmailSettings } from "./email/orders";
+import { dispatchEvent, deliverDispatchEmails } from "./email/outbox";
 import { notifySlackChange, notifySlackNewOrder } from "./slackOrders";
 import { handleInsights } from "./insights";
 import { autoTabFor, clearTab, listTabs, setOnTab } from "./wholesaleTabs";
@@ -52,11 +53,12 @@ interface Order {
   trackingUrl?: string;
   /** The customer's own optional note at checkout ("Use our own custom labels"); shown back to them, unlike the internal `note`. */
   customerNote?: string;
-  /** When the customer was emailed that it was shipped or collected (once). */
+  /** Legacy marker retained for historical dispatch mail. New mail uses the durable outbox. */
   dispatchEmailedAt?: number;
   /** On the customer's open tab (src/wholesaleTabs.ts), and the cleared tab it went into. Staff/admin only. */
   tab?: { at: number; by: string; auto?: boolean }; tabClearedId?: string;
   /** Admin only to set (src/wholesaleStanding.ts): the day it's due to go out, and the standing order it belongs to. */
+  standingIssue?: { code: string; at: number }; standingRetryAt?: number;
   dispatchDate?: string; standing?: Standing; nextRunId?: string; previousRunId?: string;
   /** When an admin changed the bags; `originalLines` are the bags as first placed. */
   amendedAt?: number; amendedBy?: string; originalLines?: Line[];
@@ -363,15 +365,32 @@ export async function updateOrderStatus(env: Env, id: string, body: Record<strin
   // Dispatch day and standing order: Admin only (the staff orders page never sends `schedule`).
   const schedule = allowSchedule ? scheduleFields(order, body.schedule) : null;
   // The first time a customer order is marked Dispatched, the customer is emailed (shipped or collected); recorded on
-  // the order so going back and forth never sends it twice.
+  // a unique durable event so going back and forth never sends it twice.
   const firstDispatch = body.status === "Dispatched" && order.status !== "Dispatched" && order.preview === false && !order.dispatchEmailedAt;
-  const data: Order = { ...current, ...(schedule || {}), status: body.status, customerId, note, trackingUrl: body.trackingUrl === undefined ? order.trackingUrl || "" : trackingUrl(body.trackingUrl), ...(firstDispatch && notify ? { dispatchEmailedAt: Date.now() } : {}) };
+  const data: Order = { ...current, ...(schedule || {}), status: body.status, customerId, note, trackingUrl: body.trackingUrl === undefined ? order.trackingUrl || "" : trackingUrl(body.trackingUrl) };
   for (const key of ["dispatchDate", "standing"] as const) if (data[key] === undefined) delete data[key];
-  const updated = await save(env, "order", id, data, version(body.ifVersion));
-  if (firstDispatch && notify) await dispatchToCustomer(env, notify.ctx, updated, notify.ordersUrl);
+  if (!data.standing) { delete data.standingIssue; delete data.standingRetryAt; }
+  const expected = version(body.ifVersion);
+  const outgoing = firstDispatch && notify ? await prepareDispatchEmail(env, { ...data, id }, notify.ordersUrl) : null;
+  let updated: Order & Versioned;
+  if (outgoing) {
+    const at = Date.now();
+    // Insert only at the reviewed version, then update that same row in one transaction.
+    const results = await env.DB.batch([
+      dispatchEvent(env, id, expected, outgoing),
+      env.DB.prepare("UPDATE wholesale_preview SET data=?,version=version+1,updated_at=? WHERE kind='order' AND id=? AND version=?").bind(JSON.stringify(data), at, id, expected),
+    ]);
+    if (!results[1].meta.changes) throw new ApiError(409, "conflict", "This order changed on another device. Reload it before saving.");
+    updated = { ...data, id, version: expected + 1, updatedAt: at };
+  } else updated = await save(env, "order", id, data, expected);
+  if (body.status === "Dispatched" && notify) {
+    const delivery = deliverDispatchEmails(env, "dispatch:" + id).catch(() => {});
+    if (notify.ctx) notify.ctx.waitUntil(delivery); else await delivery;
+  }
   await audit(env, "wholesale_preview_status", actor, `${actor} marked wholesale order ${id} as ${body.status}. No fulfilment action was sent.`);
   // A standing run that went out (or was skipped) makes the next one, which also records it on this order.
-  if (await rollStanding(env, updated, actor)) return (await get<Order>(env, "order", id))!;
+  await rollStanding(env, updated, actor);
+  if (updated.standing && ["Dispatched", "Cancelled"].includes(updated.status)) return (await get<Order>(env, "order", id))!;
   return updated as Order & Versioned;
 }
 
@@ -382,17 +401,18 @@ export async function handleWholesaleAdmin(req: Request, env: Env, route: string
   if (invoiceResponse) return invoiceResponse;
   const announcement = await handleAnnouncementAdmin(req, env, route, user.name);
   if (announcement) return announcement;
-  const orderEmails = await handleOrderEmailsAdmin(req, env, route, user.name, links.diary);
+  const orderEmails = await handleOrderEmailsAdmin(req, env, route, user.name, links.diary, ctx);
   if (orderEmails) return orderEmails;
   const insightsResponse = await handleInsights(req, env, route, user.name);
   if (insightsResponse) return insightsResponse;
   if (route === "" && req.method === "GET") {
+    const standingIssues = await env.DB.prepare("SELECT id,json_extract(data,'$.business') AS business,COUNT(*) OVER() AS count FROM wholesale_preview WHERE kind='order' AND json_extract(data,'$.preview')=0 AND json_extract(data,'$.deletedAt') IS NULL AND json_extract(data,'$.standingIssue') IS NOT NULL AND json_extract(data,'$.status') IN ('Dispatched','Cancelled') ORDER BY updated_at DESC LIMIT 20").all<{ id: string; business: string; count: number }>();
     const [orderPage, customerPage, products, counts, stats] = await Promise.all([
       adminWholesalePage<Order>(env, "order"), adminWholesalePage<Customer>(env, "customer"), catalogue(env, true),
       env.DB.prepare("SELECT kind, COUNT(*) AS n FROM wholesale_preview WHERE kind <> 'order' OR json_extract(data, '$.deletedAt') IS NULL GROUP BY kind").all<{ kind: string; n: number }>(),
       adminWholesaleStats(env),
     ]);
-    return json({ minimumOrderGrams: standardMinimum(env), orders: orderPage.records.map((order) => visibleOrder(order, true)), customers: customerPage.records.map(locationDefaults), orderCursor: orderPage.nextCursor, customerCursor: customerPage.nextCursor, stats: { ...stats, totalCustomers: customerPage.count, visibleCoffees: products.filter((product) => product.active).length, totalCoffees: products.length }, accounts: await wholesaleAccounts(env), products, paymentTermChoices: PAYMENT_TERMS, statuses: STATUSES, sourceDate: catalogueRetrievedAt, counts: Object.fromEntries(counts.results.map((row) => [row.kind, row.n])), links: { ...links, preview: links.preview || "/wholesale/" }, preview: true, stage: "beta" });
+    return json({ standingIssues: standingIssues.results, minimumOrderGrams: standardMinimum(env), orders: orderPage.records.map((order) => visibleOrder(order, true)), customers: customerPage.records.map(locationDefaults), orderCursor: orderPage.nextCursor, customerCursor: customerPage.nextCursor, stats: { ...stats, totalCustomers: customerPage.count, visibleCoffees: products.filter((product) => product.active).length, totalCoffees: products.length }, accounts: await wholesaleAccounts(env), products, paymentTermChoices: PAYMENT_TERMS, statuses: STATUSES, sourceDate: catalogueRetrievedAt, counts: Object.fromEntries(counts.results.map((row) => [row.kind, row.n])), links: { ...links, preview: links.preview || "/wholesale/" }, preview: true, stage: "beta" });
   }
   // Orders to print (packing sheets and bag totals): customer orders by status, or the orders an admin picked.
   if (route === "orders/print" && req.method === "GET") {

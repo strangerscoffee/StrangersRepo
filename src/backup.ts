@@ -23,13 +23,45 @@ async function gzip(text: string): Promise<ArrayBuffer> {
 
 export async function makeBackup(env: Env, by: string): Promise<BackupInfo> {
   const at = Date.now();
-  const docs = await env.DB.prepare("SELECT path, data, seq, employee_privacy_version, updated_at, updated_by FROM docs WHERE deleted = 0 ORDER BY path")
-    .all<{ path: string; data: string; seq: number; employee_privacy_version: number | null; updated_at: number; updated_by: string | null }>();
-  const users = await env.DB.prepare("SELECT id, name, username, role, active, created_at, last_login_at, email, email_prefs FROM users ORDER BY name_key").all();
+  // D1 batches run in one transaction: every table and sequence belongs to the same snapshot.
+  const reads = [
+    { key: "docs", sql: "SELECT path, data, seq, employee_privacy_version, updated_at, updated_by FROM docs WHERE deleted = 0 ORDER BY path" },
+    { key: "users", sql: "SELECT id, name, username, role, active, created_at, last_login_at, email, email_prefs FROM users ORDER BY name_key" },
+    { key: "documentSequence", sql: "SELECT v FROM meta WHERE k = 'seq'" },
+    { key: "wholesalePreview", sql: "SELECT kind, id, data, version, updated_at FROM wholesale_preview ORDER BY kind, id" },
+    { key: "wholesaleAccounts", sql: "SELECT id, customer_id, username, active, approval_status, created_at, last_login_at FROM wholesale_accounts ORDER BY username" },
+    { key: "staffOrderAccess", sql: "SELECT user_id,enabled,version,updated_at,updated_by FROM staff_order_access ORDER BY user_id" },
+    { key: "qb.installation", sql: "SELECT id,namespace FROM quickbooks_installation" },
+    { key: "qb.mappings", sql: "SELECT environment,realm_id,data,version,updated_at FROM quickbooks_environment_mappings" },
+    { key: "qb.companies", sql: "SELECT environment,realm_id,company_name,country,currency,vat_number FROM quickbooks_connections" },
+    { key: "qb.exports", sql: "SELECT id,environment,realm_id,company_name,company_vat,invoice_id,request_id,fingerprint,payload,payload_hash,source_hash,created_by,preview,profiles,connection_generation,mapping_version,CASE WHEN state='linked' THEN 'linked' ELSE 'review' END AS state,remote_id,sync_token,created_remote,sandbox_eligible,write_started_at,attempts,retry_at,last_error,version,created_at,updated_at FROM quickbooks_exports" },
+    { key: "qb.observations", sql: "SELECT * FROM quickbooks_observations" },
+    { key: "qb.verifications", sql: "SELECT * FROM quickbooks_verifications" },
+    { key: "qb.events", sql: "SELECT event_key,environment,realm_id,entity,entity_id,operation,event_at,'queued' AS state,created_at FROM quickbooks_events" },
+    { key: "qb.reconciliation", sql: "SELECT environment,realm_id,checkpoint,cursor,updated_at,last_full_at,last_error,retry_at FROM quickbooks_reconciliation" },
+    { key: "invoice.settings", sql: "SELECT * FROM wholesale_invoice_settings ORDER BY id" },
+    { key: "invoice.sequence", sql: "SELECT seq FROM sqlite_sequence WHERE name = 'wholesale_invoices'" },
+    { key: "invoice.invoices", sql: "SELECT * FROM wholesale_invoices ORDER BY seq" },
+    { key: "orderEmails", sql: "SELECT * FROM wholesale_order_emails" },
+    { key: "announcement", sql: "SELECT * FROM wholesale_announcement" },
+    { key: "tabs", sql: "SELECT * FROM wholesale_tabs ORDER BY cleared_at" },
+    { key: "history.settings", sql: "SELECT * FROM insights_settings" },
+    { key: "history.imports", sql: "SELECT * FROM sales_history_imports" },
+    { key: "history.products", sql: "SELECT * FROM sales_history_products" },
+    { key: "history.rows", sql: "SELECT * FROM sales_history ORDER BY date, id" },
+    { key: "dispatchOutbox", sql: "SELECT event_key,order_id,payload,CASE WHEN state='sent' THEN 'sent' ELSE 'unknown' END AS state,attempts,created_at,next_attempt_at,attempted_at,first_attempt_at,NULL AS lease_until,NULL AS claim_token,CASE WHEN state='sent' THEN 0 ELSE 1 END AS uncertain,sent_at,last_error FROM wholesale_email_outbox ORDER BY created_at,event_key" },
+    ...["rota_shifts", "rota_weeks", "rota_sites", "rota_people", "rota_time_off", "rota_requests", "rota_leave_state", "rota_leave_settings", "rota_leave_allowances", "rota_leave_days", "rota_leave_blocks", "rota_leave_events", "rota_sickness"].map(t => ({ key: "rota:" + t, sql: `SELECT * FROM ${t}` })),
+  ];
+  const captured = await env.DB.batch(reads.map(read => env.DB.prepare(read.sql)));
+  if (captured.length !== reads.length || captured.some(result => (result as { success?: boolean }).success === false)) throw new Error("The complete backup snapshot could not be read.");
+  const snapshot = new Map(reads.map((read, i) => [read.key, captured[i].results || []]));
+  const rows = (key: string): Record<string, any>[] => snapshot.get(key) as Record<string, any>[];
+  const docs = rows("docs");
+  const users = rows("users");
   // The rota's tables (src/rota.ts). People are users.id, listed (without any password or PIN) under users.
   const rota: Record<string, unknown[]> = {};
   for (const t of ["rota_shifts", "rota_weeks", "rota_sites", "rota_people", "rota_time_off", "rota_requests", "rota_leave_state", "rota_leave_settings", "rota_leave_allowances", "rota_leave_days", "rota_leave_blocks", "rota_leave_events", "rota_sickness"]) {
-    rota[t] = (await env.DB.prepare(`SELECT * FROM ${t}`).all()).results;
+    rota[t] = rows("rota:" + t);
   }
   // quickbooks_app_settings is intentionally excluded: even encrypted app secrets are not JSON backup data.
   const body = JSON.stringify({
@@ -37,44 +69,46 @@ export async function makeBackup(env: Env, by: string): Promise<BackupInfo> {
     version: 1,
     at,
     by,
-    documentSequence: (await env.DB.prepare("SELECT v FROM meta WHERE k = 'seq'").first<{ v: number }>())?.v || 0,
-    docs: docs.results.map((d) => ({ path: d.path, data: JSON.parse(d.data), seq: d.seq, employee_privacy_version: d.employee_privacy_version, updatedAt: d.updated_at, updatedBy: d.updated_by })),
-    users: users.results,
+    documentSequence: ((rows("documentSequence")[0] || null))?.v || 0,
+    docs: docs.map((d) => ({ path: d.path, data: JSON.parse(d.data), seq: d.seq, employee_privacy_version: d.employee_privacy_version, updatedAt: d.updated_at, updatedBy: d.updated_by })),
+    users,
     rota,
-    wholesalePreview: (await env.DB.prepare("SELECT kind, id, data, version, updated_at FROM wholesale_preview ORDER BY kind, id").all()).results,
-    wholesaleAccounts: await env.DB.prepare("SELECT id, customer_id, username, active, approval_status, created_at, last_login_at FROM wholesale_accounts ORDER BY username").all().then((rows) => rows.results),
-    staffOrderAccess: (await env.DB.prepare("SELECT user_id,enabled,version,updated_at,updated_by FROM staff_order_access ORDER BY user_id").all()).results,
+    wholesalePreview: rows("wholesalePreview"),
+    wholesaleAccounts: rows("wholesaleAccounts"),
+    staffOrderAccess: rows("staffOrderAccess"),
     quickbooks: {
       mode: "disconnected-on-restore",
-      installation: (await env.DB.prepare("SELECT id,namespace FROM quickbooks_installation").all()).results,
-      mappings: (await env.DB.prepare("SELECT environment,realm_id,data,version,updated_at FROM quickbooks_environment_mappings").all()).results,
-      companies: (await env.DB.prepare("SELECT environment,realm_id,company_name,country,currency,vat_number FROM quickbooks_connections").all()).results,
+      installation: rows("qb.installation"),
+      mappings: rows("qb.mappings"),
+      companies: rows("qb.companies"),
       // Credentials, OAuth nonces, leases and Live approval are intentionally excluded.
       settings: { active_environment: "sandbox", live_approval: null },
-      exports: (await env.DB.prepare("SELECT id,environment,realm_id,company_name,company_vat,invoice_id,request_id,fingerprint,payload,payload_hash,source_hash,created_by,preview,profiles,connection_generation,mapping_version,CASE WHEN state='linked' THEN 'linked' ELSE 'review' END AS state,remote_id,sync_token,created_remote,sandbox_eligible,write_started_at,attempts,retry_at,last_error,version,created_at,updated_at FROM quickbooks_exports").all()).results,
-      observations: (await env.DB.prepare("SELECT * FROM quickbooks_observations").all()).results,
-      verifications: (await env.DB.prepare("SELECT * FROM quickbooks_verifications").all()).results,
-      events: (await env.DB.prepare("SELECT event_key,environment,realm_id,entity,entity_id,operation,event_at,'queued' AS state,created_at FROM quickbooks_events").all()).results,
-      reconciliation: (await env.DB.prepare("SELECT environment,realm_id,checkpoint,cursor,updated_at,last_full_at,last_error,retry_at FROM quickbooks_reconciliation").all()).results,
+      exports: rows("qb.exports"),
+      observations: rows("qb.observations"),
+      verifications: rows("qb.verifications"),
+      events: rows("qb.events"),
+      reconciliation: rows("qb.reconciliation"),
     },
     wholesaleInvoices: {
-      settings: (await env.DB.prepare("SELECT * FROM wholesale_invoice_settings ORDER BY id").all()).results,
-      sequence: (await env.DB.prepare("SELECT seq FROM sqlite_sequence WHERE name = 'wholesale_invoices'").first<{ seq: number }>())?.seq || 0,
-      invoices: (await env.DB.prepare("SELECT * FROM wholesale_invoices ORDER BY seq").all()).results,
+      settings: rows("invoice.settings"),
+      sequence: ((rows("invoice.sequence")[0] || null))?.seq || 0,
+      invoices: rows("invoice.invoices"),
     },
-    wholesaleOrderEmails: (await env.DB.prepare("SELECT * FROM wholesale_order_emails").all()).results,
-    wholesaleAnnouncement: (await env.DB.prepare("SELECT * FROM wholesale_announcement").all()).results,
-    wholesaleTabs: (await env.DB.prepare("SELECT * FROM wholesale_tabs ORDER BY cleared_at").all()).results,
+    wholesaleOrderEmails: rows("orderEmails"),
+    wholesaleAnnouncement: rows("announcement"),
+    wholesaleTabs: rows("tabs"),
+    wholesaleEmailOutbox: rows("dispatchOutbox"),
+    notificationRestorePolicy: "Unsent dispatch events require delivery review after restore; active leases are not restored.",
     salesHistory: {
-      settings: (await env.DB.prepare("SELECT * FROM insights_settings").all()).results,
-      imports: (await env.DB.prepare("SELECT * FROM sales_history_imports").all()).results,
-      products: (await env.DB.prepare("SELECT * FROM sales_history_products").all()).results,
-      rows: (await env.DB.prepare("SELECT * FROM sales_history ORDER BY date, id").all()).results,
+      settings: rows("history.settings"),
+      imports: rows("history.imports"),
+      products: rows("history.products"),
+      rows: rows("history.rows"),
     },
   });
   const gz = await gzip(body);
   const id = new Date(at).toISOString().replace(/\.\d+Z$/, "Z").replace(/:/g, "-");
-  const info: BackupInfo = { id, at, by, docs: docs.results.length, bytes: gz.byteLength };
+  const info: BackupInfo = { id, at, by, docs: docs.length, bytes: gz.byteLength };
   await env.FILES.put(PREFIX + id, gz, { metadata: info });
   await prune(env);
   return info;

@@ -27,47 +27,64 @@ export async function startServer({ writeLimit, preSql, scheduled, vars = {}, ho
       cwd: ROOT, stdio: "pipe", env: { ...process.env, CI: "1" },
     });
   }
-  const port = await freePort();
-  // Let the OS allocate the inspector socket too: parallel Workers must not race for 9229.
-  const args = ["dev", "--local", "--port", String(port), "--inspector-port", "0", "--ip", "127.0.0.1", "--persist-to", state,
-    "--var", `SETUP_CODE:${SETUP_CODE}`, "--show-interactive-dev-session=false"];
-  if (host) args.push("--host", host);
-  if (writeLimit) args.push("--var", `WRITE_LIMIT_PER_15_MIN:${writeLimit}`);
-  // Wholesale tests place small orders: the 6 kg minimum is off unless a test sets WHOLESALE_MINIMUM_ORDER_GRAMS.
-  // The admin section's own address is for the real site: here it's at /admin on the diary's (unless a test sets it).
-  for (const [k, v] of Object.entries({ ADMIN_HOST: "", PREVIEW_HOST: "", WHOLESALE_MINIMUM_ORDER_GRAMS: "0", ...(typeof vars === "function" ? vars({ port, base: `http://127.0.0.1:${port}` }) : vars) })) args.push("--var", `${k}:${v}`);
-  if (scheduled) args.push("--test-scheduled"); // GET /__scheduled runs the Worker's scheduled() handler
-  const proc = spawn(WRANGLER, args, { cwd: ROOT, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, CI: "1" } });
-  let log = "";
-  proc.stdout.on("data", (d) => (log += d));
-  proc.stderr.on("data", (d) => (log += d));
-  const base = `http://127.0.0.1:${port}`;
-  const deadline = Date.now() + 60000;
-  for (;;) {
-    if (proc.exitCode != null) throw new Error("wrangler dev exited:\n" + log);
+  // A released ephemeral port can be claimed by another concurrent fixture before Wrangler binds it.
+  // Retry only a confirmed bind collision; application errors and failed assertions are never retried.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const port = await freePort();
+    // Let the OS allocate the inspector socket too: parallel Workers must not race for 9229.
+    const args = ["dev", "--local", "--port", String(port), "--inspector-port", "0", "--ip", "127.0.0.1", "--persist-to", state,
+      "--var", `SETUP_CODE:${SETUP_CODE}`, "--show-interactive-dev-session=false"];
+    if (host) args.push("--host", host);
+    if (writeLimit) args.push("--var", `WRITE_LIMIT_PER_15_MIN:${writeLimit}`);
+    // Wholesale tests place small orders: the 6 kg minimum is off unless a test sets WHOLESALE_MINIMUM_ORDER_GRAMS.
+    // The admin section's own address is for the real site: here it's at /admin on the diary's (unless a test sets it).
+    for (const [k, v] of Object.entries({ ADMIN_HOST: "", PREVIEW_HOST: "", WHOLESALE_MINIMUM_ORDER_GRAMS: "0", ...(typeof vars === "function" ? vars({ port, base: `http://127.0.0.1:${port}` }) : vars) })) args.push("--var", `${k}:${v}`);
+    if (scheduled) args.push("--test-scheduled"); // GET /__scheduled runs the Worker's scheduled() handler
+    const proc = spawn(WRANGLER, args, { cwd: ROOT, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, CI: "1" } });
+    let log = "";
+    proc.stdout.on("data", (d) => (log += d));
+    proc.stderr.on("data", (d) => (log += d));
+    const base = `http://127.0.0.1:${port}`;
+    const deadline = Date.now() + 60000;
     try {
-      const r = await fetch(base + "/robots.txt");
-      if (r.ok) break;
-    } catch {}
-    if (Date.now() > deadline) throw new Error("wrangler dev didn't start:\n" + log);
-    await new Promise((r) => setTimeout(r, 300));
-  }
-  return {
-    base,
-    log: () => log,
-    /** Runs SQL on this server's local database and returns the rows (for checking schema and query plans). */
-    sql(command) {
-      const out = execFileSync(WRANGLER, ["d1", "execute", "kitchen-diary", "--local", "--persist-to", state, "--json", "--command", command], {
-        cwd: ROOT, stdio: "pipe", env: { ...process.env, CI: "1" },
-      }).toString();
-      return JSON.parse(out)[0].results;
-    },
-    async stop() {
-      proc.kill("SIGINT");
-      await new Promise((r) => (proc.exitCode != null ? r() : proc.once("exit", r)));
+      for (;;) {
+        if (/Address already in use/i.test(log)) throw new Error("wrangler dev port collision:\n" + log);
+        if (proc.exitCode != null) throw new Error("wrangler dev exited:\n" + log);
+        // Do not mistake the process that stole the port for this fixture.
+        if (/Ready on https?:\/\//.test(log)) try {
+          const r = await fetch(base + "/robots.txt");
+          if (r.ok) break;
+        } catch {}
+        if (Date.now() > deadline) throw new Error("wrangler dev didn't start:\n" + log);
+        await new Promise((r) => setTimeout(r, 300));
+      }
+    } catch (error) {
+      if (proc.exitCode == null) {
+        proc.kill("SIGINT");
+        await new Promise(resolve => proc.exitCode != null ? resolve() : proc.once("exit", resolve));
+      }
+      if (attempt < 2 && /Address already in use/i.test(log)) continue;
       rmSync(state, { recursive: true, force: true });
-    },
-  };
+      throw error;
+    }
+    return {
+      base,
+      log: () => log,
+      /** Runs SQL on this server's local database and returns the rows (for checking schema and query plans). */
+      sql(command) {
+        const out = execFileSync(WRANGLER, ["d1", "execute", "kitchen-diary", "--local", "--persist-to", state, "--json", "--command", command], {
+          cwd: ROOT, stdio: "pipe", env: { ...process.env, CI: "1" },
+        }).toString();
+        return JSON.parse(out)[0].results;
+      },
+      async stop() {
+        proc.kill("SIGINT");
+        await new Promise((r) => (proc.exitCode != null ? r() : proc.once("exit", r)));
+        rmSync(state, { recursive: true, force: true });
+      },
+    };
+  }
+  throw new Error("wrangler dev could not acquire a port.");
 }
 
 /** Pages run on the server's clock (public/shared/core.js): for a test that needs "now" to be a set time, every

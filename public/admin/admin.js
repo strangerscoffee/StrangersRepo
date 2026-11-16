@@ -725,6 +725,7 @@
   (async () => {
     try {
       const me = await SC.startSession({ clear: () => {
+        wholesale.clear();
         cache = {}; S.me = null; S.open = null; S.q = ""; S.fq = ""; wholesaleExpanded = false;
         closeSheet(); for (const id of ["#main", "#sheet", "#sideNav", "#tabBar", "#whoName", "#whoInit"]) $(id)?.replaceChildren();
       } });

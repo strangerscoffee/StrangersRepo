@@ -2,7 +2,7 @@
 import { products as originals, type SourceCoffee } from "./wholesale/catalogue.js";
 import { newId } from "./auth";
 import { audit } from "./audit";
-import { ApiError, type Env, invalid, json, readJson } from "./http";
+import { ApiError, type Env, invalid, json, readJson, readBytes } from "./http";
 import { list, object, save, text, version } from "./wholesaleStore";
 import { canOrder, editedRecipe, editedWhiteLabel, isCustomCoffee } from "./wholesaleWhiteLabel";
 
@@ -125,9 +125,7 @@ async function upload(req: Request, env: Env, coffee: Coffee, by: string): Promi
   const expected = version(Number(query));
   if (expected !== coffee.version) throw new ApiError(409, "conflict", "This coffee changed. Reload before adding photos.");
   if (coffee.images.length >= MAX_IMAGES) throw invalid("Each coffee can have up to six photos.");
-  if (Number(req.headers.get("content-length") || 0) > MAX_IMAGE_BYTES) throw new ApiError(413, "too_large", "Photos can be up to 5 MB.");
-  const bytes = new Uint8Array(await req.arrayBuffer());
-  if (bytes.byteLength > MAX_IMAGE_BYTES) throw new ApiError(413, "too_large", "Photos can be up to 5 MB.");
+  const bytes = await readBytes(req, MAX_IMAGE_BYTES, "Photos can be up to 5 MB.");
   const contentType = imageType(bytes);
   // Some original retail photos have a .webp filename but contain JPEG bytes. Serve the detected raster type.
   if (!contentType) throw new ApiError(415, "unsupported_type", "Choose a JPEG, PNG or WebP photo.");

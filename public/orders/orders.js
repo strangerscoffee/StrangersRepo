@@ -63,7 +63,7 @@
  function printBar(){
   return picking
    ?el('div',{class:'print-bar picking',role:'region','aria-label':'Choose orders'},el('span',{class:'picked-count','aria-live':'polite'},picked.size?`${picked.size} selected`:'Tap orders to select them'),
-     el('button',{type:'button',class:'btn soft sm',onclick:()=>{for(const row of rows)picked.add(row.id);draw()}},'Select all shown'),
+     el('button',{type:'button',class:'btn soft sm',disabled:!!batch?.running,onclick:()=>{if(batch?.running)return;for(const row of rows)picked.add(row.id);draw()}},'Select all shown'),
      el('button',{type:'button',class:'btn soft sm',disabled:!picked.size,onclick:()=>openTotals([...picked])},'Bag totals'),
      el('button',{type:'button',class:'btn sm',disabled:!picked.size,onclick:()=>printScope({ids:[...picked],label:`${picked.size} selected ${picked.size===1?'order':'orders'}`})},svg('doc'),'Print selected'),
      el('button',{type:'button',class:'btn soft sm',onclick:()=>{if(batch?.running)return;picking=false;picked.clear();batch=null;draw()}},'Done'))
@@ -101,23 +101,24 @@
    ...BATCH.map(([to,label])=>{const n=chosen.filter(r=>movable(r,to)).length;return el('button',{type:'button',class:'btn soft sm','data-batch':to,disabled:!n||!!batch?.running,onclick:()=>{if(to==='Dispatched'){batch={status:to,confirm:true};batchBar();}else runBatch(to);}},n?`${label} (${n})`:label);}));
  }
  async function runBatch(to){
-  const targets=rows.filter(r=>picked.has(r.id)&&movable(r,to));if(!targets.length||batch?.running)return;
-  batch={status:to,running:true,done:0,total:targets.length};batchBar();
+  const targets=rows.filter(r=>picked.has(r.id)&&movable(r,to)).map(r=>({...r}));if(!targets.length||batch?.running)return;
+  const operation={status:to,running:true,done:0,total:targets.length},owner=orderingIdentity;
+  batch=operation;const active=()=>batch===operation&&started&&orderingIdentity===owner;batchBar();
   let saved=0,failed=0,conflict=false,lost=false;
   for(const row of targets){
-   const current=rows.find(r=>r.id===row.id)||row;busy.add(row.id);
-   try{await patch(current,{status:to});saved++;picked.delete(row.id);}
-   catch(e){if(e.quiet)lost=true;else{failed++;if(e.code==='conflict')conflict=true;}}
-   finally{busy.delete(row.id);batch.done++;}
-   if(lost)break;
+   if(!active())return;busy.add(row.id);
+   try{await patch(row,{status:to});if(!active())return;saved++;picked.delete(row.id);}
+   catch(e){if(e.quiet||!active())lost=true;else{failed++;if(e.code==='conflict')conflict=true;}}
+   finally{busy.delete(row.id);operation.done++;}
+   if(lost||!active())return;
    if(started)draw();
   }
-  batch=null;if(lost)return;
-  if(conflict)await load();else draw();
+  if(!active())return;batch=null;
+  if(failed)await load();else draw();
   const word=to.toLowerCase();
-  toast(failed?`${saved} marked ${word}. ${failed} couldn't be saved${conflict?' (changed elsewhere: reloaded)':''}; they're still selected.`:`${saved} ${saved===1?'order':'orders'} marked ${word}.`);
+  toast(failed?`${saved} confirmed ${word}. ${failed} need checking${conflict?' (changed elsewhere)':''}; review the refreshed orders before trying again.`:`${saved} ${saved===1?'order':'orders'} marked ${word}.`);
  }
- function togglePick(id){picked.has(id)?picked.delete(id):picked.add(id);draw();document.querySelector(`[data-order-id="${CSS.escape(id)}"]`)?.focus({preventScroll:true});}
+ function togglePick(id){if(batch?.running)return;picked.has(id)?picked.delete(id):picked.add(id);draw();document.querySelector(`[data-order-id="${CSS.escape(id)}"]`)?.focus({preventScroll:true});}
  function draw(){
   $('statusFilters').replaceChildren(...filters.map(([id,label])=>el('button',{type:'button','aria-pressed':String(status===id),onclick:()=>{status=id;load()}},label)));
   $('printBar').replaceChildren(printBar());batchBar();
@@ -224,10 +225,13 @@
  }
  function openOrder(id){const row=rows.find(row=>row.id===id);if(!row)return;selected=id;editing=false;renderDetail(row);$('orderDialog').showModal();}
  async function patch(row,changes){
+  const owner=orderingIdentity,expectedStatus=changes.status||row.status;
   const response=await fetch('/api/staff-orders/orders/'+encodeURIComponent(row.id),{method:'PATCH',cache:'no-store',headers:{'content-type':'application/json'},body:JSON.stringify({ifVersion:row.version,status:row.status,note:row.note||'',trackingUrl:row.trackingUrl||'',...changes})});
-  const data=await response.json().catch(()=>({}));
+  let data;try{data=await response.json();}catch(e){if(!started||orderingIdentity!==owner)throw Object.assign(e,{quiet:true});throw new Error('The update could not be confirmed. Refresh orders before trying again.');}
+  if(!started||orderingIdentity!==owner)throw Object.assign(new Error('The signed-in account changed.'),{quiet:true});
   if(response.status===403){lock(true);message('You no longer have access to wholesale orders.',{denied:true});throw Object.assign(new Error('No access.'),{quiet:true});}
   if(!response.ok)throw Object.assign(new Error(data.message||'The order could not be saved. Check your connection and try again.'),{code:data.code});
+  if(data.order?.id!==row.id||data.order.status!==expectedStatus||!Number.isSafeInteger(data.order.version)||data.order.version<=row.version)throw new Error('The update could not be confirmed. Refresh orders before trying again.');
   const index=rows.findIndex(r=>r.id===row.id);if(index>=0)rows[index]={...rows[index],...data.order};
   return data.order;
  }

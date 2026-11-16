@@ -278,3 +278,13 @@ Custom coffees remain in the existing versioned wholesale catalogue JSON. `white
 `slack_diary_posts (site, day, slot, created_at, sent_at, attempts, last_error)`, primary key `(site, day, slot)`: one row per site (`cafe`, `asg`, `roastery`), UK date and slot (`morning` | `evening`) once its time comes, so each message is sent once (`src/slackDiary.ts`). `last_error` is Slack's refusal, or `closed` when the site was closed that day. Rows older than 60 days are removed. Not in backups.
 
 - `wholesale_announcement` (migration 29): one row (`id` 1), `data` JSON `{enabled, title, message, tone: info|important, from, until}`, `version`, `updated_at`. The ordering page's announcement bar.
+
+## Recoverable wholesale notifications (migration 30)
+
+`wholesale_email_outbox` stores one `dispatch:<orderId>` event per order, frozen outgoing content, state, attempts, due time, first/last attempt times, a claim token/lease, uncertainty and acknowledged `sent_at`. It contains customer mail content but no provider credential. Event insertion and the reviewed order status update share a transaction. States are `queued`, `sending`, `retry`, `failed`, `unknown`, `sent`. Up to eight attempts use a stable provider idempotency key; uncertain events cannot replay automatically beyond the conservative 23-hour provider window measured from the first attempt. Explicit reviewed retries restart unknown events; ordinary retries retain their uncertainty/window. Leases are two minutes and provider requests time out after ten seconds.
+
+`slack_order_delivery` supplies leases and `queued`/`sending`/`failed`/`unknown`/`sent` state alongside the unchanged `slack_order_posts` payload and attempt records. `sent_at` is set only after acknowledgement. Interrupted claims become unknown; explicit reviewed retry is required because webhooks do not deduplicate. Known rejected attempts retain the existing six-attempt bound and cron retry behavior. Migration preserves all historical sent markers.
+
+Closed standing order JSON may include generic `standingIssue:{code,at}` and `standingRetryAt`. No current private product price/name is copied on failed validation. Successful rollover clears these flags atomically with the parent claim; disabling the standing schedule clears them as well. Existing next orders and tombstones remain authoritative.
+
+All backup table reads run in one D1 transaction, including global/document sequences, employee privacy metadata, invoice sequence/snapshots and leave tables. `wholesaleEmailOutbox` exports sent events unchanged, and unsent events as `unknown` with no claim/lease. A manual restore must retain this policy rather than automatically replaying unsent notifications.

@@ -1,5 +1,5 @@
 // Allergen PDFs in Workers KV (docs/runtime-api.md, `assets`).
-import { ApiError, Env, json } from "./http";
+import { ApiError, Env, json, readBytes } from "./http";
 
 const MAX_BYTES = 20 * 1024 * 1024;
 const ID_RE = /^[0-9a-f]{32}$/;
@@ -19,11 +19,9 @@ function newId(): string {
 export async function uploadAsset(req: Request, env: Env, by: string): Promise<Response> {
   const type = (req.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
   if (type !== "application/pdf") throw new ApiError(415, "unsupported_type", "Only PDF files can be uploaded.");
-  if (Number(req.headers.get("content-length") || 0) > MAX_BYTES) throw new ApiError(413, "too_large", "PDFs can be up to 20 MB.");
-  const body = await req.arrayBuffer();
-  if (body.byteLength > MAX_BYTES) throw new ApiError(413, "too_large", "PDFs can be up to 20 MB.");
+  const body = await readBytes(req, MAX_BYTES, "PDFs can be up to 20 MB.");
   if (body.byteLength === 0) throw new ApiError(400, "invalid_argument", "The file is empty.");
-  const magic = new TextDecoder().decode(new Uint8Array(body, 0, Math.min(1024, body.byteLength)));
+  const magic = new TextDecoder().decode(body.subarray(0, 1024));
   if (!magic.includes("%PDF-")) throw new ApiError(415, "unsupported_type", "That file isn't a PDF.");
   const id = newId();
   const meta: Meta = { contentType: "application/pdf", size: body.byteLength, by, at: Date.now() };

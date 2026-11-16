@@ -96,18 +96,21 @@ export interface Outgoing {
 }
 
 /** Sends one email (never throws): "sent", "off" (no API key), "limit" (the day's allowance is used) or "failed". */
-export async function send(env: Env, o: Outgoing): Promise<"sent" | "off" | "limit" | "failed"> {
-  if (!emailReady(env)) return "off";
+export async function sendOutcome(env: Env, o: Outgoing, idempotencyKey?: string): Promise<{ status: "sent" | "off" | "limit" | "failed"; uncertain?: boolean }> {
+  if (!emailReady(env)) return { status: "off" };
+  let started = false;
   try {
     const since = Date.now() - 864e5;
     const n = await env.DB.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE kind = 'email_sent' AND at > ?").bind(since).first<{ n: number }>();
     if ((n?.n ?? 0) >= DAILY(env)) {
       await audit(env, "email_failed", null, `Didn't email ${o.to.name} (${o.about}): the day's limit of ${DAILY(env)} emails was reached`);
-      return "limit";
+      return { status: "limit" };
     }
+    started = true;
     const res = await fetch(env.RESEND_API_URL || "https://api.resend.com/emails", {
       method: "POST",
-      headers: { authorization: `Bearer ${env.RESEND_API_KEY}`, "content-type": "application/json" },
+      headers: { authorization: `Bearer ${env.RESEND_API_KEY}`, "content-type": "application/json", ...(idempotencyKey ? { "idempotency-key": idempotencyKey } : {}) },
+      signal: AbortSignal.timeout(10000),
       body: JSON.stringify({
         from: o.from || FROM(env), to: [o.to.email], subject: o.mail.subject, html: o.mail.html, text: o.mail.text,
         ...(o.replyTo ? { reply_to: o.replyTo } : {}),
@@ -120,14 +123,18 @@ export async function send(env: Env, o: Outgoing): Promise<"sent" | "off" | "lim
     if (!res.ok) {
       const why = (await res.text().catch(() => "")).slice(0, 200);
       await audit(env, "email_failed", null, `Couldn't email ${o.to.name} (${o.about}): Resend said ${res.status}${why ? ` ${why}` : ""}`);
-      return "failed";
+      return { status: "failed" };
     }
     await audit(env, "email_sent", null, `Emailed ${o.to.name}: ${o.about}`);
-    return "sent";
+    return { status: "sent" };
   } catch (e) {
     await audit(env, "email_failed", null, `Couldn't email ${o.to.name} (${o.about}): ${String((e as Error)?.message || e).slice(0, 160)}`).catch(() => {});
-    return "failed";
+    return { status: "failed", uncertain: started };
   }
+}
+
+export async function send(env: Env, o: Outgoing): Promise<"sent" | "off" | "limit" | "failed"> {
+  return (await sendOutcome(env, o)).status;
 }
 
 /** Sends several, one after another (Resend allows a few a second), in the background of a request. */
