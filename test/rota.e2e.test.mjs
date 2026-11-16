@@ -197,6 +197,9 @@ for (const [label, viewport] of [["phone", { width: 393, height: 852 }], ["iPad"
       assert.match(await m.page.locator("#page").innerText(), /4\.5h/);
       await m.page.locator(".nextshift", { hasText: "08:15–12:45" }).waitFor();
       assert.match(await m.page.locator(".nextshift").innerText(), /Your private actual-hours note/);
+      // Today's highlighted date takes the same space as the others, so every day's shifts start on one line.
+      const tops = await m.page.locator(".mweek .mday").evaluateAll((days) => days.map((d) => Math.round(d.querySelector(".blk").getBoundingClientRect().top)));
+      assert.equal(new Set(tops).size, 1, `each day's first box lines up: ${tops}`);
       assert.equal(await m.page.locator('[aria-label="Whose shifts"]').count(), 0, "manager has no colleague roster toggle");
       assert.equal(await m.page.locator('#snav a[href="#hours"],#snav a[href="#week"],#snav a[href="#requests"]').count(), 0, "manager has no employee administration or payroll navigation");
       assert.doesNotMatch(await m.page.locator("#page").innerText(), /Alex Brown|COLLEAGUE_PRIVATE|17:05|18:35/);

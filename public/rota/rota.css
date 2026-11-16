@@ -392,8 +392,9 @@ a.btn.sm{text-decoration:none}
 .mweek{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px;padding:12px;border-radius:22px}
 .mday{display:grid;gap:6px;align-content:start;min-width:0}
 .mday .dh{text-align:center;font-size:12px;font-weight:700;color:var(--muted);line-height:1.2}
-.mday .dh b{display:block;font-size:17px;color:var(--fg)}
-.mday.today .dh b{display:grid;place-items:center;width:30px;height:30px;border-radius:50%;background:var(--accent);color:var(--accent-ink);margin:2px auto 0}
+/* Every date sits in the same 30px circle space, so today's filled circle doesn't push its day down out of line. */
+.mday .dh b{display:grid;place-items:center;width:30px;height:30px;border-radius:50%;margin:2px auto 0;font-size:17px;color:var(--fg)}
+.mday.today .dh b{background:var(--accent);color:var(--accent-ink)}
 .blk{border-radius:12px;padding:7px 5px;min-height:74px;display:grid;align-content:start;gap:2px;font:inherit;font-size:12.5px;text-align:center;line-height:1.25;box-sizing:border-box;width:100%;color:var(--fg)}
 .blk .tm{font-size:13px;font-variant-numeric:tabular-nums}
 .blk.shift{border:1px solid var(--line);background:var(--surface);cursor:pointer}
