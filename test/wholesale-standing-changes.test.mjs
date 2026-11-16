@@ -1,6 +1,6 @@
 // Changing and skipping standing order deliveries (src/wholesaleStanding.ts): customers change the bags on, or skip,
-// a delivery of their own standing order while it's still New (the minimum order applies; Strangers is emailed);
-// staff with wholesale orders access and admins can too while it's New or Preparing. A change is for this delivery
+// a delivery of their own standing order until it's dispatched (the minimum order applies; Strangers is emailed and told on Slack);
+// staff with wholesale orders access and admins can too; everyone until it's dispatched (New, Preparing or Ready). A change is for this delivery
 // only (the next delivery goes back to the usual bags) or every delivery from now on. Nobody sees which staff member.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -90,16 +90,34 @@ test("customers skip a delivery: it's cancelled as skipped and the next one is m
   assert.equal((await call("POST", `/api/wholesale/orders/${run.id}/skip`, { ifVersion: saved.version }, A)).status, 409, "already skipped");
 });
 
-test("what customers can't do: below the minimum, once it's being prepared, someone else's, a one-off order", async () => {
+test("what customers can't do: below the minimum, once it's dispatched, someone else's, a one-off order", async () => {
   const run = await standing();
   const small = await call("PUT", `/api/wholesale/orders/${run.id}/lines`, { ifVersion: run.version, lines: [{ productId: "campo", pack: "kilo", grind: "beans", quantity: 2 }] }, A);
   assert.equal(small.status, 409); assert.equal(small.body.code, "below_minimum");
   assert.equal((await call("PUT", `/api/wholesale/orders/${run.id}/lines`, { ifVersion: run.version, lines: usual }, B)).status, 404, "not theirs");
   assert.equal((await call("POST", `/api/wholesale/orders/${run.id}/skip`, { ifVersion: run.version }, B)).status, 404);
   assert.equal((await call("PUT", `/api/wholesale/orders/${run.id}/lines`, { ifVersion: run.version, lines: usual, scope: "sometimes" }, A)).status, 400);
+  // Until it's dispatched: while preparing or ready they still can, and Strangers is warned; once dispatched, not.
+  srv.sql("DELETE FROM slack_order_posts"); sent.length = 0;
   const preparing = await setStatus(run.id, "Preparing");
-  const late = await call("POST", `/api/wholesale/orders/${run.id}/skip`, { ifVersion: preparing.version }, A);
-  assert.equal(late.status, 409); assert.equal(late.body.code, "order_closed");
+  const whilePreparing = await call("PUT", `/api/wholesale/orders/${run.id}/lines`, { ifVersion: preparing.version, lines: [{ productId: "campo", pack: "kilo", grind: "beans", quantity: 9 }] }, A);
+  assert.equal(whilePreparing.status, 200, whilePreparing.text);
+  const ready = await setStatus(run.id, "Ready");
+  const skipReady = await call("POST", `/api/wholesale/orders/${run.id}/skip`, { ifVersion: ready.version }, A);
+  assert.equal(skipReady.status, 200, skipReady.text); assert.equal(skipReady.body.order.status, "Cancelled");
+  await until(() => srv.sql("SELECT COUNT(*) AS n FROM slack_order_posts")[0].n >= 2 && sent.filter((m) => /standing order/.test(m.subject || "")).length >= 2);
+  const warned = srv.sql("SELECT payload FROM slack_order_posts ORDER BY created_at").map((r) => JSON.parse(r.payload).text);
+  assert.match(warned[0], /already being prepared: check the packing/);
+  assert.match(warned[1], /already packed and ready to go: check the packing/);
+  const mails = sent.filter((m) => /standing order/.test(m.subject || ""));
+  assert.match(mails[0].subject, /^Already preparing: Café Weekly changed a standing order/);
+  assert.match(mails[1].subject, /^Already ready: Café Weekly skipped a standing order delivery/);
+  const next = await adminOrder((await adminOrder(run.id)).nextRunId);
+  const dispatched = await setStatus(next.id, "Dispatched");
+  const late = await call("POST", `/api/wholesale/orders/${next.id}/skip`, { ifVersion: dispatched.version }, A);
+  assert.equal(late.status, 409); assert.equal(late.body.code, "order_closed"); assert.match(late.body.message, /dispatched/);
+  const lateStaff = await call("PUT", `/api/staff-orders/orders/${next.id}/lines`, { ifVersion: dispatched.version, lines: usual }, STAFF);
+  assert.equal(lateStaff.status, 409); assert.equal(lateStaff.body.code, "order_closed");
   // A one-off order isn't changed here.
   const session = (await ok("GET", "/api/wholesale/session", undefined, A)).body;
   const price = (await ok("GET", "/api/wholesale/catalogue", undefined, A)).body.products.find((p) => p.id === "campo").prices.kilo;

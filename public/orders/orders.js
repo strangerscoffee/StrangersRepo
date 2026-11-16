@@ -118,9 +118,9 @@
     next?el('button',{type:'button',class:'btn soft',onclick:()=>{statusSelect.value=next[0];trackingField.hidden=!(next[0]==='Dispatched'||tracking.value);save(row.id)}},next[1]):null,
     el('button',{type:'button',class:'btn',id:'saveOrder',onclick:()=>save(row.id)},'Save')));
  }
- // Changing the bags (New or Preparing, no invoice: the server checks) and skipping a standing delivery. Bags only:
+ // Changing the bags (until dispatched, no invoice: the server checks) and skipping a standing delivery. Bags only:
  // the server prices them. On a standing order, the change is for this delivery or every one from now on.
- const OPEN_STATUSES=['New','Preparing'];
+ const OPEN_STATUSES=['New','Preparing','Ready'];
  let amend=null;
  async function openAmend(row){
   editing=true;

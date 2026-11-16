@@ -124,7 +124,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     if (section === "customers") snapshot.invites = (await api("GET", "/api/admin/wholesale/customers/invites")).invites;
     if (current !== sequence) return html``;
     data = snapshot;
-    const stats = data.stats || { openOrders: data.orders.filter((row) => row.preview === false && !["Dispatched", "Cancelled"].includes(row.status)).length, gramsToPrepare: data.orders.filter((row) => row.preview === false && ["New", "Preparing"].includes(row.status)).reduce((total, row) => total + row.grams, 0), totalCustomers: data.counts.customer || 0, visibleCoffees: data.products.filter((row) => row.active).length, totalCoffees: data.products.length, pendingAccounts: data.accounts.filter((row) => row.approvalStatus === "pending").length };
+    const stats = data.stats || { openOrders: data.orders.filter((row) => row.preview === false && !["Dispatched", "Cancelled"].includes(row.status)).length, gramsToPrepare: data.orders.filter((row) => row.preview === false && ["New", "Preparing", "Ready"].includes(row.status)).reduce((total, row) => total + row.grams, 0), totalCustomers: data.counts.customer || 0, visibleCoffees: data.products.filter((row) => row.active).length, totalCoffees: data.products.length, pendingAccounts: data.accounts.filter((row) => row.approvalStatus === "pending").length };
     const metrics = [["Open orders", stats.openOrders, "New, preparing and ready"], ["Coffee to prepare", weight(stats.gramsToPrepare), "Customer orders only"]];
     if (section !== "orders") metrics.push(["Customers", stats.totalCustomers, "Business accounts"], ["Visible coffees", stats.visibleCoffees, `Of ${stats.totalCoffees} coffees`]);
     onNavigationChange();
@@ -520,7 +520,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
       <p class="hint">${row.nextRunId ? html`The next run has been made: <button class="link" type="button" data-sheet="open-run" data-id="${row.nextRunId}">${shortId(row.nextRunId)}…</button>` : closed && row.standing ? "Saving makes the next run." : "When a standing order is marked dispatched (or cancelled, to skip one), the next run is made straight away as a New order for the next dispatch day, so you can prepare it and change its bags in advance."}${row.standing?.run > 1 ? ` This is run ${row.standing.run}.` : ""}${row.previousRunId ? html` <button class="link" type="button" data-sheet="open-run" data-id="${row.previousRunId}">Previous run</button>` : ""}</p>
       <p class="hint">Untick Standing order to stop it repeating. The customer sees the dispatch day and the schedule on their orders.</p></section>`;
   }
-  // Change the bags on a New or Preparing customer order. Kept lines keep the price they were ordered at; added ones
+  // Change the bags on a customer order until it's dispatched. Kept lines keep the price they were ordered at; added ones
   // take today's catalogue price. `back` reopens the order with what was typed there.
   function editLines(row, state = null, back = null) {
     const lines = state || row.lines.map((line) => ({ ...line }));

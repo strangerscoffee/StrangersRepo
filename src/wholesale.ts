@@ -305,12 +305,15 @@ export async function handleWholesale(req: Request, env: Env, route: string, use
     const owner = await wholesaleCustomer(env, user.customerId);
     if (!owner || owner.status === "On hold") throw new ApiError(403, "account_on_hold", "Your account is on hold. Contact Strangers about this order.");
     const body = await readJson(req, 32 * 1024), id = changeMatch[1], by = { customerId: user.customerId, minimumGrams: minimumOrderGrams(env, owner) };
+    // Strangers is warned when the delivery was already being prepared or was ready to go.
+    const wasStatus = (await get<Order>(env, "order", id))?.status;
+    const already = wasStatus === "Preparing" || wasStatus === "Ready" ? wasStatus : undefined;
     const saved = changeMatch[2] === "lines"
       ? await amendLines(env, id, body, user.name, by)
       : await skipRun(env, id, body, user.name, by);
     const { change, nextDispatchDate } = await standingChange(env, saved as any, changeMatch[2] as "lines" | "skip", body);
-    await notifyCustomerChange(env, ctx, saved as any, change, links.diary);
-    await notifySlackChange(env, ctx, { ...(saved as any), nextDispatchDate }, change, links.diary);
+    await notifyCustomerChange(env, ctx, saved as any, change, links.diary, already);
+    await notifySlackChange(env, ctx, { ...(saved as any), nextDispatchDate, already }, change, links.diary);
     return json({ order: visibleOrder(saved as Order & Versioned) });
   }
   const match = /^orders\/((?:PREVIEW|WS)-[A-F0-9]{32})$/.exec(route);

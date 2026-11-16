@@ -1,7 +1,7 @@
 // Standing orders and dispatch days (Admin only). A customer order can be given a dispatch day and ticked as a standing
 // order that repeats every 1, 2 or 4 weeks. When a run is marked Dispatched (or Cancelled, to skip one) the next run is
 // made at once as a New order with the next dispatch day, so it can be prepared and amended ahead of time. Admins can
-// amend the bags on any New or Preparing customer order that has no invoice yet. Everything is stored in the order's
+// amend the bags on any New, Preparing or Ready customer order that has no invoice yet. Everything is stored in the order's
 // own JSON (no migration); customers see the dispatch day, the schedule and that Strangers updated the order.
 import { addDays, ukDay } from "./insightsMath";
 import { shippingFor } from "../public/wholesale/shipping.js";
@@ -20,7 +20,8 @@ export const STANDING_EVERY = [1, 2, 4] as const;
 export interface Standing { every: 1 | 2 | 4; seriesId: string; run: number }
 const GRAMS: Record<string, number> = { quarter: 250, half: 500, kilo: 1000 };
 const LABELS: Record<string, string> = { quarter: "250 g bag", half: "500 g bag", kilo: "1 kg bag" };
-const OPEN = ["New", "Preparing"];
+// Bags can be changed, and standing deliveries skipped, by anyone allowed to until the order is dispatched.
+const OPEN = ["New", "Preparing", "Ready"];
 type AnyOrder = Record<string, any> & Versioned;
 const strip = ({ id, version, updatedAt, ...rest }: AnyOrder) => rest;
 const isDay = (value: unknown): value is string => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) && addDays(value, 0) === value;
@@ -110,12 +111,12 @@ export async function repairStandingRuns(env: Env, limit = 3) {
 }
 
 /** Who is changing an order: Strangers (admins, staff with wholesale orders access) or the customer themselves, who
- *  may change and skip only their own standing deliveries, and only while New (before Strangers starts preparing). */
+ *  may change and skip only their own standing deliveries, and until it's dispatched (New, Preparing or Ready). */
 export interface Changer { customerId?: string; minimumGrams?: number }
 async function saveChange(env: Env, order: AnyOrder, data: Record<string, any>, expected: number, by: Changer) {
   if (expected !== order.version) throw new ApiError(409, "conflict", "This order changed. Reload it before saving.");
   const at = Date.now();
-  const result = await env.DB.prepare("UPDATE wholesale_preview SET data=?,version=version+1,updated_at=? WHERE kind='order' AND id=? AND version=? AND json_extract(data,'$.deletedAt') IS NULL AND json_extract(data,'$.preview')=0 AND json_extract(data,'$.status') IN ('New','Preparing') AND (? IS NULL OR (json_extract(data,'$.customerId')=? AND json_extract(data,'$.status')='New')) AND NOT EXISTS(SELECT 1 FROM wholesale_invoices WHERE order_id=?)")
+  const result = await env.DB.prepare("UPDATE wholesale_preview SET data=?,version=version+1,updated_at=? WHERE kind='order' AND id=? AND version=? AND json_extract(data,'$.deletedAt') IS NULL AND json_extract(data,'$.preview')=0 AND json_extract(data,'$.status') IN ('New','Preparing','Ready') AND (? IS NULL OR json_extract(data,'$.customerId')=?) AND NOT EXISTS(SELECT 1 FROM wholesale_invoices WHERE order_id=?)")
     .bind(JSON.stringify(data), at, order.id, expected, by.customerId || null, by.customerId || null, order.id).run();
   if (!result.meta.changes) throw new ApiError(409, "conflict", "The order changed or was invoiced. Reload it before saving.");
   return { ...data, id: order.id, version: expected + 1, updatedAt: at } as AnyOrder;
@@ -125,7 +126,7 @@ async function changeable(env: Env, id: string, by: Changer) {
   if (!order || order.deletedAt != null || (by.customerId && order.customerId !== by.customerId)) throw new ApiError(404, "not_found", "Order not found.");
   if (order.preview !== false) throw invalid("Only customer orders can be amended.");
   if (by.customerId && !order.standing) throw new ApiError(409, "not_standing", "Only standing orders can be changed here. Contact Strangers about this order.");
-  if (by.customerId ? order.status !== "New" : !OPEN.includes(order.status)) throw new ApiError(409, "order_closed", by.customerId ? "Strangers has started preparing this delivery, so it can't be changed here now. Contact Strangers." : "Only New or Preparing orders can be amended.");
+  if (!OPEN.includes(order.status)) throw new ApiError(409, "order_closed", order.status === "Dispatched" ? "This delivery has been dispatched, so it can't be changed now." : "This delivery has been cancelled, so it can't be changed now.");
   if (await env.DB.prepare("SELECT 1 FROM wholesale_invoices WHERE order_id = ?").bind(id).first()) throw new ApiError(409, "invoiced", by.customerId ? "This delivery has been invoiced, so it can't be changed here. Contact Strangers." : "This order has an invoice, so its bags can't be changed.");
   return order;
 }
@@ -141,7 +142,7 @@ export async function skipRun(env: Env, id: string, value: unknown, actor: strin
   return marked;
 }
 
-/** Amends the bags on a New or Preparing customer order with no invoice: kept lines keep their saved price; added
+/** Amends the bags on a New, Preparing or Ready customer order with no invoice: kept lines keep their saved price; added
  * ones take today's catalogue price. Totals and the delivery charge are worked out again. On a standing order the
  * change is for every delivery from now on (`scope: "ongoing"`, the default) or just this one (`"once"`: the usual
  * bags are kept in repeatLines for the next run). */
