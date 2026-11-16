@@ -26,7 +26,7 @@ const order = (fields = {}) => ({ requestId: crypto.randomUUID(), customerId: C.
 before(async () => {
   mock = createServer((rq, rs) => { let b = ""; rq.on("data", (d) => (b += d)); rq.on("end", () => { try { sent.push(JSON.parse(b)); } catch {} rs.writeHead(200, { "content-type": "application/json" }).end('{"id":"x"}'); }); });
   await new Promise((r) => mock.listen(0, "127.0.0.1", r));
-  srv = await startServer({ writeLimit: 3000, vars: { WHOLESALE_MINIMUM_ORDER_GRAMS: "6000", RESEND_API_KEY: "re_test_key", RESEND_API_URL: `http://127.0.0.1:${mock.address().port}/emails` } });
+  srv = await startServer({ writeLimit: 3000, vars: { WHOLESALE_MINIMUM_ORDER_GRAMS: "6000", RESEND_API_KEY: "re_test_key", RESEND_API_URL: `http://127.0.0.1:${mock.address().port}/emails`, SLACK_TEST_HOOKS: "1", SLACK_ORDERS_WEBHOOK_URL: `http://127.0.0.1:${mock.address().port}/slack` } });
   ADMIN = (await ok("POST", "/api/auth/setup", { name: "Owner", username: "owner", password: "owner-password", code: SETUP_CODE }, null)).cookie;
   const staff = await person("staff", "packer"); STAFF = staff.cookie; staffId = staff.id;
   OTHER = (await person("staff", "other")).cookie;
@@ -62,6 +62,10 @@ test("staff take an order for a customer: a real order at today's prices, emaile
   const brazil = admin.products.find((p) => p.id === "brazil");
   assert.deepEqual([saved.preview, saved.customerId, saved.createdName, saved.takenFor.source, saved.lines[0].price, saved.pence], [false, C.id, "Pat Packer", "In person", brazil.prices.kilo, brazil.prices.kilo * 2]);
   assert.equal(saved.customerNote, "Collecting at 3");
+  // Its Slack post links to the staff orders page by its full address (a bare "/orders" doesn't open from Slack).
+  const post = srv.sql(`SELECT payload FROM slack_order_posts WHERE order_id = '${r.body.order.id}'`)[0];
+  assert.ok(post, "the order is posted to Slack");
+  assert.match(JSON.parse(post.payload).text, /\n<https?:\/\/[^/|>]+\/orders\|Open wholesale orders>$/);
   // The same request again returns the same order.
   const again = await call("POST", "/api/staff-orders/orders", body, STAFF);
   assert.equal(again.status, 200); assert.equal(again.body.order.id, r.body.order.id);

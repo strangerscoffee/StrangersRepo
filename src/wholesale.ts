@@ -235,8 +235,11 @@ async function placeOrder(req: Request, env: Env, user: OrderingUser, links: Lin
   // A new customer order (never a staff preview or a retry, which returned above) is emailed to Strangers and posted
   // to Slack. One staff took themselves isn't emailed to the team, but still goes to Slack for packing.
   if (customer) {
-    if (!takenFor) await notifyNewOrder(env, ctx, saved, links.diary);
-    await notifySlackNewOrder(env, ctx, saved, links.diary);
+    // Emails and Slack open links from elsewhere, so the staff orders page needs its full address (on the diary's own
+    // host links.diary is just "/").
+    const diary = new URL(links.diary || "/", req.url).href;
+    if (!takenFor) await notifyNewOrder(env, ctx, saved, diary);
+    await notifySlackNewOrder(env, ctx, saved, diary);
     // The customer gets their own confirmation, linking back to My orders (for a taken order, only when asked).
     if (!takenFor || takenFor.emailCustomer) await confirmToCustomer(env, ctx, saved, { showPrices: !customer.hidePrices, ordersUrl: customerOrdersUrl(env, links, req) });
   }
@@ -312,8 +315,9 @@ export async function handleWholesale(req: Request, env: Env, route: string, use
       ? await amendLines(env, id, body, user.name, by)
       : await skipRun(env, id, body, user.name, by);
     const { change, nextDispatchDate } = await standingChange(env, saved as any, changeMatch[2] as "lines" | "skip", body);
-    await notifyCustomerChange(env, ctx, saved as any, change, links.diary, already);
-    await notifySlackChange(env, ctx, { ...(saved as any), nextDispatchDate, already }, change, links.diary);
+    const diary = new URL(links.diary || "/", req.url).href;
+    await notifyCustomerChange(env, ctx, saved as any, change, diary, already);
+    await notifySlackChange(env, ctx, { ...(saved as any), nextDispatchDate, already }, change, diary);
     return json({ order: visibleOrder(saved as Order & Versioned) });
   }
   const match = /^orders\/((?:PREVIEW|WS)-[A-F0-9]{32})$/.exec(route);

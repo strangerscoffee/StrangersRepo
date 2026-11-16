@@ -56,7 +56,7 @@ export function buildSlackOrder(order: SlackOrder, ordersUrl: string, held: bool
     `${esc(order.id)} · placed ${esc(placed(order.createdAt))}${held ? " (overnight, posted this morning)" : ""}${order.reference ? ` · ref ${esc(order.reference)}` : ""}`,
     `*${bags.all} ${bags.all === 1 ? "bag" : "bags"}* (${sizes || "no bags"}) · ${kg(order.grams)} · ${esc(fulfil)}`,
     ...lines,
-  ].join("\n") + note + `\n<${ordersUrl}|Open wholesale orders>`;
+  ].join("\n") + note + (/^https?:\/\//.test(ordersUrl) ? `\n<${ordersUrl}|Open wholesale orders>` : "");
   return { text, unfurl_links: false, unfurl_media: false };
 }
 
@@ -75,6 +75,6 @@ export function buildSlackChange(order: SlackChange, change: "skipped" | "once" 
     : `${change === "once" ? "This delivery only" : "Every delivery from now on"}${day ? ` · dispatch ${esc(day)}` : ""}`;
   const bags = change === "skipped" ? [] : order.lines.map((l) => `• *${l.quantity}* × ${esc(l.title)} · ${esc(packName[l.pack] || l.packLabel || l.pack)} · ${esc(l.grindLabel || "Beans")}${l.decaf ? " · decaf" : ""}`);
   const warn = order.already ? [`:warning: *It was already ${order.already === "Ready" ? "packed and ready to go" : "being prepared"}: check the packing.*`] : [];
-  const text = [head, ...warn, `${esc(order.id)} · ${esc(placed(at))}${held ? " (overnight, posted this morning)" : ""}`, what, ...bags].join("\n") + `\n<${ordersUrl}|Open wholesale orders>`;
+  const text = [head, ...warn, `${esc(order.id)} · ${esc(placed(at))}${held ? " (overnight, posted this morning)" : ""}`, what, ...bags].join("\n") + (/^https?:\/\//.test(ordersUrl) ? `\n<${ordersUrl}|Open wholesale orders>` : "");
   return { text, unfurl_links: false, unfurl_media: false };
 }
