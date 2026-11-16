@@ -597,6 +597,9 @@ body[data-auth-view=login] #login-submit { margin-top:3px; }
 .login-detail { margin-top:16px; color:var(--muted); font-size:13px; line-height:1.6; }
 .wholesale-login #reset-intro { margin-top:14px; color:var(--muted); font-size:13px; line-height:1.6; overflow-wrap:anywhere; }
 .wholesale-login .quantity-error { margin-top:12px; line-height:1.5; }
+.wholesale-login .field-error { margin:8px 0 0; font-size:13px; font-weight:500; }
+.wholesale-login .field-note { margin:7px 0 0; color:var(--muted); font-size:12.5px; font-weight:400; line-height:1.45; }
+.wholesale-login .form-field input[aria-invalid="true"] { border-color:var(--bad); }
 .login-footer nav { display:flex; justify-content:center; flex-wrap:wrap; gap:12px; margin-top:6px; }
 .login-footer a,.wholesale-login .login-footer .text-button { display:inline-flex; align-items:center; justify-content:center; min-width:44px; min-height:44px; padding:8px 4px; border:0; background:transparent; color:var(--muted); font-size:12px; font-weight:550; }
 .login-footer p { margin:0; color:var(--muted); font-size:11px; line-height:1.6; text-align:center; }

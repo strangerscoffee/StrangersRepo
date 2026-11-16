@@ -82,10 +82,23 @@ test("import the QuickBooks customer list, invite one, and the customer sets up 
   await cp.goto(srv.base + new URL(link).pathname + new URL(link).search);
   await cp.locator("#login-intro", { hasText: "The Green Grocers" }).waitFor();
   assert.equal(await cp.evaluate(() => location.search), "", "the token leaves the address bar");
-  await cp.locator("#username").fill("greengrocers"); await cp.locator("#password").fill("grocers-own-password"); await cp.locator("#invite-password2").fill("grocers-own-pass");
+  // A username is suggested from the business name, and the box says it isn't the email address.
+  assert.equal(await cp.locator("#username").inputValue(), "thegreengrocers");
+  assert.match(await cp.locator('label[for="username"]').innerText(), /not your email address/);
+  // Each problem shows under its own box: an email address as the username, a short password, then a mismatch.
+  await cp.locator("#username").fill("pip@greengrocers.example"); await cp.locator("#password").fill("short"); await cp.locator("#invite-password2").fill("short");
   await cp.locator("#login-submit").click();
-  await cp.locator("#login-error", { hasText: "do not match" }).waitFor();
-  await cp.locator("#invite-password2").fill("grocers-own-password");
+  await cp.locator("#username-error", { hasText: "rather than your email address, for example thegreengrocers" }).waitFor();
+  assert.match(await cp.locator("#password-error").innerText(), /at least 8 characters \(this one has 5\)/);
+  assert.equal(await cp.locator("#login-error").isHidden(), true, "nothing at the foot of the form");
+  assert.equal(await cp.locator("#username").getAttribute("aria-invalid"), "true");
+  if (process.env.SHOT_DIR) await cp.screenshot({ path: `${process.env.SHOT_DIR}/invite-errors-phone.png`, fullPage: true });
+  await cp.locator("#username").fill("greengrocers");
+  assert.equal(await cp.locator("#username-error").isHidden(), true, "typing clears its message");
+  await cp.locator("#password").fill("grocers.own.2026"); await cp.locator("#invite-password2").fill("grocers.own.2025");
+  await cp.locator("#login-submit").click();
+  await cp.locator("#invite-password2-error", { hasText: "doesn't match the password above" }).waitFor();
+  await cp.locator("#invite-password2").fill("grocers.own.2026");
   await shot(cp, "invite-phone");
   await cp.locator("#login-submit").click();
   await cp.locator(".product-card").first().waitFor();

@@ -7,6 +7,42 @@
   let linkBusiness = '', resetUsername = '';
   const say = (selector, message) => { $(selector).textContent = message; $(selector).hidden = !message; };
   const connection = error => error.message === 'Failed to fetch' ? 'Check your connection and try again.' : error.message;
+  // Errors sit under the box they're about (username, password, confirm password); anything else goes at the foot.
+  const FIELDS = ['username', 'password', 'invite-password2'];
+  function fieldError(id, message) {
+    say('#' + id + '-error', message);
+    if (message) $('#' + id).setAttribute('aria-invalid', 'true'); else $('#' + id).removeAttribute('aria-invalid');
+  }
+  const clearFieldErrors = () => FIELDS.forEach(id => fieldError(id, ''));
+  for (const id of FIELDS) $('#' + id).addEventListener('input', () => fieldError(id, ''));
+  // A username suggested from the business name ("The Grind Coffee House" -> "thegrindcoffeehouse"), filled in
+  // until the person types their own.
+  let usernameTyped = false;
+  $('#username').addEventListener('input', () => { usernameTyped = true; });
+  const suggestUsername = business => {
+    const name = String(business || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]+/g, '').slice(0, 32);
+    return name.length >= 3 ? name : '';
+  };
+  const suggestFor = business => { if (!usernameTyped || !$('#username').value) { $('#username').value = suggestUsername(business); usernameTyped = false; } };
+  $('#wholesale-login').elements.business.addEventListener('input', event => { if (mode === 'register') suggestFor(event.target.value); });
+  /** Checks a new username and password before sending, with a message under the box that needs changing. */
+  function checkNewAccount() {
+    const username = $('#username').value.trim().toLowerCase(), password = $('#password').value;
+    let first = null;
+    const flag = (id, message) => { fieldError(id, message); first ||= id; };
+    if (username.includes('@')) flag('username', `Choose a username rather than your email address${suggestUsername(linkBusiness || $('#wholesale-login').elements.business.value) ? `, for example ${suggestUsername(linkBusiness || $('#wholesale-login').elements.business.value)}` : ''}.`);
+    else if (!/^[a-z0-9][a-z0-9._-]{2,31}$/.test(username)) flag('username', username.length < 3 ? 'Usernames need at least 3 characters.' : /\s/.test(username) ? "Usernames can't contain spaces: use dots or dashes instead, or leave them out." : 'Usernames can only use letters, numbers, dots, dashes or underscores, starting with a letter or number.');
+    if (password.length < 8) flag('password', `Passwords need at least 8 characters (this one has ${password.length}). Letters, numbers, dots and other symbols are all fine.`);
+    if (mode === 'invite' && password.length >= 8 && password !== $('#invite-password2').value) flag('invite-password2', 'This doesn\'t match the password above. Type the same password in both boxes.');
+    if (first) $('#' + first).focus();
+    return !first;
+  }
+  /** A refusal from the server goes under the box it's about when it's about one. */
+  function placeError(message) {
+    const id = /^Usernames|username is already/i.test(message) ? 'username' : /^Passwords/i.test(message) ? 'password' : '';
+    if (!id || !['register', 'invite'].includes(mode)) return say('#login-error', message);
+    fieldError(id, message); $('#' + id).focus();
+  }
   const toggles = [...document.querySelectorAll('[data-password-toggle]')];
   for (const button of toggles) button.dataset.passwordLabel = button.getAttribute('aria-label').replace(/^Show /, '');
   function hidePasswords(clear = false) {
@@ -44,6 +80,12 @@
     $('#invite-confirm').hidden = next !== 'invite';
     $('#invite-password2').required = next === 'invite';
     $('#password').autocomplete = ['register', 'invite'].includes(next) ? 'new-password' : 'current-password';
+    const newAccount = ['register', 'invite'].includes(next);
+    $('#username-hint').hidden = $('#username-note').hidden = !newAccount;
+    $('#username').autocomplete = newAccount ? 'off' : 'username';
+    // An invite checks its own boxes, with a message under each, instead of the browser's pop-up.
+    $('#wholesale-login').noValidate = next === 'invite';
+    clearFieldErrors();
     $('#forgot-toggle').hidden = next !== 'login';
     $('#registration-complete').hidden = next !== 'registered';
     $('#forgot-form').hidden = next !== 'forgot';
@@ -116,7 +158,8 @@
     if (busy || checkingLink || !['login', 'register', 'changing', 'invite'].includes(mode)) return;
     const submittedMode = mode;
     say('#login-error', '');
-    if (mode === 'invite' && $('#password').value !== $('#invite-password2').value) { say('#login-error', 'The passwords do not match.'); return; }
+    clearFieldErrors();
+    if (['register', 'invite'].includes(mode) && !checkNewAccount()) return;
     if (mode === 'changing' && $('#new-password').value !== $('#confirm-password').value) { say('#login-error', 'The new passwords do not match.'); return; }
     const form = $('#wholesale-login');
     const payload = { username: $('#username').value, password: $('#password').value,
@@ -134,7 +177,7 @@
       if (!response.ok) throw new Error(result.message || 'Could not sign in. Try again.');
       if (submittedMode === 'register') { busy = false; form.reset(); hidePasswords(true); render('registered'); $('#registration-toggle').focus({ preventScroll: true }); return; }
       location.replace(home);
-    } catch (error) { say('#login-error', connection(error)); }
+    } catch (error) { placeError(connection(error)); }
     finally { busy = false; updateBusy(); }
   });
   $('#reset-form').addEventListener('submit', async event => {
@@ -158,7 +201,8 @@
       if (generation !== started) return;
       linkBusiness = result.business || 'your business'; resetUsername = result.username || '';
       checkingLink = false; render(kind);
-      $(kind === 'reset' ? '#reset-password' : '#username').focus();
+      if (kind === 'invite') { suggestFor(linkBusiness); $('#password').focus(); }
+      else $('#reset-password').focus();
     } catch (error) {
       if (generation !== started) return;
       invite = reset = null; checkingLink = false; render('login'); say('#login-intro', connection(error));
