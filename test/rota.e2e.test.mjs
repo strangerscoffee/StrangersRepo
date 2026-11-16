@@ -304,12 +304,20 @@ for (const [label, viewport] of [["phone", { width: 393, height: 852 }], ["iPad"
     await call("PUT", "/api/rota/people/" + ALEX_ID, { contractHours: 30 });
     if (!(await call("GET", "/api/rota/week?start=" + today)).shifts.some((s) => s.userId === ALEX_ID && s.day === today))
       await call("POST", "/api/rota/shifts", { site: "cafe", day: today, start: "08:00", end: "16:30", breakMins: 30, job: "", userId: ALEX_ID });
+    // Two days off sick this month (a whole day and part of one): each date is listed for keying into payroll.
+    const sickA = month + "-02", sickB = month + "-03";
+    srv.sql(`INSERT OR IGNORE INTO rota_time_off(id,user_id,from_day,to_day,reason,status,created_at,kind,from_time,to_time) VALUES
+      ('e2e-sick-a','${ALEX_ID}','${sickA}','${sickA}','','approved',${Date.now()},'sick',NULL,NULL),
+      ('e2e-sick-b','${ALEX_ID}','${sickB}','${sickB}','','approved',${Date.now()},'sick','12:00','17:00')`);
     const m = await pageFor(viewport);
     await m.page.emulateMedia({ colorScheme: scheme });
     await m.page.goto(srv.base + "/rota/#hours");
     await m.page.locator(".htable").waitFor();
     await m.page.locator(".hmode").getByRole("button", { name: "Month", exact: true }).click();
     await m.page.locator(".mtable").waitFor();
+    const dayLabel = (d) => new Date(d + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
+    const sickList = m.page.locator(".mtable tbody tr", { hasText: "Alex Brown" }).locator("ul.sickdates li");
+    assert.deepEqual(await sickList.allInnerTexts(), [dayLabel(sickA), dayLabel(sickB) + " (half day)"]);
     const title = new Date(month + "-01T12:00:00Z").toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
     assert.match(await m.page.locator("body").innerText(), new RegExp(title + " · all sites · for payroll"));
     const row = m.page.locator(".mtable tbody tr", { hasText: "Alex Brown" });

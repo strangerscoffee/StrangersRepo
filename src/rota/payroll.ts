@@ -50,6 +50,11 @@ function runsText(days: Map<string, number>): string {
   return out.join(", ");
 }
 
+/** Every day on its own, for keying into payroll: "Wed 7 Oct, Thu 8 Oct, Fri 9 Oct (half day)". */
+function eachDayText(days: Map<string, number>): string {
+  return [...days.keys()].sort().map((d) => dateOf(d).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }).replace(",", "") + (days.get(d)! < 1 ? " (half day)" : "")).join(", ");
+}
+
 export async function monthHours(env: Env, month: string, format: string | null): Promise<Response> {
   if (!isMonth(month)) throw invalid("Choose a real month.");
   const { from, to } = monthRange(month);
@@ -114,7 +119,9 @@ export async function monthHours(env: Env, month: string, format: string | null)
       sites: Object.fromEntries(ROTA_SITES.map((s) => [s.id, round2(mine.filter((x) => x.site === s.id).reduce((h, x) => h + x.hours, 0))])),
       holidayDays: round2(a?.annual.charge.days || 0),
       holidayHours: round2(a?.annual.charge.hours || 0), holidayDates: dates("annual"),
-      sickDays: days("sick"), sickDates: dates("sick"),
+      // Sick days one by one (payroll software takes each date): the page lists them, the CSV has them too.
+      sickDays: days("sick"), sickDates: a ? eachDayText(a.sick.days) : "",
+      sickDayList: a ? [...a.sick.days.entries()].sort(([x], [y]) => x.localeCompare(y)).map(([date, n]) => ({ date, half: n < 1 })) : [],
       unpaidDays: days("unpaid"), unpaidDates: dates("unpaid"),
       unauthorisedDays: days("unauthorised"), unauthorisedDates: dates("unauthorised"),
       otherDays: days("other"), otherDates: dates("other"),

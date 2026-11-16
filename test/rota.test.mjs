@@ -386,7 +386,8 @@ test("a month's hours for payroll: weekly overtime allocated to the dates worked
   assert.equal(priya.overtime, 5, "3h on 1 Oct plus 2h on 29 Oct; weekly thresholds include preceding days");
   assert.equal(priya.basicHours, 10);
   assert.deepEqual(priya.sites, { roastery: 0, cafe: 15, asg: 0, factory: 0, office: 0 });
-  assert.equal(priya.sickDays, 3); assert.equal(priya.sickDates, "7–9 Oct");
+  assert.equal(priya.sickDays, 3); assert.equal(priya.sickDates, "Mon 7 Oct, Tue 8 Oct, Wed 9 Oct");
+  assert.deepEqual(priya.sickDayList, [{ date: "2030-10-07", half: false }, { date: "2030-10-08", half: false }, { date: "2030-10-09", half: false }], "each sick day, for payroll");
   assert.equal(priya.holidayDays, 1.5, "the saved holiday charges");
   assert.equal(priya.unpaidDays, 0, "declined time off doesn't count");
   const sam = r.body.people.find((p) => p.userId === ids.Sam);
@@ -401,7 +402,7 @@ test("a month's hours for payroll: weekly overtime allocated to the dates worked
   assert.match(csv.headers.get("content-disposition"), /payroll-hours-2030-10\.csv/);
   const lines = csv.text.trim().split(/\r\n/);
   assert.equal(lines[0], "Name,Hours worked,Basic hours,Overtime hours,Holiday days,Holiday hours,Holiday dates,Sick days,Sick dates,Unpaid days,Unpaid dates,Unauthorised days,Unauthorised dates,Other time off days,Other time off dates,Shifts,Shifts amended,Roastery hours,Cafe hours,ASG hours,Factory hours,Office hours,Contract hours a week,Still employed");
-  assert.ok(lines.includes("Priya Shah,15,10,5,1.5,0,14–15 Oct,3,7–9 Oct,0,,0,,0,,2,0,0,15,0,0,0,8,Yes"), csv.text);
+  assert.ok(lines.includes("Priya Shah,15,10,5,1.5,0,14–15 Oct,3,\"Mon 7 Oct, Tue 8 Oct, Wed 9 Oct\",0,,0,,0,,2,0,0,15,0,0,0,8,Yes"), csv.text);
   const shifts = await rota("GET", "hours?month=2030-10&format=shifts", undefined, ADMIN);
   const rows = shifts.text.trim().split(/\r\n/);
   assert.equal(rows[0], "Date,Name,Site,Planned start,Planned finish,Planned break (min),Actual start,Actual finish,Actual break (min),Paid hours,Amended because");

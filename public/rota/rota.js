@@ -1568,8 +1568,8 @@
       actions: [el("button", { type: "button", class: "iconbtn", "aria-label": "Previous week", onclick: () => { R.hoursWeek = addDays(r.week, -7); render(); } }, svgi(ICON.chevL)),
         el("button", { type: "button", class: "iconbtn", "aria-label": "Next week", onclick: () => { R.hoursWeek = addDays(r.week, 7); render(); } }, svgi(ICON.chevR))],
     });
-    const names = { roastery: "Roastery", cafe: "Cafe", asg: "ASG", factory: "Factory" };
-    const stats = el("div", { class: "stat3 hstats" }, ...Object.entries(r.siteTotals).filter(([id, h]) => h || id !== "factory").map(([id, h]) => el("div", { class: "stat glass" }, el("b", { text: hrs(h) }), el("span", { text: names[id] }))));
+    const names = { roastery: "Roastery", cafe: "Cafe", asg: "ASG", factory: "Factory", office: "Office" };
+    const stats = el("div", { class: "stat3 hstats" }, ...Object.entries(r.siteTotals).filter(([id, h]) => h || !["factory", "office"].includes(id)).map(([id, h]) => el("div", { class: "stat glass" }, el("b", { text: hrs(h) }), el("span", { text: names[id] }))));
     const table = el("table", { class: "htable" },
       el("thead", {}, el("tr", {}, el("th", { scope: "col", text: "Person" }), el("th", { scope: "col", class: "n", text: "Hours" }), el("th", { scope: "col", class: "n", text: "Contract" }), el("th", { scope: "col", class: "n", text: "Overtime" }))),
       el("tbody", {}, ...r.people.map((p) => el("tr", {}, el("th", { scope: "row", text: p.name }),
@@ -1590,18 +1590,22 @@
       actions: [el("button", { type: "button", class: "iconbtn", "aria-label": "Previous month", onclick: () => { R.hoursMonth = monthAdd(r.month, -1); render(); } }, svgi(ICON.chevL)),
         el("button", { type: "button", class: "iconbtn", "aria-label": "Next month", onclick: () => { R.hoursMonth = monthAdd(r.month, 1); render(); } }, svgi(ICON.chevR))],
     });
-    const names = { roastery: "Roastery", cafe: "Cafe", asg: "ASG", factory: "Factory" };
-    const stats = el("div", { class: "stat3 hstats" }, ...Object.entries(r.siteTotals).filter(([id, h]) => h || id !== "factory").map(([id, h]) => el("div", { class: "stat glass" }, el("b", { text: hrs(h) }), el("span", { text: names[id] }))));
+    const names = { roastery: "Roastery", cafe: "Cafe", asg: "ASG", factory: "Factory", office: "Office" };
+    const stats = el("div", { class: "stat3 hstats" }, ...Object.entries(r.siteTotals).filter(([id, h]) => h || !["factory", "office"].includes(id)).map(([id, h]) => el("div", { class: "stat glass" }, el("b", { text: hrs(h) }), el("span", { text: names[id] }))));
     const days = (n) => `${hrs(n)} ${n === 1 ? "day" : "days"}`;
     const away = (p) => [p.holidayDays || p.holidayHours ? `${p.holidayHours && !p.holidayDays ? hrs(p.holidayHours) + "h" : days(p.holidayDays)} holiday` : "",
-      p.sickDays ? `${days(p.sickDays)} sick` : "", p.unpaidDays ? `${days(p.unpaidDays)} unpaid` : "", p.unauthorisedDays ? `${days(p.unauthorisedDays)} unauthorised` : "", p.otherDays ? `${days(p.otherDays)} other (to check)` : ""].filter(Boolean);
+      p.sickDays ? { sick: `${days(p.sickDays)} sick`, list: p.sickDayList || [] } : "", p.unpaidDays ? `${days(p.unpaidDays)} unpaid` : "", p.unauthorisedDays ? `${days(p.unauthorisedDays)} unauthorised` : "", p.otherDays ? `${days(p.otherDays)} other (to check)` : ""].filter(Boolean);
     const table = el("table", { class: "htable mtable" },
       el("thead", {}, el("tr", {}, el("th", { scope: "col", text: "Person" }), el("th", { scope: "col", class: "n", text: "Hours" }), el("th", { scope: "col", class: "n", text: "Overtime" }), el("th", { scope: "col", text: "Time off" }))),
       el("tbody", {}, ...r.people.map((p) => el("tr", {},
         el("th", { scope: "row" }, el("span", { text: p.name }), p.active ? null : el("span", { class: "s", text: "No longer here" })),
         el("td", { class: "n", text: hrs(p.hours) + (p.amended ? "*" : ""), title: p.amended ? `Planned ${hrs(p.plannedHours)}h; ${plural(p.amended, "shift")} amended on the day` : "" }),
         el("td", { class: "n" + (p.overtime ? " over" : ""), text: p.overtime ? `+${hrs(p.overtime)}` : "–" }),
-        el("td", { class: "away" }, ...(away(p).length ? away(p).map((t) => el("span", { text: t })) : [el("span", { class: "s", text: "–" })]))))),
+        el("td", { class: "away" }, ...(away(p).length ? away(p).map((t) => typeof t === "string" ? el("span", { text: t }) : el("span", { class: "sickdays" },
+          el("span", { text: t.sick }),
+          // Each day off sick, for typing into the payroll software.
+          el("ul", { class: "sickdates", "aria-label": `Days ${p.name} was off sick` }, ...t.list.map((d) => el("li", { text: fmt(d.date, { weekday: "short", day: "numeric", month: "short" }) + (d.half ? " (half day)" : "") })))))
+          : [el("span", { class: "s", text: "–" })]))))),
       el("tfoot", {}, el("tr", {}, el("th", { scope: "row", text: "Total" }), el("td", { class: "n", text: hrs(r.total) }), el("td", { class: "n" + (r.overtime ? " over" : ""), text: r.overtime ? `+${hrs(r.overtime)}` : "–" }), el("td"))));
     const notes = [];
     if (r.draftWeeks.length) notes.push(el("div", { class: "alert rp warn", role: "note" }, el("span", { class: "ic" }, svgi(ICON.warn)), el("span", { class: "t" }, el("b", { text: `${plural(r.draftWeeks.length, "week")} not published` }),
