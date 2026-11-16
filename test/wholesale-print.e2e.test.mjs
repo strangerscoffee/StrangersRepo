@@ -96,7 +96,7 @@ test("print new orders, pick orders to print, and see the bags to process", asyn
 
     await p.evaluate(() => { window.__printed = ""; });
     await p.locator(".w-print-menu summary").click();
-    await p.locator('[data-act="wh-pick-start"]').click(); await p.locator('[data-act="wh-pick"]').first().click();
+    await p.locator('.w-print-menu [data-act="wh-pick-start"]').click(); await p.locator('[data-act="wh-pick"]').first().click();
     assert.equal(await p.locator(".w-picked-count").textContent(), "1 selected");
     assert.equal(await p.locator('[data-act="wh-pick"]').first().getAttribute("aria-pressed"), "true");
     await p.locator('[data-act="wh-print-picked"]').click(); await p.waitForFunction(() => window.__printed);

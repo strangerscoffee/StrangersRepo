@@ -3,6 +3,9 @@
 .w-print-bar .btn{min-height:40px}
 .w-picking{padding:10px 12px;border-radius:16px;background:var(--tint,var(--sunk));border:1px solid var(--line)}
 .w-picked-count{margin-right:auto;font-weight:650}
+.w-batch{flex:1 1 100%;display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding-top:8px;margin-top:2px;border-top:1px solid var(--line)}
+.w-batch-label{font-size:13px;font-weight:650;margin-right:auto;flex:1 1 200px}
+.w-batch .btn:disabled{opacity:.45;cursor:default}
 .w-pick-ring{display:block;width:20px;height:20px;border-radius:50%;border:2px solid var(--muted)}
 .w-order-entry.is-picking .w-order[aria-pressed=true]{background:var(--tint,var(--sunk))}
 .wp-sheet{display:grid;gap:16px;min-width:0;width:min(760px,100%)}
@@ -12,5 +15,5 @@
 .wp-body{display:grid;gap:16px;min-width:0}
 .wp-sheet .w-actions{justify-content:flex-end;flex-wrap:wrap}
 .w-order-entry.is-picking{grid-template-columns:minmax(0,1fr)!important}
-@media(max-width:600px){.w-print-bar .btn{flex:1 1 auto}.w-picked-count{flex-basis:100%}.wp-sheet .w-actions .btn{flex:1 1 100%}}
+@media(max-width:600px){.w-batch-label{flex-basis:100%}.w-print-bar .btn{flex:1 1 auto}.w-picked-count{flex-basis:100%}.wp-sheet .w-actions .btn{flex:1 1 100%}}
 /* Bags-to-process tables, tiles and the printed pages: /shared/wholesale-packing.css. */

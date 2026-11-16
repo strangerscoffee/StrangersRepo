@@ -65,7 +65,7 @@ test("granted staff move orders along, keep notes, print and look up customers",
     await p.locator("#totalsScope button", { hasText: "New & preparing" }).click();
     await p.waitForFunction(() => document.querySelector("#totalsBody .wp-tiles,#totalsBody .wp-empty"));
     await p.locator("#closeTotals").click();
-    await p.getByRole("button", { name: "Select to print" }).click();
+    await p.getByRole("button", { name: "Select orders" }).click();
     await p.locator("[data-order-id]").first().click(); assert.equal(await p.locator(".picked-count").textContent(), "1 selected");
     await p.getByRole("button", { name: "Print selected" }).click(); await p.waitForFunction(() => window.__printed);
     const printed = await p.evaluate(() => window.__printed);

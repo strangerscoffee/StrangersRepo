@@ -7,6 +7,10 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
   const tabsUI = window.WholesaleTabs({ api, html, raw, svg, put, openSheet, closeSheet, reload, toast });
   // Picking orders to print: while on, tapping an order ticks it instead of opening it.
   let picking = false; const picked = new Set();
+  // Batch actions on the picked orders: {status, confirm} while asking, {running, done, total} while saving.
+  let batch = null;
+  const FLOW = ["New", "Preparing", "Ready", "Dispatched"];
+  const movable = (row, to) => row.preview === false && FLOW.includes(row.status) && FLOW.indexOf(row.status) < FLOW.indexOf(to);
   document.addEventListener("click", event => {
     const menu = document.querySelector(".w-print-menu[open]");
     if (menu && (!menu.contains(event.target) || event.target.closest("[data-act]"))) menu.open = false;
@@ -144,8 +148,8 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     const hasPreparation = counts ? (counts.New || 0) + (counts.Preparing || 0) > 0 : true;
     const tools = html`<div class="w-order-toolbar"><div class="toolbar">${search("Search wholesale orders", "Search order, reference or customer")}</div>
       <div class="segwrap w-filters"><div class="seg" role="group" aria-label="Order status">${["all", ...data.statuses].map((value) => html`<button type="button" data-act="wh-status" data-id="${value}" aria-pressed="${status === value}">${value === "all" ? "All orders" : value}${counts && (value === "all" ? allCount : counts[value]) > 0 ? html`<span class="w-status-count">${value === "all" ? allCount : counts[value] || 0}</span>` : ""}</button>`)}</div></div>
-      ${picking ? html`<div class="w-print-bar w-picking" role="region" aria-label="Choose orders to print"><span class="w-picked-count" aria-live="polite">${picked.size ? `${picked.size} selected` : "Tap orders to select them"}</span><button class="btn sm soft" type="button" data-act="wh-pick-all">Select all shown</button><button class="btn sm soft" type="button" data-act="wh-totals" ${picked.size ? "" : raw("disabled")}>Bag totals</button><button class="btn sm" type="button" data-act="wh-print-picked" ${picked.size ? "" : raw("disabled")}>${svg("doc")}Print selected</button><button class="btn sm soft" type="button" data-act="wh-pick-done">Done</button></div>`
-        : html`<div class="w-print-bar">${hasNew || rows.length ? html`<details class="w-print-menu"><summary class="btn sm ${hasNew ? "" : "soft"}">${svg("doc")}Print<span aria-hidden="true">⌄</span></summary><div class="w-print-options"><button class="btn sm soft" type="button" data-act="wh-print-new" ${hasNew ? "" : raw("disabled")}>Print new orders</button><button class="btn sm soft" type="button" data-act="wh-pick-start" ${rows.length ? "" : raw("disabled")}>Select to print</button></div></details>` : html`<button class="btn sm" type="button" disabled>${svg("doc")}Print<span aria-hidden="true">⌄</span></button>`}<button class="btn sm soft" type="button" data-act="wh-totals" ${hasPreparation ? "" : raw("disabled")}>Bag totals</button></div>`}</div>`;
+      ${picking ? html`<div class="w-print-bar w-picking" role="region" aria-label="Choose orders"><span class="w-picked-count" aria-live="polite">${picked.size ? `${picked.size} selected` : "Tap orders to select them"}</span><button class="btn sm soft" type="button" data-act="wh-pick-all">Select all shown</button><button class="btn sm soft" type="button" data-act="wh-totals" ${picked.size ? "" : raw("disabled")}>Bag totals</button><button class="btn sm" type="button" data-act="wh-print-picked" ${picked.size ? "" : raw("disabled")}>${svg("doc")}Print selected</button><button class="btn sm soft" type="button" data-act="wh-pick-done">Done</button><div class="w-batch" id="wBatch" role="group" aria-label="Change the selected orders">${batchControls()}</div></div>`
+        : html`<div class="w-print-bar">${hasNew || rows.length ? html`<details class="w-print-menu"><summary class="btn sm ${hasNew ? "" : "soft"}">${svg("doc")}Print<span aria-hidden="true">⌄</span></summary><div class="w-print-options"><button class="btn sm soft" type="button" data-act="wh-print-new" ${hasNew ? "" : raw("disabled")}>Print new orders</button><button class="btn sm soft" type="button" data-act="wh-pick-start" ${rows.length ? "" : raw("disabled")}>Select to print</button></div></details>` : html`<button class="btn sm" type="button" disabled>${svg("doc")}Print<span aria-hidden="true">⌄</span></button>`}<button class="btn sm soft" type="button" data-act="wh-pick-start" ${rows.length ? "" : raw("disabled")}>Select</button><button class="btn sm soft" type="button" data-act="wh-totals" ${hasPreparation ? "" : raw("disabled")}>Bag totals</button></div>`}</div>`;
     return listing("wOrdersTitle", "Orders", resultCount(rows.length, data.matchingCount, "order"), tools,
       rows.length ? rows.map(orderRow) : emptyState(filtered ? "search" : "coffee", filtered ? "No matching orders" : "No orders yet", filtered ? "Try another search or status, or clear your filters to see all orders." : "Customer orders will appear here when they’re placed.", filtered),
       html`${more("orders")}<p class="hint">Coffee subtotals are saved with each order. Delivery and invoicing are managed separately.</p>`, html`<a class="btn sm w-new-order" href="${(data.links?.diary || "").replace(/\/$/, "")}/orders#new"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>New order</a> <button class="btn sm soft w-alerts-button" type="button" data-act="wh-announcement"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1zM15.5 8.5a5 5 0 0 1 0 7"/></svg>Announcement</button> <button class="btn sm soft w-alerts-button" type="button" data-act="wh-order-emails"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>Order alerts</button>`);
@@ -230,6 +234,37 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     preview();
     $("#wAnnForm").addEventListener("input", preview);
   }
+  // Mark the picked orders preparing, ready or dispatched: one version-checked save each, the same as the quick
+  // step (dispatch emails and standing orders work as usual). Orders only move forward; staff previews are left
+  // alone. Dispatching asks once more, because customers are emailed.
+  function batchControls() {
+    const chosen = (data?.orders || []).filter((row) => picked.has(row.id));
+    if (batch?.running) return html`<span class="w-batch-label" aria-live="polite">Saving ${batch.done} of ${batch.total}…</span>`;
+    if (batch?.confirm) {
+      const n = chosen.filter((row) => movable(row, "Dispatched")).length;
+      return html`<span class="w-batch-label">Mark ${n} ${n === 1 ? "order" : "orders"} dispatched? Customers are emailed that their order has been shipped or collected.</span><button class="btn sm" type="button" data-act="wh-batch-confirm">Dispatch ${n}</button><button class="btn sm soft" type="button" data-act="wh-batch-cancel">Cancel</button>`;
+    }
+    return html`<span class="w-batch-label">Selected orders:</span>${[["Preparing", "Mark preparing"], ["Ready", "Mark ready"], ["Dispatched", "Mark dispatched"]].map(([to, label]) => { const n = chosen.filter((row) => movable(row, to)).length; return html`<button class="btn sm soft" type="button" data-act="wh-batch" data-id="${to}" ${n ? "" : raw("disabled")}>${n ? `${label} (${n})` : label}</button>`; })}`;
+  }
+  function refreshBatch() { const box = $("#wBatch"); if (box) put(box, batchControls()); }
+  async function runBatch(to) {
+    const targets = data.orders.filter((row) => picked.has(row.id) && movable(row, to));
+    if (!targets.length || batch?.running) return;
+    batch = { running: true, done: 0, total: targets.length }; refreshBatch();
+    let saved = 0, failed = 0, conflict = false;
+    for (const row of targets) {
+      try {
+        const result = await api("PATCH", `/api/admin/wholesale/orders/${row.id}`, { ifVersion: row.version, status: to, customerId: row.customerId, note: row.note || "", trackingUrl: row.trackingUrl || "" });
+        if (result.order?.status !== to) throw new Error("The status update could not be confirmed.");
+        saved++; picked.delete(row.id);
+      } catch (error) { failed++; if (error.code === "conflict") conflict = true; }
+      batch.done++; refreshBatch();
+    }
+    batch = null;
+    await reload();
+    const word = to.toLowerCase();
+    toast(failed ? `${saved} marked ${word}. ${failed} couldn't be saved${conflict ? " (changed elsewhere)" : ""}; they're still selected.` : `${saved} ${saved === 1 ? "order" : "orders"} marked ${word}.`);
+  }
   function refreshPicks() {
     document.querySelectorAll('[data-act="wh-pick"]').forEach((button) => {
       const chosen = picked.has(button.dataset.id), icon = button.querySelector(".ic");
@@ -239,6 +274,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     });
     const count = $(".w-picked-count"); if (count) count.textContent = picked.size ? `${picked.size} selected` : "Tap orders to select them";
     for (const act of ["wh-totals", "wh-print-picked"]) { const button = $(`.w-picking [data-act="${act}"]`); if (button) button.disabled = !picked.size; }
+    if (!batch?.running) { batch = null; refreshBatch(); }
   }
   function refreshOrderFeedback(id) {
     const entry = document.querySelector(`[data-order-entry="${id}"]`);
@@ -1033,7 +1069,10 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
       if (name === "wh-announcement") { await openAnnouncement(); return; }
       if (name === "wh-print-new") { await printUI.printOrders(printUI.scopes.New); return; }
       if (name === "wh-totals") { await printUI.openTotals(picking ? [...picked] : []); return; }
-      if (name === "wh-pick-start" || name === "wh-pick-done") { picking = name === "wh-pick-start"; picked.clear(); await reload(); return; }
+      if (name === "wh-pick-start" || name === "wh-pick-done") { if (batch?.running) return; picking = name === "wh-pick-start"; picked.clear(); batch = null; await reload(); return; }
+      if (name === "wh-batch" && id) { if (batch?.running) return; if (id === "Dispatched") { batch = { confirm: true }; refreshBatch(); $('[data-act="wh-batch-confirm"]')?.focus({ preventScroll: true }); } else await runBatch(id); return; }
+      if (name === "wh-batch-confirm") { await runBatch("Dispatched"); return; }
+      if (name === "wh-batch-cancel") { batch = null; refreshBatch(); return; }
       if (name === "wh-pick" && id) { picked.has(id) ? picked.delete(id) : picked.add(id); refreshPicks(); return; }
       if (name === "wh-pick-all") { for (const row of data.orders) picked.add(row.id); refreshPicks(); return; }
       if (name === "wh-print-picked" && picked.size) { await printUI.printOrders({ ids: [...picked], label: `${picked.size} selected ${picked.size === 1 ? "order" : "orders"}` }); return; }

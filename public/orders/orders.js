@@ -37,13 +37,14 @@
  let tabs={open:[],cleared:[],threshold:6000},tabSelected=null,tabConfirm=false;
  const picked=new Set();
  let draft=null; // the order being taken for a customer (in memory only)
+ let batch=null; // {status, confirm, running, done} while marking selected orders
  const weight=grams=>new Intl.NumberFormat('en-GB',{maximumFractionDigits:2}).format(grams/1000)+' kg';
  const date=at=>new Date(at).toLocaleString('en-GB',{timeZone:'Europe/London',day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});
  const pill=value=>el('span',{class:'pill '+String(value).toLowerCase()},value);
  function closeDialogs(){for(const id of ['orderDialog','customerDialog','totalsDialog','tabDialog','newOrderDialog'])if($(id).open)$(id).close();}
  function lock(clear=false){
   document.documentElement.setAttribute('data-orders-locked','');closeDialogs();
-  if(clear){rows=[];customers=[];tabs={open:[],cleared:[],threshold:6000};tabSelected=null;$('tabList').replaceChildren();$('clearedList').replaceChildren();$('tabDetail').replaceChildren();selected=null;cursor=null;picked.clear();picking=false;editing=false;
+  if(clear){rows=[];customers=[];tabs={open:[],cleared:[],threshold:6000};tabSelected=null;$('tabList').replaceChildren();$('clearedList').replaceChildren();$('tabDetail').replaceChildren();selected=null;cursor=null;picked.clear();picking=false;editing=false;batch=null;
    for(const id of ['orderList','orderDetail','orderEdit','customerList','customerDetail','totalsBody','newOrderForm','newOrderFoot'])$(id).replaceChildren();draft=null;
    $('signedIn').textContent='';$('ordersContent').hidden=true;}
  }
@@ -61,13 +62,13 @@
  // Orders: the list, with a quick next step on each, or ticking orders to print.
  function printBar(){
   return picking
-   ?el('div',{class:'print-bar picking',role:'region','aria-label':'Choose orders to print'},el('span',{class:'picked-count','aria-live':'polite'},picked.size?`${picked.size} selected`:'Tap orders to select them'),
+   ?el('div',{class:'print-bar picking',role:'region','aria-label':'Choose orders'},el('span',{class:'picked-count','aria-live':'polite'},picked.size?`${picked.size} selected`:'Tap orders to select them'),
      el('button',{type:'button',class:'btn soft sm',onclick:()=>{for(const row of rows)picked.add(row.id);draw()}},'Select all shown'),
      el('button',{type:'button',class:'btn soft sm',disabled:!picked.size,onclick:()=>openTotals([...picked])},'Bag totals'),
      el('button',{type:'button',class:'btn sm',disabled:!picked.size,onclick:()=>printScope({ids:[...picked],label:`${picked.size} selected ${picked.size===1?'order':'orders'}`})},svg('doc'),'Print selected'),
-     el('button',{type:'button',class:'btn soft sm',onclick:()=>{picking=false;picked.clear();draw()}},'Done'))
+     el('button',{type:'button',class:'btn soft sm',onclick:()=>{if(batch?.running)return;picking=false;picked.clear();batch=null;draw()}},'Done'))
    :el('div',{class:'print-bar'},el('button',{type:'button',class:'btn sm',onclick:()=>printScope({status:'New',label:'New orders'})},svg('doc'),'Print new orders'),
-     el('button',{type:'button',class:'btn soft sm',onclick:()=>{picking=true;picked.clear();draw()}},'Select to print'),
+     el('button',{type:'button',class:'btn soft sm',onclick:()=>{picking=true;picked.clear();batch=null;draw()}},'Select orders'),
      el('button',{type:'button',class:'btn soft sm',onclick:()=>openTotals([])},'Bags to process'));
  }
  // Dispatch day and standing order, set in Admin ("Dispatch Fri 20 Nov · Standing order, every 2 weeks").
@@ -80,10 +81,46 @@
    el('span',{class:'row-end'},pill(row.status),picking?null:svg('chev')));
   return el('div',{class:'order-entry'+(picking?' is-picking':''),'aria-busy':String(working)},main,!picking&&next?el('button',{type:'button',class:'btn soft quick','data-quick':row.id,disabled:working,onclick:()=>quick(row.id)},working?'Saving…':next[1]):null);
  }
+ // Batch actions: mark every selected order preparing, ready or dispatched, one at a time against the version on
+ // screen (the same save as a single order, so dispatch emails and standing orders work as usual). Orders only move
+ // forward; ones already there or further on are left alone. Dispatching asks once more (customers are emailed).
+ const FLOW=['New','Preparing','Ready','Dispatched'];
+ const BATCH=[['Preparing','Mark preparing'],['Ready','Mark ready'],['Dispatched','Mark dispatched']];
+ const movable=(row,to)=>FLOW.includes(row.status)&&FLOW.indexOf(row.status)<FLOW.indexOf(to);
+ function batchBar(){
+  const bar=$('batchBar');bar.hidden=!picking;if(!picking){bar.replaceChildren();return;}
+  const chosen=rows.filter(r=>picked.has(r.id));
+  if(batch?.confirm&&!batch.running){
+   const n=chosen.filter(r=>movable(r,batch.status)).length;
+   bar.replaceChildren(el('span',{class:'batch-label'},`Mark ${n} ${n===1?'order':'orders'} dispatched? Customers are emailed that their order has been shipped or collected.`),
+    el('button',{type:'button',class:'btn sm',id:'batchConfirm',onclick:()=>runBatch('Dispatched')},`Dispatch ${n}`),
+    el('button',{type:'button',class:'btn soft sm',onclick:()=>{batch=null;batchBar()}},'Cancel'));
+   bar.querySelector('#batchConfirm').focus({preventScroll:true});return;
+  }
+  bar.replaceChildren(el('span',{class:'batch-label'},batch?.running?`Saving ${batch.done} of ${batch.total}…`:'Selected orders:'),
+   ...BATCH.map(([to,label])=>{const n=chosen.filter(r=>movable(r,to)).length;return el('button',{type:'button',class:'btn soft sm','data-batch':to,disabled:!n||!!batch?.running,onclick:()=>{if(to==='Dispatched'){batch={status:to,confirm:true};batchBar();}else runBatch(to);}},n?`${label} (${n})`:label);}));
+ }
+ async function runBatch(to){
+  const targets=rows.filter(r=>picked.has(r.id)&&movable(r,to));if(!targets.length||batch?.running)return;
+  batch={status:to,running:true,done:0,total:targets.length};batchBar();
+  let saved=0,failed=0,conflict=false,lost=false;
+  for(const row of targets){
+   const current=rows.find(r=>r.id===row.id)||row;busy.add(row.id);
+   try{await patch(current,{status:to});saved++;picked.delete(row.id);}
+   catch(e){if(e.quiet)lost=true;else{failed++;if(e.code==='conflict')conflict=true;}}
+   finally{busy.delete(row.id);batch.done++;}
+   if(lost)break;
+   if(started)draw();
+  }
+  batch=null;if(lost)return;
+  if(conflict)await load();else draw();
+  const word=to.toLowerCase();
+  toast(failed?`${saved} marked ${word}. ${failed} couldn't be saved${conflict?' (changed elsewhere: reloaded)':''}; they're still selected.`:`${saved} ${saved===1?'order':'orders'} marked ${word}.`);
+ }
  function togglePick(id){picked.has(id)?picked.delete(id):picked.add(id);draw();document.querySelector(`[data-order-id="${CSS.escape(id)}"]`)?.focus({preventScroll:true});}
  function draw(){
   $('statusFilters').replaceChildren(...filters.map(([id,label])=>el('button',{type:'button','aria-pressed':String(status===id),onclick:()=>{status=id;load()}},label)));
-  $('printBar').replaceChildren(printBar());
+  $('printBar').replaceChildren(printBar());batchBar();
   $('orderCount').textContent=rows.length<total?`${rows.length} of ${total} orders`:`${total} ${total===1?'order':'orders'}`;
   $('orderList').replaceChildren(...rows.map(orderRow));
   if(!rows.length)$('orderList').append(el('div',{class:'empty'},$('search').value.trim()?'No matching orders. Try another search or status.':'No orders in this view.'));
