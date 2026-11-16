@@ -9,7 +9,7 @@ import { startServer, SETUP_CODE } from "./harness.mjs";
 const require = createRequire(import.meta.url);
 let chromium;
 try { ({ chromium } = require("playwright")); } catch { ({ chromium } = await import("playwright")); }
-let srv, b, ADMIN, STAFF;
+let srv, b, ADMIN, STAFF, BUYER;
 const cookieOf = (r) => (r.headers.getSetCookie().find((v) => /^sf(?:bb|_wholesale)_session=[\w-]/.test(v)) || "").split(";")[0];
 async function call(method, path, body, cookie = ADMIN) {
   const r = await fetch(srv.base + path, { method, headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -23,7 +23,7 @@ before(async () => {
   ADMIN = (await call("POST", "/api/auth/setup", { name: "Admin", username: "owner", password: "owner-password", code: SETUP_CODE }, null)).cookie;
   const c = (await call("POST", "/api/admin/wholesale/customers", { business: "Lune Café", contact: "Sam Buyer", email: "sam@lune.example", phone: "01603 000000", address: "1 Elm Hill", postcode: "NR3 1HN", status: "Active" })).body.customer;
   const account = (await call("POST", `/api/admin/wholesale/customers/${c.id}/account`, { username: "lune" })).body;
-  const BUYER = (await call("POST", "/api/wholesale/auth/change-password", { username: "lune", password: account.temporaryPassword, newPassword: "lune-own-password" }, null)).cookie;
+  BUYER = (await call("POST", "/api/wholesale/auth/change-password", { username: "lune", password: account.temporaryPassword, newPassword: "lune-own-password" }, null)).cookie;
   for (const lines of [[{ productId: "brazil", pack: "kilo", grind: "beans", quantity: 6, price: 1800 }], [{ productId: "campo", pack: "quarter", grind: "filter", quantity: 12, price: 500 }]]) {
     const session = (await call("GET", "/api/wholesale/session", undefined, BUYER)).body;
     const placed = await call("POST", "/api/wholesale/orders", { requestId: crypto.randomUUID(), lines, delivery: "Roastery collection", reference: "", customerVersion: session.customer.version }, BUYER);
@@ -95,4 +95,35 @@ test("granted staff move orders along, keep notes, print and look up customers",
   assert.equal(await p.locator("#orderDetail .detail-id").textContent(), order.id);
   assert.equal(new URL(p.url()).hash, "", "the link is used once");
   await ctx.close();
+});
+
+// A tracking link can be added while the order is still being prepared (delivery orders only), and it's saved with
+// the next step, so the customer's shipped email can include it.
+test("staff add a tracking link while preparing a delivery order", async () => {
+  const session = (await call("GET", "/api/wholesale/session", undefined, BUYER)).body;
+  const sent = (await call("POST", "/api/wholesale/orders", { requestId: crypto.randomUUID(), lines: [{ productId: "brazil", pack: "kilo", grind: "beans", quantity: 6, price: 1800 }], delivery: "Delivery", reference: "", customerVersion: session.customer.version }, BUYER)).body.order;
+  const collected = (await call("GET", "/api/admin/wholesale")).body.orders.find((o) => o.preview === false && o.delivery === "Roastery collection" && o.id !== sent.id);
+  for (const [name, viewport, isMobile, colorScheme] of [["phone", { width: 390, height: 844 }, true, "dark"], ["iPad", { width: 1180, height: 820 }, false, "light"]]) {
+    const ctx = await b.newContext({ viewport, isMobile, hasTouch: isMobile, colorScheme });
+    const [n, v] = STAFF.split("="); await ctx.addCookies([{ name: n, value: v, url: srv.base }]);
+    const p = await ctx.newPage(); const errors = []; p.on("pageerror", (e) => errors.push(String(e)));
+    await p.goto(srv.base + "/orders"); await p.locator(`[data-order-id="${sent.id}"]`).waitFor();
+    // A collection doesn't ask for one.
+    await p.locator("#statusFilters button", { hasText: "All orders" }).click();
+    await p.locator(`[data-order-id="${collected.id}"]`).click(); await p.locator("#editNote").waitFor();
+    assert.equal(await p.locator("#trackingField").isHidden(), true, `${name}: no tracking box for a collection`);
+    await p.locator("#doneOrder").click();
+    // A delivery does, from the start.
+    await p.locator(`[data-order-id="${sent.id}"]`).click(); await p.locator("#editNote").waitFor();
+    assert.equal(await p.locator("#trackingField").isVisible(), true, `${name}: tracking box while ${(await call("GET", "/api/admin/wholesale")).body.orders.find((o) => o.id === sent.id).status}`);
+    assert.match(await p.locator("#trackingField").innerText(), /goes in the customer's shipped email/);
+    const link = `https://track.example/${name}`;
+    await p.locator("#editTracking").fill(link);
+    if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/staff-tracking-${name}.png` });
+    await p.locator("#saveOrder").click();
+    await p.waitForFunction((l) => document.querySelector("#orderDetail a.tracking")?.href === l, link);
+    assert.equal((await call("GET", "/api/admin/wholesale")).body.orders.find((o) => o.id === sent.id).trackingUrl, link);
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  }
 });

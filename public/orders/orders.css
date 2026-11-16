@@ -46,6 +46,7 @@
 .field select,.field input,.field textarea{font:inherit;font-size:16px;font-weight:400;color:var(--fg);background:var(--surface,var(--sunk));border:1px solid var(--line);border-radius:12px;padding:10px 12px;min-height:44px;width:100%;box-sizing:border-box}
 .field textarea{resize:vertical;min-height:72px}
 .field small{font-weight:400;font-size:12px}
+.field .field-hint{display:block;margin-top:6px;color:var(--muted);line-height:1.4}
 .edit-error{margin:0;padding:10px 12px;border-radius:12px;background:var(--warn-bg);color:var(--warn);font-size:14px;font-weight:600}.edit-error[hidden]{display:none}
 .edit-actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end}
 .location{white-space:pre-line}.location .row-meta{white-space:normal}

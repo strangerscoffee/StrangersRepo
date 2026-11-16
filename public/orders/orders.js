@@ -139,8 +139,11 @@
   const statusSelect=el('select',{id:'editStatus','aria-describedby':'editHint'},...STATUSES.map(s=>el('option',{value:s,...(s===row.status?{selected:true}:{})},s)));
   const tracking=el('input',{id:'editTracking',type:'url',inputmode:'url',maxlength:'500',placeholder:'https://…',autocomplete:'off',value:row.trackingUrl||''});
   const note=el('textarea',{id:'editNote',rows:'3',maxlength:'1000'});note.value=row.note||'';
-  const trackingField=el('label',{class:'field',id:'trackingField',hidden:!(row.status==='Dispatched'||row.trackingUrl)},el('span',{},'Tracking link (optional)'),tracking);
-  statusSelect.addEventListener('change',()=>{trackingField.hidden=!(statusSelect.value==='Dispatched'||tracking.value);});
+  // The courier's tracking link, for orders being sent: there from the start, so it can be pasted in while
+  // preparing and goes out with the customer's "shipped" email when the order is marked dispatched.
+  const sending=row.delivery!=='Roastery collection';
+  const trackingField=el('label',{class:'field',id:'trackingField',hidden:!(sending||row.trackingUrl)},el('span',{},'Tracking link (optional)'),tracking,
+   row.status!=='Dispatched'?el('small',{class:'field-hint'},'Add it before marking dispatched and it goes in the customer\'s shipped email.'):null);
   for(const input of [statusSelect,tracking,note])input.addEventListener('input',()=>{editing=true;});
   const next=NEXT[row.status];
   $('orderEdit').replaceChildren(
@@ -152,7 +155,7 @@
     row.customerId?el('button',{type:'button',class:'btn soft',id:'tabToggle',onclick:()=>toggleTab(row.id)},row.onTab?'Take off tab':'Put on tab'):null,
     row.customerId&&OPEN_STATUSES.includes(row.status)?el('button',{type:'button',class:'btn soft',id:'changeBags',onclick:()=>openAmend(row)},'Change bags'):null,
     row.standingEvery&&OPEN_STATUSES.includes(row.status)?el('button',{type:'button',class:'btn soft',id:'skipDelivery',onclick:()=>askSkip(row)},'Skip this delivery'):null,
-    next?el('button',{type:'button',class:'btn soft',onclick:()=>{statusSelect.value=next[0];trackingField.hidden=!(next[0]==='Dispatched'||tracking.value);save(row.id)}},next[1]):null,
+    next?el('button',{type:'button',class:'btn soft',onclick:()=>{statusSelect.value=next[0];save(row.id)}},next[1]):null,
     el('button',{type:'button',class:'btn',id:'saveOrder',onclick:()=>save(row.id)},'Save')));
  }
  // Changing the bags (until dispatched, no invoice: the server checks) and skipping a standing delivery. Bags only:
