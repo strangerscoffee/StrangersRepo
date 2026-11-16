@@ -84,7 +84,8 @@
           <div class="order-totals" id="order-totals" hidden>
             <div class="weight-total"><span>Total coffee</span><span id="total-weight">0 kg</span></div>
             <div class="subtotal"><span>Coffee subtotal</span><strong id="subtotal">£0.00</strong></div>
-            <div class="basket-delivery price-summary"><span>Estimated delivery</span><strong id="basket-delivery">£0.00</strong></div>
+            <fieldset class="delivery-options basket-method" id="basket-method"><legend>How you'll get it</legend><label><input type="radio" name="basket-method" value="dispatch" checked><span>Delivery</span></label><label><input type="radio" name="basket-method" value="collection"><span>Collect from the Roastery</span></label></fieldset>
+            <div class="basket-delivery price-summary"><span id="basket-delivery-label">Delivery</span><strong id="basket-delivery">£0.00</strong></div>
             <div class="basket-estimate price-summary"><span>Estimated total</span><strong id="basket-estimate">£0.00</strong></div>
             <p class="terms-note" id="delivery-note">Delivery £7.44 including VAT, free on orders of £250 or more. No charge for roastery collection.</p>
           </div>

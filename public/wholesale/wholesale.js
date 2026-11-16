@@ -15,6 +15,14 @@ let reviewNeedsRefresh = false;
 const $ = (selector) => document.querySelector(selector);
 const escape = (value) => String(value).replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
 let storageAvailable = true;
+// Delivery or Roastery collection, chosen in the basket so its totals are right for collectors (no delivery
+// charge), carried into the review and remembered on this device after an order (a convenience only).
+const METHOD_KEY = "sc.wholesale.deliveryMethod";
+let basketMethod = (() => { try { return localStorage.getItem(METHOD_KEY) === "collection" ? "collection" : "dispatch"; } catch { return "dispatch"; } })();
+function setBasketMethod(method, remember = false) {
+  basketMethod = method === "collection" ? "collection" : "dispatch";
+  if (remember) try { localStorage.setItem(METHOD_KEY, basketMethod); } catch {}
+}
 let basket = [];
 let currentFilter = "all";
 let currentSort = "catalogue", catalogueLoading = false;
@@ -334,11 +342,15 @@ function renderBasket() {
   $("#order-totals").hidden = !basket.length;
   $("#total-weight").textContent = weight(sum.grams);
   $("#subtotal").textContent = pricesShown() ? money(sum.pence) : "";
-  const delivery = sum.pence >= FREE_SHIPPING_FROM_PENCE ? 0 : SHIPPING_PENCE;
+  const collecting = basketMethod === "collection";
+  for (const input of document.querySelectorAll('input[name="basket-method"]')) input.checked = input.value === basketMethod;
+  const delivery = collecting ? 0 : shippingFor("Delivery", sum.pence);
+  $("#basket-delivery-label").textContent = collecting ? "Roastery collection" : "Delivery";
   $("#basket-delivery").textContent = pricesShown() ? delivery ? money(delivery) : "Free" : "";
   $("#basket-estimate").textContent = pricesShown() ? money(sum.pence + delivery) : "";
-  $("#delivery-note").textContent = !pricesShown() ? "" : sum.pence >= FREE_SHIPPING_FROM_PENCE ? "Free delivery included. Roastery collection is also free."
-    : `Add ${money(FREE_SHIPPING_FROM_PENCE - sum.pence)} more for free delivery. Delivery includes VAT. Choose free roastery collection at review.`;
+  $("#delivery-note").textContent = !pricesShown() ? "" : collecting ? "No delivery charge when you collect from the Roastery, 10 Dove Street, Norwich."
+    : sum.pence >= FREE_SHIPPING_FROM_PENCE ? "Free delivery on orders of £250 or more of coffee."
+    : `Delivery is ${money(SHIPPING_PENCE)} including VAT, free on £250 or more of coffee (add ${money(FREE_SHIPPING_FROM_PENCE - sum.pence)} more). Collecting from the Roastery is free.`;
   // The minimum order (6 kg of any coffees and bag sizes) unless Strangers has exempted this business.
   const minimum = minimumGrams(), short = Math.max(0, minimum - sum.grams);
   $("#minimum-note").hidden = !minimum || (basket.length && !short);
@@ -495,7 +507,11 @@ document.querySelectorAll("[data-basket]").forEach((button) => button.addEventLi
 }));
 
 $("#review-form").addEventListener("change", event => {
-  if (event.target.name === "delivery" && !saving && !pendingAttempt) { renderReviewLocation(); renderReviewDelivery(); }
+  if (event.target.name === "delivery" && !saving && !pendingAttempt) { setBasketMethod(event.target.value); renderReviewLocation(); renderReviewDelivery(); renderBasket(); }
+});
+$("#basket-method").addEventListener("change", event => {
+  if (event.target.name !== "basket-method") return;
+  setBasketMethod(event.target.value, true); renderBasket();
 });
 $("#review-location").addEventListener("click", () => {
   if (!session.customer || saving || pendingAttempt) return;
@@ -533,6 +549,8 @@ $("#review-order").addEventListener("click", async () => {
   $("#review-total").textContent = money(totals(basket).pence);
   renderReviewDelivery();
   $("#review-form").reset();
+  $("#review-form").elements.delivery.value = basketMethod;
+  renderReviewDelivery();
   reviewBusiness(session.customer?.business || "");
   $("#review-form").elements.locationId.value = session.customer?.defaultLocationId || "primary";
   renderReviewLocation();
@@ -685,6 +703,7 @@ $("#review-form").addEventListener("submit", async (event) => {
     deliverySummary: $("#delivery-summary").textContent, locationLabel: session.customer ? $("#review-location-name").textContent : "", terms: $("#review-payment-terms").textContent });
   if (!pendingAttempt) { saving = false; button.disabled = false; $("#preview-submit-error").textContent = "Allow browser storage before placing an order so an interrupted submission can be recovered safely."; $("#preview-submit-error").hidden = false; return; }
   lockReview(true); lockPendingUi();
+  setBasketMethod(pendingAttempt.payload.delivery === "Roastery collection" ? "collection" : "dispatch", true);
   try { showReceipt(await api("/api/wholesale/orders", pendingAttempt.payload)); }
   catch (error) {
     // A validated rejection means nothing was saved. Network/5xx/invalid-response failures remain uncertain.
