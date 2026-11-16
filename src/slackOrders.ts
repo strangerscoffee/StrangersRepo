@@ -8,7 +8,7 @@
 // morning, or one Slack refused, still goes out. Staff previews and retries of an order already placed post nothing.
 import { audit } from "./audit";
 import { Env } from "./http";
-import { buildSlackOrder, SlackOrder, slackPostTime } from "./slackOrderText";
+import { buildSlackChange, buildSlackOrder, SlackChange, SlackOrder, slackPostTime } from "./slackOrderText";
 
 export const slackReady = (env: Env) => /^https:\/\/hooks\.slack\.com\/services\/[A-Za-z0-9/_-]+$/.test(env.SLACK_ORDERS_WEBHOOK_URL || "")
   || (env.SLACK_TEST_HOOKS === "1" && /^http:\/\/127\.0\.0\.1:\d+\//.test(env.SLACK_ORDERS_WEBHOOK_URL || ""));
@@ -29,7 +29,7 @@ async function deliver(env: Env, row: { order_id: string; payload: string; attem
   catch (error) {
     const message = String((error as Error)?.message || error).slice(0, 200);
     await env.DB.prepare("UPDATE slack_order_posts SET sent_at = NULL, last_error = ? WHERE order_id = ?").bind(message, row.order_id).run();
-    if (row.attempts + 1 >= MAX_ATTEMPTS) await audit(env, "slack_failed", null, `Couldn't post wholesale order ${row.order_id} to Slack: ${message}`).catch(() => {});
+    if (row.attempts + 1 >= MAX_ATTEMPTS) await audit(env, "slack_failed", null, `Couldn't post wholesale order ${row.order_id.split(":")[0]}${row.order_id.includes(":") ? " (a standing order change)" : ""} to Slack: ${message}`).catch(() => {});
   }
 }
 
@@ -44,6 +44,24 @@ export async function notifySlackNewOrder(env: Env, ctx: ExecutionContext | unde
       if (sendAfter <= Date.now()) await deliver(env, { order_id: order.id, payload, attempts: 0 });
     } catch (error) {
       await audit(env, "slack_failed", null, `Couldn't post wholesale order ${order.id} to Slack: ${String((error as Error)?.message || error).slice(0, 160)}`).catch(() => {});
+    }
+  })();
+  if (ctx) ctx.waitUntil(run); else await run;
+}
+
+/** Queues (and in business hours sends) a post when a customer changes or skips a standing delivery themselves.
+ *  Keyed by order, change and version, so each change posts once. Never throws. */
+export async function notifySlackChange(env: Env, ctx: ExecutionContext | undefined, order: SlackChange & { version?: number }, change: "skipped" | "once" | "ongoing", diaryBase: string) {
+  if (!slackReady(env)) return;
+  const key = `${order.id}:${change}:${order.version ?? Date.now()}`;
+  const run = (async () => {
+    try {
+      const now = Date.now(), sendAfter = slackPostTime(now);
+      const payload = JSON.stringify(buildSlackChange(order, change, `${diaryBase.replace(/\/$/, "")}/orders#${encodeURIComponent(order.id)}`, now, sendAfter > now));
+      await env.DB.prepare("INSERT OR IGNORE INTO slack_order_posts (order_id, payload, send_after, created_at, attempts) VALUES (?, ?, ?, ?, 0)").bind(key, payload, sendAfter, now).run();
+      if (sendAfter <= Date.now()) await deliver(env, { order_id: key, payload, attempts: 0 });
+    } catch (error) {
+      await audit(env, "slack_failed", null, `Couldn't post a standing order change ${order.id} to Slack: ${String((error as Error)?.message || error).slice(0, 160)}`).catch(() => {});
     }
   })();
   if (ctx) ctx.waitUntil(run); else await run;

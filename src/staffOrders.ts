@@ -5,7 +5,7 @@
 // exemption or login details).
 import type {User} from "./auth";
 import {ApiError,type Env,invalid,json,readJson} from "./http";
-import {customerOrdersUrl,ordersToPrint,takeOrderFor,TAKEN_SOURCES,updateOrderStatus} from "./wholesale";
+import {customerOrdersUrl,ordersToPrint,takeOrderFor,TAKEN_SOURCES,tellCustomerStandingChange,updateOrderStatus} from "./wholesale";
 import {wholesaleCustomer} from "./wholesaleAccounts";
 import {catalogue,packsOf} from "./wholesaleCatalogue";
 import {catalogueFor} from "./wholesaleWhiteLabel";
@@ -106,6 +106,7 @@ export async function handleStaffOrders(req:Request,env:Env,route:string,user:Us
     const body=await readJson(req,32*1024),id=change[1];
     const saved=change[2]==="lines"?await amendLines(env,id,body,user.name):await skipRun(env,id,body,user.name,{});
     await requireStaffOrders(env,user);
+    await tellCustomerStandingChange(env,ctx,saved,change[2] as "lines"|"skip",body,customerOrdersUrl(env,links,req));
     return json({order:staffView(saved as any)});
   }
   // Customer tabs: kg and bags only here (no money); the same checks as Admin.

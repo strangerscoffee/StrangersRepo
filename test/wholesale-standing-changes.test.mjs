@@ -9,7 +9,7 @@ import { startServer, SETUP_CODE } from "./harness.mjs";
 import { addDays, ukDay } from "../src/insightsMath.ts";
 
 let srv, mock, ADMIN, STAFF, OTHER, A, B, staffId;
-const sent = [];
+const sent = [], slack = [];
 const cookieOf = (r) => (r.headers.getSetCookie().find((v) => /^sf(?:bb|_wholesale)_session=[\w-]/.test(v)) || "").split(";")[0];
 async function call(method, path, body, cookie = ADMIN) {
   const r = await fetch(srv.base + path, { method, headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -40,9 +40,9 @@ async function standing(cookie = A, lines = usual) {
 }
 
 before(async () => {
-  mock = createServer((rq, rs) => { let b = ""; rq.on("data", (d) => (b += d)); rq.on("end", () => { try { sent.push(JSON.parse(b)); } catch {} rs.writeHead(200, { "content-type": "application/json" }).end('{"id":"x"}'); }); });
+  mock = createServer((rq, rs) => { let b = ""; rq.on("data", (d) => (b += d)); rq.on("end", () => { try { (rq.url.startsWith("/slack") ? slack : sent).push(JSON.parse(b)); } catch {} rs.writeHead(200, { "content-type": "application/json" }).end('{"id":"x"}'); }); });
   await new Promise((r) => mock.listen(0, "127.0.0.1", r));
-  srv = await startServer({ writeLimit: 4000, vars: { WHOLESALE_MINIMUM_ORDER_GRAMS: "6000", RESEND_API_KEY: "re_test_key", RESEND_API_URL: `http://127.0.0.1:${mock.address().port}/emails` } });
+  srv = await startServer({ writeLimit: 4000, vars: { WHOLESALE_MINIMUM_ORDER_GRAMS: "6000", RESEND_API_KEY: "re_test_key", RESEND_API_URL: `http://127.0.0.1:${mock.address().port}/emails`, SLACK_TEST_HOOKS: "1", SLACK_ORDERS_WEBHOOK_URL: `http://127.0.0.1:${mock.address().port}/slack` } });
   ADMIN = (await ok("POST", "/api/auth/setup", { name: "Admin", username: "owner", password: "owner-password", code: SETUP_CODE }, null)).cookie;
   for (const [username, name] of [["packer", "Pat Packer"], ["other", "Olly Other"]]) {
     const u = (await ok("POST", "/api/admin/users", { name, username, role: "staff", password: "temporary-password" })).body.user;
@@ -129,4 +129,62 @@ test("wholesale staff and admins change and skip deliveries (no minimum, even wh
   const admin = await call("POST", `/api/admin/wholesale/orders/${next.id}/skip`, { ifVersion: next.version });
   assert.equal(admin.status, 200, admin.text); assert.equal(admin.body.order.skipped.by, "Admin");
   assert.equal((await call("POST", `/api/admin/wholesale/orders/${next.id}/skip`, { ifVersion: next.version }, STAFF)).status, 403, "staff can't use Admin's routes");
+});
+
+// Slack hears about the customer's own changes (queued like new orders: now in business hours, else the morning), and the
+// customer is emailed when Strangers changes or skips a delivery for them. Neither for the other side.
+const slackRows = () => srv.sql("SELECT order_id, payload FROM slack_order_posts WHERE order_id LIKE '%:%' ORDER BY created_at").map((r) => ({ key: r.order_id, text: JSON.parse(r.payload).text }));
+const toCustomer = () => sent.filter((m) => (m.to || []).includes("weekly.buyer@example.com"));
+async function until(check, ms = 4000) { const end = Date.now() + ms; while (Date.now() < end && !check()) await wait(100); await wait(300); }
+
+test("customer changes and skips go to Slack; Strangers' changes and skips email the customer", async () => {
+  const run = await standing();
+  await until(() => toCustomer().length >= 1); // the order confirmation from placing it
+  srv.sql("DELETE FROM slack_order_posts"); sent.length = 0;
+  const changed = await ok("PUT", `/api/wholesale/orders/${run.id}/lines`, { ifVersion: run.version, lines: [{ productId: "campo", pack: "kilo", grind: "beans", quantity: 7 }], scope: "once" }, A);
+  await until(() => slackRows().length >= 1);
+  let rows = slackRows();
+  assert.equal(rows.length, 1);
+  assert.ok(rows[0].key.startsWith(run.id + ":once:"));
+  assert.match(rows[0].text, /Café Weekly changed their standing order/);
+  assert.match(rows[0].text, /This delivery only · dispatch /);
+  assert.match(rows[0].text, /• \*7\* × .* · 1 kg · Beans/);
+  assert.match(rows[0].text, new RegExp(`/orders#${run.id}\\|Open wholesale orders>$`));
+  assert.doesNotMatch(rows[0].text, /£/);
+  assert.equal(toCustomer().length, 0, "the customer made the change, so isn't emailed about it");
+  await ok("POST", `/api/wholesale/orders/${run.id}/skip`, { ifVersion: changed.body.order.version }, A);
+  await until(() => slackRows().length >= 2);
+  rows = slackRows();
+  assert.equal(rows.length, 2);
+  assert.match(rows[1].text, /Café Weekly skipped a standing order delivery/);
+  assert.match(rows[1].text, /won't go out · next delivery /);
+  assert.doesNotMatch(rows[1].text, /• /, "no bags for a skip");
+  // Strangers changes the next delivery for them (staff page), then an admin skips it: the customer hears both; no Slack.
+  const next = await adminOrder((await adminOrder(run.id)).nextRunId);
+  sent.length = 0;
+  const staff = await ok("PUT", `/api/staff-orders/orders/${next.id}/lines`, { ifVersion: next.version, lines: [{ productId: "campo", pack: "quarter", grind: "beans", quantity: 3 }], scope: "ongoing" }, STAFF);
+  await until(() => toCustomer().length >= 1);
+  let mails = toCustomer();
+  assert.equal(mails.length, 1);
+  assert.match(mails[0].subject, /^Changed: your Strangers Coffee standing order/);
+  assert.match(mails[0].text, /every delivery from now on/);
+  assert.match(mails[0].text, /3 × .*, 250 g, Beans/);
+  assert.ok(!/Pat Packer|£/.test(mails[0].text + mails[0].html), "no names or prices");
+  await ok("POST", `/api/admin/wholesale/orders/${next.id}/skip`, { ifVersion: staff.body.order.version });
+  await until(() => toCustomer().length >= 2);
+  mails = toCustomer();
+  assert.equal(mails.length, 2);
+  assert.match(mails[1].subject, /^Skipped: your Strangers Coffee standing order for /);
+  const after = await adminOrder((await adminOrder(next.id)).nextRunId);
+  const nextDay = new Date(after.dispatchDate + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" });
+  assert.match(mails[1].text, new RegExp(`next delivery is due for dispatch on ${nextDay}`));
+  assert.ok(!/Admin|£/.test(mails[1].text));
+  assert.equal(slackRows().length, 2, "Strangers' own changes don't go to Slack");
+  // With "Email customers about their orders" off, Strangers' changes email nobody.
+  const settings = (await ok("GET", "/api/admin/wholesale/order-emails")).body;
+  await ok("PUT", "/api/admin/wholesale/order-emails", { ifVersion: settings.version, enabled: settings.enabled, to: settings.to, confirmCustomers: false });
+  sent.length = 0;
+  await ok("POST", `/api/admin/wholesale/orders/${after.id}/skip`, { ifVersion: after.version });
+  await wait(800);
+  assert.equal(toCustomer().length, 0);
 });

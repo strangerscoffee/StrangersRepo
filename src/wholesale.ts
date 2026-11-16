@@ -12,8 +12,8 @@ import { audit } from "./audit";
 import { ApiError, type Env, invalid, json, readJson } from "./http";
 import { manageWholesaleAccount, publicCustomer, wholesaleAccounts, wholesaleCustomer, paymentTermsFor, PAYMENT_TERMS, type Customer, type OrderingUser } from "./wholesaleAccounts";
 import { customerLocations, editedCustomerLocations, locationDefaults, validLocationId, type CustomerLocation } from "./wholesaleCustomers";
-import { notifyCustomerChange, confirmToCustomer, dispatchToCustomer, handleOrderEmailsAdmin, notifyNewOrder, orderEmailSettings } from "./email/orders";
-import { notifySlackNewOrder } from "./slackOrders";
+import { notifyCustomerChange, standingChangeToCustomer, confirmToCustomer, dispatchToCustomer, handleOrderEmailsAdmin, notifyNewOrder, orderEmailSettings } from "./email/orders";
+import { notifySlackChange, notifySlackNewOrder } from "./slackOrders";
 import { handleInsights } from "./insights";
 import { autoTabFor, clearTab, listTabs, setOnTab } from "./wholesaleTabs";
 import { importCustomers, inviteCustomer, inviteStates, matchAccountsEmails } from "./wholesaleImport";
@@ -66,6 +66,23 @@ type Links = { admin: string; diary: string; preview?: string };
 export function customerOrdersUrl(env: Env, links: { preview?: string }, req: Request) {
   const site = /^https?:\/\//.test(links.preview || "") ? links.preview! : env.PREVIEW_HOST ? `https://${env.PREVIEW_HOST}/` : new URL("/wholesale/", req.url).href;
   return site.replace(/\/?$/, "/") + "#orders";
+}
+
+/** After a standing delivery is changed or skipped: what kind of change, and (for a skip) the next run's dispatch day. */
+async function standingChange(env: Env, saved: Record<string, any>, kind: "lines" | "skip", body: unknown) {
+  const change: "skipped" | "once" | "ongoing" = kind === "skip" ? "skipped" : (body as any)?.scope === "once" ? "once" : "ongoing";
+  const next = kind === "skip" && typeof saved.nextRunId === "string" ? await get<Record<string, any>>(env, "order", saved.nextRunId) : null;
+  return { change, nextDispatchDate: typeof next?.dispatchDate === "string" ? next.dispatchDate : undefined };
+}
+
+/** Strangers (staff with wholesale orders access, or an admin) changed or skipped a standing delivery for the
+ *  customer: the customer is emailed (one-off orders aren't). Background; never throws. */
+export async function tellCustomerStandingChange(env: Env, ctx: ExecutionContext | undefined, saved: Record<string, any>, kind: "lines" | "skip", body: unknown, ordersUrl: string) {
+  if (!saved.standing) return;
+  try {
+    const { change, nextDispatchDate } = await standingChange(env, saved, kind, body);
+    await standingChangeToCustomer(env, ctx, saved as any, change, ordersUrl, nextDispatchDate);
+  } catch {}
 }
 const denied = () => new ApiError(403, "permission_denied", "Only admins can manage wholesale ordering.");
 export function visibleOrder(order: Order & Versioned, admin = false) {
@@ -291,7 +308,9 @@ export async function handleWholesale(req: Request, env: Env, route: string, use
     const saved = changeMatch[2] === "lines"
       ? await amendLines(env, id, body, user.name, by)
       : await skipRun(env, id, body, user.name, by);
-    await notifyCustomerChange(env, ctx, saved as any, changeMatch[2] === "skip" ? "skipped" : (body as any).scope === "once" ? "once" : "ongoing", links.diary);
+    const { change, nextDispatchDate } = await standingChange(env, saved as any, changeMatch[2] as "lines" | "skip", body);
+    await notifyCustomerChange(env, ctx, saved as any, change, links.diary);
+    await notifySlackChange(env, ctx, { ...(saved as any), nextDispatchDate }, change, links.diary);
     return json({ order: visibleOrder(saved as Order & Versioned) });
   }
   const match = /^orders\/((?:PREVIEW|WS)-[A-F0-9]{32})$/.exec(route);
@@ -453,9 +472,17 @@ export async function handleWholesaleAdmin(req: Request, env: Env, route: string
     return json({ deleted: true, id, version: removed.version });
   }
   const linesMatch = /^orders\/(WS-[A-F0-9]{32})\/lines$/.exec(route);
-  if (linesMatch && req.method === "PUT") return json({ order: visibleOrder(await amendLines(env, linesMatch[1], body, user.name) as Order & Versioned, true) });
+  if (linesMatch && req.method === "PUT") {
+    const saved = await amendLines(env, linesMatch[1], body, user.name);
+    await tellCustomerStandingChange(env, ctx, saved, "lines", body, customerOrdersUrl(env, links, req));
+    return json({ order: visibleOrder(saved as Order & Versioned, true) });
+  }
   const skipMatch = /^orders\/(WS-[A-F0-9]{32})\/skip$/.exec(route);
-  if (skipMatch && req.method === "POST") return json({ order: visibleOrder(await skipRun(env, skipMatch[1], body, user.name, {}) as Order & Versioned, true) });
+  if (skipMatch && req.method === "POST") {
+    const saved = await skipRun(env, skipMatch[1], body, user.name, {});
+    await tellCustomerStandingChange(env, ctx, saved, "skip", body, customerOrdersUrl(env, links, req));
+    return json({ order: visibleOrder(saved as Order & Versioned, true) });
+  }
   if (orderMatch && req.method === "PATCH") {
     const updated = await updateOrderStatus(env, orderMatch[1], body, user.name, { allowRelink: true, allowSchedule: true, notify: { ctx, ordersUrl: customerOrdersUrl(env, links, req) } });
     return json({ order: visibleOrder(updated, true) });

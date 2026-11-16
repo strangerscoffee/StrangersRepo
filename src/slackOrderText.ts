@@ -59,3 +59,21 @@ export function buildSlackOrder(order: SlackOrder, ordersUrl: string, held: bool
   ].join("\n") + note + `\n<${ordersUrl}|Open wholesale orders>`;
   return { text, unfurl_links: false, unfurl_media: false };
 }
+
+/** A customer changed or skipped a delivery of their standing order themselves: the same channel hears about it,
+ *  with the new bags (none for a skip), the dispatch day and, for a skip, when the next delivery is. */
+export interface SlackChange extends Pick<SlackOrder, "id" | "business" | "lines"> { dispatchDate?: string; nextDispatchDate?: string }
+const ukDate = (day?: string) => day ? new Date(`${day}T12:00:00Z`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }) : "";
+export function buildSlackChange(order: SlackChange, change: "skipped" | "once" | "ongoing", ordersUrl: string, at: number, held: boolean) {
+  const business = order.business || "A customer";
+  const day = ukDate(order.dispatchDate);
+  const head = change === "skipped"
+    ? `:no_entry_sign: *${esc(business)} skipped a standing order delivery*`
+    : `:pencil2: *${esc(business)} changed their standing order*`;
+  const what = change === "skipped"
+    ? `${day ? `Dispatch ${esc(day)} won't go out` : "This delivery won't go out"}${order.nextDispatchDate ? ` · next delivery ${esc(ukDate(order.nextDispatchDate))}` : ""}`
+    : `${change === "once" ? "This delivery only" : "Every delivery from now on"}${day ? ` · dispatch ${esc(day)}` : ""}`;
+  const bags = change === "skipped" ? [] : order.lines.map((l) => `• *${l.quantity}* × ${esc(l.title)} · ${esc(packName[l.pack] || l.packLabel || l.pack)} · ${esc(l.grindLabel || "Beans")}${l.decaf ? " · decaf" : ""}`);
+  const text = [head, `${esc(order.id)} · ${esc(placed(at))}${held ? " (overnight, posted this morning)" : ""}`, what, ...bags].join("\n") + `\n<${ordersUrl}|Open wholesale orders>`;
+  return { text, unfurl_links: false, unfurl_media: false };
+}

@@ -202,6 +202,64 @@ export async function dispatchToCustomer(env: Env, ctx: ExecutionContext | undef
   if (ctx) ctx.waitUntil(run); else await run;
 }
 
+/** The customer hears when Strangers changes the bags on, or skips, a delivery of their standing order for them
+ *  (after a phone call, say). Bags only, no prices and never who made the change. */
+export function buildStandingChangeEmail(order: MailOrder & { dispatchDate?: string }, change: "skipped" | "once" | "ongoing", ordersUrl: string, nextDispatchDate?: string) {
+  const customer = order.customerSnapshot || {}, place = order.locationSnapshot || {};
+  const hello = (place.contact || customer.contact || "").split(/\s+/)[0];
+  const when = (d?: string) => d ? new Date(d + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" }) : "";
+  const day = when(order.dispatchDate), next = when(nextDispatchDate);
+  const ref = order.id.slice(0, 11);
+  const skipped = change === "skipped";
+  const headline = skipped ? "We've skipped a delivery of your standing order" : "We've changed your standing order";
+  const subject = skipped ? `Skipped: your Strangers Coffee standing order${day ? ` for ${day}` : ""} (${ref})` : `Changed: your Strangers Coffee standing order (${ref})`;
+  const lead = skipped
+    ? `As agreed, your standing order${day ? ` due for dispatch on ${day}` : ""} won't be sent.${next ? ` Your next delivery is due for dispatch on ${next}.` : ""}`
+    : `As agreed, we've changed the bags on your standing order${day ? ` due for dispatch on ${day}` : ""}. ${change === "once" ? "This is for this delivery only: your usual order carries on after it." : "This is for every delivery from now on."}`;
+  const lineText = (l: Line) => `${l.quantity} × ${l.title}, ${packName[l.pack] || l.packLabel || l.pack}, ${l.grindLabel || ""}${l.decaf ? ", decaf" : ""}`;
+  const lines = skipped ? [] : order.lines;
+  const text = [
+    hello ? `Hi ${hello},` : "Hello,", "", skipped ? "DELIVERY SKIPPED" : "STANDING ORDER CHANGED", lead, "",
+    `Order ${order.id}${order.reference ? ` · your reference ${order.reference}` : ""}`, ...lines.map(lineText), ...(lines.length ? [""] : []),
+    "If this isn't right, just reply to this email.", "", `See your orders: ${ordersUrl}`, "", "Strangers Coffee",
+  ].join("\n");
+  const tone = skipped ? { bg: "#fdf1e3", fg: "#8a4b0b", label: "Delivery skipped" } : { bg: "#e8f1fd", fg: "#0b4f9c", label: "Standing order changed" };
+  const cell = "padding:7px 10px;border-bottom:1px solid #e3e6eb;text-align:left;vertical-align:top;font-size:14px;";
+  const html = `<!doctype html><html><body style="margin:0;background:#f4f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#14181f;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f5f7;padding:20px 0;"><tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:620px;background:#fff;border-radius:14px;border:1px solid #e3e6eb;">
+<tr><td style="padding:22px 24px 6px;"><div style="font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#5d6675;">Strangers Coffee · Wholesale</div>
+<div style="display:inline-block;margin:12px 0 4px;padding:6px 12px;border-radius:999px;background:${tone.bg};color:${tone.fg};font-size:13px;font-weight:700;letter-spacing:.02em;">${esc(tone.label)}</div>
+<h1 style="margin:6px 0 6px;font-size:22px;line-height:1.25;">${esc(headline)}</h1>
+<p style="margin:0;font-size:15px;line-height:1.5;">${hello ? `Hi ${esc(hello)}, ` : ""}${esc(lead)}</p></td></tr>
+<tr><td style="padding:16px 24px 0;font-size:13px;color:#5d6675;">Order ${esc(order.id)}${order.reference ? ` · your reference ${esc(order.reference)}` : ""}</td></tr>
+${lines.length ? `<tr><td style="padding:6px 24px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
+${lines.map((l) => `<tr><td style="${cell}font-weight:700;width:40px;">${l.quantity}</td><td style="${cell}">${esc(l.title)}${l.decaf ? " (decaf)" : ""}</td><td style="${cell}white-space:nowrap;">${esc(packName[l.pack] || l.packLabel || l.pack)}</td><td style="${cell}">${esc(l.grindLabel || "")}</td></tr>`).join("")}
+</table></td></tr>` : ""}
+<tr><td style="padding:14px 24px 0;font-size:14px;line-height:1.5;">If this isn't right, just reply to this email.</td></tr>
+<tr><td style="padding:16px 24px 22px;"><a href="${esc(ordersUrl)}" style="color:#0062cc;font-weight:600;text-decoration:none;">See your orders</a></td></tr>
+</table><div style="font-size:12px;color:#5d6675;padding:12px;">Strangers Coffee · 10 Dove Street, Norwich NR2 1DE.</div></td></tr></table></body></html>`;
+  return { subject, html, text };
+}
+
+/** Emails the customer that Strangers changed or skipped their standing delivery (background; never throws). Same
+ *  switch as their other order emails ("Email customers about their orders"). */
+export async function standingChangeToCustomer(env: Env, ctx: ExecutionContext | undefined, order: MailOrder & { dispatchDate?: string }, change: "skipped" | "once" | "ongoing", ordersUrl: string, nextDispatchDate?: string) {
+  const email = cleanEmail(order.customerSnapshot?.email);
+  if (!emailReady(env) || !email) return;
+  const run = (async () => {
+    try {
+      const settings = await orderEmailSettings(env);
+      if (!settings.confirmCustomers) return;
+      const mail = buildStandingChangeEmail(order, change, ordersUrl, nextDispatchDate), name = order.business || "a wholesale customer";
+      await send(env, { to: { id: "customer", name, email, email_prefs: "{}", active: 1 }, kind: "order", mail, about: `standing order ${change === "skipped" ? "skip" : "change"} ${order.id} to ${name}`, from: FROM(env), replyTo: settings.to[0] || DEFAULT_ORDER_EMAIL });
+    } catch (error) {
+      await audit(env, "email_failed", null, `Couldn't email the customer about a standing order change ${order.id}: ${String((error as Error)?.message || error).slice(0, 160)}`).catch(() => {});
+    }
+  })();
+  if (ctx) ctx.waitUntil(run); else await run;
+}
+
 /** The staff Wholesale orders page (diary host, /orders), opened on this order. */
 const ordersPageUrl = (diaryBase: string, id?: string) => `${diaryBase.replace(/\/$/, "")}/orders${id ? `#${encodeURIComponent(id)}` : ""}`;
 
