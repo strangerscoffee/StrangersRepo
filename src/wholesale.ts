@@ -233,12 +233,12 @@ async function placeOrder(req: Request, env: Env, user: OrderingUser, links: Lin
     ? `${user.name} took order ${body.id} for ${customer!.business} (${takenFor.source.toLowerCase()}).`
     : `${user.name} placed ${customer ? "wholesale" : "staff preview"} order ${body.id}.`);
   // A new customer order (never a staff preview or a retry, which returned above) is emailed to Strangers and posted
-  // to Slack. One staff took themselves isn't emailed to the team, but still goes to Slack for packing.
+  // to Slack, including one staff entered for the customer (the email says who entered it and how it came in).
   if (customer) {
     // Emails and Slack open links from elsewhere, so the staff orders page needs its full address (on the diary's own
     // host links.diary is just "/").
     const diary = new URL(links.diary || "/", req.url).href;
-    if (!takenFor) await notifyNewOrder(env, ctx, saved, diary);
+    await notifyNewOrder(env, ctx, saved, diary);
     await notifySlackNewOrder(env, ctx, saved, diary);
     // The customer gets their own confirmation, linking back to My orders (for a taken order, only when asked).
     if (!takenFor || takenFor.emailCustomer) await confirmToCustomer(env, ctx, saved, { showPrices: !customer.hidePrices, ordersUrl: customerOrdersUrl(env, links, req) });

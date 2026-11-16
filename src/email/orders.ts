@@ -19,6 +19,7 @@ interface Line { price?: number; title: string; pack: string; packLabel?: string
 interface MailOrder {
   id: string; business?: string; createdAt: number; delivery: string; reference?: string; customerNote?: string;
   pence: number; deliveryPence?: number; totalPence?: number; grams: number; lines: Line[];
+  takenFor?: { source?: string } | null; createdName?: string;
   customerSnapshot?: { name?: string; contact?: string; email?: string; phone?: string; address?: string; postcode?: string; deliveryNotes?: string } | null;
   paymentTerms?: { label?: string; note?: string } | null;
   trackingUrl?: string;
@@ -49,7 +50,9 @@ export function buildOrderEmail(order: MailOrder, orderUrl: string) {
   const business = order.business || "A customer";
   const where = order.delivery === "Delivery" ? [place.name && place.name !== "Main location" ? place.name : "", place.address, place.postcode].filter(Boolean).join(", ") || "No address saved" : "Roastery collection";
   const contact = [place.contact || customer.contact, place.phone || customer.phone, customer.email].filter(Boolean).join(" · ");
-  const subject = `New wholesale order: ${business} · ${bags.all} ${bags.all === 1 ? "bag" : "bags"} · ${money(total)}`;
+  // An order Strangers entered for the customer (email, phone, at the door) says so, and who took it.
+  const taken = order.takenFor ? `${order.createdName || "Strangers"}${order.takenFor.source ? ` (${order.takenFor.source.toLowerCase()})` : ""}` : "";
+  const subject = `New wholesale order${taken ? " (entered by staff)" : ""}: ${business} · ${bags.all} ${bags.all === 1 ? "bag" : "bags"} · ${money(total)}`;
   const lineText = (l: Line) => `${l.quantity} × ${l.title}, ${packName[l.pack] || l.packLabel || l.pack}, ${l.grindLabel || ""}${l.grindHint ? ` (${l.grindHint})` : ""}${l.decaf ? ", decaf" : ""}`;
   const text = [
     `New wholesale order from ${business}`, `${order.id} · ${when(order.createdAt)}`, "",
@@ -57,7 +60,7 @@ export function buildOrderEmail(order: MailOrder, orderUrl: string) {
     `${bags.quarter} × 250 g · ${bags.kilo} × 1 kg · ${bags.all} bags · ${kg(order.grams)}`,
     `Coffee ${money(order.pence)} · Delivery ${order.deliveryPence ? money(order.deliveryPence) : "free"} · Total ${money(total)}`, "",
     `${order.delivery === "Delivery" ? "Deliver to" : "Collection"}: ${where}`, ...(place.deliveryNotes ? [`Delivery notes: ${place.deliveryNotes}`] : []),
-    ...(contact ? [`Contact: ${contact}`] : []), ...(order.reference ? [`Reference: ${order.reference}`] : []),
+    ...(contact ? [`Contact: ${contact}`] : []), ...(order.reference ? [`Reference: ${order.reference}`] : []), ...(taken ? [`Entered by: ${taken}`] : []),
     ...(order.customerNote ? ["", "Customer comments:", order.customerNote] : []), "", `Open the order: ${orderUrl}`,
   ].join("\n");
   const cell = "padding:8px 10px;border-bottom:1px solid #e3e6eb;text-align:left;vertical-align:top;font-size:14px;";
@@ -73,7 +76,7 @@ ${order.lines.map((l) => `<tr><td style="${cell}font-weight:700;">${l.quantity}<
 </table></td></tr>
 <tr><td style="padding:12px 24px 0;font-size:14px;"><b>${bags.quarter}</b> × 250 g · <b>${bags.kilo}</b> × 1 kg · <b>${bags.all} bags</b> · ${esc(kg(order.grams))}<br>Coffee ${esc(money(order.pence))} · Delivery ${esc(order.deliveryPence ? money(order.deliveryPence) : "free")} · <b>Total ${esc(money(total))}</b></td></tr>
 <tr><td style="padding:14px 24px 0;"><table role="presentation" cellpadding="0" cellspacing="0">
-${kv(order.delivery === "Delivery" ? "Deliver to" : "Collection", where)}${place.deliveryNotes ? kv("Delivery notes", place.deliveryNotes) : ""}${contact ? kv("Contact", contact) : ""}${order.reference ? kv("Reference", order.reference) : ""}
+${kv(order.delivery === "Delivery" ? "Deliver to" : "Collection", where)}${place.deliveryNotes ? kv("Delivery notes", place.deliveryNotes) : ""}${contact ? kv("Contact", contact) : ""}${order.reference ? kv("Reference", order.reference) : ""}${taken ? kv("Entered by", taken) : ""}
 </table></td></tr>
 ${order.customerNote ? `<tr><td style="padding:14px 24px 0;"><div style="border:1px solid #14181f;border-radius:10px;padding:10px 12px;"><div style="font-size:12px;font-weight:700;color:#5d6675;text-transform:uppercase;letter-spacing:.05em;">Customer comments</div><div style="font-size:14px;white-space:pre-line;margin-top:3px;">${esc(order.customerNote)}</div></div></td></tr>` : ""}
 <tr><td style="padding:18px 24px 22px;"><a href="${esc(orderUrl)}" style="display:inline-block;background:#0062cc;color:#fff;text-decoration:none;font-weight:600;padding:11px 18px;border-radius:10px;">Open the order</a></td></tr>

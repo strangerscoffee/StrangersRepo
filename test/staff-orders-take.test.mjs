@@ -71,6 +71,12 @@ test("staff take an order for a customer: a real order at today's prices, emaile
   assert.equal(again.status, 200); assert.equal(again.body.order.id, r.body.order.id);
   await wait(800);
   assert.equal(sent.filter((m) => (m.to || []).includes("dee@door.example")).length, 0, "no confirmation unless asked");
+  // The team's order alert still goes out, saying who entered it and how it came in.
+  const alert = sent.find((m) => (m.to || []).includes("sales@strangerscoffee.com") && m.text.includes(r.body.order.id));
+  assert.ok(alert, "the Order alerts addresses are emailed");
+  assert.match(alert.subject, /^New wholesale order \(entered by staff\): Door Café/);
+  assert.match(alert.text, /Entered by: Pat Packer \(in person\)/);
+  assert.equal(sent.filter((m) => m.text?.includes(r.body.order.id) && (m.to || []).includes("sales@strangerscoffee.com")).length, 1, "once, even after the retry");
   // The customer sees it in My orders, without who took it.
   const mine = await ok("GET", "/api/wholesale/orders", undefined, CUSTOMER);
   assert.match(mine.text, new RegExp(r.body.order.id));
