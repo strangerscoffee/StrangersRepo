@@ -64,9 +64,10 @@ test("customers change this delivery only: the next delivery goes back to the us
   assert.deepEqual(r.body.order.lines.map((l) => [l.productId, l.quantity]), [["campo", 4], ["rosalina", 8]]);
   assert.deepEqual(r.body.order.repeatLines.map((l) => [l.productId, l.quantity]), [["campo", 6]], "the usual bags are kept");
   assert.equal(r.body.order.amendedByCustomer, true); assert.equal(r.body.order.amendedBy, undefined);
-  const end = Date.now() + 4000; while (Date.now() < end && !sent.length) await wait(100);
-  assert.match(sent[0]?.subject || "", /Café Weekly changed a standing order/);
-  assert.match(sent[0].text, /this delivery only/);
+  const mail = () => sent.find((m) => /Café Weekly changed a standing order/.test(m.subject || ""));
+  const end = Date.now() + 4000; while (Date.now() < end && !mail()) await wait(100);
+  assert.ok(mail(), "Strangers is emailed");
+  assert.match(mail().text, /this delivery only/);
   const next = await adminOrder((await setStatus(run.id, "Dispatched")).nextRunId);
   assert.deepEqual(next.lines.map((l) => [l.productId, l.quantity]), [["campo", 6]], "back to the usual bags");
   assert.equal(next.repeatLines, undefined); assert.equal(next.amendedAt, undefined); assert.equal(next.amendedByCustomer, undefined);
@@ -105,11 +106,11 @@ test("what customers can't do: below the minimum, once it's dispatched, someone 
   const ready = await setStatus(run.id, "Ready");
   const skipReady = await call("POST", `/api/wholesale/orders/${run.id}/skip`, { ifVersion: ready.version }, A);
   assert.equal(skipReady.status, 200, skipReady.text); assert.equal(skipReady.body.order.status, "Cancelled");
-  await until(() => srv.sql("SELECT COUNT(*) AS n FROM slack_order_posts")[0].n >= 2 && sent.filter((m) => /standing order/.test(m.subject || "")).length >= 2);
-  const warned = srv.sql("SELECT payload FROM slack_order_posts ORDER BY created_at").map((r) => JSON.parse(r.payload).text);
+  await until(() => srv.sql("SELECT COUNT(*) AS n FROM slack_order_posts WHERE order_id LIKE '%:%'")[0].n >= 2 && sent.filter((m) => /standing order/.test(m.subject || "") && !/^Next standing/.test(m.subject)).length >= 2);
+  const warned = srv.sql("SELECT payload FROM slack_order_posts WHERE order_id LIKE '%:%' ORDER BY created_at").map((r) => JSON.parse(r.payload).text);
   assert.match(warned[0], /already being prepared: check the packing/);
   assert.match(warned[1], /already packed and ready to go: check the packing/);
-  const mails = sent.filter((m) => /standing order/.test(m.subject || ""));
+  const mails = sent.filter((m) => /standing order/.test(m.subject || "") && !/^Next standing/.test(m.subject));
   assert.match(mails[0].subject, /^Already preparing: Café Weekly changed a standing order/);
   assert.match(mails[1].subject, /^Already ready: Café Weekly skipped a standing order delivery/);
   const next = await adminOrder((await adminOrder(run.id)).nextRunId);
@@ -177,7 +178,8 @@ test("customer changes and skips go to Slack; Strangers' changes and skips email
   assert.match(rows[1].text, /Café Weekly skipped a standing order delivery/);
   assert.match(rows[1].text, /won't go out · next delivery /);
   assert.doesNotMatch(rows[1].text, /• /, "no bags for a skip");
-  // Strangers changes the next delivery for them (staff page), then an admin skips it: the customer hears both; no Slack.
+  // Strangers changes the next delivery for them (staff page), then an admin skips it: the customer hears both, and so
+  // do the Order alerts addresses and Slack, saying who did it.
   const next = await adminOrder((await adminOrder(run.id)).nextRunId);
   sent.length = 0;
   const staff = await ok("PUT", `/api/staff-orders/orders/${next.id}/lines`, { ifVersion: next.version, lines: [{ productId: "campo", pack: "quarter", grind: "beans", quantity: 3 }], scope: "ongoing" }, STAFF);
@@ -197,7 +199,15 @@ test("customer changes and skips go to Slack; Strangers' changes and skips email
   const nextDay = new Date(after.dispatchDate + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" });
   assert.match(mails[1].text, new RegExp(`next delivery is due for dispatch on ${nextDay}`));
   assert.ok(!/Admin|£/.test(mails[1].text));
-  assert.equal(slackRows().length, 2, "Strangers' own changes don't go to Slack");
+  await until(() => slackRows().length >= 4 && sent.filter((m) => /by (Pat Packer|Admin)$/.test(m.subject || "")).length >= 2);
+  rows = slackRows();
+  assert.equal(rows.length, 4, "Strangers' changes go to Slack too");
+  assert.match(rows[2].text, /Pat Packer changed Café Weekly's standing order/);
+  assert.match(rows[2].text, /Every delivery from now on/);
+  assert.match(rows[3].text, /Admin skipped a standing order delivery for Café Weekly/);
+  const alerts = sent.filter((m) => !(m.to || []).includes("weekly.buyer@example.com"));
+  assert.ok(alerts.some((m) => m.subject === "Café Weekly: standing order changed by Pat Packer" && /Pat Packer \(Strangers\) changed the bags on Café Weekly's standing order/.test(m.text)), JSON.stringify(alerts.map((m) => m.subject)));
+  assert.ok(alerts.some((m) => m.subject === "Café Weekly: standing order delivery skipped by Admin"));
   // With "Email customers about their orders" off, Strangers' changes email nobody.
   const settings = (await ok("GET", "/api/admin/wholesale/order-emails")).body;
   await ok("PUT", "/api/admin/wholesale/order-emails", { ifVersion: settings.version, enabled: settings.enabled, to: settings.to, confirmCustomers: false });
@@ -205,4 +215,28 @@ test("customer changes and skips go to Slack; Strangers' changes and skips email
   await ok("POST", `/api/admin/wholesale/orders/${after.id}/skip`, { ifVersion: after.version });
   await wait(800);
   assert.equal(toCustomer().length, 0);
+});
+
+test("the next delivery of a standing order, made when the last one goes out, is emailed to Strangers and posted to Slack", async () => {
+  const run = await standing();
+  await wait(500); sent.length = 0;
+  const done = await setStatus(run.id, "Dispatched");
+  const nextId = done.nextRunId;
+  assert.ok(nextId);
+  await until(() => srv.sql(`SELECT COUNT(*) AS n FROM slack_order_posts WHERE order_id='${nextId}'`)[0].n === 1 && sent.some((m) => /^Next standing order delivery: Café Weekly/.test(m.subject || "")));
+  const next = await adminOrder(nextId);
+  const post = JSON.parse(srv.sql(`SELECT payload FROM slack_order_posts WHERE order_id='${nextId}'`)[0].payload).text;
+  assert.match(post, /^:repeat: \*Next standing order delivery: Café Weekly\*/);
+  assert.match(post, /Standing order, every week · dispatch /);
+  assert.doesNotMatch(post, /£/);
+  const mail = sent.find((m) => /^Next standing order delivery: Café Weekly/.test(m.subject || ""));
+  const day = new Date(next.dispatchDate + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" });
+  assert.match(mail.text, new RegExp(`Standing order, every week · dispatch ${day}`));
+  assert.ok(!(mail.to || []).includes("weekly.buyer@example.com"), "not to the customer");
+  assert.ok(!sent.some((m) => (m.to || []).includes("weekly.buyer@example.com") && /Next standing/.test(m.subject || "")), "the customer isn't sent Strangers' notice");
+  // Saving it again doesn't make (or announce) another run.
+  await setStatus(run.id, "Dispatched").catch(() => {});
+  await wait(500);
+  assert.equal(srv.sql("SELECT COUNT(*) AS n FROM slack_order_posts WHERE order_id NOT LIKE '%:%' AND payload LIKE '%Next standing order%'")[0].n >= 1, true);
+  assert.equal(sent.filter((m) => /^Next standing order delivery/.test(m.subject || "")).length, 1);
 });

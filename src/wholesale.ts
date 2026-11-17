@@ -78,12 +78,15 @@ async function standingChange(env: Env, saved: Record<string, any>, kind: "lines
 }
 
 /** Strangers (staff with wholesale orders access, or an admin) changed or skipped a standing delivery for the
- *  customer: the customer is emailed (one-off orders aren't). Background; never throws. */
-export async function tellCustomerStandingChange(env: Env, ctx: ExecutionContext | undefined, saved: Record<string, any>, kind: "lines" | "skip", body: unknown, ordersUrl: string) {
+ *  customer: the customer is emailed (one-off orders aren't), and the Order alerts addresses and the orders Slack
+ *  channel hear who did it (the owner's decision, 17 Nov 2026). Background; never throws. */
+export async function tellCustomerStandingChange(env: Env, ctx: ExecutionContext | undefined, saved: Record<string, any>, kind: "lines" | "skip", body: unknown, ordersUrl: string, diaryBase: string, by: string) {
   if (!saved.standing) return;
   try {
     const { change, nextDispatchDate } = await standingChange(env, saved, kind, body);
     await standingChangeToCustomer(env, ctx, saved as any, change, ordersUrl, nextDispatchDate);
+    await notifyCustomerChange(env, ctx, saved as any, change, diaryBase, undefined, by);
+    await notifySlackChange(env, ctx, { ...(saved as any), nextDispatchDate, by }, change, diaryBase);
   } catch {}
 }
 const denied = () => new ApiError(403, "permission_denied", "Only admins can manage wholesale ordering.");
@@ -315,7 +318,7 @@ export async function handleWholesale(req: Request, env: Env, route: string, use
     const already = wasStatus === "Preparing" || wasStatus === "Ready" ? wasStatus : undefined;
     const saved = changeMatch[2] === "lines"
       ? await amendLines(env, id, body, user.name, by)
-      : await skipRun(env, id, body, user.name, by);
+      : await skipRun(env, id, body, user.name, by, ctx);
     const { change, nextDispatchDate } = await standingChange(env, saved as any, changeMatch[2] as "lines" | "skip", body);
     const diary = new URL(links.diary || "/", req.url).href;
     await notifyCustomerChange(env, ctx, saved as any, change, diary, already);
@@ -389,7 +392,7 @@ export async function updateOrderStatus(env: Env, id: string, body: Record<strin
   }
   await audit(env, "wholesale_preview_status", actor, `${actor} marked wholesale order ${id} as ${body.status}. No fulfilment action was sent.`);
   // A standing run that went out (or was skipped) makes the next one, which also records it on this order.
-  await rollStanding(env, updated, actor);
+  await rollStanding(env, updated, actor, notify?.ctx);
   if (updated.standing && ["Dispatched", "Cancelled"].includes(updated.status)) return (await get<Order>(env, "order", id))!;
   return updated as Order & Versioned;
 }
@@ -501,13 +504,13 @@ export async function handleWholesaleAdmin(req: Request, env: Env, route: string
   const linesMatch = /^orders\/(WS-[A-F0-9]{32})\/lines$/.exec(route);
   if (linesMatch && req.method === "PUT") {
     const saved = await amendLines(env, linesMatch[1], body, user.name);
-    await tellCustomerStandingChange(env, ctx, saved, "lines", body, customerOrdersUrl(env, links, req));
+    await tellCustomerStandingChange(env, ctx, saved, "lines", body, customerOrdersUrl(env, links, req), new URL(links.diary || "/", req.url).href, user.name);
     return json({ order: visibleOrder(saved as Order & Versioned, true) });
   }
   const skipMatch = /^orders\/(WS-[A-F0-9]{32})\/skip$/.exec(route);
   if (skipMatch && req.method === "POST") {
-    const saved = await skipRun(env, skipMatch[1], body, user.name, {});
-    await tellCustomerStandingChange(env, ctx, saved, "skip", body, customerOrdersUrl(env, links, req));
+    const saved = await skipRun(env, skipMatch[1], body, user.name, {}, ctx);
+    await tellCustomerStandingChange(env, ctx, saved, "skip", body, customerOrdersUrl(env, links, req), new URL(links.diary || "/", req.url).href, user.name);
     return json({ order: visibleOrder(saved as Order & Versioned, true) });
   }
   if (orderMatch && req.method === "PATCH") {

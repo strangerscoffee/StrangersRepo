@@ -34,6 +34,7 @@ interface Line { title: string; pack: string; packLabel?: string; grindLabel?: s
 export interface SlackOrder {
   id: string; business?: string; createdAt: number; delivery: string; reference?: string; customerNote?: string; grams: number; lines: Line[];
   locationSnapshot?: { name?: string; postcode?: string } | null; customerSnapshot?: { postcode?: string } | null;
+  dispatchDate?: string; standing?: { every?: number } | null; previousRunId?: string;
 }
 // Slack's own escaping for message text: everything else is shown as typed.
 const esc = (value: unknown) => String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -51,9 +52,14 @@ export function buildSlackOrder(order: SlackOrder, ordersUrl: string, held: bool
   const sizes = [bags.quarter ? `${bags.quarter} × 250 g` : "", bags.kilo ? `${bags.kilo} × 1 kg` : ""].filter(Boolean).join(" + ");
   const lines = order.lines.map((l) => `• *${l.quantity}* × ${esc(l.title)} · ${esc(packName[l.pack] || l.packLabel || l.pack)} · ${esc(l.grindLabel || "Beans")}${l.decaf ? " · decaf" : ""}`);
   const note = order.customerNote ? `\n>${esc(order.customerNote).replace(/\n/g, "\n>")}` : "";
+  // A standing order's next delivery, made when the last one was dispatched or skipped.
+  const nextRun = !!(order.standing && order.previousRunId);
+  const every = order.standing ? (order.standing.every === 1 ? "every week" : `every ${order.standing.every} weeks`) : "";
+  const schedule = order.standing ? `Standing order, ${every}${order.dispatchDate ? ` · dispatch ${esc(ukDate(order.dispatchDate))}` : ""}` : order.dispatchDate ? `Dispatch ${esc(ukDate(order.dispatchDate))}` : "";
   const text = [
-    `:coffee: *New wholesale order: ${esc(business)}*`,
-    `${esc(order.id)} · placed ${esc(placed(order.createdAt))}${held ? " (overnight, posted this morning)" : ""}${order.reference ? ` · ref ${esc(order.reference)}` : ""}`,
+    nextRun ? `:repeat: *Next standing order delivery: ${esc(business)}*` : `:coffee: *New wholesale order: ${esc(business)}*`,
+    ...(schedule ? [`*${schedule}*`] : []),
+    `${esc(order.id)} · ${nextRun ? "made" : "placed"} ${esc(placed(order.createdAt))}${held ? " (overnight, posted this morning)" : ""}${order.reference ? ` · ref ${esc(order.reference)}` : ""}`,
     `*${bags.all} ${bags.all === 1 ? "bag" : "bags"}* (${sizes || "no bags"}) · ${kg(order.grams)} · ${esc(fulfil)}`,
     ...lines,
   ].join("\n") + note + (/^https?:\/\//.test(ordersUrl) ? `\n<${ordersUrl}|Open wholesale orders>` : "");
@@ -62,12 +68,14 @@ export function buildSlackOrder(order: SlackOrder, ordersUrl: string, held: bool
 
 /** A customer changed or skipped a delivery of their standing order themselves: the same channel hears about it,
  *  with the new bags (none for a skip), the dispatch day and, for a skip, when the next delivery is. */
-export interface SlackChange extends Pick<SlackOrder, "id" | "business" | "lines"> { dispatchDate?: string; nextDispatchDate?: string; already?: string }
+export interface SlackChange extends Pick<SlackOrder, "id" | "business" | "lines"> { dispatchDate?: string; nextDispatchDate?: string; already?: string; /** a member of Strangers made it */ by?: string }
 const ukDate = (day?: string) => day ? new Date(`${day}T12:00:00Z`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }) : "";
 export function buildSlackChange(order: SlackChange, change: "skipped" | "once" | "ongoing", ordersUrl: string, at: number, held: boolean) {
   const business = order.business || "A customer";
   const day = ukDate(order.dispatchDate);
-  const head = change === "skipped"
+  const head = order.by
+    ? (change === "skipped" ? `:no_entry_sign: *${esc(order.by)} skipped a standing order delivery for ${esc(business)}*` : `:pencil2: *${esc(order.by)} changed ${esc(business)}'s standing order*`)
+    : change === "skipped"
     ? `:no_entry_sign: *${esc(business)} skipped a standing order delivery*`
     : `:pencil2: *${esc(business)} changed their standing order*`;
   const what = change === "skipped"

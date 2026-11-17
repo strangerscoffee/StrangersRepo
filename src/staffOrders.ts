@@ -104,9 +104,9 @@ export async function handleStaffOrders(req:Request,env:Env,route:string,user:Us
   const change=/^orders\/(WS-[A-F0-9]{32})\/(lines|skip)$/.exec(route);
   if(change&&((change[2]==="lines"&&req.method==="PUT")||(change[2]==="skip"&&req.method==="POST"))){
     const body=await readJson(req,32*1024),id=change[1];
-    const saved=change[2]==="lines"?await amendLines(env,id,body,user.name):await skipRun(env,id,body,user.name,{});
+    const saved=change[2]==="lines"?await amendLines(env,id,body,user.name):await skipRun(env,id,body,user.name,{},ctx);
     await requireStaffOrders(env,user);
-    await tellCustomerStandingChange(env,ctx,saved,change[2] as "lines"|"skip",body,customerOrdersUrl(env,links,req));
+    await tellCustomerStandingChange(env,ctx,saved,change[2] as "lines"|"skip",body,customerOrdersUrl(env,links,req),new URL(links.diary||"/",req.url).href,user.name);
     return json({order:staffView(saved as any)});
   }
   // Customer tabs: kg and bags only here (no money); the same checks as Admin.

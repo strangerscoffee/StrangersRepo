@@ -25,6 +25,8 @@ interface MailOrder {
   id: string; business?: string; createdAt: number; delivery: string; reference?: string; customerNote?: string;
   pence: number; deliveryPence?: number; totalPence?: number; grams: number; lines: Line[];
   takenFor?: { source?: string } | null; createdName?: string;
+  /** Standing orders: the dispatch day, how often, and (for a run made after the last one went out) the run before. */
+  dispatchDate?: string; standing?: { every?: number } | null; previousRunId?: string;
   customerSnapshot?: { name?: string; contact?: string; email?: string; phone?: string; address?: string; postcode?: string; deliveryNotes?: string } | null;
   paymentTerms?: { label?: string; note?: string } | null;
   trackingUrl?: string;
@@ -46,6 +48,9 @@ const kg = (grams: number) => `${new Intl.NumberFormat("en-GB", { maximumFractio
 const packName: Record<string, string> = { quarter: "250 g", kilo: "1 kg", half: "500 g" };
 const when = (at: number) => new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "Europe/London" }).format(new Date(at));
 
+const everyText = (every?: number) => every === 1 ? "every week" : every ? `every ${every} weeks` : "standing";
+const longDay = (day: string) => new Date(day + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" });
+const shortDay = (day: string) => new Date(day + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
 export function buildOrderEmail(order: MailOrder, orderUrl: string) {
   const place = order.locationSnapshot || order.customerSnapshot || {};
   const customer = order.customerSnapshot || {};
@@ -56,11 +61,15 @@ export function buildOrderEmail(order: MailOrder, orderUrl: string) {
   const where = order.delivery === "Delivery" ? [place.name && place.name !== "Main location" ? place.name : "", place.address, place.postcode].filter(Boolean).join(", ") || "No address saved" : "Roastery collection";
   const contact = [place.contact || customer.contact, place.phone || customer.phone, customer.email].filter(Boolean).join(" · ");
   // An order Strangers entered for the customer (email, phone, at the door) says so, and who took it.
-  const taken = order.takenFor ? `${order.createdName || "Strangers"}${order.takenFor.source ? ` (${order.takenFor.source.toLowerCase()})` : ""}` : "";
-  const subject = `New wholesale order${taken ? " (entered by staff)" : ""}: ${business} · ${bags.all} ${bags.all === 1 ? "bag" : "bags"} · ${money(total)}`;
+  // A standing order's next delivery, made when the last one was dispatched or skipped, says so (not "entered by staff").
+  const nextRun = !!(order.standing && order.previousRunId);
+  const taken = order.takenFor && !nextRun ? `${order.createdName || "Strangers"}${order.takenFor.source ? ` (${order.takenFor.source.toLowerCase()})` : ""}` : "";
+  const schedule = order.standing ? `Standing order, ${everyText(order.standing.every)}${order.dispatchDate ? ` · dispatch ${longDay(order.dispatchDate)}` : ""}` : order.dispatchDate ? `Dispatch ${longDay(order.dispatchDate)}` : "";
+  const kind = nextRun ? "Next standing order delivery" : "New wholesale order";
+  const subject = `${kind}${taken ? " (entered by staff)" : ""}: ${business} · ${bags.all} ${bags.all === 1 ? "bag" : "bags"} · ${money(total)}${nextRun && order.dispatchDate ? ` · dispatch ${shortDay(order.dispatchDate)}` : ""}`;
   const lineText = (l: Line) => `${l.quantity} × ${l.title}, ${packName[l.pack] || l.packLabel || l.pack}, ${l.grindLabel || ""}${l.grindHint ? ` (${l.grindHint})` : ""}${l.decaf ? ", decaf" : ""}`;
   const text = [
-    `New wholesale order from ${business}`, `${order.id} · ${when(order.createdAt)}`, "",
+    `${kind} ${nextRun ? "for" : "from"} ${business}`, `${order.id} · ${when(order.createdAt)}`, ...(schedule ? [schedule] : []), "",
     ...order.lines.map(lineText), "",
     `${bags.quarter} × 250 g · ${bags.kilo} × 1 kg · ${bags.all} bags · ${kg(order.grams)}`,
     `Coffee ${money(order.pence)} · Delivery ${order.deliveryPence ? money(order.deliveryPence) : "free"} · Total ${money(total)}`, "",
@@ -73,8 +82,8 @@ export function buildOrderEmail(order: MailOrder, orderUrl: string) {
   const html = `<!doctype html><html><body style="margin:0;background:#f4f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#14181f;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f5f7;padding:20px 0;"><tr><td align="center">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:620px;background:#fff;border-radius:14px;border:1px solid #e3e6eb;">
-<tr><td style="padding:22px 24px 6px;"><div style="font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#5d6675;">New wholesale order</div>
-<h1 style="margin:4px 0 2px;font-size:22px;line-height:1.25;">${esc(business)}</h1><div style="font-size:13px;color:#5d6675;">${esc(order.id)} · ${esc(when(order.createdAt))}</div></td></tr>
+<tr><td style="padding:22px 24px 6px;"><div style="font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#5d6675;">${esc(kind)}</div>
+<h1 style="margin:4px 0 2px;font-size:22px;line-height:1.25;">${esc(business)}</h1><div style="font-size:13px;color:#5d6675;">${esc(order.id)} · ${esc(when(order.createdAt))}</div>${schedule ? `<div style="font-size:14px;font-weight:600;color:#0062cc;margin-top:6px;">${esc(schedule)}</div>` : ""}</td></tr>
 <tr><td style="padding:14px 24px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
 <tr><th style="${cell}color:#5d6675;font-size:12px;">Bags</th><th style="${cell}color:#5d6675;font-size:12px;">Coffee</th><th style="${cell}color:#5d6675;font-size:12px;">Size</th><th style="${cell}color:#5d6675;font-size:12px;">Grind</th></tr>
 ${order.lines.map((l) => `<tr><td style="${cell}font-weight:700;">${l.quantity}</td><td style="${cell}">${esc(l.title)}${l.decaf ? " <span style=\"font-size:11px;border:1px solid #c9ccd2;border-radius:5px;padding:0 4px;\">Decaf</span>" : ""}</td><td style="${cell}white-space:nowrap;">${esc(packName[l.pack] || l.packLabel || l.pack)}</td><td style="${cell}">${esc(l.grindLabel || "")}${l.grindHint ? `<div style="font-size:12px;color:#5d6675;">${esc(l.grindHint)}</div>` : ""}</td></tr>`).join("")}
@@ -282,22 +291,26 @@ export async function notifyNewOrder(env: Env, ctx: ExecutionContext | undefined
 
 /** When a customer changes or skips a standing delivery themselves, the Order alerts addresses hear about it (the
  *  roastery may already be planning it). Background, never throws; failures are email_failed like new orders. */
-export async function notifyCustomerChange(env: Env, ctx: ExecutionContext | undefined, order: MailOrder & { dispatchDate?: string }, change: "skipped" | "once" | "ongoing", diaryBase: string, already?: string) {
+export async function notifyCustomerChange(env: Env, ctx: ExecutionContext | undefined, order: MailOrder & { dispatchDate?: string }, change: "skipped" | "once" | "ongoing", diaryBase: string, already?: string, by?: string) {
   if (!emailReady(env)) return;
-  const business = order.business || "A customer";
+  // `by`: a member of Strangers made the change for the customer (the staff orders page or Admin).
+  const business = by ? `${by} (Strangers)` : order.business || "A customer";
+  const theirs = by ? `${order.business || "the customer"}'s` : "their";
   const warning = already ? `It was already ${already === "Ready" ? "packed and ready to go" : "being prepared"}: check the packing.` : "";
   const day = order.dispatchDate ? new Date(order.dispatchDate + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" }) : "";
-  const what = change === "skipped" ? `skipped their standing order delivery${day ? ` for ${day}` : ""}` : `changed the bags on their standing order${day ? ` for ${day}` : ""}${change === "once" ? " (this delivery only)" : " (every delivery from now on)"}`;
+  const what = change === "skipped" ? `skipped ${theirs} standing order delivery${day ? ` for ${day}` : ""}` : `changed the bags on ${theirs} standing order${day ? ` for ${day}` : ""}${change === "once" ? " (this delivery only)" : " (every delivery from now on)"}`;
   const url = ordersPageUrl(diaryBase, order.id);
   const lines = change === "skipped" ? [] : order.lines.map((l) => `${l.quantity} × ${l.title}, ${packName[l.pack] || l.packLabel || l.pack}, ${l.grindLabel || ""}`);
-  const subject = `${already ? "Already " + (already === "Ready" ? "ready" : "preparing") + ": " : ""}${business} ${change === "skipped" ? "skipped a standing order delivery" : "changed a standing order"}`;
+  const subject = by
+    ? `${order.business || "A customer"}: standing order ${change === "skipped" ? "delivery skipped" : "changed"} by ${by}`
+    : `${already ? "Already " + (already === "Ready" ? "ready" : "preparing") + ": " : ""}${business} ${change === "skipped" ? "skipped a standing order delivery" : "changed a standing order"}`;
   const text = [`${business} ${what}.`, ...(warning ? [warning] : []), order.id, "", ...lines, ...(lines.length ? [""] : []), `Open the order: ${url}`].join("\n");
-  const html = `<!doctype html><html><body style="margin:0;background:#f4f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#14181f;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:20px 0;"><tr><td align="center"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:620px;background:#fff;border-radius:14px;border:1px solid #e3e6eb;"><tr><td style="padding:22px 24px;"><div style="font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#5d6675;">Standing order ${change === "skipped" ? "skipped" : "changed"}</div><h1 style="margin:4px 0 8px;font-size:20px;">${esc(business)}</h1><p style="font-size:15px;margin:0 0 10px;">${esc(business)} ${esc(what)}.</p>${warning ? `<p style="font-size:15px;margin:0 0 10px;padding:10px 12px;border-radius:10px;background:#fdf1e3;color:#8a4b0b;font-weight:600;">${esc(warning)}</p>` : ""}${lines.length ? `<ul style="font-size:14px;padding-left:18px;">${lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : ""}<a href="${esc(url)}" style="display:inline-block;background:#0062cc;color:#fff;text-decoration:none;font-weight:600;padding:11px 18px;border-radius:10px;">Open the order</a></td></tr></table></td></tr></table></body></html>`;
+  const html = `<!doctype html><html><body style="margin:0;background:#f4f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#14181f;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:20px 0;"><tr><td align="center"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:620px;background:#fff;border-radius:14px;border:1px solid #e3e6eb;"><tr><td style="padding:22px 24px;"><div style="font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#5d6675;">Standing order ${change === "skipped" ? "skipped" : "changed"}</div><h1 style="margin:4px 0 8px;font-size:20px;">${esc(order.business || "A customer")}</h1><p style="font-size:15px;margin:0 0 10px;">${esc(business)} ${esc(what)}.</p>${warning ? `<p style="font-size:15px;margin:0 0 10px;padding:10px 12px;border-radius:10px;background:#fdf1e3;color:#8a4b0b;font-weight:600;">${esc(warning)}</p>` : ""}${lines.length ? `<ul style="font-size:14px;padding-left:18px;">${lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : ""}<a href="${esc(url)}" style="display:inline-block;background:#0062cc;color:#fff;text-decoration:none;font-weight:600;padding:11px 18px;border-radius:10px;">Open the order</a></td></tr></table></td></tr></table></body></html>`;
   const run = (async () => {
     try {
       const settings = await orderEmailSettings(env);
       if (!settings.enabled) return;
-      for (const to of settings.to) await send(env, { to: { id: "orders", name: to, email: to, email_prefs: "{}", active: 1 }, kind: "order", mail: { subject, text, html }, about: `standing order change ${order.id} (${business})`, from: FROM(env), replyTo: order.customerSnapshot?.email || undefined });
+      for (const to of settings.to) await send(env, { to: { id: "orders", name: to, email: to, email_prefs: "{}", active: 1 }, kind: "order", mail: { subject, text, html }, about: `standing order change ${order.id} (${business})`, from: FROM(env), replyTo: by ? undefined : order.customerSnapshot?.email || undefined });
     } catch (error) {
       await audit(env, "email_failed", null, `Couldn't email a standing order change ${order.id}: ${String((error as Error)?.message || error).slice(0, 160)}`).catch(() => {});
     }

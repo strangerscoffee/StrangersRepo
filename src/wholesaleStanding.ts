@@ -15,6 +15,8 @@ import { audit } from "./audit";
 import { autoTabFor } from "./wholesaleTabs";
 import { canOrder, recipeText } from "./wholesaleWhiteLabel";
 import { ApiError, type Env, invalid } from "./http";
+import { notifyNewOrder } from "./email/orders";
+import { notifySlackNewOrder } from "./slackOrders";
 
 export const STANDING_EVERY = [1, 2, 4] as const;
 export interface Standing { every: 1 | 2 | 4; seriesId: string; run: number }
@@ -60,7 +62,7 @@ export function scheduleFields(order: AnyOrder, value: unknown): Record<string, 
 
 /** After a standing run is dispatched or cancelled, makes the next run (once): a New order for the next dispatch day,
  * with the same bags at today's prices and the customer's current details. Returns the new order's id, or null. */
-export async function rollStanding(env: Env, saved: AnyOrder, actor: string): Promise<string | null> {
+export async function rollStanding(env: Env, saved: AnyOrder, actor: string, ctx?: ExecutionContext): Promise<string | null> {
   if (!saved.standing || saved.preview !== false || saved.deletedAt != null || !["Dispatched", "Cancelled"].includes(saved.status)) return null;
   if (saved.nextRunId && await get(env, "order", saved.nextRunId)) return null; // Includes intentionally deleted runs.
   const id = saved.nextRunId || "WS-" + crypto.randomUUID().replaceAll("-", "").toUpperCase();
@@ -108,6 +110,11 @@ export async function rollStanding(env: Env, saved: AnyOrder, actor: string): Pr
   ]);
   if (!results[1].meta.changes) return null;
   await audit(env, "wholesale_standing_run", actor, `Standing order ${saved.standing.seriesId}: ${saved.skipped?.by || actor} ${saved.status === "Cancelled" ? "skipped" : "dispatched"} ${saved.id}; next run ${id} is due for dispatch on ${next.dispatchDate}.`);
+  // The Order alerts addresses and the orders Slack channel hear about the next delivery, like a new order (the
+  // owner's decision, 17 Nov 2026). Never the customer: they get their own email when it's dispatched.
+  const made = { ...next, id } as any, diary = `https://${env.COOKIE_DOMAIN || "staffstrangerscoffee.com"}/`;
+  await notifyNewOrder(env, ctx, made, diary).catch(() => {});
+  await notifySlackNewOrder(env, ctx, made, diary).catch(() => {});
   return id;
 }
 
@@ -148,13 +155,13 @@ async function changeable(env: Env, id: string, by: Changer) {
 }
 
 /** Skip one delivery of a standing order: the run is Cancelled (marked who skipped it) and the next run is made. */
-export async function skipRun(env: Env, id: string, value: unknown, actor: string, by: Changer): Promise<AnyOrder> {
+export async function skipRun(env: Env, id: string, value: unknown, actor: string, by: Changer, ctx?: ExecutionContext): Promise<AnyOrder> {
   const body = object(value);
   const order = await changeable(env, id, by);
   if (!order.standing) throw invalid("Only a standing order's delivery can be skipped. To stop a one-off order, cancel it.");
   const marked = await saveChange(env, order, { ...strip(order), status: "Cancelled", skipped: { by: by.customerId ? order.business || "The customer" : actor, customer: !!by.customerId, at: Date.now() } }, version(body.ifVersion), by);
   await audit(env, "wholesale_preview_status", actor, `${actor} skipped wholesale standing delivery ${id}.`);
-  await rollStanding(env, marked, actor);
+  await rollStanding(env, marked, actor, ctx);
   return (await get(env, "order", id)) || marked;
 }
 
