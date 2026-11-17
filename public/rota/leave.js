@@ -51,7 +51,7 @@ window.SCLeave = function createLeaveUI(c) {
             const years = select('leave_year', data.balances.map(y => [y.from, `${y.from} – ${y.to}`]), b.from);
             years.setAttribute('aria-label', 'Leave year');
             years.onchange = () => { year = years.value; yearPicked = true; render(); };
-            out.push(el('section', { class: 'panel leave-allowance' }, el('div', { class: 'row between' }, el('h2', { text: 'Your allowance' }), years), note(`${amount(b.entitlement)} days entitlement${b.carry ? ` + ${amount(b.carry)} days approved carry-over` : ''}. ${amount(b.remaining)} days remain before pending requests and reserved bank holidays.`), b.bankHolidayReserved ? note(`${amount(b.bankHolidayReserved)} days are reserved for your bank holidays. A confirmed worked bank holiday releases its day to book later.`) : null, b.credits ? note(`${amount(b.credits)} bank-holiday ${b.credits === 1 ? 'day' : 'days'} released to use in lieu. Included in “Available to book”.`) : null, b.note ? note(b.note) : null, b.openingUsed ? note(`Includes ${amount(b.openingUsed)} days previously used, reconciled through ${shortM(b.openingAsOf)}.`) : null));
+            out.push(el('section', { class: 'panel leave-allowance' }, el('div', { class: 'row between' }, el('h2', { text: 'Your allowance' }), years), note(`${amount(b.entitlement)} days entitlement${b.carry ? ` + ${amount(b.carry)} days approved carry-over` : ''}. ${amount(b.remaining)} days remain before pending requests and reserved bank holidays.`), b.bankHolidayReserved ? note(`${amount(b.bankHolidayReserved)} days are reserved for your bank holidays. A confirmed worked bank holiday releases its day to book later.`) : null, b.credits ? note(`${amount(b.credits)} bank-holiday ${b.credits === 1 ? 'day' : 'days'} released to use in lieu. Included in “Available to book”.`) : null, accrualNotes(b), b.note ? note(b.note) : null, b.openingUsed ? note(`Includes ${amount(b.openingUsed)} days previously used, reconciled through ${shortM(b.openingAsOf)}.`) : null));
         }
         else if (data.enabled)
             out.push(el('section', { class: 'panel' }, el('h2', { text: 'Your allowance needs setting up' }), note('Ask an admin to enter your own entitlement and normal working days. No allowance has been assumed.')));
@@ -61,11 +61,33 @@ window.SCLeave = function createLeaveUI(c) {
             past.onchange = () => { year = past.value; yearPicked = !!year; render(); };
             out.push(el('section', { class: 'panel' }, el('h2', { text: 'Other leave years' }), past));
         }
+        if (data.takeBy && b && b.from === data.takeBy.year.from)
+            out.push(takeByPanel(data.takeBy, data.enabled));
         if (data.legacyCount)
             out.push(note(`${data.legacyCount} existing time-off record${data.legacyCount === 1 ? ' needs' : 's need'} admin reconciliation. Unclassified records are retained on the rota and are not silently deducted from your allowance.`));
         out.push(calendarView(calendar));
         out.push(label('Your requests and absences'), absenceList(data.absences, false));
         return out;
+    }
+    // Holiday added for hours above the minimum contract, quarter by quarter, with the workings.
+    function accrualNotes(b) {
+        const list = (b.accruals || []).filter(a => !a.reversedAt);
+        if (!list.length)
+            return null;
+        return el('details', { class: 'leave-accruals' }, el('summary', { text: `Includes ${amount(b.accrued)} ${b.accrued === 1 ? 'day' : 'days'} added for extra hours worked` }), ...list.map(a => el('div', { class: 'leave-accrual' }, el('b', { text: `${a.label}: +${amount(a.amount)} ${a.amount === 1 ? 'day' : 'days'}` }), el('span', { class: 's', text: `${hours(a.countedHours)} counted − ${hours(a.minimumHours)} minimum = ${hours(a.extraHours)} extra × 12.07% = ${hours(a.accruedHours)} ÷ ${hours(a.dayHours)} average day` }))));
+    }
+    const hours = n => `${amount(n)} h`;
+    const RISK = { done: ['All planned', 'ok'], 'on-track': ['On track', 'ok'], behind: ['Behind', 'warn'], 'at-risk': ['Book soon', 'warn'], 'act-now': ['Book now', 'bad'], ended: ['Year ended', 'muted'] };
+    const riskChip = r => el('span', { class: 'leave-risk ' + (RISK[r]?.[1] || 'muted'), text: RISK[r]?.[0] || r });
+    const longDate = d => fmt(d, { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' });
+    // Holiday not yet booked against the leave year's deadline, and the reminders this person has had (their own only).
+    function takeByPanel(t, enabled) {
+        if (t.left <= 0)
+            return el('section', { class: 'panel leave-takeby ok' }, el('div', { class: 'row between' }, el('h2', { text: 'All your holiday is planned' }), riskChip('done')), note(`Everything in your allowance is used, booked or requested before ${longDate(t.deadline)}.`));
+        return el('section', { class: 'panel leave-takeby ' + (RISK[t.risk]?.[1] || '') }, el('div', { class: 'row between' }, el('h2', { text: `${amount(t.left)} ${t.left === 1 ? 'day' : 'days'} still to book` }), riskChip(t.risk)),
+            note(`Your leave year ends on ${longDate(t.deadline)}. Holiday not taken by then is lost, unless the law says it carries over or an admin agrees. ${enabled ? 'Request it here' : 'Ask an admin to book it'}, giving notice of twice as long as the holiday plus a day.`),
+            t.nextReminder ? note(`Next reminder: ${t.nextReminder.label.toLowerCase()}, ${fmt(t.nextReminder.on, { day: 'numeric', month: 'long' })}.`) : null,
+            t.reminders.length ? el('div', { class: 'leave-reminders' }, ...t.reminders.map(r => el('span', { class: 'leave-tag', text: `${r.label} · ${new Date(r.at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'Europe/London' })}` }))) : null);
     }
     function changeMonth(delta) { const d = new Date(month + 'T12:00:00Z'); d.setUTCMonth(d.getUTCMonth() + delta); month = d.toISOString().slice(0, 7) + '-01'; render(); }
     const KIND_WORD = { annual: 'holiday', unpaid: 'unpaid leave' };
@@ -290,18 +312,102 @@ window.SCLeave = function createLeaveUI(c) {
         if (token !== generation)
             return [];
         employee = employee || data.people[0]?.id || '';
-        const person = data.people.find(p => p.id === employee), own = employee ? await get('/api/rota/leave/dashboard?userId=' + encodeURIComponent(employee)) : null;
+        const person = data.people.find(p => p.id === employee);
+        const [own, takeBy, yearEnd] = await Promise.all([employee ? get('/api/rota/leave/dashboard?userId=' + encodeURIComponent(employee)) : null, get('/api/rota/leave/take-by'), get('/api/rota/leave/year-end')]);
         if (token !== generation)
             return [];
         setHead('leave-admin', 'Holiday management', 'Allowances, requests and absence records', { back: ['Holidays', 'leave'], actions: [ghost('Policy & limits', () => settings(data)), btn('Record absence', () => request(undefined, employee, data), 'btn', { disabled: !employee || !data.settings.enabled })] });
         const pick = select('leave_employee', data.people.map(p => [p.id, p.name]), employee);
         pick.setAttribute('aria-label', 'Employee');
         pick.onchange = () => { employee = pick.value; document.querySelectorAll('#page button,#pageAction button').forEach(b => b.disabled = true); render(); };
-        const out = [el('section', { class: 'panel' }, el('div', { class: 'row between' }, el('h2', { text: 'Employee allowance' }), pick), note(`${data.setup.filter(p => !p.configured).length} employees need a current leave-year allowance.`), el('div', { class: 'row' }, btn('Set up a leave year', () => allowance(person, undefined, data.settings)), ghost('Add blackout dates', () => blackout())), ...(own?.balances || []).map(b => el('div', { class: 'leave-year-row' }, el('span', { class: 't' }, el('b', { text: `${b.from} – ${b.to}` }), el('span', { class: 's', text: `${amount(b.available)} days available · ${amount(b.used)} used · ${amount(b.booked)} booked · ${amount(b.pending)} pending${b.bankHolidayReserved ? ` · ${amount(b.bankHolidayReserved)} reserved for bank holidays` : ''}` })), ghost('Edit', () => allowance(person, b, data.settings)), b.bankHolidayEligible && data.settings.bankHolidayPolicy === 'credit-worked' ? ghost('Bank holiday worked', () => credit(person, b)) : null)))];
+        const out = [el('section', { class: 'panel' }, el('div', { class: 'row between' }, el('h2', { text: 'Employee allowance' }), pick), note(`${data.setup.filter(p => !p.configured).length} employees need a current leave-year allowance.`), el('div', { class: 'row' }, btn('Set up a leave year', () => allowance(person, undefined, data.settings)), ghost('Add blackout dates', () => blackout())), ...(own?.balances || []).map(b => el('div', { class: 'leave-year-row' }, el('span', { class: 't' }, el('b', { text: `${b.from} – ${b.to}` }), el('span', { class: 's', text: `${amount(b.available)} days available · ${amount(b.used)} used · ${amount(b.booked)} booked · ${amount(b.pending)} pending${b.bankHolidayReserved ? ` · ${amount(b.bankHolidayReserved)} reserved for bank holidays` : ''}` })), ghost('Edit', () => allowance(person, b, data.settings)), b.bankHolidayEligible && data.settings.bankHolidayPolicy === 'credit-worked' ? ghost('Bank holiday worked', () => credit(person, b)) : null, ...(b.accruals || []).filter(a => !a.reversedAt).map(a => ghost(`${a.label} +${amount(a.amount)}`, () => reverseAccrual(person, b, a), { 'aria-label': `Holiday for extra hours, ${a.label}: take off` })))))];
+        out.push(el('section', { class: 'panel' }, el('div', { class: 'row between' }, el('h2', { text: 'Holiday for extra hours' }), btn('Review a quarter', () => accrualSheet())), note('Each quarter, hours worked above the minimum contract (contracts under 42 hours) earn holiday at 12.07%. Nothing is added until you approve it.')));
+        out.push(...takeByAdmin(takeBy), ...yearEndAdmin(yearEnd));
         out.push(label(`Requests awaiting a decision · ${data.requests.length}`), absenceList(data.requests, true));
         out.push(label(person ? `${person.name} · absence history` : 'Absence history'), absenceList((own?.absences || []).filter(a => a.status !== 'requested'), true));
         out.push(label('Blackout dates'), data.blocks.length ? el('div', { class: 'list glass' }, ...data.blocks.map(b => el('div', { class: 'lrow wraprow' }, el('span', { class: 't' }, el('b', { text: b.title }), el('span', { class: 's', text: `${span(b.from, b.to)} · ${SITES[b.site || 'all']}` })), el('span', { class: 'row' }, ghost('Edit', () => blackout(b)), ghost('Remove', () => removeBlock(b)))))) : empty('No blackout dates set.'));
         return out;
+    }
+    // Everyone's holiday left to take this leave year, most urgent first.
+    function takeByAdmin(t) {
+        const order = ['act-now', 'at-risk', 'behind', 'on-track', 'done', 'ended'];
+        const people = (t?.people || []).slice().sort((a, b) => order.indexOf(a.risk) - order.indexOf(b.risk) || b.left - a.left);
+        if (!people.length)
+            return [];
+        return [label('Holiday left to take this year'), el('div', { class: 'list glass leave-takeby-list' }, ...people.map(p => el('div', { class: 'lrow wraprow' }, el('span', { class: 't' }, el('b', { text: p.name }), el('span', { class: 's', text: p.left > 0 ? `${amount(p.left)} days to book by ${fmt(p.deadline, { day: 'numeric', month: 'short', year: 'numeric' })} · require by ${fmt(p.cutoff, { day: 'numeric', month: 'short' })}${p.reminders.length ? ` · ${p.reminders.length} reminder${p.reminders.length === 1 ? '' : 's'} sent` : ''}` : `${amount(p.takenOrPlanned)} of ${amount(p.total)} days used or booked` })), riskChip(p.risk)))),
+            note('“Require by” is the last comfortable day to tell someone to take their holiday: you need to give notice of twice the length of the holiday. Reminders go to staff 6 months (if behind), 3, 2 and 1 month before the year ends; the 1-month one is the formal notice that untaken holiday is lost.')];
+    }
+    // Leave years that have ended with holiday not taken: carry it over only where the law requires it or you agree.
+    function yearEndAdmin(y) {
+        const people = y?.people || [];
+        if (!people.length)
+            return [];
+        return [label('Holiday not taken last year'), el('div', { class: 'list glass' }, ...people.map(p => el('div', { class: 'lrow wraprow' }, el('span', { class: 't' }, el('b', { text: p.name }), el('span', { class: 's', text: `${amount(p.left)} days not taken by ${fmt(p.year.to, { day: 'numeric', month: 'short', year: 'numeric' })}${p.next?.carry ? ` · ${amount(p.next.carry)} carried over` : ''}` }), p.missing.length ? el('span', { class: 'leave-tag full', text: 'Not every reminder was sent: the law may carry this over' }) : null, p.sickDays >= 5 ? el('span', { class: 'leave-tag full', text: `Off sick ${p.sickDays} days: if that stopped them, it carries over` }) : null), ghost('Carry over', () => carrySheet(p))))),
+            note('Untaken holiday is lost at the end of the year unless the law says it carries over (for example long sickness, or the person wasn’t reminded) or you agree to it.')];
+    }
+    function carrySheet(p) {
+        const days = number('carry_days', p.next?.carry || p.left, { max: p.left }), why = input('carry_reason', '', { maxlength: 300, placeholder: 'e.g. Off sick in March; agreed with Sam' }), msg = message();
+        openSheet(`${p.name} · carry over`, el('div', { class: 'sbody' }, note(`${amount(p.left)} days weren’t taken in the year to ${fmt(p.year.to, { day: 'numeric', month: 'long', year: 'numeric' })}. Carried-over days are added to the next leave year.`), p.next ? null : note('Set up the next leave year first.'), el('div', { class: 'sfields' }, field('carry_days', 'Days to carry over', days), field('carry_reason', 'Why it carries over', why, true)), msg, el('div', { class: 'sfoot' }, btn('Carry over', async () => { try {
+            await api('POST', '/api/rota/leave/carry', { userId: p.userId, year: p.year.from, days: days.value, reason: why.value, ifVersion: p.next?.version ?? 0 });
+            closeSheets();
+            toast('Holiday carried over.');
+            render();
+        }
+        catch (e) {
+            msg.textContent = errorText(e);
+        } }, 'btn', { disabled: !p.next }))), { left: cancelLink() });
+    }
+    // One quarter: everyone's hours counted, their minimum, the extra and the holiday it earns. Approve to add it.
+    async function accrualSheet(quarter) {
+        const token = generation;
+        let data;
+        try { data = await get('/api/rota/leave/accrual' + (quarter ? '?quarter=' + encodeURIComponent(quarter) : '')); }
+        catch (e) { toast(errorText(e)); return; }
+        if (token !== generation)
+            return;
+        const pick = select('accrual_quarter', data.quarters.map(q => [q.from, q.label]), data.quarter.from);
+        pick.onchange = () => accrualSheet(pick.value);
+        const WHY = { 'full-time': 'Contract of 42 hours or more', 'no-contract': 'No contract hours set', 'no-hours': 'No hours on the rota' };
+        const ticks = [], msg = message();
+        const rows = data.people.filter(p => p.status === 'ready' || p.added).sort((a, b) => b.units - a.units).map(p => {
+            const tick = p.added || !p.units ? null : input('accrual_' + p.userId, '', { type: 'checkbox', checked: !!p.year, disabled: !p.year, 'aria-label': `Add holiday for ${p.name}` });
+            if (tick)
+                ticks.push([tick, p]);
+            return el('div', { class: 'leave-accrual-row' }, el('div', { class: 'row between' }, el('label', { class: 'leave-check' }, tick, el('b', { text: p.name })), el('b', { class: 'leave-accrual-days', text: p.added ? `Added ${amount(p.added.days)} days` : p.units ? `+${amount(p.units / 100)} days` : 'Nothing extra' })),
+                el('span', { class: 's', text: `Contract ${p.contractMin}${p.contractMax !== p.contractMin ? `–${p.contractMax}` : ''} h · counted from ${fmt(p.countedFrom, { day: 'numeric', month: 'short' })}` }),
+                el('span', { class: 's', text: `${hours(p.countedHours)} counted (${hours(p.workedHours)} worked${p.sickHours ? ` + ${hours(p.sickHours)} sick` : ''}${p.holidayHours ? ` + ${hours(p.holidayHours)} holiday` : ''}) − ${hours(p.minimumHours)} minimum = ${hours(p.extraHours)} extra` }),
+                p.units ? el('span', { class: 's', text: `${hours(p.extraHours)} × 12.07% = ${hours(p.accruedHours)} ÷ ${hours(p.dayHours)} average day = ${amount(p.accruedDays)} days` }) : null,
+                !p.year && !p.added && p.units ? el('span', { class: 'leave-tag full', text: `Set up their leave year from ${fmt(data.creditDay, { day: 'numeric', month: 'short', year: 'numeric' })} first` }) : null);
+        });
+        const others = data.people.filter(p => p.status !== 'ready' && !p.added);
+        const add = btn('Add holiday', async () => {
+            const chosen = ticks.filter(([t]) => t.checked).map(([, p]) => ({ userId: p.userId, units: p.units }));
+            if (!chosen.length) { msg.textContent = 'Tick at least one person.'; return; }
+            try {
+                const r = await api('POST', '/api/rota/leave/accrual', { quarter: data.quarter.from, people: chosen, ifVersion: data.version });
+                closeSheets();
+                toast(`Holiday added for ${r.added} ${r.added === 1 ? 'person' : 'people'}.`);
+                render();
+            }
+            catch (e) { msg.textContent = errorText(e); }
+        }, 'btn', { disabled: !ticks.length });
+        openSheet('Holiday for extra hours', el('div', { class: 'sbody leave-accrual-body' }, field('accrual_quarter', 'Quarter', pick, true),
+            note(`Hours counted: paid hours on published rota weeks (amended hours where shifts changed), planned hours missed through sickness, and an average day for each day of holiday. Unpaid leave isn’t counted. Holiday earned is 12.07% of the hours above the minimum contract, turned into days using each person’s average working day, and goes into the leave year that includes ${fmt(data.creditDay, { day: 'numeric', month: 'short', year: 'numeric' })}.`),
+            data.unpublished.length ? el('div', { class: 'leave-notice' }, el('b', { text: 'Some weeks aren’t published' }), note(`Hours in ${data.unpublished.map(w => 'the week of ' + fmt(w, { day: 'numeric', month: 'short' })).join(', ')} aren’t counted until they’re published.`)) : null,
+            data.rotaStart && data.rotaStart > data.quarter.from ? note(`The rota starts on ${fmt(data.rotaStart, { day: 'numeric', month: 'short', year: 'numeric' })}: hours before then aren’t on it, so they aren’t counted.`) : null,
+            rows.length ? el('div', { class: 'leave-accrual-list' }, ...rows) : empty('Nobody worked above their minimum this quarter.'),
+            others.length ? el('details', { class: 'leave-accruals' }, el('summary', { text: `Not included · ${others.length}` }), ...others.map(p => note(`${p.name}: ${WHY[p.status] || p.status}`))) : null,
+            msg, el('div', { class: 'sfoot' }, add)), { left: cancelLink() });
+    }
+    function reverseAccrual(person, b, a) {
+        const reason = input('accrual_correction', '', { maxlength: 300 }), msg = message();
+        openSheet('Take off holiday for extra hours', el('div', { class: 'sbody' }, note(`${person.name} · ${a.label} · ${amount(a.amount)} days. The record is kept.`), field('accrual_correction', 'Reason', reason, true), msg, el('div', { class: 'sfoot' }, btn('Take it off', async () => { try {
+            await api('POST', '/api/rota/leave/accrual/reverse', { userId: person.id, year: b.from, key: a.key, reason: reason.value, ifVersion: b.version });
+            closeSheets();
+            toast('Holiday for extra hours taken off.');
+            render();
+        }
+        catch (e) { msg.textContent = errorText(e); } }))), { left: cancelLink() });
     }
     function leaveYearStart(policy) { const today = londonToday(), md = policy.yearStart || '04-01'; return (today.slice(5) < md ? Number(today.slice(0, 4)) - 1 : Number(today.slice(0, 4))) + '-' + md; }
     function allowance(person, b, policy) {
@@ -344,9 +450,9 @@ window.SCLeave = function createLeaveUI(c) {
     function settings(data) {
         const p = data.settings, on = check('leave_enabled', 'Enable holiday requests', p.enabled), yearStart = input('yearStart', p.yearStart || '04-01', { pattern: '[0-9]{2}-[0-9]{2}', placeholder: '04-01' });
         const bank = select('bankHolidayPolicy', [['unconfirmed', 'Awaiting contract review'], ['credit-worked', 'Inclusive allowance; release worked bank-holiday days in lieu'], ['included', 'Inclusive allowance; no separate worked-day process']], p.bankHolidayPolicy);
-        const limits = Object.keys(SITES).map(key => [key, number('limit_' + key, p.limits[key] ?? '', { step: 1, max: 999 })]), countUnpaid = check('leave_count_unpaid', 'Count unpaid leave towards these limits', !!p.countUnpaid), msg = message();
-        openSheet('Leave policy and limits', el('div', { class: 'sbody' }, on.node, el('div', { class: 'sfields' }, field('leave_year_start', 'Default leave-year start (MM-DD)', yearStart, true), field('leave_bank_policy', 'Bank-holiday policy', bank, true)), note('1 April to 31 March uses 04-01; 6 April to 5 April uses 04-06. Changing the default leaves existing yearly records unchanged.'), label('Maximum employees off on holiday per day'), note('Blank means no limit; 0 blocks new holiday requests. Site rules use each employee’s rota sites. Existing approvals are retained when a limit changes.'), el('div', { class: 'sfields' }, ...limits.map(([key, n]) => field('leave_limit_' + key, SITES[key], n))), countUnpaid.node, note('When ticked, someone on approved unpaid leave takes up a place, so a day can fill up with holiday and unpaid leave together.'), msg, el('div', { class: 'sfoot' }, btn('Save policy', async () => { try {
-            await api('PUT', '/api/rota/leave/settings', { enabled: on.input.checked, yearStart: yearStart.value, bankHolidayPolicy: bank.value, limits: Object.fromEntries(limits.map(([k, n]) => [k, n.value === '' ? null : Number(n.value)])), countUnpaid: countUnpaid.input.checked, ifVersion: data.version });
+        const limits = Object.keys(SITES).map(key => [key, number('limit_' + key, p.limits[key] ?? '', { step: 1, max: 999 })]), countUnpaid = check('leave_count_unpaid', 'Count unpaid leave towards these limits', !!p.countUnpaid), reminders = check('leave_reminders', 'Remind staff about holiday left to take', p.reminders !== false), msg = message();
+        openSheet('Leave policy and limits', el('div', { class: 'sbody' }, on.node, el('div', { class: 'sfields' }, field('leave_year_start', 'Default leave-year start (MM-DD)', yearStart, true), field('leave_bank_policy', 'Bank-holiday policy', bank, true)), note('1 April to 31 March uses 04-01; 6 April to 5 April uses 04-06. Changing the default leaves existing yearly records unchanged.'), label('Maximum employees off on holiday per day'), note('Blank means no limit; 0 blocks new holiday requests. Site rules use each employee’s rota sites. Existing approvals are retained when a limit changes.'), el('div', { class: 'sfields' }, ...limits.map(([key, n]) => field('leave_limit_' + key, SITES[key], n))), countUnpaid.node, note('When ticked, someone on approved unpaid leave takes up a place, so a day can fill up with holiday and unpaid leave together.'), reminders.node, note('Staff are emailed 6 months (if behind), 3, 2 and 1 month before their leave year ends, and admins get a list. The 1-month email is the formal notice that untaken holiday is lost.'), msg, el('div', { class: 'sfoot' }, btn('Save policy', async () => { try {
+            await api('PUT', '/api/rota/leave/settings', { enabled: on.input.checked, yearStart: yearStart.value, bankHolidayPolicy: bank.value, limits: Object.fromEntries(limits.map(([k, n]) => [k, n.value === '' ? null : Number(n.value)])), countUnpaid: countUnpaid.input.checked, reminders: reminders.input.checked, ifVersion: data.version });
             closeSheets();
             toast('Policy saved.');
             render();

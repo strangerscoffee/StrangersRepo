@@ -76,7 +76,7 @@ test("admins set email addresses; nobody else can, and bad ones are refused", as
   // Each person sees their own address read-only, and chooses which emails they get.
   const me = (await req("GET", "/api/rota/me", undefined, ALEX)).body.email;
   assert.equal(me.address, "alex@example.com");
-  assert.deepEqual(me.prefs, { published: true, changed: true, requests: true, open: false, weekly: true });
+  assert.deepEqual(me.prefs, { published: true, changed: true, requests: true, open: false, weekly: true, holiday: true });
   assert.equal(me.weeklySites, undefined, "the Monday summary is for managers");
   assert.equal(me.ready, true);
   assert.equal((await req("PUT", "/api/rota/me/emails", { prefs: { nonsense: true } }, ALEX)).status, 400);
@@ -166,7 +166,7 @@ test("the unsubscribe link asks first, then turns that email off; without signin
   const t = new URL(link).searchParams.get("t");
   const one = await fetch(link, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "List-Unsubscribe=One-Click" });
   assert.equal(one.status, 200);
-  assert.deepEqual((await req("GET", "/api/rota/me", undefined, ALEX)).body.email.prefs, { published: true, changed: false, requests: true, open: false, weekly: true });
+  assert.deepEqual((await req("GET", "/api/rota/me", undefined, ALEX)).body.email.prefs, { published: true, changed: false, requests: true, open: false, weekly: true, holiday: true });
   // No more change emails for Alex.
   await req("PATCH", `/api/rota/shifts/${ids.a1}`, { start: "08:45" }, ADMIN);
   assert.equal((await req("POST", "/api/rota/week/publish", { week: WEEK, email: true }, ADMIN)).body.emailed, 0);

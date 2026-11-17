@@ -1,6 +1,7 @@
 // Strangers Coffee Kitchen Diary staff site.
 // Serves the diary page (public/index.html) and the API it uses through claude-shim.js, and, on its own
 // hostname (ROTA_HOST), the staff rota (public/rota/, src/rota.ts). One Worker, one database, one set of accounts.
+import { runHolidayReminders } from "./rota/leave/notify";
 import { repairStandingRuns } from "./wholesaleStanding";
 import { deliverSlackPosts } from "./slackOrders";
 import { handleResendWebhook } from "./email/delivery";
@@ -89,6 +90,10 @@ export default {
         await deliverSlackPosts(env).catch(() => {}); // new-order posts held for 07:50, and retries
         await deliverDispatchEmails(env).catch(() => {});
         await deliverDiaryReminders(env).catch(() => {}); // each site's morning and end-of-day diary reminder
+        // Holiday left to take, and the quarter's extra-hours holiday to review: once a day from 09:00 UK time.
+        const domain = env.COOKIE_DOMAIN || "staffstrangerscoffee.com";
+        const at = env.SLACK_TEST_HOOKS === "1" && env.HOLIDAY_NOW ? new Date(env.HOLIDAY_NOW) : new Date();
+        await runHolidayReminders(env, { diary: `https://${domain}/`, rota: env.ROTA_HOST ? `https://${env.ROTA_HOST}/` : `https://${domain}/rota/` }, at).catch(() => {});
         if(env.QUICKBOOKS_CLIENT_ID||env.QUICKBOOKS_PRODUCTION_CLIENT_ID||await env.DB.prepare('SELECT 1 FROM quickbooks_app_settings WHERE data IS NOT NULL LIMIT 1').first())await runQuickBooksJobs(env);
       }));
       return;

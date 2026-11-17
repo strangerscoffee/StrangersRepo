@@ -157,6 +157,9 @@ test("security: staff can't use manager or admin features, managers can't use ad
     ["POST", "time-off", { userId: other.id, from: "2026-12-01", to: "2026-12-02", reason: "x" }],
     ["GET", "sickness"], ["DELETE", "sickness/x"], ["GET", `sickness/preview?userId=${other.id}&kind=off&from=2026-12-01&to=2026-12-01`],
     ["POST", "sickness", { userId: other.id, requestKey: "security-probe-1", kind: "off", from: "2026-12-01", to: "2026-12-01", category: "Other", details: "x", vomiting: false, doctor: false, workAccident: false, declared: true }],
+    // Holiday for extra hours, everyone's holiday left to take, and year-end carry-over: admins only.
+    ["GET", "leave/accrual"], ["POST", "leave/accrual", { quarter: "2026-07-01", people: [{ userId: other.id, units: 100 }], ifVersion: 1 }], ["POST", "leave/accrual/reverse", { userId: other.id, year: "2026-04-01", key: "hours:2026-07-01", reason: "x", ifVersion: 1 }],
+    ["GET", "leave/take-by"], ["GET", "leave/year-end"], ["POST", "leave/carry", { userId: other.id, year: "2025-04-01", days: 1, reason: "x", ifVersion: 1 }],
   ]) await denied(await send(method, "/api/rota/" + route, cookie, body), `${cookie === STAFF ? "staff" : "manager"} ${method} /api/rota/${route}`);
   await denied(await send("PUT", "/api/rota/sites/cafe", STAFF, { minPeople: 0 }), "staff cannot change business site settings");
 

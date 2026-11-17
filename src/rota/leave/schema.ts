@@ -32,3 +32,14 @@ export async function migrateLeave(env: Env) {
         env.DB.prepare("CREATE INDEX IF NOT EXISTS rota_leave_events_user ON rota_leave_events(user_id,at DESC)"),
     ]);
 }
+
+/** Migration 32: reminders about holiday left to take (one row per person, leave year and stage, kept as a record
+ *  that the person was told), and each contract change with the day it took effect, so a quarter's extra hours use
+ *  the contract in force on each day. Today's contracts are recorded as applying from the start. */
+export async function migrateHolidayReminders(env: Env) {
+    await env.DB.batch([
+        env.DB.prepare("CREATE TABLE IF NOT EXISTS rota_leave_notices (user_id TEXT NOT NULL, year_from TEXT NOT NULL, stage TEXT NOT NULL, at INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY(user_id, year_from, stage))"),
+        env.DB.prepare("CREATE TABLE IF NOT EXISTS rota_contract_history (user_id TEXT NOT NULL, from_day TEXT NOT NULL, contract_min REAL, contract_max REAL, at INTEGER NOT NULL, PRIMARY KEY(user_id, from_day))"),
+        env.DB.prepare("INSERT OR IGNORE INTO rota_contract_history(user_id, from_day, contract_min, contract_max, at) SELECT user_id, '2000-01-01', contract_min, contract_max, ? FROM rota_people").bind(Date.now()),
+    ]);
+}

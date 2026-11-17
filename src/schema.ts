@@ -1,7 +1,7 @@
 // The database schema. The Worker applies it itself (once per Worker instance) so a fresh deploy needs no
 // migration step: first the tables (every statement idempotent), then any migrations not yet recorded in
 // schema_migrations (MIGRATIONS below). To change the schema, add a migration.
-import { migrateLeave } from "./rota/leave/schema";
+import { migrateHolidayReminders, migrateLeave } from "./rota/leave/schema";
 import { migrateSickness } from "./rota/sickness";
 import { migrateInvites } from "./wholesaleImport";
 import { migrateAnnouncement } from "./wholesaleAnnouncement";
@@ -322,6 +322,8 @@ const MIGRATIONS: Migration[] = [
       env.DB.prepare("CREATE TABLE IF NOT EXISTS email_suppressions (email TEXT PRIMARY KEY,active INTEGER NOT NULL,source TEXT NOT NULL,event_at INTEGER NOT NULL,event_id TEXT NOT NULL)"),
     ]);
   } },
+  // Holiday for extra hours and reminders about holiday left to take (src/rota/leave/accrual.ts, reminders.ts).
+  { id: 32, name: "Holiday reminders and contract history", run: migrateHolidayReminders },
 ];
 
 async function migrate(env: Env): Promise<void> {

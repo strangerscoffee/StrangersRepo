@@ -3,7 +3,7 @@ import { invalid, json } from "../../http";
 import { activeUser, loadSites } from "../load";
 import { DAY_KEYS, ROTA_SITES, RotaRequest, SITE_IDS } from "../types";
 import { checkContract, checkPattern, checkSites } from "../validate";
-import { isTime, mins, nowMs, parseJson } from "../util";
+import { isTime, londonToday, mins, nowMs, parseJson } from "../util";
 
 export async function peopleRoutes(r: RotaRequest): Promise<Response | null> {
   const { env, route, seg, m, needAdmin, needSiteManager, body } = r;
@@ -28,6 +28,10 @@ export async function peopleRoutes(r: RotaRequest): Promise<Response | null> {
        ON CONFLICT (user_id) DO UPDATE SET contract_hours = excluded.contract_hours, contract_min = excluded.contract_min, contract_max = excluded.contract_max,
          sites = excluded.sites, pattern = excluded.pattern, updated_at = excluded.updated_at`,
     ).bind(uid, max, min, max, JSON.stringify(sites), JSON.stringify(pattern), nowMs()).run();
+    // Each contract change from today, so holiday for extra hours uses the contract in force on each day.
+    if ((cur?.contract_min ?? null) !== min || (cur?.contract_max ?? null) !== max)
+      await env.DB.prepare("INSERT INTO rota_contract_history(user_id, from_day, contract_min, contract_max, at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id, from_day) DO UPDATE SET contract_min = excluded.contract_min, contract_max = excluded.contract_max, at = excluded.at")
+        .bind(uid, londonToday(), min, max, nowMs()).run();
     return json({ userId: uid, contractMin: min, contractMax: max, contractHours: max, sites, pattern });
   }
 

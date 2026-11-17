@@ -719,3 +719,25 @@ body[data-page="leave"] .stat b { font-variant-numeric:tabular-nums; }
 .leave-person-card.own { border-color:var(--accent); }
 .leave-list-panel > .note:last-child { margin-top:12px; }
 .leave-list-panel { min-width:0;max-width:100%; }.leave-list-panel > * { min-width:0; }
+
+/* Holiday left to take, and holiday for extra hours (public/rota/leave.js). Colour always comes with words. */
+.leave-risk { flex:none;font-size:12px;font-weight:800;border-radius:99px;padding:4px 10px;white-space:nowrap; }
+.leave-risk.ok { background:var(--ok-bg);color:var(--ok); }
+.leave-risk.warn { background:var(--warn-bg);color:var(--warn); }
+.leave-risk.bad { background:var(--bad-bg);color:var(--bad); }
+.leave-risk.muted { background:var(--sunk);color:var(--muted); }
+.leave-takeby.warn { border-color:color-mix(in srgb,var(--warn) 45%,transparent); }
+.leave-takeby.bad { border-color:color-mix(in srgb,var(--bad) 45%,transparent); }
+.leave-takeby h2 { margin:0; }
+.leave-takeby .row.between, .leave-accrual-row .row.between { align-items:center;gap:10px; }
+.leave-reminders { display:flex;flex-wrap:wrap;gap:6px;margin-top:8px; }
+.leave-reminders .leave-tag { background:var(--sunk);border:1px solid var(--line); }
+.leave-accruals { margin-top:8px; }
+.leave-accruals summary { cursor:pointer;font-weight:600;color:var(--muted);font-size:14px;padding-block:4px; }
+.leave-accrual { display:flex;flex-direction:column;gap:2px;padding:8px 0;border-top:1px solid var(--line);min-width:0; }
+.leave-accrual .s, .leave-accrual-row .s { color:var(--muted);font-size:13px;overflow-wrap:anywhere; }
+.leave-accrual-list { display:flex;flex-direction:column;margin-block:10px; }
+.leave-accrual-row { display:flex;flex-direction:column;gap:3px;padding:12px 0;border-top:1px solid var(--line);min-width:0; }
+.leave-accrual-row .leave-check { min-width:0; }
+.leave-accrual-days { flex:none;font-variant-numeric:tabular-nums; }
+.leave-takeby-list .lrow .t { min-width:0; }

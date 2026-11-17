@@ -5,8 +5,11 @@ import { activeUser, touchWeek } from "../load";
 import { RotaRequest, SITE_IDS } from "../types";
 import { actor, timeOffDecided } from "../../email/rota";
 import { addDays, conflict, denied, isDay, isTime, londonToday, mondayOf, notFound, text } from "../util";
-import { AllowanceRow, LEAVE_TYPES, LeaveDay, LeaveKind, LeaveRow, allowanceData, allowanceInput, allowances, amount, balance, chargeDays, chargedDays, commitLeave, dates, enoughBalance, event, leaveView, leaveViews, ownLeave, policy, policyInput, range, requireVersion, revision } from "./model";
+import { AllowanceRow, LEAVE_TYPES, LeaveDay, LeaveKind, LeaveRow, allowanceData, allowanceInput, allowances, amount, balance, chargeDays, chargedDays, commitLeave, dates, enoughBalance, event, leaveView, leaveViews, ownLeave, policy, policyInput, range, requireVersion, revision, units } from "./model";
 import { calendarRules, checkCalendar, employeeSites } from "./rules";
+import { accrualRoutes } from "./accrual";
+import { holidayStatus, ownHolidayStatus } from "./notify";
+import { addMonths } from "./accrualMath";
 const canRequest = (kind: string) => kind === "annual" || kind === "unpaid";
 const writeWeeks = (r: RotaRequest, from: string, to: string) => [...new Set(dates(from, to).map(mondayOf))].map(w => touchWeek(r.env, w));
 async function person(r: RotaRequest, id: unknown) {
@@ -133,6 +136,9 @@ export async function leaveRoutes(r: RotaRequest): Promise<Response | null> {
     const { env, route, m, q, seg, user } = r;
     if (!route.startsWith("leave/"))
         return null;
+    const accrual = await accrualRoutes(r);
+    if (accrual)
+        return accrual;
     if (route === "leave/dashboard" && m === "GET") {
         const uid = await person(r, q("userId") ?? undefined);
         const [p, rows, days, absences, legacy] = await Promise.all([
@@ -142,7 +148,7 @@ export async function leaveRoutes(r: RotaRequest): Promise<Response | null> {
                 n: number;
             }>(),
         ]);
-        return json({ today: londonToday(), userId: uid, enabled: p.settings.enabled, yearStart: p.settings.yearStart, bankHolidayPolicy: p.settings.bankHolidayPolicy, balances: rows.map(row => balance(row, days)), absences: await leaveViews(env, absences.results), legacyCount: legacy?.n ?? 0, types: Object.entries(LEAVE_TYPES).filter(([k]) => k !== "legacy" && (r.admin || canRequest(k))).map(([id, label]) => ({ id, label })) });
+        return json({ today: londonToday(), userId: uid, takeBy: await ownHolidayStatus(env, uid), enabled: p.settings.enabled, yearStart: p.settings.yearStart, bankHolidayPolicy: p.settings.bankHolidayPolicy, balances: rows.map(row => balance(row, days)), absences: await leaveViews(env, absences.results), legacyCount: legacy?.n ?? 0, types: Object.entries(LEAVE_TYPES).filter(([k]) => k !== "legacy" && (r.admin || canRequest(k))).map(([id, label]) => ({ id, label })) });
     }
     if (route === "leave/calendar" && m === "GET") {
         const { from, to } = range(q("from"), q("to"), 93), { settings } = await policy(env);
@@ -254,6 +260,8 @@ export async function leaveRoutes(r: RotaRequest): Promise<Response | null> {
             throw conflict("Leave years for this employee cannot overlap.");
         const value = allowanceInput(b, from, to);
         value.credits = old ? (allowanceData(old).credits ?? []) : [];
+        // Holiday added for extra hours stays with the year (it's reversed through its own route, with a reason).
+        value.accruals = old ? (allowanceData(old).accruals ?? []) : [];
         const reason = text(b.changeReason, "Reason for this allowance change", 300);
         if (!reason)
             throw invalid("Record why this allowance is being set or changed.");
@@ -357,6 +365,57 @@ export async function leaveRoutes(r: RotaRequest): Promise<Response | null> {
         requireVersion(old.version, b.ifVersion);
         await commitLeave(env, ver, [env.DB.prepare("DELETE FROM rota_leave_blocks WHERE id=?").bind(seg[2]), event(env, null, null, "blackout_removed", user.id, old)]);
         return json({ ok: true });
+    }
+    if (route === "leave/take-by" && m === "GET") {
+        // Everyone's holiday left to take this leave year, the deadline, and the reminders they've had (admins only).
+        const people = (await holidayStatus(env)).map(({ sentStages, ...p }) => p);
+        return json({ today: londonToday(), people });
+    }
+    if (route === "leave/year-end" && m === "GET") {
+        // Leave years that ended in the last four months: holiday not taken, whether every reminder went out, and
+        // sickness (both bear on whether the law carries holiday over). Nothing carries over unless an admin says so.
+        const today = londonToday(), since = addMonths(today, -4);
+        const rows = (await env.DB.prepare("SELECT a.*, u.name FROM rota_leave_allowances a JOIN users u ON u.id = a.user_id WHERE u.active = 1 AND a.to_day < ? AND a.to_day >= ? ORDER BY u.name_key").bind(today, since).all<AllowanceRow & { name: string }>()).results;
+        const people = [];
+        for (const row of rows) {
+            const days = await chargedDays(env, row.user_id), b = balance(row, days, row.to_day);
+            if (b.available <= 0)
+                continue;
+            const [notices, sick, next] = await Promise.all([
+                env.DB.prepare("SELECT stage, data FROM rota_leave_notices WHERE user_id = ? AND year_from = ?").bind(row.user_id, row.from_day).all<{ stage: string; data: string }>(),
+                env.DB.prepare("SELECT from_day, to_day FROM rota_time_off WHERE user_id = ? AND kind = 'sick' AND status = 'approved' AND from_day <= ? AND to_day >= ?").bind(row.user_id, row.to_day, row.from_day).all<{ from_day: string; to_day: string }>(),
+                env.DB.prepare("SELECT * FROM rota_leave_allowances WHERE user_id = ? AND from_day = ?").bind(row.user_id, addDays(row.to_day, 1)).first<AllowanceRow>(),
+            ]);
+            const told = notices.results.filter(n => { try { return !JSON.parse(n.data).passed; } catch { return true; } }).map(n => n.stage);
+            const missing = ["three", "two", "final"].filter(s => !told.includes(s));
+            const sickDays = sick.results.reduce((n, t) => n + dates(t.from_day < row.from_day ? row.from_day : t.from_day, t.to_day > row.to_day ? row.to_day : t.to_day).length, 0);
+            people.push({ userId: row.user_id, name: row.name, year: { from: row.from_day, to: row.to_day }, left: b.available, reminded: told, missing, sickDays, next: next ? { from: next.from_day, carry: amount(allowanceData(next).carry), version: next.version } : null });
+        }
+        return json({ today, people });
+    }
+    if (route === "leave/carry" && m === "POST") {
+        // An admin agrees to carry holiday into the next leave year (or the law requires it): sets that year's carry-over.
+        const ver = await revision(env), b = await r.body(), uid = await activeUser(env, b.userId);
+        const ended = await env.DB.prepare("SELECT * FROM rota_leave_allowances WHERE user_id = ? AND from_day = ?").bind(uid, String(b.year ?? "")).first<AllowanceRow>();
+        if (!ended || ended.to_day >= londonToday())
+            throw notFound("Choose a leave year that has ended.");
+        const next = await env.DB.prepare("SELECT * FROM rota_leave_allowances WHERE user_id = ? AND from_day = ?").bind(uid, addDays(ended.to_day, 1)).first<AllowanceRow>();
+        if (!next)
+            throw conflict("Set up the next leave year first: the carried-over holiday goes into it.");
+        requireVersion(next.version, b.ifVersion);
+        const left = Math.round(balance(ended, await chargedDays(env, uid), ended.to_day).available * 100), n = units(b.days, "Days to carry over");
+        if (n > left)
+            throw invalid("You can carry over at most the holiday that wasn't taken.");
+        const reason = text(b.reason, "Reason for carrying holiday over", 300);
+        if (!reason)
+            throw invalid("Say why this holiday carries over (for example, off sick, or agreed with the employee).");
+        const a = allowanceData(next), before = a.carry;
+        a.carry = n;
+        const updated = { ...next, data: JSON.stringify(a), version: next.version + 1 };
+        if (balance(updated, await chargedDays(env, uid)).available < 0)
+            throw conflict("That would leave less holiday than is already booked or requested next year.");
+        await commitLeave(env, ver, [env.DB.prepare("UPDATE rota_leave_allowances SET data = ?, version = version + 1, updated_at = ?, updated_by = ? WHERE user_id = ? AND from_day = ? AND version = ?").bind(updated.data, Date.now(), user.id, uid, next.from_day, next.version), event(env, uid, null, "carry_over_agreed", user.id, { from: ended.from_day, into: next.from_day, before: before / 100, days: n / 100, reason })]);
+        return json({ ok: true, carry: n / 100 });
     }
     if (route === "leave/events" && m === "GET") {
         const uid = await activeUser(env, q("userId"));

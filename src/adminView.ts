@@ -1,6 +1,8 @@
 // The admin section's data (admin.staffstrangerscoffee.com, public/admin/): an overview of the diary and the rota,
 // people with their account, rota and training details, sites, activity, security and exports. Admins only
 // (checked in index.ts before anything here runs). Reads the diary's documents and the rota's tables directly.
+import { quarterAwaiting } from "./rota/leave/accrual";
+import { holidayStatus } from "./rota/leave/notify";
 import { audit } from "./audit";
 import { deviceOf, errorCode, recentErrors, whereOf } from "./errors";
 import { emailReady, prefsOf, weeklySitesOf } from "./email/send";
@@ -109,6 +111,12 @@ export async function overview(env: Env, links: { rota: string; diary: string })
       action: { label: "Review", href: `${links.rota}#requests` },
     });
   }
+  // Holiday: the quarter's extra-hours holiday waiting for approval, and people running out of time to take theirs.
+  const quarter = await quarterAwaiting(env).catch(() => null);
+  if (quarter) attention.push({ tone: "warn", icon: "cal", title: `Holiday for extra hours: ${quarter.label} is ready to review`, detail: "Check each person's hours above their minimum contract and approve the holiday they've earned.", action: { label: "Review", href: `${links.rota}#leave-admin` } });
+  const takeBy = (await holidayStatus(env).catch(() => [])).filter((p) => p.risk === "act-now" || p.risk === "at-risk");
+  if (takeBy.length) attention.push({ tone: "warn", icon: "cal", title: `${takeBy.length} ${takeBy.length === 1 ? "person has" : "people have"} holiday left to take`,
+    detail: takeBy.slice(0, 4).map((p) => `${p.name}: ${Math.round(p.left * 100) / 100} days by ${shortDate(p.deadline)}`).join("; ") + (takeBy.length > 4 ? " and more" : ""), action: { label: "Review", href: `${links.rota}#leave-admin` } });
   // A site a member of staff marked closed today (managers plan closures ahead in Setup), so an admin sees it the same day.
   const roleOf = new Map(users.map((u) => ["web:" + u.name, u.role]));
   for (const s of SITES) {

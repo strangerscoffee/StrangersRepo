@@ -1426,7 +1426,8 @@
 
   // Rota emails: the address an admin set, and which emails this person gets (theirs to choose).
   const EMAIL_KINDS = [["published", "Rota published", "Your shifts when a week goes out"], ["changed", "My shifts change", "Added, moved or removed"],
-    ["requests", "Requests and time off", "When they're approved or declined"], ["open", "Open shifts I could take", "At my sites, when I'm free"]];
+    ["requests", "Requests and time off", "When they're approved or declined"], ["open", "Open shifts I could take", "At my sites, when I'm free"],
+    ["holiday", "Holiday reminders", "Holiday left to book, and holiday added for extra hours"]];
   function emailSettings(me) {
     const m = me.email;
     if (!m) return [];

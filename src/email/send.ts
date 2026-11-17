@@ -10,7 +10,7 @@ import { Env, invalid } from "../http";
 import { Built, Links } from "./templates";
 
 /** The emails people can turn on or off, and how each starts (docs/data-model.md, users.email_prefs). */
-export const EMAIL_KINDS = { published: true, changed: true, requests: true, open: false, weekly: true } as const;
+export const EMAIL_KINDS = { published: true, changed: true, requests: true, open: false, weekly: true, holiday: true } as const;
 /** The sites a manager's Monday summary covers (email_prefs.weeklySites); none chosen means all four. */
 export const SUMMARY_SITES = ["roastery", "cafe", "asg", "factory"] as const;
 export type EmailKind = keyof typeof EMAIL_KINDS;

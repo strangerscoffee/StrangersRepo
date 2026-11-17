@@ -12,8 +12,10 @@ export interface Policy {
     bankHolidayPolicy: "unconfirmed" | "included" | "credit-worked";
     /** Approved unpaid leave takes up a place in the daily limits too (off by default). */
     countUnpaid?: boolean;
+    /** Reminders about holiday left to take (notify.ts); on unless switched off. */
+    reminders?: boolean;
 }
-export const DEFAULT_POLICY: Policy = { enabled: false, limits: {}, yearStart: "04-01", bankHolidayPolicy: "unconfirmed", countUnpaid: false };
+export const DEFAULT_POLICY: Policy = { enabled: false, limits: {}, yearStart: "04-01", bankHolidayPolicy: "unconfirmed", countUnpaid: false, reminders: true };
 export interface LeaveCredit {
     key: string;
     day: string;
@@ -23,8 +25,30 @@ export interface LeaveCredit {
     reversedAt?: number;
     reversalReason?: string;
 }
+/** Holiday added for hours above the minimum contract in a quarter (accrualMath.ts), once an admin approves it. */
+export interface LeaveAccrual {
+    key: string; // "hours:<quarter's first day>"
+    quarter: string;
+    quarterTo: string;
+    label: string;
+    units: number;
+    workedHours: number;
+    sickHours: number;
+    holidayHours: number;
+    countedHours: number;
+    minimumHours: number;
+    extraHours: number;
+    dayHours: number;
+    rateBp: number;
+    accruedHours: number;
+    at: number;
+    by: string;
+    reversedAt?: number;
+    reversalReason?: string;
+}
 export interface Allowance {
     credits: LeaveCredit[];
+    accruals?: LeaveAccrual[];
     bankHolidayEligible: boolean;
     bankHolidays: string[];
     unit: Unit;
@@ -114,7 +138,9 @@ export function policyInput(b: any): Policy {
         throw invalid("Choose the contracted bank-holiday policy.");
     if (b.countUnpaid !== undefined && typeof b.countUnpaid !== "boolean")
         throw invalid("Choose whether unpaid leave counts towards the limits.");
-    return { enabled: b.enabled, limits, yearStart, bankHolidayPolicy, countUnpaid: b.countUnpaid === true };
+    if (b.reminders !== undefined && typeof b.reminders !== "boolean")
+        throw invalid("Choose whether to send holiday reminders.");
+    return { enabled: b.enabled, limits, yearStart, bankHolidayPolicy, countUnpaid: b.countUnpaid === true, reminders: b.reminders !== false };
 }
 export async function policy(env: Env) {
     const r = await env.DB.prepare("SELECT data,version FROM rota_leave_settings WHERE id=1").first<{
@@ -154,11 +180,12 @@ export function balance(row: AllowanceRow, days: LeaveDay[], today = londonToday
     const booked = own.filter(d => d.status === "approved" && d.day > today).reduce((n, d) => n + d.units, 0);
     const pending = own.filter(d => d.status === "requested").reduce((n, d) => n + d.units, 0);
     const credits = (a.credits ?? []).filter(c => !c.reversedAt).reduce((n, c) => n + c.units, 0);
-    const total = a.entitlement + a.carry;
+    const accrued = (a.accruals ?? []).filter(c => !c.reversedAt).reduce((n, c) => n + c.units, 0);
+    const total = a.entitlement + a.carry + accrued;
     const bankHolidayDates = a.bankHolidayEligible ? (a.bankHolidays ?? []) : [];
     const reservedDates = bankHolidayDates.filter(day => !(a.credits ?? []).some(c => c.day === day && !c.reversedAt) && !own.some(d => d.day === day && ["requested", "approved"].includes(d.status ?? "")));
     const bankHolidayReserved = reservedDates.length * 100;
-    return { from: row.from_day, to: row.to_day, unit: a.unit, entitlement: amount(a.entitlement), carry: amount(a.carry), credits: amount(credits), creditHistory: (a.credits ?? []).map(c => ({ ...c, amount: amount(c.units) })), bankHolidayEligible: a.bankHolidayEligible ?? false, total: amount(total), bankHolidays: a.bankHolidays ?? [], bankHolidayReserved: amount(bankHolidayReserved), reservedDates, used: amount(used), booked: amount(booked), pending: amount(pending), remaining: amount(total - used - booked), available: amount(total - used - booked - pending - bankHolidayReserved), openingUsed: amount(a.openingUsed), openingAsOf: a.openingAsOf, weekly: a.weekly.map(amount), excludedDates: a.excludedDates, note: a.note, version: row.version };
+    return { from: row.from_day, to: row.to_day, unit: a.unit, entitlement: amount(a.entitlement), carry: amount(a.carry), credits: amount(credits), accrued: amount(accrued), accruals: (a.accruals ?? []).map(c => ({ ...c, by: undefined, amount: amount(c.units) })), creditHistory: (a.credits ?? []).map(c => ({ ...c, amount: amount(c.units) })), bankHolidayEligible: a.bankHolidayEligible ?? false, total: amount(total), bankHolidays: a.bankHolidays ?? [], bankHolidayReserved: amount(bankHolidayReserved), reservedDates, used: amount(used), booked: amount(booked), pending: amount(pending), remaining: amount(total - used - booked), available: amount(total - used - booked - pending - bankHolidayReserved), openingUsed: amount(a.openingUsed), openingAsOf: a.openingAsOf, weekly: a.weekly.map(amount), excludedDates: a.excludedDates, note: a.note, version: row.version };
 }
 export async function allowances(env: Env, uid: string) {
     return (await env.DB.prepare("SELECT * FROM rota_leave_allowances WHERE user_id=? ORDER BY from_day DESC").bind(uid).all<AllowanceRow>()).results;

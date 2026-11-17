@@ -226,3 +226,51 @@ export function shiftsCalendar(shifts: MailShift[], rotaUrl: string): string {
   });
   return ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Strangers Coffee//Rota//EN", "METHOD:PUBLISH", "CALSCALE:GREGORIAN", ...events, "END:VCALENDAR", ""].join("\r\n");
 }
+
+/* ---------- holiday: extra hours added, holiday left to take ---------- */
+
+const daysText = (n: number) => `${Math.round(n * 100) / 100} day${Math.round(n * 100) / 100 === 1 ? "" : "s"}`;
+const fact = (label: string, value: string) => `<tr><td style="padding:6px 0;border-top:1px solid ${LINE};color:${MUTED};font-size:14px;">${esc(label)}</td><td style="padding:6px 0;border-top:1px solid ${LINE};text-align:right;font-weight:700;font-size:14px;">${esc(value)}</td></tr>`;
+const facts = (rows: [string, string][]) => `<tr><td style="padding:14px 22px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0">${rows.map(([a, b]) => fact(a, b)).join("")}</table></td></tr>`;
+
+/** Holiday added for the hours someone worked above their minimum in a quarter, with the workings. */
+export function holidayAddedEmail(o: { name: string; quarter: string; days: number; countedHours: number; minimumHours: number; extraHours: number; accruedHours: number; dayHours: number; links: Links }): Built {
+  const first = o.name.split(" ")[0];
+  const subject = `${daysText(o.days)} holiday added for your extra hours (${o.quarter})`;
+  const rows: [string, string][] = [["Hours counted", `${hrs(o.countedHours)} hours`], ["Your minimum contracted hours", `${hrs(o.minimumHours)} hours`], ["Extra hours", `${hrs(o.extraHours)} hours`], ["Holiday rate", "12.07% (GOV.UK)"], ["Holiday earned", `${hrs(o.accruedHours)} hours`], ["Your average working day", `${hrs(o.dayHours)} hours`], ["Added to your allowance", daysText(o.days)]];
+  const html = layout({ preheader: subject, heading: `Hi ${first}, you've earned extra holiday`, links: o.links,
+    body: row(`You worked more than your minimum contracted hours in <b>${esc(o.quarter)}</b>, so <b>${esc(daysText(o.days))}</b> of holiday has been added to your allowance.`) + facts(rows) +
+      row(`<span style="color:${MUTED};font-size:14px;">Hours counted are your paid hours on the rota, plus planned hours missed through sickness and an average day for each day of holiday.</span>`) + row(button(o.links.rota + "#leave", "See my holiday"), "14px 22px 22px") });
+  const text = `Hi ${first},\n\nYou worked more than your minimum contracted hours in ${o.quarter}, so ${daysText(o.days)} of holiday has been added to your allowance.\n\n${rows.map(([a, b]) => `${a}: ${b}`).join("\n")}\n\nSee my holiday: ${o.links.rota}#leave\n${textFooter(o.links)}`;
+  return { subject, html, text };
+}
+
+/** A reminder about holiday left to take before the leave year ends. The `final` one is the formal notice that what
+ *  isn't taken will be lost. */
+export function holidayReminderEmail(o: { name: string; stage: "half" | "three" | "two" | "final"; left: number; deadline: string; canRequest: boolean; links: Links }): Built {
+  const first = o.name.split(" ")[0], end = longDay(o.deadline), left = daysText(o.left);
+  const subject = o.stage === "final" ? `Important: ${left} of holiday must be taken by ${end}` : o.stage === "half" ? `You've ${left} of holiday to book this year` : `${left} of holiday left to book before ${end}`;
+  const how = o.canRequest ? "Request it in the rota under Holidays." : "Ask an admin to book it for you.";
+  const notice = `Remember to give notice of at least twice as long as the holiday, plus a day (3 days' notice for 1 day off).`;
+  const say = o.stage === "final"
+    ? `This is your formal notice: you have <b>${esc(left)}</b> of holiday not yet booked, and the leave year ends on <b>${esc(end)}</b>. Holiday not taken by then will be lost unless the law says it carries over or an admin agrees it in writing. Please book it now.`
+    : o.stage === "half"
+      ? `We're halfway through the leave year and you have <b>${esc(left)}</b> of holiday not yet booked. Taking it regularly is good for you, and leaving it late makes it harder to fit in. The year ends on <b>${esc(end)}</b>.`
+      : `You have <b>${esc(left)}</b> of holiday not yet booked, and the leave year ends on <b>${esc(end)}</b>. Please plan it now, so you can take it before then. Holiday not taken by then won't carry over unless the law requires it or an admin agrees.`;
+  const html = layout({ preheader: subject, heading: o.stage === "final" ? `${first}, please book your holiday` : `Hi ${first}, don't forget your holiday`, links: o.links,
+    body: row(say) + row(`${esc(how)} ${esc(notice)}`) + row(button(o.links.rota + "#leave", o.canRequest ? "Book holiday" : "See my holiday"), "14px 22px 22px") });
+  const text = `Hi ${first},\n\n${say.replace(/<[^>]+>/g, "")}\n\n${how} ${notice}\n\n${o.canRequest ? "Book holiday" : "See my holiday"}: ${o.links.rota}#leave\n${textFooter(o.links)}`;
+  return { subject, html, text };
+}
+
+/** For admins: people with holiday left to take who've reached a reminder stage, and a quarter ready to review. */
+export function holidayAdminEmail(o: { name: string; people: { name: string; left: number; stage: string; deadline: string; cutoff: string }[]; quarter: string | null; links: Links }): Built {
+  const first = o.name.split(" ")[0];
+  const subject = o.people.length ? `${o.people.length} ${o.people.length === 1 ? "person has" : "people have"} holiday left to take` : `Holiday for extra hours: ${o.quarter} is ready to review`;
+  const peopleRows = o.people.map((p) => `<tr><td style="padding:8px 0;border-top:1px solid ${LINE};font-size:14px;"><b>${esc(p.name)}</b><br><span style="color:${MUTED};">${esc(p.stage)}</span></td><td style="padding:8px 0;border-top:1px solid ${LINE};text-align:right;font-size:14px;"><b>${esc(daysText(p.left))}</b><br><span style="color:${MUTED};">require by ${esc(shortDay(p.cutoff))}</span></td></tr>`).join("");
+  const html = layout({ preheader: subject, heading: `Hi ${first}, holiday needs a look`, links: o.links,
+    body: (o.people.length ? row(`These people still have holiday to book before the leave year ends. You can require someone to take holiday by giving notice of twice the length of the holiday; the date on the right is the last day to do that comfortably.`) + `<tr><td style="padding:14px 22px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0">${peopleRows}</table></td></tr>` : "") +
+      (o.quarter ? row(`Holiday for extra hours worked in <b>${esc(o.quarter)}</b> is ready to review and approve.`) : "") + row(button(o.links.rota + "#leave-admin", "Open Holiday management"), "14px 22px 22px") });
+  const text = `Hi ${first},\n\n${o.people.length ? `These people still have holiday to book before the leave year ends:\n${o.people.map((p) => `- ${p.name}: ${daysText(p.left)} (${p.stage}; require by ${shortDay(p.cutoff)})`).join("\n")}\n\n` : ""}${o.quarter ? `Holiday for extra hours worked in ${o.quarter} is ready to review and approve.\n\n` : ""}Open Holiday management: ${o.links.rota}#leave-admin\n${textFooter(o.links)}`;
+  return { subject, html, text };
+}
