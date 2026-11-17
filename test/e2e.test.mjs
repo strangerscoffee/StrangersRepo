@@ -68,6 +68,8 @@ test("staff journey on the real page", async () => {
   assert.match(alexTemp, /^[a-z2-9]{4}-[a-z2-9]{4}-[a-z2-9]{4}$/);
   await page.click("#sheet button:has-text('Done')");
   assert.equal(await page.locator("#scrim").isHidden(), true, "the password sheet closes");
+  await page.getByRole("heading", { name: "Alex Brown", exact: true }).waitFor();
+  await page.getByRole("button", { name: "Back to people" }).click();
   await page.locator("[data-person]", { hasText: "Alex Brown" }).waitFor();
 
   // The test's own session for checking the database (signing out in the browser ends the browser's session).

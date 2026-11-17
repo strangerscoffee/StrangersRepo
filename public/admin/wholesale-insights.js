@@ -395,6 +395,7 @@ window.WholesaleInsights = function ({ api, html, raw, svg, put, openSheet, clos
     view,
     state: () => ({ workspace, period, measure, customer }),
     restore(saved) { if (saved) ({ workspace, period, measure, customer } = saved); },
+    openRoastPlan() { workspace = "roast"; customer = null; },
     clear() { generation++; data = null; stock = {}; loadedAt = 0; loadedFor = customer = null; workspace = "roast"; period = "13"; measure = "pence"; roastExpanded.clear(); },
     async act(name, id) {
       if (name === "wh-ins-view" && ["roast","forecast","sales"].includes(id)) { workspace = id; await reload(); document.querySelector(`[data-act="wh-ins-view"][data-id="${id}"]`)?.focus({ preventScroll: true }); }

@@ -617,6 +617,12 @@
 
   async function act(name, id, el) {
     if (name === "overview-site") { overviewUI.site(id); return; }
+    if (name === "overview-roast") {
+      saveRoute();
+      wholesale.selectSection("insights");
+      wholesale.openRoastPlan();
+      await show("wholesale"); return;
+    }
     if (name === "overview-wholesale") {
       saveRoute();
       const invoice = id === "invoices" || id === "invoice-review";

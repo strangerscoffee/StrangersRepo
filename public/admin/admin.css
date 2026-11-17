@@ -662,7 +662,7 @@ button:focus-visible,a:focus-visible,summary:focus-visible,input:focus-visible,s
 .w-preview-body>.btn { margin-top:10px; }
 .w-preview-body .kv { flex-wrap:wrap; }
 .person-workspace-head { display:flex; justify-content:space-between; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:12px; }
-.person-account-actions .row { padding-block:9px 3px; }
+.person-account-actions .row { display:flex; flex-wrap:wrap; gap:8px; padding-block:9px 3px; }
 @media (min-width:1340px) {
   .w-order-layout:not(.is-picking) { grid-template-columns:minmax(0,1.8fr) minmax(275px,1fr); align-items:start; gap:15px; }
   .w-order-layout:not(.is-picking) .w-order-preview { display:block; position:sticky; top:16px; }
@@ -690,10 +690,9 @@ button:focus-visible,a:focus-visible,summary:focus-visible,input:focus-visible,s
 }
 @media (max-width:1023px) { .people-workspace.has-profile>.people-directory { display:none; } }
 @media (max-width:600px) {
-  .sk-filter .seg { flex-wrap:wrap; }
   .site>summary { align-items:start; }
 }
-.activity-dates { align-items:end; }
+.activity-dates { display:flex; flex-wrap:wrap; gap:8px; align-items:end; max-width:100%; }
 .activity-dates .field { flex:1 1 120px; }
 .activity-dates .field input { min-width:0; }
 .site>summary h2 { display:flex; align-items:center; gap:8px; font-size:19px; }

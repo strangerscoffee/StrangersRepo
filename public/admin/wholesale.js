@@ -1139,6 +1139,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     currentSection: () => tab,
     workspaceState, restoreWorkspace,
     openInvoiceQueue: queue => invoiceUI.setFilter(queue),
+    openRoastPlan: insightsUI.openRoastPlan,
     searchInvoices: invoiceUI.search,
     async act(name, id) {
       if (name.startsWith("wh-invoice-")) { await invoiceUI.act(name, id); return; }

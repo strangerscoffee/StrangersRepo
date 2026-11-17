@@ -92,6 +92,11 @@ test("import QuickBooks history, confirm products, then read the insights and pl
   assert.match(text, /Likely range/);
   await p.locator('[data-act="wh-ins-view"][data-id="roast"]').click();
   await p.locator("#insRoast").waitFor();
+  await p.locator('[data-act="wh-ins-view"][data-id="forecast"]').click();
+  await p.locator("#insFc").waitFor();
+  await p.locator('#sideNav [data-go="overview"]').click();
+  await p.getByRole("button", { name: /Next roast plan/ }).click();
+  await p.locator("#insRoast").waitFor();
   const campo = p.locator('[data-roast="campo"]');
   assert.match(await campo.innerText(), /10 kg/, "the open site order is in the plan");
   const before = Number(await campo.locator("[data-batches]").innerText());
