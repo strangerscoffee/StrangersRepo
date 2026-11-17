@@ -208,23 +208,24 @@ window.SCLeave = function createLeaveUI(c) {
             if (token !== generation)
                 return;
             const from = input('leave_from', day || addDays(londonToday(), 14), { type: 'date', min: mgr() ? undefined : londonToday() }), to = input('leave_to', from.value, { type: 'date', min: from.value });
-            from.onchange = () => { to.min = from.value; if (to.value < from.value)
+            from.onchange = () => { to.min = from.value; if (portion.value === '0.5' || to.value < from.value)
                 to.value = from.value; };
             const portion = select('leave_portion', [['1', 'Full days'], ['0.5', 'Half day']], '1');
             const fromTime = input('leave_from_time', '', { type: 'time' }), toTime = input('leave_to_time', '', { type: 'time' });
             const timeFields = el('div', { class: 'sfields wide', hidden: true }, field('leave_from_time', 'Absence starts', fromTime), field('leave_to_time', 'Absence ends', toTime));
-            portion.onchange = () => { timeFields.hidden = portion.value === '1'; if (portion.value === '0.5')
-                to.value = from.value; };
+            portion.onchange = () => { const half = portion.value === '0.5'; timeFields.hidden = !half; lastDate.hidden = half; firstDate.classList.toggle('wide', half); firstDate.querySelector('label').textContent = half ? 'Day' : 'First day'; if (half) to.value = from.value; };
             const kind = select('leave_kind', data.types.map(t => [t.id, t.label]), 'annual');
-            const reason = el('textarea', { name: 'reason', maxlength: 200, rows: 2, placeholder: 'Optional, visible only to you and admins' }), msg = message(), key = crypto.randomUUID();
+            const reason = el('textarea', { name: 'reason', maxlength: 200, rows: 2, placeholder: 'Add a note for the admin…' }), msg = message(), key = crypto.randomUUID();
             const approved = check('leave_approved', 'Record as approved', !!uid);
-            const form = el('div', { class: 'sfields' }, field('leave_kind', 'Absence type', kind, true), field('leave_portion', 'Length', portion, true), field('leave_from', 'First day', from), field('leave_to', 'Last day', to), timeFields, field('leave_reason', 'Private note (optional)', reason, true));
+            const firstDate = field('leave_from', 'First day', from), lastDate = field('leave_to', 'Last day', to);
+            const form = el('div', { class: 'sfields leave-request' }, field('leave_kind', 'Absence type', kind, true), field('leave_portion', 'Length', portion, true), firstDate, lastDate, timeFields, field('leave_reason', 'Private note (optional)', reason, true));
             const body = () => ({ ...(uid ? { userId: uid } : {}), kind: kind.value, portion: Number(portion.value), fromTime: portion.value === '0.5' ? fromTime.value : null, toTime: portion.value === '0.5' ? toTime.value : null, from: from.value, to: to.value, reason: reason.value, approved: mgr() && approved.input.checked, requestKey: key, ...(exception ? { overrideBlocked: true, overrideReason: exception } : {}) });
-            let pending = null, exception = null;
-            const output = el('div'), confirm = btn('Submit request', async () => {
+            let pending = null, exception = null, reviewVersion = 0;
+            const output = el('div', { 'aria-live': 'polite' }), confirm = btn('Submit request', async () => {
                 try {
                     pending = pending || { ...body(), expectedCharges: confirm._charges };
                     form.querySelectorAll('input,select,textarea').forEach(n => n.disabled = true);
+                    approved.input.disabled = true;
                     preview.disabled = true;
                     const saved = await api('POST', '/api/rota/leave/requests', pending);
                     if (!saved.absence?.id)
@@ -241,6 +242,7 @@ window.SCLeave = function createLeaveUI(c) {
                     else {
                         pending = null;
                         form.querySelectorAll('input,select,textarea').forEach(n => n.disabled = false);
+                        approved.input.disabled = false;
                         preview.disabled = false;
                         msg.textContent = errorText(e);
                         confirm.hidden = true;
@@ -250,16 +252,19 @@ window.SCLeave = function createLeaveUI(c) {
             });
             confirm.hidden = true;
             const preview = btn('Review request', async () => {
+                const revision = ++reviewVersion;
                 try {
                     msg.textContent = '';
                     const p = await api('POST', '/api/rota/leave/preview', body());
-                    if (token !== generation)
+                    if (token !== generation || revision !== reviewVersion || !form.isConnected || document.getElementById('sheet').hidden)
                         return;
                     confirm._charges = p.days;
                     output.replaceChildren(el('div', { class: 'leave-notice' }, el('b', { text: TYPE[p.kind] }), note(span(p.from, p.to)), exception ? note(`Exception to a blocked day: ${exception}`) : null, note(p.days.length ? `${chargeText(p.days)} will be reserved from your allowance.` : 'This absence does not use annual holiday allowance.'), p.shiftConflicts.length ? note(`${p.shiftConflicts.length} assigned shift(s) fall within these dates. Approved absence appears on the rota; an admin must resolve those shifts.`) : null));
                     confirm.hidden = false;
+                    confirm.scrollIntoView({ block: 'nearest' });
                 }
                 catch (e) {
+                    if (token !== generation || revision !== reviewVersion || !form.isConnected || document.getElementById('sheet').hidden) return;
                     confirm.hidden = true;
                     output.replaceChildren();
                     if (e.code === 'leave_blocked' && mgr()) {
@@ -270,10 +275,11 @@ window.SCLeave = function createLeaveUI(c) {
                         msg.textContent = errorText(e);
                 }
             });
-            form.addEventListener('input', () => { confirm.hidden = true; exception = null; output.replaceChildren(); });
-            form.addEventListener('change', () => { confirm.hidden = true; exception = null; output.replaceChildren(); });
-            approved.input.onchange = () => { confirm.hidden = true; output.replaceChildren(); };
-            openSheet(uid ? 'Record employee absence' : 'Request leave', el('div', { class: 'sbody' }, form, mgr() ? approved.node : null, note('Only configured working days are charged. For a half day, enter the actual absence times so the rota can still offer shifts outside that period.'), output, msg, el('div', { class: 'sfoot' }, preview, confirm)), { left: cancelLink() });
+            const invalidateReview = () => { reviewVersion++; confirm.hidden = true; exception = null; output.replaceChildren(); msg.textContent = ''; };
+            form.addEventListener('input', invalidateReview);
+            form.addEventListener('change', invalidateReview);
+            approved.input.onchange = invalidateReview;
+            openSheet(uid ? 'Record employee absence' : 'Request leave', el('div', { class: 'sbody leave-request-body' }, form, mgr() ? approved.node : null, note('Your note is private to you and admins. Only configured working days use holiday allowance. For a half day, enter the hours you’ll be away.'), output, msg, el('div', { class: 'sfoot' }, preview, confirm)), { left: cancelLink() });
         }
         catch (e) {
             toast(errorText(e));

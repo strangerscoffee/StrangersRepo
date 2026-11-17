@@ -328,7 +328,7 @@
     const s = $("#sheet");
     s.replaceChildren(el("div", { class: "grab", "aria-hidden": "true" }),
       el("div", { class: "shead" }, left || el("span"), el("h2", { id: "sheetTitle", text: title }), right || el("span")), body);
-    $("#sheetVeil").hidden = false; s.hidden = false;
+    $("#sheetVeil").hidden = false; s.hidden = false; s.scrollTop = 0;
     const f = s.querySelector("input,select,button:not(.linkbtn)"); if (f && wide.matches) f.focus({ preventScroll: true });
     return s;
   }
@@ -1508,16 +1508,17 @@
     const r = await get("/api/rota/requests");
     R.badge = r.timeOff.length + r.requests.filter((q) => (q.kind === "claim" && q.status === "open") || (q.kind === "cover" && q.status === "accepted")).length;
     renderNav();
-    setHead("requests", "Requests", R.badge ? `${plural(R.badge, "thing")} waiting for you` : "Nothing waiting for you");
+    setHead("requests", "Requests", R.badge ? `${plural(R.badge, "request")} ${R.badge === 1 ? "needs" : "need"} review` : "No requests need your review");
     const decide = (url, body, ok) => async () => { if (await act(() => api("PATCH", url, body), ok)) { if (R.weekData) R.weekData._at = 0; render(); } };
-    const out = [label("Time off")];
-    out.push(r.timeOff.length ? el("div", { class: "list glass" }, ...r.timeOff.map((t) => el("div", { class: "lrow wraprow" }, avatar(t.name),
-      el("span", { class: "t" }, el("b", { text: t.name }), el("span", { class: "s", text: `${t.from === t.to ? shortM(t.from) : shortM(t.from) + " – " + shortM(t.to)}${t.reason ? " · " + t.reason : ""}` })),
-      // Another manager or an admin decides a manager's own time off.
-      t.userId === R.me.user.id && !isAdmin() ? el("span", { class: "acts note", text: "Another manager or an admin decides this" })
-        : el("span", { class: "acts" }, ghost("Decline", decide("/api/rota/time-off/" + t.id, { status: "declined", ifVersion:t.version }, "Declined"), { class: "btn ghost sm" }),
-          btn("Review", () => Leave.review({...t,days:t.days||[]}), "btn sm")))))
-      : el("section", { class: "panel" }, el("p", { class: "note", text: "No time off waiting." })));
+    const types = { annual: "Annual leave", unpaid: "Unpaid leave", sick: "Sick leave", unauthorised: "Unauthorised absence", legacy: "Unclassified time off" };
+    const noRequests = (title, detail) => el("section", { class: "panel request-empty" }, el("span", { class: "tile green", "aria-hidden": "true" }, svgi(ICON.check)), el("div", { class: "t" }, el("b", { text: title }), el("p", { class: "note", text: detail })));
+    const out = [label("Time off" + (r.timeOff.length ? ` · ${r.timeOff.length}` : ""))];
+    out.push(r.timeOff.length ? el("div", { class: "list glass request-list" }, ...r.timeOff.map((t) => el("div", { class: "lrow request-card", "data-leave-request": t.id }, avatar(t.name),
+      el("span", { class: "t" }, el("b", { text: t.name }), el("span", { class: "pill request-kind", text: types[t.kind] || "Time off" }),
+        el("span", { class: "s", text: t.from === t.to ? shortM(t.from) : shortM(t.from) + " – " + shortM(t.to) }),
+        t.reason ? el("span", { class: "request-note", text: t.reason }) : null),
+      el("span", { class: "acts" }, btn("Review request", () => Leave.review({...t,days:t.days||[]}), "btn request-review")))))
+      : noRequests("No leave requests waiting", "New requests will appear here for review."));
     out.push(label("Pickups and covers"));
     const rows = r.requests.map((q) => {
       const s = q.shift;
@@ -1526,12 +1527,12 @@
       if (q.kind === "claim") { title = `${q.fromName} wants to pick up an open shift`; ready = true; }
       else if (q.status === "accepted") { title = `${q.takerName} will cover ${q.fromName}'s shift`; ready = true; }
       else title = `${q.fromName} asked ${q.toUser ? q.toName : "anyone"} to cover · no reply yet`;
-      return el("div", { class: "lrow wraprow" }, avatar(q.kind === "claim" ? q.fromName : q.takerName || q.fromName),
+      return el("div", { class: "lrow request-card" }, avatar(q.kind === "claim" ? q.fromName : q.takerName || q.fromName),
         el("span", { class: "t" }, el("b", { text: title }), el("span", { class: "s", text: line }), q.message ? el("span", { class: "s", text: `“${q.message}”` }) : null),
         el("span", { class: "acts" }, ghost("Decline", decide("/api/rota/requests/" + q.id, { action: "decline" }, "Declined"), { class: "btn ghost sm" }),
           ready ? btn("Approve", decide("/api/rota/requests/" + q.id, { action: "approve" }, "Approved. The rota is updated."), "btn sm") : null));
     });
-    out.push(rows.length ? el("div", { class: "list glass" }, ...rows) : el("section", { class: "panel" }, el("p", { class: "note", text: "No pickups or covers waiting." })));
+    out.push(rows.length ? el("div", { class: "list glass request-list" }, ...rows) : noRequests("No pickups or covers waiting", "Shift pickup and cover requests will appear here."));
     return out;
   }
 

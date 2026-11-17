@@ -108,17 +108,26 @@ button.shc:hover{border-color:var(--accent)}
 .overtx{color:var(--ot)!important;font-weight:650}
 
 /* The shift sheet and other sheets */
-.rsheet{max-height:calc(100dvh - 24px);overflow:auto;display:grid;gap:12px;padding-bottom:16px}
+.rsheet{max-height:calc(100dvh - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px) - 24px);overflow:auto;overscroll-behavior:contain;display:grid;gap:16px;padding:12px 18px 18px;min-width:0;scroll-padding-block:16px}
 @media (min-width:1024px){.rsheet{width:560px;top:6vh}}
-.shead{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:8px;margin:0 6px}
-.shead h2{margin:0;text-align:center}
-.shead .linkbtn{justify-self:start;font-size:16px;min-height:40px}
+.shead{display:grid;grid-template-columns:minmax(58px,1fr) minmax(0,3fr) minmax(40px,1fr);align-items:center;gap:8px;margin:0}
+.rsheet .shead h2{margin:0;text-align:center;font-size:20px;line-height:1.25;overflow-wrap:anywhere}
+.shead .linkbtn{justify-self:start;font-size:16px;min-height:44px;padding:0}
 .shead>:last-child{justify-self:end}
-.sbody{display:grid;gap:14px;margin:0 6px}
-.sfields{display:grid;grid-template-columns:1fr 1fr;gap:10px 12px}
-.sfields .field{display:grid;gap:4px;margin:0}
+.sbody{display:grid;gap:16px;margin:0;min-width:0}
+.rsheet .sbody>.note{margin:0}
+.sfields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px 12px;min-width:0}
+.sfields>*{min-width:0}
+.sfields .field{display:grid;gap:6px;margin:0}
+.sfields .field>.label{margin:0}
 .sfields .wide{grid-column:1/-1}
-.sfields input,.sfields select{width:100%;box-sizing:border-box;min-height:44px;font-size:16px}
+.sfields input,.sfields select,.sfields textarea{width:100%;max-width:100%;min-width:0;box-sizing:border-box;min-height:48px;font-size:16px}
+.sfields input:is([type=date],[type=time]){display:block;text-align:left}
+.sfields input:is([type=date],[type=time])::-webkit-date-and-time-value{text-align:left;min-height:1.25em}
+.sfields input:is([type=date],[type=time])::-webkit-datetime-edit{padding:0}
+.leave-request-body .sfoot{grid-auto-flow:row;grid-template-columns:minmax(0,1fr);position:sticky;bottom:0;z-index:1;padding-top:10px;background:var(--glass-thick);border-radius:18px}
+.leave-request-body textarea{min-height:88px}
+@media (max-width:380px){.leave-request,.leave-request .sfields{grid-template-columns:minmax(0,1fr)}}
 .sfields.flash{animation:rflash .9s}
 @keyframes rflash{0%,100%{box-shadow:none}30%{box-shadow:0 0 0 4px var(--tint);border-radius:14px}}
 .who{display:grid;gap:8px}
@@ -189,6 +198,17 @@ button.shc:hover{border-color:var(--accent)}
 .wraprow{flex-wrap:wrap}
 .wraprow .acts{display:flex;gap:8px;margin-left:auto}
 @media (max-width:600px){.wraprow .acts{flex-basis:100%;justify-content:flex-end}}
+.request-list .request-card{display:grid;grid-template-columns:auto minmax(0,1fr);gap:12px;padding:16px;align-items:start}
+.request-card .t{gap:6px;overflow-wrap:anywhere}
+.request-card .t b{font-weight:700}
+.request-card .request-kind{justify-self:start;white-space:normal}
+.request-card .request-note{margin:0;font-size:14px;line-height:1.45;color:var(--muted);white-space:pre-wrap;overflow-wrap:anywhere}
+.request-card .acts{grid-column:2;display:flex;flex-wrap:wrap;gap:10px;min-width:0;margin:0}
+.request-card .acts .btn{min-height:44px;min-width:88px;white-space:normal}
+.request-empty.panel{display:flex;align-items:center;gap:12px}
+.request-empty .t{display:grid;gap:4px;min-width:0}
+.request-empty .note{margin:0}
+@media (max-width:600px){.request-card .acts{grid-column:1/-1;justify-content:stretch}.request-card .acts .btn{flex:1}.request-card .request-review{width:100%}}
 
 /* When I can work */
 .avwrap+.avwrap{border-top:1px solid var(--line)}
