@@ -9,3 +9,4 @@ rota-handoff/
 
 # Browser-test screenshots and downloads.
 /test/artifacts/
+test-results/
