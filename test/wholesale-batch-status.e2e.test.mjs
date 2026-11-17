@@ -78,7 +78,8 @@ for (const [screen, viewport, isMobile] of screens) for (const scheme of ["light
       await p.locator("#batchConfirm").click();
       assert.ok(await until(async () => JSON.stringify(await statusOf(ids)) === JSON.stringify(["Dispatched", "Dispatched", "Preparing"])));
       // Orders never move backwards: a dispatched one can't be marked preparing.
-      await p.locator("#statusFilters button", { hasText: "All orders" }).click();
+      if (screen === "phone") await p.getByRole("combobox", { name: "Order status" }).selectOption("all");
+      else await p.locator("#statusFilters button", { hasText: "All orders" }).click();
       await p.locator(`[data-order-id="${ids[0]}"]`).waitFor();
       await p.locator(`[data-order-id="${ids[0]}"]`).click();
       assert.equal(await p.locator('#batchBar [data-batch="Preparing"]').isDisabled(), true);

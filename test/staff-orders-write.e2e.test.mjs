@@ -42,6 +42,13 @@ test("granted staff move orders along, keep notes, print and look up customers",
     await ctx.addInitScript(() => { window.print = () => { window.__printed = document.getElementById("wPrintArea")?.innerText || ""; }; });
     const p = await ctx.newPage(); const errors = []; p.on("pageerror", (e) => errors.push(String(e)));
     await p.goto(srv.base + "/orders"); await p.locator("[data-order-id]").first().waitFor();
+    const nav = p.locator("#viewTabs");
+    const navPosition = () => nav.evaluate(node => {
+      const rect = node.getBoundingClientRect();
+      return { left: rect.left, top: rect.top + window.scrollY, width: rect.width };
+    });
+    const ordersNav = await navPosition();
+    assert.ok(await p.evaluate(() => document.documentElement.scrollWidth) <= viewport.width + 1, `${name}: the orders toolbar fits`);
 
     // Quick next step from the list.
     const quick = p.locator("[data-quick]").first(), id = await quick.getAttribute("data-quick");
@@ -73,12 +80,19 @@ test("granted staff move orders along, keep notes, print and look up customers",
     await p.getByRole("button", { name: "Done" }).click();
 
     // Customers, read-only.
-    await p.locator('#viewTabs [data-view="customers"]').click(); await p.locator("[data-customer-id]").first().click();
+    await nav.getByRole("button", { name: "Tabs", exact: true }).click();
+    await p.locator("#tabList[aria-busy=false]").waitFor();
+    assert.deepEqual(await navPosition(), ordersNav, `${name}: navigation stays in place on Tabs`);
+    assert.ok(await p.evaluate(() => document.documentElement.scrollWidth) <= viewport.width + 1, `${name}: the tabs fit`);
+    await nav.getByRole("button", { name: "Customers" }).click();
+    await p.locator("[data-customer-id]").first().waitFor();
+    assert.deepEqual(await navPosition(), ordersNav, `${name}: navigation stays in place on Customers`);
+    await p.locator("[data-customer-id]").first().click();
     const customer = await p.locator("#customerDetail").innerText();
     assert.match(customer, /Lune Café/); assert.match(customer, /sam@lune\.example/); assert.match(customer, /NR3 1HN/);
     assert.equal(await p.locator("#customerDialog input,#customerDialog select,#customerDialog textarea").count(), 0);
     await p.locator("#doneCustomer").click();
-    assert.equal(await p.evaluate(() => document.documentElement.scrollWidth - innerWidth), 0, `${name}: no sideways scroll`);
+    assert.ok(await p.evaluate(() => document.documentElement.scrollWidth) <= viewport.width + 1, `${name}: the customer directory fits`);
     assert.deepEqual(errors, []);
     // Put the order back for the next screen size.
     const reset = (await call("GET", "/api/admin/wholesale")).body.orders.find((o) => o.id === id);
@@ -109,7 +123,8 @@ test("staff add a tracking link while preparing a delivery order", async () => {
     const p = await ctx.newPage(); const errors = []; p.on("pageerror", (e) => errors.push(String(e)));
     await p.goto(srv.base + "/orders"); await p.locator(`[data-order-id="${sent.id}"]`).waitFor();
     // A collection doesn't ask for one.
-    await p.locator("#statusFilters button", { hasText: "All orders" }).click();
+    if (isMobile) await p.getByRole("combobox", { name: "Order status" }).selectOption("all");
+    else await p.locator("#statusFilters button", { hasText: "All orders" }).click();
     await p.locator(`[data-order-id="${collected.id}"]`).click(); await p.locator("#editNote").waitFor();
     assert.equal(await p.locator("#trackingField").isHidden(), true, `${name}: no tracking box for a collection`);
     await p.locator("#doneOrder").click();
