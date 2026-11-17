@@ -17,6 +17,14 @@ window.SCLeave = function createLeaveUI(c) {
     const note = t => el('p', { class: 'note', text: t });
     const check = (name, text, checked = false) => { const i = input(name, '', { type: 'checkbox', checked }); return { input: i, node: el('label', { class: 'leave-check' }, i, el('span', { text })) }; };
     const errorText = e => e.message || "Couldn't save. Check your connection and try again.";
+    // An admin's exception to a blackout or full day: says which days are blocked and why, asks for a reason, then goes ahead.
+    function exceptionPanel(e, label, onGo) {
+        const why = input('override_reason', '', { maxlength: 300, placeholder: 'e.g. Agreed before the blackout was set' }), msg = message();
+        return el('div', { class: 'leave-notice override' }, el('b', { text: 'This holiday falls on a blocked day' }), ...(e.blocked || []).map(d => note(`${shortM(d.day)}: ${d.reasons.join(', ')}`)), note('Staff can’t book these days. As an admin you can make an exception; it’s recorded with your name and reason.'), field('override_reason', 'Reason for the exception', why, true), msg, btn(label, async () => {
+            if (!why.value.trim()) { msg.textContent = 'Say why you’re making an exception.'; why.focus(); return; }
+            await onGo(why.value.trim(), msg);
+        }));
+    }
     function clear() { generation++; month = ''; year = ''; yearPicked = false; employee = ''; }
     async function dashboard() {
         const token = generation;
@@ -114,8 +122,8 @@ window.SCLeave = function createLeaveUI(c) {
             const reason = el('textarea', { name: 'reason', maxlength: 200, rows: 2, placeholder: 'Optional, visible only to you and admins' }), msg = message(), key = crypto.randomUUID();
             const approved = check('leave_approved', 'Record as approved', !!uid);
             const form = el('div', { class: 'sfields' }, field('leave_kind', 'Absence type', kind, true), field('leave_portion', 'Length', portion, true), field('leave_from', 'First day', from), field('leave_to', 'Last day', to), timeFields, field('leave_reason', 'Private note (optional)', reason, true));
-            const body = () => ({ ...(uid ? { userId: uid } : {}), kind: kind.value, portion: Number(portion.value), fromTime: portion.value === '0.5' ? fromTime.value : null, toTime: portion.value === '0.5' ? toTime.value : null, from: from.value, to: to.value, reason: reason.value, approved: mgr() && approved.input.checked, requestKey: key });
-            let pending = null;
+            const body = () => ({ ...(uid ? { userId: uid } : {}), kind: kind.value, portion: Number(portion.value), fromTime: portion.value === '0.5' ? fromTime.value : null, toTime: portion.value === '0.5' ? toTime.value : null, from: from.value, to: to.value, reason: reason.value, approved: mgr() && approved.input.checked, requestKey: key, ...(exception ? { overrideBlocked: true, overrideReason: exception } : {}) });
+            let pending = null, exception = null;
             const output = el('div'), confirm = btn('Submit request', async () => {
                 try {
                     pending = pending || { ...body(), expectedCharges: confirm._charges };
@@ -151,17 +159,22 @@ window.SCLeave = function createLeaveUI(c) {
                     if (token !== generation)
                         return;
                     confirm._charges = p.days;
-                    output.replaceChildren(el('div', { class: 'leave-notice' }, el('b', { text: TYPE[p.kind] }), note(span(p.from, p.to)), note(p.days.length ? `${chargeText(p.days)} will be reserved from your allowance.` : 'This absence does not use annual holiday allowance.'), p.shiftConflicts.length ? note(`${p.shiftConflicts.length} assigned shift(s) fall within these dates. Approved absence appears on the rota; an admin must resolve those shifts.`) : null));
+                    output.replaceChildren(el('div', { class: 'leave-notice' }, el('b', { text: TYPE[p.kind] }), note(span(p.from, p.to)), exception ? note(`Exception to a blocked day: ${exception}`) : null, note(p.days.length ? `${chargeText(p.days)} will be reserved from your allowance.` : 'This absence does not use annual holiday allowance.'), p.shiftConflicts.length ? note(`${p.shiftConflicts.length} assigned shift(s) fall within these dates. Approved absence appears on the rota; an admin must resolve those shifts.`) : null));
                     confirm.hidden = false;
                 }
                 catch (e) {
-                    msg.textContent = errorText(e);
                     confirm.hidden = true;
                     output.replaceChildren();
+                    if (e.code === 'leave_blocked' && mgr()) {
+                        msg.textContent = '';
+                        output.replaceChildren(exceptionPanel(e, 'Make an exception', async (text) => { exception = text; preview.click(); }));
+                    }
+                    else
+                        msg.textContent = errorText(e);
                 }
             });
-            form.addEventListener('input', () => { confirm.hidden = true; output.replaceChildren(); });
-            form.addEventListener('change', () => { confirm.hidden = true; output.replaceChildren(); });
+            form.addEventListener('input', () => { confirm.hidden = true; exception = null; output.replaceChildren(); });
+            form.addEventListener('change', () => { confirm.hidden = true; exception = null; output.replaceChildren(); });
             approved.input.onchange = () => { confirm.hidden = true; output.replaceChildren(); };
             openSheet(uid ? 'Record employee absence' : 'Request leave', el('div', { class: 'sbody' }, form, mgr() ? approved.node : null, note('Only configured working days are charged. For a half day, enter the actual absence times so the rota can still offer shifts outside that period.'), output, msg, el('div', { class: 'sfoot' }, preview, confirm)), { left: cancelLink() });
         }
@@ -299,16 +312,22 @@ window.SCLeave = function createLeaveUI(c) {
         }
         const covered = check('legacy_opening', 'The historical days are already included in the opening used balance');
         const classification = select('absence_classification', [['', 'Choose original absence type'], ...Object.entries(TYPE).filter(([k]) => k !== 'legacy')], ''), why = input('classify_reason', '', { maxlength: 300, placeholder: 'Why this historical record is being reconciled' }), msg = message();
-        const action = async (status) => { try {
-            await api('PATCH', `/api/rota/leave/requests/${t.id}`, { status, ifVersion: t.version, kind: classification.value || undefined, coveredByOpening: covered.input.checked });
+        const exceptionBox = el('div');
+        const action = async (status, overrideReason) => { try {
+            await api('PATCH', `/api/rota/leave/requests/${t.id}`, { status, ifVersion: t.version, kind: classification.value || undefined, coveredByOpening: covered.input.checked, ...(overrideReason ? { overrideBlocked: true, overrideReason } : {}) });
             closeSheets();
-            toast(`Absence ${status}.`);
+            toast(overrideReason ? 'Absence approved as an exception.' : `Absence ${status}.`);
             render();
         }
         catch (e) {
-            msg.textContent = errorText(e);
+            if (e.code === 'leave_blocked' && status === 'approved' && !overrideReason) {
+                msg.textContent = '';
+                exceptionBox.replaceChildren(exceptionPanel(e, 'Approve anyway', (text) => action('approved', text)));
+            }
+            else
+                msg.textContent = errorText(e);
         } };
-        openSheet('Review absence', el('div', { class: 'sbody' }, el('h3', { text: t.name || TYPE[t.kind] }), note(`${TYPE[t.kind]} · ${span(t.from, t.to)}${t.fromTime ? ` · ${t.fromTime}–${t.toTime}` : ''} · ${STAT[t.status]}`), t.days.length ? note(chargeText(t.days)) : null, t.reason ? note(t.reason) : null, t.coveredByOpening ? note('Historical days are included in the opening used balance. If you cancel this record, reconcile the opening used figure separately; it cannot be refunded twice automatically.') : null, ...(t.balances || []).map(b => note(`${b.from} leave year: ${amount(b.available)} days available after pending requests.`)), (t.shiftConflicts || []).length ? el('div', { class: 'leave-notice' }, el('b', { text: 'Assigned shifts need review' }), ...t.shiftConflicts.map(s => note(`${shortM(s.day)} · ${SITES[s.site] || s.site} · ${s.start}–${s.end}`)), note('Approval marks this absence on the rota. Existing assignments are retained for you to resolve.')) : null, t.kind === 'legacy' ? field('absence_classification', 'Classify existing time off', classification, true) : null, t.kind === 'legacy' ? covered.node : null, t.kind === 'legacy' && t.status === 'approved' ? field('classify_reason', 'Reason for reconciliation', why, true) : null, msg, el('div', { class: 'sfoot' }, t.status === 'requested' ? ghost('Decline', () => action('declined')) : null, t.status === 'requested' ? btn('Approve', () => action('approved')) : null, t.kind === 'legacy' && t.status === 'approved' ? btn('Reconcile record', async () => { try {
+        openSheet('Review absence', el('div', { class: 'sbody' }, el('h3', { text: t.name || TYPE[t.kind] }), note(`${TYPE[t.kind]} · ${span(t.from, t.to)}${t.fromTime ? ` · ${t.fromTime}–${t.toTime}` : ''} · ${STAT[t.status]}`), t.days.length ? note(chargeText(t.days)) : null, t.reason ? note(t.reason) : null, t.coveredByOpening ? note('Historical days are included in the opening used balance. If you cancel this record, reconcile the opening used figure separately; it cannot be refunded twice automatically.') : null, ...(t.balances || []).map(b => note(`${b.from} leave year: ${amount(b.available)} days available after pending requests.`)), (t.shiftConflicts || []).length ? el('div', { class: 'leave-notice' }, el('b', { text: 'Assigned shifts need review' }), ...t.shiftConflicts.map(s => note(`${shortM(s.day)} · ${SITES[s.site] || s.site} · ${s.start}–${s.end}`)), note('Approval marks this absence on the rota. Existing assignments are retained for you to resolve.')) : null, t.kind === 'legacy' ? field('absence_classification', 'Classify existing time off', classification, true) : null, t.kind === 'legacy' ? covered.node : null, t.kind === 'legacy' && t.status === 'approved' ? field('classify_reason', 'Reason for reconciliation', why, true) : null, exceptionBox, msg, el('div', { class: 'sfoot' }, t.status === 'requested' ? ghost('Decline', () => action('declined')) : null, t.status === 'requested' ? btn('Approve', () => action('approved')) : null, t.kind === 'legacy' && t.status === 'approved' ? btn('Reconcile record', async () => { try {
             await api('PATCH', `/api/rota/leave/requests/${t.id}/classify`, { kind: classification.value, changeReason: why.value, coveredByOpening: covered.input.checked, ifVersion: t.version });
             closeSheets();
             render();

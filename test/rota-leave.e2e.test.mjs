@@ -207,3 +207,37 @@ test('team calendar shows approved holiday names and blackout labels, never priv
         await staff.c.close();
     }
 });
+test('an admin can approve holiday on a blackout day as an exception, giving a reason', { timeout: 60000 }, async () => {
+    const a = await user();
+    await api('PUT', 'rota/leave/allowances', { userId: a.id, from: yearFrom, to: yearTo, unit: 'days', entitlement: 25, weekly: [1, 1, 1, 1, 1, 1, 1], changeReason: 'Exception test allowance', ifVersion: 0 });
+    const day = addDays(holiday, 21), body = { kind: 'annual', from: day, to: day };
+    const preview = await api('POST', 'rota/leave/preview', body, a.cookie);
+    await api('POST', 'rota/leave/requests', { ...body, expectedCharges: preview.days, requestKey: crypto.randomUUID() }, a.cookie);
+    await api('POST', 'rota/leave/blocks', { from: day, to: day, title: 'Christmas', site: null });
+    for (const [viewport, scheme] of [[{ width: 393, height: 852 }, 'dark'], [{ width: 1180, height: 820 }, 'light']]) {
+        const x = await context(viewport, scheme, ADMIN);
+        try {
+            await x.page.goto(srv.base + '/rota/#leave-admin');
+            const row = x.page.locator('.leave-record', { hasText: a.name });
+            await row.getByRole('button', { name: 'Review', exact: true }).click();
+            await x.page.locator('#sheet').getByRole('button', { name: 'Approve', exact: true }).click();
+            const panel = x.page.locator('#sheet .leave-notice.override');
+            await panel.waitFor();
+            assert.match(await panel.innerText(), /Christmas/);
+            // A reason is needed before going ahead.
+            await panel.getByRole('button', { name: 'Approve anyway', exact: true }).click();
+            assert.match(await panel.innerText(), /Say why/);
+            if (process.env.SHOT_DIR) await x.page.screenshot({ path: `${process.env.SHOT_DIR}/leave-exception-${scheme}.png` });
+            if (scheme === 'light') {
+                await panel.locator('#override_reason').fill('Booked before Christmas was blocked');
+                await panel.getByRole('button', { name: 'Approve anyway', exact: true }).click();
+                await x.page.locator('#sheet').waitFor({ state: 'hidden' });
+            } else await x.page.locator('#sheet').getByRole('button', { name: 'Cancel', exact: true }).click();
+        }
+        finally {
+            await x.c.close();
+        }
+    }
+    const events = (await api('GET', 'rota/leave/events?userId=' + a.id)).events;
+    assert.ok(events.some(e => e.action === 'approved' && JSON.parse(e.data).overrideBlocked?.reason === 'Booked before Christmas was blocked'));
+});

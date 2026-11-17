@@ -1,4 +1,4 @@
-import { Env } from "../../http";
+import { ApiError, Env } from "../../http";
 import { conflict } from "../util";
 import { LeaveDay, Policy, dates } from "./model";
 export async function employeeSites(env: Env, uid: string): Promise<string[]> {
@@ -62,10 +62,13 @@ export async function calendarRules(env: Env, from: string, to: string, settings
     });
 }
 export const fullText = (f: { off: number; limit: number }) => f.limit === 0 ? "No holiday on this day" : `Full (${f.off} off)`;
-export async function checkCalendar(env: Env, from: string, to: string, settings: Policy, uid: string, days: LeaveDay[], exclude?: string) {
+/** Holiday on a blackout or full day is refused (409 leave_blocked, with each blocked day and why). An admin making an
+ * exception passes `override`: the blocked days are then returned for the audit record instead of refusing. */
+export async function checkCalendar(env: Env, from: string, to: string, settings: Policy, uid: string, days: LeaveDay[], exclude?: string, override = false) {
     const calendar = await calendarRules(env, from, to, settings, await employeeSites(env, uid), exclude);
     // Non-working dates do not consume a holiday place; a seven-day trip can include a non-working weekend.
-    const blocked = calendar.find(d => d.blocked && days.some(x => x.day === d.day));
-    if (blocked)
-        throw conflict(`Holiday requests are blocked on ${blocked.day}: ${blocked.reasons.join("; ")}.`);
+    const blocked = calendar.filter(d => d.blocked && days.some(x => x.day === d.day)).map(d => ({ day: d.day, reasons: d.reasons }));
+    if (blocked.length && !override)
+        throw new ApiError(409, "leave_blocked", `Holiday requests are blocked on ${blocked[0].day}: ${blocked[0].reasons.join("; ")}.`, { blocked });
+    return blocked;
 }

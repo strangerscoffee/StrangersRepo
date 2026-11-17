@@ -14,6 +14,16 @@ async function person(r: RotaRequest, id: unknown) {
         r.needAdmin();
     return id === undefined || id === r.user.id ? r.user.id : activeUser(r.env, id);
 }
+/** An admin's exception to a blackout or full day: only admins, only with a reason (kept in the leave events). */
+function override(r: RotaRequest, b: any) {
+    if (b.overrideBlocked !== true)
+        return false;
+    if (!r.admin)
+        throw denied("Only an admin can book holiday on a blocked day.");
+    if (!text(b.overrideReason, "Reason for the exception", 300))
+        throw invalid("Say why you're making an exception to the blocked day.");
+    return true;
+}
 async function prepare(r: RotaRequest, b: any, uid: string, exclude?: string, allowOpeningCoverage = false) {
     const { from, to } = range(b.from, b.to), kind = b.kind ?? "annual";
     if (!Object.hasOwn(LEAVE_TYPES, kind) || kind === "legacy")
@@ -34,15 +44,15 @@ async function prepare(r: RotaRequest, b: any, uid: string, exclude?: string, al
     const overlap = await r.env.DB.prepare("SELECT id FROM rota_time_off WHERE user_id=? AND id<>? AND status IN ('requested','approved') AND from_day<=? AND to_day>=? AND (? IS NULL OR from_time IS NULL OR (from_time<? AND to_time>?)) LIMIT 1").bind(uid, exclude ?? "", to, from, fromTime, toTime, fromTime).first();
     if (overlap)
         throw conflict("There is already an absence request or booking for these dates.");
-    let days: LeaveDay[] = [];
+    let days: LeaveDay[] = [], overridden: { day: string; reasons: string[] }[] = [];
     if (kind === "annual") {
         const rows = await allowances(r.env, uid);
         days = chargeDays(rows, from, to, portion, allowOpeningCoverage);
         enoughBalance(rows, await chargedDays(r.env, uid, exclude), days);
-        await checkCalendar(r.env, from, to, settings, uid, days, exclude);
+        overridden = await checkCalendar(r.env, from, to, settings, uid, days, exclude, override(r, b));
     }
     const shifts = (await r.env.DB.prepare("SELECT id,day,site,start,end FROM rota_shifts WHERE user_id=? AND day BETWEEN ? AND ? ORDER BY day,start").bind(uid, from, to).all()).results;
-    return { uid, from, to, fromTime, toTime, kind: kind as LeaveKind, reason: text(b.reason, "Private note", 200), days, shifts: shifts.filter((s: any) => !fromTime || (s.start < toTime && s.end > fromTime)) };
+    return { uid, from, to, fromTime, toTime, kind: kind as LeaveKind, reason: text(b.reason, "Private note", 200), days, overridden, shifts: shifts.filter((s: any) => !fromTime || (s.start < toTime && s.end > fromTime)) };
 }
 export async function createLeave(r: RotaRequest, b: any) {
     const uid = await person(r, b.userId), ver = await revision(r.env);
@@ -64,7 +74,7 @@ export async function createLeave(r: RotaRequest, b: any) {
     await commitLeave(r.env, ver, [
         r.env.DB.prepare("INSERT INTO rota_time_off(id,user_id,from_day,to_day,reason,status,decided_by,decided_at,created_at,kind,version,request_key,request_payload,from_time,to_time) VALUES(?,?,?,?,?,?,?,?,?,?,1,?,?,?,?)").bind(id, uid, p.from, p.to, p.reason, status, status === "approved" ? r.user.id : null, status === "approved" ? now : null, now, p.kind, key, payload, p.fromTime, p.toTime),
         ...p.days.map(d => r.env.DB.prepare("INSERT INTO rota_leave_days(time_off_id,day,units,unit,year_start) VALUES(?,?,?,?,?)").bind(id, d.day, d.units, d.unit, d.year_start)),
-        event(r.env, uid, id, "created", r.user.id, { kind: p.kind, status, from: p.from, to: p.to }),
+        event(r.env, uid, id, "created", r.user.id, { kind: p.kind, status, from: p.from, to: p.to, ...(p.overridden.length ? { overrideBlocked: { reason: text(b.overrideReason, "Reason for the exception", 300), days: p.overridden } } : {}) }),
         ...writeWeeks(r, p.from, p.to),
     ]);
     return json({ absence: await leaveView(r.env, (await ownLeave(r.env, id, r.user.id, r.admin))!), shiftConflicts: p.shifts });
@@ -92,7 +102,7 @@ export async function decideLeave(r: RotaRequest, id: string, b: any) {
     }
     else
         throw invalid("Choose approve, decline or cancel.");
-    let days = (await r.env.DB.prepare("SELECT * FROM rota_leave_days WHERE time_off_id=?").bind(id).all<LeaveDay>()).results;
+    let days = (await r.env.DB.prepare("SELECT * FROM rota_leave_days WHERE time_off_id=?").bind(id).all<LeaveDay>()).results, overridden: { day: string; reasons: string[] }[] = [];
     let kind = t.kind;
     // Existing unclassified leave remains private and consumes no invented allowance. Admins explicitly classify it.
     if (status === "approved" && kind === "legacy") {
@@ -103,17 +113,18 @@ export async function decideLeave(r: RotaRequest, id: string, b: any) {
             const p = await prepare(r, { from: t.from_day, to: t.to_day, kind: b.kind, reason: t.reason }, t.user_id, id, b.coveredByOpening === true);
             kind = p.kind;
             days = p.days;
+            overridden = p.overridden;
         }
     }
     if (status === "approved" && kind === "annual") {
         const { settings } = await policy(r.env);
         enoughBalance(await allowances(r.env, t.user_id), await chargedDays(r.env, t.user_id, id), days);
-        await checkCalendar(r.env, t.from_day, t.to_day, settings, t.user_id, days, id);
+        overridden = await checkCalendar(r.env, t.from_day, t.to_day, settings, t.user_id, days, id, override(r, b));
     }
     const stmts = [r.env.DB.prepare("UPDATE rota_time_off SET status=?,kind=?,covered_opening=?,version=version+1,decided_by=?,decided_at=? WHERE id=?").bind(status, kind, t.covered_opening || (t.kind === "legacy" && kind === "annual" && b.coveredByOpening === true ? 1 : 0), r.user.id, Date.now(), id)];
     if (t.kind === "legacy" && kind !== "legacy")
         stmts.push(...days.map(d => r.env.DB.prepare("INSERT INTO rota_leave_days(time_off_id,day,units,unit,year_start) VALUES(?,?,?,?,?)").bind(id, d.day, d.units, d.unit, d.year_start)));
-    await commitLeave(r.env, ver, [...stmts, event(r.env, t.user_id, id, status, r.user.id, { from: t.from_day, to: t.to_day, kind }), ...writeWeeks(r, t.from_day, t.to_day)]);
+    await commitLeave(r.env, ver, [...stmts, event(r.env, t.user_id, id, status, r.user.id, { from: t.from_day, to: t.to_day, kind, ...(overridden.length ? { overrideBlocked: { reason: text(b.overrideReason, "Reason for the exception", 300), days: overridden } } : {}) }), ...writeWeeks(r, t.from_day, t.to_day)]);
     if (status === "approved" || status === "declined")
         await timeOffDecided(r.env, r.exec, r.mailLinks, t, status === "approved", await actor(r.env, r.user)).catch(() => { });
     return json({ absence: await leaveView(r.env, (await ownLeave(r.env, id, r.user.id, r.admin))!) });

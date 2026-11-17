@@ -89,6 +89,35 @@ test('blackouts apply at both request and approval; cancellations refund without
     assert.equal(d.balances[0].available, 18);
     assert.equal(d.absences.find(a => a.id === pending.absence.id).status, 'cancelled');
 });
+test('admins can make an exception to a blocked day, with a reason that is recorded; staff cannot', async () => {
+    const block = await ok('POST', 'blocks', { from: '2030-05-13', to: '2030-05-14', title: 'Christmas', site: null });
+    const refused = await leave('POST', 'preview', { kind: 'annual', from: '2030-05-13', to: '2030-05-13' }, A);
+    assert.equal(refused.status, 409);
+    assert.equal(refused.data.code, 'leave_blocked');
+    assert.deepEqual(refused.data.blocked, [{ day: '2030-05-13', reasons: ['Christmas'] }]);
+    // Staff can't override, even asking for it.
+    assert.equal((await leave('POST', 'preview', { kind: 'annual', from: '2030-05-13', to: '2030-05-13', overrideBlocked: true, overrideReason: 'Please' }, A)).status, 403);
+    // An admin booking it needs a reason.
+    const base = { kind: 'annual', from: '2030-05-13', to: '2030-05-13', userId: ids.Alice, approved: true };
+    assert.equal((await leave('POST', 'preview', { ...base, overrideBlocked: true, overrideReason: '  ' })).status, 400);
+    const p = await ok('POST', 'preview', { ...base, overrideBlocked: true, overrideReason: 'Agreed before the blackout' });
+    const booked = await ok('POST', 'requests', { ...base, overrideBlocked: true, overrideReason: 'Agreed before the blackout', expectedCharges: p.days, requestKey: crypto.randomUUID() });
+    assert.equal(booked.absence.status, 'approved');
+    // Approving a staff request on a blocked day: refused, then approved anyway with a reason.
+    await ok('DELETE', 'blocks/' + block.id, { ifVersion: 1 });
+    const asked = await request(B, '2030-05-14');
+    const again = await ok('POST', 'blocks', { from: '2030-05-14', to: '2030-05-14', title: 'Stocktake', site: null });
+    const no = await leave('PATCH', 'requests/' + asked.absence.id, { status: 'approved', ifVersion: 1 });
+    assert.deepEqual([no.status, no.data.code], [409, 'leave_blocked']);
+    assert.equal((await leave('PATCH', 'requests/' + asked.absence.id, { status: 'approved', ifVersion: 1, overrideBlocked: true })).status, 400);
+    await ok('PATCH', 'requests/' + asked.absence.id, { status: 'approved', ifVersion: 1, overrideBlocked: true, overrideReason: 'Only one off that day' });
+    const events = [...(await ok('GET', 'events?userId=' + ids.Alice)).events, ...(await ok('GET', 'events?userId=' + ids.Beth)).events];
+    const reasons = events.map(e => JSON.parse(e.data || '{}').overrideBlocked?.reason).filter(Boolean);
+    assert.ok(reasons.includes('Agreed before the blackout') && reasons.includes('Only one off that day'), JSON.stringify(events.slice(0, 3)));
+    await ok('PATCH', 'requests/' + booked.absence.id, { status: 'cancelled', ifVersion: 1 });
+    await ok('PATCH', 'requests/' + asked.absence.id, { status: 'cancelled', ifVersion: 2 });
+    await ok('DELETE', 'blocks/' + again.id, { ifVersion: 1 });
+});
 test('simultaneous approvals cannot exceed holiday capacity', async () => {
     const a = await request(A, '2030-06-03'), b = await request(B, '2030-06-03');
     await settings({ limits: { all: 1 } });

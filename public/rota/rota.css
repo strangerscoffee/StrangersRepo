@@ -532,6 +532,9 @@ a.btn.sm{text-decoration:none}
 .leave-allowance select { max-width:100%;min-height:44px; }
 .leave-notice { padding:14px 16px;border:1px solid var(--line);border-radius:14px;background:var(--sunk);margin-block:12px; }
 .leave-notice .note { margin:6px 0 0; }
+.leave-notice.override { border-color:color-mix(in srgb,var(--warn) 50%,transparent);background:var(--warn-bg); }
+.leave-notice.override .field { margin-top:10px; }
+.leave-notice.override .btn { margin-top:10px; }
 .leave-check { display:flex;align-items:center;gap:10px;min-height:44px;font-size:14px; }
 .leave-check input { width:20px;height:20px;min-height:0;flex:0 0 20px; }
 .leave-weekly-fields { display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px; }
