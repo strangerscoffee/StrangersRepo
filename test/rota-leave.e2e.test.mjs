@@ -158,6 +158,7 @@ test('team calendar shows approved holiday names and blackout labels, never priv
     const preview = await api('POST', 'rota/leave/preview', body);
     await api('POST', 'rota/leave/requests', { ...body, expectedCharges: preview.days, requestKey: crypto.randomUUID() });
     await api('POST', 'rota/leave/requests', { userId: a.id, kind: 'sick', from: addDays(holiday, 1), to: addDays(holiday, 1), reason: 'PRIVATE MEDICAL REASON', approved: true, requestKey: crypto.randomUUID() });
+    await api('POST', 'rota/leave/requests', { userId: a.id, kind: 'unpaid', from: addDays(holiday, 2), to: addDays(holiday, 2), reason: 'PRIVATE UNPAID REASON', approved: true, requestKey: crypto.randomUUID() });
     const blocked = addDays(holiday, 3), admin = await context({ width: 393, height: 852 }, 'light', ADMIN), staff = await context({ width: 393, height: 852 }, 'light', b.cookie);
     try {
         await admin.page.goto(srv.base + '/rota/#leave-admin');
@@ -177,8 +178,18 @@ test('team calendar shows approved holiday names and blackout labels, never priv
         await holidayCell.click();
         assert.ok((await s.locator('#sheet').innerText()).includes(a.name));
         await s.locator('#sheet').getByRole('button',{name:'Cancel',exact:true}).click();
+        // Holiday and unpaid leave are told apart by colour and by words (the day's label and sheet), never by colour alone.
+        assert.ok(await holidayCell.locator('.leave-person.holiday').count() >= 1);
+        const unpaidCell = s.locator('[data-leave-day="' + addDays(holiday, 2) + '"]');
+        assert.ok(await unpaidCell.locator('.leave-person.unpaid').count() >= 1);
+        assert.match(await unpaidCell.getAttribute('aria-label'), /on unpaid leave/);
+        await unpaidCell.click();
+        assert.match(await s.locator('#sheet').innerText(), /Unpaid leave/);
+        await s.locator('#sheet').getByRole('button',{name:'Cancel',exact:true}).click();
+        if (process.env.SHOT_DIR) await s.locator('.leave-calendar-panel').screenshot({ path: process.env.SHOT_DIR + '/leave-calendar-unpaid.png' });
         assert.ok(!(await s.locator('body').innerText()).includes('PRIVATE ANNUAL NOTE'));
         assert.ok(!(await s.locator('body').innerText()).includes('PRIVATE MEDICAL REASON'));
+        assert.ok(!(await s.locator('body').innerText()).includes('PRIVATE UNPAID REASON'));
         const day = s.locator('[data-leave-day="' + blocked + '"]');
         assert.match(await day.innerText(), /Blocked/);
         await day.click();

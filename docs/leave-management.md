@@ -61,7 +61,7 @@ Creation, decisions, allowance/policy changes, blackout changes, bank-holiday cr
 
 ## Privacy boundary
 
-The newly authorised exception is narrow: an authenticated employee may see **names and dates of approved annual leave** in the team calendar, plus generic blackout labels/capacity availability. That response is explicitly constructed and contains no employee IDs, absence IDs, reasons, balances, pending requests, sickness/unpaid/unauthorised records, contracts, hours or contact details. The existing private rota/planning filters remain unchanged.
+The authorised exception is narrow: an authenticated employee may see **names and dates of approved holiday and unpaid leave** in the team calendar (each entry marked `annual` or `unpaid`; unpaid leave added by the owner's decision of 17 Nov 2026, shown in its own colour and named in each day's label and sheet), plus generic blackout labels/capacity availability. The calendar shows approved leave whether or not requests are switched on. That response is explicitly constructed and contains no employee IDs, absence IDs, reasons, times, balances, pending requests, sickness/unauthorised/other records, contracts, hours or contact details. The existing private rota/planning filters remain unchanged.
 
 Detailed dashboards, direct absence reads, private notes and balances require the individual employee or an admin. Managers receive no extra employee-private capability. Allowance/policy/credit/blackout administration and audit events require an admin. Identity checks, exact-origin write protection, no-store API responses and the shared session guard cover the new endpoints. Switching account clears dashboard state and private unsaved forms. Nothing is stored in browser localStorage for leave management.
 

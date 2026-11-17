@@ -63,7 +63,7 @@ test('approval feeds the rota and exposes only approved holiday names/dates to c
     assert.equal(d.balances[0].remaining, 18);
     const cal = await ok('GET', 'calendar?from=2030-04-01&to=2030-04-30', undefined, B);
     assert.equal(cal.holidays.length, 4);
-    assert.ok(cal.holidays.every(h => h.name === 'Alice' && Object.keys(h).sort().join() === 'day,mine,name'));
+    assert.ok(cal.holidays.every(h => h.name === 'Alice' && Object.keys(h).sort().join() === 'day,kind,mine,name' && h.kind === 'annual'));
     assert.doesNotMatch(JSON.stringify(cal), /PRIVATE|"reason":|entitlement|from_day|user_id/);
     const week = await call('GET', 'rota/week?start=2030-04-01');
     assert.ok(week.data.timeOff.some(t => t.id === ids.first && t.kind === 'annual'));
@@ -106,6 +106,19 @@ test('sickness and unauthorised absence are admin-only to record and never appea
     assert.doesNotMatch(JSON.stringify(cal), /sick|unauthorised|MEDICAL|Alice/);
     const own = await dashboard();
     assert.ok(own.absences.some(a => a.kind === 'sick' && a.reason === 'PRIVATE MEDICAL DETAILS'));
+});
+test('approved unpaid leave shows on the shared calendar as unpaid, with no reason, even while requests are switched off', async () => {
+    const saved = await request(ADMIN, '2031-02-10', '2031-02-11', { kind: 'unpaid', reason: 'PRIVATE UNPAID REASON', userId: ids.Alice, approved: true });
+    assert.equal(saved.absence.status, 'approved');
+    const cal = await ok('GET', 'calendar?from=2031-02-01&to=2031-02-28', undefined, B);
+    assert.deepEqual(cal.holidays.map(h => [h.name, h.day, h.kind, h.mine]), [['Alice', '2031-02-10', 'unpaid', false], ['Alice', '2031-02-11', 'unpaid', false]]);
+    assert.doesNotMatch(JSON.stringify(cal), /PRIVATE|"reason":|userId|user_id/);
+    assert.equal((await ok('GET', 'calendar?from=2031-02-01&to=2031-02-28', undefined, A)).holidays.every(h => h.mine), true);
+    await settings({ enabled: false });
+    const off = await ok('GET', 'calendar?from=2031-02-01&to=2031-02-28', undefined, B);
+    assert.equal(off.enabled, false);
+    assert.equal(off.holidays.length, 2);
+    await settings();
 });
 test('allowance edits are versioned, cannot erase bookings and keep an audit record', async () => {
     const a = (await dashboard()).balances[0];

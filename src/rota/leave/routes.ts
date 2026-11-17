@@ -136,14 +136,17 @@ export async function leaveRoutes(r: RotaRequest): Promise<Response | null> {
     if (route === "leave/calendar" && m === "GET") {
         const { from, to } = range(q("from"), q("to"), 93), { settings } = await policy(env);
         const sites = await employeeSites(env, user.id);
-        const rows = settings.enabled ? (await env.DB.prepare("SELECT u.name,t.user_id,t.from_day,t.to_day FROM rota_time_off t JOIN users u ON u.id=t.user_id WHERE t.kind='annual' AND t.status='approved' AND u.active=1 AND t.from_day<=? AND t.to_day>=? ORDER BY t.from_day,u.name_key").bind(to, from).all<{
+        // Shown whether or not requests are switched on, so imported and admin-recorded leave is visible from the start.
+        const rows = (await env.DB.prepare("SELECT u.name,t.user_id,t.from_day,t.to_day,t.kind FROM rota_time_off t JOIN users u ON u.id=t.user_id WHERE t.kind IN ('annual','unpaid') AND t.status='approved' AND u.active=1 AND t.from_day<=? AND t.to_day>=? ORDER BY t.from_day,u.name_key").bind(to, from).all<{
             name: string;
             user_id: string;
             from_day: string;
             to_day: string;
-        }>()).results : [];
-        // Explicit, narrow exception to employee privacy: names/dates of approved annual leave only.
-        return json({ from, to, enabled: settings.enabled, holidays: rows.flatMap(t => dates(t.from_day < from ? from : t.from_day, t.to_day > to ? to : t.to_day).map(day => ({ name: t.name, day, mine: t.user_id === user.id }))), days: settings.enabled ? await calendarRules(env, from, to, settings, sites) : [] });
+            kind: "annual" | "unpaid";
+        }>()).results;
+        // Explicit, narrow exception to employee privacy (the owner's decision, 17 Nov 2026): names, dates and whether it's
+        // holiday or unpaid leave, for approved annual and unpaid leave only. Never reasons, times, sickness or other absence.
+        return json({ from, to, enabled: settings.enabled, holidays: rows.flatMap(t => dates(t.from_day < from ? from : t.from_day, t.to_day > to ? to : t.to_day).map(day => ({ name: t.name, day, mine: t.user_id === user.id, kind: t.kind }))), days: settings.enabled ? await calendarRules(env, from, to, settings, sites) : [] });
     }
     if (seg[1] === "requests" && seg.length === 3 && m === "GET") {
         const t = await ownLeave(env, seg[2], user.id, r.admin);
