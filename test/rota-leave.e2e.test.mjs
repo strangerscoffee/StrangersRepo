@@ -243,16 +243,16 @@ test('an admin can approve holiday on a blackout day as an exception, giving a r
 });
 test('an admin can edit a blackout from Holiday management', { timeout: 60000 }, async () => {
     const day = addDays(holiday, 40);
-    await api('POST', 'rota/leave/blocks', { from: day, to: day, title: 'Christmas', site: null });
+    await api('POST', 'rota/leave/blocks', { from: day, to: day, title: 'Staff training', site: null });
     for (const [viewport, scheme] of [[{ width: 393, height: 852 }, 'dark'], [{ width: 1180, height: 820 }, 'light']]) {
         const x = await context(viewport, scheme, ADMIN);
         try {
             await x.page.goto(srv.base + '/rota/#leave-admin');
-            const row = x.page.locator('.lrow', { hasText: scheme === 'dark' ? 'Christmas' : 'Year-end stocktake' });
+            const row = x.page.locator('.lrow', { hasText: scheme === 'dark' ? 'Staff training' : 'Year-end stocktake' });
             await row.getByRole('button', { name: 'Edit', exact: true }).click();
             const sheet = x.page.locator('#sheet');
             if (scheme === 'dark') {
-                assert.equal(await sheet.locator('#block_reason').inputValue(), 'Christmas');
+                assert.equal(await sheet.locator('#block_reason').inputValue(), 'Staff training');
                 assert.equal(await sheet.locator('#block_from').inputValue(), day);
                 await sheet.locator('#block_to').fill(addDays(day, 2));
                 await sheet.locator('#block_reason').selectOption('custom');
