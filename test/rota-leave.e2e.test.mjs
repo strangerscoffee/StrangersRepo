@@ -173,6 +173,8 @@ test('team calendar shows approved holiday names and blackout labels, never priv
         await admin.page.locator('#sheet').waitFor({ state: 'hidden' });
         const s = staff.page;
         await s.goto(srv.base + '/rota/#leave');
+        // Phones open on Days; the month grid is one tap away.
+        await s.locator('.leave-views button', { hasText: 'Month' }).click();
         await s.locator('.leave-calendar').waitFor();
         for (let i = 0; i < 2 && !await s.locator('[data-leave-day="' + blocked + '"]').count(); i++)
             await s.getByRole('button', { name: 'Next month', exact: true }).click();
@@ -200,7 +202,7 @@ test('team calendar shows approved holiday names and blackout labels, never priv
         assert.doesNotMatch(await day.getAttribute('class'), /\bfull\b/);
         await day.click();
         assert.match(await s.locator('#sheet').innerText(), /Peak trading/);
-        assert.equal(await s.locator('#sheet').getByRole('button', { name: 'Request leave', exact: true }).isDisabled(), true);
+        assert.equal(await s.locator('#sheet').getByRole('button', { name: 'No holiday this day', exact: true }).isDisabled(), true, 'the button says why');
     }
     finally {
         await admin.c.close();
@@ -271,4 +273,35 @@ test('an admin can edit a blackout from Holiday management', { timeout: 60000 },
     }
     const b = (await api('GET', 'rota/leave/admin')).blocks.find(b => b.title === 'Year-end stocktake');
     assert.deepEqual([b.from, b.to, b.version], [day, addDays(day, 2), 2]);
+});
+test('on a phone, Days and People show who is off with each whole stretch of leave; the choice is remembered', { timeout: 60000 }, async () => {
+    const a = await user(), start = addDays(today, 2);
+    await api('POST', 'rota/leave/requests', { userId: a.id, kind: 'unpaid', from: start, to: addDays(start, 2), reason: 'PRIVATE STRETCH REASON', approved: true, requestKey: crypto.randomUUID() });
+    for (const [viewport, scheme] of [[{ width: 393, height: 852 }, 'dark'], [{ width: 320, height: 740 }, 'light']]) {
+        const x = await context(viewport, scheme, ADMIN);
+        try {
+            await x.page.goto(srv.base + '/rota/#leave');
+            const days = x.page.locator('.leave-list-panel');
+            await days.waitFor();
+            assert.equal(await x.page.locator('.leave-views button[aria-pressed="true"]').innerText(), 'Days');
+            const first = x.page.locator('#leave-d-' + start + ' .leave-row', { hasText: a.name });
+            assert.match(await first.innerText(), /Unpaid/);
+            assert.ok(!/day \d of/.test(await first.innerText()), 'the first day shows the whole stretch');
+            assert.match(await x.page.locator('#leave-d-' + addDays(start, 1) + ' .leave-row', { hasText: a.name }).innerText(), /day 2 of 3/);
+            assert.match(await x.page.locator('#leave-d-' + addDays(start, 2) + ' .leave-row', { hasText: a.name }).innerText(), /last day/);
+            await x.page.locator('.leave-views button', { hasText: 'People' }).click();
+            const card = x.page.locator('.leave-person-card', { hasText: a.name });
+            await card.waitFor();
+            assert.match(await card.innerText(), /3 days/);
+            // Filters: Holiday hides unpaid leave.
+            await x.page.locator('.leave-chip', { hasText: 'Holiday' }).click();
+            await x.page.waitForTimeout(300);
+            assert.equal(await x.page.locator('.leave-person-card', { hasText: a.name }).count(), 0);
+            assert.ok(!(await x.page.locator('body').innerText()).includes('PRIVATE STRETCH REASON'));
+            assert.equal(await x.page.evaluate(() => document.documentElement.scrollWidth - innerWidth), 0, 'no sideways scroll');
+            await x.page.reload();
+            await x.page.locator('.leave-list-panel').waitFor();
+            assert.equal(await x.page.locator('.leave-views button[aria-pressed="true"]').innerText(), 'People', 'remembered on this device');
+        } finally { await x.c.close(); }
+    }
 });

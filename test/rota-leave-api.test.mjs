@@ -171,6 +171,7 @@ test('approved unpaid leave shows on the shared calendar as unpaid, with no reas
     const cal = await ok('GET', 'calendar?from=2031-02-01&to=2031-02-28', undefined, B);
     assert.deepEqual(cal.holidays.map(h => [h.name, h.day, h.kind, h.mine]), [['Alice', '2031-02-10', 'unpaid', false], ['Alice', '2031-02-11', 'unpaid', false]]);
     assert.doesNotMatch(JSON.stringify(cal), /PRIVATE|"reason":|userId|user_id/);
+    assert.deepEqual(cal.runs.map(r => [r.name, r.kind, r.from, r.to, r.mine, Object.keys(r).sort().join()]), [['Alice', 'unpaid', '2031-02-10', '2031-02-11', false, 'from,kind,mine,name,to']]);
     assert.equal((await ok('GET', 'calendar?from=2031-02-01&to=2031-02-28', undefined, A)).holidays.every(h => h.mine), true);
     await settings({ enabled: false });
     const off = await ok('GET', 'calendar?from=2031-02-01&to=2031-02-28', undefined, B);

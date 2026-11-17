@@ -157,7 +157,9 @@ export async function leaveRoutes(r: RotaRequest): Promise<Response | null> {
         }>()).results;
         // Explicit, narrow exception to employee privacy (the owner's decision, 17 Nov 2026): names, dates and whether it's
         // holiday or unpaid leave, for approved annual and unpaid leave only. Never reasons, times, sickness or other absence.
-        return json({ from, to, enabled: settings.enabled, holidays: rows.flatMap(t => dates(t.from_day < from ? from : t.from_day, t.to_day > to ? to : t.to_day).map(day => ({ name: t.name, day, mine: t.user_id === user.id, kind: t.kind }))), days: await calendarRules(env, from, to, settings, sites) });
+        return json({ from, to, enabled: settings.enabled, holidays: rows.flatMap(t => dates(t.from_day < from ? from : t.from_day, t.to_day > to ? to : t.to_day).map(day => ({ name: t.name, day, mine: t.user_id === user.id, kind: t.kind }))),
+            // Each approved booking once, with its own first and last day (the Days and People views show whole stretches).
+            runs: rows.map(t => ({ name: t.name, mine: t.user_id === user.id, kind: t.kind, from: t.from_day, to: t.to_day })), days: await calendarRules(env, from, to, settings, sites) });
     }
     if (seg[1] === "requests" && seg.length === 3 && m === "GET") {
         const t = await ownLeave(env, seg[2], user.id, r.admin);

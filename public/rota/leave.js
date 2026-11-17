@@ -1,7 +1,7 @@
 // Holiday dashboard. Private state lives only in memory and is cleared with the shared session guard.
 window.SCLeave = function createLeaveUI(c) {
     const { el, btn, ghost, label, empty, api, get, openSheet, closeSheets, cancelLink, setHead, go, R, mgr, toast, render, fmt, shortM, addDays, monday, londonToday } = c;
-    let month = '', year = '', yearPicked = false, employee = '', generation = 0;
+    let month = '', year = '', yearPicked = false, employee = '', generation = 0, view = '', who = 'all', earlier = false;
     const TYPE = { annual: 'Annual leave', sick: 'Sick leave', unpaid: 'Unpaid leave', unauthorised: 'Unauthorised absence', legacy: 'Unclassified time off' };
     const STAT = { requested: 'Pending', approved: 'Approved', declined: 'Declined', cancelled: 'Cancelled' };
     const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
@@ -25,14 +25,14 @@ window.SCLeave = function createLeaveUI(c) {
             await onGo(why.value.trim(), msg);
         }));
     }
-    function clear() { generation++; month = ''; year = ''; yearPicked = false; employee = ''; }
+    function clear() { generation++; month = ''; year = ''; yearPicked = false; employee = ''; who = 'all'; earlier = false; }
     async function dashboard() {
         const token = generation;
         const data = await get('/api/rota/leave/dashboard');
         if (token !== generation)
             return [];
         month = month || londonToday().slice(0, 7) + '-01';
-        const start = monday(month), last = addDays(start, 41);
+        const start = monday(month), last = addDays(start, 55);
         const calendar = await get(`/api/rota/leave/calendar?from=${start}&to=${last}`);
         if (token !== generation)
             return [];
@@ -70,22 +70,119 @@ window.SCLeave = function createLeaveUI(c) {
     function changeMonth(delta) { const d = new Date(month + 'T12:00:00Z'); d.setUTCMonth(d.getUTCMonth() + delta); month = d.toISOString().slice(0, 7) + '-01'; render(); }
     const KIND_WORD = { annual: 'holiday', unpaid: 'unpaid leave' };
     const BLACKOUT_REASONS = ['Christmas', 'New Year', 'Bank holiday', 'Peak trading', 'Stocktake', 'Staff training', 'Short-staffed'];
+    // Days (who's off, day by day) and People (each stretch of leave once) suit a phone; Month is the grid. The choice is
+    // remembered on this device only (a view setting: no leave data is stored).
+    const VIEWS = [['days', 'Days'], ['people', 'People'], ['month', 'Month']];
+    function viewMode() {
+        if (view)
+            return view;
+        try { const saved = localStorage.getItem('sc.rota.leaveView'); if (VIEWS.some(([v]) => v === saved)) return (view = saved); } catch { }
+        return (view = matchMedia('(max-width: 700px)').matches ? 'days' : 'month');
+    }
+    function setView(v) { view = v; try { localStorage.setItem('sc.rota.leaveView', v); } catch { } render(); }
+    // Whole stretches of leave: each booking once, joined with the same person's next one when they touch.
+    function stretches(data, everyone = false) {
+        const out = [];
+        for (const r of [...(data.runs || [])].sort((a, b) => a.from.localeCompare(b.from))) {
+            const prev = out.find(o => o.name === r.name && o.kind === r.kind && o.mine === r.mine && addDays(o.to, 1) >= r.from && o.from <= r.to);
+            if (prev) { if (r.to > prev.to) prev.to = r.to; }
+            else out.push({ ...r });
+        }
+        return everyone ? out : out.filter(r => who === 'all' || (who === 'mine' ? r.mine : r.kind === who));
+    }
+    const countDays = (a, b) => Math.round((Date.parse(b + 'T12:00:00Z') - Date.parse(a + 'T12:00:00Z')) / 864e5) + 1;
+    const dayName = (d, long = false) => fmt(d, long ? { weekday: 'short', day: 'numeric', month: 'short' } : { weekday: 'short', day: 'numeric' });
+    // "Fri 20 – Sun 22 Nov" (the month once when both days share it), "Sat 28 Nov – Wed 2 Dec" across months.
+    const runText = (r, long = false) => r.from === r.to ? `${dayName(r.from, long)} only` : long && r.from.slice(0, 7) === r.to.slice(0, 7) ? `${dayName(r.from)} – ${dayName(r.to, true)}` : `${dayName(r.from, long)} – ${dayName(r.to, long)}`;
+    const personAv = (r, big) => el('span', { class: 'leave-av ' + (r.kind === 'unpaid' ? 'unpaid' : 'holiday') + (big ? ' big' : ''), text: initialsOf(r.name), 'aria-hidden': 'true' });
+    const initialsOf = n => String(n || '?').split(/\s+/).filter(Boolean).map(w => w[0]).slice(0, 2).join('').toUpperCase();
+    const kindPill = r => el('span', { class: 'leave-pill ' + (r.kind === 'unpaid' ? 'unpaid' : 'holiday'), text: r.kind === 'unpaid' ? 'Unpaid' : 'Holiday' });
+    const ruleTags = rules => [...(rules?.blackouts || []).map(t => el('span', { class: 'leave-tag blackout', text: t })), rules?.full ? el('span', { class: 'leave-tag full', text: rules.full.limit === 0 ? 'No holiday' : `Full · ${rules.full.off} off, limit ${rules.full.limit}` }) : null];
     function calendarView(data) {
-        const heading = el('div', { class: 'leave-calendar-head' }, el('h2', { text: fmt(month, { month: 'long', year: 'numeric' }) }), el('div', { class: 'row' }, ghost('‹', () => changeMonth(-1), { 'aria-label': 'Previous month' }), ghost('Today', () => { month = londonToday().slice(0, 7) + '-01'; render(); }), ghost('›', () => changeMonth(1), { 'aria-label': 'Next month' })));
+        const mode = viewMode(), today = londonToday(), thisMonth = month.slice(0, 7) === today.slice(0, 7);
+        const nav = el('div', { class: 'row' }, ghost('‹', () => { earlier = false; changeMonth(-1); }, { 'aria-label': 'Previous month' }), ghost('Today', () => { earlier = false; month = today.slice(0, 7) + '-01'; render(); }), ghost('›', () => { earlier = false; changeMonth(1); }, { 'aria-label': 'Next month' }));
+        const switcher = el('div', { class: 'seg leave-views', role: 'group', 'aria-label': 'How to show leave' }, ...VIEWS.map(([v, t]) => el('button', { type: 'button', 'aria-pressed': String(v === mode), text: t, onclick: () => setView(v) })));
+        const heading = el('div', { class: 'leave-calendar-head' }, el('div', {}, el('h2', { text: mode === 'month' ? fmt(month, { month: 'long', year: 'numeric' }) : "Who's off" }), mode === 'month' ? null : el('span', { class: 's', text: fmt(month, { month: 'long', year: 'numeric' }) })), nav);
+        if (mode === 'month')
+            return monthGrid(data, heading, switcher);
+        // From today in this month (earlier days on request), from the 1st in any other; four weeks either way.
+        const from = thisMonth && !earlier ? today : month, to = addDays(from, 27) < data.to ? addDays(from, 27) : data.to;
+        const runs = stretches(data), chips = el('div', { class: 'leave-chips', role: 'group', 'aria-label': 'Show' }, ...[['all', 'Everyone'], ['annual', 'Holiday'], ['unpaid', 'Unpaid'], ['mine', 'Just me']].map(([v, t]) => el('button', { type: 'button', class: 'leave-chip', 'aria-pressed': String(v === who), text: t, onclick: () => { who = v; render(); } })));
+        const body = mode === 'people' ? peopleList(data, runs, from, to) : dayList(data, runs, from, to);
+        return el('section', { class: 'panel leave-calendar-panel leave-list-panel' }, heading, switcher, chips, thisMonth && !earlier && today > month ? el('button', { type: 'button', class: 'linkbtn leave-earlier', text: 'Show earlier this month', onclick: () => { earlier = true; render(); } }) : null, ...body, note('Approved holiday and unpaid leave. Other absence types, notes and balances are private.'));
+    }
+    function dayList(data, runs, from, to) {
+        const today = londonToday(), out = [], on = d => runs.filter(r => r.from <= d && r.to >= d).sort((a, b) => (b.mine - a.mine) || a.name.localeCompare(b.name));
+        // A strip of the first week, with a dot for each person off; tapping a day goes to it.
+        const strip = el('div', { class: 'leave-strip' }, ...Array.from({ length: 7 }, (_, i) => addDays(from, i)).map(d => {
+            const people = on(d), rules = data.days.find(x => x.day === d);
+            return el('button', { type: 'button', class: 'leave-strip-day' + (d === today ? ' today' : '') + (rules?.blocked ? ' blocked' : ''), 'aria-label': `${fmt(d, { weekday: 'long', day: 'numeric', month: 'long' })}: ${people.length ? people.length + ' off' : 'nobody off'}`, onclick: () => { const card = document.getElementById('leave-d-' + d); if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' }); else dayDetails(d, dayHolidays(data, d), rules, data.enabled, stretches(data, true)); } }, el('span', { text: fmt(d, { weekday: 'short' }) }), el('b', { text: String(Number(d.slice(8))) }), el('span', { class: 'dots', 'aria-hidden': 'true' }, ...people.slice(0, 4).map(r => el('i', { class: r.kind === 'unpaid' ? 'unpaid' : 'holiday' }))));
+        }));
+        out.push(strip);
+        if (from === today) {
+            const now = on(today), soon = [...new Set(runs.filter(r => r.from <= addDays(today, 6) && r.to >= today).map(r => r.mine ? 'You' : r.name.split(' ')[0]))];
+            out.push(el('div', { class: 'leave-summary' }, el('div', {}, el('span', { text: 'Today' }), el('b', { text: now.length ? `${now.length} off` : 'Nobody off' }), el('small', { text: now.length ? now.map(r => r.mine ? 'You' : r.name.split(' ')[0]).join(', ') : 'Everyone is in' })), el('div', {}, el('span', { text: 'Next 7 days' }), el('b', { text: soon.length ? `${soon.length} ${soon.length === 1 ? 'person' : 'people'}` : 'Nobody off' }), el('small', { text: soon.join(', ') || '–' }))));
+        }
+        let quiet = [], week = '';
+        const flush = () => { if (quiet.length) out.push(el('p', { class: 'leave-quiet', text: `${quiet[0] === today ? 'Today' : dayName(quiet[0])}${quiet.length > 1 ? ` – ${dayName(quiet.at(-1))}` : ''} · nobody off` })); quiet = []; };
+        for (let d = from; d <= to; d = addDays(d, 1)) {
+            const w = monday(d);
+            if (w !== week) {
+                flush();
+                week = w;
+                const thisWeek = monday(today), title = w === thisWeek ? 'This week' : w === addDays(thisWeek, 7) ? 'Next week' : `Week of ${fmt(w, { day: 'numeric', month: 'short' })}`;
+                out.push(el('div', { class: 'leave-week' }, el('span', { text: title }), el('span', { text: `${fmt(w, { day: 'numeric', month: 'short' })} – ${fmt(addDays(w, 6), { day: 'numeric', month: 'short' })}` })));
+            }
+            const people = on(d), rules = data.days.find(x => x.day === d);
+            if (!people.length && !rules?.blocked && d !== today) { quiet.push(d); continue; }
+            flush();
+            out.push(el('button', { type: 'button', class: 'leave-daycard' + (d === today ? ' today' : ''), id: 'leave-d-' + d, onclick: () => dayDetails(d, dayHolidays(data, d), rules, data.enabled, stretches(data, true)) },
+                el('span', { class: 'leave-date' }, el('small', { text: fmt(d, { weekday: 'short' }) }), el('b', { text: String(Number(d.slice(8))) }), d === today ? el('span', { class: 'leave-today', text: 'Today' }) : null),
+                el('span', { class: 'leave-daybody' }, ...ruleTags(rules), people.length ? null : el('span', { class: 'leave-none', text: 'Nobody off' }), ...people.map(r => {
+                    const first = r.from === d || d === from, n = countDays(r.from, d), total = countDays(r.from, r.to);
+                    return el('span', { class: 'leave-row' + (first ? '' : ' cont') + (r.mine ? ' own' : '') }, personAv(r), el('span', { class: 't' }, el('b', { text: r.mine ? 'You' : r.name }), el('small', { text: first ? (r.from < d ? `since ${dayName(r.from)} · until ${dayName(r.to)}` : runText(r)) : d === r.to ? 'last day' : `day ${n} of ${total}` })), kindPill(r));
+                }))));
+        }
+        flush();
+        if (!runs.some(r => r.from <= to && r.to >= from))
+            out.push(empty(who === 'mine' ? "You've no holiday or unpaid leave in these four weeks." : 'Nobody is off in these four weeks.'));
+        return out;
+    }
+    function peopleList(data, runs, from, to) {
+        const today = londonToday(), list = runs.filter(r => r.from <= to && r.to >= from).sort((a, b) => a.from.localeCompare(b.from) || a.name.localeCompare(b.name)), out = [];
+        if (!list.length)
+            return [empty(who === 'mine' ? "You've no holiday or unpaid leave in these four weeks." : 'Nobody is off in these four weeks.')];
+        let group = '';
+        for (const r of list) {
+            const start = r.from < from ? from : r.from, g = r.from <= today && r.to >= today ? 'now' : monday(start);
+            if (g !== group) {
+                group = g;
+                const thisWeek = monday(today);
+                out.push(el('div', { class: 'leave-week' }, el('span', { text: g === 'now' ? 'Off now' : g === thisWeek ? 'Starting this week' : g === addDays(thisWeek, 7) ? 'Next week' : `Week of ${fmt(g, { day: 'numeric', month: 'short' })}` })));
+            }
+            const total = countDays(r.from, r.to);
+            out.push(el('div', { class: 'leave-person-card' + (r.mine ? ' own' : '') }, personAv(r, true), el('span', { class: 't' }, el('b', { text: r.mine ? 'You' : r.name }), el('small', { text: `${runText(r, true)} · ${total} ${total === 1 ? 'day' : 'days'}${r.from <= today && r.to >= today ? ` · until ${dayName(r.to)}` : ''}` })), kindPill(r)));
+        }
+        return out;
+    }
+    const dayHolidays = (data, d) => data.holidays.filter(h => h.day === d);
+    function monthGrid(data, heading, switcher) {
         const grid = el('div', { class: 'leave-calendar', role: 'group', 'aria-label': 'Holiday calendar' });
         DAYS.forEach(d => grid.append(el('div', { class: 'leave-weekday', text: d.slice(0, 3), 'aria-hidden': 'true' })));
         for (let i = 0; i < 42; i++) {
             const day = addDays(data.from, i), holidays = data.holidays.filter(h => h.day === day), rules = data.days.find(d => d.day === day);
             const closed = rules?.blocked, mine = holidays.some(h => h.mine), outside = day.slice(0, 7) !== month.slice(0, 7);
-            const tile = el('button', { type: 'button', class: 'leave-day' + (outside ? ' outside' : '') + (closed ? ' blocked' : '') + (rules?.blackouts?.length ? ' blackout' : '') + (rules?.full ? ' full' : '') + (day === londonToday() ? ' today' : ''), 'data-leave-day': day, 'aria-label': `${fmt(day, { weekday: 'long', day: 'numeric', month: 'long' })}${closed ? `, holiday requests blocked: ${rules.reasons.join(', ')}` : ''}${holidays.length ? ', ' + holidays.map(h => `${h.mine ? 'You' : h.name} on ${KIND_WORD[h.kind] || KIND_WORD.annual}`).join(', ') : ''}`, onclick: () => dayDetails(day, holidays, rules, data.enabled) }, el('b', { text: String(Number(day.slice(8))) }), ...(rules?.blackouts || []).slice(0, 1).map(t => el('span', { class: 'leave-block-label blackout', text: t, title: t })), rules?.full ? el('span', { class: 'leave-block-label full' }, rules.full.limit === 0 ? 'No holiday' : 'Full', rules.full.limit === 0 ? null : el('span', { class: 'n', text: ` (${rules.full.off} off)` })) : null, ...holidays.slice(0, 2).map(h => el('span', { class: 'leave-person ' + (h.kind === 'unpaid' ? 'unpaid' : 'holiday') + (h.mine ? ' own' : ''), text: h.mine ? 'You' : h.name })), holidays.length > 2 ? el('span', { class: 'leave-more', text: `+${holidays.length - 2}` }) : null);
+            const tile = el('button', { type: 'button', class: 'leave-day' + (outside ? ' outside' : '') + (closed ? ' blocked' : '') + (rules?.blackouts?.length ? ' blackout' : '') + (rules?.full ? ' full' : '') + (day === londonToday() ? ' today' : ''), 'data-leave-day': day, 'aria-label': `${fmt(day, { weekday: 'long', day: 'numeric', month: 'long' })}${closed ? `, holiday requests blocked: ${rules.reasons.join(', ')}` : ''}${holidays.length ? ', ' + holidays.map(h => `${h.mine ? 'You' : h.name} on ${KIND_WORD[h.kind] || KIND_WORD.annual}`).join(', ') : ''}`, onclick: () => dayDetails(day, holidays, rules, data.enabled, stretches(data, true)) }, el('b', { text: String(Number(day.slice(8))) }), ...(rules?.blackouts || []).slice(0, 1).map(t => el('span', { class: 'leave-block-label blackout', text: t, title: t })), rules?.full ? el('span', { class: 'leave-block-label full' }, rules.full.limit === 0 ? 'No holiday' : 'Full', rules.full.limit === 0 ? null : el('span', { class: 'n', text: ` (${rules.full.off} off)` })) : null, ...holidays.slice(0, 2).map(h => el('span', { class: 'leave-person ' + (h.kind === 'unpaid' ? 'unpaid' : 'holiday') + (h.mine ? ' own' : ''), text: h.mine ? 'You' : h.name })), holidays.length > 2 ? el('span', { class: 'leave-more', text: `+${holidays.length - 2}` }) : null);
             if (mine)
                 tile.dataset.own = '';
             grid.append(tile);
         }
-        return el('section', { class: 'panel leave-calendar-panel' }, heading, note('Approved holiday and unpaid leave. Other absence types, notes and balances are private.'), el('div', { class: 'leave-calendar-scroll', tabindex: 0, role: 'region', 'aria-label': 'Month calendar; scroll horizontally on small screens' }, grid), el('div', { class: 'leave-legend' }, el('span', { class: 'key holiday' }, el('i', { 'aria-hidden': 'true' }), 'Holiday'), el('span', { class: 'key unpaid' }, el('i', { 'aria-hidden': 'true' }), 'Unpaid leave'), el('span', { class: 'key own' }, el('b', { text: 'You' }), ' in bold'), el('span', { class: 'key blackout' }, el('i', { 'aria-hidden': 'true' }), 'Blackout: no holiday'), el('span', { class: 'key full' }, el('i', { 'aria-hidden': 'true' }), 'Full: limit reached')));
+        return el('section', { class: 'panel leave-calendar-panel' }, heading, switcher, note('Approved holiday and unpaid leave. Other absence types, notes and balances are private.'), el('div', { class: 'leave-calendar-scroll', tabindex: 0, role: 'region', 'aria-label': 'Month calendar; scroll horizontally on small screens' }, grid), el('div', { class: 'leave-legend' }, el('span', { class: 'key holiday' }, el('i', { 'aria-hidden': 'true' }), 'Holiday'), el('span', { class: 'key unpaid' }, el('i', { 'aria-hidden': 'true' }), 'Unpaid leave'), el('span', { class: 'key own' }, el('b', { text: 'You' }), ' in bold'), el('span', { class: 'key blackout' }, el('i', { 'aria-hidden': 'true' }), 'Blackout: no holiday'), el('span', { class: 'key full' }, el('i', { 'aria-hidden': 'true' }), 'Full: limit reached')));
     }
-    function dayDetails(day, holidays, rules, enabled) {
-        openSheet(fmt(day, { weekday: 'long', day: 'numeric', month: 'long' }), el('div', { class: 'sbody' }, holidays.length ? el('div', { class: 'list glass' }, ...holidays.map(h => el('div', { class: 'lrow' }, el('span', { class: 'leave-dot ' + (h.kind === 'unpaid' ? 'unpaid' : 'holiday'), 'aria-hidden': 'true' }), el('span', { class: 't' }, el('b', { text: h.name }), el('span', { class: 's', text: h.kind === 'unpaid' ? 'Unpaid leave' : 'Holiday' }))))) : note('No approved holiday or unpaid leave on this date.'), rules?.blackouts?.length ? el('div', { class: 'leave-notice blackout' }, el('b', { text: 'Blackout: no holiday on this day' }), ...rules.blackouts.map(note)) : null, rules?.full ? el('div', { class: 'leave-notice full' }, el('b', { text: rules.full.limit === 0 ? 'No holiday on this day' : `Full: ${rules.full.off} off, the limit is ${rules.full.limit}${rules.full.site ? ` at the ${SITES[rules.full.site] || rules.full.site}` : ''}` }), note('Holiday requests are closed for this day.')) : null, el('div', { class: 'sfoot' }, btn('Request leave', () => request(day), 'btn', { disabled: !enabled || rules?.blocked || day < londonToday() }))), { left: cancelLink() });
+    function dayDetails(day, holidays, rules, enabled, runs) {
+        // Each person's whole stretch when it's known (the Days and People views pass it).
+        const stretch = h => (runs || []).find(r => r.name === h.name && r.kind === h.kind && r.mine === h.mine && r.from <= day && r.to >= day);
+        openSheet(fmt(day, { weekday: 'long', day: 'numeric', month: 'long' }), el('div', { class: 'sbody' }, holidays.length ? el('div', { class: 'list glass' }, ...holidays.map(h => el('div', { class: 'lrow' }, el('span', { class: 'leave-dot ' + (h.kind === 'unpaid' ? 'unpaid' : 'holiday'), 'aria-hidden': 'true' }), el('span', { class: 't' }, el('b', { text: h.mine ? 'You' : h.name }), el('span', { class: 's', text: `${h.kind === 'unpaid' ? 'Unpaid leave' : 'Holiday'}${stretch(h) ? ' · ' + runText(stretch(h)) : ''}` }))))) : note('No approved holiday or unpaid leave on this date.'), rules?.blackouts?.length ? el('div', { class: 'leave-notice blackout' }, el('b', { text: 'Blackout: no holiday on this day' }), ...rules.blackouts.map(note)) : null, rules?.full ? el('div', { class: 'leave-notice full' }, el('b', { text: rules.full.limit === 0 ? 'No holiday on this day' : `Full: ${rules.full.off} off, the limit is ${rules.full.limit}${rules.full.site ? ` at the ${SITES[rules.full.site] || rules.full.site}` : ''}` }), note('Holiday requests are closed for this day.')) : null, el('div', { class: 'sfoot' }, btn(rules?.full ? 'Day is full' : rules?.blackouts?.length ? 'No holiday this day' : 'Request leave', () => request(day), 'btn', { disabled: !enabled || rules?.blocked || day < londonToday() }))), { left: cancelLink() });
     }
     function absenceList(absences, admin) {
         if (!absences.length)
