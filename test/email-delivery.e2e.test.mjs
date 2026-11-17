@@ -32,7 +32,7 @@ for(const [device,viewport]of[['phone',{width:393,height:852}],['iPad',{width:11
    await page.locator('[data-sheet="email-copy-record"]').first().click();assert.match(await page.evaluate(()=>window.__copiedEmailSetup),/rua=mailto:sales@strangerscoffee.com/);await page.locator('[data-sheet="email-copy-url"]').click();assert.equal(await page.evaluate(()=>window.__copiedEmailSetup),(await api('GET','/api/admin/wholesale/order-emails/delivery')).data.setup.webhookUrl);
    if(process.env.SHOT_DIR){await mkdir(process.env.SHOT_DIR,{recursive:true});await page.screenshot({path:process.env.SHOT_DIR+`/email-health-${device}-${colorScheme}.png`,fullPage:true});}
    await page.locator('[data-sheet="email-refresh"]').click();await page.getByRole('heading',{name:'Email health',exact:true}).waitFor();await page.locator('[data-sheet="email-back"]').click();assert.equal(await page.locator('#wOrderEmailsTo').inputValue(),'draft@example.invalid\n');assert.equal(await page.locator('#wOrderEmailsOn').isChecked(),false);assert.equal(await page.locator('#wConfirmCustomers').isChecked(),false);assert.deepEqual(errors,[]);assert.deepEqual(posts,[],'viewing health never sends a test email');
-  }finally{await ctx.close();}
+  }finally{await page.unrouteAll({behavior:'wait'});await ctx.close();}
  });
 }
 test('unconfigured feedback is shown honestly without exposing a secret',async()=>{
