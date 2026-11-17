@@ -36,7 +36,7 @@ test("admin page: at /admin for admins (no admin address here), others go back t
   const page = await fetch(srv.base + "/admin", { headers: { cookie: ADMIN } });
   assert.equal(page.status, 200);
   const htmlText = await page.text();
-  assert.match(htmlText, /<script src="\/admin\/admin.js\?v=[0-9a-f]+"><\/script>/, "linked by fingerprint");
+  assert.match(htmlText, /<script type="application\/x-sc-script" data-sc-module="" src="\/admin\/admin.js\?v=[0-9a-f]+"><\/script>/, "ordered dependency linked by fingerprint");
   assert.doesNotMatch(htmlText, /<script>/, "no inline scripts (the CSP allows only the site's own files)");
   assert.equal(page.headers.get("cache-control"), "private, no-store");
   for (const cookie of [STAFF, MANAGER]) for (const p of ["/admin", "/admin/", "/admin.html", "/admin/index.html"]) {
@@ -158,7 +158,8 @@ test("the admin host: admins only, its page at /, nothing of the diary's", async
     assert.equal(home.status, 200);
     assert.match(home.text, /admin\.js/);
     for (const p of ["/admin/admin.js", "/admin/overview.js", "/admin/overview.css", "/admin/quickbooks.js", "/admin/wholesale-invoices.js", "/admin/wholesale.js", "/admin/admin.css", "/admin/wholesale-invoices.css", "/admin/wholesale-print.js", "/admin/wholesale-print.css", "/admin/wholesale-insights-import.js", "/admin/wholesale-tabs.js", "/admin/wholesale-tabs.css", "/admin/sickness.js", "/admin/sickness.css", "/admin/wholesale-import.js", "/admin/wholesale-insights.js", "/admin/wholesale-insights.css", "/shared/wholesale-packing.js", "/shared/wholesale-packing.css", "/theme.css", "/icon-192.png", "/shared/core.js", "/shared/wholesale-preparation.js", "/shared/wholesale-preparation.css", "/wholesale/images/brazil.webp"]) assert.equal((await get(p, setup)).status, 200, p);
-    assert.match(home.text, /<script src="\/shared\/core.js\?v=\w+"><\/script>\n<script src="\/shared\/wholesale-preparation.js\?v=\w+"><\/script>\n<script src="\/admin\/quickbooks.js\?v=\w+"><\/script>\n<script src="\/admin\/wholesale-invoices.js\?v=\w+"><\/script>\n<script src="\/shared\/wholesale-packing.js\?v=\w+"><\/script>\n<script src="\/admin\/wholesale-print.js\?v=\w+"><\/script>\n<script src="\/admin\/wholesale-insights-import.js\?v=\w+"><\/script>\n<script src="\/admin\/wholesale-import.js\?v=\w+"><\/script>\n<script src="\/admin\/wholesale-insights.js\?v=\w+"><\/script>\n<script src="\/admin\/wholesale-tabs.js\?v=\w+"><\/script>\n<script src="\/admin\/sickness.js\?v=\w+"><\/script>\n<script src="\/admin\/wholesale.js\?v=\w+"><\/script>\n<script src="\/admin\/overview.js\?v=\w+"><\/script>\n<script src="\/admin\/admin.js\?v=\w+"><\/script>/, "shared helpers and packing labels, QuickBooks, invoicing, printing, insights and wholesale view load before the admin shell");
+    const dependencies = [...home.text.matchAll(/<script type="application\/x-sc-script"[^>]+src="([^"?]+)\?v=\w+"><\/script>/g)].map(match => match[1]);
+    assert.deepEqual(dependencies, ["/shared/focus.js", "/shared/core.js", "/shared/wholesale-preparation.js", "/admin/quickbooks.js", "/admin/wholesale-invoices.js", "/shared/wholesale-packing.js", "/admin/wholesale-print.js", "/admin/wholesale-insights-import.js", "/admin/wholesale-import.js", "/admin/wholesale-insights.js", "/admin/wholesale-tabs.js", "/admin/sickness.js", "/admin/wholesale.js", "/admin/overview.js", "/admin/admin.js"], "the bootstrap keeps core and helpers before their dependants");
     for (const p of ["/diary/core.js", "/index.html", "/rota/", "/admin/"]) assert.equal((await get(p, setup)).headers.get("location"), "/", p + " goes to /");
     assert.equal((await call("POST", "/api/db/get", { path: "days/x" }, setup, host.base)).status, 404, "the diary's data API isn't here");
     assert.equal((await get("/api/admin/overview", setup)).status, 200);
@@ -172,8 +173,8 @@ test("the admin host: admins only, its page at /, nothing of the diary's", async
     const diary = [host.base + "/", "https://staffstrangerscoffee.com/"];
     assert.ok(diary.includes((await get("/", kim)).headers.get("location")), "managers go to the diary");
     assert.equal((await get("/api/admin/people", kim)).status, 403);
-    assert.ok(diary.includes((await get("/admin/admin.js", kim)).headers.get("location")), "not even its files");
-    assert.ok(diary.includes((await get("/shared/core.js", kim)).headers.get("location")), "nor the shared helpers, on the admin address");
+    assert.equal((await get("/admin/admin.js", kim)).status, 200, "data-free code can verify an expired identity");
+    assert.equal((await get("/shared/core.js", kim)).status, 200, "shared code has no account data");
   } finally { await host.stop(); }
 });
 

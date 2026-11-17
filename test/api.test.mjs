@@ -60,7 +60,7 @@ test("signed out: only the sign-in page and the site's code are reachable, no pa
   // session has ended still works and sends the person to sign in, instead of showing unstyled and stuck.
   for (const f of ["/claude-shim.js", "/shared/core.js", "/diary/core.js", "/diary/start.js", "/app.css", "/ui.css", "/pdf.js"]) assert.equal((await fetch(srv.base + f, { redirect: "manual" })).status, 200, f);
   assert.equal((await fetch(srv.base + "/index.html", { redirect: "manual" })).status, 302, "the page itself still needs sign-in");
-  assert.equal((await fetch(srv.base + "/admin/admin.js", { redirect: "manual" })).status, 302, "the admin section's files don't");
+  assert.equal((await fetch(srv.base + "/admin/admin.js", { redirect: "manual" })).status, 200, "data-free admin code loads so expired pages can verify identity");
   const r = await db("get", { path: "days/x" }, null);
   assert.equal(r.status, 401);
   assert.equal(r.body.code, "unauthenticated");

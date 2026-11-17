@@ -85,12 +85,20 @@
   const ours = (u) => { try { return new URL(u, location.href).origin === location.origin; } catch (e) { return false; } };
   const ownFrame = detail => (String(detail || "").match(/https?:\/\/[^\s)]+|\/[\w./-]+\.(?:js|mjs)(?:\?[^\s)]*)?(?::\d+:\d+)?/g) || []).some(ours);
   const browserAutofill = (message, detail, file) => /^Could not find identifiable element\.?$/.test(message) && !(file && ours(file)) && !ownFrame(detail);
-  const retriedBranding = new WeakSet();
+  const retriedBranding = new WeakSet(), retriedStyles = new WeakSet();
   addEventListener("error", (e) => {
     const t = e.target;
     if (t && t !== window && (t.src || t.href)) {
       const u = String(t.src || t.href);
       if (!ours(u)) return;
+      // Managed Admin dependencies are retried and reported by their ordered bootstrap.
+      if (t.tagName === "SCRIPT" && t.dataset.scManaged === "1") return;
+      if (t.tagName === "LINK" && t.relList?.contains("stylesheet") && t.isConnected && navigator.onLine !== false && !retriedStyles.has(t)) {
+        retriedStyles.add(t);
+        const retry = new URL(u); retry.searchParams.set("sc-asset-retry", "1");
+        queueMicrotask(() => { if (t.isConnected) t.href = retry.href; });
+        return;
+      }
       const imageLink = t.tagName === "LINK" && (t.relList?.contains("icon") || t.relList?.contains("apple-touch-icon") || (t.relList?.contains("preload") && t.as === "image"));
       const image = t.tagName === "IMG" || imageLink;
       // A dropped logo request must not interrupt sign-in. Retry the original element once at a fresh URL;

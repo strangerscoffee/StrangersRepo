@@ -13,7 +13,7 @@
 <link rel="apple-touch-icon" href="/icon-180.png">
 <link rel="icon" type="image/png" href="/icon-192.png">
 <script src="/errors.js"></script>
-<script src="/shared/focus.js" defer></script>
+
 <link rel="stylesheet" href="/theme.css">
 <link rel="stylesheet" href="/admin/admin.css">
 <link rel="stylesheet" href="/admin/overview.css">
@@ -48,19 +48,21 @@
 <nav class="tabbar glass" id="tabBar" aria-label="Admin sections"></nav>
 <div class="scrim" id="scrim" hidden><div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle"></div></div>
 <div class="toast" id="toast" role="status" hidden></div>
-<script src="/shared/core.js"></script>
-<script src="/shared/wholesale-preparation.js"></script>
-<script src="/admin/quickbooks.js"></script>
-<script src="/admin/wholesale-invoices.js"></script>
-<script src="/shared/wholesale-packing.js"></script>
-<script src="/admin/wholesale-print.js"></script>
-<script src="/admin/wholesale-insights-import.js"></script>
-<script src="/admin/wholesale-import.js"></script>
-<script src="/admin/wholesale-insights.js"></script>
-<script src="/admin/wholesale-tabs.js"></script>
-<script src="/admin/sickness.js"></script>
-<script src="/admin/wholesale.js"></script>
-<script src="/admin/overview.js"></script>
-<script src="/admin/admin.js"></script>
+<script type="application/x-sc-script" data-sc-module="" src="/shared/focus.js"></script>
+<script type="application/x-sc-script" data-sc-module="SC" src="/shared/core.js"></script>
+<script type="application/x-sc-script" data-sc-module="SCWholesalePreparation" src="/shared/wholesale-preparation.js"></script>
+<script type="application/x-sc-script" data-sc-module="WholesaleQuickBooks" src="/admin/quickbooks.js"></script>
+<script type="application/x-sc-script" data-sc-module="WholesaleInvoices" src="/admin/wholesale-invoices.js"></script>
+<script type="application/x-sc-script" data-sc-module="SCWholesalePacking" src="/shared/wholesale-packing.js"></script>
+<script type="application/x-sc-script" data-sc-module="WholesalePrint" src="/admin/wholesale-print.js"></script>
+<script type="application/x-sc-script" data-sc-module="SCSalesImport" src="/admin/wholesale-insights-import.js"></script>
+<script type="application/x-sc-script" data-sc-module="SCCustomerImport" src="/admin/wholesale-import.js"></script>
+<script type="application/x-sc-script" data-sc-module="WholesaleInsights" src="/admin/wholesale-insights.js"></script>
+<script type="application/x-sc-script" data-sc-module="WholesaleTabs" src="/admin/wholesale-tabs.js"></script>
+<script type="application/x-sc-script" data-sc-module="AdminSickness" src="/admin/sickness.js"></script>
+<script type="application/x-sc-script" data-sc-module="WholesaleAdmin" src="/admin/wholesale.js"></script>
+<script type="application/x-sc-script" data-sc-module="AdminOverview" src="/admin/overview.js"></script>
+<script type="application/x-sc-script" data-sc-module="" src="/admin/admin.js"></script>
+<script src="/admin/boot.js"></script>
 </body>
 </html>

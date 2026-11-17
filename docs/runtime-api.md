@@ -338,3 +338,5 @@ Wholesale admin list responses include at most twenty `standingIssues` entries (
 Staff/admin batch actions retain the original reviewed versions; a live refresh cannot rebase a pending write onto a newer order. Success requires a matching order ID, requested status and advancing version. Uncertain or conflicted results remain selected for verification. Session invalidation cancels the operation and clears sensitive data. A local operation token survives clearing safely. Existing intentional single-order status corrections remain available.
 
 Binary PDF and catalogue photo requests enforce their existing limits while streaming, including omitted or inaccurate Content-Length. Oversized bodies are cancelled before KV storage.
+
+Admin static JS/CSS and shared helper code can load without a session so cached pages can verify identity. These routes return code with correct MIME/cache headers, never sign-in HTML. Admin page/data/image authorization remains unchanged. The dependency bootstrap preserves source fingerprints, retries a failed network resource once and stops after a missing dependency. Persistent CSS/JS failures remain visible in error reporting.

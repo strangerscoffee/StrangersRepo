@@ -45,12 +45,14 @@ export function isRotaSharedFile(path: string): boolean {
  * The diary's and the rota's scripts (with the helpers they share, /shared/…), styles and images (code, no data) load without a session, on their own
  * address. Safari can show a page from memory after the session has ended (going back to a tab); its files then
  * still load, and its script sends the person to sign in, instead of a page with no styles that does nothing.
- * Pages and every API still need sign-in; the admin section's files stay admin-only.
+ * Pages, private images and every API still need sign-in. Admin JS/CSS contain implementation only, never saved data.
  */
 export function isPublicCode(app: string, path: string): boolean {
   // The source-price snapshot is used by the server, never by the browser bootstrap.
   if (path === "/wholesale/catalogue.js") return false;
-  if (!/\.(js|css|svg|png|webmanifest)$/.test(path) || path.startsWith("/admin/")) return false;
+  if (path.startsWith("/admin/")) return (app === "admin" || app === "diary") && /^\/admin\/[\w-]+\.(?:js|css)$/.test(path);
+  if (!/\.(js|css|svg|png|webmanifest)$/.test(path)) return false;
+  if (app === "admin") return isSharedCode(path);
   return app === "rota" ? isRotaSharedFile(path) : app === "diary";
 }
 
