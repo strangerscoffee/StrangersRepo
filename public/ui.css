@@ -355,12 +355,6 @@ section.panel.onlywide{display:none}
 .signbox{grid-template-columns:1fr;margin-top:6px}
 .signbox label{gap:14px;padding:10px 0;line-height:1.35;border-bottom:0}
 .signbox label span{flex:1}
-.toggles input[type=checkbox]{appearance:none;-webkit-appearance:none;width:51px;height:31px;margin:0;border-radius:99px;background:var(--sunk);position:relative;flex:none;cursor:pointer;
-  box-shadow:inset 0 0 0 1px var(--line);transition:background .2s}
-.toggles input[type=checkbox]::after{content:"";position:absolute;top:2px;left:2px;width:27px;height:27px;border-radius:50%;background:#fff;box-shadow:0 2px 4px rgba(0,0,0,.2);transition:left .2s}
-.toggles input[type=checkbox]:checked{background:#30b158;box-shadow:none}
-.toggles input[type=checkbox]:checked::after{left:22px}
-.toggles input[type=checkbox]:disabled{opacity:.5}
 .toggles label strong{font-weight:650}
 
 /* ---------- motion and feedback ---------- */

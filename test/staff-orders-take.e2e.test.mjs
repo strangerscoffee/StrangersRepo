@@ -28,7 +28,7 @@ before(async () => {
 });
 after(async () => { await b?.close(); await srv?.stop(); });
 
-for (const [name, viewport, isMobile] of [["small phone", { width: 360, height: 740 }, true], ["phone", { width: 390, height: 844 }, true], ["iPad", { width: 1180, height: 820 }, false]]) for (const scheme of ["light", "dark"]) {
+for (const [name, viewport, isMobile] of [["small phone", { width: 360, height: 740 }, true], ["phone", { width: 390, height: 844 }, true], ["iPad", { width: 1180, height: 820 }, false], ["desktop", { width: 1440, height: 980 }, false]]) for (const scheme of ["light", "dark"]) {
   test(`staff take an order for a customer on a ${name} (${scheme})`, async () => {
     const ctx = await b.newContext({ viewport, isMobile, hasTouch: isMobile, colorScheme: scheme });
     const [n, v] = STAFF.split("=");
@@ -42,12 +42,18 @@ for (const [name, viewport, isMobile] of [["small phone", { width: 360, height: 
     await dialog.locator("#noSearch").fill("Lune");
     await dialog.locator(".order-row", { hasText: "Lune Café" }).click();
     await dialog.locator(".no-line select").first().waitFor();
-    // The "How it came in" choices sit inside their track, don't overlap, and show their whole word.
-    const boxes = await dialog.locator(".no-seg").first().evaluate((f) => { const t = f.querySelector(".seg").getBoundingClientRect(); return [...f.querySelectorAll(".seg button")].map((b) => { const r = b.getBoundingClientRect(); return { r: [r.left, r.top, r.right, r.bottom], whole: b.scrollWidth <= b.clientWidth, inside: r.left >= t.left - 0.5 && r.right <= t.right + 0.5 && r.top >= t.top - 0.5 && r.bottom <= t.bottom + 0.5 }; }); });
-    const overlap = (a, b) => a.r[0] < b.r[2] - 0.5 && b.r[0] < a.r[2] - 0.5 && a.r[1] < b.r[3] - 0.5 && b.r[1] < a.r[3] - 0.5;
-    assert.ok(boxes.every((b, i) => b.inside && b.whole && boxes.every((c, j) => i === j || !overlap(b, c))), JSON.stringify(boxes));
-    if (process.env.SHOT_DIR) await page.screenshot({ path: `${process.env.SHOT_DIR}/take-top-${name}-${scheme}.png` });
-    await dialog.getByRole("button", { name: "In person" }).click();
+    const source = dialog.getByRole("combobox", {name:"Order source"});
+    assert.deepEqual(await source.locator("option").allTextContents(), ["Email", "In person", "Phone", "Other"]);
+    const flow = await dialog.locator(".no-workspace").evaluate(node => {
+      const coffee = node.querySelector(".no-card").getBoundingClientRect();
+      const details = node.querySelector(".no-details").getBoundingClientRect();
+      return {sideBySide:details.left>=coffee.right, stacked:details.top>=coffee.bottom};
+    });
+    assert.ok(viewport.width>=890?flow.sideBySide:flow.stacked);
+    if (process.env.SHOT_DIR) await page.screenshot({ path: `${process.env.SHOT_DIR}/take-top-${name}-${scheme}.png`, animations:"disabled" });
+    await source.focus();
+    await source.selectOption('In person');
+    assert.equal(await source.evaluate(node=>node===document.activeElement), true);
     await dialog.locator('.no-line input[type="number"]').first().fill("3");
     await dialog.getByRole("button", { name: "Add another coffee" }).click();
     assert.equal(await dialog.locator(".no-line").count(), 2);
@@ -56,7 +62,12 @@ for (const [name, viewport, isMobile] of [["small phone", { width: 360, height: 
     await dialog.locator("#noTab").check();
     assert.ok(!/£/.test(await dialog.innerText()), "no prices");
     assert.equal(await page.evaluate(() => { const d = document.querySelector("#newOrderDialog"); return d.scrollWidth <= d.clientWidth + 1; }), true, "no sideways scrolling");
-    if (process.env.SHOT_DIR) await page.screenshot({ path: `${process.env.SHOT_DIR}/take-${name}-${scheme}.png` });
+    const place = await dialog.locator("#placeOrder").boundingBox();
+    assert.ok(place.y>=0 && place.y+place.height<=viewport.height, "the order action stays in view");
+    if (process.env.SHOT_DIR) {
+      await dialog.locator("#newOrderForm").evaluate(form=>{form.scrollTop=0});
+      await page.screenshot({ path: `${process.env.SHOT_DIR}/take-${name}-${scheme}.png`, animations:"disabled" });
+    }
     await dialog.locator("#placeOrder").click();
     await page.locator("#orderDialog[open]").waitFor();
     assert.match(await page.locator("#orderDetail").innerText(), /Lune Café[\s\S]*Came in\s*In person/);

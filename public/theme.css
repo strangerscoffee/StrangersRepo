@@ -6,6 +6,7 @@
 
 /* ---------- tokens ---------- */
 :root{
+  color-scheme:light dark;
   --bg:#edf1f6; --surface:#ffffff; --sunk:rgba(118,128,148,.12); --line:rgba(60,72,92,.15);
   --fg:#0b1220; --muted:#545f70; --accent:#0062cc; --accent-ink:#ffffff;
   --ok:#17733a; --ok-bg:rgba(52,199,89,.17); --warn:#835000; --warn-bg:rgba(255,159,10,.2); --bad:#c0261b; --bad-bg:rgba(255,59,48,.14);
@@ -14,6 +15,7 @@
   --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
   --r:12px; --r-lg:22px;
   --focus-ink:var(--muted); --focus-ring-width:2px;
+  --switch-width:51px; --switch-height:31px; --switch-thumb-size:27px; --switch-active:#30b158;
 
   --glass:rgba(255,255,255,.6);
   --glass-thick:rgba(255,255,255,.8);
@@ -46,6 +48,8 @@
     radial-gradient(48% 40% at 78% 96%,rgba(255,159,10,.12),transparent 70%),
     radial-gradient(40% 36% at 4% 80%,rgba(191,90,242,.16),transparent 70%);
 }}
+
+:root[data-theme="light"]{color-scheme:light}
 
 /* ---------- canvas & type ---------- */
 html{-webkit-text-size-adjust:100%}
@@ -89,6 +93,18 @@ input[type=text],input[type=password],input[type=number],input[type=date],input[
   background:var(--sunk);border:1px solid transparent;border-radius:var(--r);padding:11px 13px;font-size:16px;transition:border-color .15s,background-color .15s,box-shadow .15s}
 input[type=text]:focus,input[type=password]:focus,input[type=number]:focus,input[type=date]:focus,input[type=tel]:focus,input[type=email]:focus,textarea:focus,select:focus{
   background:var(--surface);border-color:var(--focus-ink);box-shadow:none;outline:0}
+/* One select surface across the apps, with the browser's built-in option list. */
+select:not([multiple]):is(:not([size]),[size="1"]){
+  -webkit-appearance:none;appearance:none;max-inline-size:100%;color:var(--fg);color-scheme:inherit;
+  padding-inline-end:34px;min-block-size:44px;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' fill='none' stroke='%237d899b' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m4 6 4 4 4-4'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 11px center;
+}
+select:disabled{opacity:.62}
+@media(forced-colors:active){
+  select:not([multiple]):is(:not([size]),[size="1"]){-webkit-appearance:auto;appearance:auto;background-image:none}
+}
+
 ::placeholder{color:var(--muted);opacity:.75}
 /* Touch/mouse focus never paints a ring; keyboard users retain a neutral, control-sized cue.
    Programmatically focused containers (for example Admin's main landmark) never get a page border. */
@@ -119,6 +135,24 @@ input[type=text]:focus,input[type=password]:focus,input[type=number]:focus,input
 .checks input[type=checkbox]:checked::after,.issue>input[type=checkbox]:checked::after{transform:translateY(-1px) rotate(45deg) scale(1)}
 .checks input[type=checkbox]:disabled{opacity:.5;cursor:not-allowed}
 .alg input,.toggles input,.chk-row input[type=checkbox],.doc-table input[type=checkbox]{accent-color:var(--accent);width:20px;height:20px}
+
+/* Application switches share the same track and thumb. */
+input[type=checkbox]:is(.switch,.toggles input,.rswitch input){
+  -webkit-appearance:none;appearance:none;width:var(--switch-width);height:var(--switch-height);margin:0;
+  border-radius:99px;background:var(--sunk);position:relative;flex:none;cursor:pointer;
+  box-shadow:inset 0 0 0 1px var(--line);transition:background .2s
+}
+input[type=checkbox]:is(.switch,.toggles input,.rswitch input)::after{
+  content:"";position:absolute;top:2px;left:2px;width:var(--switch-thumb-size);height:var(--switch-thumb-size);
+  border-radius:50%;background:#fff;box-shadow:0 2px 4px rgba(0,0,0,.2);transition:transform .2s
+}
+input[type=checkbox]:is(.switch,.toggles input,.rswitch input):checked{background:var(--switch-active);box-shadow:none}
+input[type=checkbox]:is(.switch,.toggles input,.rswitch input):checked::after{transform:translateX(calc(var(--switch-width) - var(--switch-height)))}
+input[type=checkbox]:is(.switch,.toggles input,.rswitch input):disabled{opacity:.5}
+@media(forced-colors:active){
+  input[type=checkbox]:is(.switch,.toggles input,.rswitch input){-webkit-appearance:auto;appearance:auto;width:20px;height:20px}
+  input[type=checkbox]:is(.switch,.toggles input,.rswitch input)::after{content:none}
+}
 
 /* ---------- status ---------- */
 .pill,.rate{font-weight:650;padding:4px 10px;background:var(--sunk);color:var(--muted)}

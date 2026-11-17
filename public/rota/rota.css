@@ -217,10 +217,6 @@ button.shc:hover{border-color:var(--accent)}
 .tchip{border:0;border-radius:12px;min-height:36px;padding:0 12px;font:inherit;font-weight:650;background:var(--tint);color:var(--accent);cursor:pointer}
 .tchip.any{background:none;color:var(--fg);font-weight:500;padding:0 4px}
 .rswitch{display:flex;flex:none;cursor:pointer}
-.rswitch input{appearance:none;-webkit-appearance:none;width:51px;height:31px;margin:0;border-radius:99px;background:var(--sunk);position:relative;cursor:pointer;box-shadow:inset 0 0 0 1px var(--line);transition:background .2s}
-.rswitch input::after{content:"";position:absolute;top:2px;left:2px;width:27px;height:27px;border-radius:50%;background:#fff;box-shadow:0 2px 4px rgba(0,0,0,.2);transition:left .2s}
-.rswitch input:checked{background:#30b158;box-shadow:none}
-.rswitch input:checked::after{left:22px}
 .rswitch input:focus-visible{outline:var(--focus-ring-width) solid var(--focus-ink);outline-offset:2px}
 .avtimes{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;padding:0 14px 14px 70px}
 .avtimes label{display:inline-flex;align-items:center;gap:6px;font-size:14px;color:var(--muted)}
