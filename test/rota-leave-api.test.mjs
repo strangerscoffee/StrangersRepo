@@ -74,6 +74,12 @@ test('approval feeds the rota and exposes only approved holiday names/dates to c
 test('blackouts apply at both request and approval; cancellations refund without losing history', async () => {
     const pending = await request(A, '2030-05-06');
     const block = await ok('POST', 'blocks', { from: '2030-05-06', to: '2030-05-07', title: 'Peak trading', site: null });
+    const day = (await ok('GET', 'calendar?from=2030-05-01&to=2030-05-31', undefined, B)).days.find(d => d.day === '2030-05-07');
+    assert.deepEqual([day.blocked, day.blackouts, day.full], [true, ['Peak trading'], null]);
+    // A blackout over holiday that's already approved leaves it booked.
+    const over = await ok('POST', 'blocks', { from: '2030-04-01', to: '2030-04-30', title: 'Christmas', site: null });
+    assert.equal((await dashboard()).absences.find(a => a.id === ids.first).status, 'approved');
+    await ok('DELETE', 'blocks/' + over.id, { ifVersion: 1 });
     assert.equal((await leave('POST', 'preview', { kind: 'annual', from: '2030-05-07', to: '2030-05-07' }, A)).status, 409);
     assert.equal((await leave('PATCH', 'requests/' + pending.absence.id, { status: 'approved', ifVersion: 1 })).status, 409);
     await ok('DELETE', 'blocks/' + block.id, { ifVersion: 1 });
@@ -91,6 +97,17 @@ test('simultaneous approvals cannot exceed holiday capacity', async () => {
     const cal = await ok('GET', 'calendar?from=2030-06-01&to=2030-06-07', undefined, B);
     assert.equal(cal.holidays.length, 1);
     assert.equal(cal.days.find(d => d.day === '2030-06-03').blocked, true);
+    // A full day says why: how many are off against the limit, apart from any blackout.
+    const full = cal.days.find(d => d.day === '2030-06-03');
+    assert.deepEqual([full.full, full.blackouts, full.reasons], [{ off: 1, limit: 1, site: null }, [], ['Full (1 off)']]);
+    // Unpaid leave can be counted towards the limit: Beth's unpaid day fills 2030-06-04 only when that's switched on.
+    await request(ADMIN, '2030-06-04', '2030-06-04', { kind: 'unpaid', userId: ids.Beth, approved: true });
+    assert.equal((await ok('GET', 'calendar?from=2030-06-01&to=2030-06-07', undefined, A)).days.find(d => d.day === '2030-06-04').blocked, false);
+    await settings({ limits: { all: 1 }, countUnpaid: true });
+    const counted = (await ok('GET', 'calendar?from=2030-06-01&to=2030-06-07', undefined, A)).days.find(d => d.day === '2030-06-04');
+    assert.deepEqual(counted.full, { off: 1, limit: 1, site: null });
+    assert.equal((await leave('POST', 'preview', { kind: 'annual', from: '2030-06-04', to: '2030-06-04' }, A)).status, 409);
+    assert.equal((await ok('GET', 'admin')).settings.countUnpaid, true);
     await settings();
 });
 test('sickness and unauthorised absence are admin-only to record and never appear on the shared calendar', async () => {

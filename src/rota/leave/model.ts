@@ -10,8 +10,10 @@ export interface Policy {
     limits: Record<string, number | null>;
     yearStart: string;
     bankHolidayPolicy: "unconfirmed" | "included" | "credit-worked";
+    /** Approved unpaid leave takes up a place in the daily limits too (off by default). */
+    countUnpaid?: boolean;
 }
-export const DEFAULT_POLICY: Policy = { enabled: false, limits: {}, yearStart: "04-01", bankHolidayPolicy: "unconfirmed" };
+export const DEFAULT_POLICY: Policy = { enabled: false, limits: {}, yearStart: "04-01", bankHolidayPolicy: "unconfirmed", countUnpaid: false };
 export interface LeaveCredit {
     key: string;
     day: string;
@@ -110,7 +112,9 @@ export function policyInput(b: any): Policy {
     const bankHolidayPolicy = b.bankHolidayPolicy ?? "unconfirmed";
     if (!["unconfirmed", "included", "credit-worked"].includes(bankHolidayPolicy))
         throw invalid("Choose the contracted bank-holiday policy.");
-    return { enabled: b.enabled, limits, yearStart, bankHolidayPolicy };
+    if (b.countUnpaid !== undefined && typeof b.countUnpaid !== "boolean")
+        throw invalid("Choose whether unpaid leave counts towards the limits.");
+    return { enabled: b.enabled, limits, yearStart, bankHolidayPolicy, countUnpaid: b.countUnpaid === true };
 }
 export async function policy(env: Env) {
     const r = await env.DB.prepare("SELECT data,version FROM rota_leave_settings WHERE id=1").first<{

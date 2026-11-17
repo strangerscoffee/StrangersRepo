@@ -165,6 +165,9 @@ test('team calendar shows approved holiday names and blackout labels, never priv
         await admin.page.getByRole('button', { name: 'Add blackout dates', exact: true }).click();
         await admin.page.locator('#block_from').fill(blocked);
         await admin.page.locator('#block_to').fill(blocked);
+        // A preset reason or a custom one: "Custom reason…" shows the box to type it.
+        assert.equal(await admin.page.locator('#block_title').isVisible(), false);
+        await admin.page.locator('#block_reason').selectOption('custom');
         await admin.page.locator('#block_title').fill('Peak trading');
         await admin.page.getByRole('button', { name: 'Add blackout', exact: true }).click();
         await admin.page.locator('#sheet').waitFor({ state: 'hidden' });
@@ -191,7 +194,10 @@ test('team calendar shows approved holiday names and blackout labels, never priv
         assert.ok(!(await s.locator('body').innerText()).includes('PRIVATE MEDICAL REASON'));
         assert.ok(!(await s.locator('body').innerText()).includes('PRIVATE UNPAID REASON'));
         const day = s.locator('[data-leave-day="' + blocked + '"]');
-        assert.match(await day.innerText(), /Blocked/);
+        // The reason is on the day itself, and blackout days look different from full ones.
+        assert.match(await day.innerText(), /Peak trading/);
+        assert.match(await day.getAttribute('class'), /blackout/);
+        assert.doesNotMatch(await day.getAttribute('class'), /\bfull\b/);
         await day.click();
         assert.match(await s.locator('#sheet').innerText(), /Peak trading/);
         assert.equal(await s.locator('#sheet').getByRole('button', { name: 'Request leave', exact: true }).isDisabled(), true);
