@@ -17,24 +17,26 @@
 <main>
 <div id="accessStatus" role="status" class="access-status">Checking access…</div>
 <div id="ordersContent" hidden>
-  <header class="heading">
-    <h1 id="workspaceTitle">Packing desk</h1>
-    <button type="button" class="btn" id="newOrder"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>New order</button>
+  <header class="heading" id="workspaceHeading" hidden>
+    <h1 id="workspaceTitle"></h1>
+    <button type="button" class="btn" data-new-order><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>New order</button>
   </header>
   <div id="ordersView">
+    <h1 class="sr-only">Wholesale orders</h1>
     <div class="desk-toolbar glass">
       <div class="toolbar toolbar-search">
         <label class="search">
           <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="5.5"/><path d="m15 15 4 4"/></svg>
-          <input id="search" type="search" maxlength="120" placeholder="Search business or reference" aria-label="Search wholesale orders">
+          <input id="search" type="search" maxlength="120" placeholder="Search orders" aria-label="Search wholesale orders by business or reference">
         </label>
-        <button class="refresh" id="refresh" aria-label="Refresh orders" type="button"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 3M18 17a7 7 0 0 1-12 1l-2-3"/></svg></button>
         <div class="scope-controls">
           <select id="orderStatus" class="dispatch-scope compact-status" aria-label="Order status"></select>
           <select id="orderDispatchScope" class="dispatch-scope" aria-label="Dispatch date">
-            <option value="all">All dispatch dates</option><option value="today">Due today</option><option value="upcoming">Upcoming</option>
+            <option value="all">All dates</option><option value="today">Due today</option><option value="upcoming">Upcoming</option>
           </select>
+          <button class="refresh" id="refresh" aria-label="Refresh orders" type="button"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 3M18 17a7 7 0 0 1-12 1l-2-3"/></svg></button>
         </div>
+        <button type="button" class="btn" id="newOrder" data-new-order><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>New order</button>
       </div>
       <div class="orders-bar">
         <nav id="statusFilters" class="filters" aria-label="Order status"></nav>

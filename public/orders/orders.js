@@ -774,7 +774,9 @@
  function showView(next){
   view=next;$('ordersView').hidden=view!=='orders';$('customersView').hidden=view!=='customers';$('tabsView').hidden=view!=='tabs';
   for(const b of $('viewTabs').querySelectorAll('button'))b.setAttribute('aria-pressed',String(b.dataset.view===view));
-  setWorkspaceTitle();SC.reveal($(view+'View'));
+  $('workspaceHeading').hidden=view==='orders';
+  if(view!=='orders')$('workspaceTitle').textContent=view==='tabs'?'Customer tabs':'Customers';
+  SC.reveal($(view+'View'));
   if(view==='orders')loadDeskTotals();
   if(view==='customers')loadCustomers();
   if(view==='tabs')loadTabs();
@@ -827,9 +829,7 @@
  $('orderStatus').replaceChildren(...filters.map(([value,label])=>el('option',{value},label)));
  $('orderStatus').onchange=event=>{status=event.target.value;load();};
  $('orderDispatchScope').onchange=()=>{totalsSequence++;deskTotals=null;drawDeskTotals();load();};
- const setWorkspaceTitle=()=>{$('workspaceTitle').textContent={orders:'Packing desk',tabs:'Customer tabs',customers:'Customers'}[view];};
  wideDesk.addEventListener('change',()=>{if(!wideDesk.matches&&status==='prepare')status='open';if(started)load();});
- setWorkspaceTitle();
  $('search').oninput=()=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>load(),250)};
  $('customerSearch').oninput=()=>{clearTimeout(customerTimer);customerTimer=setTimeout(loadCustomers,250)};
  $('refreshCustomers').onclick=loadCustomers;
@@ -859,7 +859,8 @@
  $('closeCustomer').onclick=$('doneCustomer').onclick=()=>$('customerDialog').close();
  $('refreshTabs').onclick=()=>load({reverify:true});$('closeTab').onclick=()=>$('tabDialog').close();$('tabDialog').addEventListener('close',()=>{tabSelected=null;tabConfirm=false;});
  $('closeTotals').onclick=()=>$('totalsDialog').close();
- $('newOrder').onclick=()=>newOrder(null);$('closeNewOrder').onclick=()=>$('newOrderDialog').close();
+ for(const button of document.querySelectorAll('[data-new-order]'))button.onclick=()=>newOrder(null);
+ $('closeNewOrder').onclick=()=>$('newOrderDialog').close();
  $('newOrderDialog').addEventListener('close',()=>{if(draft&&!draft.sending)draft=null;});
  $('newOrderForm').addEventListener('submit',e=>e.preventDefault());
  // Printing moves focus to the print dialog: that isn't leaving the page, so it doesn't lock it.

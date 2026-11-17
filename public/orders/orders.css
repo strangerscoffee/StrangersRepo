@@ -28,6 +28,7 @@ a { color: var(--accent); text-decoration: none; }
   padding: 8px 14px;
   margin-bottom: 26px;
 }
+.top:has(.view-tabs:not([hidden]) [data-view="orders"][aria-pressed=true]) { margin-bottom: 14px; }
 .brand {
   display: flex;
   align-items: center;
@@ -314,6 +315,8 @@ button.cleared-row:hover{background:var(--sunk)}
   border-radius: var(--r-lg);
 }
 .dispatch-scope { min-width: 0; min-height: 44px; padding-block: 8px; border: 1px solid var(--line); background-color: var(--sunk); font-size: 14px; }
+.scope-controls { display: flex; align-items: center; gap: 8px; min-width: 0; }
+#newOrder { flex: none; white-space: nowrap; }
 .compact-status { display: none; }
 #statusFilters { overflow-x: auto; scrollbar-width: thin; max-width: 100%; }
 #printBar { min-width: 0; }
@@ -408,11 +411,12 @@ button.cleared-row:hover{background:var(--sunk)}
   #packingDesk,#deskBagTotals { display: block; position: sticky; top: 16px; }
 }
 @media (max-width: 690px) {
-  #ordersView .toolbar-search { flex-wrap: wrap; }
-  #ordersView .toolbar-search .search { flex-basis: calc(100% - 52px); }
-  .scope-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; flex: 1 1 100%; }
+  #ordersView .toolbar-search { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+  #ordersView .search input::placeholder { font-size: 14px; }
+  .scope-controls { grid-column: 1/-1; grid-row: 2; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)) auto; }
   .scope-controls .compact-status { display: block; }
   .scope-controls select:not([multiple]):is(:not([size]),[size="1"]) { padding-inline: 8px 25px; background-position: right 6px center; font-size: 13px; }
+  #newOrder { grid-column: 2; grid-row: 1; padding-inline: 12px; }
   #statusFilters { display: none; }
   .desk-toolbar .orders-bar { gap: 9px; }
   #printBar { flex: 1 1 100%; }
