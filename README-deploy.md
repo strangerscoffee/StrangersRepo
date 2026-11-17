@@ -306,3 +306,26 @@ Standing deliveries check current business eligibility, coffee visibility, stock
 Backups now capture all table reads in one D1 batch transaction, retaining matching leave charges, absences, invoice numbering and document sequence/privacy metadata. Dispatch events are included; unsent events export as uncertain with no active lease, requiring delivery review after any manual restore. PDF/photo uploads cancel unknown-length streams at their existing 20/5 MiB limits.
 
 Admin asset recovery serves implementation-only JS/CSS independently of session/database health, while pages, APIs, photos and source-price snapshots remain protected. The ordered Admin bootstrap retries failed network script loads once and stops dependants after a persistent failure; stylesheets also retry once. This fixes expired/cached Safari startup and prevents missing-core `SC` cascades. Existing fingerprint/cache behavior is retained. No new secret, migration, DNS or service is required.
+
+## Email inbox placement and feedback (migration 31)
+
+Wholesale messages use the familiar `Strangers Wholesale` display name on the existing verified `orders@staffstrangerscoffee.com` address. `ORDER_EMAIL_FROM` overrides remain supported, and already queued dispatch payloads are unchanged. Staff rota sending and optional unsubscribe controls are retained. HTML and plain-text versions continue to be sent.
+
+Admin → Wholesale → Orders → Order alerts → Email health shows provider acceptance separately from delivery to the receiving mail server, delays, bounces, complaints and suppression. Delivery never proves inbox placement. Opening health and returning preserves unsaved alert settings. Only admins can read message metadata, including staff recipients. No email body, reset/invitation/unsubscribe link or provider credential is persisted in the new feedback tables.
+
+Resend feedback setup:
+1. Add `https://admin.staffstrangerscoffee.com/api/email/resend-webhook` in Resend → Webhooks. Select `email.sent`, `email.delivered`, `email.delivery_delayed`, `email.bounced`, `email.complained`, `email.failed`, `email.suppressed`, `suppression.added` and `suppression.removed`.
+2. Store its full signing secret in the existing Cloudflare Worker as the **secret** `RESEND_WEBHOOK_SECRET`. Never put it in git, a public variable, chat, an email or a backup. An unset/invalid secret leaves feedback disabled.
+3. Keep open/click tracking disabled in the Resend sending-domain settings for operational mail.
+4. Verify a received Gmail/Outlook message's original headers for aligned SPF, DKIM and DMARC. Published DNS and provider acceptance are separate from this check. No real test mail is sent automatically.
+
+The host selected `sales@strangerscoffee.com` for DMARC aggregate reports. Add these TXT records (initial monitoring policy):
+
+| DNS zone | Full record name | Value |
+| --- | --- | --- |
+| `staffstrangerscoffee.com` | `_dmarc.staffstrangerscoffee.com` | `v=DMARC1; p=none; rua=mailto:sales@strangerscoffee.com;` |
+| `strangerscoffee.com` | `staffstrangerscoffee.com._report._dmarc.strangerscoffee.com` | `v=DMARC1;` |
+
+The second record authorizes reporting to the separate company domain. `EMAIL_DMARC_REPORT_TO` can override the reporting inbox; changing it requires reviewing the corresponding DNS instructions. Check published DNS in Email health after setup. The checker is read-only, handles missing/invalid/unavailable results, checks the Resend DKIM selector and bounce-domain SPF (including Forge's CNAME chain), and never changes DNS. Tighten DMARC only after monitoring confirms legitimate senders align. No new domain, paid service or dedicated IP is required.
+
+Callbacks verify the raw bytes using Svix HMAC-SHA256, header freshness and event-ID deduplication before storage. Invalid requests do not initialize or query D1. Events arriving before the send acknowledgement are retained for later correlation; failure/complaint states cannot be downgraded by older delivery events. Suppression updates use event time, not arrival order, and a replay cannot mutate them. Verified hard bounces, complaints and provider suppression block future sends locally; only verified provider removal clears the block. Resend's own suppression list remains authoritative. Active suppression is retained in backups alongside minimal metadata/events; the signing secret stays outside D1/backups.

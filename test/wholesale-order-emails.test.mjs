@@ -48,7 +48,7 @@ test("each new customer order emails sales@ from orders@, with Reply-To the cust
   const { body, order } = await place({ customerNote: "Use our own custom labels" });
   assert.equal(await settle(1), 1);
   const [mail] = take();
-  assert.equal(mail.from, "Strangers Coffee Orders <orders@staffstrangerscoffee.com>");
+  assert.equal(mail.from, "Strangers Wholesale <orders@staffstrangerscoffee.com>");
   assert.deepEqual(mail.to, ["sales@strangerscoffee.com"]);
   assert.equal(mail.reply_to, "buyer@lune.example");
   assert.equal(mail.headers, undefined, "a business notification has no unsubscribe header");
@@ -101,7 +101,7 @@ test("the customer gets their own confirmation: their bags, delivery, totals and
   assert.equal(await settle(1), 1, "just the confirmation (Strangers' own alert is switched off here)");
   const [mail] = take();
   assert.deepEqual(mail.to, ["buyer@lune.example"]);
-  assert.equal(mail.from, "Strangers Coffee Orders <orders@staffstrangerscoffee.com>");
+  assert.equal(mail.from, "Strangers Wholesale <orders@staffstrangerscoffee.com>");
   assert.equal(mail.reply_to, "sales@strangerscoffee.com", "replies go to Strangers");
   assert.equal(mail.headers, undefined);
   assert.match(mail.subject, /^Order confirmed: 10 bags of Strangers Coffee/);

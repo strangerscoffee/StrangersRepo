@@ -3,6 +3,7 @@
 // hostname (ROTA_HOST), the staff rota (public/rota/, src/rota.ts). One Worker, one database, one set of accounts.
 import { repairStandingRuns } from "./wholesaleStanding";
 import { deliverSlackPosts } from "./slackOrders";
+import { handleResendWebhook } from "./email/delivery";
 import { deliverDispatchEmails } from "./email/outbox";
 import { deliverDiaryReminders } from "./slackDiary";
 import { appForHost, appLinks, authorize, isAdminSharedFile, isPreviewFile, isPublicAsset, isPublicCode, isRotaManager, isRotaSharedFile, limitWrites, recordId, requireUser, unifiedSignin } from "./access";
@@ -196,6 +197,7 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
     req = new Request(target, req); url = target;
   }
   const p = url.pathname;
+  if (p === "/api/email/resend-webhook") return handleResendWebhook(req, env, () => ensureSchema(env));
   if(p.startsWith("/api/quickbooks/webhook/"))return handleWebhook(req,env,ctx,processEvents);
   const app = appForHost(url.hostname, env.ROTA_HOST, env.ADMIN_HOST, env.PREVIEW_HOST, env.LEGACY_PREVIEW_HOST);
   const links = appLinks(url, env.ROTA_HOST, env.ADMIN_HOST, env.PREVIEW_HOST, env.LEGACY_PREVIEW_HOST);

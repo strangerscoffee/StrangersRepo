@@ -23,6 +23,8 @@ export interface Env {
   QUICKBOOKS_PRODUCTION_WEBHOOK_TOKEN?: string;
   QUICKBOOKS_TEST_ORIGIN?: string; // local harness only; ignored on deployed hosts
   RESEND_API_KEY?: string; // rota emails (src/email/): a secret the host adds in Cloudflare; without it nothing is sent
+  EMAIL_DMARC_REPORT_TO?: string; // non-secret monitored aggregate-report inbox
+  RESEND_WEBHOOK_SECRET?: string; // Svix signing secret; never sent to the browser or stored in backups
   RESEND_API_URL?: string; // for tests only: where to send instead of Resend
   EMAIL_FROM?: string; // default "Strangers Rota <rota@staffstrangerscoffee.com>"
   SLACK_ORDERS_WEBHOOK_URL?: string; // a secret the host adds: Slack incoming webhook for the new-order channel (src/slackOrders.ts)
@@ -31,7 +33,7 @@ export interface Env {
   SLACK_ASG_WEBHOOK_URL?: string; // diary's morning and end-of-day reminders (src/slackDiary.ts)
   SLACK_ROASTERY_WEBHOOK_URL?: string;
   SLACK_DIARY_NOW?: string; // tests only (with SLACK_TEST_HOOKS): the time the diary reminders work from
-  ORDER_EMAIL_FROM?: string; // new wholesale order emails; default "Strangers Coffee Orders <orders@staffstrangerscoffee.com>"
+  ORDER_EMAIL_FROM?: string; // new wholesale order emails; default "Strangers Wholesale <orders@staffstrangerscoffee.com>"
   EMAIL_DAILY_LIMIT?: string; // default 100 (Resend's free plan)
   WEEKLY_ANY_TIME?: string; // tests only: "1" sends the Monday summary whenever its cron runs
 }

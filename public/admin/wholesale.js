@@ -23,7 +23,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
   const weight = (grams) => `${new Intl.NumberFormat("en-GB", { maximumFractionDigits: 2 }).format(grams / 1000)} kg`;
   const shortId = (id) => id.slice(0, 20);
   const date = (ms) => new Date(ms).toLocaleString("en-GB", { timeZone: "Europe/London", year: "numeric", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
-  let tab = "orders", status = "all", approval = "all", query = "", data = null, timer, sequence = 0;
+  let tab = "orders", status = "all", approval = "all", query = "", data = null, timer, sequence = 0, emailDraft = null, emailHealthToken = 0;
   let orderQueue = "";
   let orderPages = 1, customerPages = 1, loadingMore = false;
   const sections = [["orders", "Orders"], ["customers", "Customers"], ["catalogue", "Coffee catalogue"], ["custom", "Custom coffees"], ["tabs", "Tabs"], ["invoices", "Invoicing"], ["insights", "Insights"]];
@@ -162,23 +162,26 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
   }
   // Who gets an email for each new customer order (sent from orders@staffstrangerscoffee.com).
   async function openOrderEmails() {
-    let settings = await api("GET", "/api/admin/wholesale/order-emails");
+    emailHealthToken++;
+    const retained = emailDraft;
+    let settings = retained?.settings || await api("GET", "/api/admin/wholesale/order-emails");
     const view = () => html`<div class="w-sheet wp-sheet"><div class="wp-sheet-head"><div><h2 id="sheetTitle" tabindex="-1">New-order alerts</h2><p class="hint">An email for every new customer order, from ${settings.from}. Replies go to the customer.</p></div><button class="btn soft" type="button" data-sheet="close" aria-label="Close">${svg("x")}</button></div>
       ${settings.sending ? "" : html`<p class="err">Email isn’t set up on this site yet, so nothing will be sent.</p>`}
-      <form id="wOrderEmailsForm" class="w-order-emails" novalidate><div class="checks"><label><input id="wOrderEmailsOn" type="checkbox" ${settings.enabled ? raw("checked") : ""}>Email new orders</label></div>
-      <label class="field"><span class="fl">Send to</span><textarea id="wOrderEmailsTo" rows="3" autocapitalize="none" spellcheck="false" aria-describedby="wOrderEmailsHint">${settings.to.join("\n")}</textarea></label><p class="hint" id="wOrderEmailsHint">One address per line, up to 5.</p>
-      <h3>Customers</h3><div class="checks"><label><input id="wConfirmCustomers" type="checkbox" ${settings.confirmCustomers !== false ? raw("checked") : ""}>Email customers about their orders</label></div>
+      <form id="wOrderEmailsForm" class="w-order-emails" novalidate><div class="checks"><label><input id="wOrderEmailsOn" type="checkbox" ${(retained?.enabled ?? settings.enabled) ? raw("checked") : ""}>Email new orders</label></div>
+      <label class="field"><span class="fl">Send to</span><textarea id="wOrderEmailsTo" rows="3" autocapitalize="none" spellcheck="false" aria-describedby="wOrderEmailsHint">${retained?.toText ?? settings.to.join("\n")}</textarea></label><p class="hint" id="wOrderEmailsHint">One address per line, up to 5.</p>
+      <h3>Customers</h3><div class="checks"><label><input id="wConfirmCustomers" type="checkbox" ${(retained?.confirmCustomers ?? settings.confirmCustomers !== false) ? raw("checked") : ""}>Email customers about their orders</label></div>
       <p class="hint">Two emails to the business’s email address. When they place an order: a confirmation with their bags, delivery or collection, totals (not for businesses with hidden prices) and payment terms. When it’s marked dispatched: that it’s been shipped (with the tracking link, if added) or collected from the Roastery. Replies come to the first address above.</p>
       <p class="err" id="wOrderEmailsErr" role="alert" hidden></p></form>
       <div class="row w-actions"><button class="btn soft" type="button" data-sheet="test" ${settings.sending ? "" : raw("disabled")}>Send a test email</button><button class="btn" type="button" data-sheet="save">Save</button></div>
       <h3>Slack</h3><p class="hint" id="wSlackState">${settings.slack ? "Each new order is posted to the orders channel: straight away from 07:45 to 16:45 (Sunday 10:00 to 15:30), otherwise at 07:50 (Sunday 10:00)." : "Not set up: add the SLACK_ORDERS_WEBHOOK_URL secret in Cloudflare (README-deploy.md)."}</p>
       <div class="row w-actions"><button class="btn soft" type="button" data-sheet="slack-test" ${settings.slack ? "" : raw("disabled")}>Send a test to Slack</button></div></div>`;
-    const deliveryView = () => html`<section class="w-order-section" aria-label="Notification delivery"><h3>Notification delivery</h3>${["email", "slack"].map(channel => { const counts = settings.delivery?.[channel] || {pending:0,failed:0,unknown:0}; return html`<p id="wDelivery-${channel}" class="hint">${channel === "email" ? "Dispatch emails" : "Slack posts"}: ${counts.pending} waiting · ${counts.failed} retrying or failed · ${counts.unknown} need review</p><div class="toolbar">${counts.failed ? html`<button class="btn sm soft" type="button" data-sheet="retry-${channel}">Retry failed ${channel === "email" ? "emails" : "posts"}</button>` : ""}${counts.unknown ? html`<button class="btn sm soft" type="button" data-sheet="review-${channel}">Review uncertain ${channel === "email" ? "emails" : "posts"}</button>` : ""}</div>`; })}<div id="wLegacyDispatch">${(settings.delivery?.legacyDispatch || []).map(row => html`<button class="btn sm soft" type="button" data-sheet="review-legacy" data-id="${row.id}">Review previous failed dispatch: ${row.business}</button>`)}</div><div id="wRetryConfirm" class="w-order-feedback" hidden><p>Check whether these notifications already arrived. Retrying an uncertain delivery may send a duplicate.</p><div class="toolbar"><button class="btn sm" type="button" data-sheet="retry-reviewed">Retry after checking</button><button class="btn sm soft" type="button" data-sheet="retry-cancel">Cancel</button></div></div></section>`;
+    const deliveryView = () => html`<section class="w-order-section" aria-label="Notification delivery"><h3>Notification delivery</h3><p class="hint">Provider acceptance is separate from delivery and inbox placement.</p><button class="btn sm soft" type="button" data-sheet="email-health">Email health and setup</button>${["email", "slack"].map(channel => { const counts = settings.delivery?.[channel] || {pending:0,failed:0,unknown:0}; return html`<p id="wDelivery-${channel}" class="hint">${channel === "email" ? "Dispatch emails" : "Slack posts"}: ${counts.pending} waiting · ${counts.failed} retrying or failed · ${counts.unknown} need review</p><div class="toolbar">${counts.failed ? html`<button class="btn sm soft" type="button" data-sheet="retry-${channel}">Retry failed ${channel === "email" ? "emails" : "posts"}</button>` : ""}${counts.unknown ? html`<button class="btn sm soft" type="button" data-sheet="review-${channel}">Review uncertain ${channel === "email" ? "emails" : "posts"}</button>` : ""}</div>`; })}<div id="wLegacyDispatch">${(settings.delivery?.legacyDispatch || []).map(row => html`<button class="btn sm soft" type="button" data-sheet="review-legacy" data-id="${row.id}">Review previous failed dispatch: ${row.business}</button>`)}</div><div id="wRetryConfirm" class="w-order-feedback" hidden><p>Check whether these notifications already arrived. Retrying an uncertain delivery may send a duplicate.</p><div class="toolbar"><button class="btn sm" type="button" data-sheet="retry-reviewed">Retry after checking</button><button class="btn sm soft" type="button" data-sheet="retry-cancel">Cancel</button></div></div></section>`;
     let reviewedChannel = null, reviewedOrder = null, retrying = false;
     const fail = (error) => { const box = $("#wOrderEmailsErr"); if (box) { box.textContent = error.message; box.hidden = false; } };
     openSheet(view(), async (action, button) => {
       if (action === "close") { closeSheet(); return; }
       $("#wOrderEmailsErr").hidden = true;
+      if (action === "email-health") { emailDraft = {settings,enabled:$("#wOrderEmailsOn").checked,toText:$("#wOrderEmailsTo").value,confirmCustomers:$("#wConfirmCustomers").checked}; try { await openEmailHealth(); } catch(error) { fail(error); } return; }
       if (action === "retry-cancel") { reviewedChannel = null; $("#wRetryConfirm").hidden = true; return; }
       if (action.startsWith("review-")) { reviewedChannel = action.slice(7); reviewedOrder = button?.dataset.id || null; $("#wRetryConfirm").hidden = false; $("#wRetryConfirm").scrollIntoView({ block: "nearest" }); return; }
       if (action.startsWith("retry-") && action !== "retry-cancel") {
@@ -192,7 +195,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
       }
       if (action === "save") {
         const to = $("#wOrderEmailsTo").value.split(/[\s,;]+/).map((value) => value.trim()).filter(Boolean);
-        try { settings = await api("PUT", "/api/admin/wholesale/order-emails", { ifVersion: settings.version, enabled: $("#wOrderEmailsOn").checked, to, confirmCustomers: $("#wConfirmCustomers").checked }); closeSheet(); toast(settings.enabled ? "Order emails saved" : "Order emails switched off"); }
+        try { settings = await api("PUT", "/api/admin/wholesale/order-emails", { ifVersion: settings.version, enabled: $("#wOrderEmailsOn").checked, to, confirmCustomers: $("#wConfirmCustomers").checked }); emailDraft = null; closeSheet(); toast(settings.enabled ? "Order emails saved" : "Order emails switched off"); }
         catch (error) { if (error.code === "conflict") { settings = await api("GET", "/api/admin/wholesale/order-emails"); } fail(error); }
       }
       if (action === "slack-test") {
@@ -205,6 +208,31 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
       }
     });
     const deliveryHost = document.createElement("div"); put(deliveryHost, deliveryView()); $("#sheet .w-sheet").append(deliveryHost);
+  }
+  async function openEmailHealth(existing) {
+    const current = sequence, token = ++emailHealthToken, origin = $("#sheet .w-sheet");
+    let health = existing || await api("GET", "/api/admin/wholesale/order-emails/delivery");
+    if (current !== sequence || token !== emailHealthToken || (origin && !origin.isConnected)) return;
+    const labels = {accepted:"Accepted by provider",delivered:"Delivered to mail server",delayed:"Delivery delayed",bounced:"Bounced",complained:"Marked as spam",failed:"Delivery failed",suppressed:"Suppressed"};
+    const code = value => html`<code class="w-email-code">${value}</code>`;
+    const view = () => html`<div class="w-sheet w-email-health"><div class="wp-sheet-head"><div><button class="btn sm soft" type="button" data-sheet="email-back">Back to order alerts</button><h2 id="sheetTitle" tabindex="-1">Email health</h2><p class="hint">Delivery feedback and sender authentication for wholesale and staff emails.</p></div><button class="btn soft" type="button" data-sheet="close" aria-label="Close">${svg("x")}</button></div>
+      <section><h3>Delivery feedback</h3><p class="hint" id="wEmailWebhook">${health.webhookConfigured ? health.lastWebhookAt ? `Signed feedback last received ${date(health.lastWebhookAt)}.` : "Signing secret configured. Waiting for the first verified event." : "Not connected. Complete the Resend webhook setup below to receive delivery feedback."}</p><p class="hint">Delivered means the recipient’s mail server accepted it. The inbox or spam folder is decided by their provider.</p><button class="btn sm soft" type="button" data-sheet="email-refresh">Refresh feedback</button>
+      <div class="w-email-messages" id="wEmailMessages">${health.messages.length ? health.messages.map(message=>html`<article><b>${message.name || message.recipient}</b><span>${message.recipient}</span><span>${message.subject}</span><span class="hint">${message.stream === "wholesale" ? "Wholesale" : "Staff rota"} · ${date(message.acceptedAt)}</span><strong>${labels[message.status] || "Awaiting feedback"}</strong>${message.detail ? html`<span class="hint">${message.detail}</span>` : ""}</article>`) : html`<p class="hint">No sending records yet. New messages appear here; historical delivery is not inferred.</p>`}</div></section>
+      <section><h3>Suppressed addresses</h3><p class="hint">Further sends to these addresses are blocked. Correct the address or resolve the issue in Resend; only verified provider feedback removes the block.</p>${health.suppressed.length ? health.suppressed.map(row=>html`<p class="hint">${row.email} · ${row.source}</p>`) : html`<p class="hint">No verified suppressions recorded.</p>`}</section>
+      <section><h3>Sender authentication</h3><p class="hint">${health.setup.senders.join(" · ")}</p><p class="hint">DMARC reports go to ${health.setup.reportTo || "a configured monitored inbox"}. Start with monitoring; tighten the policy after all legitimate sending passes alignment.</p><button class="btn sm soft" type="button" data-sheet="email-dns">Check published DNS</button><p class="hint" id="wEmailDns" role="status">DNS has not been checked in this window.</p>
+      ${health.setup.records.map((record,index)=>html`<div class="w-email-record"><b>${record.type} record</b>${code(record.name)}${code(record.value)}<button class="btn sm soft" type="button" data-sheet="email-copy-record" data-id="${index}">Copy record</button></div>`)}</section>
+      <section><h3>Connect Resend feedback</h3><p class="hint">In Resend → Webhooks, add this endpoint and subscribe to delivery, bounce, complaint, failure and suppression events:</p>${code(health.setup.webhookUrl)}<button class="btn sm soft" type="button" data-sheet="email-copy-url">Copy webhook URL</button><p class="hint">Save Resend’s signing secret in Cloudflare Worker → Settings → Variables and Secrets as ${health.setup.webhookSecretName}. The secret is never displayed here.</p><p class="hint">In Resend’s sending-domain settings, keep open and click tracking disabled for operational emails. Public DNS records alone cannot prove a received message passed SPF, DKIM and DMARC; check its original headers.</p><p class="hint">DNS records and provider settings require configuration in their respective dashboards. This window checks DNS without changing it.</p></section><p class="err" id="wEmailHealthError" hidden role="alert"></p></div>`;
+    openSheet(view(), async(action,button)=>{
+      const error = $("#wEmailHealthError"); if (error) error.hidden=true;
+      try {
+        if (action === "email-back") { await openOrderEmails(); return; }
+        if (action === "email-refresh") { const next=await api("GET","/api/admin/wholesale/order-emails/delivery");if(current===sequence && token===emailHealthToken && panel.isConnected)await openEmailHealth(next);return; }
+        if (action === "email-dns") { const result=await api("GET","/api/admin/wholesale/order-emails/delivery/dns");const target=panel.querySelector("#wEmailDns");if(target && panel.isConnected)target.textContent=result.domains.map(row=>`${row.domain}: DMARC ${row.dmarc}; Resend DKIM ${row.dkim}; bounce-domain SPF ${row.bounceSpf}.`).join(" ");return; }
+        if (action === "email-copy-url") { await navigator.clipboard.writeText(health.setup.webhookUrl);toast("Webhook URL copied");return; }
+        if (action === "email-copy-record") { const record=health.setup.records[Number(button.dataset.id)];if(record){await navigator.clipboard.writeText(`${record.name}\n${record.type}\n${record.value}`);toast("DNS record copied");} }
+      } catch(e) { if(error?.isConnected){error.textContent=e.message;error.hidden=false;} }
+    });
+    const panel = $("#sheet .w-email-health");
   }
   // The ordering page's announcement bar: a heading, a message, Information or Important, optional dates, on or off.
   async function openAnnouncement() {
@@ -1073,7 +1101,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     drawPhotos();
   }
   return {
-    clear() { sequence++; data = null; batch = null; picked.clear(); picking = false; clearTimeout(timer); },
+    clear() { sequence++; emailHealthToken++; data = null; emailDraft = null; batch = null; picked.clear(); picking = false; clearTimeout(timer); },
     view,
     navigation,
     syncNavigation,

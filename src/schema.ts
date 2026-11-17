@@ -311,6 +311,17 @@ const MIGRATIONS: Migration[] = [
       env.DB.prepare("CREATE INDEX IF NOT EXISTS slack_order_delivery_lease ON slack_order_delivery(state,lease_until)"),
     ]);
   } },
+  { id: 31, name: "Email delivery feedback and suppression", run: async env => {
+    await env.DB.batch([
+      env.DB.prepare("CREATE TABLE IF NOT EXISTS email_delivery_messages (id TEXT PRIMARY KEY,provider_id TEXT,recipient TEXT NOT NULL,recipient_name TEXT NOT NULL,subject TEXT NOT NULL,stream TEXT NOT NULL,about TEXT NOT NULL,accepted_at INTEGER NOT NULL)"),
+      env.DB.prepare("CREATE UNIQUE INDEX IF NOT EXISTS email_delivery_provider ON email_delivery_messages(provider_id) WHERE provider_id IS NOT NULL"),
+      env.DB.prepare("CREATE INDEX IF NOT EXISTS email_delivery_recent ON email_delivery_messages(accepted_at DESC)"),
+      env.DB.prepare("CREATE INDEX IF NOT EXISTS email_delivery_recipient ON email_delivery_messages(recipient)"),
+      env.DB.prepare("CREATE TABLE IF NOT EXISTS email_delivery_events (id TEXT PRIMARY KEY,provider_id TEXT,type TEXT NOT NULL,event_at INTEGER NOT NULL,received_at INTEGER NOT NULL,recipients TEXT NOT NULL,reason TEXT NOT NULL,ingest_id TEXT NOT NULL)"),
+      env.DB.prepare("CREATE INDEX IF NOT EXISTS email_delivery_event_message ON email_delivery_events(provider_id,type,event_at)"),
+      env.DB.prepare("CREATE TABLE IF NOT EXISTS email_suppressions (email TEXT PRIMARY KEY,active INTEGER NOT NULL,source TEXT NOT NULL,event_at INTEGER NOT NULL,event_id TEXT NOT NULL)"),
+    ]);
+  } },
 ];
 
 async function migrate(env: Env): Promise<void> {

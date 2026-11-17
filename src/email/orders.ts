@@ -5,6 +5,9 @@
 import { audit } from "../audit";
 import { ApiError, Env, invalid, json, readJson } from "../http";
 import { object, get } from "../wholesaleStore";
+import { emailSetup, emailDns } from "./health";
+import { emailDeliveryStatus } from "./delivery";
+import { orderSender } from "./sender";
 import { notificationStatus } from "../notificationStatus";
 import { deliverDispatchEmails, retryDispatchEmails, dispatchEvent } from "./outbox";
 import { cleanEmail, emailReady, send, type Outgoing } from "./send";
@@ -12,7 +15,7 @@ import { esc } from "./templates";
 import { sendSlackTest, slackReady, retrySlackPosts, deliverSlackPosts } from "../slackOrders";
 
 export const DEFAULT_ORDER_EMAIL = "sales@strangerscoffee.com";
-const FROM = (env: Env) => env.ORDER_EMAIL_FROM || "Strangers Coffee Orders <orders@staffstrangerscoffee.com>";
+const FROM = orderSender;
 const MAX_RECIPIENTS = 5;
 
 /** `confirmCustomers`: also email each customer a confirmation of their own order (absent = on). */
@@ -304,6 +307,8 @@ export async function notifyCustomerChange(env: Env, ctx: ExecutionContext | und
 
 /** Admin: GET/PUT order-emails ({ifVersion, enabled, to}) and POST order-emails/test. */
 export async function handleOrderEmailsAdmin(req: Request, env: Env, route: string, actor: string, diaryBase: string, ctx?: ExecutionContext): Promise<Response | null> {
+  if (route === "order-emails/delivery/dns" && req.method === "GET") return json(await emailDns(env,req.url));
+  if (route === "order-emails/delivery" && req.method === "GET") return json({...await emailDeliveryStatus(env),setup:emailSetup(env,req.url)});
   if (route === "order-emails" && req.method === "GET") return json({ ...await orderEmailSettings(env), delivery: await notificationStatus(env) });
   if (route === "order-emails/legacy-retry" && req.method === "POST") {
     const body = object(await readJson(req, 2048));

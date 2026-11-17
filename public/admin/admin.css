@@ -640,3 +640,6 @@ button:focus-visible,a:focus-visible,summary:focus-visible,input:focus-visible,s
 .w-ann-preview.important{border-color:color-mix(in srgb,var(--warn) 55%,transparent);background:var(--warn-bg)}
 .w-ann-preview p{margin:0;white-space:pre-line;line-height:1.45;overflow-wrap:anywhere}
 .w-ann-preview strong[hidden]{display:none}
+
+/* Email feedback contains only escaped metadata; long addresses and DNS values stay within the sheet. */
+.w-email-health{min-width:0;display:grid;gap:18px;overflow-wrap:anywhere}.w-email-health section{min-width:0;display:grid;gap:10px;border-top:1px solid var(--line);padding-top:14px}.w-email-health section h3,.w-email-health section p{margin:0}.w-email-code{display:block;min-width:0;max-width:100%;white-space:pre-wrap;overflow-wrap:anywhere;padding:10px 12px;border-radius:12px;background:var(--sunk);font-size:12px}.w-email-record,.w-email-messages article{min-width:0;display:grid;gap:6px;padding:12px;border:1px solid var(--line);border-radius:14px;overflow-wrap:anywhere}.w-email-messages{display:grid;gap:10px}.w-email-messages span{font-size:13px}.w-email-health .btn{min-width:0;max-width:100%;white-space:normal;overflow-wrap:anywhere}

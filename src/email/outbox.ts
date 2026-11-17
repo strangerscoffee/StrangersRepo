@@ -46,7 +46,7 @@ export async function deliverDispatchEmails(env: Env, eventKey?: string) {
       await env.DB.prepare("UPDATE wholesale_email_outbox SET state='sent',sent_at=?,lease_until=NULL,claim_token=NULL,uncertain=0,last_error=NULL WHERE event_key=? AND claim_token=?")
         .bind(Date.now(), row.event_key, token).run();
     } else {
-      const failed = row.attempts + 1 >= MAX_ATTEMPTS, uncertain = !!outcome.uncertain || !!row.uncertain;
+      const failed = !!outcome.permanent || row.attempts + 1 >= MAX_ATTEMPTS, uncertain = !!outcome.uncertain || !!row.uncertain;
       await env.DB.prepare("UPDATE wholesale_email_outbox SET state=?,next_attempt_at=?,lease_until=NULL,claim_token=NULL,uncertain=?,last_error=? WHERE event_key=? AND claim_token=?")
         .bind(failed ? (uncertain ? "unknown" : "failed") : "retry", Date.now() + Math.min(3600000, 60000 * 2 ** row.attempts), uncertain ? 1 : 0, outcome.status === "limit" ? "Daily email limit reached." : outcome.status === "off" ? "Email is not configured." : "Provider delivery was not confirmed.", row.event_key, token).run();
     }

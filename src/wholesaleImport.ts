@@ -1,3 +1,4 @@
+import { orderSender } from "./email/sender";
 // Bringing QuickBooks customers into Wholesale, and inviting them to order online.
 //
 // Import (Admin → Wholesale → Customers → Import from QuickBooks): the customer list exported from QuickBooks is read
@@ -114,7 +115,7 @@ export async function inviteCustomer(env: Env, customerId: string, actor: string
     env.DB.prepare("INSERT INTO wholesale_invites (hash, customer_id, email, created_at, expires_at, used_at, created_by) VALUES (?, ?, ?, ?, ?, NULL, ?)").bind(hash, customerId, email, now, now + INVITE_MS, actor),
   ]);
   const link = `${signinUrl}${signinUrl.includes("?") ? "&" : "?"}invite=${token}`;
-  const result = await send(env, { to: { id: "customer", name: customer.business, email, email_prefs: "{}", active: 1 }, kind: "order", mail: inviteEmail(customer.business, customer.contact || "", link), about: `wholesale invite to ${customer.business}`, from: env.ORDER_EMAIL_FROM || "Strangers Coffee Orders <orders@staffstrangerscoffee.com>", replyTo });
+  const result = await send(env, { to: { id: "customer", name: customer.business, email, email_prefs: "{}", active: 1 }, kind: "order", mail: inviteEmail(customer.business, customer.contact || "", link), about: `wholesale invite to ${customer.business}`, from: orderSender(env), replyTo });
   if (result !== "sent") await env.DB.prepare("DELETE FROM wholesale_invites WHERE hash = ?").bind(hash).run();
   else await audit(env, "wholesale_invite", actor, `${actor} invited ${customer.business} to order online.`);
   return result;

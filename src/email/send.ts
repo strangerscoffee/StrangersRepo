@@ -2,6 +2,8 @@
 // address and which emails they want, the links to change that or unsubscribe, a daily limit, and a line in the
 // admin section's activity for each one sent or refused. With no RESEND_API_KEY (the host adds it as a secret in
 // Cloudflare), nothing is sent and the rota works as before.
+import { recordAccepted, recipientSuppressed } from "./delivery";
+export { cleanEmail } from "./address";
 import { audit } from "../audit";
 import { readToken, signToken } from "../auth";
 import { Env, invalid } from "../http";
@@ -58,14 +60,6 @@ export const emailReady = (env: Env) => !!env.RESEND_API_KEY;
 const FROM = (env: Env) => env.EMAIL_FROM || "Strangers Rota <rota@staffstrangerscoffee.com>";
 const DAILY = (env: Env) => Math.max(1, Number(env.EMAIL_DAILY_LIMIT) || 100);
 
-const EMAIL_RE = /^[^\s@<>()",;:]+@[^\s@<>()",;:]+\.[A-Za-z]{2,}$/;
-/** A cleaned email address, "" to remove it, or null if it isn't one. */
-export function cleanEmail(v: unknown): string | null {
-  if (v === null || v === "") return "";
-  if (typeof v !== "string") return null;
-  const s = v.trim().toLowerCase();
-  return s === "" ? "" : s.length <= 254 && EMAIL_RE.test(s) ? s : null;
-}
 
 export interface Recipient { id: string; name: string; email: string | null; email_prefs: string; active: number }
 
@@ -96,10 +90,14 @@ export interface Outgoing {
 }
 
 /** Sends one email (never throws): "sent", "off" (no API key), "limit" (the day's allowance is used) or "failed". */
-export async function sendOutcome(env: Env, o: Outgoing, idempotencyKey?: string): Promise<{ status: "sent" | "off" | "limit" | "failed"; uncertain?: boolean }> {
+export async function sendOutcome(env: Env, o: Outgoing, idempotencyKey?: string): Promise<{ status: "sent" | "off" | "limit" | "failed"; uncertain?: boolean; permanent?: boolean }> {
   if (!emailReady(env)) return { status: "off" };
   let started = false;
   try {
+    if (await recipientSuppressed(env,o.to.email)) {
+      await audit(env,"email_failed",null,`Email to ${o.to.name} is suppressed after a delivery problem. Review Email health in Admin.`);
+      return {status:"failed",permanent:true};
+    }
     const since = Date.now() - 864e5;
     const n = await env.DB.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE kind = 'email_sent' AND at > ?").bind(since).first<{ n: number }>();
     if ((n?.n ?? 0) >= DAILY(env)) {
@@ -125,6 +123,8 @@ export async function sendOutcome(env: Env, o: Outgoing, idempotencyKey?: string
       await audit(env, "email_failed", null, `Couldn't email ${o.to.name} (${o.about}): Resend said ${res.status}${why ? ` ${why}` : ""}`);
       return { status: "failed" };
     }
+    const acknowledged = await res.json().catch(()=>null) as {id?:unknown}|null;
+    await recordAccepted(env,o,acknowledged?.id,idempotencyKey).catch(()=>audit(env,"email_tracking_failed",null,"An accepted email could not be recorded for delivery feedback."));
     await audit(env, "email_sent", null, `Emailed ${o.to.name}: ${o.about}`);
     return { status: "sent" };
   } catch (e) {

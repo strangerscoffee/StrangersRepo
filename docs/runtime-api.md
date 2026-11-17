@@ -340,3 +340,11 @@ Staff/admin batch actions retain the original reviewed versions; a live refresh 
 Binary PDF and catalogue photo requests enforce their existing limits while streaming, including omitted or inaccurate Content-Length. Oversized bodies are cancelled before KV storage.
 
 Admin static JS/CSS and shared helper code can load without a session so cached pages can verify identity. These routes return code with correct MIME/cache headers, never sign-in HTML. Admin page/data/image authorization remains unchanged. The dependency bootstrap preserves source fingerprints, retries a failed network resource once and stops after a missing dependency. Persistent CSS/JS failures remain visible in error reporting.
+
+## Email delivery feedback
+
+`GET /api/admin/wholesale/order-emails/delivery` returns at most 50 accepted message metadata rows, derived delivery states, at most 50 active suppressions, feedback readiness and public setup instructions. `GET .../delivery/dns` performs read-only DNS checks for configured sender domains using a fixed resolver and bounded responses/timeouts; it is admin-only. No key or email body is returned.
+
+`POST /api/email/resend-webhook` is available on Admin's host (local dev: the local host). It requires RESEND_WEBHOOK_SECRET and validates the exact raw body, svix-id, svix-timestamp and v1 signatures before touching D1. Unknown event types and unrelated senders are ignored. Valid events are recorded idempotently with minimal recipient metadata; their own timestamps govern suppression state. Duplicate event IDs cannot mutate state through altered payloads. Non-POST returns 405; invalid signatures/freshness return 400; unconfigured feedback returns 503; an oversized body returns 413. No browser session substitutes for a webhook signature.
+
+A provider acknowledgement remains distinct from delivery. A delivered callback means acceptance by the recipient mail server, not proof of inbox placement. Newly recorded hard bounces/complaints/suppression block further sends and stop automatic dispatch retries, while existing provider suppression remains in force. No automatic real-world test messages are sent.

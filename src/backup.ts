@@ -49,6 +49,9 @@ export async function makeBackup(env: Env, by: string): Promise<BackupInfo> {
     { key: "history.imports", sql: "SELECT * FROM sales_history_imports" },
     { key: "history.products", sql: "SELECT * FROM sales_history_products" },
     { key: "history.rows", sql: "SELECT * FROM sales_history ORDER BY date, id" },
+    { key: "email.messages", sql: "SELECT * FROM email_delivery_messages ORDER BY accepted_at,id" },
+    { key: "email.events", sql: "SELECT id,provider_id,type,event_at,received_at,recipients,reason,ingest_id FROM email_delivery_events ORDER BY event_at,id" },
+    { key: "email.suppressions", sql: "SELECT * FROM email_suppressions ORDER BY email" },
     { key: "dispatchOutbox", sql: "SELECT event_key,order_id,payload,CASE WHEN state='sent' THEN 'sent' ELSE 'unknown' END AS state,attempts,created_at,next_attempt_at,attempted_at,first_attempt_at,NULL AS lease_until,NULL AS claim_token,CASE WHEN state='sent' THEN 0 ELSE 1 END AS uncertain,sent_at,last_error FROM wholesale_email_outbox ORDER BY created_at,event_key" },
     ...["rota_shifts", "rota_weeks", "rota_sites", "rota_people", "rota_time_off", "rota_requests", "rota_leave_state", "rota_leave_settings", "rota_leave_allowances", "rota_leave_days", "rota_leave_blocks", "rota_leave_events", "rota_sickness"].map(t => ({ key: "rota:" + t, sql: `SELECT * FROM ${t}` })),
   ];
@@ -98,6 +101,7 @@ export async function makeBackup(env: Env, by: string): Promise<BackupInfo> {
     wholesaleAnnouncement: rows("announcement"),
     wholesaleTabs: rows("tabs"),
     wholesaleEmailOutbox: rows("dispatchOutbox"),
+    emailDelivery: { messages: rows("email.messages"), events: rows("email.events"), suppressions: rows("email.suppressions") },
     notificationRestorePolicy: "Unsent dispatch events require delivery review after restore; active leases are not restored.",
     salesHistory: {
       settings: rows("history.settings"),

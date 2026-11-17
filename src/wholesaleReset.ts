@@ -1,3 +1,4 @@
+import { orderSender } from "./email/sender";
 // "Forgotten your password?" for wholesale customers (the customer sign-in page).
 //
 // A customer types their username or their business's email address. If it matches an approved, active sign-in, a
@@ -91,7 +92,7 @@ async function sendReset(env: Env, m: Match, signinUrl: string, replyTo: string)
     env.DB.prepare("INSERT INTO wholesale_resets (hash, account_id, email, created_at, expires_at, used_at) VALUES (?, ?, ?, ?, ?, NULL)").bind(hash, m.id, m.email, now, now + RESET_MS),
   ]);
   const link = `${signinUrl}${signinUrl.includes("?") ? "&" : "?"}reset=${token}`;
-  const result = await send(env, { to: { id: "customer", name: m.business, email: m.email, email_prefs: "{}", active: 1 }, kind: "order", mail: resetEmail(m.business, m.contact, m.username, link), about: `wholesale password reset for ${m.business}`, from: env.ORDER_EMAIL_FROM || "Strangers Coffee Orders <orders@staffstrangerscoffee.com>", replyTo });
+  const result = await send(env, { to: { id: "customer", name: m.business, email: m.email, email_prefs: "{}", active: 1 }, kind: "order", mail: resetEmail(m.business, m.contact, m.username, link), about: `wholesale password reset for ${m.business}`, from: orderSender(env), replyTo });
   if (result !== "sent") await env.DB.prepare("DELETE FROM wholesale_resets WHERE hash = ?").bind(hash).run();
   else await audit(env, "wholesale_reset_sent", m.username, `A password reset link was emailed for wholesale sign-in ${m.username} (${m.business}).`);
 }
