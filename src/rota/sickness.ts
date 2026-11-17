@@ -19,31 +19,8 @@ const BACK_DAYS = 28, AHEAD_DAYS = 14, MAX_SPAN = 28;
 type ShiftRow = { id: string; day: string; site: string; start: string; end: string; break_mins: number; actual_start: string | null; actual_end: string | null; actual_break: number | null; adjust_note: string | null; adjusted_by: string | null; adjusted_at: number | null };
 type Change = { shiftId: string; day: string; site: string; start: string; end: string; hoursBefore: number; hoursAfter: number; set: { start: string; end: string; breakMins: number }; before: { actual_start: string | null; actual_end: string | null; actual_break: number | null; adjust_note: string | null; adjusted_by: string | null; adjusted_at: number | null } };
 
-/* ---------- the Bradford Factor: S² × D over the last 52 weeks ---------- */
-// S is the number of separate spells (records on touching or overlapping days count as one), D the days lost (a day off
-// counts 1 a day, going home early half a day). The trigger points are the ones most UK employers use; the action is the
-// usual next step, to be applied with judgement and the company's own absence policy.
-export const BRADFORD_BANDS = [
-  { min: 0, max: 49, key: "none", label: "No concern", action: "No action. Hold a return-to-work chat after each absence." },
-  { min: 50, max: 124, key: "monitor", label: "Monitor", action: "Informal review: talk through the pattern and note any support needed." },
-  { min: 125, max: 399, key: "stage1", label: "Stage 1", action: "First formal absence meeting; a first written warning may be given." },
-  { min: 400, max: 649, key: "stage2", label: "Stage 2", action: "Second formal meeting; a final written warning may be given." },
-  { min: 650, max: Infinity, key: "stage3", label: "Stage 3", action: "Final review meeting; dismissal may be considered, after checking for health or disability reasons." },
-] as const;
-export const bandOf = (score: number) => BRADFORD_BANDS.find((b) => score <= b.max) || BRADFORD_BANDS[BRADFORD_BANDS.length - 1];
-export function bradford(records: { kind: string; from_day: string; to_day: string }[], today: string) {
-  const start = addDays(today, -364);
-  const inWindow = records.filter((r) => r.to_day >= start && r.from_day <= today).map((r) => ({ ...r, from: r.from_day < start ? start : r.from_day, to: r.to_day > today ? today : r.to_day })).sort((a, b) => a.from.localeCompare(b.from));
-  let spells = 0, lastTo = "", days = 0;
-  for (const r of inWindow) {
-    if (!lastTo || r.from > addDays(lastTo, 1)) spells++;
-    if (!lastTo || r.to > lastTo) lastTo = r.to;
-    days += r.kind === "early" ? 0.5 : Math.round((Date.parse(r.to) - Date.parse(r.from)) / 864e5) + 1;
-  }
-  const score = Math.round(spells * spells * days);
-  const band = bandOf(score);
-  return { spells, days, score, band: { key: band.key, label: band.label, action: band.action } };
-}
+import { BRADFORD_BANDS, EXCLUDE_REASONS, bradford, type SickAbsence } from "./bradford";
+export { BRADFORD_BANDS, bandOf, bradford } from "./bradford";
 
 /* ---------- what the form changes on the person's shifts ---------- */
 const hoursOf = (s: { start: string; end: string; breakMins: number }) => paidHours(s);
@@ -149,14 +126,37 @@ export async function sicknessRoutes(r: RotaRequest): Promise<Response | null> {
     const today = londonToday(), since = addDays(today, -364);
     const people = (await env.DB.prepare("SELECT id,name FROM users WHERE active=1 ORDER BY name_key").all<{ id: string; name: string }>()).results;
     const rows = (await env.DB.prepare("SELECT s.*, u.name AS name, c.name AS created_name FROM rota_sickness s JOIN users u ON u.id=s.user_id LEFT JOIN users c ON c.id=s.created_by WHERE s.status='active' ORDER BY s.from_day DESC, s.created_at DESC").all<any>()).results;
-    const view = (row: any) => ({ id: row.id, userId: row.user_id, name: row.name, kind: row.kind, from: row.from_day, to: row.to_day, leftAt: row.left_at, createdAt: row.created_at, createdBy: row.created_name || "", answers: JSON.parse(row.data), changes: preview(JSON.parse(row.amended || "[]")) });
-    const byUser = new Map<string, any[]>();
-    for (const row of rows) byUser.set(row.user_id, [...(byUser.get(row.user_id) || []), row]);
+    const view = (row: any) => ({ id: row.id, userId: row.user_id, name: row.name, kind: row.kind, from: row.from_day, to: row.to_day, leftAt: row.left_at, createdAt: row.created_at, createdBy: row.created_name || "", timeOffId: row.time_off_id, answers: JSON.parse(row.data), changes: preview(JSON.parse(row.amended || "[]")) });
+    const { absences, review } = await sickAbsences(env, today);
+    const byUser = new Map<string, typeof absences>();
+    for (const a of absences) byUser.set(a.userId, [...(byUser.get(a.userId) || []), a]);
     const employees = people.map((p) => {
       const mine = byUser.get(p.id) || [];
-      return { userId: p.id, name: p.name, ...bradford(mine, today), lastSick: mine[0]?.to_day || null, recordsThisYear: mine.filter((x) => x.to_day >= since).length };
+      const counted = mine.filter((a) => a.counted);
+      return { userId: p.id, name: p.name, ...bradford(mine.map(asRecord), today), lastSick: counted[0]?.to || mine[0]?.to || null, recordsThisYear: mine.filter((x) => x.to >= since).length, toReview: review.filter((f) => f.userId === p.id).length };
     }).sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
-    return json({ today, since, bands: BRADFORD_BANDS.map((b) => ({ ...b, max: Number.isFinite(b.max) ? b.max : null })), employees, records: rows.slice(0, 500).map(view) });
+    return json({ today, since, bands: BRADFORD_BANDS.map((b) => ({ ...b, max: Number.isFinite(b.max) ? b.max : null })), excludeReasons: EXCLUDE_REASONS, employees, absences: absences.filter((a) => a.to >= addDays(since, -365)), review, records: rows.slice(0, 500).map(view) });
+  }
+
+  // An admin leaves one absence out of the Bradford Factor (with a reason), counts it again, or marks it as the same
+  // spell as the one before. Version-checked; each change is logged with what it was before.
+  if (seg.length === 3 && seg[1] === "absence" && m === "PUT") {
+    const t = await env.DB.prepare("SELECT id,user_id,from_day,to_day FROM rota_time_off WHERE id=? AND kind='sick' AND status='approved'").bind(seg[2]).first<{ id: string; user_id: string; from_day: string; to_day: string }>();
+    if (!t) throw notFound("That sickness absence isn't there any more.");
+    const b = await r.body();
+    const cur = await env.DB.prepare("SELECT * FROM rota_bradford_review WHERE time_off_id=?").bind(t.id).first<{ excluded_reason: string | null; continues: number; version: number }>();
+    if (Number(b.ifVersion ?? -1) !== (cur?.version ?? 0)) throw conflict("This absence was changed on another device. Reload and try again.");
+    const reason = b.excluded == null || b.excluded === "" ? null : text(b.excluded, "Reason for leaving it out", 200);
+    if (b.excluded != null && b.excluded !== "" && !reason) throw invalid("Say why this absence is left out.");
+    if (typeof b.continues !== "boolean") throw invalid("Choose whether it continues the spell before.");
+    const now = Date.now(), version = (cur?.version ?? 0) + 1;
+    await env.DB.batch([
+      cur ? env.DB.prepare("UPDATE rota_bradford_review SET excluded_reason=?, continues=?, version=?, updated_at=?, updated_by=? WHERE time_off_id=? AND version=?").bind(reason, b.continues ? 1 : 0, version, now, user.id, t.id, cur.version)
+        : env.DB.prepare("INSERT INTO rota_bradford_review(time_off_id, excluded_reason, continues, version, updated_at, updated_by) VALUES(?,?,?,?,?,?)").bind(t.id, reason, b.continues ? 1 : 0, version, now, user.id),
+      event(env, t.user_id, t.id, "bradford_review", user.id, { before: { excluded: cur?.excluded_reason ?? null, continues: !!cur?.continues }, after: { excluded: reason, continues: !!b.continues }, from: t.from_day, to: t.to_day }),
+    ]);
+    await audit(env, "sickness_bradford_review", user.name, `${user.name} ${reason ? `left a sickness absence (${t.from_day}) out of the Bradford Factor: ${reason}` : `counted a sickness absence (${t.from_day}) in the Bradford Factor`}${b.continues ? ", as part of the spell before" : ""}.`);
+    return json({ ok: true, version });
   }
 
   if (seg.length === 2 && m === "DELETE") {
@@ -185,4 +185,38 @@ export async function migrateSickness(env: Env) {
     env.DB.prepare("CREATE INDEX IF NOT EXISTS rota_sickness_user ON rota_sickness(user_id, status, from_day)"),
     env.DB.prepare("CREATE UNIQUE INDEX IF NOT EXISTS rota_sickness_key ON rota_sickness(user_id, request_key)"),
   ]);
+}
+
+/* ---------- every sickness absence, where it came from, and what needs a look ---------- */
+type Absence = { id: string; userId: string; name: string; from: string; to: string; partial: boolean; source: string; formId: string | null; excluded: string | null; continues: boolean; reviewVersion: number; counted: boolean; fromTime: string | null; toTime: string | null };
+const asRecord = (a: Absence): SickAbsence => ({ id: a.id, from_day: a.from, to_day: a.to, partial: a.partial, excluded: a.excluded, continues: a.continues });
+export async function sickAbsences(env: Env, today: string) {
+  const rows = (await env.DB.prepare(`SELECT t.id, t.user_id, u.name, t.from_day, t.to_day, t.from_time, t.to_time, t.reason, s.id AS form_id, s.kind AS form_kind, r.excluded_reason, r.continues, r.version AS review_version
+    FROM rota_time_off t JOIN users u ON u.id = t.user_id LEFT JOIN rota_sickness s ON s.time_off_id = t.id AND s.status = 'active' LEFT JOIN rota_bradford_review r ON r.time_off_id = t.id
+    WHERE t.kind = 'sick' AND t.status = 'approved' AND u.active = 1 ORDER BY t.from_day DESC`).all<any>()).results;
+  const absences: Absence[] = rows.map((r) => {
+    const partial = r.from_time != null || r.form_kind === "early";
+    return { id: r.id, userId: r.user_id, name: r.name, from: r.from_day, to: r.to_day, partial, source: r.form_id ? "Sickness form" : String(r.reason || "").startsWith("Imported from WhosOff") ? "Imported from WhosOff" : "Recorded in the rota",
+      formId: r.form_id || null, excluded: r.excluded_reason || null, continues: !!r.continues, reviewVersion: r.review_version || 0, counted: !partial && !r.excluded_reason, fromTime: r.from_time, toTime: r.to_time };
+  });
+  // Flags for an admin to check, never changed automatically.
+  const review: { userId: string; name: string; ids: string[]; kind: "gap" | "clash" | "twice"; text: string }[] = [];
+  const others = (await env.DB.prepare("SELECT id, user_id, from_day, to_day, kind FROM rota_time_off WHERE status = 'approved' AND kind <> 'sick'").all<{ id: string; user_id: string; from_day: string; to_day: string; kind: string }>()).results;
+  const KIND: Record<string, string> = { annual: "holiday", unpaid: "unpaid leave", unauthorised: "an unauthorised absence" };
+  const since = addDays(today, -364 - 365);
+  const byUser = new Map<string, Absence[]>();
+  for (const a of absences) if (a.to >= since) byUser.set(a.userId, [...(byUser.get(a.userId) || []), a]);
+  for (const [userId, list] of byUser) {
+    const asc = [...list].sort((a, b) => a.from.localeCompare(b.from));
+    const counted = asc.filter((a) => a.counted);
+    for (let i = 1; i < counted.length; i++) {
+      const prev = counted[i - 1], a = counted[i], gap = Math.round((Date.parse(a.from) - Date.parse(prev.to)) / 864e5) - 1;
+      if (gap >= 1 && gap <= 3 && !a.continues) review.push({ userId, name: a.name, ids: [prev.id, a.id], kind: "gap", text: `${gap === 1 ? "One day" : `${gap} days`} between absences ending ${prev.to} and starting ${a.from}: if ${gap === 1 ? "it wasn't a working day" : "those weren't working days"}, mark them as one spell. They count as two now.` });
+    }
+    for (let i = 0; i < asc.length; i++) for (let k = i + 1; k < asc.length; k++) if (asc[k].from <= asc[i].to && !asc[i].partial && !asc[k].partial)
+      review.push({ userId, name: asc[i].name, ids: [asc[i].id, asc[k].id], kind: "twice", text: `Sickness recorded twice on ${asc[k].from}: check one isn't a duplicate (it's counted once).` });
+    for (const a of asc) for (const o of others) if (o.user_id === userId && o.from_day <= a.to && o.to_day >= a.from)
+      review.push({ userId, name: a.name, ids: [a.id], kind: "clash", text: `Off sick ${a.from === a.to ? `on ${a.from}` : `${a.from} to ${a.to}`} but also booked as ${KIND[o.kind] || o.kind} then: check which is right.` });
+  }
+  return { absences, review };
 }

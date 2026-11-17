@@ -324,6 +324,10 @@ const MIGRATIONS: Migration[] = [
   } },
   // Holiday for extra hours and reminders about holiday left to take (src/rota/leave/accrual.ts, reminders.ts).
   { id: 32, name: "Holiday reminders and contract history", run: migrateHolidayReminders },
+  // Bradford Factor review: an absence left out (with a reason) or joined to the spell before (src/rota/sickness.ts).
+  { id: 33, name: "Bradford Factor review", run: async (env) => {
+    await env.DB.prepare("CREATE TABLE IF NOT EXISTS rota_bradford_review (time_off_id TEXT PRIMARY KEY, excluded_reason TEXT, continues INTEGER NOT NULL DEFAULT 0, version INTEGER NOT NULL, updated_at INTEGER NOT NULL, updated_by TEXT NOT NULL)").run();
+  } },
 ];
 
 async function migrate(env: Env): Promise<void> {

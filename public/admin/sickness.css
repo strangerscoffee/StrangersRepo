@@ -28,3 +28,12 @@
 .sk-sheet .w-actions{flex-wrap:wrap}
 .btn.danger-fill{background:var(--bad);color:#fff}
 @media (max-width:560px){.sk-band-row{grid-template-columns:1fr;gap:4px}.sk-person .end{flex-direction:column;align-items:flex-end}}
+/* Absences in the Bradford Factor: counted, part day (not counted) or left out, always in words. */
+.sk-chip{display:inline-block;align-self:flex-start;width:fit-content;margin-top:4px;font-size:12px;font-weight:650;border-radius:99px;padding:3px 9px;background:var(--sunk);color:var(--muted)}
+.sk-chip.on{background:var(--tint);color:var(--accent)}
+.sk-review{border-radius:20px;padding:14px 16px;margin-bottom:16px}
+.sk-review .sk-h{margin-top:0}
+.sk-sheet .field{display:grid;gap:6px;margin:14px 0 0}
+.sk-sheet .field select,.sk-sheet .field input{min-height:44px;border-radius:12px;border:1px solid var(--line);background:var(--sunk);color:var(--fg);padding:8px 12px;font:inherit;max-width:100%}
+.sk-sheet .check{display:flex;gap:10px;align-items:flex-start;margin:14px 0 0;font-size:14px}
+.sk-sheet .check input{width:20px;height:20px;flex:none;margin-top:1px;accent-color:var(--accent)}

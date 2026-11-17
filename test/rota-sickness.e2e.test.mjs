@@ -128,6 +128,16 @@ test("Admin → Sickness: Bradford Factor by trigger point, a form's answers, an
     await p.locator(".sk-sheet").waitFor({ state: "detached" });
     await p.locator(".sk-person", { hasText: u.name }).filter({ hasText: "4 spells" }).waitFor();
     assert.match(await p.locator(".sk-person", { hasText: u.name }).innerText(), /64\s*Monitor/);
+    // Every absence is listed with whether it counts; an admin leaves one out (pregnancy-related), with a log.
+    await p.locator(".sk-person", { hasText: u.name }).click();
+    assert.match(await p.locator(".sk-sheet").innerText(), /When it falls:[\s\S]*Goes down to[\s\S]*clears on[\s\S]*Sickness absences[\s\S]*Counted/);
+    await p.locator('.sk-sheet [data-sheet="sk-absence"]').first().click();
+    await p.locator("#skExclude").selectOption("Pregnancy-related");
+    await shot(p, "admin-absence");
+    await p.locator('#skAbsenceForm button[type="submit"]').click();
+    await p.locator(".sk-score", { hasText: "3 × 3 × 3 =" }).waitFor();
+    assert.match(await p.locator(".sk-sheet").innerText(), /Left out · Pregnancy-related/);
+    assert.ok(await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
     assert.deepEqual(errors, []);
   } finally { await c.close(); }
 });

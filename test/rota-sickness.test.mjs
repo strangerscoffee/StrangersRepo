@@ -76,7 +76,7 @@ test("only admins read the forms and the Bradford Factor", async () => {
   assert.equal(r.status, 200, r.text);
   const alex = r.body.employees.find((e) => e.name === "Alex"), beth = r.body.employees.find((e) => e.name === "Beth");
   assert.deepEqual([alex.spells, alex.days, alex.score, alex.band.key], [1, 1, 1, "none"]);
-  assert.deepEqual([beth.spells, beth.days, beth.score], [1, 0.5, 1]);
+  assert.deepEqual([beth.spells, beth.days, beth.score, beth.partDays], [0, 0, 0, 1], "going home early (a part day) doesn't count");
   const rec = r.body.records.find((x) => x.name === "Beth");
   assert.equal(rec.answers.vomiting, true);
   assert.equal(rec.answers.declaredBy, "Beth");
@@ -94,6 +94,45 @@ test("Bradford: spells are squared, so many short absences score high", async ()
   const alex = (await call("GET", "/api/rota/sickness")).body.employees.find((e) => e.name === "Alex");
   assert.deepEqual([alex.spells, alex.days, alex.score, alex.band.key, alex.band.label], [5, 6, 150, "stage1", "Stage 1"]);
   assert.match(alex.band.action, /written warning/);
+});
+
+test("Bradford counts every sickness absence (not only forms), flags what to check and lets an admin decide", async () => {
+  // Sickness recorded in Holiday management (as imported from WhosOff): two days, then one more after a day's gap.
+  const pol = (await call("GET", "/api/rota/leave/admin")).body;
+  assert.equal((await call("PUT", "/api/rota/leave/settings", { enabled: true, yearStart: "04-01", bankHolidayPolicy: "included", limits: {}, ifVersion: pol.version })).status, 200);
+  const rec = async (from, to = from, extra = {}) => {
+    const r = await call("POST", "/api/rota/leave/requests", { userId: ids.Beth, kind: "sick", from, to, approved: true, requestKey: crypto.randomUUID(), reason: "Imported from WhosOff", ...extra });
+    assert.equal(r.status, 200, r.text); return r.body;
+  };
+  await rec(london(-90), london(-89)); await rec(london(-87));
+  // A half day: recorded, but not counted.
+  await rec(london(-30), london(-30), { portion: 0.5, fromTime: "12:30", toTime: "17:00" });
+  let r = (await call("GET", "/api/rota/sickness")).body;
+  let beth = r.employees.find((e) => e.name === "Beth");
+  assert.deepEqual([beth.spells, beth.days, beth.score, beth.partDays], [2, 3, 12, 2]);
+  assert.ok(beth.nextDrop && beth.clearsOn, "says when it falls");
+  const mine = r.absences.filter((a) => a.userId === ids.Beth);
+  assert.deepEqual(mine.map((a) => [a.source, a.partial, a.counted]).sort(), [["Imported from WhosOff", false, true], ["Imported from WhosOff", false, true], ["Imported from WhosOff", true, false], ["Sickness form", true, false]].sort());
+  // One day between the two absences: flagged as possibly one spell, not changed.
+  const gap = r.review.find((f) => f.userId === ids.Beth && f.kind === "gap");
+  assert.ok(gap, JSON.stringify(r.review));
+  assert.match(gap.text, /One day between absences/);
+  // Staff and managers can't change it; an admin marks it as one spell (version-checked), then leaves one out.
+  const later = mine.find((a) => a.from === london(-87));
+  for (const who of [BETH, MGR]) assert.equal((await call("PUT", `/api/rota/sickness/absence/${later.id}`, { excluded: null, continues: true, ifVersion: 0 }, who)).status, 403);
+  assert.equal((await call("PUT", `/api/rota/sickness/absence/${later.id}`, { excluded: null, continues: true, ifVersion: 5 })).status, 409);
+  assert.equal((await call("PUT", `/api/rota/sickness/absence/${later.id}`, { excluded: null, continues: true, ifVersion: 0 })).status, 200);
+  r = (await call("GET", "/api/rota/sickness")).body;
+  beth = r.employees.find((e) => e.name === "Beth");
+  assert.deepEqual([beth.spells, beth.days, beth.score], [1, 3, 3]);
+  assert.equal(r.review.some((f) => f.userId === ids.Beth && f.kind === "gap"), false);
+  assert.equal((await call("PUT", `/api/rota/sickness/absence/${later.id}`, { excluded: "Pregnancy-related", continues: true, ifVersion: 1 })).status, 200);
+  beth = (await call("GET", "/api/rota/sickness")).body.employees.find((e) => e.name === "Beth");
+  assert.deepEqual([beth.spells, beth.days, beth.score, beth.leftOut], [1, 2, 2, 1]);
+  // Every decision is logged with what it was before.
+  const events = (await call("GET", `/api/rota/leave/events?userId=${ids.Beth}`)).body.events.filter((e) => e.action === "bradford_review");
+  assert.equal(events.length, 2);
+  assert.deepEqual(JSON.parse(events.find((e) => JSON.parse(e.data).after.excluded).data).before, { excluded: null, continues: true });
 });
 
 test("removing a record cancels the absence and puts the hours back", async () => {
