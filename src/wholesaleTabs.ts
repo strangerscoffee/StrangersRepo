@@ -17,13 +17,29 @@ export interface TabClear { customerId: string; business: string; clearedAt: num
 const OPEN_TAB = "kind='order' AND json_extract(data,'$.preview')=0 AND json_extract(data,'$.deletedAt') IS NULL AND json_extract(data,'$.tab') IS NOT NULL AND json_extract(data,'$.tabClearedId') IS NULL";
 const counts = (o: AnyOrder) => o.status !== "Cancelled";
 
+const PACK_GRAMS: Record<string, number> = { quarter: 250, half: 500, kilo: 1000 };
+const PACK_SIZE: Record<string, string> = { quarter: "250 g", half: "500 g", kilo: "1 kg" };
+/** One order's bags, without prices: coffee, bag size, grind, decaf and how many. */
+const orderLines = (o: AnyOrder) => (Array.isArray(o.lines) ? o.lines : []).filter((l: any) => l && Number(l.quantity) > 0).map((l: any) => ({
+  title: String(l.title || l.productId || "Coffee"), size: PACK_SIZE[l.pack] || String(l.packLabel || l.pack || ""), grind: String(l.grindLabel || "Beans"), decaf: !!l.decaf,
+  bags: Number(l.quantity), grams: (PACK_GRAMS[l.pack] || 0) * Number(l.quantity),
+}));
+/** What's on a tab, itemised: the counted orders' bags added up by coffee, size, grind and decaf. */
+export function tabItems(orders: AnyOrder[]) {
+  const by = new Map<string, ReturnType<typeof orderLines>[number]>();
+  for (const o of orders.filter(counts)) for (const l of orderLines(o)) {
+    const key = [l.title, l.size, l.grind, l.decaf].join("|"), had = by.get(key);
+    if (had) { had.bags += l.bags; had.grams += l.grams; } else by.set(key, { ...l });
+  }
+  return [...by.values()].sort((a, b) => a.title.localeCompare(b.title) || b.grams / Math.max(1, b.bags) - a.grams / Math.max(1, a.bags) || a.grind.localeCompare(b.grind));
+}
 function tabOrder(o: AnyOrder, admin: boolean) {
-  return { id: o.id, version: o.version, date: o.date, createdAt: o.createdAt, status: o.status, reference: o.reference || "", packs: o.packs, grams: o.grams, ...(admin ? { pence: o.pence } : {}), addedAt: o.tab?.at, addedBy: o.tab?.auto ? "Automatically" : o.tab?.by || "", counts: counts(o) };
+  return { id: o.id, version: o.version, date: o.date, createdAt: o.createdAt, status: o.status, reference: o.reference || "", packs: o.packs, grams: o.grams, ...(admin ? { pence: o.pence } : {}), addedAt: o.tab?.at, addedBy: o.tab?.auto ? "Automatically" : o.tab?.by || "", counts: counts(o), lines: orderLines(o) };
 }
 function summarise(orders: AnyOrder[], admin: boolean) {
   const counted = orders.filter(counts);
   const grams = counted.reduce((t, o) => t + (o.grams || 0), 0), packs = counted.reduce((t, o) => t + (o.packs || 0), 0), pence = counted.reduce((t, o) => t + (o.pence || 0), 0);
-  return { grams, packs, ...(admin ? { pence } : {}), ready: grams >= TAB_GRAMS, toGo: Math.max(0, TAB_GRAMS - grams), orders: orders.sort((a, b) => a.createdAt - b.createdAt).map((o) => tabOrder(o, admin)) };
+  return { grams, packs, ...(admin ? { pence } : {}), ready: grams >= TAB_GRAMS, toGo: Math.max(0, TAB_GRAMS - grams), items: tabItems(orders), orders: orders.sort((a, b) => a.createdAt - b.createdAt).map((o) => tabOrder(o, admin)) };
 }
 
 /** Every customer's open tab (oldest order first), biggest first, plus recently cleared tabs. */
@@ -38,9 +54,21 @@ export async function listTabs(env: Env, { admin = false } = {}) {
     .sort((a, b) => Number(b.ready) - Number(a.ready) || b.grams - a.grams || a.business.localeCompare(b.business));
   const autoOnly = [...names.entries()].filter(([id, c]) => c.autoTab && !by.has(id)).map(([customerId, c]) => ({ customerId, business: c.business, autoTab: true, ...summarise([], admin) }));
   const cleared = await env.DB.prepare("SELECT id,data FROM wholesale_tabs ORDER BY cleared_at DESC LIMIT 50").all<{ id: string; data: string }>();
+  // A cleared tab keeps its orders (each marked with the clear's id), so what was on it can still be itemised.
+  const clearedOrders = new Map<string, AnyOrder[]>();
+  if (cleared.results.length) {
+    const ids = cleared.results.map((r) => r.id);
+    const rows2 = await env.DB.prepare(`SELECT id,data,version,updated_at FROM wholesale_preview WHERE kind='order' AND json_extract(data,'$.tabClearedId') IN (${ids.map(() => "?").join(",")})`).bind(...ids).all<Row>();
+    for (const row of rows2.results) { const o = decode<Record<string, any>>(row) as AnyOrder; (clearedOrders.get(o.tabClearedId) || clearedOrders.set(o.tabClearedId, []).get(o.tabClearedId)!).push(o); }
+  }
   return {
     threshold: TAB_GRAMS, open: [...open, ...autoOnly.sort((a, b) => a.business.localeCompare(b.business))],
-    cleared: cleared.results.map((row) => { const { pence, ...rest } = JSON.parse(row.data) as TabClear; return { id: row.id, ...rest, ...(admin ? { pence } : {}) }; }),
+    cleared: cleared.results.map((row) => {
+      const { pence, ...rest } = JSON.parse(row.data) as TabClear;
+      const orders = (clearedOrders.get(row.id) || []).filter((o) => rest.orderIds.includes(o.id) && !o.deletedAt).sort((a, b) => a.createdAt - b.createdAt);
+      return { id: row.id, ...rest, ...(admin ? { pence } : {}), items: tabItems(orders),
+        orders: orders.map((o) => ({ id: o.id, createdAt: o.createdAt, reference: o.reference || "", status: o.status, packs: o.packs, grams: o.grams, counts: counts(o), lines: orderLines(o) })) };
+    }),
   };
 }
 

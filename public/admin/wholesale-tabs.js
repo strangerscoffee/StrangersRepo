@@ -7,6 +7,11 @@ window.WholesaleTabs = function ({ api, html, raw, svg, put, openSheet, closeShe
   const money = (p) => Number.isFinite(p) ? (p / 100).toLocaleString("en-GB", { style: "currency", currency: "GBP" }) : "";
   const date = (ms) => new Date(ms).toLocaleDateString("en-GB", { timeZone: "Europe/London", day: "numeric", month: "short", year: "numeric" });
   const counted = (t) => t.orders.filter((o) => o.counts).length;
+  // What's on a tab, itemised by coffee, bag size and grind; a shorter version on the cards.
+  const itemText = (i) => `${i.size} · ${i.grind}${i.decaf ? " · Decaf" : ""}`;
+  const itemList = (items) => html`<ul class="w-tab-items">${items.map((i) => html`<li><span class="n">${i.bags} ×</span><span class="t"><b>${i.title}</b><span>${itemText(i)}</span></span><span class="kg">${weight(i.grams)}</span></li>`)}</ul>`;
+  const itemPeek = (items) => html`<span class="w-tab-peek">${items.slice(0, 3).map((i) => html`<span>${i.bags} × ${i.title} · ${itemText(i)}</span>`)}${items.length > 3 ? html`<span class="more">and ${items.length - 3} more</span>` : ""}</span>`;
+  const lineText = (o) => (o.lines || []).map((l) => `${l.bags} × ${l.title} ${l.size} ${l.grind}${l.decaf ? " decaf" : ""}`).join(", ");
   const bar = (t) => { const pct = Math.min(100, Math.round(t.grams / data.threshold * 100)); return html`<span class="w-tab-bar ${t.ready ? "ready" : ""}" role="progressbar" aria-valuemin="0" aria-valuemax="${data.threshold / 1000}" aria-valuenow="${t.grams / 1000}" aria-label="${weight(t.grams)} of ${weight(data.threshold)}"><span style="width:${pct}%"></span></span>`; };
 
   async function view() {
@@ -18,10 +23,11 @@ window.WholesaleTabs = function ({ api, html, raw, svg, put, openSheet, closeShe
       ${open.length ? html`<div class="w-tab-cards">${open.map((t) => html`<button class="w-tab-card ${t.ready ? "ready" : ""}" type="button" data-act="wh-tabs-open" data-id="${t.customerId}">
           <span class="w-tab-top"><b>${t.business}</b>${t.ready ? html`<span class="pill ok">${svg("ok")}Ready to clear</span>` : t.autoTab ? html`<span class="pill">Automatic</span>` : ""}</span>
           <span class="w-tab-kg"><strong>${weight(t.grams)}</strong> of ${weight(data.threshold)}</span>${bar(t)}
+          ${t.items?.length ? itemPeek(t.items) : ""}
           <span class="w-tab-meta">${t.orders.length ? `${counted(t)} ${counted(t) === 1 ? "order" : "orders"} · ${t.packs} ${t.packs === 1 ? "bag" : "bags"} · ${money(t.pence)}${t.ready ? "" : ` · ${weight(t.toGo)} to go`}` : "Nothing on the tab yet"}</span>
         </button>`)}</div>` : html`<div class="w-empty"><span class="ic mut">${svg("coffee")}</span><h3>No open tabs</h3><p>Open an order and choose Put on tab, or enable automatic tabs in a customer’s settings.</p></div>`}
       <h3 class="w-tabs-sub">Recently cleared</h3>
-      ${data.cleared.length ? html`<div class="group">${data.cleared.map((c) => html`<div class="item"><span class="tx"><b>${c.business}</b><span>Cleared ${date(c.clearedAt)} by ${c.clearedBy}</span></span><span class="end"><strong class="num">${weight(c.grams)}</strong>${Number.isFinite(c.pence) ? html`<span class="w-tab-money">${money(c.pence)}</span>` : ""}${c.early ? html`<span class="pill">Early</span>` : ""}</span></div>`)}</div>` : html`<p class="hint">No tabs cleared yet.</p>`}
+      ${data.cleared.length ? html`<div class="group">${data.cleared.map((c) => html`<button class="item w-tab-cleared" type="button" data-act="wh-tabs-cleared" data-id="${c.id}"><span class="tx"><b>${c.business}</b><span>Cleared ${date(c.clearedAt)} by ${c.clearedBy}</span></span><span class="end"><strong class="num">${weight(c.grams)}</strong>${Number.isFinite(c.pence) ? html`<span class="w-tab-money">${money(c.pence)}</span>` : ""}${c.early ? html`<span class="pill">Early</span>` : ""}</span></button>`)}</div>` : html`<p class="hint">No tabs cleared yet.</p>`}
     </section>`;
   }
 
@@ -30,8 +36,9 @@ window.WholesaleTabs = function ({ api, html, raw, svg, put, openSheet, closeShe
     if (!t) { closeSheet(); return; }
     openSheet(html`<form class="w-sheet w-tab-sheet" novalidate><div class="wp-sheet-head"><div><h2 id="sheetTitle" tabindex="-1">${t.business}</h2><p class="hint">${t.ready ? `This tab has reached ${weight(data.threshold)} and is ready to clear.` : `${weight(t.toGo)} to go before it's ready to clear. You can clear it sooner if needed.`}</p></div><button class="btn soft" type="button" data-sheet="close" aria-label="Close">${svg("x")}</button></div>
       <div class="w-tab-summary ${t.ready ? "ready" : ""}"><span class="w-tab-kg big"><strong>${weight(t.grams)}</strong> of ${weight(data.threshold)}</span>${bar(t)}<span class="w-tab-meta">${t.packs} ${t.packs === 1 ? "bag" : "bags"} · ${money(t.pence)}</span></div>
+      ${t.items?.length ? html`<h3>On the tab</h3>${itemList(t.items)}` : ""}
       <h3>Orders on the tab</h3>
-      ${t.orders.length ? html`<div class="group">${t.orders.map((o) => html`<div class="item ${o.counts ? "" : "w-tab-not-counted"}"><span class="tx"><b>${date(o.createdAt)}${o.reference ? ` · ${o.reference}` : ""}</b><span>${o.packs} ${o.packs === 1 ? "bag" : "bags"} · ${weight(o.grams)} · ${o.status}${o.counts ? "" : " · cancelled, not counted"}</span><span>${o.addedBy === "Automatically" ? "Added automatically" : o.addedBy ? `Added by ${o.addedBy}` : ""}</span></span><span class="end"><strong class="num">${money(o.pence)}</strong></span></div>`)}</div>` : html`<p class="hint">Nothing on the tab yet.</p>`}
+      ${t.orders.length ? html`<div class="group">${t.orders.map((o) => html`<div class="item ${o.counts ? "" : "w-tab-not-counted"}"><span class="tx"><b>${date(o.createdAt)}${o.reference ? ` · ${o.reference}` : ""}</b><span>${o.packs} ${o.packs === 1 ? "bag" : "bags"} · ${weight(o.grams)} · ${o.status}${o.counts ? "" : " · cancelled, not counted"}</span>${o.lines?.length ? html`<span>${lineText(o)}</span>` : ""}<span>${o.addedBy === "Automatically" ? "Added automatically" : o.addedBy ? `Added by ${o.addedBy}` : ""}</span></span><span class="end"><strong class="num">${money(o.pence)}</strong></span></div>`)}</div>` : html`<p class="hint">Nothing on the tab yet.</p>`}
       <p class="err" id="wErr" role="alert">${error}</p>
       <div class="row w-actions">${!t.orders.length ? html`<button class="btn soft" type="button" data-sheet="close">Done</button>`
         : confirm ? html`<span class="w-tab-confirm">${t.ready ? `Clear ${weight(t.grams)}?` : `Clear early at ${weight(t.grams)}?`}</span><button class="btn soft" type="button" data-sheet="tab-cancel">Cancel</button><button class="btn" type="submit">Clear tab</button>`
@@ -53,5 +60,18 @@ window.WholesaleTabs = function ({ api, html, raw, svg, put, openSheet, closeShe
     document.querySelector("#sheetTitle")?.focus({ preventScroll: true });
   }
 
-  return { view, async act(name, id) { if (name === "wh-tabs-open") openTab(id); } };
+  // A cleared tab, read only: what was on it, the orders and the total.
+  function openCleared(id) {
+    const c = data?.cleared.find((x) => x.id === id);
+    if (!c) return;
+    openSheet(html`<div class="w-sheet w-tab-sheet"><div class="wp-sheet-head"><div><h2 id="sheetTitle" tabindex="-1">${c.business}</h2><p class="hint">Cleared ${date(c.clearedAt)} by ${c.clearedBy}${c.early ? `, before it reached ${weight(data.threshold)}` : ""}.</p></div><button class="btn soft" type="button" data-sheet="close">Close</button></div>
+      <div class="w-tab-summary"><span class="w-tab-kg big"><strong>${weight(c.grams)}</strong></span><span class="w-tab-meta">${c.packs} ${c.packs === 1 ? "bag" : "bags"}${Number.isFinite(c.pence) ? ` · ${money(c.pence)}` : ""}</span></div>
+      ${c.items?.length ? html`<h3>What was on the tab</h3>${itemList(c.items)}` : ""}
+      <h3>Orders on the tab</h3>
+      ${c.orders?.length ? html`<div class="group">${c.orders.map((o) => html`<div class="item ${o.counts ? "" : "w-tab-not-counted"}"><span class="tx"><b>${date(o.createdAt)}${o.reference ? ` · ${o.reference}` : ""}</b><span>${o.packs} ${o.packs === 1 ? "bag" : "bags"} · ${weight(o.grams)} · ${o.status}${o.counts ? "" : " · cancelled, not counted"}</span>${o.lines?.length ? html`<span>${lineText(o)}</span>` : ""}</span></div>`)}</div>` : html`<p class="hint">The orders on this tab are no longer available.</p>`}
+      <div class="row w-actions"><button class="btn soft" type="button" data-sheet="close">Done</button></div></div>`, () => {});
+    document.querySelector("#sheetTitle")?.focus({ preventScroll: true });
+  }
+
+  return { view, async act(name, id) { if (name === "wh-tabs-open") openTab(id); if (name === "wh-tabs-cleared") openCleared(id); } };
 };

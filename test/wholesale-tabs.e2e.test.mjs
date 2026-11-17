@@ -69,17 +69,29 @@ test("put an order on a tab, fill it to 6 kg, clear it", async () => {
   await p.locator(".tab-card.ready", { hasText: "Strangers ASG" }).waitFor();
   assert.match(await p.locator(".tab-card").first().innerText(), /Strangers ASG[\s\S]*Ready to clear[\s\S]*6 kg/);
   assert.doesNotMatch(await p.locator("#tabsView").innerText(), /£/, "no money on the staff page");
+  // The card lists what's on the tab: three orders of the same coffee add up to one line.
+  assert.match(await p.locator(".tab-card", { hasText: "Strangers ASG" }).locator(".tab-peek").innerText(), /^6 × .+ · 1 kg · Beans$/);
   await shot(p, "list-ipad");
   // Clear it (two steps), then it's in Recently cleared and the tab starts again.
   await p.locator(".tab-card", { hasText: "Strangers ASG" }).click();
   await p.locator("#tabDialog[open]").waitFor();
   assert.match(await p.locator("#tabDetail").innerText(), /ready to clear/);
+  assert.match(await p.locator("#tabDetail .tab-items").innerText(), /6 ×[\s\S]*1 kg · Beans[\s\S]*6 kg/);
+  assert.equal(await p.locator("#tabDetail .tab-order-lines").count(), 3, "each order lists its bags");
   await shot(p, "detail-ipad");
   await p.locator("#clearTab").click(); await p.locator("#confirmClear").click();
   await p.locator("#tabDialog[open]").waitFor({ state: "detached" });
   await p.locator("#clearedList", { hasText: "Strangers ASG" }).waitFor();
   assert.match(await p.locator("#clearedList").innerText(), /Cleared .* by Sam Packer[\s\S]*6 kg/);
   assert.match(await p.locator(".tab-card", { hasText: "Strangers ASG" }).innerText(), /Nothing on the tab yet/);
+  // A cleared tab still shows what was on it.
+  await p.locator("#clearedList .cleared-row", { hasText: "Strangers ASG" }).click();
+  await p.locator("#tabDialog[open]").waitFor();
+  assert.match(await p.locator("#tabDetail").innerText(), /Cleared .* by Sam Packer[\s\S]*What was on the tab[\s\S]*6 ×[\s\S]*1 kg · Beans[\s\S]*Orders on the tab/);
+  assert.equal(await p.locator("#tabDetail .tab-order").count(), 3);
+  await shot(p, "cleared-ipad");
+  await p.locator("#tabFoot .btn", { hasText: "Done" }).click();
+  await p.locator("#tabDialog[open]").waitFor({ state: "detached" });
   // Lune's tab, cleared early.
   await p.locator(".tab-card", { hasText: "Lune Café" }).click();
   await p.locator("#clearTab", { hasText: "Clear tab early" }).click(); await p.locator("#confirmClear").click();
@@ -155,6 +167,12 @@ test("Admin → Wholesale → Tabs: see every tab with £, and clear one", async
   await p.locator(".w-tab-sheet").waitFor({ state: "detached" });
   await p.locator(".w-tab-card.ready", { hasText: "Strangers ASG" }).waitFor({ state: "detached" });
   assert.match(await p.locator(".w-tabs-workspace .group").last().innerText(), /Strangers ASG[\s\S]*Cleared .* by Admin[\s\S]*kg[\s\S]*£/);
+  // The cleared tab opens to show what was on it, with £.
+  await p.locator(".w-tab-cleared", { hasText: "Strangers ASG" }).first().click();
+  await p.locator(".w-tab-sheet").waitFor();
+  assert.match(await p.locator(".w-tab-sheet").innerText(), /Cleared .* by Admin[\s\S]*£[\s\S]*What was on the tab[\s\S]*\d+ ×[\s\S]*1 kg · Beans/);
+  await shot(p, "admin-cleared");
+  await p.locator('.w-tab-sheet [data-sheet="close"]').first().click();
   const tabs = (await call("GET", "/api/admin/wholesale/tabs")).body;
   assert.ok(tabs.cleared.some((c) => c.business === "Strangers ASG" && c.clearedBy === "Admin" && c.grams >= 6000 && Number.isFinite(c.pence)));
   assert.deepEqual(errors, []);

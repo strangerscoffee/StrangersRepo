@@ -303,6 +303,11 @@
   catch(e){if(e.quiet)return;toast(e.code==='conflict'?'That order changed elsewhere. Reloaded: try again.':e.message);if(e.code==='conflict')await load();}
   finally{const b=$('tabToggle');if(b)b.disabled=false;}
  }
+ // What's on a tab, itemised by coffee, bag size and grind (no prices), and a shorter version for the cards.
+ const itemText=i=>`${i.size} · ${i.grind}${i.decaf?' · Decaf':''}`;
+ const tabItemList=items=>el('ul',{class:'tab-items'},...items.map(i=>el('li',{},el('span',{class:'tab-item-n'},`${i.bags} ×`),el('span',{class:'tab-item-t'},el('b',{},i.title),el('span',{class:'row-meta'},itemText(i))),el('span',{class:'tab-item-kg'},weight(i.grams)))));
+ const tabItemPeek=items=>{const shown=items.slice(0,3);return el('span',{class:'tab-peek'},...shown.map(i=>el('span',{},`${i.bags} × ${i.title} · ${i.size} · ${i.grind}${i.decaf?' · Decaf':''}`)),items.length>3?el('span',{class:'row-meta'},`and ${items.length-3} more`):null);};
+ const orderLineText=o=>(o.lines||[]).map(l=>`${l.bags} × ${l.title} ${l.size} ${l.grind}${l.decaf?' decaf':''}`).join(', ');
  const tabProgress=(t,threshold)=>{const pct=Math.min(100,Math.round(t.grams/threshold*100));return el('div',{class:'tab-progress'+(t.ready?' ready':''),role:'progressbar','aria-valuemin':'0','aria-valuemax':String(threshold/1000),'aria-valuenow':String(t.grams/1000),'aria-label':`${weight(t.grams)} of ${weight(threshold)}`},el('span',{style:`width:${pct}%`}));};
  function drawTabs(){
   const open=tabs.open,ready=open.filter(t=>t.ready).length;
@@ -311,9 +316,11 @@
    el('span',{class:'tab-head'},el('b',{},t.business),t.ready?el('span',{class:'pill ready'},svg('ok'),'Ready to clear'):t.autoTab?el('span',{class:'pill'},'Automatic'):null),
    el('span',{class:'tab-kg'},el('strong',{},weight(t.grams)),el('span',{},` of ${weight(tabs.threshold)}`)),
    tabProgress(t,tabs.threshold),
+   t.items?.length?tabItemPeek(t.items):null,
    el('span',{class:'row-meta'},t.orders.length?`${t.orders.filter(o=>o.counts).length} ${t.orders.filter(o=>o.counts).length===1?'order':'orders'} · ${t.packs} ${t.packs===1?'bag':'bags'}${t.ready?'':` · ${weight(t.toGo)} to go`}`:'Nothing on the tab yet'))));
   if(!open.length)$('tabList').append(el('div',{class:'empty glass tab-empty'},'No open tabs. Open an order and choose Put on tab.'));
-  $('clearedList').replaceChildren(...tabs.cleared.map(c=>el('div',{class:'order-row cleared-row'},el('span',{},el('b',{},c.business),el('span',{class:'row-meta'},`Cleared ${date(c.clearedAt)} by ${c.clearedBy}`)),el('span',{class:'row-end'},el('span',{class:'cleared-kg'},weight(c.grams)),c.early?pill('Early'):null))));
+  // Cleared tabs open to show what was on them.
+  $('clearedList').replaceChildren(...tabs.cleared.map(c=>el('button',{type:'button',class:'order-row cleared-row','data-cleared':c.id,onclick:()=>openCleared(c.id)},el('span',{},el('b',{},c.business),el('span',{class:'row-meta'},`Cleared ${date(c.clearedAt)} by ${c.clearedBy}`)),el('span',{class:'row-end'},el('span',{class:'cleared-kg'},weight(c.grams)),c.early?pill('Early'):null,svg('chev')))));
   if(!tabs.cleared.length)$('clearedList').append(el('div',{class:'empty'},'No tabs cleared yet.'));
   if($('tabDialog').open&&tabSelected){const t=open.find(x=>x.customerId===tabSelected);if(t)renderTab(t);else $('tabDialog').close();}
  }
@@ -322,11 +329,27 @@
   $('tabDetail').replaceChildren(
    el('div',{class:'tab-summary'+(t.ready?' ready':'')},el('div',{class:'tab-kg big'},el('strong',{},weight(t.grams)),el('span',{},` of ${weight(tabs.threshold)}`)),tabProgress(t,tabs.threshold),
     el('p',{},t.ready?'This tab has reached 6 kg and is ready to clear.':`${weight(t.toGo)} to go before it's ready to clear. You can clear it sooner if needed.`)),
+   ...(t.items?.length?[el('h3',{class:'packing-heading'},'On the tab'),tabItemList(t.items)]:[]),
    el('h3',{class:'packing-heading'},'Orders on the tab'),
-   t.orders.length?el('div',{class:'order-list glass'},...t.orders.map(o=>el('div',{class:'order-row tab-order'+(o.counts?'':' not-counted')},el('span',{},el('b',{},new Date(o.createdAt).toLocaleDateString('en-GB',{timeZone:'Europe/London',day:'numeric',month:'short',year:'numeric'})+(o.reference?' · '+o.reference:'')),el('span',{class:'row-meta'},`${o.packs} ${o.packs===1?'bag':'bags'} · ${weight(o.grams)}${o.counts?'':' · cancelled, not counted'}`),el('span',{class:'row-meta'},o.addedBy==='Automatically'?'Added automatically':`Added by ${o.addedBy}`)),el('span',{class:'row-end'},pill(o.status))))):el('p',{class:'hint'},'Nothing on this tab yet. New orders will be added automatically.'),
+   t.orders.length?tabOrderList(t.orders,true):el('p',{class:'hint'},'Nothing on this tab yet. New orders will be added automatically.'),
    el('p',{class:'edit-error',id:'tabError',role:'alert',hidden:true}));
   $('tabFoot').replaceChildren(...(t.orders.length?(tabConfirm?[el('span',{},t.ready?`Clear ${weight(t.grams)}?`:`Clear early at ${weight(t.grams)}?`),el('div',{class:'edit-actions'},el('button',{type:'button',class:'btn soft',onclick:()=>{tabConfirm=false;renderTab(t)}},'Cancel'),el('button',{type:'button',class:'btn',id:'confirmClear',onclick:()=>clearTabNow(t)},'Clear tab'))]
    :[el('span',{},t.ready?'Ready to clear':'Not at 6 kg yet'),el('button',{type:'button',class:'btn'+(t.ready?'':' soft'),id:'clearTab',onclick:()=>{tabConfirm=true;renderTab(t)}},t.ready?'Clear tab':'Clear tab early')]):[el('span',{}),el('button',{type:'button',class:'btn soft',onclick:()=>$('tabDialog').close()},'Done')]));
+ }
+ function tabOrderList(orders,open){
+  return el('div',{class:'order-list glass'},...orders.map(o=>el('div',{class:'order-row tab-order'+(o.counts?'':' not-counted')},el('span',{},el('b',{},new Date(o.createdAt).toLocaleDateString('en-GB',{timeZone:'Europe/London',day:'numeric',month:'short',year:'numeric'})+(o.reference?' · '+o.reference:'')),el('span',{class:'row-meta'},`${o.packs} ${o.packs===1?'bag':'bags'} · ${weight(o.grams)}${o.counts?'':' · cancelled, not counted'}`),o.lines?.length?el('span',{class:'row-meta tab-order-lines'},orderLineText(o)):null,open?el('span',{class:'row-meta'},o.addedBy==='Automatically'?'Added automatically':`Added by ${o.addedBy}`):null),el('span',{class:'row-end'},pill(o.status)))));
+ }
+ // A cleared tab, read only: what was on it and the orders it covered.
+ function openCleared(id){
+  const c=tabs.cleared.find(x=>x.id===id);if(!c)return;tabSelected=null;tabConfirm=false;
+  $('tabTitle').textContent=c.business;
+  $('tabDetail').replaceChildren(
+   el('div',{class:'tab-summary cleared'},el('div',{class:'tab-kg big'},el('strong',{},weight(c.grams)),el('span',{},` · ${c.packs} ${c.packs===1?'bag':'bags'}`)),el('p',{},`Cleared ${date(c.clearedAt)} by ${c.clearedBy}${c.early?', before it reached '+weight(tabs.threshold):''}.`)),
+   ...(c.items?.length?[el('h3',{class:'packing-heading'},'What was on the tab'),tabItemList(c.items)]:[]),
+   el('h3',{class:'packing-heading'},'Orders on the tab'),
+   c.orders?.length?tabOrderList(c.orders,false):el('p',{class:'hint'},'The orders on this tab are no longer available.'));
+  $('tabFoot').replaceChildren(el('span',{},'Cleared'),el('button',{type:'button',class:'btn soft',onclick:()=>$('tabDialog').close()},'Done'));
+  $('tabDialog').showModal();
  }
  function openTab(customerId){const t=tabs.open.find(x=>x.customerId===customerId);if(!t)return;tabSelected=customerId;tabConfirm=false;renderTab(t);$('tabDialog').showModal();}
  async function clearTabNow(t){
