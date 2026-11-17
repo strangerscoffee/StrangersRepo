@@ -89,6 +89,18 @@ test('blackouts apply at both request and approval; cancellations refund without
     assert.equal(d.balances[0].available, 18);
     assert.equal(d.absences.find(a => a.id === pending.absence.id).status, 'cancelled');
 });
+test('admins can edit a blackout (version-checked); staff cannot', async () => {
+    const block = await ok('POST', 'blocks', { from: '2030-05-20', to: '2030-05-21', title: 'Christmas', site: null });
+    assert.equal((await leave('PUT', 'blocks/' + block.id, { from: '2030-05-20', to: '2030-05-22', title: 'Stocktake', site: null, ifVersion: 1 }, A)).status, 403);
+    const saved = await ok('PUT', 'blocks/' + block.id, { from: '2030-05-21', to: '2030-05-23', title: 'Stocktake', site: 'cafe', ifVersion: 1 });
+    assert.equal(saved.version, 2);
+    assert.equal((await leave('PUT', 'blocks/' + block.id, { from: '2030-05-21', to: '2030-05-23', title: 'Old copy', site: null, ifVersion: 1 })).status, 409);
+    assert.equal((await leave('PUT', 'blocks/' + block.id, { from: '2030-05-21', to: '2030-05-23', title: ' ', site: null, ifVersion: 2 })).status, 400);
+    const row = (await ok('GET', 'admin')).blocks.find(b => b.id === block.id);
+    assert.deepEqual([row.from, row.to, row.site, row.title, row.version], ['2030-05-21', '2030-05-23', 'cafe', 'Stocktake', 2]);
+    await ok('DELETE', 'blocks/' + block.id, { ifVersion: 2 });
+    assert.equal((await leave('PUT', 'blocks/' + block.id, { from: '2030-05-21', to: '2030-05-23', title: 'Stocktake', site: null, ifVersion: 2 })).status, 404);
+});
 test('admins can make an exception to a blocked day, with a reason that is recorded; staff cannot', async () => {
     const block = await ok('POST', 'blocks', { from: '2030-05-13', to: '2030-05-14', title: 'Christmas', site: null });
     const refused = await leave('POST', 'preview', { kind: 'annual', from: '2030-05-13', to: '2030-05-13' }, A);

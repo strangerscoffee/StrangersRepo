@@ -325,6 +325,27 @@ export async function leaveRoutes(r: RotaRequest): Promise<Response | null> {
         await commitLeave(env, ver, [env.DB.prepare("INSERT INTO rota_leave_blocks(id,from_day,to_day,site,title,version,updated_at,updated_by) VALUES(?,?,?,?,?,1,?,?)").bind(id, from, to, site, title, Date.now(), user.id), event(env, null, null, "blackout_created", user.id, { id, from, to, site, title })]);
         return json({ id, version: 1 });
     }
+    if (seg[1] === "blocks" && seg.length === 3 && m === "PUT") {
+        // Edit a blackout's dates, site or reason (version-checked). Like adding one, it never cancels approved leave.
+        const ver = await revision(env), b = await r.body(), { from, to } = range(b.from, b.to, 366), site = b.site || null, title = text(b.title, "Staff-visible blackout label", 120);
+        if (site && !SITE_IDS.has(site))
+            throw invalid("Choose a site or all sites.");
+        if (!title)
+            throw invalid("Add a short label staff can see.");
+        const old = await env.DB.prepare("SELECT * FROM rota_leave_blocks WHERE id=?").bind(seg[2]).first<{
+            id: string;
+            from_day: string;
+            to_day: string;
+            site: string | null;
+            title: string;
+            version: number;
+        }>();
+        if (!old)
+            throw notFound("That blackout has been removed.");
+        requireVersion(old.version, b.ifVersion);
+        await commitLeave(env, ver, [env.DB.prepare("UPDATE rota_leave_blocks SET from_day=?,to_day=?,site=?,title=?,version=version+1,updated_at=?,updated_by=? WHERE id=? AND version=?").bind(from, to, site, title, Date.now(), user.id, old.id, old.version), event(env, null, null, "blackout_updated", user.id, { id: old.id, before: { from: old.from_day, to: old.to_day, site: old.site, title: old.title }, after: { from, to, site, title } })]);
+        return json({ id: old.id, version: old.version + 1 });
+    }
     if (seg[1] === "blocks" && seg.length === 3 && m === "DELETE") {
         const ver = await revision(env), b = await r.body(), old = await env.DB.prepare("SELECT * FROM rota_leave_blocks WHERE id=?").bind(seg[2]).first<{
             version: number;

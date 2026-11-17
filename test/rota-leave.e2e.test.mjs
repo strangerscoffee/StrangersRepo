@@ -241,3 +241,34 @@ test('an admin can approve holiday on a blackout day as an exception, giving a r
     const events = (await api('GET', 'rota/leave/events?userId=' + a.id)).events;
     assert.ok(events.some(e => e.action === 'approved' && JSON.parse(e.data).overrideBlocked?.reason === 'Booked before Christmas was blocked'));
 });
+test('an admin can edit a blackout from Holiday management', { timeout: 60000 }, async () => {
+    const day = addDays(holiday, 40);
+    await api('POST', 'rota/leave/blocks', { from: day, to: day, title: 'Christmas', site: null });
+    for (const [viewport, scheme] of [[{ width: 393, height: 852 }, 'dark'], [{ width: 1180, height: 820 }, 'light']]) {
+        const x = await context(viewport, scheme, ADMIN);
+        try {
+            await x.page.goto(srv.base + '/rota/#leave-admin');
+            const row = x.page.locator('.lrow', { hasText: scheme === 'dark' ? 'Christmas' : 'Year-end stocktake' });
+            await row.getByRole('button', { name: 'Edit', exact: true }).click();
+            const sheet = x.page.locator('#sheet');
+            if (scheme === 'dark') {
+                assert.equal(await sheet.locator('#block_reason').inputValue(), 'Christmas');
+                assert.equal(await sheet.locator('#block_from').inputValue(), day);
+                await sheet.locator('#block_to').fill(addDays(day, 2));
+                await sheet.locator('#block_reason').selectOption('custom');
+                await sheet.locator('#block_title').fill('Year-end stocktake');
+                if (process.env.SHOT_DIR) await x.page.screenshot({ path: `${process.env.SHOT_DIR}/leave-edit-blackout-${scheme}.png` });
+                await sheet.getByRole('button', { name: 'Save changes', exact: true }).click();
+                await sheet.waitFor({ state: 'hidden' });
+            } else {
+                // A custom reason opens on "Custom reason…" with its words in the box.
+                assert.equal(await sheet.locator('#block_reason').inputValue(), 'custom');
+                assert.equal(await sheet.locator('#block_title').inputValue(), 'Year-end stocktake');
+                if (process.env.SHOT_DIR) await x.page.screenshot({ path: `${process.env.SHOT_DIR}/leave-edit-blackout-${scheme}.png` });
+                await sheet.getByRole('button', { name: 'Cancel', exact: true }).click();
+            }
+        } finally { await x.c.close(); }
+    }
+    const b = (await api('GET', 'rota/leave/admin')).blocks.find(b => b.title === 'Year-end stocktake');
+    assert.deepEqual([b.from, b.to, b.version], [day, addDays(day, 2), 2]);
+});

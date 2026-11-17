@@ -197,7 +197,7 @@ window.SCLeave = function createLeaveUI(c) {
         const out = [el('section', { class: 'panel' }, el('div', { class: 'row between' }, el('h2', { text: 'Employee allowance' }), pick), note(`${data.setup.filter(p => !p.configured).length} employees need a current leave-year allowance.`), el('div', { class: 'row' }, btn('Set up a leave year', () => allowance(person, undefined, data.settings)), ghost('Add blackout dates', () => blackout())), ...(own?.balances || []).map(b => el('div', { class: 'leave-year-row' }, el('span', { class: 't' }, el('b', { text: `${b.from} – ${b.to}` }), el('span', { class: 's', text: `${amount(b.available)} days available · ${amount(b.used)} used · ${amount(b.booked)} booked · ${amount(b.pending)} pending${b.bankHolidayReserved ? ` · ${amount(b.bankHolidayReserved)} reserved for bank holidays` : ''}` })), ghost('Edit', () => allowance(person, b, data.settings)), b.bankHolidayEligible && data.settings.bankHolidayPolicy === 'credit-worked' ? ghost('Bank holiday worked', () => credit(person, b)) : null)))];
         out.push(label(`Requests awaiting a decision · ${data.requests.length}`), absenceList(data.requests, true));
         out.push(label(person ? `${person.name} · absence history` : 'Absence history'), absenceList((own?.absences || []).filter(a => a.status !== 'requested'), true));
-        out.push(label('Blackout dates'), data.blocks.length ? el('div', { class: 'list glass' }, ...data.blocks.map(b => el('div', { class: 'lrow wraprow' }, el('span', { class: 't' }, el('b', { text: b.title }), el('span', { class: 's', text: `${span(b.from, b.to)} · ${SITES[b.site || 'all']}` })), ghost('Remove', () => removeBlock(b))))) : empty('No blackout dates set.'));
+        out.push(label('Blackout dates'), data.blocks.length ? el('div', { class: 'list glass' }, ...data.blocks.map(b => el('div', { class: 'lrow wraprow' }, el('span', { class: 't' }, el('b', { text: b.title }), el('span', { class: 's', text: `${span(b.from, b.to)} · ${SITES[b.site || 'all']}` })), el('span', { class: 'row' }, ghost('Edit', () => blackout(b)), ghost('Remove', () => removeBlock(b)))))) : empty('No blackout dates set.'));
         return out;
     }
     function leaveYearStart(policy) { const today = londonToday(), md = policy.yearStart || '04-01'; return (today.slice(5) < md ? Number(today.slice(0, 4)) - 1 : Number(today.slice(0, 4))) + '-' + md; }
@@ -252,14 +252,20 @@ window.SCLeave = function createLeaveUI(c) {
             msg.textContent = errorText(e);
         } }))), { left: cancelLink() });
     }
-    function blackout() {
-        const from = input('block_from', londonToday(), { type: 'date' }), to = input('block_to', londonToday(), { type: 'date' }), title = input('block_title', '', { maxlength: 120, placeholder: 'Type the reason staff will see' }), reason = select('block_reason', BLACKOUT_REASONS.map(r => [r, r]).concat([['custom', 'Custom reason…']]), BLACKOUT_REASONS[0]), titleField = field('block_title', 'Custom reason', title, true), site = select('block_site', Object.entries(SITES), 'all'), msg = message();
-        titleField.hidden = true;
+    // Add a blackout, or edit one (`b`): the same form, filled in, saved with its version.
+    function blackout(b) {
+        const preset = b ? BLACKOUT_REASONS.includes(b.title) : true;
+        const from = input('block_from', b ? b.from : londonToday(), { type: 'date' }), to = input('block_to', b ? b.to : londonToday(), { type: 'date' }), title = input('block_title', b && !preset ? b.title : '', { maxlength: 120, placeholder: 'Type the reason staff will see' }), reason = select('block_reason', BLACKOUT_REASONS.map(r => [r, r]).concat([['custom', 'Custom reason…']]), b ? (preset ? b.title : 'custom') : BLACKOUT_REASONS[0]), titleField = field('block_title', 'Custom reason', title, true), site = select('block_site', Object.entries(SITES), b?.site || 'all'), msg = message();
+        titleField.hidden = reason.value !== 'custom';
         reason.onchange = () => { titleField.hidden = reason.value !== 'custom'; if (!titleField.hidden) title.focus(); };
-        openSheet('Add holiday blackout', el('div', { class: 'sbody' }, el('div', { class: 'sfields' }, field('block_from', 'First day', from), field('block_to', 'Last day', to), field('block_site', 'Applies to', site, true), field('block_reason', 'Reason shown on the calendar', reason, true), titleField), note('New holiday requests and approvals on these days are refused. Holiday already approved stays booked.'), msg, el('div', { class: 'sfoot' }, btn('Add blackout', async () => { try {
-            await api('POST', '/api/rota/leave/blocks', { from: from.value, to: to.value, site: site.value === 'all' ? null : site.value, title: reason.value === 'custom' ? title.value : reason.value });
+        openSheet(b ? 'Edit holiday blackout' : 'Add holiday blackout', el('div', { class: 'sbody' }, el('div', { class: 'sfields' }, field('block_from', 'First day', from), field('block_to', 'Last day', to), field('block_site', 'Applies to', site, true), field('block_reason', 'Reason shown on the calendar', reason, true), titleField), note('New holiday requests and approvals on these days are refused. Holiday already approved stays booked.'), msg, el('div', { class: 'sfoot' }, b ? ghost('Remove', () => removeBlock(b)) : null, btn(b ? 'Save changes' : 'Add blackout', async () => { try {
+            const body = { from: from.value, to: to.value, site: site.value === 'all' ? null : site.value, title: reason.value === 'custom' ? title.value : reason.value };
+            if (b)
+                await api('PUT', `/api/rota/leave/blocks/${b.id}`, { ...body, ifVersion: b.version });
+            else
+                await api('POST', '/api/rota/leave/blocks', body);
             closeSheets();
-            toast('Blackout added.');
+            toast(b ? 'Blackout updated.' : 'Blackout added.');
             render();
         }
         catch (e) {
