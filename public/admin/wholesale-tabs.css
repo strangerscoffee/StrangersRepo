@@ -26,3 +26,9 @@ button.w-tab-cleared:hover{background:var(--sunk)}
 .w-tab-sheet .w-actions{flex-wrap:wrap}.w-tab-confirm{flex:1 0 100%;font-weight:600}
 .w-tabs-sub{margin:10px 0 0}.w-tabs-empty{padding:14px;border:1px dashed var(--line);border-radius:16px}
 @media (max-width:520px){.w-tab-cards{grid-template-columns:1fr}}
+/* Part-clearing a tab: tick the orders to clear; unticked ones stay on the tab. */
+.w-tab-order{cursor:pointer;align-items:flex-start}
+.w-tab-order .w-tab-pick{flex:none;width:22px;height:22px;margin:2px 4px 0 0;accent-color:var(--accent)}
+.w-tab-order.kept{background:var(--sunk)}
+.w-tab-order .end,.w-tab-sheet .item .end{display:flex;flex-direction:column;align-items:flex-end;gap:6px}
+.w-tab-summary .w-tab-meta+.w-tab-meta{margin-top:2px}

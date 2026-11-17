@@ -103,6 +103,36 @@ test("clearing: exactly the orders seen, recorded, and a fresh tab starts; early
   assert.equal((await call("POST", `/api/admin/wholesale/tabs/${A.customer.id}/clear`, { orderIds: ["x"] })).status, 404, "nothing on the tab");
 });
 
+test("part of a tab: clear the ticked orders, keep the rest on the open tab, and see both", async () => {
+  // B's tab has the 1 kg order from above; add two more.
+  await order(B, 2); await order(B, 3);
+  const tab = await tabOf(B);
+  assert.equal(tab.orders.length, 3);
+  assert.ok(tab.orders.every((o) => o.createdAt), "each order says when it was ordered");
+  const [first, second, third] = tab.orders.map((o) => o.id), seen = [first, second, third];
+  // What was seen must still be the whole tab, and only orders seen can be cleared.
+  assert.equal((await call("POST", `/api/staff-orders/tabs/${B.customer.id}/clear`, { orderIds: [first], seen: [first, second] }, STAFF)).status, 409, "stale view");
+  assert.equal((await call("POST", `/api/staff-orders/tabs/${B.customer.id}/clear`, { orderIds: ["other"], seen }, STAFF)).status, 409, "not on the tab");
+  const part = await ok("POST", `/api/staff-orders/tabs/${B.customer.id}/clear`, { orderIds: [first, second], seen }, STAFF);
+  assert.deepEqual([part.body.cleared.grams, part.body.cleared.keptIds, part.body.cleared.early], [3000, [third], true]);
+  const after = await tabOf(B);
+  assert.deepEqual(after.orders.map((o) => o.id), [third], "the unticked order stays on the open tab");
+  assert.equal(after.grams, 3000);
+  assert.equal(after.lastCleared.partial, true);
+  assert.equal(after.lastCleared.grams, 3000);
+  let rec = (await tabs()).body.cleared.find((c) => c.id === part.body.cleared.id);
+  assert.deepEqual(rec.orders.map((o) => o.id), [first, second]);
+  assert.deepEqual(rec.kept.map((o) => [o.id, o.now]), [[third, "on-tab"]]);
+  assert.ok(rec.kept[0].createdAt);
+  // Admins see the same with £; once the kept order is cleared too, the record says so.
+  const adminRec = (await ok("GET", "/api/admin/wholesale/tabs")).body.cleared.find((c) => c.id === part.body.cleared.id);
+  assert.ok(Number.isFinite(adminRec.pence));
+  await ok("POST", `/api/admin/wholesale/tabs/${B.customer.id}/clear`, { orderIds: [third], seen: [third] });
+  rec = (await tabs()).body.cleared.find((c) => c.id === part.body.cleared.id);
+  assert.equal(rec.kept[0].now, "cleared");
+  assert.equal((await tabs()).body.cleared[0].keptIds, undefined, "a whole clear keeps nothing");
+});
+
 test("only admins and staff with wholesale orders access; customers never", async () => {
   const a = await order(A, 1);
   const row = (await ok("GET", "/api/admin/wholesale")).body.orders.find((x) => x.id === a.id);

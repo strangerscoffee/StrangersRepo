@@ -478,41 +478,58 @@
    el('span',{class:'row-meta'},t.orders.length?`${t.orders.filter(o=>o.counts).length} ${t.orders.filter(o=>o.counts).length===1?'order':'orders'} · ${t.packs} ${t.packs===1?'bag':'bags'}${t.ready?'':` · ${weight(t.toGo)} to go`}`:'Nothing on the tab yet'))));
   if(!open.length)$('tabList').append(el('div',{class:'empty glass tab-empty'},'No open tabs. Open an order and choose Put on tab.'));
   // Cleared tabs open to show what was on them.
-  $('clearedList').replaceChildren(...tabs.cleared.map(c=>el('button',{type:'button',class:'order-row cleared-row','data-cleared':c.id,onclick:()=>openCleared(c.id)},el('span',{},el('b',{},c.business),el('span',{class:'row-meta'},`Cleared ${date(c.clearedAt)} by ${c.clearedBy}`)),el('span',{class:'row-end'},el('span',{class:'cleared-kg'},weight(c.grams)),c.early?pill('Early'):null,svg('chev')))));
+  $('clearedList').replaceChildren(...tabs.cleared.map(c=>el('button',{type:'button',class:'order-row cleared-row','data-cleared':c.id,onclick:()=>openCleared(c.id)},el('span',{},el('b',{},c.business),el('span',{class:'row-meta'},`${c.kept?.length?'Part cleared':'Cleared'} ${date(c.clearedAt)} by ${c.clearedBy}${c.kept?.length?` · ${c.kept.length} kept on the tab`:''}`)),el('span',{class:'row-end'},el('span',{class:'cleared-kg'},weight(c.grams)),c.kept?.length?pill('Part'):null,c.early?pill('Early'):null,svg('chev')))));
   if(!tabs.cleared.length)$('clearedList').append(el('div',{class:'empty'},'No tabs cleared yet.'));
   if($('tabDialog').open&&tabSelected){const t=open.find(x=>x.customerId===tabSelected);if(t)renderTab(t);else $('tabDialog').close();}
  }
+ // Which orders on the open tab are ticked to clear (all of them unless someone unticks some); the rest stay on the tab.
+ let tabPick=new Set();
+ const ordered=o=>'Ordered '+new Date(o.createdAt).toLocaleDateString('en-GB',{timeZone:'Europe/London',weekday:'short',day:'numeric',month:'short',year:'numeric'});
+ const sumOf=list=>{const c=list.filter(o=>o.counts);return{orders:list.length,grams:c.reduce((t,o)=>t+(o.grams||0),0),packs:c.reduce((t,o)=>t+(o.packs||0),0)};};
  function renderTab(t){
   $('tabTitle').textContent=t.business;
+  tabPick=new Set([...tabPick].filter(id=>t.orders.some(o=>o.id===id)));
+  const picked=t.orders.filter(o=>tabPick.has(o.id)),keep=t.orders.filter(o=>!tabPick.has(o.id)),pick=sumOf(picked),rest=sumOf(keep),all=!keep.length;
+  const last=t.lastCleared;
   $('tabDetail').replaceChildren(
    el('div',{class:'tab-summary'+(t.ready?' ready':'')},el('div',{class:'tab-kg big'},el('strong',{},weight(t.grams)),el('span',{},` of ${weight(tabs.threshold)}`)),tabProgress(t,tabs.threshold),
-    el('p',{},t.ready?'This tab has reached 6 kg and is ready to clear.':`${weight(t.toGo)} to go before it's ready to clear. You can clear it sooner if needed.`)),
+    el('p',{},t.ready?'This tab has reached 6 kg and is ready to clear.':`${weight(t.toGo)} to go before it's ready to clear. You can clear it sooner if needed.`),
+    last?el('p',{class:'row-meta tab-last'},`Last cleared ${date(last.clearedAt)} by ${last.clearedBy}: ${weight(last.grams)}${last.partial?' (part of the tab; the rest stayed on it)':''}`):null),
    ...(t.items?.length?[el('h3',{class:'packing-heading'},'On the tab'),tabItemList(t.items)]:[]),
    el('h3',{class:'packing-heading'},'Orders on the tab'),
-   t.orders.length?tabOrderList(t.orders,true):el('p',{class:'hint'},'Nothing on this tab yet. New orders will be added automatically.'),
+   t.orders.length>1?el('p',{class:'hint'},'Untick any orders that should stay on the tab. Only the ticked ones are cleared.'):null,
+   t.orders.length?tabOrderList(t.orders,true,t):el('p',{class:'hint'},'Nothing on this tab yet. New orders will be added automatically.'),
    el('p',{class:'edit-error',id:'tabError',role:'alert',hidden:true}));
-  $('tabFoot').replaceChildren(...(t.orders.length?(tabConfirm?[el('span',{},t.ready?`Clear ${weight(t.grams)}?`:`Clear early at ${weight(t.grams)}?`),el('div',{class:'edit-actions'},el('button',{type:'button',class:'btn soft',onclick:()=>{tabConfirm=false;renderTab(t)}},'Cancel'),el('button',{type:'button',class:'btn',id:'confirmClear',onclick:()=>clearTabNow(t)},'Clear tab'))]
-   :[el('span',{},t.ready?'Ready to clear':'Not at 6 kg yet'),el('button',{type:'button',class:'btn'+(t.ready?'':' soft'),id:'clearTab',onclick:()=>{tabConfirm=true;renderTab(t)}},t.ready?'Clear tab':'Clear tab early')]):[el('span',{}),el('button',{type:'button',class:'btn soft',onclick:()=>$('tabDialog').close()},'Done')]));
+  const label=all?(t.ready?'Clear tab':'Clear tab early'):`Clear ${picked.length} of ${t.orders.length}`;
+  const question=all?(t.ready?`Clear ${weight(t.grams)}?`:`Clear early at ${weight(t.grams)}?`):`Clear ${weight(pick.grams)}? ${rest.orders} ${rest.orders===1?'order stays':'orders stay'} on the tab (${weight(rest.grams)}).`;
+  $('tabFoot').replaceChildren(...(t.orders.length?(tabConfirm&&picked.length?[el('span',{},question),el('div',{class:'edit-actions'},el('button',{type:'button',class:'btn soft',onclick:()=>{tabConfirm=false;renderTab(t)}},'Cancel'),el('button',{type:'button',class:'btn',id:'confirmClear',onclick:()=>clearTabNow(t)},all?'Clear tab':'Clear these'))]
+   :[el('span',{},!picked.length?'Tick the orders to clear':all?(t.ready?'Ready to clear':'Not at 6 kg yet'):`${weight(pick.grams)} to clear · ${weight(rest.grams)} stays`),el('button',{type:'button',class:'btn'+(t.ready||!all?'':' soft'),id:'clearTab',disabled:!picked.length,onclick:()=>{tabConfirm=true;renderTab(t)}},label)]):[el('span',{}),el('button',{type:'button',class:'btn soft',onclick:()=>$('tabDialog').close()},'Done')]));
  }
- function tabOrderList(orders,open){
-  return el('div',{class:'order-list glass'},...orders.map(o=>el('div',{class:'order-row tab-order'+(o.counts?'':' not-counted')},el('span',{},el('b',{},new Date(o.createdAt).toLocaleDateString('en-GB',{timeZone:'Europe/London',day:'numeric',month:'short',year:'numeric'})+(o.reference?' · '+o.reference:'')),el('span',{class:'row-meta'},`${o.packs} ${o.packs===1?'bag':'bags'} · ${weight(o.grams)}${o.counts?'':' · cancelled, not counted'}`),o.lines?.length?el('span',{class:'row-meta tab-order-lines'},orderLineText(o)):null,open?el('span',{class:'row-meta'},o.addedBy==='Automatically'?'Added automatically':`Added by ${o.addedBy}`):null),el('span',{class:'row-end'},pill(o.status)))));
+ function tabOrderList(orders,open,t){
+  return el('div',{class:'order-list glass'},...orders.map(o=>{
+   const box=open&&t?el('input',{type:'checkbox',class:'tab-pick','aria-label':`Clear the order of ${date(o.createdAt)}`,...(tabPick.has(o.id)?{checked:true}:{}),onchange:e=>{e.target.checked?tabPick.add(o.id):tabPick.delete(o.id);tabConfirm=false;renderTab(t);}}):null;
+   const body=el('span',{},el('b',{},ordered(o)+(o.reference?' · '+o.reference:'')),el('span',{class:'row-meta'},`${o.packs} ${o.packs===1?'bag':'bags'} · ${weight(o.grams)}${o.counts?'':' · cancelled, not counted'}`),o.lines?.length?el('span',{class:'row-meta tab-order-lines'},orderLineText(o)):null,open?el('span',{class:'row-meta'},o.addedBy==='Automatically'?'Added automatically':`Added by ${o.addedBy}`):null);
+   return el(box?'label':'div',{class:'order-row tab-order'+(o.counts?'':' not-counted')+(box?' pickable':'')+(box&&!tabPick.has(o.id)?' kept':'')},box,body,el('span',{class:'row-end'},box&&!tabPick.has(o.id)?pill('Stays on tab'):null,pill(o.status)));
+  }));
  }
- // A cleared tab, read only: what was on it and the orders it covered.
+ const NOW={'on-tab':'Still on the tab',cleared:'Cleared since','off-tab':'Taken off the tab'};
+ // A cleared tab, read only: what was cleared, when each was ordered, and (after a part clear) what stayed on the tab.
  function openCleared(id){
   const c=tabs.cleared.find(x=>x.id===id);if(!c)return;tabSelected=null;tabConfirm=false;
   $('tabTitle').textContent=c.business;
   $('tabDetail').replaceChildren(
-   el('div',{class:'tab-summary cleared'},el('div',{class:'tab-kg big'},el('strong',{},weight(c.grams)),el('span',{},` · ${c.packs} ${c.packs===1?'bag':'bags'}`)),el('p',{},`Cleared ${date(c.clearedAt)} by ${c.clearedBy}${c.early?', before it reached '+weight(tabs.threshold):''}.`)),
-   ...(c.items?.length?[el('h3',{class:'packing-heading'},'What was on the tab'),tabItemList(c.items)]:[]),
-   el('h3',{class:'packing-heading'},'Orders on the tab'),
-   c.orders?.length?tabOrderList(c.orders,false):el('p',{class:'hint'},'The orders on this tab are no longer available.'));
-  $('tabFoot').replaceChildren(el('span',{},'Cleared'),el('button',{type:'button',class:'btn soft',onclick:()=>$('tabDialog').close()},'Done'));
+   el('div',{class:'tab-summary cleared'},el('div',{class:'tab-kg big'},el('strong',{},weight(c.grams)),el('span',{},` · ${c.packs} ${c.packs===1?'bag':'bags'}`)),el('p',{},`${c.kept?.length?'Part cleared':'Cleared'} ${date(c.clearedAt)} by ${c.clearedBy}${c.early?', before it reached '+weight(tabs.threshold):''}.`)),
+   ...(c.items?.length?[el('h3',{class:'packing-heading'},'What was cleared'),tabItemList(c.items)]:[]),
+   el('h3',{class:'packing-heading'},'Orders cleared'),
+   c.orders?.length?tabOrderList(c.orders,false):el('p',{class:'hint'},'The orders on this tab are no longer available.'),
+   ...(c.kept?.length?[el('h3',{class:'packing-heading'},'Kept on the tab'),el('div',{class:'order-list glass'},...c.kept.map(o=>el('div',{class:'order-row tab-order kept'},el('span',{},el('b',{},ordered(o)+(o.reference?' · '+o.reference:'')),el('span',{class:'row-meta'},`${o.packs} ${o.packs===1?'bag':'bags'} · ${weight(o.grams)}`),o.lines?.length?el('span',{class:'row-meta tab-order-lines'},orderLineText(o)):null),el('span',{class:'row-end'},pill(NOW[o.now]||o.now)))))]:[]));
+  $('tabFoot').replaceChildren(el('span',{},c.kept?.length?'Part cleared':'Cleared'),el('button',{type:'button',class:'btn soft',onclick:()=>$('tabDialog').close()},'Done'));
   $('tabDialog').showModal();
  }
- function openTab(customerId){const t=tabs.open.find(x=>x.customerId===customerId);if(!t)return;tabSelected=customerId;tabConfirm=false;renderTab(t);$('tabDialog').showModal();}
+ function openTab(customerId){const t=tabs.open.find(x=>x.customerId===customerId);if(!t)return;tabSelected=customerId;tabConfirm=false;tabPick=new Set(t.orders.map(o=>o.id));renderTab(t);$('tabDialog').showModal();}
  async function clearTabNow(t){
   const button=$('confirmClear');if(button){button.disabled=true;button.textContent='Clearing…';}
-  try{const {cleared}=await tabRequest('POST','tabs/'+encodeURIComponent(t.customerId)+'/clear',{orderIds:t.orders.map(o=>o.id)});$('tabDialog').close();toast(`${cleared.business}: tab cleared at ${weight(cleared.grams)}`);await loadTabs();await load();}
+  try{const {cleared}=await tabRequest('POST','tabs/'+encodeURIComponent(t.customerId)+'/clear',{orderIds:t.orders.filter(o=>tabPick.has(o.id)).map(o=>o.id),seen:t.orders.map(o=>o.id)});$('tabDialog').close();toast(cleared.keptIds?.length?`${cleared.business}: ${weight(cleared.grams)} cleared, ${cleared.keptIds.length} ${cleared.keptIds.length===1?'order stays':'orders stay'} on the tab`:`${cleared.business}: tab cleared at ${weight(cleared.grams)}`);await loadTabs();await load();}
   catch(e){if(e.quiet)return;tabConfirm=false;if(e.code==='conflict'){await loadTabs();}const box=$('tabError');if(box){box.textContent=e.code==='conflict'?'This tab changed on another device. It has been reloaded: check it and clear again.':e.message;box.hidden=false;}}
  }
  async function loadTabs(){

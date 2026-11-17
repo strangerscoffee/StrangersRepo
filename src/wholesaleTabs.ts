@@ -12,7 +12,9 @@ import { audit } from "./audit";
 /** The usual point to clear a tab: the wholesale minimum, 6 kg. */
 export const TAB_GRAMS = MINIMUM_ORDER_GRAMS;
 type AnyOrder = Record<string, any> & Versioned;
-export interface TabClear { customerId: string; business: string; clearedAt: number; clearedBy: string; orderIds: string[]; grams: number; packs: number; pence: number; early: boolean }
+export interface TabClear { customerId: string; business: string; clearedAt: number; clearedBy: string; orderIds: string[]; grams: number; packs: number; pence: number; early: boolean;
+  /** A part clear: the orders left on the open tab at the time (still active then). */
+  keptIds?: string[] }
 
 const OPEN_TAB = "kind='order' AND json_extract(data,'$.preview')=0 AND json_extract(data,'$.deletedAt') IS NULL AND json_extract(data,'$.tab') IS NOT NULL AND json_extract(data,'$.tabClearedId') IS NULL";
 const counts = (o: AnyOrder) => o.status !== "Cancelled";
@@ -61,13 +63,28 @@ export async function listTabs(env: Env, { admin = false } = {}) {
     const rows2 = await env.DB.prepare(`SELECT id,data,version,updated_at FROM wholesale_preview WHERE kind='order' AND json_extract(data,'$.tabClearedId') IN (${ids.map(() => "?").join(",")})`).bind(...ids).all<Row>();
     for (const row of rows2.results) { const o = decode<Record<string, any>>(row) as AnyOrder; (clearedOrders.get(o.tabClearedId) || clearedOrders.set(o.tabClearedId, []).get(o.tabClearedId)!).push(o); }
   }
+  // Orders kept on the tab by a part clear: where they are now (still on the open tab, or cleared since).
+  const keptIds = [...new Set(cleared.results.flatMap((r) => { try { return (JSON.parse(r.data) as TabClear).keptIds || []; } catch { return []; } }))];
+  const keptOrders = new Map<string, AnyOrder>();
+  for (let i = 0; i < keptIds.length; i += 90) {
+    const part = keptIds.slice(i, i + 90);
+    const found = await env.DB.prepare(`SELECT id,data,version,updated_at FROM wholesale_preview WHERE kind='order' AND id IN (${part.map(() => "?").join(",")})`).bind(...part).all<Row>();
+    for (const row of found.results) keptOrders.set(row.id, decode<Record<string, any>>(row) as AnyOrder);
+  }
+  const clearedLine = (o: AnyOrder) => ({ id: o.id, createdAt: o.createdAt, date: o.date, reference: o.reference || "", status: o.status, packs: o.packs, grams: o.grams, counts: counts(o), lines: orderLines(o) });
+  // Each open tab says when it was last cleared, so what's left on it after a part clear is clear.
+  const lastClear = new Map<string, { id: string; clearedAt: number; clearedBy: string; grams: number; orders: number; partial: boolean }>();
+  for (const r of cleared.results) { try { const c = JSON.parse(r.data) as TabClear; if (!lastClear.has(c.customerId)) lastClear.set(c.customerId, { id: r.id, clearedAt: c.clearedAt, clearedBy: c.clearedBy, grams: c.grams, orders: c.orderIds.length, partial: !!c.keptIds?.length }); } catch {} }
+  for (const t of open) (t as Record<string, unknown>).lastCleared = lastClear.get(t.customerId) ?? null;
   return {
     threshold: TAB_GRAMS, open: [...open, ...autoOnly.sort((a, b) => a.business.localeCompare(b.business))],
     cleared: cleared.results.map((row) => {
       const { pence, ...rest } = JSON.parse(row.data) as TabClear;
       const orders = (clearedOrders.get(row.id) || []).filter((o) => rest.orderIds.includes(o.id) && !o.deletedAt).sort((a, b) => a.createdAt - b.createdAt);
-      return { id: row.id, ...rest, ...(admin ? { pence } : {}), items: tabItems(orders),
-        orders: orders.map((o) => ({ id: o.id, createdAt: o.createdAt, reference: o.reference || "", status: o.status, packs: o.packs, grams: o.grams, counts: counts(o), lines: orderLines(o) })) };
+      const kept = (rest.keptIds || []).map((id) => keptOrders.get(id)).filter((o): o is AnyOrder => !!o && !o.deletedAt).sort((a, b) => a.createdAt - b.createdAt);
+      return { id: row.id, ...rest, ...(admin ? { pence } : {}), items: tabItems(orders), orders: orders.map(clearedLine),
+        // What a part clear left active, and where each of those orders is now.
+        kept: kept.map((o) => ({ ...clearedLine(o), now: o.tabClearedId ? "cleared" : o.tab ? "on-tab" : "off-tab", clearedId: o.tabClearedId || null })) };
     }),
   };
 }
@@ -88,20 +105,25 @@ export async function setOnTab(env: Env, id: string, value: unknown, actor: stri
   return saved as AnyOrder;
 }
 
-/** Clears a customer's open tab: exactly the orders the person saw (`orderIds`), so one added meanwhile isn't swept in
- *  unseen. Each order is version-checked in one batch; the clear is recorded and the next order starts a new tab. */
+/** Clears a customer's open tab, or part of it. `seen` is every order on the tab as the person saw it and `orderIds` the
+ *  ones they chose to clear; the rest stay on the open tab. If the tab has changed since (an order added, taken off or
+ *  cleared elsewhere) nothing is cleared, so nothing is cleared or left behind unseen. Without `seen` (older pages)
+ *  `orderIds` must be the whole tab. Each order is version-checked in one batch; the clear is recorded. */
 export async function clearTab(env: Env, customerId: string, value: unknown, actor: string, { admin = false } = {}) {
   const body = object(value);
-  if (!Array.isArray(body.orderIds) || !body.orderIds.length || body.orderIds.length > 500 || body.orderIds.some((x: unknown) => typeof x !== "string")) throw invalid("Send the orders on the tab.");
+  const ids = (v: unknown) => Array.isArray(v) && v.length > 0 && v.length <= 500 && v.every((x) => typeof x === "string");
+  if (!ids(body.orderIds)) throw invalid("Send the orders on the tab.");
+  if (body.seen !== undefined && !ids(body.seen)) throw invalid("Send the orders on the tab as you saw them.");
   const rows = await env.DB.prepare(`SELECT id,data,version,updated_at FROM wholesale_preview WHERE ${OPEN_TAB} AND json_extract(data,'$.customerId')=?`).bind(customerId).all<Row>();
-  const orders = rows.results.map((row) => decode<Record<string, any>>(row) as AnyOrder);
-  const seen = new Set(body.orderIds as string[]);
-  if (!orders.length) throw new ApiError(404, "not_found", "This customer has nothing on their tab.");
-  if (orders.length !== seen.size || orders.some((o) => !seen.has(o.id))) throw new ApiError(409, "conflict", "The tab changed on another device. Reload it before clearing.");
+  const onTab = rows.results.map((row) => decode<Record<string, any>>(row) as AnyOrder);
+  const seen = new Set((body.seen ?? body.orderIds) as string[]), chosen = new Set(body.orderIds as string[]);
+  if (!onTab.length) throw new ApiError(404, "not_found", "This customer has nothing on their tab.");
+  if (onTab.length !== seen.size || onTab.some((o) => !seen.has(o.id)) || [...chosen].some((id) => !seen.has(id))) throw new ApiError(409, "conflict", "The tab changed on another device. Reload it before clearing.");
+  const orders = onTab.filter((o) => chosen.has(o.id)), kept = onTab.filter((o) => !chosen.has(o.id));
   const counted = orders.filter(counts);
   const customer = await get<Record<string, any>>(env, "customer", customerId);
   const tabId = crypto.randomUUID(), at = Date.now();
-  const record: TabClear = { customerId, business: customer?.business || orders[0].business || "Customer", clearedAt: at, clearedBy: actor, orderIds: orders.map((o) => o.id), grams: counted.reduce((t, o) => t + (o.grams || 0), 0), packs: counted.reduce((t, o) => t + (o.packs || 0), 0), pence: counted.reduce((t, o) => t + (o.pence || 0), 0), early: false };
+  const record: TabClear = { customerId, business: customer?.business || orders[0].business || "Customer", clearedAt: at, clearedBy: actor, orderIds: orders.map((o) => o.id), grams: counted.reduce((t, o) => t + (o.grams || 0), 0), packs: counted.reduce((t, o) => t + (o.packs || 0), 0), pence: counted.reduce((t, o) => t + (o.pence || 0), 0), early: false, ...(kept.length ? { keptIds: kept.map((o) => o.id) } : {}) };
   record.early = record.grams < TAB_GRAMS;
   const statements = [
     env.DB.prepare("INSERT INTO wholesale_tabs (id,customer_id,cleared_at,data) VALUES (?,?,?,?)").bind(tabId, customerId, at, JSON.stringify(record)),
@@ -116,7 +138,7 @@ export async function clearTab(env: Env, customerId: string, value: unknown, act
     await env.DB.batch([...undo, env.DB.prepare("DELETE FROM wholesale_tabs WHERE id=?").bind(tabId)]);
     throw new ApiError(409, "conflict", "An order on the tab changed on another device. Reload it before clearing.");
   }
-  await audit(env, "wholesale_tab_cleared", actor, `${actor} cleared ${record.business}'s tab: ${orders.length} ${orders.length === 1 ? "order" : "orders"}, ${(record.grams / 1000).toFixed(2)} kg${record.early ? " (before 6 kg)" : ""}.`);
+  await audit(env, "wholesale_tab_cleared", actor, `${actor} cleared ${kept.length ? "part of " : ""}${record.business}'s tab: ${orders.length} ${orders.length === 1 ? "order" : "orders"}, ${(record.grams / 1000).toFixed(2)} kg${record.early ? " (before 6 kg)" : ""}${kept.length ? `; ${kept.length} ${kept.length === 1 ? "order stays" : "orders stay"} on the tab` : ""}.`);
   const { pence, ...visible } = record;
   return { id: tabId, ...visible, ...(admin ? { pence } : {}) };
 }

@@ -88,7 +88,7 @@ test("put an order on a tab, fill it to 6 kg, clear it", async () => {
   // A cleared tab still shows what was on it.
   await p.locator("#clearedList .cleared-row", { hasText: "Strangers ASG" }).click();
   await p.locator("#tabDialog[open]").waitFor();
-  assert.match(await p.locator("#tabDetail").innerText(), /Cleared .* by Sam Packer[\s\S]*What was on the tab[\s\S]*6 ×[\s\S]*1 kg · Beans[\s\S]*Orders on the tab/);
+  assert.match(await p.locator("#tabDetail").innerText(), /Cleared .* by Sam Packer[\s\S]*What was cleared[\s\S]*6 ×[\s\S]*1 kg · Beans[\s\S]*Orders cleared[\s\S]*Ordered /);
   assert.equal(await p.locator("#tabDetail .tab-order").count(), 3);
   await shot(p, "cleared-ipad");
   await p.locator("#tabFoot .btn", { hasText: "Done" }).click();
@@ -171,11 +171,70 @@ test("Admin → Wholesale → Tabs: see every tab with £, and clear one", async
   // The cleared tab opens to show what was on it, with £.
   await p.locator(".w-tab-cleared", { hasText: "Strangers ASG" }).first().click();
   await p.locator(".w-tab-sheet").waitFor();
-  assert.match(await p.locator(".w-tab-sheet").innerText(), /Cleared .* by Admin[\s\S]*£[\s\S]*What was on the tab[\s\S]*\d+ ×[\s\S]*1 kg · Beans/);
+  assert.match(await p.locator(".w-tab-sheet").innerText(), /Cleared .* by Admin[\s\S]*£[\s\S]*What was cleared[\s\S]*\d+ ×[\s\S]*1 kg · Beans/);
   await shot(p, "admin-cleared");
   await p.locator('.w-tab-sheet [data-sheet="close"]').first().click();
   const tabs = (await call("GET", "/api/admin/wholesale/tabs")).body;
   assert.ok(tabs.cleared.some((c) => c.business === "Strangers ASG" && c.clearedBy === "Admin" && c.grams >= 6000 && Number.isFinite(c.pence)));
   assert.deepEqual(errors, []);
   await ctx.close();
+});
+
+test("clear part of a tab: untick orders to keep them on it, and see what was cleared and what stayed", async () => {
+  // A customer with three orders on an automatic tab.
+  const part = await customer("Part Tab Bakery", "parttab", { autoTab: true });
+  await order(part, 1); await order(part, 2); await order(part, 3);
+  const { ctx, p, errors } = await staffPage({ width: 393, height: 852 }, { isMobile: true, hasTouch: true });
+  await p.locator('#viewTabs [data-view="tabs"]').click();
+  await p.locator(".tab-card", { hasText: "Part Tab Bakery" }).click(); await p.locator("#tabDialog[open]").waitFor();
+  const boxes = p.locator("#tabDetail .tab-pick");
+  assert.equal(await boxes.count(), 3);
+  assert.match(await p.locator("#tabDetail").innerText(), /Untick any orders that should stay on the tab[\s\S]*Ordered /);
+  // Keep the newest (3 kg) on the tab.
+  await boxes.nth(2).uncheck();
+  assert.match(await p.locator("#tabDetail .tab-order").nth(2).innerText(), /Stays on tab/);
+  assert.match(await p.locator("#tabFoot").innerText(), /3 kg to clear · 3 kg stays/);
+  await p.locator("#clearTab", { hasText: "Clear 2 of 3" }).click();
+  assert.match(await p.locator("#tabFoot").innerText(), /Clear 3 kg\? 1 order stays on the tab \(3 kg\)/);
+  await shot(p, "part-confirm-phone");
+  assert.ok(await p.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth) <= 1);
+  await p.locator("#confirmClear").click();
+  await p.locator("#tabDialog[open]").waitFor({ state: "detached" });
+  const card = p.locator(".tab-card", { hasText: "Part Tab Bakery" });
+  await card.filter({ hasText: "3 kg" }).waitFor();
+  assert.match(await p.locator("#clearedList .cleared-row", { hasText: "Part Tab Bakery" }).innerText(), /Part cleared .* by Sam Packer · 1 kept on the tab[\s\S]*3 kg/);
+  // The open tab says when it was last cleared; the cleared record shows both parts with order dates.
+  await card.click(); await p.locator("#tabDialog[open]").waitFor();
+  assert.match(await p.locator("#tabDetail").innerText(), /Last cleared .* by Sam Packer: 3 kg \(part of the tab/);
+  assert.equal(await p.locator("#tabDetail .tab-order").count(), 1);
+  await p.locator("#closeTab").click();
+  await p.locator("#clearedList .cleared-row", { hasText: "Part Tab Bakery" }).click(); await p.locator("#tabDialog[open]").waitFor();
+  const text = await p.locator("#tabDetail").innerText();
+  assert.match(text, /Part cleared[\s\S]*Orders cleared[\s\S]*Ordered [\s\S]*Ordered [\s\S]*Kept on the tab[\s\S]*Ordered [\s\S]*Still on the tab/);
+  await shot(p, "part-cleared-phone");
+  await p.locator("#closeTab").click();
+  assert.deepEqual(errors, []);
+  await ctx.close();
+
+  // Admin: the same, with £, on an iPad.
+  const actx = await b.newContext({ viewport: { width: 820, height: 1180 }, colorScheme: "dark" });
+  const [n, v] = ADMIN.split("="); await actx.addCookies([{ name: n, value: v, url: srv.base }]);
+  const a = await actx.newPage(), aerr = []; a.on("pageerror", (e) => aerr.push(String(e)));
+  await order(part, 2);
+  await a.goto(srv.base + "/admin#wholesale"); await selectWholesaleSection(a, "tabs");
+  await a.locator(".w-tab-card", { hasText: "Part Tab Bakery" }).click(); await a.locator(".w-tab-sheet").waitFor();
+  assert.equal(await a.locator(".w-tab-pick").count(), 2);
+  assert.match(await a.locator(".w-tab-sheet").innerText(), /Last cleared .* by Sam Packer: 3 kg \(part of the tab/);
+  await a.locator(".w-tab-pick").first().uncheck();
+  await a.locator('[data-sheet="tab-clear"]', { hasText: "Clear 1 of 2" }).click();
+  await a.locator(".w-tab-confirm", { hasText: /Clear 2 kg \(£.*\)\? 1 order stays on the tab\./ }).waitFor();
+  await shot(a, "part-admin-confirm");
+  assert.ok(await a.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+  await a.locator('.w-tab-sheet button[type="submit"]').click();
+  await a.locator(".w-tab-sheet").waitFor({ state: "detached" });
+  await a.locator(".w-tab-cleared", { hasText: "Part Tab Bakery" }).first().click(); await a.locator(".w-tab-sheet").waitFor();
+  assert.match(await a.locator(".w-tab-sheet").innerText(), /Part cleared .* by Admin[\s\S]*£[\s\S]*Orders cleared[\s\S]*Ordered [\s\S]*Kept on the tab[\s\S]*Still on the tab/);
+  await shot(a, "part-admin-cleared");
+  assert.deepEqual(aerr, []);
+  await actx.close();
 });

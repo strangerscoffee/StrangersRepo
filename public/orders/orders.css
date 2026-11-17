@@ -200,3 +200,10 @@ button.cleared-row:hover{background:var(--sunk)}
  .mobile-pack-body .business-title{margin:0}
  .mobile-pack-body .wp-check-line{padding-block:9px}
 }
+/* Part-clearing a tab: tick the orders to clear; unticked ones stay on the tab. */
+.tab-order.pickable{cursor:pointer;justify-content:flex-start;align-items:flex-start;gap:12px}
+.tab-order.pickable>span:not(.row-end){flex:1;min-width:0}
+.tab-order.pickable .tab-pick{flex:none;width:22px;height:22px;margin:2px 0 0;accent-color:var(--accent)}
+.tab-order.kept{background:var(--sunk)}
+.tab-order .row-end{flex-wrap:wrap;justify-content:flex-end;gap:6px}
+.tab-last{margin-top:2px}
