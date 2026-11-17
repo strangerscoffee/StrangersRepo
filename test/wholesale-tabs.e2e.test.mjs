@@ -232,7 +232,8 @@ test("clear part of a tab: untick orders to keep them on it, and see what was cl
   assert.ok(await a.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
   await a.locator('.w-tab-sheet button[type="submit"]').click();
   await a.locator(".w-tab-sheet").waitFor({ state: "detached" });
-  await a.locator(".w-tab-cleared", { hasText: "Part Tab Bakery" }).first().click(); await a.locator(".w-tab-sheet").waitFor();
+  const adminCleared = a.locator(".w-tab-cleared", { hasText: "Part Tab Bakery" }).filter({ hasText: /Part cleared .* by Admin/ });
+  await adminCleared.click(); await a.locator(".w-tab-sheet").waitFor();
   assert.match(await a.locator(".w-tab-sheet").innerText(), /Part cleared .* by Admin[\s\S]*£[\s\S]*Orders cleared[\s\S]*Ordered [\s\S]*Kept on the tab[\s\S]*Still on the tab/);
   await shot(a, "part-admin-cleared");
   assert.deepEqual(aerr, []);
