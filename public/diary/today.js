@@ -27,12 +27,21 @@ function rotaWho(job){
   const names=list.map(x=>x.me?"you":firstName(x.name));
   return names.length===1?`${names[0]} ${job==="opens"?"opens":"closes"}`:`${names.slice(0,-1).join(", ")} and ${names[names.length-1]} ${job==="opens"?"open":"close"}`;
 }
+// Folded by default (a tap on the heading opens it); S.onShiftOpen stays as chosen until the page is reloaded.
+S.onShiftOpen=false;
 function renderOnShift(){
   const box=$("#onShift"),r=rotaToday();
   box.hidden=!r||!r.shifts.length;if(box.hidden)return;
-  const jobText={opens:"opening checks",closes:"closing checks and sign-off"};
-  box.replaceChildren(el("div",{class:"row spread"},el("h3",{id:"onShiftTitle",text:S.role==="admin"?"On shift today":"Your rota today"}),el("a",{class:"linkbtn",href:S.rotaUrl},"Rota")),
-    el("div",{class:"list"},...[...r.shifts].sort((a,b)=>a.start.localeCompare(b.start)).map(x=>el("div",{class:"lrow"},
+  const jobText={opens:"opening checks",closes:"closing checks and sign-off"},open=!!S.onShiftOpen;
+  const shifts=[...r.shifts].sort((a,b)=>a.start.localeCompare(b.start)),mine=shifts.find(x=>x.me),people=shifts.filter(x=>!x.open).length,openN=shifts.length-people;
+  const summary=S.role==="admin"?[`${people} on shift`,openN?`${openN} open shift${openN===1?"":"s"}`:""].filter(Boolean).join(" · "):mine?`You · ${mine.actualEnd?`${mine.actualStart}–${mine.actualEnd}`:`${mine.start}–${mine.end}`}`:`${shifts.length} open shift${shifts.length===1?"":"s"}`;
+  box.classList.toggle("shut",!open);
+  box.replaceChildren(el("div",{class:"row spread"},
+      el("button",{type:"button",class:"onshift-toggle","aria-expanded":String(open),"aria-controls":"onShiftList",onclick:()=>{S.onShiftOpen=!open;renderOnShift()}},
+        el("span",{class:"t"},el("h3",{id:"onShiftTitle",text:S.role==="admin"?"On shift today":"Your rota today"}),el("span",{class:"s",text:summary})),
+        el("span",{class:"chev"},svgi(ICON.chevD))),
+      el("a",{class:"linkbtn",href:S.rotaUrl},"Rota")),
+    el("div",{class:"list",id:"onShiftList",hidden:!open},...shifts.map(x=>el("div",{class:"lrow"},
       el("span",{class:"avatar sm",text:x.open?"?":initials(x.name),"aria-hidden":"true"}),
       el("span",{class:"t"},el("b",{text:x.open?"Open shift":x.me?"You":x.name}),el("span",{class:"s",text:[(S.role==="admin"||x.me)&&x.actualEnd?`${x.actualStart}–${x.actualEnd} (was ${x.start}–${x.end})`:`${x.start}–${x.end}`,jobText[x.job]].filter(Boolean).join(" · ")})),
       x.job?el("span",{class:"pill "+(x.job==="opens"?"acc":""),text:x.job==="opens"?"Opens":"Closes"}):null))));

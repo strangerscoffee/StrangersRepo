@@ -564,6 +564,12 @@ table.rk-grid .rk-corner{font-size:10px;width:40px}
 .onshift .lrow{padding:8px 0;min-height:52px}
 a.lrow{text-decoration:none}
 .onshift a.linkbtn{text-decoration:none}
+.onshift .onshift-toggle{flex:1;min-width:0;display:flex;align-items:center;gap:8px;background:none;border:0;padding:4px 0;margin:-4px 0;color:inherit;font:inherit;text-align:left;cursor:pointer;min-height:44px}
+.onshift .onshift-toggle .t{display:flex;flex-direction:column;gap:2px;min-width:0}
+.onshift .onshift-toggle .s{color:var(--muted);font-size:13px}
+.onshift .onshift-toggle .chev svg.i{transition:transform .2s}
+.onshift.shut .onshift-toggle .chev svg.i{transform:rotate(-90deg)}
+.onshift .onshift-toggle:focus-visible{outline:2px solid var(--accent);outline-offset:4px;border-radius:8px}
 
 /* ---------- notifications (the bell): maintenance jobs that need someone's attention ---------- */
 .aright{display:flex;align-items:center;gap:8px}

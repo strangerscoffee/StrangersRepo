@@ -115,8 +115,13 @@ for (const [label, viewport] of [["phone", { width: 393, height: 852 }], ["iPad"
 
     // The diary's Today shows who's on and who opens.
     await a.page.goto(srv.base + "/");
+    // Folded until tapped: the heading says when they're on, and tapping it shows the list.
     await a.page.locator("#onShift", { hasText: "Your rota today" }).waitFor();
-    assert.match(await a.page.locator("#onShift").innerText(), /You[\s\S]*Opens/);
+    assert.equal(await a.page.locator("#onShift .onshift-toggle").getAttribute("aria-expanded"), "false");
+    assert.equal(await a.page.locator("#onShiftList").isVisible(), false);
+    assert.match(await a.page.locator("#onShift .onshift-toggle").innerText(), /You · 00:30–23:30/);
+    await a.page.locator("#onShift .onshift-toggle").click();
+    assert.match(await a.page.locator("#onShiftList").innerText(), /You[\s\S]*Opens/);
     await a.page.locator("#openCard .sec", { hasText: "You're opening" }).waitFor();
 
     // On the day, the manager amends Alex's finish with the slider (went home sick); the diary shows it.
@@ -132,7 +137,9 @@ for (const [label, viewport] of [["phone", { width: 393, height: 852 }], ["iPad"
     assert.deepEqual([w.shifts[0].actualEnd, w.shifts[0].adjustNote, w.shifts[0].end], ["12:00", "Went home sick", "23:30"]);
     await m.page.locator(".tl-bar.amended", { hasText: "00:30–12:00" }).waitFor();
     await a.page.reload();
-    await a.page.locator("#onShift", { hasText: "00:30–12:00 (was 00:30–23:30)" }).waitFor();
+    await a.page.locator("#onShift .onshift-toggle", { hasText: "You · 00:30–12:00" }).waitFor();
+    await a.page.locator("#onShift .onshift-toggle").click();
+    await a.page.locator("#onShiftList", { hasText: "00:30–12:00 (was 00:30–23:30)" }).waitFor();
 
     // A pickup: an open shift at the Cafe tomorrow, claimed by Alex, approved by the manager.
     const open = (await call("POST", "/api/rota/shifts", { site: "cafe", day: addDays(today, 1), start: "08:00", end: "12:00", breakMins: 0 })).shift;
