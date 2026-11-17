@@ -644,3 +644,19 @@ body[data-auth-view=login] #login-submit { margin-top:3px; }
 .announcement-text p{margin:0;white-space:pre-line;line-height:1.45;overflow-wrap:anywhere}
 .announcement-close{flex:none;width:36px;height:36px;margin:-6px -4px 0 0;border:0;border-radius:50%;background:transparent;color:var(--muted);font-size:22px;line-height:1;cursor:pointer}
 .announcement-close:hover,.announcement-close:focus-visible{background:color-mix(in srgb,var(--fg) 8%,transparent);color:var(--fg)}
+
+/* Send to more sites: the same order, one per ticked location */
+.more-sites { border: 0; padding: 0; margin: 18px 0 4px; min-width: 0; }
+.more-sites legend { display: block; margin-bottom: 4px; color: var(--muted); font-size: 13px; font-weight: 600; }
+.more-sites legend span { font-weight: 500; }
+.more-sites-hint { margin: 0 0 10px; color: var(--muted); font-size: 13px; line-height: 1.4; }
+.more-site-choices { display: grid; gap: 8px; }
+.more-site { display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 14px; cursor: pointer; min-height: 44px; }
+.more-site input { width: 20px; height: 20px; margin: 2px 0 0; flex: none; accent-color: var(--accent); }
+.more-site span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.more-site strong { font-size: 15px; }
+.more-site small { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.more-site:has(input:checked) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.complete-orders { list-style: none; padding: 0; margin: 4px 0 14px; display: grid; gap: 8px; }
+.complete-orders li { display: flex; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; font-size: 14px; }
+.complete-orders li span { color: var(--muted); text-align: right; overflow-wrap: anywhere; }

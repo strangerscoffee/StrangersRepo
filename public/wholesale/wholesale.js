@@ -9,6 +9,8 @@ let STORAGE_KEY = null;
 let session = null;
 let ready = false;
 let requestId = null;
+// Order again starts on the site the original order went to (when it's still one of the customer's locations).
+let reorderSite = null;
 let saving = false;
 let pendingAttempt = null;
 let reviewNeedsRefresh = false;
@@ -83,6 +85,22 @@ function renderReviewLocation() {
   $("#review-location-label").textContent = $("#review-form").elements.delivery.value === "collection" ? "Business location" : "Delivery location";
   $("#review-location-name").textContent = selected.name;
   $("#delivery-summary").textContent = locationSummary(selected) || "Add delivery details in My account, or choose roastery collection.";
+  renderMoreSites();
+}
+// "Send to more sites": the same bags as a separate order for each ticked location (one order per site).
+function moreSites() { return [...document.querySelectorAll('#more-site-choices input:checked')].map(input => input.value); }
+function renderMoreSites() {
+  const box = $("#review-more-sites"), field = $("#review-form").elements.locationId;
+  const others = session.customer && !session.preview && !pendingAttempt ? locationsFor().filter(location => location.id !== field.value) : [];
+  const ticked = new Set(moreSites());
+  box.hidden = !others.length;
+  $("#more-site-choices").innerHTML = others.map(location => `<label class="more-site"><input type="checkbox" name="moreSites" value="${escape(location.id)}" ${ticked.has(location.id) ? "checked" : ""}><span><strong>${escape(location.name)}</strong><small>${escape([location.address, location.postcode].filter(Boolean).join(" · ") || "Delivery address not yet added")}</small></span></label>`).join("");
+  updatePlaceButton();
+}
+function updatePlaceButton() {
+  if (pendingAttempt || saving) return;
+  const n = moreSites().length + 1;
+  $("#submit-preview-order").textContent = session?.preview ? "Save preview order" : n > 1 ? `Place ${n} orders` : "Place order";
 }
 function syncPrimaryLocation() {
   const primary = accountLocations.find(location => location.id === "primary"), form = $("#account-form");
@@ -519,6 +537,7 @@ $("#review-location").addEventListener("click", () => {
   $("#location-choices").innerHTML = '<legend class="sr-only">Saved locations</legend>' + locationsFor().map(location => `<label><input type="radio" name="location-choice" value="${escape(location.id)}" ${location.id === selected ? "checked" : ""}><span><strong>${escape(location.name)}</strong><small>${escape([location.address, location.postcode].filter(Boolean).join(" · ") || "Delivery address not yet added")}</small></span></label>`).join("");
   $("#location-choice-dialog").showModal();
 });
+$("#more-site-choices").addEventListener("change", updatePlaceButton);
 $("#location-choice-form").addEventListener("submit", event => {
   event.preventDefault();
   if (!session.customer || saving || pendingAttempt) return;
@@ -552,7 +571,8 @@ $("#review-order").addEventListener("click", async () => {
   $("#review-form").elements.delivery.value = basketMethod;
   renderReviewDelivery();
   reviewBusiness(session.customer?.business || "");
-  $("#review-form").elements.locationId.value = session.customer?.defaultLocationId || "primary";
+  $("#review-form").elements.locationId.value = reorderSite && locationsFor().some(location => location.id === reorderSite) ? reorderSite : session.customer?.defaultLocationId || "primary";
+  $("#more-site-choices").replaceChildren();
   renderReviewLocation();
   $("#review-account").hidden = !session.customer;
   $("#review-payment-terms").textContent = session.customer ? `Payment terms: ${session.customer.paymentTerms.label}${session.customer.paymentTerms.note ? " · " + session.customer.paymentTerms.note : ""}` : "";
@@ -600,7 +620,7 @@ function readAttempt() {
 function lockReview(locked) {
   for (const field of $("#review-form").elements) {
     if (field.tagName === "BUTTON") continue;
-    if (field.type === "radio") field.disabled = locked;
+    if (field.type === "radio" || field.type === "checkbox") field.disabled = locked;
     else field.readOnly = locked || (field.name === "business" && !!session.customer);
   }
   $("#review-account").disabled = locked;
@@ -629,7 +649,8 @@ function showReceipt(result) {
   }
   // Commit the confirmed state before rendering optional receipt details. Never write [] over a newer tab's basket.
   saveAttempt(null);
-  basket = []; requestId = null; reviewNeedsRefresh = false;
+  basket = []; requestId = null; reviewNeedsRefresh = false; reorderSite = null;
+  $("#complete-orders").hidden = true; $("#complete-problem").hidden = true; $("#complete-continue").hidden = true;
   renderBasket(); renderProducts(); filterProducts();
   setRepeatOrder(result.order);
   try { basketChannel?.postMessage({ type: "order-confirmed", identity: attempt.identity, orderId: result.order.id, requestId: attempt.payload.requestId }); } catch {}
@@ -652,6 +673,53 @@ function showReceipt(result) {
   $("#preview-complete [data-close]").focus({ preventScroll: true });
   $("#review-form").reset();
 }
+// Places the same order for each further site, one at a time and each with its own saved attempt, so an
+// interrupted submission is recovered exactly like a single order (and the rest can be placed afterwards).
+async function placeForSites(source, sites, done) {
+  const left = [...sites];
+  let problem = "";
+  while (left.length) {
+    const site = left.shift(), location = locationsFor().find(item => item.id === site);
+    if (!location) { problem = "A site you ticked is no longer on your account, so it wasn't ordered."; continue; }
+    saveAttempt({ identity: session.me.id, payload: { ...source.payload, requestId: crypto.randomUUID(), locationId: site }, summary: source.summary,
+      deliverySummary: locationSummary(location), locationLabel: location.name, terms: source.terms, more: [...left] });
+    if (!pendingAttempt) { problem = `Allow browser storage to place the orders for ${[location.name, ...left.map(id => locationsFor().find(item => item.id === id)?.name)].filter(Boolean).join(", ")}.`; break; }
+    try {
+      const result = await api("/api/wholesale/orders", pendingAttempt.payload);
+      showReceipt(result);
+      done.push({ order: result.order, site: location.name });
+    } catch (error) {
+      if (error.status >= 400 && error.status < 500 && error.status !== 401) { saveAttempt(null); problem = `The order for ${location.name} wasn't placed: ${error.message}${left.length ? " The other sites weren't ordered either." : ""}`; }
+      else problem = `We couldn't confirm the order for ${location.name}. Use “Check submitted order” in your basket to check it${left.length ? `; the orders for ${left.map(id => locationsFor().find(item => item.id === id)?.name).filter(Boolean).join(", ")} can be placed after that` : ""}.`;
+      break;
+    }
+  }
+  showMultiReceipt(done, problem);
+}
+function showMultiReceipt(done, problem) {
+  if (done.length > 1) {
+    $("#complete-message").textContent = `${done.length} orders have been received by Strangers, one for each site. Follow their progress in My orders.`;
+    $("#complete-orders").innerHTML = done.map(item => `<li><strong>${escape(item.site || "Your account")}</strong><span>${escape(item.order.id)}${pricesShown() ? ` · ${money(orderTotal(item.order))}` : ""}</span></li>`).join("");
+    $("#complete-orders").hidden = false;
+    $("#complete-location").hidden = true;
+    $("#complete-total").textContent = money(done.reduce((sum, item) => sum + orderTotal(item.order), 0)) + " for all sites";
+  }
+  $("#complete-problem").textContent = problem;
+  $("#complete-problem").hidden = !problem;
+}
+// After recovering an order that was one of several, offer to place the rest (each still checked by the server).
+function offerRemaining(attempt) {
+  const rest = (attempt?.more || []).filter(id => locationsFor().some(location => location.id === id));
+  if (!rest.length) return;
+  const button = $("#complete-continue");
+  button.textContent = `Place the same order for ${rest.map(id => locationsFor().find(location => location.id === id).name).join(", ")}`;
+  button.hidden = false;
+  button.onclick = async () => {
+    if (saving || pendingAttempt) return;
+    saving = true; button.disabled = true;
+    try { await placeForSites(attempt, rest, []); } finally { saving = false; button.disabled = false; button.hidden = true; }
+  };
+}
 async function confirmIdentity() {
   const current = await api("/api/wholesale/session");
   if (current.me.id !== session.me.id) { location.reload(); return false; }
@@ -661,7 +729,7 @@ async function resumeAttempt() {
   if (saving || !pendingAttempt) return;
   try { if (!await confirmIdentity()) return; } catch (error) { toast(error.message); return; }
   const id = (session.preview ? "PREVIEW-" : "WS-") + pendingAttempt.payload.requestId.replaceAll("-", "").toUpperCase();
-  try { const result = await api("/api/wholesale/orders/" + id); showReceipt(result); return; }
+  try { const attempt = pendingAttempt, result = await api("/api/wholesale/orders/" + id); showReceipt(result); offerRemaining(attempt); return; }
   catch (error) { if (error.status === 401) return; }
   const attempt = pendingAttempt, form = $("#review-form");
   $("#review-items").innerHTML = attempt.summary.map(line => `<div class="review-line"><div><h3>${escape(line.title)}</h3><p>${escape(line.description)}</p></div>${pricesShown() ? `<strong>${money(line.pence)}</strong>` : ""}</div>`).join("");
@@ -674,6 +742,7 @@ async function resumeAttempt() {
   form.elements.locationId.value = attempt.payload.locationId || "";
   $("#review-location-block").hidden = !session.customer;
   $("#review-location-name").textContent = attempt.locationLabel || "Saved account location";
+  $("#review-more-sites").hidden = true;
   $("#delivery-summary").textContent = attempt.deliverySummary;
   $("#review-payment-terms").textContent = attempt.terms;
   $("#review-account").hidden = !session.customer;
@@ -700,11 +769,15 @@ $("#review-form").addEventListener("submit", async (event) => {
     ...(form.elements.customerNote.value.trim() ? { customerNote: form.elements.customerNote.value.trim() } : {}),
     ...(session.customer ? { customerVersion: session.customer.version, locationId: form.elements.locationId.value } : {}),
   }, summary: basket.map(line => ({ title: productFor(line.productId).name, description: `${line.quantity} × ${packs[line.pack].label} · ${grindLabel(productFor(line.productId), line.grind)}`, pence: unitPrice(productFor(line.productId),line.pack) * line.quantity })),
-    deliverySummary: $("#delivery-summary").textContent, locationLabel: session.customer ? $("#review-location-name").textContent : "", terms: $("#review-payment-terms").textContent });
+    deliverySummary: $("#delivery-summary").textContent, locationLabel: session.customer ? $("#review-location-name").textContent : "", terms: $("#review-payment-terms").textContent, more: session.customer && !session.preview ? moreSites() : [] });
   if (!pendingAttempt) { saving = false; button.disabled = false; $("#preview-submit-error").textContent = "Allow browser storage before placing an order so an interrupted submission can be recovered safely."; $("#preview-submit-error").hidden = false; return; }
   lockReview(true); lockPendingUi();
   setBasketMethod(pendingAttempt.payload.delivery === "Roastery collection" ? "collection" : "dispatch", true);
-  try { showReceipt(await api("/api/wholesale/orders", pendingAttempt.payload)); }
+  try {
+    const attempt = pendingAttempt, result = await api("/api/wholesale/orders", attempt.payload);
+    showReceipt(result);
+    if (attempt.more?.length) await placeForSites(attempt, attempt.more, [{ order: result.order, site: attempt.locationLabel }]);
+  }
   catch (error) {
     // A validated rejection means nothing was saved. Network/5xx/invalid-response failures remain uncertain.
     if (error.status >= 400 && error.status < 500 && error.status !== 401) { saveAttempt(null); reviewNeedsRefresh = true; lockReview(false); renderProducts(); filterProducts(); renderBasket(); }
@@ -1209,6 +1282,7 @@ $("#confirm-reorder").addEventListener("click", async () => {
     const current = buildReorderPlan(reviewed.order);
     if (current.signature !== reviewed.signature) { renderReorderPlan(current); $("#reorder-error").textContent = "Prices, availability or your basket changed. Review these updated items before adding."; $("#reorder-error").hidden = false; return; }
     basket = current.next; changedBasket();
+    reorderSite = typeof reviewed.order.locationId === "string" ? reviewed.order.locationId : null;
     $("#reorder-dialog").close(); reorderPlan = null;
     toast(`${bagCount(current.added.packs)} added at current prices. Review your basket before placing the order.`);
     openBasket();

@@ -118,6 +118,7 @@
           <label class="form-field" id="staff-business-field">Business name<input name="business" maxlength="120" autocomplete="organization"></label>
           <div class="review-location-field" id="review-location-block" hidden><span class="field-label" id="review-location-label">Delivery location</span><input type="hidden" name="locationId"><button class="location-picker" type="button" id="review-location" aria-haspopup="dialog" aria-controls="location-choice-dialog"><span id="review-location-name"></span><span aria-hidden="true">⌄</span></button></div>
           <p class="dialog-intro" id="delivery-summary"></p><button class="text-button" type="button" id="review-account" hidden>Edit delivery details</button>
+          <fieldset class="more-sites" id="review-more-sites" hidden><legend>Send to more sites <span>(optional)</span></legend><p class="more-sites-hint">Each ticked site gets the same bags as its own order, with its own delivery charge and invoice.</p><div class="more-site-choices" id="more-site-choices"></div></fieldset>
           <p class="payment-terms" id="review-payment-terms"></p>
           <label class="form-field">Purchase reference <span>(optional)</span><input name="reference" maxlength="80" placeholder="e.g. Your café name or PO number" autocomplete="off"></label>
           <label class="form-field">Additional comments or order information <span>(optional)</span><textarea name="customerNote" id="review-customer-note" rows="3" maxlength="1000" placeholder="e.g. Use our own custom labels"></textarea></label>
@@ -126,7 +127,7 @@
           <button class="button button-outline" type="button" data-close>Keep choosing coffee</button>
         </form>
       </div>
-      <div class="preview-complete" id="preview-complete" hidden><p class="eyebrow">ORDER RECEIVED</p><h2 id="complete-title">Thank you.</h2><p id="complete-total-line">Order total <strong id="complete-total">£0.00</strong></p><p id="complete-message"></p><p class="receipt-location" id="complete-location" hidden></p><p class="receipt-location receipt-note" id="complete-note" hidden></p><p class="payment-terms" id="complete-payment-terms"></p><a class="button button-dark" id="complete-dashboard-link" href="/admin#wholesale" hidden>Open Admin · Wholesale</a><button class="button button-outline" type="button" data-close>Back to the coffee</button></div>
+      <div class="preview-complete" id="preview-complete" hidden><p class="eyebrow">ORDER RECEIVED</p><h2 id="complete-title">Thank you.</h2><p id="complete-total-line">Order total <strong id="complete-total">£0.00</strong></p><p id="complete-message"></p><ul class="complete-orders" id="complete-orders" hidden></ul><p class="quantity-error" id="complete-problem" role="alert" hidden></p><button class="button button-dark" type="button" id="complete-continue" hidden>Place the remaining orders</button><p class="receipt-location" id="complete-location" hidden></p><p class="receipt-location receipt-note" id="complete-note" hidden></p><p class="payment-terms" id="complete-payment-terms"></p><a class="button button-dark" id="complete-dashboard-link" href="/admin#wholesale" hidden>Open Admin · Wholesale</a><button class="button button-outline" type="button" data-close>Back to the coffee</button></div>
     </div>
   </dialog>
 
