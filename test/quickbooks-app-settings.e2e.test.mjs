@@ -1,3 +1,4 @@
+import { selectWholesaleSection } from "./admin-workspace-helpers.mjs";
 import {test,before,after} from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
@@ -16,7 +17,7 @@ after(async()=>{await browser?.close();await srv?.stop();await provider?.stop();
 for(const [device,viewport] of [['phone',{width:393,height:852}],['iPad',{width:820,height:1180}],['desktop',{width:1440,height:1000}]])for(const colorScheme of ['light','dark']){
  test(`QuickBooks app setup ${device} ${colorScheme}: editable environment settings, hidden saved secrets and copyable URLs`,async()=>{
   const context=await browser.newContext({viewport,colorScheme});const [name,value]=ADMIN.split('=');await context.addCookies([{name,value,url:srv.base}]);const page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
-  async function open(){await page.goto(srv.base+'/admin#wholesale');await page.locator('[data-act="wh-tab"][data-id="invoices"]').click();await page.locator('[data-act="wh-invoice-quickbooks"]').click();await page.locator('#qbConnectionForm').waitFor();}
+  async function open(){await page.goto(srv.base+'/admin#wholesale');await selectWholesaleSection(page, "invoices");await page.locator('[data-act="wh-invoice-quickbooks"]').click();await page.locator('#qbConnectionForm').waitFor();}
   try{
    await open();
    for(const [scope,label]of [['sandbox','Sandbox'],['production','Live']]){

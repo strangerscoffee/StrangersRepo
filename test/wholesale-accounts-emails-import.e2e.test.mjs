@@ -1,3 +1,4 @@
+import { selectWholesaleSection } from "./admin-workspace-helpers.mjs";
 // Accounts emails in Admin: choose a QuickBooks customer list, see the matches, save them. Phone and iPad, light and dark.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -33,7 +34,7 @@ async function open(viewport, colorScheme) {
   const [n, v] = ADMIN.split("="); await ctx.addCookies([{ name: n, value: v, url: srv.base }]);
   const p = await ctx.newPage(), errors = []; p.on("pageerror", (e) => errors.push(String(e)));
   await p.goto(srv.base + "/admin#wholesale");
-  await p.locator('[data-act="wh-tab"][data-id="customers"]').first().click();
+  await selectWholesaleSection(p, "customers");
   await p.locator('[data-act="wh-accounts-emails"]').click();
   await p.locator("#wAeFile").setInputFiles(file);
   await p.locator(".w-ae-group").first().waitFor();

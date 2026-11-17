@@ -1623,12 +1623,15 @@
       el("p", { class: "note", text: "The payroll CSV has one row a person: hours worked, basic and overtime hours, holiday, sick, unpaid, unauthorised and other time off with their dates, and hours by site. Every shift lists each shift's planned and actual times, for checking." })];
   }
 
-  async function renderSettings() {
+  async function renderSettings([siteId] = []) {
     setHead("settings", isAdmin() ? "Rota settings" : "Site rota settings", isAdmin() ? "Opening times, minimum cover and contracted hours" : "Opening times and minimum cover", { back: ["More", "more"] });
     const [sites, wk] = await Promise.all([get("/api/rota/sites"), isAdmin() ? loadWeek(R.week, true) : Promise.resolve(null)]);
     const out = [label("Sites")];
     const dayAb = (n) => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][n];
-    out.push(el("div", { class: "list glass" }, ...sites.sites.filter((s) => !s.adHoc).map((s) => {
+    const configured = sites.sites.filter(site => !site.adHoc);
+    const selectedSite = configured.find(site => site.id === siteId);
+    if (selectedSite) out.push(el("a", { class: "btn ghost sm", href: "#settings", style: "justify-self:start" }, "All rota settings"));
+    out.push(el("div", { class: "list glass" }, ...(selectedSite ? [selectedSite] : configured).map((s) => {
       const o = el("input", { type: "time", value: s.opensAt || "", "aria-label": `${s.name} opens at` });
       const c = el("input", { type: "time", value: s.closesAt || "", "aria-label": `${s.name} closes at` });
       const n = el("input", { type: "number", value: String(s.minPeople), min: 0, max: 20, inputmode: "numeric", "aria-label": `${s.name} minimum people on shift` });
@@ -1662,7 +1665,7 @@
     out.push(el("p", { class: "note", text: "Cover is checked hour by hour between opening and closing, using each day's own hours where it has them. Which days each site opens comes from the diary's Setup, and planned closures from Closures & holidays." }));
     const adHoc = sites.sites.filter((s) => s.adHoc);
     if (adHoc.length) out.push(el("p", { class: "note", text: `${joinAnd(adHoc.map((s) => "the " + s.name)).replace(/^t/, "T")} ${adHoc.length === 1 ? "is" : "are"} used as needed: you can put people there any day, with no opening hours or minimum cover to check.` }));
-    if (isAdmin()) {
+    if (isAdmin() && !selectedSite) {
     out.push(label("Contracted hours a week"));
     out.push(el("div", { class: "list glass" }, ...wk.people.map((p) => {
       const opts = { type: "number", min: 0, max: 80, step: 0.5, inputmode: "decimal", placeholder: "–" };

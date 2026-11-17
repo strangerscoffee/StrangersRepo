@@ -2,7 +2,7 @@
 // people with their account, rota and training details, sites, activity, security and exports. Admins only
 // (checked in index.ts before anything here runs). Reads the diary's documents and the rota's tables directly.
 import { audit } from "./audit";
-import { deviceOf, errorCode, recentErrors, whereOf } from "./errors";
+import { deviceOf, errorCode, whereOf } from "./errors";
 import { emailReady, prefsOf, weeklySitesOf } from "./email/send";
 import { User, nameKey } from "./auth";
 import { listBackups } from "./backup";
@@ -284,16 +284,30 @@ const COLLECTION_LABEL: Record<string, string> = {
 };
 const who = (by: string | null, names: Map<string, string>) => !by ? "Someone" : by.startsWith("web:") ? by.slice(4) : names.get(by) || "Someone";
 
-export async function activity(env: Env, kind: string) {
+export async function activity(env: Env, kind: string, query = new URLSearchParams()) {
+  const q = (query.get("q") || "").trim().toLowerCase(), from = query.get("from"), to = query.get("to");
+  if (q.length > 120 || (from && !isDay(from)) || (to && !isDay(to)) || (from && to && from > to)) throw invalid("Choose a valid search and date range.");
+  const atStart = (day: string) => {
+    const at = Date.parse(day + "T00:00:00Z");
+    const offset = new Intl.DateTimeFormat("en-GB", {timeZone:"Europe/London",timeZoneName:"longOffset"}).formatToParts(at).find(p => p.type === "timeZoneName")?.value || "";
+    return at - (offset === "GMT+01:00" ? 3600000 : 0);
+  };
+  const fromAt = from ? atStart(from) : 0, until = to ? atStart(addDays(to, 1)) : Date.now() + 600000;
   const want = (k: string) => kind !== "errors" && (!kind || kind === "all" || kind === k);
+  type ActivityDoc = { path: string; collection: string; doc_id: string; data: string | null; deleted: number; updated_at: number; updated_by: string };
+  const list = <T>(sql: string, at: string, fields: string[]) => {
+    const filter = q ? " AND (" + fields.map(field => `instr(lower(COALESCE(${field},'')),?)>0`).join(" OR ") + ")" : "";
+    return env.DB.prepare(`${sql} AND ${at}>=? AND ${at}<?${filter} ORDER BY ${at} DESC LIMIT 120`).bind(fromAt, until, ...(q ? fields.map(() => q) : [])).all<T>();
+  };
+  const diarySite = "(CASE WHEN path LIKE 'sites/cafe/%' THEN 'Cafe' WHEN path LIKE 'sites/asg/%' THEN 'ASG' WHEN path LIKE 'sites/factory/%' THEN 'Factory' WHEN path LIKE 'config/%' THEN 'all sites' ELSE 'Roastery' END)";
   const [docs, people, weeks, offs, reqs, adjusted, log] = await Promise.all([
-    want("diary") ? env.DB.prepare("SELECT path, collection, doc_id, data, deleted, updated_at, updated_by FROM docs WHERE source = 'web' AND updated_by IS NOT NULL ORDER BY updated_at DESC LIMIT 60").all<{ path: string; collection: string; doc_id: string; data: string | null; deleted: number; updated_at: number; updated_by: string }>() : null,
-    docData(env, "config/people"),
-    want("rota") ? env.DB.prepare("SELECT w.week, w.published_at, u.name FROM rota_weeks w LEFT JOIN users u ON u.id = w.published_by WHERE w.published_at IS NOT NULL ORDER BY w.published_at DESC LIMIT 20").all<{ week: string; published_at: number; name: string | null }>() : null,
-    want("rota") ? env.DB.prepare("SELECT t.from_day, t.to_day, t.status, t.decided_at, u.name AS who, d.name AS by FROM rota_time_off t JOIN users u ON u.id = t.user_id LEFT JOIN users d ON d.id = t.decided_by WHERE t.decided_at IS NOT NULL AND t.status IN ('approved', 'declined') ORDER BY t.decided_at DESC LIMIT 30").all<{ from_day: string; to_day: string; status: string; decided_at: number; who: string; by: string | null }>() : null,
-    want("rota") ? env.DB.prepare("SELECT r.kind, r.status, r.decided_at, s.day, s.site, t.name AS taker, d.name AS by FROM rota_requests r JOIN rota_shifts s ON s.id = r.shift_id LEFT JOIN users t ON t.id = r.taker LEFT JOIN users d ON d.id = r.decided_by WHERE r.status IN ('approved', 'declined') AND r.decided_at IS NOT NULL ORDER BY r.decided_at DESC LIMIT 30").all<any>() : null,
-    want("rota") ? env.DB.prepare("SELECT s.day, s.site, s.adjust_note, s.adjusted_at, s.actual_start, s.actual_end, u.name AS who, d.name AS by FROM rota_shifts s LEFT JOIN users u ON u.id = s.user_id LEFT JOIN users d ON d.id = s.adjusted_by WHERE s.adjusted_at IS NOT NULL ORDER BY s.adjusted_at DESC LIMIT 30").all<any>() : null,
-    want("account") ? env.DB.prepare("SELECT at, kind, text FROM audit_log WHERE kind <> 'signin_failed' ORDER BY at DESC LIMIT 80").all<{ at: number; kind: string; text: string }>() : null,
+    want("diary") ? list<ActivityDoc>("SELECT path, collection, doc_id, data, deleted, updated_at, updated_by FROM docs WHERE source='web' AND updated_by IS NOT NULL", "updated_at", ["updated_by", "collection", "doc_id", diarySite, "json_extract(data,'$.title')"]) : null,
+    want("diary") ? docData(env, "config/people") : null,
+    want("rota") ? list<{ week: string; published_at: number; name: string | null }>("SELECT w.week, w.published_at, u.name FROM rota_weeks w LEFT JOIN users u ON u.id=w.published_by WHERE w.published_at IS NOT NULL","w.published_at",["u.name","w.week"]) : null,
+    want("rota") ? list<{ from_day: string; to_day: string; status: string; decided_at: number; who: string; by: string | null }>("SELECT t.from_day, t.to_day, t.status, t.decided_at, u.name AS who, d.name AS by FROM rota_time_off t JOIN users u ON u.id=t.user_id LEFT JOIN users d ON d.id=t.decided_by WHERE t.decided_at IS NOT NULL AND t.status IN ('approved','declined')","t.decided_at",["u.name","d.name","t.from_day","t.to_day"]) : null,
+    want("rota") ? list<any>("SELECT r.kind, r.status, r.decided_at, s.day, s.site, t.name AS taker, d.name AS by FROM rota_requests r JOIN rota_shifts s ON s.id=r.shift_id LEFT JOIN users t ON t.id=r.taker LEFT JOIN users d ON d.id=r.decided_by WHERE r.decided_at IS NOT NULL AND r.status IN ('approved','declined')","r.decided_at",["d.name","t.name","s.site","s.day"]) : null,
+    want("rota") ? list<any>("SELECT s.day, s.site, s.adjust_note, s.adjusted_at, s.actual_start, s.actual_end, u.name AS who, d.name AS by FROM rota_shifts s LEFT JOIN users u ON u.id=s.user_id LEFT JOIN users d ON d.id=s.adjusted_by WHERE s.adjusted_at IS NOT NULL","s.adjusted_at",["u.name","d.name","s.site","s.day"]) : null,
+    want("account") ? list<{ at: number; kind: string; text: string }>("SELECT at, kind, text FROM audit_log WHERE kind<>'signin_failed'","at",["text","kind"]) : null,
   ]);
   const names = new Map(Object.entries(people || {}).filter(([, v]) => typeof v === "string") as [string, string][]);
   const items: { kind: string; at: number; text: string; where: string }[] = [];
@@ -317,7 +331,17 @@ export async function activity(env: Env, kind: string) {
   if (kind === "errors") {
     const APP: Record<string, string> = { diary: "Kitchen Diary", rota: "Rota", admin: "Admin", signin: "Staff Login", wholesale: "Strangers Wholesale", worker: "Server" };
     const uk = (ms: number) => new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", weekday: "short", day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(ms));
-    for (const e of await recentErrors(env)) {
+    const floor = Math.max(fromAt, Date.now() - 30 * 86400000);
+    let codes: string[] = [];
+    const reference = /^e-[a-z0-9]{6}$/i.test(q);
+    if (reference) {
+      const keys = await env.DB.prepare("SELECT key FROM errors WHERE last_at>=? AND last_at<?").bind(floor, until).all<{key:string}>();
+      codes = keys.results.filter(row => errorCode(row.key).toLowerCase() === q).map(row => row.key);
+    }
+    const match = reference ? " AND key IN (SELECT value FROM json_each(?))" : q ? " AND instr(lower(message || ' ' || app || ' ' || page || ' ' || COALESCE(who,'') || ' ' || ua),?)>0" : "";
+    const result = await env.DB.prepare(`SELECT key,source,app,page,message,detail,ua,who,first_at,last_at,count FROM errors WHERE last_at>=? AND last_at<?${match} ORDER BY last_at DESC LIMIT 120`)
+      .bind(floor, until, ...(reference ? [JSON.stringify(codes)] : q ? [q] : [])).all<{key:string;source:string;app:string;page:string;message:string;detail:string;ua:string;who:string|null;first_at:number;last_at:number;count:number}>();
+    for (const e of result.results) {
       const code = errorCode(e.key), at = whereOf(e.detail), device = e.ua ? deviceOf(e.ua) : "";
       // Everything needed to find and fix it, laid out to be read from a screenshot or pasted as text.
       const report = [
@@ -430,7 +454,7 @@ export async function handleAdminView(req: Request, env: Env, route: string, use
     if (body?.slot !== "morning" && body?.slot !== "evening") throw invalid("Choose the morning or the end-of-day message.");
     return json(await sendDiaryReminderTest(env, slackTest[1], body.slot));
   }
-  if (route === "activity" && m === "GET") return json(await activity(env, new URL(req.url).searchParams.get("kind") || "all"));
+  if (route === "activity" && m === "GET") { const query = new URL(req.url).searchParams; return json(await activity(env, query.get("kind") || "all", query)); }
   if (route === "security" && m === "GET") return json(await security(env));
   if (route === "security/reset-pins" && m === "POST") {
     const r = await env.DB.prepare("UPDATE users SET quick_hash = NULL, quick_salt = NULL WHERE quick_hash IS NOT NULL").run();

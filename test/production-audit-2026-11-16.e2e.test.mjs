@@ -1,3 +1,4 @@
+import { selectWholesaleSection, revealAdminOptions } from "./admin-workspace-helpers.mjs";
 // Production audit regressions. Every account, database and provider here is local and synthetic.
 import {test,before,after} from 'node:test';
 import assert from 'node:assert/strict';
@@ -68,11 +69,11 @@ for(const [screen,viewport,isMobile] of [['phone',{width:393,height:852},true],[
   await page.route('**/api/admin/wholesale/order-emails',async route=>{const response=await route.fetch(),data=await response.json();await route.fulfill({response,json:{...data,delivery:{email:{pending:0,failed:0,unknown:1},slack:{pending:0,failed:1,unknown:0},legacyDispatch:[{id:blockedStanding.id,business:'VeryLongBusinessName'.repeat(6)}]}}});});
   await page.route('**/api/admin/wholesale/order-emails/email-retry',async route=>{assert.equal(route.request().postDataJSON().acknowledgeUnknown,true);retried=true;await route.fulfill({json:{queued:1,delivery:{email:{pending:1,failed:0,unknown:0},slack:{pending:0,failed:1,unknown:0},legacyDispatch:[]}}});});
   try{
-   await page.goto(srv.base+'/admin#wholesale');await page.locator('[data-act="wh-tab"][data-id="orders"]').click();
+   await page.goto(srv.base+'/admin#wholesale');await selectWholesaleSection(page, "orders");
    await page.getByText('1 standing delivery needs review',{exact:true}).waitFor();
    if(process.env.SHOT_DIR)await page.screenshot({path:process.env.SHOT_DIR+`/standing-review-${screen}-${colorScheme}.png`,fullPage:true});
    await page.locator(`[data-act="wh-standing-review"][data-id="${blockedStanding.id}"]`).click();await page.locator('#sheet').getByText(blockedStanding.id,{exact:true}).waitFor();await page.locator('#sheet [data-sheet="close"]').click();
-   await page.locator('[data-act="wh-order-emails"]').click();
+   await revealAdminOptions(page, ".w-order-settings"); await page.locator('[data-act="wh-order-emails"]').click();
    await page.locator('#wOrderEmailsTo').fill('unsaved-draft@example.invalid');await page.locator('[data-sheet="review-email"]').click();await page.locator('#wRetryConfirm').waitFor();
    assert.match(await page.locator('#wRetryConfirm').innerText(),/may send a duplicate/);assert.ok(await page.locator('#wRetryConfirm').evaluate(e=>e.getBoundingClientRect().bottom<=innerHeight+1),'review confirmation is visible without an extra scroll');
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth-innerWidth),0);

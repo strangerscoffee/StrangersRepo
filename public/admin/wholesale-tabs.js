@@ -17,7 +17,7 @@ window.WholesaleTabs = function ({ api, html, raw, svg, put, openSheet, closeShe
   async function view() {
     try { data = await api("GET", "/api/admin/wholesale/tabs"); }
     catch (error) { return html`<section class="w-tabs-workspace w-list-panel glass" aria-label="Customer tabs"><p class="err" role="alert">Tabs could not be loaded: ${error.message}</p></section>`; }
-    const open = data.open, ready = open.filter((t) => t.ready).length;
+    const open = [...data.open].sort((a, b) => Number(b.ready) - Number(a.ready)), ready = open.filter((t) => t.ready).length;
     return html`<section class="w-tabs-workspace w-list-panel glass" aria-label="Customer tabs">
       <div class="w-tabs-head"><div><h2>Customer tabs</h2><p class="hint">A running tally of a customer's orders. Clear the tab once it reaches ${weight(data.threshold)}, or sooner. Orders on a tab are packed and dispatched as usual. Put an order on a tab from the order, or tick "Put orders on a tab" on the customer.</p></div>${open.length ? html`<p class="w-tabs-count">${open.length} ${open.length === 1 ? "tab" : "tabs"}${ready ? html` · <b>${ready} ready to clear</b>` : ""}</p>` : ""}</div>
       ${open.length ? html`<div class="w-tab-cards">${open.map((t) => html`<button class="w-tab-card ${t.ready ? "ready" : ""}" type="button" data-act="wh-tabs-open" data-id="${t.customerId}">

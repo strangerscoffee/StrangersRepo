@@ -3,7 +3,7 @@
 // (public/rota/sickness.js); this page reads /api/rota/sickness (admins only) and can remove a record, which puts the
 // shift hours back.
 window.AdminSickness = function ({ api, html, raw, svg, put, head, openSheet, closeSheet, reload, toast, links }) {
-  let data = null, filter = "sick";
+  let data = null, filter = "sick", query = "", timer, generation = 0;
   const date = (d) => new Date(d + "T12:00:00Z").toLocaleDateString("en-GB", { timeZone: "UTC", day: "numeric", month: "short", year: "numeric" });
   const span = (r) => r.kind === "early" ? `${date(r.from)}, went home at ${r.leftAt}` : r.from === r.to ? date(r.from) : `${date(r.from)} – ${date(r.to)}`;
   const daysText = (n) => `${n % 1 ? n.toFixed(1) : n} ${n === 1 ? "day" : "days"}`;
@@ -12,8 +12,14 @@ window.AdminSickness = function ({ api, html, raw, svg, put, head, openSheet, cl
   const rotaLink = (userId) => `${(links().rota || "/rota/").replace(/#.*$/, "")}#sick${userId ? "/" + userId : ""}`;
 
   async function view() {
-    data = await api("GET", "/api/rota/sickness");
-    const shown = filter === "sick" ? data.employees.filter((e) => e.score > 0 || e.recordsThisYear) : data.employees;
+    const started = ++generation;
+    const result = await api("GET", "/api/rota/sickness");
+    if (started !== generation) return html``;
+    data = result;
+    const matches = name => name.toLowerCase().includes(query.trim().toLowerCase());
+    const shown = data.employees.filter(employee => matches(employee.name) &&
+      (filter === "all" || (filter === "review" ? employee.band.key !== "none" : employee.score > 0 || employee.recordsThisYear)));
+    const records = data.records.filter(record => matches(record.name));
     const flagged = data.employees.filter((e) => e.band.key !== "none").length;
     return html`${head("Sickness", "Self-certified sickness forms and each person's Bradford Factor over the last 52 weeks. Only admins can see this page.", html`<a class="btn" href="${rotaLink()}">${svg("plus")}Record sickness</a>`)}
       <div class="sk-page">
@@ -21,13 +27,13 @@ window.AdminSickness = function ({ api, html, raw, svg, put, head, openSheet, cl
           <p class="hint">Score = spells × spells × days off, over the last 52 weeks. Separate spells count most, so frequent short absences score higher than one long one. Going home early counts as half a day. Use the action as a guide alongside your absence policy, and check for health or disability reasons first.</p>
           <div class="sk-bands">${data.bands.map((b) => html`<div class="sk-band-row"><span class="sk-band sk-${b.key}"><b>${b.max == null ? `${b.min}+` : `${b.min}–${b.max}`}</b>${b.label}</span><span>${b.action}</span></div>`)}</div>
         </details>
-        <div class="row sk-filter"><div class="seg" role="group" aria-label="Who to show"><button type="button" data-act="sick-filter" data-id="sick" aria-pressed="${filter === "sick"}">With sickness</button><button type="button" data-act="sick-filter" data-id="all" aria-pressed="${filter === "all"}">Everyone</button></div></div>
+        <div class="row sk-filter"><label class="search">${svg("search")}<input id="sickSearch" type="search" aria-label="Search sickness records" placeholder="Search by name" maxlength="120" value="${query}"></label><div class="seg" role="group" aria-label="Who to show"><button type="button" data-act="sick-filter" data-id="sick" aria-pressed="${filter === "sick"}">With sickness</button><button type="button" data-act="sick-filter" data-id="review" aria-pressed="${filter === "review"}">Needs follow-up</button><button type="button" data-act="sick-filter" data-id="all" aria-pressed="${filter === "all"}">Everyone</button></div></div>
         ${shown.length ? html`<div class="group glass sk-people">${shown.map((e) => html`<button class="item sk-person" type="button" data-act="sick-person" data-id="${e.userId}">
             <span class="tx"><b>${e.name}</b><span>${e.spells ? `${e.spells} ${e.spells === 1 ? "spell" : "spells"} · ${daysText(e.days)}` : "No sickness in the last 52 weeks"}${e.lastSick ? ` · last ${date(e.lastSick)}` : ""}</span>${e.band.key !== "none" ? html`<span class="sk-action">${e.band.action}</span>` : ""}</span>
             <span class="end">${band(e)}<span class="chev">${svg("chev")}</span></span></button>`)}</div>`
-          : html`<div class="group glass"><div class="empty">${svg("heart")}<span>No sickness recorded in the last 52 weeks.</span></div></div>`}
+          : html`<div class="group glass"><div class="empty">${svg("heart")}<span>${query || filter === "review" ? "No matching people." : "No sickness recorded in the last 52 weeks."}</span></div></div>`}
         <h2 class="sk-h">Recent forms</h2>
-        ${data.records.length ? html`<div class="group glass">${data.records.slice(0, 15).map((r) => html`<button class="item" type="button" data-act="sick-record" data-id="${r.id}"><span class="tx"><b>${r.name}</b><span>${span(r)} · ${r.answers.category}</span>${r.answers.onBehalf ? html`<span>Recorded by ${r.createdBy}</span>` : ""}</span><span class="end"><span class="chev">${svg("chev")}</span></span></button>`)}</div>`
+        ${records.length ? html`<div class="group glass">${records.slice(0, 15).map((r) => html`<button class="item" type="button" data-act="sick-record" data-id="${r.id}"><span class="tx"><b>${r.name}</b><span>${span(r)} · ${r.answers.category}</span>${r.answers.onBehalf ? html`<span>Recorded by ${r.createdBy}</span>` : ""}</span><span class="end"><span class="chev">${svg("chev")}</span></span></button>`)}</div>`
           : html`<p class="hint">No forms yet. Staff send them from the rota: My shifts → Off sick or went home early?</p>`}
       </div>`;
   }
@@ -85,8 +91,16 @@ window.AdminSickness = function ({ api, html, raw, svg, put, head, openSheet, cl
 
   return {
     view,
+    clear() { generation++; clearTimeout(timer); data = null; query = ""; },
+    search(value) {
+      query = value; clearTimeout(timer);
+      timer = setTimeout(async () => {
+        if (!document.getElementById("sickSearch")) return;
+        await reload(); document.getElementById("sickSearch")?.focus({ preventScroll: true });
+      }, 200);
+    },
     async act(name, id) {
-      if (name === "sick-filter") { filter = id === "all" ? "all" : "sick"; await reload(); }
+      if (name === "sick-filter") { if (["all","sick","review"].includes(id)) filter = id; await reload(); }
       if (name === "sick-person") openPerson(id);
       if (name === "sick-record") openRecord(id);
     },

@@ -97,8 +97,11 @@ test("an ordinary visit reports nothing; a page that throws reports it, and admi
   assert.match(rep, /Who: {4}Will Owner · iPhone · Safari/);
   await item.locator("button", { hasText: "Copy report" }).waitFor();
   // Searching for the code finds it.
+  const matching = ap.waitForResponse(response => response.url().includes('kind=errors') && response.url().includes('q=' + code));
   await ap.fill("#fq", code);
+  assert.equal((await matching).status(), 200);
   await ap.locator(".item", { hasText: "Test: something broke on Today" }).waitFor();
+  await ap.locator(".item", { hasText: "Unhandled: Test: a save that nobody caught" }).waitFor({state:"detached"});
   if (process.env.SHOTS) await ap.screenshot({ path: process.env.SHOTS + "/error-report-ipad.png", fullPage: true });
   await ctx.close(); await a.close();
 });

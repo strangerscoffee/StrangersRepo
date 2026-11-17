@@ -252,15 +252,46 @@ export async function handleInvoiceAdmin(req: Request, env: Env, route: string, 
 
 async function invoiceList(req: Request, env: Env, customerId?: string): Promise<Response> {
   const query = new URL(req.url).searchParams, cursor = query.get("cursor");
-  const where = customerId ? "customer_id=?" : "1=1", bindings: (string | number)[] = customerId ? [customerId] : [];
-  const after = cursor ? " AND seq < ?" : "";
-  const values = [...bindings]; if (cursor) values.push(integer(Number(cursor), "invoice page", 1, Number.MAX_SAFE_INTEGER));
-  const [rows, summary] = await Promise.all([
-    env.DB.prepare(`SELECT * FROM wholesale_invoices WHERE ${where}${after} ORDER BY seq DESC LIMIT 201`).bind(...values).all<InvoiceRow>(),
-    accountingSummary(env,customerId),
+  const conditions: string[] = [], bindings: (string | number)[] = [];
+  let joins = "";
+  if (customerId) {
+    conditions.push("i.customer_id=?");
+    bindings.push(customerId);
+  } else {
+    const search = text(query.get("q") || "", "search", 120).toLowerCase();
+    const queue = query.get("queue") || "all";
+    if (!["all", "overdue", "soon", "review"].includes(queue)) throw invalid("Choose a listed invoice queue.");
+    if (search) {
+      conditions.push("(instr(lower(i.invoice_number),?)>0 OR instr(lower(json_extract(i.data,'$.billTo.name')),?)>0)");
+      bindings.push(search, search);
+    }
+    if (queue !== "all") {
+      joins = " LEFT JOIN quickbooks_exports e ON e.invoice_id=i.seq AND e.environment='production' AND e.state='linked' LEFT JOIN quickbooks_observations o ON o.export_id=e.id";
+      const needsReview = "(e.id IS NOT NULL AND (o.status IS NULL OR o.status='review'))";
+      if (queue === "review") conditions.push(needsReview);
+      else {
+        const due = "json_extract(i.data,'$.dueDate')";
+        conditions.push("NOT " + needsReview, "(CASE WHEN e.id IS NULL THEN i.paid=0 ELSE o.outstanding_pence>0 END)");
+        if (queue === "overdue") { conditions.push(due + "<?"); bindings.push(today()); }
+        else {
+          const start = today(), end = new Date(Date.parse(start + "T00:00:00Z") + 7 * 86400000).toISOString().slice(0, 10);
+          conditions.push(due + " BETWEEN ? AND ?");
+          bindings.push(start, end);
+        }
+      }
+    }
+  }
+  const where = conditions.length ? conditions.join(" AND ") : "1=1";
+  const after = cursor ? " AND i.seq < ?" : "";
+  const values = [...bindings];
+  if (cursor) values.push(integer(Number(cursor), "invoice page", 1, Number.MAX_SAFE_INTEGER));
+  const [rows, summary, matching] = await Promise.all([
+    env.DB.prepare(`SELECT i.* FROM wholesale_invoices i${joins} WHERE ${where}${after} ORDER BY i.seq DESC LIMIT 201`).bind(...values).all<InvoiceRow>(),
+    accountingSummary(env, customerId),
+    !customerId && conditions.length ? env.DB.prepare(`SELECT COUNT(*) AS n FROM wholesale_invoices i${joins} WHERE ${where}`).bind(...bindings).first<{n:number}>() : null,
   ]);
   const records = rows.results.slice(0, 200);
-  return json({ invoices: await withAccounting(env,records.map(document),!customerId), count: summary?.count || 0, nextCursor: rows.results.length > 200 ? String(records.at(-1)!.seq) : null, summary: summary || { count: 0, outstandingPence: 0, overduePence: 0, overdueCount: 0 } });
+  return json({ invoices: await withAccounting(env, records.map(document), !customerId), count: matching?.n ?? summary?.count ?? 0, nextCursor: rows.results.length > 200 ? String(records.at(-1)!.seq) : null, summary: summary || { count: 0, outstandingPence: 0, overduePence: 0, overdueCount: 0 } });
 }
 export async function handleInvoiceCustomer(req: Request, env: Env, route: string, user: OrderingUser): Promise<Response | null> {
   if (!(route === "invoices" || /^invoices\/\d+(?:\/pdf)?$/.test(route) || /^orders\/WS-[A-F0-9]{32}\/invoice(?:\/pdf)?$/.test(route))) return null;

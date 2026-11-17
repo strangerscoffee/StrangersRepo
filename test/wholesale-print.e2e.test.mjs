@@ -1,3 +1,4 @@
+import { selectWholesaleSection, revealAdminOptions } from "./admin-workspace-helpers.mjs";
 // Admin → Wholesale → Orders: Print new orders, Select to print and Bags to process, on a phone and an iPad.
 // window.print is stubbed; the printed pages are what's in #wPrintArea. Needs Playwright with Chromium.
 import { test, before, after } from "node:test";
@@ -42,10 +43,11 @@ for (const [screen, viewport] of [["small phone", { width: 320, height: 844 }], 
       const geometry = await panel.evaluate(node => {
         const bounds = node.getBoundingClientRect();
         const elements = [...node.querySelectorAll('.w-list-header .btn,.search,.w-print-menu summary,[data-act="wh-totals"],.w-order,.w-order .end,[data-act="wh-next"]')];
-        return { overflow: node.scrollWidth - node.clientWidth, outside: elements.filter(e => { const r = e.getBoundingClientRect(); return r.left < bounds.left - 1 || r.right > bounds.right + 1; }).map(e => e.className + ': ' + e.textContent.trim()) };
+        return { overflow: node.scrollWidth - node.clientWidth, outside: elements.filter(e => { const r = e.getBoundingClientRect(); return r.width > 0 && (r.left < bounds.left - 1 || r.right > bounds.right + 1); }).map(e => e.className + ': ' + e.textContent.trim()) };
       });
       assert.ok(geometry.overflow <= 1, `the panel must not clip its contents: ${JSON.stringify(geometry)}`);
       assert.deepEqual(geometry.outside, [], 'actions, prices and order rows fit inside the panel');
+      await revealAdminOptions(p, '.w-order-settings');
       for (const action of ['wh-announcement', 'wh-order-emails']) {
         const button = p.locator(`[data-act="${action}"]`); await button.scrollIntoViewIfNeeded();
         const target = await button.evaluate(node => { const r = node.getBoundingClientRect(), hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2); return { width: r.width, height: r.height, overflow: node.scrollWidth - node.clientWidth, exposed: hit === node || node.contains(hit) }; });
@@ -71,13 +73,13 @@ test("print new orders, pick orders to print, and see the bags to process", asyn
     await ctx.addInitScript(() => { window.print = () => { window.__printed = document.getElementById("wPrintArea")?.innerText || ""; }; });
     const p = await ctx.newPage(); const errors = []; p.on("pageerror", (e) => errors.push(String(e)));
     await p.goto(srv.base + "/admin#wholesale");
-    await p.locator('[data-act="wh-tab"][data-id="orders"]').click(); await p.locator('[data-act="wh-order"]').first().waitFor();
+    await selectWholesaleSection(p, "orders"); await p.locator('[data-act="wh-order"]').first().waitFor();
 
     // Order alerts: the customer confirmation switch saves and comes back as saved.
-    await p.locator('[data-act="wh-order-emails"]').click(); await p.locator("#wConfirmCustomers").waitFor();
+    await revealAdminOptions(p, ".w-order-settings"); await p.locator('[data-act="wh-order-emails"]').click(); await p.locator("#wConfirmCustomers").waitFor();
     assert.equal(await p.locator("#wConfirmCustomers").isChecked(), true, "customer confirmations are on by default");
     await p.locator("#wConfirmCustomers").uncheck(); await p.locator('#sheet [data-sheet="save"]').click(); await p.locator("#wConfirmCustomers").waitFor({ state: "detached" });
-    await p.locator('[data-act="wh-order-emails"]').click(); await p.locator("#wConfirmCustomers").waitFor();
+    await revealAdminOptions(p, ".w-order-settings"); await p.locator('[data-act="wh-order-emails"]').click(); await p.locator("#wConfirmCustomers").waitFor();
     assert.equal(await p.locator("#wConfirmCustomers").isChecked(), false);
     await p.locator("#wConfirmCustomers").check();
     if (process.env.WHOLESALE_SCREENSHOT_DIR) { await p.locator("#wConfirmCustomers").scrollIntoViewIfNeeded(); await p.screenshot({ path: `${process.env.WHOLESALE_SCREENSHOT_DIR}/order-alerts-${name}.png` }); }

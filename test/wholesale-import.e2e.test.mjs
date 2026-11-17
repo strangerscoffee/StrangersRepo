@@ -1,3 +1,4 @@
+import { selectWholesaleSection } from "./admin-workspace-helpers.mjs";
 // Import from QuickBooks and invites in a browser: Admin uploads a QuickBooks customer list, sees who bought in the
 // last year ticked (from the QuickBooks history in Insights; Strangers' own businesses left out), imports them, then
 // invites one; the customer opens the emailed link, chooses a username and password and lands on ordering. Phone and
@@ -35,7 +36,7 @@ async function adminPage(viewport, extra = {}) {
   const [n, v] = ADMIN.split("="); await ctx.addCookies([{ name: n, value: v, url: srv.base }]);
   const p = await ctx.newPage(), errors = []; p.on("pageerror", (e) => errors.push(String(e)));
   await p.goto(srv.base + "/admin#wholesale");
-  await p.locator('[data-act="wh-tab"][data-id="customers"]').first().click();
+  await selectWholesaleSection(p, "customers");
   await p.locator('[data-act="wh-import-customers"]').waitFor();
   return { ctx, p, errors };
 }

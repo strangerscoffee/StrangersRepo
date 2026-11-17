@@ -1,3 +1,4 @@
+import { selectWholesaleSection } from "./admin-workspace-helpers.mjs";
 // Batch actions on wholesale orders: on the staff orders page and in Admin → Wholesale → Orders, select several
 // orders and mark them preparing, ready or dispatched at once (dispatching asks once more). Orders only move
 // forward; any that couldn't be saved stay selected. Phone and iPad, light and dark. Needs Playwright with Chromium.
@@ -91,7 +92,7 @@ for (const [screen, viewport, isMobile] of screens) for (const scheme of ["light
     const { ctx, p, errors } = await pageFor(ADMIN, viewport, isMobile, scheme);
     try {
       await p.goto(srv.base + "/admin#wholesale");
-      await p.locator('[data-act="wh-tab"][data-id="orders"]').click(); await p.locator(`[data-act="wh-order"][data-id="${ids[0]}"]`).waitFor();
+      await selectWholesaleSection(p, "orders"); await p.locator(`[data-act="wh-order"][data-id="${ids[0]}"]`).waitFor();
       await p.locator('.w-print-bar > [data-act="wh-pick-start"]').click();
       for (const id of ids) await p.locator(`[data-act="wh-pick"][data-id="${id}"]`).click();
       assert.equal(await p.locator('[data-act="wh-batch"][data-id="Ready"]').innerText(), "Mark ready (3)");

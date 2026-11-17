@@ -1,3 +1,4 @@
+import { selectWholesaleSection } from "./admin-workspace-helpers.mjs";
 // White-label coffees in the browser: Admin makes one in Coffee catalogue (White label for one business, Made from two
 // coffees); that business sees it first as "Your coffee", another business doesn't see it; staff see what it's made
 // from on the staff orders page and in Bags to process; the customer's Admin sheet lists it. Phone and iPad, light and dark.
@@ -41,7 +42,7 @@ after(async () => { await b?.close(); await srv?.stop(); });
 test("Admin makes a white-label coffee for one business, made from two coffees", async () => {
   const { ctx, p, errors } = await page(ADMIN, { width: 1180, height: 820 });
   await p.goto(srv.base + "/admin#wholesale");
-  await p.locator('[data-act="wh-tab"][data-id="catalogue"]').click();
+  await selectWholesaleSection(p, "catalogue");
   await p.locator('[data-act="wh-coffee"]:not([data-id])').click();
   await p.locator("#wCoffeeTitle").fill("Lune House Blend");
   await p.locator("#wCoffeeName").fill("Lune House Blend");
@@ -53,7 +54,7 @@ test("Admin makes a white-label coffee for one business, made from two coffees",
   await p.locator("#wWlSearch").fill("lune");
   assert.equal(await p.locator("#wWlList [data-wl]").count(), 1);
   await p.locator("#wWlList label", { hasText: "Lune House" }).locator("input").check();
-  assert.match(await p.locator("#wWlCount").innerText(), /For Lune House/);
+  assert.match(await p.locator("#wWlCount").innerText(), /Lune House/);
   await p.locator('[data-sheet="recipe-add"]').click();
   await p.locator("[data-recipe]").nth(0).locator("[data-recipe-coffee]").selectOption("brazil");
   await p.locator("[data-recipe]").nth(0).locator("[data-recipe-percent]").fill("60");
@@ -86,7 +87,7 @@ test("the coffee editor fits phones and iPads, light and dark", async () => {
   for (const [name, viewport] of [["phone", { width: 390, height: 844 }], ["ipad", { width: 820, height: 1180 }]]) for (const colorScheme of ["light", "dark"]) {
     const { ctx, p, errors } = await page(ADMIN, viewport, { colorScheme, isMobile: true, hasTouch: true });
     await p.goto(srv.base + "/admin#wholesale");
-    await p.locator('[data-act="wh-tab"][data-id="custom"]').click();
+    await selectWholesaleSection(p, "custom");
     await p.locator(`[data-act="wh-coffee"][data-id="${product.id}"]`).click();
     await p.locator("#wWlList [data-wl]").first().waitFor();
     await p.locator("#wRecipeTitle").scrollIntoViewIfNeeded();
@@ -141,7 +142,7 @@ test("staff see what it's made from; the customer's Admin sheet lists it", async
   assert.match(await p.locator("table", { hasText: "Coffee for blends and white labels" }).innerText(), /Bom Jesus\s+4 kg/);
   await shot(p, "bags-to-process");
   await p.keyboard.press("Escape");
-  await p.locator('[data-act="wh-tab"][data-id="customers"]').click();
+  await selectWholesaleSection(p, "customers");
   await p.locator('[data-act="wh-customer"]', { hasText: "Lune House" }).click();
   await p.locator("#wWlCustomerTitle").scrollIntoViewIfNeeded();
   assert.match(await p.locator("section", { has: p.locator("#wWlCustomerTitle") }).innerText(), /Lune House Blend[\s\S]*£21\.50[\s\S]*Bom Jesus/);
@@ -155,7 +156,7 @@ test("staff see what it's made from; the customer's Admin sheet lists it", async
 test("a coffee sold in 1 kg bags only: Admin turns 250 g off; the customer sees just 1 kg bags", async () => {
   const { ctx, p, errors } = await page(ADMIN, { width: 390, height: 844 }, { isMobile: true, hasTouch: true });
   await p.goto(srv.base + "/admin#wholesale");
-  await p.locator('[data-act="wh-tab"][data-id="catalogue"]').click();
+  await selectWholesaleSection(p, "catalogue");
   await p.locator('[data-act="wh-coffee"]:not([data-id])').click();
   await p.locator("#wCoffeeTitle").fill("Lune Kilo Blend");
   await p.locator('[data-pack-on="quarter"]').uncheck();
@@ -195,7 +196,7 @@ test("Duplicate makes a hidden copy with everything but photos, ready to edit", 
     if (name === "ipad" && colorScheme === "light") continue;
     const { ctx, p, errors } = await page(ADMIN, viewport, { colorScheme, isMobile: true, hasTouch: true });
     await p.goto(srv.base + "/admin#wholesale");
-    await p.locator('[data-act="wh-tab"][data-id="custom"]').click();
+    await selectWholesaleSection(p, "custom");
     await p.locator(`[data-act="wh-coffee"][data-id="${source.id}"]`).click();
     await p.locator('[data-sheet="duplicate"]').click();
     await p.locator("#sheetTitle", { hasText: "Duplicate coffee" }).waitFor();
@@ -210,7 +211,7 @@ test("Duplicate makes a hidden copy with everything but photos, ready to edit", 
   }
   const { ctx, p, errors } = await page(ADMIN, { width: 1180, height: 820 });
   await p.goto(srv.base + "/admin#wholesale");
-  await p.locator('[data-act="wh-tab"][data-id="custom"]').click();
+  await selectWholesaleSection(p, "custom");
   await p.locator(`[data-act="wh-coffee"][data-id="${source.id}"]`).click();
   await p.locator('[data-sheet="duplicate"]').click();
   await p.locator("#wCoffeeTitle").fill("Lune Decaf Blend");
@@ -239,9 +240,9 @@ test("Custom coffees section: private drafts, customer choices and safe removal 
     try {
       const title = `Private ${device} ${colorScheme}`;
       await p.goto(srv.base + "/admin#wholesale");
-      await p.locator('[data-act="wh-tab"][data-id="catalogue"]').click();
+      await selectWholesaleSection(p, "catalogue");
       assert.equal(await p.locator(".w-coffee .w-wl-tag").count(), 0, "general catalogue excludes custom coffees");
-      await p.locator('[data-act="wh-tab"][data-id="custom"]').click();
+      await selectWholesaleSection(p, "custom");
       await p.locator('#wCatalogueTitle', {hasText:"Custom coffees"}).waitFor();
       assert.equal(await p.locator('[data-act="wh-coffee"][data-id="brazil"]').count(), 0);
       await p.getByRole("button", {name:"Add custom coffee", exact:true}).click();
@@ -265,7 +266,7 @@ test("Custom coffees section: private drafts, customer choices and safe removal 
       await p.locator('#wWlList label', {hasText:'Lune House'}).locator('input').check();
       await p.locator('#wCoffeeForm button[type="submit"]').click(); await p.locator('#scrim').waitFor({state:'hidden'});
       await row.getByText("For Lune House", {exact:true}).waitFor();
-      assert.match(await row.innerText(), /For Lune House/);
+      assert.match(await row.innerText(), /Lune House/);
       const assigned = (await call('GET','/api/wholesale/catalogue',undefined,lune.cookie)).body.products;
       const otherProducts = (await call('GET','/api/wholesale/catalogue',undefined,other.cookie)).body.products;
       assert.equal(assigned.some(c=>c.id===saved.id && c.yours),true); assert.equal(otherProducts.some(c=>c.id===saved.id),false);

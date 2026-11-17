@@ -17,12 +17,23 @@ window.WholesaleInsights = function ({ api, html, raw, svg, put, openSheet, clos
   const PERIODS = [["4", "4 weeks"], ["13", "3 months"], ["52", "12 months"], ["all", "All"]];
   let period = "13", measure = "pence", data = null, stock = {}, loadedAt = 0, loadedFor = null;
   // One customer at a time (their key from the customer list), or everyone.
-  let customer = null;
+  let customer = null, workspace = "roast", generation = 0;
+  const roastExpanded = new Set();
   // Switching period or £/kg redraws from what's loaded; anything older than a minute, or changed here, loads afresh.
   async function load(force) {
     if (force || !data || loadedFor !== customer || Date.now() - loadedAt > 60000) {
-      try { data = await api("GET", root + (customer ? "?customer=" + encodeURIComponent(customer) : "")); }
-      catch (error) { if (!customer) throw error; customer = null; data = await api("GET", root); toast(error.message); }
+      const running = ++generation, requested = customer;
+      try {
+        const result = await api("GET", root + (requested ? "?customer=" + encodeURIComponent(requested) : ""));
+        if (running !== generation) return null;
+        data = result;
+      } catch (error) {
+        if (!requested) throw error;
+        if (running !== generation) return null;
+        const result = await api("GET", root);
+        if (running !== generation) return null;
+        customer = null; data = result; toast(error.message);
+      }
       loadedAt = Date.now(); loadedFor = customer;
     }
     return data;
@@ -135,7 +146,11 @@ window.WholesaleInsights = function ({ api, html, raw, svg, put, openSheet, clos
     if (partial) pts.push({ label: day(partial.week), tip: `Week of ${longDay(partial.week)} (so far; excluded from training)`, value: partial.grams, partial: true });
     const fc = f.total.weeks.map((p) => ({ label: day(p.week), tip: `Week of ${longDay(p.week)} (forecast)`, value: p.grams, low: p.low, high: p.high }));
     const head4 = f.total.weeks.slice(0, 4);
+    const next = f.total.weeks.find(week => week.week === data.roast.week);
+    const booked = data.roast.rows.reduce((total, row) => total + (row.committedGrams || 0), 0);
     return html`<section class="ins-section glass" aria-labelledby="insFc"><header class="ins-head"><h3 id="insFc">Forecast: ${data.customer ? `${data.customer.name}'s coffee` : "coffee"} for the next ${f.total.weeks.length} weeks</h3></header>
+      <div class="ins-week-summary">${head4.map(p => html`<div><b>${day(p.week)}</b><strong>${kg(p.grams)}</strong><span>Likely range ${kgNum(p.low)}–${kg(p.high)}</span></div>`)}</div>
+      ${next ? html`<p class="hint">Week of ${day(next.week)} · ${kg(booked)} booked · ${kg(data.roast.rows.reduce((total, row) => total + (row.additionalForecastGrams || 0), 0))} additional demand in the roast plan.</p>` : ""}
       <p class="hint">Models are compared against earlier completed weeks when enough history is available.${f.total.basis === "seasonal" ? " Last year's pattern also contributes where history supports it." : ""} This week's unfinished sales are shown separately and excluded from training. Shading shows an estimated range.</p>
       <p class="hint ins-forecast-validation">${f.total.validation?.origins >= 6 ? `Average error in historical checks: ${kg(f.total.validation.maeGrams)} per week.` : "Limited completed history: these are rough planning estimates."}${f.total.rangeBasis === "limited" ? " There is limited evidence for the longer-range estimates." : " Ranges use past prediction errors."}</p>
       ${bars(pts, (g) => kg(g, 0), "Coffee sold in recent weeks and forecast for the coming weeks", fc)}
@@ -167,9 +182,9 @@ window.WholesaleInsights = function ({ api, html, raw, svg, put, openSheet, clos
       <div class="row"><button class="btn sm soft" type="button" data-act="wh-ins-batch">${svg("pen")}${data.roast.batchKg} kg batches → ${data.roast.yieldKg} kg</button><button class="btn sm soft" type="button" data-act="wh-ins-print-roast" ${rows.length ? "" : raw("disabled")}>${svg("doc")}Print</button></div></header>
       <p class="hint">Unpacked orders due by next week, including backlog, plus forecast demand not already booked for next week. Later scheduled deliveries are excluded. Add roasted coffee already in stock to take it off.</p>
       ${rows.length ? html`<div class="ins-table-wrap"><table class="ins-table" id="insRoastTable"><thead><tr><th scope="col">Coffee</th><th scope="col" class="num">Ordered, not packed</th><th scope="col" class="num">Additional expected</th><th scope="col" class="num">In stock (kg)</th><th scope="col" class="num">Batches</th><th scope="col" class="num">Green coffee</th></tr></thead>
-        <tbody>${rows.map((r) => html`<tr data-roast="${r.key}"><th scope="row">${swatch(r.key, r.title)}${r.title}</th><td class="num">${kg(r.openGrams)}</td><td class="num">${kg(r.additionalForecastGrams ?? r.forecastGrams)}</td>
-          <td class="num"><input class="ins-stock" type="number" inputmode="decimal" min="0" step="0.5" value="${stock[r.key] || ""}" placeholder="0" data-ins-stock="${r.key}" aria-label="Roasted ${r.title} in stock, kg"></td>
-          <td class="num"><b data-batches>${r.batches}</b></td><td class="num" data-green>${r.green} kg</td></tr>`)}</tbody>
+        <tbody>${rows.map((r) => html`<tr data-roast="${r.key}" class="${roastExpanded.has(r.key) ? "ins-roast-expanded" : ""}"><th scope="row">${swatch(r.key, r.title)}${r.title}<button class="link ins-roast-toggle" type="button" data-act="wh-ins-roast-details" data-id="${r.key}" aria-label="Calculation for ${r.title}" aria-expanded="${roastExpanded.has(r.key)}">Calculation ${svg("chev")}</button></th><td class="num" data-label="Ordered, not packed">${kg(r.openGrams)}</td><td class="num" data-label="Additional expected">${kg(r.additionalForecastGrams ?? r.forecastGrams)}</td>
+          <td class="num" data-label="Roasted stock"><input class="ins-stock" type="number" inputmode="decimal" min="0" step="0.5" value="${stock[r.key] || ""}" placeholder="0" data-ins-stock="${r.key}" aria-label="Roasted ${r.title} in stock, kg"></td>
+          <td class="num" data-label="Batches"><b data-batches>${r.batches}</b></td><td class="num" data-label="Green coffee" data-green>${r.green} kg</td></tr>`)}</tbody>
         <tfoot><tr><th scope="row">Total</th><td class="num">${kg(rows.reduce((t, r) => t + r.openGrams, 0))}</td><td class="num">${kg(rows.reduce((t, r) => t + (r.additionalForecastGrams ?? r.forecastGrams), 0))}</td><td></td><td class="num"><b id="insBatches">${totalBatches}</b></td><td class="num" id="insGreen">${green} kg</td></tr></tfoot></table></div>`
         : html`<p class="hint">Nothing ordered or expected next week yet.</p>`}</section>`;
   }
@@ -245,17 +260,18 @@ window.WholesaleInsights = function ({ api, html, raw, svg, put, openSheet, clos
 
   /* ---------- the page ---------- */
   async function view() {
-    await load();
+    if (!await load()) return html``;
     const s = data.sources, cut = slice();
     const sourceText = [s.siteOrders ? `${n(s.siteOrders)} site ${s.siteOrders === 1 ? "order" : "orders"} since ${longDay(s.firstSiteOrder)}` : "no site orders yet", s.historyRows ? `QuickBooks history ${longDay(s.historyFirst)} to ${longDay(s.historyUntil && s.historyUntil <= s.historyLast ? s.historyUntil : s.historyLast)}` : "no QuickBooks history imported"].join(" · ");
     const empty = !data.weekly.length && !data.roast.rows.length;
     return html`<section class="ins-workspace" aria-labelledby="insTitle"><div class="toolbar"><div><h2 id="insTitle">Insights</h2><p class="hint">${sourceText}</p></div>
-      <div class="row ins-actions"><button class="btn soft" type="button" data-act="wh-ins-import">${svg("plus")}Import QuickBooks history</button>${s.historyRows ? html`<button class="btn soft" type="button" data-act="wh-ins-products">QuickBooks products${s.unreviewedProducts ? html` <span class="badge">${s.unreviewedProducts}</span>` : ""}</button>` : ""}${empty ? "" : html`<button class="btn soft" type="button" data-act="wh-ins-csv">${svg("dl")}Download CSV</button>`}</div></div>
+      <details class="ins-tools"><summary class="btn soft">Data &amp; export</summary><div class="row ins-actions"><button class="btn soft" type="button" data-act="wh-ins-import">${svg("plus")}Import QuickBooks history</button>${s.historyRows ? html`<button class="btn soft" type="button" data-act="wh-ins-products">QuickBooks products${s.unreviewedProducts ? html` <span class="badge">${s.unreviewedProducts}</span>` : ""}</button>` : ""}${empty ? "" : html`<button class="btn soft" type="button" data-act="wh-ins-csv">${svg("dl")}Download CSV</button>`}</div></details></div>
       ${s.unreviewedProducts ? html`<div class="ins-note group"><p><b>${s.unreviewedProducts} QuickBooks ${s.unreviewedProducts === 1 ? "product needs" : "products need"} checking.</b> The site guessed which coffee and bag size each one is; check them so the history counts the right coffee.</p><button class="btn sm soft" type="button" data-act="wh-ins-products">Check products</button></div>` : ""}
       ${empty ? html`<div class="w-empty"><span class="ic mut">${svg("pulse")}</span><h3>No sales to show yet</h3><p>Insights fill in as customer orders arrive. Import your QuickBooks sales history to see past years and a seasonal forecast straight away.</p><button class="btn" type="button" data-act="wh-ins-import">Import QuickBooks history</button></div>` : html`
+      <div class="w-queue-controls" role="group" aria-label="Insights views">${[["roast","Roast plan"],["forecast","Forecast"],["sales","Sales"]].map(([id,label]) => html`<button class="btn sm soft" type="button" data-act="wh-ins-view" data-id="${id}" aria-pressed="${workspace === id}">${label}</button>`)}</div>
       <div class="ins-filters"><button class="btn soft ins-pick ${data.customer ? "on" : ""}" type="button" data-act="wh-ins-pick" aria-haspopup="dialog">${svg("search")}${data.customer ? data.customer.name : "All customers"}</button>${data.customer ? html`<button class="btn soft sm" type="button" data-act="wh-ins-customer" data-id="" aria-label="Show all customers">${svg("x")}All customers</button>` : ""}</div>
-      <div class="segwrap ins-periods"><div class="seg" role="group" aria-label="Period">${PERIODS.map(([v, l]) => html`<button type="button" data-act="wh-ins-period" data-id="${v}" aria-pressed="${period === v}">${l}</button>`)}</div></div>
-      ${data.customer ? customerCard(data.customer) : ""}${tiles(cut)}${movers(cut)}${roast()}${overTime(cut)}${forecast()}${byCoffee(cut)}${data.customer ? "" : customers()}`}</section>`;
+      ${workspace === "sales" ? html`<div class="segwrap ins-periods"><div class="seg" role="group" aria-label="Period">${PERIODS.map(([v, l]) => html`<button type="button" data-act="wh-ins-period" data-id="${v}" aria-pressed="${period === v}">${l}</button>`)}</div></div>
+      ${data.customer ? customerCard(data.customer) : ""}${tiles(cut)}${movers(cut)}${overTime(cut)}${byCoffee(cut)}${data.customer ? "" : customers()}` : workspace === "forecast" ? forecast() : roast()}`}</section>`;
   }
 
   /* ---------- CSV ---------- */
@@ -377,7 +393,19 @@ window.WholesaleInsights = function ({ api, html, raw, svg, put, openSheet, clos
 
   return {
     view,
+    state: () => ({ workspace, period, measure, customer }),
+    restore(saved) { if (saved) ({ workspace, period, measure, customer } = saved); },
+    clear() { generation++; data = null; stock = {}; loadedAt = 0; loadedFor = customer = null; workspace = "roast"; period = "13"; measure = "pence"; roastExpanded.clear(); },
     async act(name, id) {
+      if (name === "wh-ins-view" && ["roast","forecast","sales"].includes(id)) { workspace = id; await reload(); document.querySelector(`[data-act="wh-ins-view"][data-id="${id}"]`)?.focus({ preventScroll: true }); }
+      if (name === "wh-ins-roast-details") {
+        const row = document.querySelector(`[data-roast="${CSS.escape(id)}"]`);
+        if (row) {
+          const open = row.classList.toggle("ins-roast-expanded");
+          if (open) roastExpanded.add(id); else roastExpanded.delete(id);
+          row.querySelector(".ins-roast-toggle").setAttribute("aria-expanded", String(open));
+        }
+      }
       if (name === "wh-ins-period" && PERIODS.some(([v]) => v === id)) { period = id; await reload(); }
       if (name === "wh-ins-pick" && data) openPicker();
       if (name === "wh-ins-customer") await choose(id);

@@ -63,7 +63,7 @@
   const DAYS = [["mon", "Mo", "Monday"], ["tue", "Tu", "Tuesday"], ["wed", "We", "Wednesday"], ["thu", "Th", "Thursday"], ["fri", "Fr", "Friday"], ["sat", "Sa", "Saturday"], ["sun", "Su", "Sunday"]];
   const TOPIC_NAMES = { hygiene: "Hygiene", cross: "Cross-contamination", cleaning: "Cleaning", chilling: "Chilling", cooking: "Cooking", allergens: "Allergens", diary: "Opening & closing", l2: "Level 2" };
   const ROLE = { admin: "Admin", manager: "Manager", staff: "Staff" };
-  const S = { me: null, links: { diary: "/", rota: "/rota/", admin: "/" }, page: "overview", open: null, filter: "all", q: "", feed: "all", fq: "", locked: 0 };
+  const S = { me: null, links: { diary: "/", rota: "/rota/", admin: "/" }, page: "overview", open: null, filter: "all", q: "", feed: "all", fq: "", activityFrom: "", activityTo: "", locked: 0 };
 
   const ini = (n) => String(n || "").split(/\s+/).filter(Boolean).map((p) => p[0]).join("").slice(0, 2).toUpperCase();
   const LON = { timeZone: "Europe/London" };
@@ -159,11 +159,43 @@
     try { S.locked = (await api("GET", "/api/admin/security")).locked.length; renderNav(); } catch (e) { /* keep the last count */ }
   }
 
-  let seq = 0;
-  async function show(page, { keepScroll } = {}) {
+  let seq = 0, routeEntry = 0;
+  const routeSnapshots = new Map();
+  const routeHash = () => S.page === "wholesale" ? "#wholesale/" + wholesale.currentSection() : "#" + S.page;
+  function saveRoute() {
+    if (!history.state?.adminEntry) return;
+    routeSnapshots.set(history.state.adminEntry, {
+      wholesale: wholesale.workspaceState(), open: S.open, filter: S.filter, q: S.q,
+      feed: S.feed, fq: S.fq, from: S.activityFrom, to: S.activityTo, scroll: window.scrollY,
+    });
+    if (routeSnapshots.size > 60) routeSnapshots.delete(routeSnapshots.keys().next().value);
+  }
+  function parseRoute() {
+    const [page, section] = location.hash.slice(1).split("/");
+    return { page: PAGES.includes(page) ? page : "overview", section };
+  }
+  async function restoreRoute() {
+    if (!S.me) return;
+    const { page, section } = parseRoute();
+    const saved = routeSnapshots.get(history.state?.adminEntry);
+    if (saved) {
+      wholesale.restoreWorkspace(saved.wholesale);
+      Object.assign(S, { open: saved.open, filter: saved.filter, q: saved.q, feed: saved.feed, fq: saved.fq, activityFrom: saved.from, activityTo: saved.to });
+    } else if (page === "wholesale") wholesale.selectSection(section || "orders");
+    if (page === "wholesale" && section && wholesale.currentSection() !== section) wholesale.selectSection(section);
+    closeSheet();
+    await show(page, { fromHistory: true, scroll: saved?.scroll });
+  }
+  async function show(page, { keepScroll, fromHistory, scroll } = {}) {
     if (page === "wholesale" && S.page !== "wholesale") wholesaleExpanded = true;
     S.page = PAGES.includes(page) ? page : "overview";
-    if (location.hash !== "#" + S.page) { try { history.replaceState(null, "", "#" + S.page); } catch (e) { /* ignore */ } }
+    const hash = routeHash();
+    if (!keepScroll) {
+      routeEntry = Math.max(routeEntry, Number(history.state?.adminEntry) || 0);
+      const entry = { adminEntry: fromHistory && history.state?.adminEntry ? history.state.adminEntry : ++routeEntry };
+      if (!fromHistory && location.hash !== hash && history.state?.adminEntry) history.pushState(entry, "", hash);
+      else history.replaceState(entry, "", hash);
+    }
     renderNav();
     const my = ++seq;
     const main = $("#main");
@@ -175,7 +207,9 @@
       put(main, view);
       if (!keepScroll) SC.reveal(main);
       if (S.page === "wholesale") wholesale.syncNavigation(desktopNav.matches);
-      document.title = "Strangers Coffee - Admin"; // the same tab name on every page
+      document.title = "Strangers Coffee - Admin";
+      if (scroll != null) window.scrollTo(0, scroll);
+      saveRoute();
     } catch (e) {
       if (my !== seq) return;
       put(main, html`${head("Couldn't load this page", "")}<div class="group glass"><div class="empty">${svg("warn")}<span>${e.message}</span></div></div>`);
@@ -185,7 +219,7 @@
 
   /* ---------- views ---------- */
   const VIEWS = {};
-  const wholesale = window.WholesaleAdmin({ api, html, raw, svg, put, head, openSheet, closeSheet, reload, toast, onNavigationChange: () => { if (S.me) renderNav(); } });
+  const wholesale = window.WholesaleAdmin({ api, html, raw, svg, put, head, openSheet, closeSheet, reload, toast, onNavigationChange: () => { if (S.me) renderNav(); }, onSectionChange: id => act("wh-tab", id) });
   VIEWS.wholesale = wholesale.view;
   const sickness = window.AdminSickness({ api, html, raw, svg, put, head, openSheet, closeSheet, reload, toast, links: () => S.links || {} });
   VIEWS.sickness = sickness.view;
@@ -204,12 +238,19 @@
     S.local = false;
     cache.peopleData = d;
     cache.people = d.people;
-    const counts = { all: d.people.filter((p) => p.active).length, staff: 0, manager: 0, admin: 0, off: d.people.filter((p) => !p.active).length };
-    d.people.forEach((p) => { if (p.active) counts[p.role]++; });
+    const hasInactive = d.people.some(person => !person.active);
     const q = S.q.trim().toLowerCase();
-    const list = d.people.filter((p) => (S.filter === "off" ? !p.active : p.active && (S.filter === "all" || p.role === S.filter)) &&
+    const inFilter = p => {
+      if (S.filter === "off") return !p.active;
+      if (!p.active) return false;
+      if (S.filter === "locked") return p.locked;
+      if (S.filter === "new") return !p.lastLoginAt;
+      return S.filter === "all" || p.role === S.filter;
+    };
+    const list = d.people.filter((p) => inFilter(p) &&
       (!q || p.name.toLowerCase().includes(q) || p.username.toLowerCase().includes(q) || (p.email || "").includes(q)));
-    const filters = [["all", "Everyone"], ["staff", "Staff"], ["manager", "Managers"], ["admin", "Admins"], ...(counts.off ? [["off", "Switched off"]] : [])];
+    const filters = [["all", "Everyone"], ["staff", "Staff"], ["manager", "Managers"], ["admin", "Admins"], ["locked", "Locked"], ["new", "Never signed in"], ...(hasInactive ? [["off", "Switched off"]] : [])];
+    const selected = list.find(person => person.id === S.open);
     return html`
       ${head("People", "Everyone's account, rota details and training in one place.", html`<button class="btn" type="button" data-act="add">${svg("plus")}Add person</button>`)}
       <div class="toolbar">
@@ -217,11 +258,12 @@
         <div class="segwrap"><div class="seg" role="group" aria-label="Show">${filters.map(([k, t]) => html`<button type="button" aria-pressed="${S.filter === k}" data-filter="${k}">${t}</button>`)}</div></div>
       </div>
       <div class="label">${(filters.find((f) => f[0] === S.filter) || ["", "Everyone"])[1]} <span class="count">${plural(list.length, "person", "people")}</span></div>
-      <div class="group glass">
-        ${list.length ? list.map((p) => personRow(p, d.topics)) : html`<div class="empty">${svg("search")}<span>No one matches.</span></div>`}
+      <div class="people-workspace ${selected ? "has-profile" : ""}">
+        <div class="group glass people-directory">${list.length ? list.map(personRow) : html`<div class="empty">${svg("search")}<span>No one matches.</span></div>`}</div>
+        ${selected ? personDetail(selected, d.topics) : ""}
       </div>`;
   };
-  function personRow(p, topics) {
+  function personRow(p) {
     const flag = !p.active ? html`<span class="pill">Switched off</span>` : p.locked ? html`<span class="pill bad">Locked</span>`
       : !p.lastLoginAt ? html`<span class="pill warn">Not signed in yet</span>` : p.rota.weekOvertime ? html`<span class="pill warn">${hrs(p.rota.weekOvertime)} overtime</span>` : "";
     const where = p.rota.sites.length ? p.rota.sites.map(siteName).join(", ") : "Any site";
@@ -231,8 +273,7 @@
         <span class="av" aria-hidden="true">${ini(p.name)}</span>
         <span class="tx"><b>${p.name}${p.id === S.me.id ? " (you)" : ""}</b><span>${where} · ${p.lastLoginAt ? `signed in ${when(p.lastLoginAt)}` : "never signed in"}</span></span>
         <span class="end">${flag}<span class="${flag ? "opt" : ""}">${rolePill(p.role)}</span><span class="chev">${svg("chev")}</span></span>
-      </button>
-      ${open ? personDetail(p, topics) : ""}`;
+      </button>`;
   }
   function personDetail(p, topics) {
     const r = p.rota, max = r.contractMax;
@@ -242,14 +283,16 @@
     const done = p.training.topics.length;
     const self = p.id === S.me.id;
     return html`
-      <div class="detail">
+      <div class="detail glass person-workspace"><header class="person-workspace-head"><h2>${p.name}</h2><button class="btn sm soft" type="button" data-act="person-back">Back to people</button></header>
         <div class="dbar" role="group" aria-label="Account actions for ${p.name}">
           <button class="btn sm soft" type="button" data-act="edit" data-id="${p.id}">${svg("pen")}Edit</button>
           <button class="btn sm soft" type="button" data-act="order-access" data-id="${p.id}">${svg("coffee")}Wholesale orders access</button>
+          <details class="person-account-actions"><summary class="btn sm soft">Account actions</summary><div class="row">
           ${p.active ? html`<button class="btn sm soft" type="button" data-act="password" data-id="${p.id}">${svg("key")}Temporary password</button>` : ""}
           ${p.locked ? html`<button class="btn sm soft" type="button" data-act="unlock" data-id="${p.id}">${svg("lock")}Unlock</button>` : ""}
           ${p.active ? html`<button class="btn sm soft" type="button" data-act="signout" data-id="${p.id}">${svg("out")}Sign out everywhere</button>` : ""}
           ${self ? "" : p.active ? html`<button class="btn sm bad" type="button" data-act="off" data-id="${p.id}">Switch off</button>` : html`<button class="btn sm" type="button" data-act="on" data-id="${p.id}">Switch back on</button>`}
+          </div></details>
         </div>
         <div class="cards">
           <section class="card" aria-label="Account">
@@ -288,6 +331,11 @@
   VIEWS.sites = async () => {
     const d = await api("GET", "/api/admin/sites");
     cache.sites = d.sites;
+    const diarySetup = id => {
+      const target = new URL(S.links.diary, location.origin);
+      target.searchParams.set("site", id); target.hash = "setup";
+      return target.href;
+    };
     const hoursText = (r) => (r.opensAt && r.closesAt ? `${r.opensAt}–${r.closesAt}` : "Not set");
     // The diary's daily Slack reminders to the site's channel (src/slackDiary.ts).
     const slack = (s) => !s.slack ? "" : html`<div class="sub">${svg("pulse")}Slack reminders</div>
@@ -299,28 +347,30 @@
       ${head("Sites", "Each site's diary setup and rota hours side by side. Change them in the diary's Setup and the Rota's settings.")}
       <div class="sites">
         ${d.sites.map((s) => !s.setUp ? html`
-          <section class="site glass"><header><div><h2><span class="dot ${s.id}"></span>${s.name}</h2><p>${s.address}</p></div><span class="pill warn">Not set up</span></header>
+          <details class="site glass"><summary><div><h2><span class="dot ${s.id}"></span>${s.name}</h2><p>${s.address}</p></div><span class="pill warn">Not set up</span>${svg("chev")}</summary>
             <div class="callout">${svg("warn")}<span>The ${s.name} has no diary Setup yet, so it isn't counted in the diary and can't have shifts on the Rota.</span></div>
             ${kv("People who work here", s.people ? `${s.people}${s.anywhere ? `, plus ${s.anywhere} at any site` : ""}` : s.anywhere ? `${s.anywhere} at any site` : "None yet")}
-            <div class="acts">${d.sites.some((x) => x.setUp) ? html`<button class="btn sm" type="button" data-act="copy" data-id="${s.id}">${svg("copy")}Copy setup from another site</button>` : ""}<a class="btn sm soft" href="${S.links.diary}#setup">Open Setup</a></div>${slack(s)}</section>` : html`
-          <section class="site glass"><header><div><h2><span class="dot ${s.id}"></span>${s.name}</h2><p>${s.address}</p></div><span class="pill ok">${svg("ok")}Set up</span></header>
+            <div class="acts">${d.sites.some((x) => x.setUp) ? html`<button class="btn sm" type="button" data-act="copy" data-id="${s.id}">${svg("copy")}Copy setup from another site</button>` : ""}<a class="btn sm soft" href="${diarySetup(s.id)}">Open Setup</a></div>${slack(s)}</details>` : html`
+          <details class="site glass"><summary><div><h2><span class="dot ${s.id}"></span>${s.name}</h2><p>${hoursText(s.rota)} · ${s.address}</p></div><span class="pill ok">${svg("ok")}Set up</span>${svg("chev")}</summary>
             <div class="sub">${svg("cal")}Kitchen Diary</div>
             ${kv("Fridges and freezers", s.diary.units)}${kv("Checks", `${s.diary.opening} opening · ${s.diary.closing} closing · ${s.diary.weekly} weekly`)}
             ${kv("Closed on", s.diary.closedDays.length ? s.diary.closedDays.join(", ") : "Open every day")}
             <div class="sub">${svg("clock")}Rota</div>
             ${kv("Usual hours", hoursText(s.rota))}${kv("Other days", other(s.rota))}${kv("Minimum on shift", plural(s.rota.minPeople, "person", "people"))}
             ${kv("People who work here", `${s.people}${s.anywhere ? `, plus ${s.anywhere} at any site` : ""}`)}
-            <div class="acts"><a class="btn sm soft" href="${S.links.diary}#setup">Diary Setup</a><a class="btn sm soft" href="${S.links.rota}#settings">Rota settings</a></div>${slack(s)}</section>`)}
+            <div class="acts"><a class="btn sm soft" href="${diarySetup(s.id)}">Diary Setup</a><a class="btn sm soft" href="${S.links.rota}#settings/${s.id}">Rota settings</a></div>${slack(s)}</details>`)}
       </div>
-      <p class="hint">Diary Setup opens at the site that device last used: switch site at the top of the diary if needed.</p>`;
+      `;
   };
 
   const KIND = { diary: ["ok", "cal", "Diary"], rota: ["acc", "clock", "Rota"], account: ["warn", "user", "Accounts"], error: ["bad", "warn", "Errors"] };
   VIEWS.activity = async () => {
-    const d = await api("GET", "/api/admin/activity?kind=" + encodeURIComponent(S.feed));
-    const q = S.fq.trim().toLowerCase();
-    S.reports = Object.fromEntries(d.items.filter((i) => i.code).map((i) => [i.code, i.report]));
-    const items = d.items.filter((i) => !q || i.text.toLowerCase().includes(q) || i.where.toLowerCase().includes(q));
+    const params = new URLSearchParams({ kind: S.feed });
+    if (S.fq.trim()) params.set("q", S.fq.trim());
+    if (S.activityFrom) params.set("from", S.activityFrom);
+    if (S.activityTo) params.set("to", S.activityTo);
+    const { items } = await api("GET", "/api/admin/activity?" + params);
+    if (S.me && S.page === "activity") S.reports = Object.fromEntries(items.filter(i => i.code).map(i => [i.code, i.report]));
     const groups = [];
     for (const i of items) {
       const k = dayKey(i.at), label = k === dayKey(Date.now()) ? "Today" : k === dayKey(Date.now() - 864e5) ? "Yesterday" : new Date(i.at).toLocaleDateString("en-GB", { ...LON, weekday: "long", day: "numeric", month: "long" });
@@ -330,12 +380,13 @@
     return html`
       ${head("Activity", "Who changed what in the diary, the Rota and accounts. Newest first.")}
       <div class="toolbar">
-        <div class="segwrap"><div class="seg" role="group" aria-label="Show">${[["all", "All"], ["diary", "Diary"], ["rota", "Rota"], ["account", "Accounts"], ["errors", "Errors"]].map(([k, t]) => html`<button type="button" aria-pressed="${S.feed === k}" data-feed="${k}">${t}</button>`)}</div></div>
-        <label class="search">${svg("search")}<input id="fq" type="search" placeholder="Search a name or site" aria-label="Search activity" value="${S.fq}"></label>
+        <div class="segwrap"><div class="seg" role="group" aria-label="Activity type">${[["all", "Timeline"], ["diary", "Diary"], ["rota", "Rota"], ["account", "Accounts"], ["errors", "Errors"]].map(([k, t]) => html`<button type="button" aria-pressed="${S.feed === k}" data-feed="${k}">${t}</button>`)}</div></div>
+        <label class="search">${svg("search")}<input id="fq" type="search" placeholder="${S.feed === "errors" ? "Search error reference, app or device" : "Search a name or site"}" aria-label="Search activity" maxlength="120" value="${S.fq}"></label>
+        <div class="row activity-dates"><label class="field"><span class="fl">From</span><input id="activityFrom" type="date" aria-label="Activity from date" value="${S.activityFrom}"></label><label class="field"><span class="fl">To</span><input id="activityTo" type="date" aria-label="Activity to date" value="${S.activityTo}"></label>${S.activityFrom || S.activityTo ? html`<button class="btn sm soft" type="button" data-act="activity-clear">Clear dates</button>` : ""}</div>
       </div>
       ${groups.length ? groups.map(([label, list]) => html`<div class="day">${label}</div><div class="group glass">${list.map((i) => html`
         <div class="item${i.report ? " haserr" : ""}"><span class="ic ${KIND[i.kind][0]}">${svg(KIND[i.kind][1])}</span><span class="tx"><b class="plain">${i.text}</b><span>${i.where}</span>${i.at_line ? html`<span class="errat">${i.at_line}</span>` : ""}</span><span class="end time">${hm(i.at)}</span>${i.report ? html`<details class="errdetail"><summary>Report</summary><pre>${i.report}</pre><div class="errfoot"><button class="btn sm soft" type="button" data-act="copyerr" data-id="${i.code}">Copy report</button><span>Screenshot this, or copy it, to get it fixed.</span></div></details>` : ""}</div>`)}</div>`)
-        : html`<div class="group glass"><div class="empty">${svg("pulse")}<span>${S.feed === "errors" ? "No errors in the last 30 days." : "Nothing yet."}</span></div></div>`}
+        : html`<div class="group glass"><div class="empty">${svg("pulse")}<span>${S.fq || S.activityFrom || S.activityTo ? "No matching activity." : S.feed === "errors" ? "No errors in the last 30 days." : "Nothing yet."}</span></div></div>`}
       <p class="hint">${S.feed === "errors" ? "Errors from staff devices (a page that crashed, or a file that didn't load) and from the server. The same error on the same page is counted, not repeated, and keeps the same code (E-…), which is also what staff see on the screen when it happens: search for it here. Open Report and screenshot or copy it to get it fixed. Kept 30 days." : "Diary entries show each record's latest change. Account changes are kept for about a year."}</p>`;
   };
 
@@ -354,11 +405,12 @@
         <div class="item"><span class="av" aria-hidden="true">${ini(l.name)}</span><span class="tx"><b>${l.name}</b><span>Unlocks by itself at ${hm(l.until)}.${l.pinOff ? " Their quick PIN is switched off." : ""}</span></span><span class="end"><button class="btn sm soft" type="button" data-act="unlock" data-id="${l.id}">Unlock</button></span></div>`)}</div>` : ""}
       ${d.recentFailed.length ? html`<div class="label">Recent failed sign-ins</div><div class="group glass">${d.recentFailed.map((f) => html`
         <div class="item"><span class="ic warn">${svg("warn")}</span><span class="tx"><b class="plain">${f.text}</b></span><span class="end time">${hm(f.at)}</span></div>`)}</div>` : ""}
-      <div class="label">Protections</div>
-      <div class="group glass">
+      <details class="group glass system-protections"><summary class="item">Protections</summary>
+      <div class="group">
         ${[["Lockouts", "5 wrong passwords or PINs lock an account for 10 minutes; wrong PINs also switch the PIN off"], ["Sign-in limits", "30 failed attempts per connection every 15 minutes"], ["Script lock-down", "Only the site's own code can run on its pages"], ["Nightly backups", "Every night at 03:17, the last 30 kept"]]
           .map(([t, s]) => html`<div class="item"><span class="ic ok">${svg("ok")}</span><span class="tx"><b>${t}</b><span>${s}</span></span><span class="end"><span class="pill ok">On</span></span></div>`)}
       </div>
+      </details>
       <div class="label">For everyone</div>
       <div class="group glass">
         <div class="item"><span class="ic warn">${svg("key")}</span><span class="tx"><b>Reset all quick PINs</b><span>For example when an iPad is lost. People set a new PIN after signing in with their password.</span></span><span class="end"><button class="btn sm soft" type="button" data-act="resetpins">Reset quick PINs</button></span></div>
@@ -374,6 +426,7 @@
     const monthAgo = dayKey(Date.now() - 30 * 864e5);
     return html`
       ${head("Backups & exports", "Everything is backed up every night. Download a copy now and then and keep it somewhere safe.", html`<button class="btn" type="button" data-act="backup">${svg("db")}Back up now</button>`)}
+      <div class="group glass"><div class="item"><span class="ic ${d.backups.length ? "ok" : "warn"}">${svg("db")}</span><span class="tx"><b>${d.backups.length ? "Last completed backup" : "No completed backup"}</b><span>${d.backups.length ? cap(when(d.backups[0].at)) + " · Diary, rota, wholesale and account records" : "Use Back up now to create the first copy."}</span></span></div></div>
       <div class="label">Backups <span class="count">${d.backups.length} of ${d.keep} kept</span></div>
       <div class="group glass">
         ${d.backups.length ? d.backups.slice(0, 10).map((b) => html`<div class="item"><span class="ic mut">${svg("db")}</span><span class="tx"><b>${cap(when(b.at))}</b><span>${b.by === "daily" ? "Nightly" : `Made by ${b.by}`} · ${Math.max(1, Math.round(b.bytes / 1024))} KB · ${b.docs.toLocaleString("en-GB")} diary records</span></span><span class="end"><a class="btn sm soft" href="/api/admin/backups/${b.id}" download>${svg("dl")}Download</a></span></div>`)
@@ -384,10 +437,10 @@
       <div class="group glass">
         <div class="item"><span class="ic acc">${svg("clock")}</span><span class="tx"><b>Hours for payroll</b><span>Rota · CSV per person and site for a week, with overtime</span>
           <span class="inline"><label class="fl" for="hoursWeek">Week of</label><select id="hoursWeek">${weeks.map((w, i) => html`<option value="${w}">${isoShort(w)}${i === 0 ? " (this week)" : i === 1 ? " (last week)" : ""}</option>`)}</select></span></span>
-          <span class="end"><button class="btn sm soft" type="button" data-act="hours" aria-label="Download payroll hours CSV">${svg("dl")}CSV</button></span></div>
+          <span class="end"><button class="btn sm soft" type="button" data-act="hours" aria-label="Download payroll hours CSV">${svg("dl")}Download CSV</button></span></div>
         <div class="item"><span class="ic acc">${svg("clock")}</span><span class="tx"><b>All shifts</b><span>Rota · CSV, planned and as worked</span>
           <span class="inline"><input type="date" id="shFrom" value="${monthAgo}" aria-label="From"><span>to</span><input type="date" id="shTo" value="${today}" aria-label="To"></span></span>
-          <span class="end"><button class="btn sm soft" type="button" data-act="shifts" aria-label="Download all shifts CSV">${svg("dl")}CSV</button></span></div>
+          <span class="end"><button class="btn sm soft" type="button" data-act="shifts" aria-label="Download all shifts CSV">${svg("dl")}Download CSV</button></span></div>
         <div class="item"><span class="ic warn">${svg("people")}</span><span class="tx"><b>People</b><span>Accounts · CSV of names, roles, sites and contracted hours. Never passwords.</span></span>
           <span class="end"><a class="btn sm soft" href="/api/admin/export/people.csv" aria-label="Download people CSV" download>${svg("dl")}CSV</a></span></div>
         <div class="item"><span class="ic ok">${svg("cal")}</span><span class="tx"><b>EHO inspection pack</b><span>Kitchen Diary · a PDF for a period and a site, from EHO inspection mode</span></span>
@@ -397,9 +450,11 @@
 
   VIEWS.more = async () => html`
     ${head("More", "")}
+    <div class="label">Operations</div>
     <div class="group glass">
       <button class="item" type="button" data-go="sites"><span class="ic acc">${svg("house")}</span><span class="tx"><b>Sites</b><span>Site setup, diary settings and rota hours</span></span><span class="end"><span class="chev">${svg("chev")}</span></span></button>
       <button class="item" type="button" data-go="sickness"><span class="ic warn">${svg("heart")}</span><span class="tx"><b>Sickness</b><span>Sickness forms and the Bradford Factor</span></span><span class="end"><span class="chev">${svg("chev")}</span></span></button>
+    </div><div class="label">Administration</div><div class="group glass">
       <button class="item" type="button" data-go="security"><span class="ic ${S.locked ? "bad" : "ok"}">${svg("shield")}</span><span class="tx"><b>Security</b><span>${S.locked ? `${plural(S.locked, "account")} locked` : "Sign-ins, PINs and protections"}</span></span><span class="end">${S.locked ? html`<span class="badge">${S.locked}</span>` : ""}<span class="chev">${svg("chev")}</span></span></button>
       <button class="item" type="button" data-go="data"><span class="ic mut">${svg("db")}</span><span class="tx"><b>Backups &amp; exports</b><span>Nightly backups, payroll hours and other downloads</span></span><span class="end"><span class="chev">${svg("chev")}</span></span></button>
     </div>
@@ -563,7 +618,10 @@
   async function act(name, id, el) {
     if (name === "overview-site") { overviewUI.site(id); return; }
     if (name === "overview-wholesale") {
-      wholesale.selectSection(id === "invoices" ? "invoices" : "orders", { queue: id === "prepare" || id === "ready" ? id : "", resetStatus: true });
+      saveRoute();
+      const invoice = id === "invoices" || id === "invoice-review";
+      wholesale.selectSection(invoice ? "invoices" : "orders", { queue: id, resetStatus: true });
+      if (invoice) wholesale.openInvoiceQueue(id === "invoice-review" ? "review" : "overdue");
       wholesaleExpanded = true; await show("wholesale"); return;
     }
     if (name.startsWith("sick-")) { await sickness.act(name, id); return; }
@@ -573,6 +631,7 @@
       return;
     }
     if (name === "wh-tab" || name === "wh-pending") {
+      saveRoute();
       const section = name === "wh-pending" ? "customers" : id;
       if (!wholesale.selectSection(section, { pending: name === "wh-pending" })) return;
       wholesaleExpanded = true; await show("wholesale"); return;
@@ -583,8 +642,8 @@
     }
     const p = person(id);
     switch (name) {
-      case "go": show(id); return;
-      case "errors": S.feed = "errors"; show("activity"); return;
+      case "go": saveRoute(); show(id); return;
+      case "errors": saveRoute(); S.feed = "errors"; show("activity"); return;
       case "dismiss":
         try { await api("POST", "/api/admin/overview/dismiss", { key: id }); reload(); }
         catch (e) { toast(e.message); }
@@ -598,12 +657,14 @@
         try { const r = await api("POST", "/api/admin/email/test", {}); toast("Test email sent to " + r.to); }
         catch (e) { toast(e.message); }
         return;
+      case "activity-clear": S.activityFrom = S.activityTo = ""; await reload(); return;
       case "copyerr": {
         const text = (S.reports || {})[id] || "";
         try { await navigator.clipboard.writeText(text); toast("Copied the report for " + id); }
         catch (e) { toast("Couldn't copy here: take a screenshot of the report instead."); }
         return;
       }
+      case "person-back": { const id = S.open; S.open = null; S.local = true; await reload(); document.querySelector(`[data-person="${CSS.escape(id || "")}"]`)?.focus({ preventScroll: true }); return; }
       case "add": addPerson(); return;
       case "edit": if (p) editPerson(p); return;
       case "order-access": if(p)editOrderAccess(p);return;
@@ -672,13 +733,25 @@
     const g = e.target.closest("[data-go]");
     if (g) {
       e.preventDefault();
+      saveRoute();
       if (g.dataset.go === "wholesale" && g.closest("#sideNav")) { wholesaleExpanded = true; wholesale.selectSection("orders"); }
       show(g.dataset.go); return;
     }
     const a = e.target.closest("[data-act]");
     if (a) { e.preventDefault(); act(a.dataset.act, a.dataset.id, a); return; }
     const pr = e.target.closest("[data-person]");
-    if (pr) { S.open = S.open === pr.dataset.person ? null : pr.dataset.person; S.local = S.page === "people"; reload(); return; }
+    if (pr) {
+      S.open = S.open === pr.dataset.person ? null : pr.dataset.person;
+      S.local = S.page === "people";
+      reload().then(() => {
+        if (S.page !== "people") return;
+        if (S.open && !desktopNav.matches) {
+          $(".person-workspace-head button")?.focus({ preventScroll: true });
+          $(".person-workspace")?.scrollIntoView({ block: "nearest" });
+        } else document.querySelector(`[data-person="${CSS.escape(pr.dataset.person)}"]`)?.focus({ preventScroll: true });
+      });
+      return;
+    }
     const f = e.target.closest("[data-filter]");
     if (f) { S.filter = f.dataset.filter; S.local = S.page === "people"; reload(); return; }
     const fd = e.target.closest("[data-feed]");
@@ -687,6 +760,8 @@
   // Search as you type, keeping the cursor in the box.
   let searchT;
   document.addEventListener("input", (e) => {
+    if (e.target.id === "sickSearch") { sickness.search(e.target.value); return; }
+    if (e.target.id === "wiSearch") { wholesale.searchInvoices(e.target.value); return; }
     if (e.target.id === "wq") { wholesale.search(e.target.value); return; }
     if (e.target.id !== "q" && e.target.id !== "fq") return;
     const id = e.target.id;
@@ -696,14 +771,33 @@
   });
   $("#meBtn").addEventListener("click", accountMenu);
   $("#whoBtn").addEventListener("click", accountMenu);
-  window.addEventListener("hashchange", () => { const h = location.hash.slice(1); if (h !== S.page && PAGES.includes(h)) show(h); });
+  let historyFrame = 0;
+  const routeChanged = () => {
+    cancelAnimationFrame(historyFrame);
+    historyFrame = requestAnimationFrame(() => restoreRoute().catch(error => toast(error.message)));
+  };
+  window.addEventListener("popstate", routeChanged);
+  window.addEventListener("hashchange", routeChanged);
+  document.addEventListener("change", event => {
+    if (event.target.id === "wSection") act("wh-tab", event.target.value, event.target);
+    if (["activityFrom", "activityTo"].includes(event.target.id)) {
+      const from = $("#activityFrom")?.value, to = $("#activityTo")?.value;
+      if (from && to && from > to) { toast("Choose an end date on or after the start date."); return; }
+      S.activityFrom = from || ""; S.activityTo = to || ""; reload();
+    }
+  });
+  let routeTimer;
+  window.addEventListener("scroll", () => {
+    clearTimeout(routeTimer);
+    routeTimer = setTimeout(() => { if (S.me && routeHash() === location.hash) saveRoute(); }, 100);
+  }, { passive: true });
   desktopNav.addEventListener("change", () => {
     if (!S.me) return;
-    const previous = document.activeElement, section = previous?.closest('[data-act="wh-tab"],[data-act="wh-pending"]');
+    const previous = document.activeElement, section = previous?.closest('#wSection,[data-act="wh-tab"],[data-act="wh-pending"]');
     renderNav(); // Updates navigation only; the workspace and open sheet drafts stay in place.
-    if (section && !previous.isConnected) {
-      const selector = section.dataset.act === "wh-pending" ? '[data-act="wh-pending"]' : `[data-act="wh-tab"][data-id="${section.dataset.id}"]`;
-      const target = document.querySelector(selector);
+    if (section && (!previous.isConnected || !previous.getClientRects().length)) {
+      const selector = section.id === "wSection" ? `#sideNav [data-act="wh-tab"][data-id="${wholesale.currentSection()}"]` : section.dataset.act === "wh-pending" ? '[data-act="wh-pending"]' : `[data-act="wh-tab"][data-id="${section.dataset.id}"]`;
+      const target = desktopNav.matches ? document.querySelector(selector) : $("#wSection");
       (target?.getClientRects().length ? target : $('#sideNav [data-act="wh-sidebar-toggle"]'))?.focus({ preventScroll: true });
     }
   });
@@ -725,8 +819,8 @@
   (async () => {
     try {
       const me = await SC.startSession({ clear: () => {
-        wholesale.clear();
-        cache = {}; S.me = null; S.open = null; S.q = ""; S.fq = ""; wholesaleExpanded = false;
+        seq++; sickness.clear(); wholesale.clear(); routeSnapshots.clear(); clearTimeout(routeTimer);
+        cache = {}; S.me = null; S.open = null; S.q = ""; S.fq = ""; S.reports = {}; S.activityFrom = S.activityTo = ""; wholesaleExpanded = false;
         closeSheet(); for (const id of ["#main", "#sheet", "#sideNav", "#tabBar", "#whoName", "#whoInit"]) $(id)?.replaceChildren();
       } });
       if (!me) return;
@@ -737,9 +831,11 @@
       $("#sideDiary").href = S.links.diary; $("#sideRota").href = S.links.rota;
       $("#meBtn").textContent = ini(S.me.name); $("#meBtn").setAttribute("aria-label", `Signed in as ${S.me.name}`);
       $("#whoInit").textContent = ini(S.me.name); $("#whoName").textContent = S.me.name;
-      const h = location.hash.slice(1), quickbooksReview = new URLSearchParams(location.search).get("quickbooks") === "review";
+      const route = parseRoute(), quickbooksReview = new URLSearchParams(location.search).get("quickbooks") === "review";
       if (quickbooksReview) { wholesale.selectSection("invoices"); const clean = new URL(location.href); for (const key of ["quickbooks","qbEnvironment","quickbooksError"]) clean.searchParams.delete(key); history.replaceState(null,"",clean); }
-      await show(quickbooksReview ? "wholesale" : PAGES.includes(h) ? h : "overview");
+      else if (route.page === "wholesale") wholesale.selectSection(route.section || "orders");
+      history.scrollRestoration = "manual";
+      await show(quickbooksReview ? "wholesale" : route.page, { fromHistory: true });
       if (quickbooksReview) await wholesale.act("wh-invoice-quickbooks");
       refreshBadge();
     } catch (e) {

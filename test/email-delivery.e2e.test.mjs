@@ -1,3 +1,4 @@
+import { revealAdminOptions } from "./admin-workspace-helpers.mjs";
 import {test,before,after} from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
@@ -15,7 +16,7 @@ after(async()=>{await browser?.close();await srv?.stop();});
 async function asAdmin(viewport={width:393,height:852},colorScheme='light'){
  const ctx=await browser.newContext({viewport,colorScheme}),[name,value]=admin.split('=');await ctx.addCookies([{name,value,url:srv.base}]);return ctx;
 }
-async function openAlerts(page){await page.goto(srv.base+'/admin#wholesale');await page.locator('[data-act="wh-order-emails"]').click();await page.locator('#wOrderEmailsTo').waitFor();}
+async function openAlerts(page){await page.goto(srv.base+'/admin#wholesale');await revealAdminOptions(page, ".w-order-settings"); await page.locator('[data-act="wh-order-emails"]').click();await page.locator('#wOrderEmailsTo').waitFor();}
 const longAddress='very.long.customer.contact.'.repeat(5)+'@example.invalid';
 function fixture(data){return{...data,webhookConfigured:true,lastWebhookAt:Date.now(),messages:[{id:'synthetic',recipient:longAddress,name:'Synthetic business',subject:'<img id="email-injected" src="x">',stream:'wholesale',acceptedAt:Date.now(),status:'bounced',detail:'Mailbox unavailable'}],suppressed:[{email:longAddress,source:'email.bounced',at:Date.now()}]};}
 for(const [device,viewport]of[['phone',{width:393,height:852}],['iPad',{width:1180,height:820}]])for(const colorScheme of ['light','dark']){

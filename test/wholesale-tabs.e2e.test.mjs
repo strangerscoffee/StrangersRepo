@@ -1,3 +1,4 @@
+import { selectWholesaleSection } from "./admin-workspace-helpers.mjs";
 // Customer tabs on the staff Wholesale orders page: put an order on a customer's tab from the order, watch the tab
 // fill towards 6 kg (ready to clear at 6 kg), clear it (or early), and see it in Recently cleared; Admin's automatic
 // tab switch and the order sheet's Put on tab. Phone and iPad, light and dark. Needs Playwright with Chromium.
@@ -112,7 +113,7 @@ test("Admin: automatic tabs on the customer and Put on tab in the order", async 
   await p.locator('#sheet [data-sheet="tab-toggle"]', { hasText: "Take off tab" }).waitFor();
   assert.match(await p.locator("#wTabTitle").locator("xpath=../..").innerText(), /added by Admin/);
   await p.locator('#sheet [data-sheet="close"]').first().click();
-  await p.locator('[data-act="wh-tab"][data-id="customers"]').first().click();
+  await selectWholesaleSection(p, "customers");
   await p.locator('[data-act="wh-customer"]', { hasText: "Lune Café" }).click();
   await p.locator("#wAutoTab").check();
   await p.locator('#wCustomerForm button[type="submit"]').click();
@@ -143,7 +144,7 @@ test("Admin → Wholesale → Tabs: see every tab with £, and clear one", async
     const [n, v] = ADMIN.split("="); await ctx.addCookies([{ name: n, value: v, url: srv.base }]);
     const p = await ctx.newPage(), errors = []; p.on("pageerror", (e) => errors.push(String(e)));
     await p.goto(srv.base + "/admin#wholesale");
-    await p.locator('[data-act="wh-tab"][data-id="tabs"]').first().click();
+    await selectWholesaleSection(p, "tabs");
     await p.locator(".w-tab-card").first().waitFor();
     return { ctx, p, errors };
   };

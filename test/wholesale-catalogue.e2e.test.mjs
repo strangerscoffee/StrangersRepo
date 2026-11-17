@@ -1,3 +1,4 @@
+import { selectWholesaleSection } from "./admin-workspace-helpers.mjs";
 import { openWholesaleBasket, openWholesaleOrders, openWholesaleAccount } from './wholesale-ui-helpers.mjs';
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -46,7 +47,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       const errors = [];
       for (const page of [admin, buyer]) page.on("pageerror", (error) => errors.push(error.message));
       await admin.goto(srv.base + "/admin#wholesale");
-      await admin.locator('[data-act="wh-tab"][data-id="catalogue"]').click();
+      await selectWholesaleSection(admin, "catalogue");
       await admin.locator('[data-act="wh-coffee"]:not([data-id])').click();
       await admin.locator('#wCoffeeTitle').fill(title);
       await admin.locator('#wCoffeeName').fill(title);
@@ -73,7 +74,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       assert.equal(product.prices.kilo, 4500); assert.equal(product.images.length, 3);
 
       async function editTerms(term, note) {
-        await admin.locator('[data-act="wh-tab"][data-id="customers"]').click();
+        await selectWholesaleSection(admin, "customers");
         await admin.locator('[data-act="wh-customer"]', { hasText: business }).click();
         await admin.locator('[data-sheet="customer-choice"][data-choice="wPaymentTerms"]').click();
         await admin.locator(`#wCustomerChoice [data-sheet="customer-choice-apply"][data-value="${term}"]`).click();
@@ -84,7 +85,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
         await admin.locator('#scrim').waitFor({ state: 'hidden' });
       }
       async function stock(inStock) {
-        await admin.locator('[data-act="wh-tab"][data-id="catalogue"]').click();
+        await selectWholesaleSection(admin, "catalogue");
         await admin.locator(`[data-act="wh-coffee"][data-id="${product.id}"]`).click();
         await admin.locator('#wInStock').setChecked(inStock);
         await admin.locator('#wCoffeeForm button[type="submit"]').click();

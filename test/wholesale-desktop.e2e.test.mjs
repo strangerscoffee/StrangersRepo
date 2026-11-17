@@ -1,3 +1,4 @@
+import { selectWholesaleSection } from "./admin-workspace-helpers.mjs";
 import { openWholesaleBasket, openWholesaleAccount } from './wholesale-ui-helpers.mjs';
 // Wide customer/admin editors and short desktop windows remain usable with real account/basket data.
 import { test, before, after } from "node:test";
@@ -57,7 +58,7 @@ for (const [screen, viewport] of [["compact", { width: 1280, height: 720 }], ["l
         await route.continue();
       });
       await admin.goto(srv.base + "/admin#wholesale");
-      await admin.locator('[data-act="wh-tab"][data-id="customers"]').click();
+      await selectWholesaleSection(admin, "customers");
       await admin.locator(`[data-act="wh-customer"][data-id="${original.id}"]`).click();
       await admin.locator("#wCustomerForm").waitFor();
       assert.equal(await admin.evaluate(() => document.activeElement.id), "sheetTitle", "the editor starts at its title");

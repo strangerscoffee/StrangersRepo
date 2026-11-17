@@ -1,3 +1,4 @@
+import { selectWholesaleSection } from "./admin-workspace-helpers.mjs";
 import { openWholesaleOrders } from './wholesale-ui-helpers.mjs';
 // Native wholesale order handling: packing details, quick statuses, busy guards and concurrent edits.
 import { test, before, after } from "node:test";
@@ -127,7 +128,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       await screenshot(page, `quick-conflict-${device}-${color}`);
       // A normal view redraw (also used by live updates) must not acknowledge a rejected edit.
       const previousError = await error.elementHandle();
-      await page.locator('[data-act="wh-tab"][data-id="orders"]').click();
+      await selectWholesaleSection(page, "orders");
       await page.waitForFunction((previous) => !previous.isConnected, previousError);
       await previousError.dispose();
       await error.waitFor();

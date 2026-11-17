@@ -1,3 +1,4 @@
+import { selectWholesaleSection } from "./admin-workspace-helpers.mjs";
 // The accounts email in the browser: applying for an account (phone, light and dark), Admin's customer form (iPad) and
 // My account (phone).
 import { test, before, after } from "node:test";
@@ -58,7 +59,7 @@ test("Admin edits it on the customer, and the business sees it in My account", a
   for (const colorScheme of ["light", "dark"]) {
     const { ctx, p, errors } = await page(ADMIN, { width: 820, height: 1180 }, { colorScheme, isMobile: true, hasTouch: true });
     await p.goto(srv.base + "/admin#wholesale");
-    await p.locator('[data-act="wh-tab"][data-id="customers"]').first().click();
+    await selectWholesaleSection(p, "customers");
     await p.locator('[data-act="wh-customer"]', { hasText: "Lune House light" }).click();
     assert.equal(await p.locator("#wAccountsEmail").inputValue(), colorScheme === "light" ? "accounts@lune.example" : "finance@lune.example");
     await p.locator("#wAccountsEmail").fill("finance@lune.example");

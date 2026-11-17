@@ -30,14 +30,16 @@ export async function dailyBusiness(env: Env, today: string, nextWeek: string) {
       COALESCE(SUM(CASE WHEN json_extract(data,'$.status') IN ('New','Preparing') THEN 1 ELSE 0 END),0) AS toPrepare,
       COALESCE(SUM(CASE WHEN json_extract(data,'$.status') IN ('New','Preparing') THEN json_extract(data,'$.grams') ELSE 0 END),0) AS grams,
       COALESCE(SUM(CASE WHEN json_extract(data,'$.status')='Ready' THEN 1 ELSE 0 END),0) AS ready,
-      MIN(CASE WHEN json_extract(data,'$.status') IN ('New','Preparing') THEN json_extract(data,'$.createdAt') END) AS oldestAt
-      FROM wholesale_preview WHERE kind='order' AND json_extract(data,'$.preview')=0 AND json_extract(data,'$.deletedAt') IS NULL`).first<{ toPrepare: number; grams: number; ready: number; oldestAt: number | null }>(),
+      MIN(CASE WHEN json_extract(data,'$.status') IN ('New','Preparing') THEN json_extract(data,'$.createdAt') END) AS oldestAt,
+      COALESCE(SUM(CASE WHEN json_extract(data,'$.status') IN ('New','Preparing') AND json_extract(data,'$.dispatchDate')=? THEN 1 ELSE 0 END),0) AS prepareToday,
+      COALESCE(SUM(CASE WHEN json_extract(data,'$.status')='Ready' AND json_extract(data,'$.dispatchDate')=? THEN 1 ELSE 0 END),0) AS readyToday
+      FROM wholesale_preview WHERE kind='order' AND json_extract(data,'$.preview')=0 AND json_extract(data,'$.deletedAt') IS NULL`).bind(today, today).first<{ toPrepare: number; grams: number; ready: number; oldestAt: number | null; prepareToday: number; readyToday: number }>(),
     env.DB.prepare("SELECT COUNT(*) AS n FROM wholesale_accounts WHERE approval_status='pending'").first<{ n: number }>(),
     env.DB.prepare("SELECT COALESCE(SUM(CASE WHEN kind='annual' THEN 1 ELSE 0 END),0) AS annual, COALESCE(SUM(CASE WHEN kind<>'annual' OR kind IS NULL THEN 1 ELSE 0 END),0) AS other FROM rota_time_off WHERE status='requested'").first<{ annual: number; other: number }>(),
     env.DB.prepare("SELECT COUNT(DISTINCT t.user_id) AS n FROM rota_time_off t JOIN users u ON u.id=t.user_id WHERE t.kind='annual' AND t.status='approved' AND u.active=1 AND t.from_day<=? AND t.to_day>=?").bind(nextWeek, nextWeek).first<{ n: number }>(),
     accountingSummary(env),
   ]);
-  return { orders: orders || { toPrepare: 0, grams: 0, ready: 0, oldestAt: null }, pendingAccounts: pending?.n || 0, leave: leave || { annual: 0, other: 0 }, annualLeaveMonday: annualLeave?.n || 0,
+  return { orders: orders || { toPrepare: 0, grams: 0, ready: 0, oldestAt: null, prepareToday: 0, readyToday: 0 }, pendingAccounts: pending?.n || 0, leave: leave || { annual: 0, other: 0 }, annualLeaveMonday: annualLeave?.n || 0,
     invoices: { overdueCount: invoices?.overdueCount || 0, overduePence: invoices?.overduePence || 0, reviewCount: invoices?.reviewCount || 0 } };
 }
 

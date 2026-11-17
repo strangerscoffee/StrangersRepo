@@ -1,5 +1,6 @@
 // Admin search and keyset pages use the existing (kind, updated_at DESC, id) index.
 import { type Env, invalid } from "./http";
+import { londonToday } from "./rota/util";
 import { decode, type Row, type Versioned } from "./wholesaleStore";
 
 type ListKind = "order" | "customer";
@@ -12,9 +13,13 @@ function filters(kind: ListKind, query: URLSearchParams) {
   if (kind === "order") where.push("json_extract(data, '$.deletedAt') IS NULL");
   const queue = query.get("queue");
   if (queue) {
-    if (kind !== "order" || !["prepare", "ready"].includes(queue)) throw invalid("Choose a listed order queue.");
+    if (kind !== "order" || !["prepare", "ready", "due-prepare", "due-ready"].includes(queue)) throw invalid("Choose a listed order queue.");
     where.push("json_extract(data, '$.preview') = 0");
-    where.push(queue === "prepare" ? "json_extract(data, '$.status') IN ('New','Preparing')" : "json_extract(data, '$.status') = 'Ready'");
+    where.push(queue.endsWith("prepare") ? "json_extract(data, '$.status') IN ('New','Preparing')" : "json_extract(data, '$.status') = 'Ready'");
+    if (queue.startsWith("due-")) {
+      where.push("json_extract(data, '$.dispatchDate') = ?");
+      values.push(londonToday());
+    }
   }
   const q = (query.get("q") || "").trim();
   if (q.length > 120) throw invalid("Search can be up to 120 characters.");
@@ -61,9 +66,9 @@ export async function adminWholesalePage<T>(env: Env, kind: ListKind, query = ne
 
 export async function adminWholesaleStats(env: Env) {
   const [orders, pending, statuses] = await Promise.all([
-    env.DB.prepare("SELECT COALESCE(SUM(CASE WHEN json_extract(data, '$.status') IN ('New', 'Preparing', 'Ready') THEN 1 ELSE 0 END), 0) AS openOrders, COALESCE(SUM(CASE WHEN json_extract(data, '$.status') IN ('New', 'Preparing') THEN json_extract(data, '$.grams') ELSE 0 END), 0) AS gramsToPrepare FROM wholesale_preview WHERE kind = 'order' AND json_extract(data, '$.preview') = 0 AND json_extract(data, '$.deletedAt') IS NULL").first<{ openOrders: number; gramsToPrepare: number }>(),
+    env.DB.prepare("SELECT COALESCE(SUM(CASE WHEN json_extract(data, '$.status') IN ('New', 'Preparing', 'Ready') THEN 1 ELSE 0 END), 0) AS openOrders, COALESCE(SUM(CASE WHEN json_extract(data, '$.status') IN ('New', 'Preparing') THEN 1 ELSE 0 END), 0) AS toPrepare, COALESCE(SUM(CASE WHEN json_extract(data, '$.status') = 'Ready' THEN 1 ELSE 0 END), 0) AS ready, COALESCE(SUM(CASE WHEN json_extract(data, '$.status') IN ('New', 'Preparing') THEN json_extract(data, '$.grams') ELSE 0 END), 0) AS gramsToPrepare FROM wholesale_preview WHERE kind = 'order' AND json_extract(data, '$.preview') = 0 AND json_extract(data, '$.deletedAt') IS NULL").first<{ openOrders: number; gramsToPrepare: number; toPrepare: number; ready: number }>(),
     env.DB.prepare("SELECT COUNT(*) AS n FROM wholesale_accounts WHERE approval_status = 'pending'").first<{ n: number }>(),
     env.DB.prepare("SELECT json_extract(data, '$.status') AS status, COUNT(*) AS n FROM wholesale_preview WHERE kind = 'order' AND json_extract(data, '$.deletedAt') IS NULL GROUP BY json_extract(data, '$.status')").all<{ status: string; n: number }>(),
   ]);
-  return { statusCounts: Object.fromEntries(statuses.results.map(row => [row.status, row.n])), openOrders: orders?.openOrders || 0, gramsToPrepare: orders?.gramsToPrepare || 0, pendingAccounts: pending?.n || 0 };
+  return { statusCounts: Object.fromEntries(statuses.results.map(row => [row.status, row.n])), openOrders: orders?.openOrders || 0, toPrepare: orders?.toPrepare || 0, ready: orders?.ready || 0, gramsToPrepare: orders?.gramsToPrepare || 0, pendingAccounts: pending?.n || 0 };
 }

@@ -1,3 +1,4 @@
+import { revealAdminOptions } from "./admin-workspace-helpers.mjs";
 // The announcement bar in a browser: an admin writes it in Admin → Wholesale → Orders → Announcement (with a preview);
 // the customer sees it at the top of the ordering page, can close it (it stays closed after a reload), and a new
 // message shows again. On a phone and an iPad, light and dark. Needs Playwright with Chromium.
@@ -40,7 +41,7 @@ for (const [name, viewport, isMobile] of [["phone", { width: 390, height: 844 },
     const title = `Christmas dispatch dates (${name} ${scheme})`;
     const admin = await page(ADMIN, viewport, isMobile, scheme);
     await admin.p.goto(srv.base + "/admin#wholesale");
-    await admin.p.locator('[data-act="wh-announcement"]').click();
+    await revealAdminOptions(admin.p, ".w-order-settings"); await admin.p.locator('[data-act="wh-announcement"]').click();
     await admin.p.locator("#wAnnForm").waitFor();
     await admin.p.locator("#wAnnOn").check();
     await admin.p.locator("#wAnnTitle").fill(title);

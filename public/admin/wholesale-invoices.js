@@ -16,7 +16,27 @@ window.WholesaleInvoices = function ({ api, html, raw, svg, put, openSheet, clos
   const title = (heading, subtitle = "") => html`<header class="wi-head"><div><h2 id="sheetTitle" tabindex="-1">${heading}</h2>${subtitle ? html`<p>${subtitle}</p>` : ""}</div><button class="btn soft wi-close" type="button" data-sheet="wi-back" aria-label="Close invoice window">×</button></header>`;
   const footer = (submit, back = "Cancel") => html`<footer class="wi-foot"><p class="err" id="wiError" role="alert"></p><div class="row"><button class="btn soft" type="button" data-sheet="wi-back">${back}</button>${submit ? html`<button class="btn" type="submit">${submit}</button>` : ""}</div></footer>`;
   let invoices = [], count = 0, cursor = null, listPages = 1, loadingMore = false, configCache = null;
+  let queue = "all", query = "", searchTimer, generation = 0;
   const pendingReviews = new Map();
+  function setFilter(value) {
+    queue = value; listPages = 1;
+  }
+  function listUrl(after) {
+    const params = new URLSearchParams();
+    if (queue !== "all") params.set("queue", queue);
+    if (query.trim()) params.set("q", query.trim());
+    if (after) params.set("cursor", after);
+    return root + "/invoices" + (params.size ? "?" + params : "");
+  }
+  function search(value) {
+    query = value; listPages = 1;
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(async () => {
+      if (!$("#wiSearch")) return;
+      await reload();
+      $("#wiSearch")?.focus({ preventScroll: true });
+    }, 220);
+  }
   const quickbooks = window.WholesaleQuickBooks({api,html,raw,svg,show,title,footer,field,busy,closeSheet,reload,toast});
 
   // Each nested picker has one parent draft; gestures restore it instead of discarding edits.
@@ -66,16 +86,21 @@ window.WholesaleInvoices = function ({ api, html, raw, svg, put, openSheet, clos
     return html`<div class="stats wi-stats">${[["Invoices", data.count], ["Outstanding", money(data.outstandingPence)], ["Overdue", money(data.overduePence)]].map(([label, value]) => html`<div class="stat glass"><span class="k">${label}</span><span class="v">${value}</span></div>`)}</div>${data.reviewCount ? html`<p class="wi-reasons">${data.reviewCount} ${data.reviewCount === 1 ? "invoice needs" : "invoices need"} a payment check. Totals include the saved balance until accounting is reconciled.</p>` : ""}`;
   }
   function invoiceRow(invoice) {
-    return html`<button class="item wi-invoice-row" type="button" data-act="wh-invoice-open" data-id="${invoice.id}"><span class="ic acc">${svg("dl")}</span><span class="tx"><b>${invoice.number} · ${invoice.billTo.name}</b><span>${date(invoice.invoiceDate)}${invoice.deliveryLocation?.name ? " · " + invoice.deliveryLocation.name : ""}</span><span>${invoice.dueDate ? "Due " + date(invoice.dueDate) : invoice.paymentTerms.label}</span></span><span class="end"><b class="num">${money(invoice.totals.grossPence)}</b>${status(invoice)}<span class="chev">${svg("chev")}</span></span></button>`;
+    return html`<button class="item wi-invoice-row" type="button" data-act="wh-invoice-open" data-id="${invoice.id}"><span class="ic acc">${svg("dl")}</span><span class="tx"><b>${invoice.number} · ${invoice.billTo.name}</b><span>${date(invoice.invoiceDate)}${invoice.deliveryLocation?.name ? " · " + invoice.deliveryLocation.name : ""}</span><span>${invoice.dueDate ? "Due " + date(invoice.dueDate) : invoice.paymentTerms.label}</span>${invoice.payment?.source === "quickbooks" ? html`<span>QuickBooks · ${checked(invoice.payment.checkedAt)}</span>` : ""}</span><span class="end"><b class="num">${money(invoice.totals.grossPence)}</b>${status(invoice)}<span class="chev">${svg("chev")}</span></span></button>`;
   }
   async function view() {
-    const [config, first] = await Promise.all([api("GET", root + "/invoice-settings"), api("GET", root + "/invoices")]);
+    const started = ++generation;
+    const [config, first] = await Promise.all([api("GET", root + "/invoice-settings"), api("GET", listUrl())]);
+    if (started !== generation) return html``;
     configCache = config; invoices = first.invoices; cursor = first.nextCursor; count = first.count;
     for (let page = 1; page < listPages && cursor; page++) {
-      const next = await api("GET", root + "/invoices?cursor=" + encodeURIComponent(cursor));
+      const next = await api("GET", listUrl(cursor));
+      if (started !== generation) return html``;
       invoices = [...new Map([...invoices, ...next.invoices].map((invoice) => [invoice.id, invoice])).values()]; cursor = next.nextCursor; count = next.count;
     }
-    return html`<section class="wi-workspace" aria-labelledby="wiTitle"><div class="toolbar"><div><h2 id="wiTitle">Invoices</h2><p class="hint">VAT invoices and payment records.</p></div><div class="row"><button class="btn soft" type="button" data-act="wh-invoice-quickbooks">QuickBooks</button><button class="btn soft" type="button" data-act="wh-invoice-settings">Invoice settings</button></div></div>${customerSwitch(config)}${summary(first.summary)}${!config.ready ? html`<div class="wi-setup group"><h3>Complete your invoice settings</h3><p>Add your legal business details, VAT rates and invoice numbering before issuing an invoice.</p><button class="btn soft" type="button" data-act="wh-invoice-settings">Set up invoicing</button></div>` : ""}<section class="wi-records" aria-labelledby="wiListTitle"><div class="label" id="wiListTitle">Issued invoices <span class="count">${invoices.length} of ${count}</span></div><div class="group glass">${invoices.length ? invoices.map(invoiceRow) : html`<div class="w-empty"><span class="ic mut">${svg("dl")}</span><h3>No invoices yet</h3><p>Open a customer order to review and issue its invoice.</p></div>`}</div>${cursor ? html`<div class="w-more"><button class="btn soft" type="button" data-act="wh-invoice-more">Load earlier invoices</button></div>` : ""}<p class="hint">Recording payment updates the invoice status. It does not transfer money.</p></section></section>`;
+    return html`<section class="wi-workspace" aria-labelledby="wiTitle"><div class="toolbar"><div><h2 id="wiTitle">Invoices</h2><p class="hint">VAT invoices and payment records.</p></div><div class="row"><button class="btn soft" type="button" data-act="wh-invoice-quickbooks">QuickBooks</button><button class="btn soft" type="button" data-act="wh-invoice-settings">Invoice settings</button></div></div>${summary(first.summary)}
+      <div class="w-queue-controls" role="group" aria-label="Invoice queues">${[["overdue","Overdue"],["soon","Due in 7 days"],["review","Payment review"],["all","All invoices"]].map(([id,label]) => html`<button class="btn sm soft" type="button" data-act="wh-invoice-queue" data-id="${id}" aria-pressed="${queue === id}">${label}</button>`)}</div>
+      <label class="search">${svg("search")}<input id="wiSearch" type="search" aria-label="Search invoices" placeholder="Search invoice number or business" maxlength="120" value="${query}"></label>${!config.ready ? html`<div class="wi-setup group"><h3>Complete your invoice settings</h3><p>Add your legal business details, VAT rates and invoice numbering before issuing an invoice.</p><button class="btn soft" type="button" data-act="wh-invoice-settings">Set up invoicing</button></div>` : ""}<section class="wi-records" aria-labelledby="wiListTitle"><div class="label" id="wiListTitle">Issued invoices <span class="count">${invoices.length} of ${count}</span></div><div class="group glass">${invoices.length ? invoices.map(invoiceRow) : html`<div class="w-empty"><span class="ic mut">${svg("dl")}</span><h3>${queue !== "all" || query.trim() ? "No matching invoices" : "No invoices yet"}</h3><p>${queue !== "all" || query.trim() ? "Try another queue or search." : "Open a customer order to review and issue its invoice."}</p></div>`}</div>${cursor ? html`<div class="w-more"><button class="btn soft" type="button" data-act="wh-invoice-more">Load earlier invoices</button></div>` : ""}<p class="hint">Recording payment updates the invoice status. It does not transfer money.</p></section>${customerSwitch(config)}</section>`;
   }
   // Admin's switch for what customers see: My orders → Invoices, invoice PDFs and balances. Issuing here is unaffected.
   function customerSwitch(config) {
@@ -241,8 +266,13 @@ window.WholesaleInvoices = function ({ api, html, raw, svg, put, openSheet, clos
     return html`<section class="w-order-section" aria-labelledby="wiOrderTitle"><h3 id="wiOrderTitle">Invoice</h3><p class="hint">Review VAT, billing details and the agreed payment terms, or open the invoice already issued for this order.</p><button class="btn soft" type="button" data-sheet="invoice-open">Open invoice</button></section>`;
   }
   return {
-    view, orderPanel, openOrder, openSettings,
+    view, orderPanel, openOrder, openSettings, search, setFilter,
+    state: () => ({ queue, query, listPages }),
+    restore(saved) { if (saved) ({ queue, query, listPages } = saved); },
+    resetList() { clearTimeout(searchTimer); queue = "all"; query = ""; listPages = 1; },
+    clear() { generation++; clearTimeout(searchTimer); queue = "all"; query = ""; listPages = 1; configCache = null; invoices = []; pendingReviews.clear(); },
     async act(name, id) {
+      if (name === "wh-invoice-queue") { setFilter(id); await reload(); return true; }
       if (name === "wh-invoice-quickbooks") { await quickbooks.open(); return true; }
       if (name === "wh-invoice-settings") { await openSettings(); return true; }
       if (name === "wh-invoice-customers" && configCache) {

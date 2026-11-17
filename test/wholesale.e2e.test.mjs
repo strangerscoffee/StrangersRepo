@@ -1,3 +1,4 @@
+import { selectWholesaleSection } from "./admin-workspace-helpers.mjs";
 import { chooseWholesalePack, openWholesaleBasket, openWholesaleOrders, openWholesaleAccount, openWholesaleAccountMenu } from './wholesale-ui-helpers.mjs';
 // Staff ordering and native Admin → Wholesale, on phones and iPads in light and dark mode.
 import { test, before, after } from "node:test";
@@ -136,14 +137,14 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       await page.locator('#sheet button[type="submit"]').click();
       await page.locator("#scrim").waitFor({ state: "hidden" });
       assert.equal((await api("GET", "/api/wholesale/orders/" + order.id)).body.order.status, "Preparing");
-      await page.locator('[data-act="wh-tab"][data-id="customers"]').click();
+      await selectWholesaleSection(page, "customers");
       await page.locator('[data-act="wh-customer"]').first().click();
       await page.locator("#wBusiness").fill(`${device} ${color} account`);
       await page.locator("#wEmail").fill("orders@example.test");
       await page.locator('#sheet button[type="submit"]').click();
       await page.locator("#scrim").waitFor({ state: "hidden" });
       assert.ok((await api("GET", "/api/admin/wholesale")).body.customers.some((customer) => customer.business === `${device} ${color} account`));
-      await page.locator('[data-act="wh-tab"][data-id="catalogue"]').click();
+      await selectWholesaleSection(page, "catalogue");
       await page.locator('[data-act="wh-coffee"][data-id="brazil"]').click();
       assert.equal(await page.locator("#wPrice-quarter").inputValue(), "5.00");
       assert.equal(await page.locator("#wPrice-half").count(), 0, "no 500 g price: they are no longer sold");
@@ -203,7 +204,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       await page.locator('#login-error', { hasText: 'awaiting review' }).waitFor();
 
       await admin.goto(srv.base + '/admin#wholesale');
-      await admin.locator('[data-act="wh-tab"][data-id="customers"]').click();
+      await selectWholesaleSection(admin, "customers");
       await admin.locator('[data-act="wh-customer"]', { hasText: business }).click();
       await admin.locator('[data-sheet="customer-choice"][data-choice="wPaymentTerms"]').click();
       await admin.locator('#wCustomerChoice [data-sheet="customer-choice-apply"][data-value="net-30"]').click();
@@ -256,7 +257,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       assert.equal(order.customerSnapshot.postcode, 'NR1 1AA');
       assert.equal(await page.locator('#basket-count').textContent(), '0');
       await page.locator('#preview-complete [data-close]').click();
-      await admin.locator('[data-act="wh-tab"][data-id="orders"]').click();
+      await selectWholesaleSection(admin, "orders");
       await admin.locator('[data-act="wh-order"]', { hasText: business }).click();
       assert.match(await admin.locator('#sheet').textContent(), /10 Coffee Street/);
       assert.match(await admin.locator('#sheet .w-customer-note').textContent(), /Customer comments\s*Use our own custom labels/);

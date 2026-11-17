@@ -1,3 +1,4 @@
+import { selectWholesaleSection, revealAdminOptions } from "./admin-workspace-helpers.mjs";
 // Admin → Wholesale → Insights in a browser: import a QuickBooks "Sales by Product/Service Detail" Excel export and a
 // "Sales by Customer Detail" CSV, confirm the product matches, then the tiles, charts, forecast, roast plan (with
 // stock taken off), CSV download and printing; on a desktop, and on a phone and an iPad in light and dark.
@@ -24,7 +25,7 @@ async function adminPage(viewport, extra = {}) {
   await ctx.addInitScript(() => { window.print = () => { window.__printed = document.getElementById("wPrintArea")?.innerText || ""; }; });
   const p = await ctx.newPage(), errors = []; p.on("pageerror", (e) => errors.push(String(e)));
   await p.goto(srv.base + "/admin#wholesale");
-  await p.locator('[data-act="wh-tab"][data-id="insights"]').first().click();
+  await selectWholesaleSection(p, "insights");
   await p.locator("#insTitle").waitFor();
   return { ctx, p, errors };
 }
@@ -58,6 +59,7 @@ test("import QuickBooks history, confirm products, then read the insights and pl
   const { ctx, p, errors } = await adminPage({ width: 1280, height: 900 });
   assert.match(await p.locator(".ins-workspace").innerText(), /1 site order since/);
   // Excel export: preview, import, then the product matches open.
+  await revealAdminOptions(p, ".ins-tools");
   await p.locator('[data-act="wh-ins-import"]').first().click();
   await p.locator("#insFile").setInputFiles(XLSX);
   await p.locator(".ins-preview").waitFor();
@@ -78,7 +80,8 @@ test("import QuickBooks history, confirm products, then read the insights and pl
 
   // The page: tiles, roast plan, charts, forecast with last year's pattern, coffees and customers.
   await p.locator(".ins-note").waitFor({ state: "detached" }); // no products left to check
-  await p.locator(".ins-tiles").waitFor();
+  await p.locator('[data-act="wh-ins-view"][data-id="forecast"]').click();
+  await p.locator("#insFc").waitFor();
   const text = await p.locator(".ins-workspace").innerText();
   assert.match(text, /QuickBooks history 2 Jun 2025 to/);
   assert.match(text, /Models are compared against earlier completed weeks/, "history is tested before choosing a forecasting method");
@@ -86,8 +89,9 @@ test("import QuickBooks history, confirm products, then read the insights and pl
   if (forecast.total.basis === "seasonal") assert.match(text, /Last year's pattern also contributes/);
   assert.equal(await p.locator('section[aria-labelledby="insFc"] .ins-col.partial').count(), 1, "the unfinished week has its own labelled bar");
   assert.match(await p.locator('.ins-forecast-validation').innerText(), /historical checks|Limited completed history/);
-  assert.match(text, /Roast plan · week of/);
-  assert.match(text, /Bakehouse Norwich/);
+  assert.match(text, /Likely range/);
+  await p.locator('[data-act="wh-ins-view"][data-id="roast"]').click();
+  await p.locator("#insRoast").waitFor();
   const campo = p.locator('[data-roast="campo"]');
   assert.match(await campo.innerText(), /10 kg/, "the open site order is in the plan");
   const before = Number(await campo.locator("[data-batches]").innerText());
@@ -99,6 +103,9 @@ test("import QuickBooks history, confirm products, then read the insights and pl
   assert.match(await p.evaluate(() => window.__printed), /Roast plan[\s\S]*Colombia Campo Santo Washed[\s\S]*Total/);
   // Coffee colours: the mix chart stacks each coffee in its packaging colour with a named legend, the movers name
   // coffees, and each coffee has a 12-week line in the by-coffee table.
+  await p.locator('[data-act="wh-ins-view"][data-id="sales"]').click();
+  await p.locator(".ins-tiles").waitFor();
+  assert.match(await p.locator(".ins-workspace").innerText(), /Bakehouse Norwich/);
   const legend = await p.locator(".ins-section", { hasText: "by coffee" }).first().locator(".ins-legend").innerText();
   assert.match(legend, /Colombia Campo Santo Washed/);
   const fills = await p.locator(".ins-seg").evaluateAll((els) => [...new Set(els.map((e) => getComputedStyle(e).backgroundImage + getComputedStyle(e).backgroundColor))]);
@@ -108,16 +115,18 @@ test("import QuickBooks history, confirm products, then read the insights and pl
   // Period and measure switch without reloading the data; the chart has one bar per week up to 3 months.
   await p.locator('[data-act="wh-ins-period"][data-id="4"]').click();
   await p.locator('[data-act="wh-ins-period"][data-id="4"][aria-pressed="true"]').waitFor();
-  assert.equal(await p.locator(".ins-section").nth(1).locator(".ins-col").count(), 4);
+  assert.equal(await p.locator('section[aria-labelledby="insTime"] .ins-col').count(), 4);
   await p.locator('[data-act="wh-ins-measure"][data-id="grams"]').click();
   await p.locator("#insTime", { hasText: "Coffee sold by week" }).waitFor();
   await p.locator('[data-act="wh-ins-period"][data-id="all"]').click();
   await p.locator("#insTime", { hasText: "by month" }).waitFor();
+  await revealAdminOptions(p, ".ins-tools");
   const [download] = await Promise.all([p.waitForEvent("download"), p.locator('[data-act="wh-ins-csv"]').click()]);
   const csv = await (await download.createReadStream()).toArray().then((c) => Buffer.concat(c).toString());
   assert.match(csv, /^Week starting,Coffee,Coffee \(kg\)/); assert.match(csv, /Colombia Campo Santo Washed/); assert.match(csv, /Forecast week starting/);
 
   // A Sales by Customer Detail CSV: customer from the group rows, product from its column; credit notes count against.
+  await revealAdminOptions(p, ".ins-tools");
   await p.locator('[data-act="wh-ins-import"]').first().click();
   await p.locator("#insFile").setInputFiles({ name: "customers.csv", mimeType: "text/csv", buffer: Buffer.from(CUSTOMER_CSV) });
   await p.locator(".ins-preview").waitFor();
@@ -133,7 +142,10 @@ test("import QuickBooks history, confirm products, then read the insights and pl
   await p.locator(".ins-pick-row").click();
   await p.locator("#insCustTitle", { hasText: "Bakehouse Norwich" }).waitFor();
   assert.match(await p.locator(".ins-pick").innerText(), /Bakehouse Norwich/);
-  assert.match(await p.locator("#insFc").innerText(), /Bakehouse Norwich's coffee/);
+  await p.locator('[data-act="wh-ins-view"][data-id="forecast"]').click();
+  await p.locator("#insFc", { hasText: "Bakehouse Norwich's coffee" }).waitFor();
+  await p.locator('[data-act="wh-ins-view"][data-id="sales"]').click();
+  await p.locator("#insCustTitle").waitFor();
   assert.equal(await p.locator("#insCust").count(), 0, "no customer table for one customer");
   if (process.env.WHOLESALE_SCREENSHOT_DIR) await p.screenshot({ path: `${process.env.WHOLESALE_SCREENSHOT_DIR}/insights-customer-desktop.png`, fullPage: true });
   await p.locator('[aria-label="Show all customers"]').click();
@@ -148,23 +160,31 @@ test("import QuickBooks history, confirm products, then read the insights and pl
 test("on a phone and an iPad, light and dark", async () => {
   for (const [name, viewport] of [["phone", { width: 390, height: 844 }], ["ipad", { width: 820, height: 1180 }]]) for (const colorScheme of ["light", "dark"]) {
     const { ctx, p, errors } = await adminPage(viewport, { isMobile: true, hasTouch: true, colorScheme });
-    await p.locator(".ins-tiles").waitFor();
-    // The Wholesale sections bar: the pill holds every section (none cut off) and the open one is in view.
-    if (name === "phone" || name === "ipad") {
-      const bar = await p.evaluate(() => { const wrap = document.querySelector("#wSectionsHost .w-sections"), seg = wrap?.querySelector(".seg"), on = seg?.querySelector('[aria-pressed="true"]'); if (!wrap) return null; const w = wrap.getBoundingClientRect(), r = on.getBoundingClientRect(); return { fits: seg.scrollWidth <= seg.getBoundingClientRect().width + 1, inView: r.left >= w.left - 1 && r.right <= w.right + 1 }; });
-      if (bar) assert.deepEqual(bar, { fits: true, inView: true }, `${name}: sections bar`);
+    await p.locator("#insRoast").waitFor();
+    assert.equal(await p.locator("#wSection").inputValue(), "insights", "mobile section picker shows the current view");
+    if (name === "phone") {
+      const row = p.locator("[data-roast]").first();
+      const calculation = row.getByRole("button", { name: /Calculation/ });
+      assert.equal(await row.locator(".ins-stock").isVisible(), false);
+      await calculation.click();
+      assert.equal(await row.locator(".ins-stock").isVisible(), true);
     }
+    await p.locator('[data-act="wh-ins-view"][data-id="forecast"]').click();
+    await p.locator("#insFc").waitFor();
     if (process.env.WHOLESALE_SCREENSHOT_DIR) await p.screenshot({ path: `${process.env.WHOLESALE_SCREENSHOT_DIR}/sections-${name}-${colorScheme}.png` });
     const overflow = await p.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     assert.ok(overflow <= 1, `${name} ${colorScheme}: the page doesn't scroll sideways (${overflow}px)`);
     if (process.env.WHOLESALE_SCREENSHOT_DIR) await p.screenshot({ path: `${process.env.WHOLESALE_SCREENSHOT_DIR}/insights-${name}-${colorScheme}.png`, fullPage: true });
     if (process.env.WHOLESALE_SCREENSHOT_DIR) await p.locator('section[aria-labelledby="insFc"]').screenshot({ path: `${process.env.WHOLESALE_SCREENSHOT_DIR}/forecast-${name}-${colorScheme}.png` });
+    await p.locator('[data-act="wh-ins-view"][data-id="sales"]').click();
+    await p.locator(".ins-tiles").waitFor();
     await p.locator('[data-act="wh-ins-pick"]').click(); await p.locator(".ins-pick-row").first().waitFor();
     if (process.env.WHOLESALE_SCREENSHOT_DIR) await p.screenshot({ path: `${process.env.WHOLESALE_SCREENSHOT_DIR}/insights-picker-${name}-${colorScheme}.png` });
     await p.locator(".ins-pick-row").first().click(); await p.locator("#insCustTitle").waitFor();
     if (process.env.WHOLESALE_SCREENSHOT_DIR) await p.screenshot({ path: `${process.env.WHOLESALE_SCREENSHOT_DIR}/insights-one-${name}-${colorScheme}.png`, fullPage: true });
     assert.ok(await p.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth) <= 1, "one customer: no sideways scroll");
     await p.locator('[aria-label="Show all customers"]').click(); await p.locator("#insCust").waitFor();
+    await revealAdminOptions(p, ".ins-tools");
     await p.locator('[data-act="wh-ins-products"]').first().click(); await p.locator(".ins-products").waitFor();
     if (process.env.WHOLESALE_SCREENSHOT_DIR) await p.screenshot({ path: `${process.env.WHOLESALE_SCREENSHOT_DIR}/insights-products-${name}-${colorScheme}.png` });
     assert.deepEqual(errors, []);

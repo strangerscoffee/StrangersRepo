@@ -1,3 +1,4 @@
+import { selectWholesaleSection } from "./admin-workspace-helpers.mjs";
 import { openWholesaleBasket } from './wholesale-ui-helpers.mjs';
 // Customer sorting retains configured coffee and refresh controls recover after failures.
 import { test, before, after } from 'node:test';
@@ -30,7 +31,7 @@ for (const [device, viewport] of [['phone',{width:393,height:852}],['ipad',{widt
       const product=(await api('/api/admin/wholesale/catalogue',{title:`Grinds ${device} ${colorScheme}`,name:`Grinds ${device} ${colorScheme}`,categories:['blend'],prices:{quarter:1000,half:2000,kilo:3700},active:true},adminCookie)).data.product;
       const admin=await adminContext.newPage(), buyer=await buyerContext.newPage(), errors=[];
       for (const page of [admin,buyer]) page.on('pageerror',e=>errors.push(e.message));
-      await admin.goto(srv.base+'/admin#wholesale'); await admin.locator('[data-act="wh-tab"][data-id="catalogue"]').click();
+      await admin.goto(srv.base+'/admin#wholesale'); await selectWholesaleSection(admin, "catalogue");
       async function edit() {await admin.locator(`[data-act="wh-coffee"][data-id="${product.id}"]`).click(); await admin.locator('#wCoffeeForm').waitFor();}
       async function save() {await admin.locator('#wCoffeeForm button[type="submit"]').click(); await admin.locator('#scrim').waitFor({state:'hidden'});}
       await edit();

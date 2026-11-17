@@ -99,7 +99,7 @@ const lastWhen=(ts,set)=>!ts?"":set?new Date(ts).toLocaleDateString("en-GB",{day
 // A short message above the tab bar. With an action (e.g. ["Undo", fn]) it stays longer and shows a button.
 const toast=SC.makeToast(2400);
 
-const S={site:(()=>{try{const s=localStorage.getItem("sfbb.site");return SITES.some(x=>x.id===s)?s:"roastery"}catch(e){return"roastery"}})(),
+const S={site:(()=>{try{const linked=new URLSearchParams(location.search).get("site");if(SITES.some(x=>x.id===linked))return linked;const s=localStorage.getItem("sfbb.site");return SITES.some(x=>x.id===s)?s:"roastery"}catch(e){return"roastery"}})(),
   cfg:null,sum:{},subs:[],allergenDocs:[],assets:null,shared:null,
   db:null,user:null,me:null,canWrite:true,settings:DEFAULT_SETTINGS,days:{},weeks:{},allergens:[],reviews:[],extras:[],cleaning:[],deliveries:[],maintenance:[],fire:[],accidents:[],suppliers:[],contacts:[],plans:[],plan:null,onboarding:[],onb:null,inspections:[],insp:null,staff:[],prove:[],
   date:today(),week:monday(today()),editAlg:null,editStaff:null,names:{},rev:{}};

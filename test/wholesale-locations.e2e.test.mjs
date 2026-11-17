@@ -1,3 +1,4 @@
+import { selectWholesaleSection } from "./admin-workspace-helpers.mjs";
 import { openWholesaleBasket, openWholesaleOrders, openWholesaleAccount } from './wholesale-ui-helpers.mjs';
 // Customer location drafts/defaults and immutable delivery snapshots across the native admin editor.
 import { test, before, after } from "node:test";
@@ -55,7 +56,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
         return profile();
       }
       async function openAdminCustomer() {
-        await admin.locator('[data-act="wh-tab"][data-id="customers"]').click();
+        await selectWholesaleSection(admin, "customers");
         await admin.locator(`[data-act="wh-customer"][data-id="${customer.id}"]`).click();
         await admin.locator("#wCustomerForm").waitFor();
       }
@@ -162,7 +163,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       order = (await api("GET", "/api/admin/wholesale")).body.orders.find((row) => row.reference === username);
       assert.equal(order.locationSnapshot.address, "10 Dove Street\nNorwich", "later location edits do not rewrite the saved delivery agreement");
       assert.equal(order.locationSnapshot.contact, "Main Manager");
-      await admin.locator('[data-act="wh-tab"][data-id="orders"]').click();
+      await selectWholesaleSection(admin, "orders");
       await admin.locator(`[data-act="wh-order"][data-id="${order.id}"]`).click();
       assert.match(await admin.locator("#sheet").textContent(), /Main café/);
       assert.match(await admin.locator("#sheet").textContent(), /10 Dove Street/);
