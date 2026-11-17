@@ -20,20 +20,22 @@ before(async()=>{
  today=(await api('GET','rota/me')).today;day=add(today,14);const y=Number(today.slice(0,4))-(today.slice(5)<'04-01'?1:0);
  await api('PUT','rota/leave/settings',{enabled:true,yearStart:'04-01',bankHolidayPolicy:'included',limits:{},ifVersion:0});
  await api('PUT','rota/leave/allowances',{userId:person.id,from:y+'-04-01',to:(y+1)+'-03-31',unit:'days',entitlement:60,weekly:[1,1,1,1,1,1,1],changeReason:'Synthetic mobile layout fixture',ifVersion:0});
+ // A pending request also puts a Cancel action on the page behind the request sheet.
+ await requested();
 });
 after(async()=>{await browser?.close();await srv?.stop();});
 for(const [device,viewport] of [['smallphone',{width:320,height:640}],['phone',{width:393,height:650}],['portrait-iPad',{width:820,height:1180}],['iPad',{width:1180,height:820}]])for(const scheme of ['light','dark'])test(`mobile leave ${device} ${scheme}: contained dates, half-day sync and reviewed decisions`,{timeout:90000},async()=>{
  const a=await context(viewport,scheme,staff),b=await context(viewport,scheme,admin);
  try{
-  const p=a.page;await p.goto(srv.base+'/rota/#leave');await p.getByRole('button',{name:'Request leave',exact:true}).click();await p.locator('#leave_from').waitFor();await fits(p);
+  const p=a.page,request=p.locator('#sheet');await p.goto(srv.base+'/rota/#leave');await p.getByRole('button',{name:'Request leave',exact:true}).click();await p.locator('#leave_from').waitFor();await fits(p);
   const insets=await p.locator('#sheet').evaluate(s=>{const r=s.getBoundingClientRect(),h=s.querySelector('.shead').getBoundingClientRect(),body=s.querySelector('.sbody').getBoundingClientRect();return [h.left-r.left,r.right-h.right,body.left-r.left,r.right-body.right];});assert.ok(insets.every(n=>n>=16),JSON.stringify(insets));
   const action=await p.getByRole('button',{name:'Review request',exact:true}).boundingBox(),sheet=await p.locator('#sheet').boundingBox();assert.ok(action.y+action.height<=sheet.y+sheet.height-12,'the full action stays inside the short sheet');
-  assert.ok((await p.getByRole('button',{name:'Cancel',exact:true}).boundingBox()).height>=44);await screenshot(p,`leave-request-${device}-${scheme}`);
+  assert.ok(await request.getByRole('button',{name:'Cancel',exact:true}).evaluate(button=>button.offsetHeight)>=44);await screenshot(p,`leave-request-${device}-${scheme}`);
   await p.locator('#leave_portion').selectOption('0.5');assert.equal(await p.locator('#leave_to').isVisible(),false);await p.locator('#leave_from').fill(add(day,10));await p.locator('#leave_from_time').fill('09:00');await p.locator('#leave_to_time').fill('13:00');assert.equal(await p.locator('#leave_to').inputValue(),add(day,10));await fits(p);
   await p.getByRole('button',{name:'Review request',exact:true}).click();await p.getByRole('button',{name:'Submit request',exact:true}).waitFor();assert.match(await p.locator('#sheet').innerText(),/0.5 days/);assert.ok((await p.getByRole('button',{name:'Submit request',exact:true}).boundingBox()).width>=viewport.width*0.6||viewport.width>600);
-  await p.locator('#leave_reason').fill('Edited after review');assert.equal(await p.getByRole('button',{name:'Submit request',exact:true}).isVisible(),false);await p.getByRole('button',{name:'Cancel',exact:true}).click();
+  await p.locator('#leave_reason').fill('Edited after review');assert.equal(await p.getByRole('button',{name:'Submit request',exact:true}).isVisible(),false);await request.getByRole('button',{name:'Cancel',exact:true}).click();
   const absence=await requested(),q=b.page;await q.goto(srv.base+'/rota/#requests');const card=q.locator(`[data-leave-request="${absence.id}"]`);await card.waitFor();assert.match(await card.innerText(),/Annual leave/);assert.match(await card.innerText(),/Alexandra Montgomery-Worthington/);assert.match(await card.innerText(),/Private mobile note <script>/);assert.equal(await card.getByRole('button',{name:'Decline',exact:true}).count(),0);assert.equal(await card.locator('script').count(),0);await fits(q);
-  const review=card.getByRole('button',{name:'Review request',exact:true});assert.ok((await review.boundingBox()).height>=44);await screenshot(q,`requests-${device}-${scheme}`);await review.click();await q.locator('#sheetTitle',{hasText:'Review absence'}).waitFor();assert.match(await q.locator('#sheet').innerText(),/Private mobile note/);await fits(q);await q.locator('#sheet').getByRole('button',{name:'Decline',exact:true}).click();await q.locator('#sheet').waitFor({state:'hidden'});await card.waitFor({state:'detached'});
+  const review=card.getByRole('button',{name:'Review request',exact:true});assert.ok(await review.evaluate(button=>button.offsetHeight)>=44);await screenshot(q,`requests-${device}-${scheme}`);await review.click();await q.locator('#sheetTitle',{hasText:'Review absence'}).waitFor();assert.match(await q.locator('#sheet').innerText(),/Private mobile note/);await fits(q);await q.locator('#sheet').getByRole('button',{name:'Decline',exact:true}).click();await q.locator('#sheet').waitFor({state:'hidden'});await card.waitFor({state:'detached'});
   assert.equal((await api('GET','rota/leave/requests/'+absence.id)).absence.status,'declined');assert.deepEqual(a.errors,[]);assert.deepEqual(b.errors,[]);
  }finally{await a.c.close();await b.c.close();}
 });
