@@ -15,7 +15,7 @@ after(async()=>{await browser?.close();await srv?.stop();});
 async function contextFor(viewport={width:1180,height:820},colorScheme='light'){
  const context=await browser.newContext({viewport,colorScheme});const[name,value]=ADMIN.split('=');await context.addCookies([{name,value,url:srv.base}]);return context;
 }
-const loaded=page=>page.getByRole('heading',{name:'Wholesale',exact:true}).waitFor();
+const loaded=page=>page.locator('#wOrdersTitle').waitFor();
 for(const[device,viewport]of[['phone',{width:393,height:852}],['iPad',{width:1180,height:820}],['desktop',{width:1440,height:1000}]])for(const colorScheme of['light','dark']){
  test(`loader ${device} ${colorScheme}: branded private shield, reduced motion and lean Admin bootstrap`,{timeout:45000},async()=>{
   const context=await contextFor(viewport,colorScheme),page=await context.newPage(),errors=[],calls=[];let release,captured;

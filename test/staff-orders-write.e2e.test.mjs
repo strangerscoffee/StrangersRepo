@@ -127,3 +127,87 @@ test("staff add a tracking link while preparing a delivery order", async () => {
     await ctx.close();
   }
 });
+
+test("wide Staff and Admin desks share packing and only dispatch after confirmation",{timeout:90000},async()=>{
+  const session=(await call("GET","/api/wholesale/session",undefined,BUYER)).body;
+  const {order}= (await call("POST","/api/wholesale/orders",{
+    requestId:crypto.randomUUID(),delivery:"Delivery",reference:"PACK-DESK",customerVersion:session.customer.version,
+    lines:[{productId:"brazil",pack:"kilo",grind:"beans",quantity:6,price:1800},{productId:"campo",pack:"quarter",grind:"filter",quantity:4,price:500}],
+    customerNote:"Leave at the side door."
+  },BUYER)).body;
+  async function browserPage(cookie,path,scheme,width=1920){
+    const context=await b.newContext({viewport:{width,height:1080},colorScheme:scheme});
+    const [name,value]=cookie.split("=");await context.addCookies([{name,value,url:srv.base}]);
+    const page=await context.newPage(),errors=[];page.on("pageerror",error=>errors.push(error.message));
+    await page.goto(srv.base+path);return {context,page,errors};
+  }
+  const read=async()=> (await call("GET","/api/admin/wholesale/orders?q="+order.id)).body.orders[0];
+  const phone=await browserPage(STAFF,"/orders","dark",390);
+  try{
+    const {page}=phone;
+    await page.locator(`[data-order-id="${order.id}"]`).click();
+    await page.locator("#editNote").fill("Keep this draft while packing");
+    await page.getByRole("button",{name:"Pack order",exact:true}).click();
+    await page.locator("#mobilePacking").getByRole("heading",{name:"Pack by coffee"}).waitFor();
+    assert.equal(await page.locator("#orderEdit").isHidden(),true);
+    await page.getByRole("button",{name:"Back to details",exact:true}).click();
+    assert.equal(await page.locator("#editNote").inputValue(),"Keep this draft while packing");
+    assert.deepEqual(phone.errors,[]);
+  }finally{await phone.context.close();}
+  const staff=await browserPage(STAFF,"/orders","dark");
+  try{
+    const {page}=staff,desk=page.locator("#packingDesk"),totals=page.locator("#deskBagTotals");
+    await page.locator(`[data-order-id="${order.id}"]`).click();
+    await desk.getByRole("button",{name:"Start preparing"}).click();
+    await desk.getByRole("checkbox").first().waitFor();
+    assert.equal(await desk.getByRole("button",{name:"Mark ready"}).isDisabled(),true);
+    await desk.getByRole("checkbox").first().check();
+    await page.waitForFunction(()=>document.querySelector("#packingDesk [data-pack-line='0']:enabled")?.checked);
+    assert.equal(await desk.getByRole("button",{name:"Mark ready"}).isDisabled(),true);
+    assert.deepEqual((await read()).packedLines,[0]);
+    await totals.getByRole("button",{name:"Packed",exact:true}).click();
+    assert.match(await totals.innerText(),new RegExp(`${order.lines[0].quantity} bags`));
+    assert.doesNotMatch(await page.locator("#orderWorkspace").innerText(),/£/);
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+    if(process.env.SHOT_DIR)await page.screenshot({path:`${process.env.SHOT_DIR}/staff-packing-desktop.png`,animations:"disabled"});
+    assert.deepEqual(staff.errors,[]);
+  }finally{await staff.context.close();}
+  const admin=await browserPage(ADMIN,"/admin#wholesale/orders","light");
+  try{
+    const {page}=admin;
+    await page.getByRole("button",{name:/^To pack/}).click();
+    await page.locator(`[data-act="wh-order"][data-id="${order.id}"]`).click();
+    const preview=page.getByRole("region",{name:"Order preview"});
+    if(process.env.SHOT_DIR)await page.screenshot({path:`${process.env.SHOT_DIR}/admin-order-queue-desktop.png`,animations:"disabled"});
+    await preview.getByRole("button",{name:"Pack order",exact:true}).click();
+    const desk=page.getByRole("region",{name:"Order processing"});
+    assert.equal(await desk.getByRole("checkbox").first().isChecked(),true);
+    await desk.getByRole("checkbox").nth(1).check();
+    await page.waitForFunction(()=>document.querySelector("#wPackChecklist [data-pack-next]:enabled"));
+    if(process.env.SHOT_DIR)await page.screenshot({path:`${process.env.SHOT_DIR}/admin-packing-desktop.png`,animations:"disabled"});
+    await desk.getByRole("button",{name:"Mark ready"}).click();
+    await desk.getByRole("button",{name:"Review dispatch"}).waitFor();
+    assert.equal((await read()).status,"Ready");
+    assert.equal(await page.locator(`[data-act="wh-order"][data-id="${order.id}"]`).count(),0,"the ready order leaves the To pack queue but stays in the inspector");
+    await desk.getByRole("button",{name:"Review dispatch"}).click();
+    await page.locator("#wDispatchOrderForm").waitFor();
+    await page.locator("#wDispatchOrderForm").getByRole("button",{name:"Cancel",exact:true}).click();
+    assert.equal((await read()).status,"Ready");
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+    assert.deepEqual(admin.errors,[]);
+  }finally{await admin.context.close();}
+  const dispatch=await browserPage(STAFF,"/orders","light",1440);
+  try{
+    const {page}=dispatch,desk=page.locator("#packingDesk");
+    await page.locator(`[data-order-id="${order.id}"]`).click();
+    await desk.getByRole("button",{name:"Review dispatch"}).click();
+    await page.locator("#dispatchDialog[open]").waitFor();
+    assert.equal((await read()).status,"Ready");
+    await page.locator("#deskTracking").fill("https://track.example/pack-desk");
+    await page.getByRole("button",{name:"Mark dispatched",exact:true}).click();
+    await page.locator("#dispatchDialog").waitFor({state:"hidden"});
+    const latest=await read();
+    assert.deepEqual([latest.status,latest.trackingUrl],["Dispatched","https://track.example/pack-desk"]);
+    assert.deepEqual(dispatch.errors,[]);
+  }finally{await dispatch.context.close();}
+});

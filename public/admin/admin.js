@@ -786,6 +786,8 @@
   window.addEventListener("hashchange", routeChanged);
   document.addEventListener("change", event => {
     if (event.target.id === "wSection") act("wh-tab", event.target.value, event.target);
+    if (event.target.id === "wOrderStatus") act("wh-status-select", event.target.value, event.target);
+    if (event.target.id === "wDispatchScope") act("wh-dispatch-scope", event.target.value, event.target);
     if (["activityFrom", "activityTo"].includes(event.target.id)) {
       const from = $("#activityFrom")?.value, to = $("#activityTo")?.value;
       if (from && to && from > to) { toast("Choose an end date on or after the start date."); return; }

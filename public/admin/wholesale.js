@@ -1,6 +1,8 @@
 // Native Admin → Wholesale view. Uses the admin shell, escaped templates and shared D1 wholesale APIs.
 window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, closeSheet, reload, toast, onNavigationChange = () => {}, onSectionChange = () => {} }) {
   const $ = (selector) => document.querySelector(selector);
+  const wideOrders = matchMedia("(min-width:1340px)");
+  const packing = window.SCWholesalePacking;
   const invoiceUI = window.WholesaleInvoices({ api, html, raw, svg, put, openSheet, closeSheet, reload, toast });
   const printUI = window.WholesalePrint({ api, html, raw, svg, put, openSheet, closeSheet, toast });
   const insightsUI = window.WholesaleInsights({ api, html, raw, svg, put, openSheet, closeSheet, reload, toast });
@@ -23,8 +25,16 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
   const weight = (grams) => `${new Intl.NumberFormat("en-GB", { maximumFractionDigits: 2 }).format(grams / 1000)} kg`;
   const shortId = (id) => id.slice(0, 20);
   const date = (ms) => new Date(ms).toLocaleString("en-GB", { timeZone: "Europe/London", year: "numeric", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
-  let tab = "orders", status = "all", approval = "all", query = "", data = null, timer, sequence = 0, emailDraft = null, emailHealthToken = 0;
-  let orderQueue = "", previewOrder = "";
+  let tab = "orders", status = wideOrders.matches ? "open" : "all", approval = "all", query = "", data = null, timer, sequence = 0, emailDraft = null, emailHealthToken = 0;
+  let orderQueue = "", previewOrder = "", packingOrder = "", hideOrderPreview = false;
+  let dispatchScope = "all", orderSort = wideOrders.matches ? "dispatch" : "updated", packingSession = 0;
+  wideOrders.addEventListener("change", () => {
+    if (!$("#wOrdersTitle")) return;
+    orderSort = wideOrders.matches ? "dispatch" : "updated";
+    if (!wideOrders.matches && status === "open") status = "all";
+    orderPages = 1;
+    reload();
+  });
   let orderPages = 1, customerPages = 1, loadingMore = false;
   const sections = [["orders", "Orders"], ["customers", "Customers"], ["catalogue", "Coffee catalogue"], ["custom", "Custom coffees"], ["tabs", "Tabs"], ["invoices", "Invoicing"], ["insights", "Insights"]];
   const pendingReviews = () => data?.stats?.pendingAccounts ?? data?.accounts?.filter((row) => row.approvalStatus === "pending").length ?? 0;
@@ -33,6 +43,10 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     return html`${sections.map(([id, label]) => html`<span class="${sidebar ? "nav-wholesale-item" : "w-section-item"}"><button class="${sidebar ? "nav nav-wholesale-child" : ""}" type="button" data-act="wh-tab" data-id="${id}" aria-pressed="${active && tab === id ? "true" : "false"}" ${sidebar ? html`aria-current="${active && tab === id ? "page" : "false"}"` : ""}>${label}</button>${id === "customers" && pending > 0 ? html`<button class="w-review-chip ${sidebar ? "nav-wholesale-review" : ""}" type="button" data-act="wh-pending" aria-label="${pending} ${pending === 1 ? "account awaits" : "accounts await"} review"><span>${pending}</span><span class="w-review-word"> ${pending === 1 ? "review" : "reviews"}</span></button>` : ""}</span>`)}`;
   }
   function syncNavigation(desktop) {
+    const checklist = $("#wPackChecklist");
+    if (tab === "orders" && checklist && !checklist.hasChildNodes()) mountPacking(checklist);
+    const stages = $(".w-preview-stages");
+    if (stages && !stages.hasChildNodes()) mountStages(stages);
     const host = $("#wSectionsHost");
     if (!host) return;
     const key = JSON.stringify([desktop, tab, pendingReviews()]);
@@ -41,18 +55,18 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     put(host, desktop ? html`` : html`<div class="w-section-picker"><label for="wSection">Wholesale section</label><select id="wSection">${sections.map(([id, label]) => html`<option value="${id}" ${id === tab ? raw("selected") : ""}>${label}</option>`)}</select>${pendingReviews() ? html`<button class="btn sm soft" type="button" data-act="wh-pending">${pendingReviews()} awaiting review</button>` : ""}</div>`);
   }
   function workspaceState() {
-    return { tab, status, approval, query, orderQueue, orderPages, customerPages, previewOrder, invoices: invoiceUI.state(), insights: insightsUI.state() };
+    return { tab, status, approval, query, orderQueue, orderPages, customerPages, previewOrder, packingOrder, hideOrderPreview, dispatchScope, orderSort, invoices: invoiceUI.state(), insights: insightsUI.state() };
   }
   function restoreWorkspace(saved) {
     if (!saved || !sections.some(([id]) => id === saved.tab)) return;
     clearTimeout(timer);
-    ({ tab, status, approval, query, orderQueue, orderPages, customerPages, previewOrder } = saved);
+    ({ tab, status, approval, query, orderQueue, orderPages, customerPages, previewOrder, packingOrder, hideOrderPreview, dispatchScope, orderSort } = saved);
     invoiceUI.restore(saved.invoices); insightsUI.restore(saved.insights);
   }
 
   function selectSection(id, { pending = false, queue = "", resetStatus = false } = {}) {
     if (!sections.some(([value]) => value === id)) return false;
-    clearTimeout(timer); tab = id; query = ""; previewOrder = ""; invoiceUI.resetList(); approval = pending && id === "customers" ? "pending" : "all"; orderPages = customerPages = 1;
+    clearTimeout(timer); tab = id; query = ""; previewOrder = packingOrder = ""; dispatchScope = "all"; invoiceUI.resetList(); approval = pending && id === "customers" ? "pending" : "all"; orderPages = customerPages = 1;
     orderQueue = id === "orders" && ["prepare", "ready", "due-prepare", "due-ready"].includes(queue) ? queue : "";
     if (orderQueue || resetStatus) status = "all";
     onNavigationChange(); return true;
@@ -83,14 +97,17 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
   const search = (label, placeholder) => html`<label class="search">${svg("search")}<input id="wq" type="search" maxlength="120" aria-label="${label}" placeholder="${placeholder}" value="${query}"></label>`;
   const resultCount = (loaded, total, noun) => `${loaded < total ? loaded + " of " + total : total} ${total === 1 ? noun : noun + "s"}`;
   const emptyState = (icon, title, text, filtered = false) => html`<div class="w-empty"><span class="ic mut">${svg(icon)}</span><h3>${title}</h3><p>${text}</p>${filtered ? html`<button class="btn soft" type="button" data-act="wh-clear">Clear filters</button>` : ""}</div>`;
-  const listing = (id, title, count, tools, contents, footer, actions = "") => html`<section class="w-list-panel glass" aria-labelledby="${id}"><header class="w-list-header"><h2 id="${id}">${title}</h2><div class="w-header-actions"><span class="w-result-count">${count}</span>${actions}</div></header><div class="w-panel-tools">${tools}${query.trim() || (tab === "orders" && (status !== "all" || orderQueue)) || (tab === "customers" && approval !== "all") ? html`<div class="w-active-filters"><span>Filtered results${orderQueue ? ` · Customer orders: ${orderQueue.endsWith("prepare") ? "to prepare" + (orderQueue.startsWith("due-") ? " today" : "") : "ready to dispatch" + (orderQueue.startsWith("due-") ? " today" : "")}` : ""}${query.trim() ? ` · “${query.trim()}”` : ""}</span><button class="btn sm soft" type="button" data-act="wh-clear">Clear filters</button></div>` : ""}</div><div class="group w-record-list">${contents}</div>${footer}</section>`;
+  const listing = (id, title, count, tools, contents, footer, actions = "") => html`<section class="w-list-panel glass" aria-labelledby="${id}"><header class="w-list-header"><h2 id="${id}">${title}</h2><div class="w-header-actions"><span class="w-result-count">${count}</span>${actions}</div></header><div class="w-panel-tools">${tools}${query.trim() || (tab === "orders" && (!["all","open"].includes(status) || orderQueue || dispatchScope !== "all")) || (tab === "customers" && approval !== "all") ? html`<div class="w-active-filters"><span>Filtered results${orderQueue ? ` · Customer orders: ${orderQueue.endsWith("prepare") ? "to prepare" + (orderQueue.startsWith("due-") ? " today" : "") : "ready to dispatch" + (orderQueue.startsWith("due-") ? " today" : "")}` : ""}${query.trim() ? ` · “${query.trim()}”` : ""}</span><button class="btn sm soft" type="button" data-act="wh-clear">Clear filters</button></div>` : ""}</div><div class="group w-record-list">${contents}</div>${footer}</section>`;
   const merge = (first, next) => [...new Map([...first, ...next].map((row) => [row.id, row])).values()];
+  const packingRow = id => data?.orders.find(order => order.id === id) || (data?.packingSelection?.id === id ? data.packingSelection : null);
 
   async function pages(snapshot, kind, requested, filter) {
     const params = new URLSearchParams();
     if (kind === "orders" && filter.queue) params.set("queue", filter.queue);
     if (filter.query.trim()) params.set("q", filter.query.trim());
     if (kind === "orders" && filter.status !== "all") params.set("status", filter.status);
+    if (kind === "orders" && filter.dispatch !== "all") params.set("dispatch", filter.dispatch);
+    if (kind === "orders" && filter.sort !== "updated") params.set("sort", filter.sort);
     if (kind === "customers" && filter.approval !== "all") params.set("approval", filter.approval);
     let rows = snapshot[kind], accounts = snapshot.accounts, cursor = snapshot[kind === "orders" ? "orderCursor" : "customerCursor"], count = snapshot.counts[kind === "orders" ? "order" : "customer"] || 0;
     if (params.size) {
@@ -125,19 +142,24 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
   }
 
   async function view() {
-    const current = ++sequence, section = tab, filter = { query, status, approval, queue: orderQueue };
+    const current = ++sequence, section = tab, filter = { query, status, approval, queue: orderQueue, dispatch: dispatchScope, sort: orderSort };
     const snapshot = await api("GET", "/api/admin/wholesale");
     if (section === "orders" || section === "customers") {
       const result = await pages(snapshot, section, section === "orders" ? orderPages : customerPages, filter);
       snapshot[section] = result.rows; snapshot.accounts = result.accounts;
       snapshot.nextCursor = result.cursor; snapshot.matchingCount = result.count;
+      const active = section === "orders" && ($("#wPackSheet")?.dataset.id || packingOrder);
+      if (active && !result.rows.some(row => row.id === active)) {
+        const { orders } = await api("GET", "/api/admin/wholesale/orders?q=" + encodeURIComponent(active));
+        snapshot.packingSelection = orders.find(row => row.id === active);
+      }
     }
     if (section === "custom") snapshot.customerNames = (await api("GET", "/api/admin/wholesale/customers/names")).customers;
     if (section === "customers") snapshot.invites = (await api("GET", "/api/admin/wholesale/customers/invites")).invites;
     if (current !== sequence) return html``;
     data = snapshot;
     onNavigationChange();
-    return html`<div class="w-workspace w-operations">${head(section === "orders" ? "Wholesale" : sections.find(([id]) => id === section)[1])}
+    return html`<div class="w-workspace w-operations">${head(section === "orders" ? wideOrders.matches ? "Wholesale orders" : "Wholesale" : sections.find(([id]) => id === section)[1])}
       <div id="wSectionsHost" class="w-sections-host" hidden></div>
       <div class="w-content">${section === "orders" ? orders() : section === "customers" ? customers() : section === "invoices" ? await invoiceUI.view() : section === "insights" ? await insightsUI.view() : section === "tabs" ? await tabsUI.view() : catalogue()}</div></div>`;
   }
@@ -146,41 +168,135 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     return data.nextCursor ? html`<div class="w-more"><button class="btn soft" type="button" data-act="wh-more" data-id="${kind}">Load more ${kind}</button></div>` : "";
   }
   function orders() {
-    const rows = data.orders, filtered = !!query.trim() || status !== "all" || !!orderQueue;
-    if (!rows.some(row => row.id === previewOrder)) previewOrder = rows[0]?.id || "";
+    const rows = data.orders, filtered = !!query.trim() || status !== "all" || !!orderQueue || dispatchScope !== "all";
+    if (!packingRow(previewOrder)) { previewOrder = rows[0]?.id || ""; packingOrder = ""; }
+    const canPrintShown = rows.length > 0 && rows.length <= 200;
     const counts = data.stats?.statusCounts;
     const allCount = counts ? Object.values(counts).reduce((sum, n) => sum + n, 0) : data.counts.order;
     const hasNew = counts ? (counts.New || 0) > 0 : true;
     const hasPreparation = counts ? (counts.New || 0) + (counts.Preparing || 0) > 0 : true;
-    const queues = [["prepare", "To prepare", data.stats?.toPrepare || 0], ["ready", "Ready to dispatch", data.stats?.ready || 0], ["", "All orders", allCount]];
-    const queueControls = html`<div class="w-queue-controls" role="group" aria-label="Order queues">${queues.map(([value, label, count]) => html`<button class="btn sm soft" type="button" data-act="wh-queue" data-id="${value}" aria-pressed="${orderQueue === value && status === "all"}">${label} <span class="w-status-count">${count}</span></button>`)}${data.standingIssues?.length ? html`<button class="btn sm soft" type="button" data-act="wh-review-queue">Needs review</button>` : ""}</div>`;
-    const tools = html`${queueControls}${data.standingIssues?.length ? html`<div class="w-order-feedback" id="wStandingIssues" role="status"><b>${data.standingIssues[0].count} standing ${data.standingIssues[0].count === 1 ? "delivery needs" : "deliveries need"} review</b><p>The next delivery is paused. Check the business account and available coffee, size and grind before retrying.</p><div class="toolbar">${data.standingIssues.slice(0, 5).map(issue => html`<button class="btn sm soft" type="button" data-act="wh-standing-review" data-id="${issue.id}">Review ${issue.business || "standing order"}</button>`)}</div></div>` : ""}<div class="w-order-toolbar"><div class="toolbar">${search("Search wholesale orders", "Search order, reference or customer")}</div>
-      <div class="segwrap w-filters"><div class="seg" role="group" aria-label="Order status">${["all", ...data.statuses].map((value) => html`<button type="button" data-act="wh-status" data-id="${value}" aria-pressed="${status === value}">${value === "all" ? "All orders" : value}${counts && (value === "all" ? allCount : counts[value]) > 0 ? html`<span class="w-status-count">${value === "all" ? allCount : counts[value] || 0}</span>` : ""}</button>`)}</div></div>
+    const queues = wideOrders.matches ?
+      [["open", "Open orders", data.stats?.openOrders || 0], ["prepare", "To pack", data.stats?.toPrepare || 0], ["ready", "Ready to go", data.stats?.ready || 0]] :
+      [["prepare", "To prepare", data.stats?.toPrepare || 0], ["ready", "Ready to dispatch", data.stats?.ready || 0], ["", "All orders", allCount]];
+    const queueControls = html`<div class="w-queue-controls" role="group" aria-label="Order queues">${queues.map(([value, label, count]) => html`<button class="btn sm soft" type="button" data-act="wh-queue" data-id="${value}" aria-pressed="${value === "open" ? status === "open" : orderQueue === value && status === "all"}">${label}${dispatchScope === "all" ? html` <span class="w-status-count">${count}</span>` : ""}</button>`)}${data.standingIssues?.length ? html`<button class="btn sm soft" type="button" data-act="wh-review-queue">Needs review</button>` : ""}</div>`;
+    const countStatus = value => value === "all" ? allCount : value === "open" ? data.stats?.openOrders : counts?.[value];
+    const statusChoices = ["all", ...(wideOrders.matches ? ["open"] : []), ...data.statuses];
+    const statusLabel = value => value === "all" ? "All orders" : value === "open" ? "Open orders" : value;
+    const dispatch = html`<label class="w-dispatch-scope"><span>Dispatch date</span><select id="wDispatchScope" aria-label="Dispatch date">${[["all","All dates"],["today","Today"],["upcoming","Upcoming"]].map(([id,label]) => html`<option value="${id}" ${dispatchScope === id ? raw("selected") : ""}>${label}</option>`)}</select></label>`;
+    const tools = html`${queueControls}${data.standingIssues?.length ? html`<div class="w-order-feedback" id="wStandingIssues" role="status"><b>${data.standingIssues[0].count} standing ${data.standingIssues[0].count === 1 ? "delivery needs" : "deliveries need"} review</b><p>The next delivery is paused. Check the business account and available coffee, size and grind before retrying.</p><div class="toolbar">${data.standingIssues.slice(0, 5).map(issue => html`<button class="btn sm soft" type="button" data-act="wh-standing-review" data-id="${issue.id}">Review ${issue.business || "standing order"}</button>`)}</div></div>` : ""}<div class="w-order-toolbar"><div class="toolbar">${search("Search wholesale orders", "Search order, reference or customer")}${dispatch}</div>
+      <div class="segwrap w-filters"><div class="seg" role="group" aria-label="Order status">${statusChoices.map(value => html`<button type="button" data-act="wh-status" data-id="${value}" aria-pressed="${status === value}">${statusLabel(value)}${dispatchScope === "all" && countStatus(value) > 0 ? html`<span class="w-status-count">${countStatus(value)}</span>` : ""}</button>`)}</div></div>
+      ${wideOrders.matches ? html`<select class="w-status-select" id="wOrderStatus" aria-label="Order status">${statusChoices.map(value => html`<option value="${value}" ${status === value ? raw("selected") : ""}>${statusLabel(value)}</option>`)}</select>` : ""}
       ${picking ? html`<div class="w-print-bar w-picking" role="region" aria-label="Choose orders"><span class="w-picked-count" aria-live="polite">${picked.size ? `${picked.size} selected` : "Tap orders to select them"}</span><button class="btn sm soft" type="button" data-act="wh-pick-all">Select all shown</button><button class="btn sm soft" type="button" data-act="wh-totals" ${picked.size ? "" : raw("disabled")}>Bag totals</button><button class="btn sm" type="button" data-act="wh-print-picked" ${picked.size ? "" : raw("disabled")}>${svg("doc")}Print selected</button><button class="btn sm soft" type="button" data-act="wh-pick-done">Done</button><div class="w-batch" id="wBatch" role="group" aria-label="Change the selected orders">${batchControls()}</div></div>`
-        : html`<div class="w-print-bar">${hasNew || rows.length ? html`<details class="w-print-menu"><summary class="btn sm ${hasNew ? "" : "soft"}">${svg("doc")}Print<span aria-hidden="true">⌄</span></summary><div class="w-print-options"><button class="btn sm soft" type="button" data-act="wh-print-new" ${hasNew ? "" : raw("disabled")}>Print new orders</button><button class="btn sm soft" type="button" data-act="wh-pick-start" ${rows.length ? "" : raw("disabled")}>Select to print</button></div></details>` : html`<button class="btn sm" type="button" disabled>${svg("doc")}Print<span aria-hidden="true">⌄</span></button>`}<button class="btn sm soft" type="button" data-act="wh-pick-start" ${rows.length ? "" : raw("disabled")}>Select</button><button class="btn sm soft" type="button" data-act="wh-totals" ${hasPreparation ? "" : raw("disabled")}>Bag totals</button></div>`}</div>`;
-    const list = listing("wOrdersTitle", "Orders", resultCount(rows.length, data.matchingCount, "order"), tools,
-      rows.length ? rows.map(orderRow) : emptyState(filtered ? "search" : "coffee", filtered ? "No matching orders" : "No orders yet", filtered ? "Try another search or status, or clear your filters to see all orders." : "Customer orders will appear here when they’re placed.", filtered),
-      html`${more("orders")}<p class="hint">Coffee subtotals are saved with each order. Delivery and invoicing are managed separately.</p>`, html`<a class="btn sm w-new-order" href="${(data.links?.diary || "").replace(/\/$/, "")}/orders#new"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>New order</a> <details class="w-order-settings"><summary class="btn sm soft">Order settings</summary><div class="w-order-settings-actions"><button class="btn sm soft w-alerts-button" type="button" data-act="wh-announcement"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1zM15.5 8.5a5 5 0 0 1 0 7"/></svg>Announcement</button> <button class="btn sm soft w-alerts-button" type="button" data-act="wh-order-emails"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>Order alerts</button></div></details>`);
-    return html`<div class="w-order-layout ${picking ? "is-picking" : ""}">${list}<div class="w-order-preview" id="wOrderPreview">${orderPreview()}</div></div>`;
+        : html`<div class="w-print-bar">${hasNew || rows.length ? html`<details class="w-print-menu"><summary class="btn sm ${rows.length ? "" : "soft"}">${svg("doc")}Print<span aria-hidden="true">⌄</span></summary><div class="w-print-options"><button class="btn sm soft" type="button" data-act="wh-print-shown" ${canPrintShown ? "" : raw("disabled")}>${rows.length > 200 ? "Print up to 200 selected orders" : "Print shown orders"}</button><button class="btn sm soft" type="button" data-act="wh-print-new" ${hasNew ? "" : raw("disabled")}>Print new orders</button><button class="btn sm soft" type="button" data-act="wh-pick-start" ${rows.length ? "" : raw("disabled")}>Select to print</button></div></details>` : html`<button class="btn sm" type="button" disabled>${svg("doc")}Print<span aria-hidden="true">⌄</span></button>`}<button class="btn sm soft" type="button" data-act="wh-pick-start" ${rows.length ? "" : raw("disabled")}>Select</button><button class="btn sm soft" type="button" data-act="wh-totals" ${hasPreparation ? "" : raw("disabled")}>Bag totals</button></div>`}</div>`;
+    const list = listing("wOrdersTitle", "Order queue", resultCount(rows.length, data.matchingCount, "order"), wideOrders.matches ? html`` : tools,
+      rows.length ? html`${orderColumns()}${rows.map(orderRow)}` : emptyState(filtered ? "search" : "coffee", filtered ? "No matching orders" : "No orders yet", filtered ? "Try another search or status, or clear your filters to see all orders." : "Customer orders will appear here when they’re placed.", filtered),
+      html`${more("orders")}<p class="hint">Coffee subtotals are saved with each order. Delivery and invoicing are managed separately.</p>`, html`<button class="btn sm soft w-expand-queue" type="button" data-act="wh-full-queue" aria-pressed="${hideOrderPreview}">${hideOrderPreview ? "Show preview" : "Full width"}</button><a class="btn sm w-new-order" href="${(data.links?.diary || "").replace(/\/$/, "")}/orders#new"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>New order</a> <details class="w-order-settings"><summary class="btn sm soft">Order settings</summary><div class="w-order-settings-actions"><button class="btn sm soft w-alerts-button" type="button" data-act="wh-announcement"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1zM15.5 8.5a5 5 0 0 1 0 7"/></svg>Announcement</button> <button class="btn sm soft w-alerts-button" type="button" data-act="wh-order-emails"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>Order alerts</button></div></details>`);
+    return html`${wideOrders.matches ? html`<div class="w-order-controls glass">${tools}</div>` : ""}<div class="w-order-layout ${picking ? "is-picking" : ""} ${hideOrderPreview ? "w-queue-expanded" : ""}">${list}<div class="w-order-preview" id="wOrderPreview" ${hideOrderPreview ? raw("hidden") : ""}>${orderPreview()}</div></div>`;
+  }
+  function orderColumns() {
+    const arrow = (up, down) => orderSort === up ? " ↑" : orderSort === down ? " ↓" : "";
+    return html`<div class="w-order-columns"><span>Customer</span><button type="button" data-act="wh-sort" data-id="dispatch" aria-label="Sort by dispatch date${orderSort.startsWith("dispatch") ? orderSort === "dispatch" ? ", currently earliest first" : ", currently latest first" : ""}">Dispatch${arrow("dispatch","dispatch-desc")}</button><span class="w-order-method">Fulfilment</span><button type="button" data-act="wh-sort" data-id="bags" aria-label="Sort by bag count${orderSort.startsWith("bags") ? orderSort === "bags-asc" ? ", currently fewest first" : ", currently most first" : ""}">Bags${arrow("bags-asc","bags")}</button><span class="w-order-weight">Weight</span><span>Total</span><span>Status</span></div>`;
+  }
+  function compactOrder(row) {
+    return html`<span class="w-order-compact"><span class="w-order-customer"><b>${row.business || row.createdName}</b><small>${row.locationSnapshot?.name || "Main location"}${row.reference ? " · " + row.reference : ""}${row.customerNote ? " · Customer note" : ""}${row.preview !== false ? " · Staff preview" : ""}</small></span><span>${row.dispatchDate ? day(row.dispatchDate).replace(/,? \d{4}$/, "") : "Unscheduled"}</span><span class="w-order-method">${row.delivery === "Delivery" ? "Delivery" : "Collection"}</span><span class="num">${row.packs}</span><span class="w-order-weight num">${weight(row.grams)}</span><strong class="num">${money(row.totalPence ?? row.pence)}</strong>${pill(row.status)}</span>`;
   }
   function orderPreview() {
-    const row = data.orders.find(order => order.id === previewOrder) || data.orders[0];
-    return html`<section class="group glass w-preview-panel" aria-label="Order preview"><header><h2>Order preview</h2></header>
-      ${row ? html`<div class="w-preview-body"><div class="w-order-heading"><h3>${row.business || row.createdName}</h3>${pill(row.status)}</div><p class="w-id">${row.id}</p>
-        <div class="kv"><span>Fulfilment</span><span>${row.delivery}${row.dispatchDate ? " · " + day(row.dispatchDate) : ""}</span></div>
-        <div class="kv"><span>Location</span><span>${row.locationSnapshot?.name || "Not recorded"}</span></div>
-        <div class="kv"><span>Packing list</span><span>${row.packs} bags · ${weight(row.grams)}</span></div>
-        ${(row.lines || []).map(line => html`<div class="kv"><span>${line.title} · ${grindFor(line).label}</span><span>${line.quantity} × ${line.packLabel}</span></div>`)}
-        ${row.customerNote ? html`<p class="w-address">${row.customerNote}</p>` : ""}
-        <button class="btn sm" type="button" data-act="wh-edit-preview" data-id="${row.id}">Open order</button></div>` : html`<p class="hint w-preview-body">Select a row’s Preview action to see its packing list and dispatch details here.</p>`}
+    const row = packingRow(previewOrder) || data.orders[0];
+    const active = row && row.id === packingOrder;
+    return html`<section class="group glass w-preview-panel ${active ? "w-is-packing" : ""}" aria-label="${active ? "Order processing" : "Order preview"}"><header><h2>${active ? "Order processing" : "Order preview"}</h2>${active ? html`<div class="w-preview-actions"><button class="btn sm soft" type="button" data-act="wh-print-one" data-id="${row.id}">Print list</button><button class="btn sm soft" type="button" data-act="wh-exit-pack">Exit packing</button></div>` : ""}</header>
+      ${row ? html`<div class="w-preview-body"><div class="w-order-heading"><h3>${row.business || row.createdName}</h3>${pill(row.status)}</div><p class="w-id">${row.id} · ${row.packs} bags · ${weight(row.grams)}</p>
+        <div class="w-preview-stages" data-order-stage="${row.status}"></div>
+        <div class="w-preview-destination"><b>${row.delivery}${row.locationSnapshot?.name ? " · " + row.locationSnapshot.name : ""}</b><span>${row.dispatchDate ? day(row.dispatchDate) : "Unscheduled"}</span>${row.delivery === "Delivery" && row.locationSnapshot?.address ? html`<span>${[row.locationSnapshot.address,row.locationSnapshot.postcode].filter(Boolean).join(", ")}</span>` : ""}</div>
+        ${row.customerNote ? html`<p class="wp-work-note"><b>Customer note</b>${row.customerNote}</p>` : ""}
+        ${active ? html`<div id="wPackChecklist" data-id="${row.id}"></div>` : html`
+          <h3 class="w-preview-lines-title">Packing list</h3>${(row.lines || []).map(line => html`<div class="kv"><span>${line.title} · ${grindFor(line).label}</span><span>${line.quantity} × ${line.packLabel}</span></div>`)}
+          <div class="kv"><span>Order total</span><strong>${money(row.totalPence ?? row.pence)}</strong></div>
+          <div class="w-preview-actions"><button class="btn sm soft" type="button" data-act="wh-edit-preview" data-id="${row.id}">Open order</button>
+            ${row.preview === false ? html`<button class="btn sm soft" type="button" data-act="wh-preview-invoice" data-id="${row.id}">Review invoice</button>` : ""}
+            ${nextStatus(row) ? html`<button class="btn sm" type="button" data-act="wh-pack" data-id="${row.id}">${row.status === "Ready" ? "Process dispatch" : "Pack order"}</button>` : ""}</div>`}</div>` : html`<p class="hint w-preview-body">Select an order to see its packing list and dispatch details.</p>`}
       </section>`;
+  }
+  function mountStages(node) {
+    const track = packing.stageTrack(node.dataset.orderStage);
+    if (track) node.replaceChildren(track);
+  }
+  function drawOrderPreview() {
+    const pane = $("#wOrderPreview");
+    if (!pane || !data) return;
+    pane.hidden = hideOrderPreview;
+    pane.closest(".w-order-layout").classList.toggle("w-queue-expanded", hideOrderPreview);
+    put(pane, orderPreview());
+    const stages = pane.querySelector(".w-preview-stages");
+    const checklist = pane.querySelector("#wPackChecklist");
+    if (stages) mountStages(stages);
+    if (checklist) mountPacking(checklist);
+    for (const button of document.querySelectorAll('.w-order-layout [data-act="wh-order"]')) {
+      const selected = !hideOrderPreview && button.dataset.id === previewOrder;
+      button.setAttribute("aria-pressed", String(selected));
+      button.closest(".w-order-entry").classList.toggle("w-order-selected", selected);
+    }
+    const toggle = $(".w-expand-queue");
+    if (toggle) {
+      toggle.textContent = hideOrderPreview ? "Show preview" : "Full width";
+      toggle.setAttribute("aria-pressed", String(hideOrderPreview));
+    }
+  }
+  function mountPacking(node) {
+    const row = packingRow(node.dataset.id);
+    if (!row || row.preview !== false) {
+      node.replaceChildren(SC.el("p", { class: "hint" }, "This order is outside the current queue."));
+      return;
+    }
+    const controls = packing.checklist(row, {
+      busy: quickBusy.has(row.id), problem: orderErrors.get(row.id)?.message || "",
+      change: (line, packed) => savePackingLine(row.id, line, packed),
+      advance: () => advanceOrder(row.id, true),
+      refresh: async () => { orderErrors.delete(row.id); await reload(); refreshPacking(row.id); }
+    });
+    const title = $("#wPackSheetTitle");
+    if (node.id === "wPackSheet" && title) title.textContent = row.business || "Pack order";
+    node.replaceChildren(controls);
+  }
+  function refreshPacking(id) {
+    for (const node of document.querySelectorAll("#wPackSheet, #wPackChecklist")) if (node.dataset.id === id) mountPacking(node);
+  }
+  async function savePackingLine(id, line, packed) {
+    if (quickBusy.has(id) || orderErrors.has(id)) return;
+    const row = packingRow(id);
+    if (!row || row.status !== "Preparing") return;
+    const session = packingSession;
+    quickBusy.add(id); refreshPacking(id);
+    try {
+      const { order } = await api("PATCH", `/api/admin/wholesale/orders/${id}/packing`, { ifVersion: row.version, line, packed });
+      if (session !== packingSession) return;
+      if (order?.id !== id || !Number.isSafeInteger(order.version) || order.version < row.version || !Array.isArray(order.packedLines) || order.packedLines.includes(line) !== packed) {
+        throw new Error("The packing update could not be confirmed.");
+      }
+      const index = data?.orders.findIndex(item => item.id === id) ?? -1;
+      if (index >= 0 && data.orders[index].version <= order.version) data.orders[index] = order;
+      if (data?.packingSelection?.id === id && data.packingSelection.version <= order.version) data.packingSelection = order;
+    } catch (error) {
+      if (session === packingSession && packingRow(id)) orderErrors.set(id, { version: row.version, message: error.message });
+    } finally {
+      if (session === packingSession) {
+        quickBusy.delete(id); refreshPacking(id);
+        if (document.activeElement === document.body) document.querySelector(`[data-id="${id}"] [data-pack-line="${line}"]:enabled`)?.focus({ preventScroll: true });
+      }
+    }
+  }
+  function openPackingSheet(row, back) {
+    openSheet(html`<div class="w-sheet w-pack-sheet"><h2 id="wPackSheetTitle">${row.business || "Pack order"}</h2>
+      <p class="w-id">${row.id} · ${row.delivery}${row.dispatchDate ? " · " + day(row.dispatchDate) : ""}</p>
+      ${row.customerNote ? html`<p class="wp-work-note"><b>Customer note</b>${row.customerNote}</p>` : ""}
+      <div id="wPackSheet" data-id="${row.id}"></div><div class="w-preview-actions"><button class="btn soft" type="button" data-sheet="back">Back to order</button></div></div>`,
+      action => { if (action === "back") back(); });
+    mountPacking($("#wPackSheet"));
   }
   function orderRow(row) {
     const next = nextStatus(row), busy = quickBusy.has(row.id), problem = orderErrors.get(row.id);
     const chosen = picked.has(row.id);
-    const preview = picking ? "" : html`<button class="btn sm soft w-preview-trigger" type="button" data-act="wh-preview" data-id="${row.id}" aria-controls="wOrderPreview" aria-pressed="${row.id === previewOrder}" aria-label="Preview ${row.business || row.createdName}">Preview</button>`;
-    return html`<div class="w-order-entry ${picking ? "is-picking" : ""}" data-order-entry="${row.id}" aria-busy="${busy}"><button class="item w-order" type="button" data-act="${picking ? "wh-pick" : "wh-order"}" data-id="${row.id}" ${picking ? html`aria-pressed="${chosen}"` : ""} ${busy ? raw("disabled") : ""}><span class="ic ${picking ? chosen ? "ok w-pick-on" : "mut w-pick-off" : row.preview === false ? "acc" : "mut"}">${picking ? chosen ? svg("ok") : html`<span class="w-pick-ring" aria-hidden="true"></span>` : svg("coffee")}</span><span class="tx"><b>${row.business || customer(row.customerId)?.business || row.createdName}</b><span>${shortId(row.id)}… · ${date(row.createdAt)}</span><span>${row.locationSnapshot?.name ? row.locationSnapshot.name + " · " : ""}${row.delivery} · ${row.packs} ${row.packs === 1 ? "bag" : "bags"} · ${weight(row.grams)}</span>${row.dispatchDate || row.standing ? html`<span class="w-dispatch">${row.dispatchDate ? `Dispatch ${day(row.dispatchDate)}` : ""}${row.dispatchDate && row.standing ? " · " : ""}${row.standing ? `Standing order, ${everyText(row.standing.every)}` : ""}</span>` : ""}${row.reference ? html`<span>Reference: ${row.reference}</span>` : ""}${row.customerNote ? html`<span class="w-has-note">Customer comments</span>` : ""}${row.takenFor ? html`<span>Taken by ${row.createdName} (${row.takenFor.source.toLowerCase()})</span>` : ""}${row.tab && !row.tabClearedId ? html`<span class="w-has-note">On tab</span>` : ""}${row.preview === false ? "" : html`<span class="w-test-label">Staff preview · ${row.createdName}</span>`}</span><span class="end"><strong class="num">${money(Number.isSafeInteger(row.totalPence) ? row.totalPence : row.pence)}</strong>${pill(row.status)}<span class="chev">${svg("chev")}</span></span></button>
-      ${!picking && (next || problem || preview) ? html`<div class="w-order-actions ${next || problem ? "" : "w-only-preview"}">${preview}<div class="w-order-feedback" data-order-error="${row.id}" role="alert" ${problem ? "" : raw("hidden")}>${problem ? html`<p>${problem.message}</p><button class="btn sm soft" type="button" data-act="wh-refresh-orders" data-id="${row.id}">Reload orders</button>` : ""}</div>${next ? html`<button class="btn sm soft" type="button" data-act="wh-next" data-id="${row.id}" aria-label="Mark ${row.business || "order"} ${next.toLowerCase()}" ${busy || problem ? raw("disabled") : ""}>${busy ? "Saving…" : "Mark " + next.toLowerCase()}</button>` : ""}</div>` : ""}</div>`;
+    return html`<div class="w-order-entry ${picking ? "is-picking" : row.id === previewOrder && !hideOrderPreview ? "w-order-selected" : ""}" data-order-entry="${row.id}" aria-busy="${busy}"><button class="item w-order" type="button" data-act="${picking ? "wh-pick" : "wh-order"}" data-id="${row.id}" ${picking ? html`aria-pressed="${chosen}"` : wideOrders.matches ? html`aria-pressed="${row.id === previewOrder && !hideOrderPreview}" aria-controls="wOrderPreview"` : ""} ${busy ? raw("disabled") : ""}><span class="ic ${picking ? chosen ? "ok w-pick-on" : "mut w-pick-off" : row.preview === false ? "acc" : "mut"}">${picking ? chosen ? svg("ok") : html`<span class="w-pick-ring" aria-hidden="true"></span>` : svg("coffee")}</span><span class="tx"><b>${row.business || customer(row.customerId)?.business || row.createdName}</b><span>${shortId(row.id)}… · ${date(row.createdAt)}</span><span>${row.locationSnapshot?.name ? row.locationSnapshot.name + " · " : ""}${row.delivery} · ${row.packs} ${row.packs === 1 ? "bag" : "bags"} · ${weight(row.grams)}</span>${row.dispatchDate || row.standing ? html`<span class="w-dispatch">${row.dispatchDate ? `Dispatch ${day(row.dispatchDate)}` : ""}${row.dispatchDate && row.standing ? " · " : ""}${row.standing ? `Standing order, ${everyText(row.standing.every)}` : ""}</span>` : ""}${row.reference ? html`<span>Reference: ${row.reference}</span>` : ""}${row.customerNote ? html`<span class="w-has-note">Customer comments</span>` : ""}${row.takenFor ? html`<span>Taken by ${row.createdName} (${row.takenFor.source.toLowerCase()})</span>` : ""}${row.tab && !row.tabClearedId ? html`<span class="w-has-note">On tab</span>` : ""}${row.preview === false ? "" : html`<span class="w-test-label">Staff preview · ${row.createdName}</span>`}</span><span class="end"><strong class="num">${money(Number.isSafeInteger(row.totalPence) ? row.totalPence : row.pence)}</strong>${pill(row.status)}<span class="chev">${svg("chev")}</span></span>${compactOrder(row)}</button>
+      ${!picking && (next || problem) ? html`<div class="w-order-actions"><div class="w-order-feedback" data-order-error="${row.id}" role="alert" ${problem ? "" : raw("hidden")}>${problem ? html`<p>${problem.message}</p><button class="btn sm soft" type="button" data-act="wh-refresh-orders" data-id="${row.id}">Reload orders</button>` : ""}</div>${next ? html`<button class="btn sm soft" type="button" data-act="wh-next" data-id="${row.id}" aria-label="Mark ${row.business || "order"} ${next.toLowerCase()}" ${busy || problem ? raw("disabled") : ""}>${busy ? "Saving…" : "Mark " + next.toLowerCase()}</button>` : ""}</div>` : ""}</div>`;
   }
   // Who gets an email for each new customer order (sent from orders@staffstrangerscoffee.com).
   async function openOrderEmails() {
@@ -350,7 +466,8 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     if (!row) return;
     const busy = quickBusy.has(id), problem = orderErrors.get(id), next = nextStatus(row);
     entry.setAttribute("aria-busy", String(busy));
-    entry.querySelector('[data-act="wh-order"]').disabled = busy;
+    const orderButton = entry.querySelector('[data-act="wh-order"]');
+    if (orderButton) orderButton.disabled = busy;
     const button = entry.querySelector('[data-act="wh-next"]');
     if (button) { button.disabled = busy || !!problem || !next; button.textContent = busy ? "Saving…" : next ? "Mark " + next.toLowerCase() : "Up to date"; }
     const feedback = entry.querySelector('[data-order-error]');
@@ -359,28 +476,32 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
       put(feedback, problem ? html`<p>${problem.message}</p><button class="btn sm soft" type="button" data-act="wh-refresh-orders" data-id="${id}">Reload orders</button>` : html``);
     }
   }
-  async function advanceOrder(id) {
+  async function advanceOrder(id, fromChecklist = false) {
     if (quickBusy.has(id) || orderErrors.has(id)) return;
-    const row = data.orders.find((order) => order.id === id), next = row && nextStatus(row);
+    const row = packingRow(id), next = row && nextStatus(row);
     if (!next) return;
     if (next === "Dispatched") { dispatchOrder(row); return; }
-    const source = document.querySelector(`[data-act="wh-next"][data-id="${id}"]`), wasFocused = document.activeElement === source;
+    const session = packingSession;
+    const source = fromChecklist ? document.activeElement : document.querySelector(`[data-act="wh-next"][data-id="${id}"]`);
+    const wasFocused = document.activeElement === source;
     let restoreFocus = false;
-    quickBusy.add(id); refreshOrderFeedback(id);
+    quickBusy.add(id); refreshOrderFeedback(id); if (fromChecklist) refreshPacking(id);
     try {
-      const result = await api("PATCH", `/api/admin/wholesale/orders/${id}`, { ifVersion: row.version, status: next, customerId: row.customerId, note: row.note || "" });
+      const result = await api("PATCH", `/api/admin/wholesale/orders/${id}`, { ifVersion: row.version, status: next, customerId: row.customerId, note: row.note || "", ...(fromChecklist && next === "Ready" ? { requirePacked: true } : {}) });
+      if (session !== packingSession) return;
       if (result.order?.id !== id || result.order.status !== next || result.order.version !== row.version + 1) throw new Error("The status update could not be confirmed. Reload orders to check the latest status.");
       orderErrors.delete(id);
       restoreFocus = wasFocused && (document.activeElement === source || document.activeElement === document.body);
       await reload();
-      toast(`${row.business || "Order"} marked ${next.toLowerCase()}.`);
+      if (session === packingSession) toast(`${row.business || "Order"} marked ${next.toLowerCase()}.`);
     } catch (error) {
+      if (session !== packingSession) return;
       orderErrors.set(id, { version: row.version, message: error.message + " Reload orders before updating this order again." });
       restoreFocus = wasFocused && (document.activeElement === source || document.activeElement === document.body);
     } finally {
-      quickBusy.delete(id); refreshOrderFeedback(id);
-      if (restoreFocus && $("#scrim").hidden) {
-        const target = document.querySelector(`[data-act="wh-refresh-orders"][data-id="${id}"]`) || document.querySelector(`[data-act="wh-next"][data-id="${id}"]`) || document.querySelector(`[data-act="wh-order"][data-id="${id}"]`) || document.querySelector(`[data-act="wh-status"][data-id="${status}"]`);
+      if (session === packingSession) { quickBusy.delete(id); refreshOrderFeedback(id); if (fromChecklist) refreshPacking(id); }
+      if (session === packingSession && restoreFocus && $("#scrim").hidden) {
+        const target = (fromChecklist && document.querySelector(`[data-id="${id}"] [data-pack-line]:enabled, [data-id="${id}"] [data-pack-next]:enabled`)) || document.querySelector(`[data-act="wh-refresh-orders"][data-id="${id}"]`) || document.querySelector(`[data-act="wh-next"][data-id="${id}"]`) || document.querySelector(`[data-act="wh-order"][data-id="${id}"]`) || document.querySelector(`[data-act="wh-status"][data-id="${status}"]`);
         target?.focus({ preventScroll: true });
       }
     }
@@ -392,19 +513,21 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     catch { return false; }
   }
   function dispatchOrder(row, restoredTracking) {
+    const collection = row.delivery === "Roastery collection", session = packingSession;
+    const confirmation = collection ? "Confirm collection" : "Confirm dispatch";
     let cleanup = () => {};
     const back = () => {
       cleanup(); closeSheet();
       const target = document.querySelector(`[data-act="wh-refresh-orders"][data-id="${row.id}"]`) || document.querySelector(`[data-act="wh-next"][data-id="${row.id}"]:not(:disabled)`) || document.querySelector(`[data-act="wh-order"][data-id="${row.id}"]`);
       if (target) target.focus({ preventScroll: true }); else focusOrderList(row.id);
     };
-    openSheet(html`<form id="wDispatchOrderForm" class="w-sheet"><h2 id="sheetTitle" tabindex="-1">Dispatch order</h2><p>${row.business || row.createdName}</p><p class="w-id">${row.id}</p><div class="kv"><span>Coffee subtotal</span><strong>${money(row.pence)}</strong></div>
-      ${field("Tracking link (optional)", html`<input id="wDispatchTracking" type="url" inputmode="url" maxlength="2000" placeholder="https://" autocapitalize="none" spellcheck="false" autocomplete="off" value="${restoredTracking ?? row.trackingUrl ?? ""}">`)}<p class="hint">A tracking link is optional. Customers see it on dispatched delivery orders.</p><p class="err" id="wErr" role="alert"></p><button class="btn soft" type="button" data-sheet="dispatch-reload" hidden>Reload latest order</button><div class="row w-actions"><button class="btn soft" type="button" data-sheet="dispatch-cancel">Cancel</button><fieldset id="wDispatchConfirmControls" class="w-delete-confirm-controls"><button class="btn" type="submit">Confirm dispatch</button></fieldset></div></form>`, async (action, element) => {
+    openSheet(html`<form id="wDispatchOrderForm" class="w-sheet"><h2 id="sheetTitle" tabindex="-1">${collection ? "Confirm collection" : "Dispatch order"}</h2><div class="w-order-heading"><h3>${row.business || row.createdName}</h3>${pill(row.status)}</div><p class="w-id">${row.packs} ${row.packs === 1 ? "bag" : "bags"} · ${weight(row.grams)} · ${row.id}</p><div class="w-preview-destination"><b>${row.delivery}</b>${row.locationSnapshot?.name ? html`<span>${row.locationSnapshot.name}</span>` : ""}${!collection && row.locationSnapshot?.address ? html`<span>${[row.locationSnapshot.address,row.locationSnapshot.postcode].filter(Boolean).join(", ")}</span>` : ""}</div>
+      ${collection ? html`<p class="hint">Only confirm once the customer has collected their order.</p>` : field("Tracking link (optional)", html`<input id="wDispatchTracking" type="url" inputmode="url" maxlength="2000" placeholder="https://" autocapitalize="none" spellcheck="false" autocomplete="off" value="${restoredTracking ?? row.trackingUrl ?? ""}">`)}<p class="hint">The customer will be notified where order emails are enabled.</p><p class="err" id="wErr" role="alert"></p><button class="btn soft" type="button" data-sheet="dispatch-reload" hidden>Reload latest order</button><div class="row w-actions"><button class="btn soft" type="button" data-sheet="dispatch-cancel">Cancel</button><fieldset id="wDispatchConfirmControls" class="w-delete-confirm-controls"><button class="btn" type="submit">${confirmation}</button></fieldset></div></form>`, async (action, element) => {
       const form = element.closest("form");
       if (form.dataset.whBusy) return;
       if (action === "dispatch-cancel") { back(); return; }
       if (action === "dispatch-reload") {
-        const typed = form.querySelector("#wDispatchTracking").value;
+        const typed = form.querySelector("#wDispatchTracking")?.value;
         await saveForm(form, async () => {
           await reload();
           let latest = data.orders.find((order) => order.id === row.id);
@@ -418,26 +541,27 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
         return;
       }
       if (action !== "submit" || form.querySelector("#wDispatchConfirmControls").disabled || quickBusy.has(row.id)) return;
-      const tracking = form.querySelector("#wDispatchTracking").value.trim();
+      const tracking = form.querySelector("#wDispatchTracking")?.value.trim() || "";
       if (!validTrackingUrl(tracking)) { form.querySelector("#wErr").textContent = "Use a full HTTP or HTTPS tracking link without a username or password."; form.querySelector("#wDispatchTracking").focus(); return; }
       const button = form.querySelector('button[type="submit"]'); button.textContent = "Saving…";
       quickBusy.add(row.id); refreshOrderFeedback(row.id);
       try {
         await saveForm(form, async () => {
           const result = await api("PATCH", `/api/admin/wholesale/orders/${row.id}`, { ifVersion: row.version, status: "Dispatched", customerId: row.customerId, note: row.note || "", trackingUrl: tracking });
-          if (result.order?.id !== row.id || result.order.status !== "Dispatched" || result.order.version !== row.version + 1) throw new Error("The dispatch could not be confirmed. Reload the latest order to check its status.");
+          if (session !== packingSession) return;
+          if (result.order?.id !== row.id || result.order.status !== "Dispatched" || !Number.isSafeInteger(result.order.version) || result.order.version <= row.version) throw new Error("The dispatch could not be confirmed. Reload the latest order to check its status.");
           orderErrors.delete(row.id); cleanup(); closeSheet(); await reload(); toast(`${row.business || "Order"} marked dispatched.`);
         });
         if (form.isConnected) {
-          button.textContent = "Confirm dispatch";
+          button.textContent = confirmation;
           if (form.querySelector("#wErr").textContent) {
             form.querySelector("#wDispatchConfirmControls").disabled = true; form.querySelector('[data-sheet="dispatch-reload"]').hidden = false;
             orderErrors.set(row.id, { version: row.version, message: form.querySelector("#wErr").textContent + " Reload orders before updating this order again." });
           }
         }
       } finally {
-        quickBusy.delete(row.id); refreshOrderFeedback(row.id);
-        if (!form.isConnected && $("#scrim").hidden) focusOrderList(row.id);
+        if (session === packingSession) { quickBusy.delete(row.id); refreshOrderFeedback(row.id); }
+        if (session === packingSession && !form.isConnected && $("#scrim").hidden) focusOrderList(row.id);
       }
     });
     const form = $("#wDispatchOrderForm"), controller = new AbortController(), scrim = $("#scrim");
@@ -674,6 +798,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     const snapshot = row.customerSnapshot, selectedCustomer = draft && Object.hasOwn(draft, "customerId") ? draft.customerId : row.customerId;
     const grinds = row.lines.map(grindFor), choices = [...new Map(grinds.map(grind => [grind.key, grind])).values()];
     openSheet(html`<form class="w-sheet w-order-sheet"><h2 id="sheetTitle" tabindex="-1">Order details</h2><div class="w-order-heading"><h3>${row.business || row.createdName}</h3>${pill(row.status)}${row.preview === false ? "" : html`<span class="pill">Staff preview</span>`}</div><p class="w-id">${row.id}</p>
+      ${nextStatus(row) ? html`<button class="btn sm soft w-sheet-pack" type="button" data-sheet="pack-order">${row.status === "Ready" ? "Process dispatch" : "Pack order"}</button>` : ""}
       <div class="kvs">${row.locationSnapshot?.name ? html`<div class="kv"><span>Location</span><span>${row.locationSnapshot.name}</span></div>` : ""}<div class="kv"><span>Received</span><span>${date(row.createdAt)}</span></div><div class="kv"><span>Reference</span><span>${row.reference || "None supplied"}</span></div><div class="kv"><span>${row.takenFor ? "Taken by" : "Ordered by"}</span><span>${row.takenFor ? `${row.createdName} (${row.takenFor.source.toLowerCase()})` : row.createdName}</span></div></div>
       ${row.customerNote ? html`<section class="w-order-section w-customer-note" aria-labelledby="wCustomerNoteTitle"><h3 id="wCustomerNoteTitle">Customer comments</h3><p class="w-address">${row.customerNote}</p></section>` : ""}
       <section class="w-order-section" aria-labelledby="wPackingTitle"><div class="w-section-head"><h3 id="wPackingTitle">Packing list</h3>${row.preview === false && ["New", "Preparing"].includes(row.status) ? html`<span class="row">${row.standing ? html`<button class="btn sm soft" type="button" data-sheet="skip-run">Skip this delivery</button>` : ""}<button class="btn sm soft" type="button" data-sheet="edit-lines">Edit bags</button></span>` : ""}</div>${row.amendedAt ? html`<p class="hint w-amended">Bags changed${row.amendedBy ? ` by ${row.amendedBy}${row.amendedByCustomer ? " (the customer)" : ""}` : ""} on ${date(row.amendedAt)}${row.repeatLines ? ", for this delivery only: the next delivery goes back to the usual bags" : ""}. The customer sees the updated order.</p>` : ""}${row.skipped ? html`<p class="hint w-amended">Delivery skipped by ${row.skipped.by}${row.skipped.customer ? " (the customer)" : ""} on ${date(row.skipped.at)}.</p>` : ""}${choices.length > 1 ? html`<div class="w-grind-filters" role="group" aria-label="Filter packing list by grind"><button type="button" data-sheet="grind-filter" data-grind-key="" aria-pressed="true">All grinds</button>${choices.map(grind => html`<button type="button" class="w-grind-tone" style="--w-grind-h:${grind.hue}" data-sheet="grind-filter" data-grind-key="${grind.key}" aria-pressed="false">${svg(grind.icon)}${grind.label}</button>`)}</div><p id="wGrindCount" class="hint" role="status">${row.lines.length} packing lines · Order totals include all lines.</p>` : ""}<div class="group w-packing-list">${row.lines.map((line, index) => { const grind = grinds[index]; return html`<div class="item w-packing-line w-grind-tone w-coffee-tone" style="--w-grind-h:${grind.hue};${coffeeStyle(line, data.products)}" data-grind-line="${grind.key}"><span class="w-pack-quantity"><b>${line.quantity}</b><span>${line.quantity === 1 ? "bag" : "bags"}</span></span><span class="tx"><b class="w-pack-coffee"><span class="w-coffee-swatch" aria-hidden="true"></span>${line.title}${decafLine(line) ? html`<span class="w-decaf-label">Decaf</span>` : ""}</b>${line.recipe ? html`<span class="w-recipe">Made from ${line.recipe}</span>` : ""}<span class="w-pack-size">${line.packLabel}</span><span class="w-grind-details"><span class="w-grind-badge">${svg(grind.icon)}${grind.label}</span>${grind.hint ? html`<span class="w-grind-hint">${grind.hint}</span>` : ""}</span></span><span class="end num">${money(line.price * line.quantity)}</span></div>`; })}</div><div class="kv"><span>${row.packs} ${row.packs === 1 ? "bag" : "bags"} · ${weight(row.grams)} total</span><strong>${money(row.pence)}</strong></div>${Number.isSafeInteger(row.deliveryPence) ? html`<div class="kv"><span>${row.delivery === "Delivery" ? "Delivery (including VAT)" : "Roastery collection"}</span><strong>${row.deliveryPence ? money(row.deliveryPence) : "Free"}</strong></div><div class="kv"><span>Order total</span><strong>${money(row.totalPence ?? row.pence + row.deliveryPence)}</strong></div>` : ""}</section>
@@ -688,6 +813,12 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
       ${field("Tracking link (optional)", html`<input id="wTrackingUrl" type="url" inputmode="url" maxlength="2000" placeholder="https://" autocapitalize="none" spellcheck="false" autocomplete="off" value="${draft?.trackingUrl ?? row.trackingUrl ?? ""}">`)}<p class="hint">Add, edit or clear the link. Customers see it on dispatched delivery orders.</p>
       ${field("Internal note", html`<textarea id="wNote" maxlength="1000">${draft?.note ?? row.note}</textarea>`)}</section>${note}${buttons("Save order")}<div class="w-order-danger"><button class="btn bad" type="button" data-sheet="delete-order">Delete order</button></div></form>`, async (action, element) => {
       const form = element.closest("form");
+      if (action === "pack-order") {
+        const draft = draftOf(form, row);
+        if (draft.status === row.status) delete draft.status;
+        openPackingSheet(row, () => editOrder(row.id, draft, packingRow(row.id)));
+        return;
+      }
       if (action === "grind-filter") {
         const key = element.dataset.grindKey;
         for (const button of form.querySelectorAll('[data-sheet="grind-filter"]')) button.setAttribute("aria-pressed", String(button.dataset.grindKey === key));
@@ -1131,7 +1262,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     drawPhotos();
   }
   return {
-    clear() { invoiceUI.clear(); insightsUI.clear(); sequence++; emailHealthToken++; data = null; previewOrder = ""; emailDraft = null; batch = null; picked.clear(); picking = false; clearTimeout(timer); },
+    clear() { invoiceUI.clear(); insightsUI.clear(); sequence++; emailHealthToken++; packingSession++; data = null; previewOrder = packingOrder = ""; hideOrderPreview = false; quickBusy.clear(); orderErrors.clear(); emailDraft = null; batch = null; picked.clear(); picking = false; clearTimeout(timer); },
     view,
     navigation,
     syncNavigation,
@@ -1146,18 +1277,31 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
       if (name.startsWith("wh-ins-")) { await insightsUI.act(name, id); return; }
       if (name.startsWith("wh-tabs-")) { await tabsUI.act(name, id); return; }
       if (name === "wh-standing-review") { selectSection("orders"); query = id; status = "all"; orderQueue = ""; await reload(); editOrder(id); return; }
-      if (name === "wh-queue") { clearTimeout(timer); orderQueue = ["prepare", "ready"].includes(id) ? id : ""; status = "all"; orderPages = 1; previewOrder = ""; await reload(); return; }
+      if (name === "wh-queue") { clearTimeout(timer); orderQueue = ["prepare", "ready"].includes(id) ? id : ""; status = id === "open" ? "open" : "all"; orderPages = 1; previewOrder = packingOrder = ""; await reload(); return; }
       if (name === "wh-review-queue") { $("#wStandingIssues")?.scrollIntoView({ block: "center" }); $("#wStandingIssues button")?.focus({ preventScroll: true }); return; }
-      if (name === "wh-preview") {
-        previewOrder = id;
-        const pane = $("#wOrderPreview");
-        if (pane) put(pane, orderPreview());
-        document.querySelectorAll('[data-act="wh-preview"]').forEach(button => button.setAttribute("aria-pressed", String(button.dataset.id === id)));
+      if (name === "wh-full-queue") { hideOrderPreview = !hideOrderPreview; drawOrderPreview(); return; }
+      if (name === "wh-dispatch-scope" && ["all","today","upcoming"].includes(id)) {
+        dispatchScope = id; packingOrder = ""; orderPages = 1; await reload(); $("#wDispatchScope")?.focus({ preventScroll:true }); return;
+      }
+      if (name === "wh-sort") {
+        orderSort = id === "dispatch" ? (orderSort === "dispatch" ? "dispatch-desc" : "dispatch") : (orderSort === "bags" ? "bags-asc" : "bags");
+        orderPages = 1; await reload(); $(`[data-act="wh-sort"][data-id="${id}"]`)?.focus({ preventScroll:true }); return;
+      }
+      if (name === "wh-pack" || name === "wh-exit-pack") {
+        packingOrder = name === "wh-pack" ? id : ""; drawOrderPreview();
+        ($("#wPackChecklist [data-pack-line]:enabled:not(:checked)") || $("#wPackChecklist [data-pack-next]:enabled") || $('[data-act="wh-pack"]'))?.focus({ preventScroll:true });
+        return;
+      }
+      if (name === "wh-preview-invoice") {
+        const row = data.orders.find(order => order.id === id);
+        if (row) await invoiceUI.openOrder(row, () => { closeSheet(); document.querySelector('[data-act="wh-preview-invoice"]')?.focus({ preventScroll: true }); });
         return;
       }
       if (name === "wh-edit-preview") { editOrder(id); return; }
       if (name === "wh-order-emails") { await openOrderEmails(); return; }
       if (name === "wh-announcement") { await openAnnouncement(); return; }
+      if (name === "wh-print-shown" && data.orders.length && data.orders.length <= 200) { await printUI.printOrders({ ids: data.orders.map(row => row.id), label: "Orders in this view" }); return; }
+      if (name === "wh-print-one" && id) { await printUI.printOrders({ ids: [id], label: "Order packing list" }); return; }
       if (name === "wh-print-new") { await printUI.printOrders(printUI.scopes.New); return; }
       if (name === "wh-totals") { await printUI.openTotals(picking ? [...picked] : []); return; }
       if (name === "wh-pick-start" || name === "wh-pick-done") { if (batch?.running) return; picking = name === "wh-pick-start"; picked.clear(); batch = null; await reload(); return; }
@@ -1171,19 +1315,22 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
       if (name === "wh-accounts-emails") { openAccountsEmails(); return; }
       if (name === "wh-invite-customers") { await openInvites(); return; }
       if (name === "wh-tab" && selectSection(id)) await reload();
-      if (name === "wh-status" && ["all", ...data.statuses].includes(id)) { clearTimeout(timer); orderQueue = ""; status = id; orderPages = 1; await reload(); }
+      if ((name === "wh-status" || name === "wh-status-select") && ["all", "open", ...data.statuses].includes(id)) { clearTimeout(timer); orderQueue = ""; packingOrder = ""; status = id; orderPages = 1; await reload(); if (name === "wh-status-select") $("#wOrderStatus")?.focus({ preventScroll:true }); }
       if (name === "wh-approval" && ["all", "pending"].includes(id)) { clearTimeout(timer); approval = id; customerPages = 1; await reload(); }
       if (name === "wh-pending") { selectSection("customers", { pending: true }); await reload(); }
-      if (name === "wh-clear") { clearTimeout(timer); query = ""; orderQueue = ""; status = approval = "all"; orderPages = customerPages = 1; await reload(); $("#wq")?.focus({ preventScroll: true }); }
+      if (name === "wh-clear") { clearTimeout(timer); query = ""; orderQueue = ""; status = approval = dispatchScope = "all"; orderPages = customerPages = 1; await reload(); $("#wq")?.focus({ preventScroll: true }); }
       if (name === "wh-more" && id === tab && data.nextCursor && !loadingMore) { loadingMore = true; const button = $(".w-more button"); if (button) { button.disabled = true; button.setAttribute("aria-busy", "true"); } try { if (id === "orders") orderPages++; else if (id === "customers") customerPages++; await reload(); } finally { loadingMore = false; } }
       if (name === "wh-next") await advanceOrder(id);
       if (name === "wh-refresh-orders") { orderErrors.delete(id); await reload(); (document.querySelector(`[data-act="wh-next"][data-id="${id}"]`) || document.querySelector(`[data-act="wh-order"][data-id="${id}"]`))?.focus({ preventScroll: true }); }
-      if (name === "wh-order") editOrder(id);
+      if (name === "wh-order") {
+        if (!wideOrders.matches || hideOrderPreview) editOrder(id);
+        else { if (previewOrder !== id) packingOrder = ""; previewOrder = id; hideOrderPreview = false; drawOrderPreview(); }
+      }
       if (name === "wh-customer") editCustomer(id);
       if (name === "wh-coffee") editCoffee(id);
     },
     search(value) {
-      query = value; orderPages = customerPages = 1; clearTimeout(timer);
+      query = value; packingOrder = ""; orderPages = customerPages = 1; clearTimeout(timer);
       timer = setTimeout(async () => { await reload(); const input = $("#wq"); if (input) { input.focus(); input.setSelectionRange(query.length, query.length); } }, 250);
     },
   };

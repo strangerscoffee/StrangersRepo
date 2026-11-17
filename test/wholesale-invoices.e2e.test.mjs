@@ -67,6 +67,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["desk
       for (const page of [admin, customer, other]) page.on("pageerror", (error) => errors.push(error.message));
       await admin.goto(srv.base + "/admin#wholesale");
       await admin.locator(`[data-act="wh-order"][data-id="${order.id}"]`).click();
+      if (device === "desktop") await admin.getByRole("region", { name: "Order preview" }).getByRole("button", { name: "Open order" }).click();
       await admin.locator('[data-sheet="invoice-open"]').click();
       await admin.locator("#wiSetupRequired").waitFor();
       await admin.locator('[data-sheet="wi-setup"]').click();

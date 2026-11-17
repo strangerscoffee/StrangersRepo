@@ -51,8 +51,8 @@ test("Admin desktop shows a live order alongside the queue and can open its exis
  const {ctx,page,errors}=await open(1440,"light");
  try {
   await page.locator('.ov-work [data-id="prepare"]').click();
-  await page.locator('[data-act="wh-preview"]').first().waitFor();
-  const second=page.locator('[data-act="wh-preview"]').nth(1);
+  await page.locator('[data-act="wh-order"]').first().waitFor();
+  const second=page.locator('[data-act="wh-order"]').nth(1);
   const id=await second.getAttribute("data-id");
   await second.click();
   const pane=page.getByRole("region",{name:"Order preview"});

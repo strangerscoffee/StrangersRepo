@@ -90,7 +90,7 @@ export async function rollStanding(env: Env, saved: AnyOrder, actor: string, ctx
     Object.assign(fresh, { business: customer.business, customerSnapshot: { ...profile, contact: location.contact, phone: location.phone, address: location.address, postcode: location.postcode, deliveryNotes: location.deliveryNotes }, deliveryNotes: location.deliveryNotes, paymentTerms: paymentTermsFor(customer), locationId: location.id, locationSnapshot: { ...location } });
   }
   // A new run starts clean: no emails sent yet, not on a (possibly cleared) tab, no changes, no tracking or notes.
-  const now = Date.now(), { nextRunId, amendedAt, amendedBy, amendedByCustomer, originalLines, repeatLines, skipped, trackingUrl, note, dispatchEmailedAt, standingIssue, standingRetryAt, tab, tabClearedId, ...base } = strip(saved);
+  const now = Date.now(), { nextRunId, amendedAt, amendedBy, amendedByCustomer, originalLines, repeatLines, packedLines, skipped, trackingUrl, note, dispatchEmailedAt, standingIssue, standingRetryAt, tab, tabClearedId, ...base } = strip(saved);
   const next = {
     ...base, ...fresh, status: "New", note: "", trackingUrl: "", createdAt: now, date: ukDay(now), requestKey: `standing:${id}`, lines,
     ...totals(lines, saved.delivery),
@@ -209,9 +209,15 @@ export async function amendLines(env: Env, id: string, value: unknown, actor: st
   lines.sort((a, b) => `${a.productId}:${a.pack}:${a.grind}`.localeCompare(`${b.productId}:${b.pack}:${b.grind}`));
   const sum = totals(lines, order.delivery);
   if (by.minimumGrams && sum.grams < by.minimumGrams) throw new ApiError(409, "below_minimum", `The minimum order is ${by.minimumGrams / 1000} kg of coffee. Add ${(by.minimumGrams - sum.grams) / 1000} kg more.`);
-  const { repeatLines, ...current } = strip(order as AnyOrder);
+  const { repeatLines, packedLines, ...current } = strip(order as AnyOrder);
+  const packingChanged = lines.length !== order.lines.length || lines.some((line, i) => {
+    const before = order.lines[i];
+    return line.productId !== before.productId || line.pack !== before.pack || line.grind !== before.grind || line.quantity !== before.quantity;
+  });
   const updated = await saveChange(env, order, {
     ...current, lines, ...sum, originalLines: order.originalLines || order.lines, amendedAt: Date.now(),
+    ...(packingChanged && order.status === "Ready" ? { status: "Preparing" } : {}),
+    ...(!packingChanged && packedLines ? { packedLines } : {}),
     amendedBy: by.customerId ? order.business || "The customer" : actor, ...(by.customerId ? { amendedByCustomer: true } : { amendedByCustomer: false }),
     ...(once ? { repeatLines: repeatLines || order.lines } : {}),
   }, version(body.ifVersion), by);

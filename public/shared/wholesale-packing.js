@@ -99,5 +99,41 @@
   /** The summary page, then (unless onlyTotals) one packing sheet per order. */
   const printOrders = (orders, label, printedAt, { onlyTotals = false } = {}) => print([summaryPage(orders, label, printedAt), ...(onlyTotals ? [] : orders.map(sheet))]);
 
-  window.SCWholesalePacking = Object.freeze({ totals, summaryBody, sheet, print, printOrders });
+  const stages = ["New", "Preparing", "Ready", "Dispatched"];
+  function stageTrack(status) {
+    const current = stages.indexOf(status);
+    if (current < 0) return null;
+    return el("ol", { class: "wp-stages", "aria-label": "Fulfilment stages" },
+      ...stages.map((stage, index) => el("li", {
+        class: index < current ? "done" : "",
+        ...(index === current ? { "aria-current": "step" } : {})
+      }, index === 0 ? "Received" : stage)));
+  }
+
+  function checklist(order, { change, advance, refresh, busy = false, problem = "" }) {
+    const checked = new Set(order.packedLines || []);
+    const finished = order.status === "Ready" || order.status === "Dispatched";
+    const packed = order.lines.reduce((sum, line, i) => sum + (finished || checked.has(i) ? line.quantity : 0), 0);
+    const allPacked = order.lines.length > 0 && order.lines.every((_, i) => checked.has(i));
+    const next = { New: "Start preparing", Preparing: "Mark ready", Ready: order.delivery === "Delivery" ? "Review dispatch" : "Review collection" }[order.status];
+    return el("div", { class: "wp-checklist", "aria-busy": String(busy) },
+      el("div", { class: "wp-check-head" }, el("h3", {}, "Pack by coffee"), el("small", {}, `${order.lines.length} ${order.lines.length === 1 ? "line" : "lines"}`)),
+      el("ul", { class: "wp-check-lines" }, ...order.lines.map((line, i) => {
+        const grind = grindFor(line), done = finished || checked.has(i);
+        return el("li", {}, el("label", { class: "wp-check-line", style: coffeeStyle(line) },
+          el("input", { type: "checkbox", checked: done, disabled: busy || !!problem || order.status !== "Preparing", "data-pack-line": i,
+            "aria-label": `Pack ${bags(line.quantity)} of ${line.title}, ${line.packLabel}, ${grind.label}`, onchange: event => change(i, event.target.checked) }),
+          el("span", { class: "wp-check-product" }, el("b", {}, line.title, decafTag(!!line.decaf)),
+            el("small", {}, `${line.packLabel} · ${grind.label}${done ? " · Packed" : ""}`), recipeOf(line)),
+          el("strong", { class: "wp-check-qty" }, "× ", String(line.quantity))));
+      })),
+      el("div", { class: "wp-check-foot" },
+        el("div", { class: "wp-progress" }, el("p", {}, el("b", {}, `${packed} of ${order.packs}`), " bags packed"),
+          el("progress", { "aria-label": "Bags packed", max: Math.max(order.packs || 0, 1), value: packed })),
+        next ? el("button", { type: "button", class: "btn sm", "data-pack-next": "", disabled: busy || !!problem || (order.status === "Preparing" && !allPacked), onclick: advance }, busy ? "Saving…" : next) : null),
+      problem ? el("div", { class: "wp-pack-problem", role: "alert" }, el("p", {}, problem),
+        el("button", { type: "button", class: "btn soft sm", onclick: refresh }, "Reload order")) : null);
+  }
+
+  window.SCWholesalePacking = Object.freeze({ totals, summaryBody, sheet, print, printOrders, stageTrack, checklist });
 })();

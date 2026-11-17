@@ -5,7 +5,8 @@
 // exemption or login details).
 import type {User} from "./auth";
 import {ApiError,type Env,invalid,json,readJson} from "./http";
-import {customerOrdersUrl,ordersToPrint,takeOrderFor,TAKEN_SOURCES,tellCustomerStandingChange,updateOrderStatus} from "./wholesale";
+import {customerOrdersUrl,ordersToPrint,takeOrderFor,TAKEN_SOURCES,tellCustomerStandingChange,updateOrderStatus,updatePackingLine} from "./wholesale";
+import {dispatchFilter,orderSort,packingTotals} from "./wholesalePacking";
 import {wholesaleCustomer} from "./wholesaleAccounts";
 import {catalogue,packsOf} from "./wholesaleCatalogue";
 import {catalogueFor} from "./wholesaleWhiteLabel";
@@ -43,7 +44,7 @@ function staffView(o:any,account?:{overdue:boolean;review:boolean}){
     address:o.locationSnapshot?.address??o.customerSnapshot?.address??'',postcode:o.locationSnapshot?.postcode??o.customerSnapshot?.postcode??'',
     deliveryNotes:o.locationSnapshot?.deliveryNotes??o.deliveryNotes??'',customerNote:o.customerNote||'',note:o.note||'',takenSource:o.takenFor?.source||'',trackingUrl:o.trackingUrl||'',dispatchDate:o.dispatchDate||'',standingEvery:o.standing?.every||0,onTab:!!o.tab&&!o.tabClearedId,customerId:o.customerId||null,packs:o.packs,grams:o.grams,
     lines:o.lines.map((l:any)=>({productId:l.productId,title:l.title,pack:l.pack,packLabel:l.packLabel,grind:l.grind,grindLabel:l.grindLabel,grindHint:l.grindHint,decaf:l.decaf,quantity:l.quantity,grams:l.grams,...(l.recipe?{recipe:l.recipe}:{})})),
-    account:account||{overdue:false,review:false},
+    account:account||{overdue:false,review:false},...(Array.isArray(o.packedLines)?{packedLines:o.packedLines}:{}),
     // Changes to the bags and skipped deliveries: whether the customer did it themselves, never which staff member.
     changed:o.amendedAt?{at:o.amendedAt,byCustomer:!!o.amendedByCustomer,thisDeliveryOnly:!!o.repeatLines}:null,
     skipped:o.skipped?{at:o.skipped.at,byCustomer:!!o.skipped.customer}:null,
@@ -95,9 +96,21 @@ export async function handleStaffOrders(req:Request,env:Env,route:string,user:Us
   if(orderMatch){
     if(req.method!=="PATCH")return json({code:"method_not_allowed",message:"Use PATCH to change an order."},405,{Allow:"PATCH"});
     const body=object(await readJson(req,8192));
-    const updated=await updateOrderStatus(env,orderMatch[1],{ifVersion:body.ifVersion,status:body.status,note:body.note,trackingUrl:body.trackingUrl},user.name,{customerOnly:true,notify:{ctx,ordersUrl:customerOrdersUrl(env,links,req)}});
+    const updated=await updateOrderStatus(env,orderMatch[1],{ifVersion:body.ifVersion,status:body.status,note:body.note,trackingUrl:body.trackingUrl,requirePacked:body.requirePacked},user.name,{customerOnly:true,notify:{ctx,ordersUrl:customerOrdersUrl(env,links,req)}});
     await requireStaffOrders(env,user);
     return json({order:staffView(updated)});
+  }
+  const packingOrder=/^orders\/(WS-[A-F0-9]{32})\/packing$/.exec(route);
+  if(packingOrder&&req.method==="PATCH"){
+    const order=await updatePackingLine(env,packingOrder[1],object(await readJson(req,2048)));
+    const flags=await paymentFlags(env,order.customerId?[order.customerId]:[]);
+    await requireStaffOrders(env,user);
+    return json({order:staffView(order,order.customerId?flags.get(order.customerId):undefined)});
+  }
+  if(route==="packing-totals"&&req.method==="GET"){
+    const totals=await packingTotals(env,new URL(req.url).searchParams);
+    await requireStaffOrders(env,user);
+    return json(totals);
   }
   // Changing the bags on an order (and, on a standing order, for this delivery only or from now on) and skipping a
   // standing delivery: the same rules as Admin. Bags only here; the server prices them.
@@ -141,22 +154,25 @@ export async function handleStaffOrders(req:Request,env:Env,route:string,user:Us
   if(route!=="orders")throw new ApiError(404,"not_found","Not available on the staff orders dashboard.");
   const query=new URL(req.url).searchParams,q=(query.get('q')||'').trim(),status=query.get('status')||'open';
   if(q.length>120)throw invalid("Search can be up to 120 characters.");
-  if(!['open','all','New','Preparing','Ready','Dispatched','Cancelled'].includes(status))throw invalid("Choose a listed order status.");
+  if(!['open','all','prepare','New','Preparing','Ready','Dispatched','Cancelled'].includes(status))throw invalid("Choose a listed order status.");
   const where=["kind='order'","json_extract(data,'$.preview')=0","json_extract(data,'$.deletedAt') IS NULL"],values:(number|string)[]=[];
   if(status==='open')where.push("json_extract(data,'$.status') IN ('New','Preparing','Ready')");
+  else if(status==='prepare')where.push("json_extract(data,'$.status') IN ('New','Preparing')");
   else if(status!=='all'){where.push("json_extract(data,'$.status')=?");values.push(status)}
   if(q){const pattern='%'+q.replace(/[\\%_]/g,'\\$&')+'%';where.push("(id LIKE ? ESCAPE '\\' OR json_extract(data,'$.business') LIKE ? ESCAPE '\\' OR json_extract(data,'$.reference') LIKE ? ESCAPE '\\')");values.push(pattern,pattern,pattern)}
-  const base=where.join(' AND '),cursor=query.get('cursor');
-  if(cursor){const match=/^(\d{1,16}):([a-zA-Z0-9-]{1,80})$/.exec(cursor);if(!match||!Number.isSafeInteger(Number(match[1])))throw invalid("Reload orders before loading more.");where.push('(updated_at<? OR (updated_at=? AND id>?))');values.push(Number(match[1]),Number(match[1]),match[2])}
+  const scope=dispatchFilter(query);
+  const base=where.join(' AND ')+scope.sql;
+  values.push(...scope.args);
+  const sort=orderSort(query);
   const [rows,total]=await Promise.all([
-    env.DB.prepare(`SELECT id,data,version,updated_at FROM wholesale_preview WHERE ${where.join(' AND ')} ORDER BY updated_at DESC,id LIMIT 101`).bind(...values).all<{id:string;data:string;updated_at:number}>(),
-    env.DB.prepare(`SELECT COUNT(*) AS n FROM wholesale_preview WHERE ${base}`).bind(...values.slice(0,cursor?-3:undefined)).first<{n:number}>(),
+    env.DB.prepare(`SELECT id,data,version,${sort.key} AS sort_key FROM wholesale_preview WHERE ${base}${sort.after} ORDER BY sort_key ${sort.direction},id LIMIT 101`).bind(...values,...sort.values).all<{id:string;data:string;version:number;sort_key:string|number}>(),
+    env.DB.prepare(`SELECT COUNT(*) AS n FROM wholesale_preview WHERE ${base}`).bind(...values).first<{n:number}>(),
   ]);
-  const records=rows.results.slice(0,100).map(row=>({...row,order:{...JSON.parse(row.data),version:(row as any).version}}));
+  const records=rows.results.slice(0,100).map(row=>({...row,order:{...JSON.parse(row.data),version:row.version}}));
   const flags=await paymentFlags(env,records.map(r=>r.order.customerId).filter((id):id is string=>typeof id==='string'&&!!id));
   const orders=records.map(({id,order:o})=>staffView({...o,id},flags.get(o.customerId)));
   // Recheck before releasing the response if access was revoked while the list/observations were read.
   await requireStaffOrders(env,user);
   const last=records.at(-1);
-  return json({orders,count:total?.n||0,nextCursor:rows.results.length>100&&last?`${last.updated_at}:${last.id}`:null});
+  return json({orders,count:total?.n||0,nextCursor:rows.results.length>100&&last?`${last.sort_key}:${last.id}`:null});
 }

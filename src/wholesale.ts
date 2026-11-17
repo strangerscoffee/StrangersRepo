@@ -8,6 +8,7 @@ import type { User } from "./auth";
 import { object, text, version, decode, get, save, type Row, type Versioned } from "./wholesaleStore";
 import { catalogue, handleCatalogueAdmin, serveCatalogueImage, packsOf } from "./wholesaleCatalogue";
 import { adminWholesalePage, adminWholesaleStats } from "./wholesaleAdminLists";
+import { packingTotals } from "./wholesalePacking";
 import { audit } from "./audit";
 import { ApiError, type Env, invalid, json, readJson } from "./http";
 import { manageWholesaleAccount, publicCustomer, wholesaleAccounts, wholesaleCustomer, paymentTermsFor, PAYMENT_TERMS, type Customer, type OrderingUser } from "./wholesaleAccounts";
@@ -39,6 +40,8 @@ interface Order {
   requestKey: string; lines: Line[]; pence: number; grams: number; packs: number;
   /** Skipped (a standing delivery): by whom (a name, admin only) and whether the customer did it. */
   skipped?: { by: string; customer: boolean; at: number };
+  /** Checked line indices for this run only. Order amendments invalidate them. */
+  packedLines?: number[];
   /** Standing order changed for one delivery only: the usual bags, which the next run goes back to. */
   repeatLines?: Line[];
   amendedByCustomer?: boolean;
@@ -91,8 +94,8 @@ export async function tellCustomerStandingChange(env: Env, ctx: ExecutionContext
 }
 const denied = () => new ApiError(403, "permission_denied", "Only admins can manage wholesale ordering.");
 export function visibleOrder(order: Order & Versioned, admin = false) {
-  const { requestKey, note, tab, tabClearedId, amendedBy, ...visible } = order;
-  if (admin) return { ...visible, trackingUrl: order.trackingUrl || "", note, ...(tab ? { tab } : {}), ...(tabClearedId ? { tabClearedId } : {}), ...(amendedBy ? { amendedBy } : {}) };
+  const { requestKey, note, tab, tabClearedId, amendedBy, packedLines, ...visible } = order;
+  if (admin) return { ...visible, ...(packedLines ? { packedLines } : {}), trackingUrl: order.trackingUrl || "", note, ...(tab ? { tab } : {}), ...(tabClearedId ? { tabClearedId } : {}), ...(amendedBy ? { amendedBy } : {}) };
   // Customers never see which member of staff took, changed or skipped an order: only whether they did it themselves.
   const { createdBy, createdName, skipped, ...rest } = visible as typeof visible & { createdBy?: string; createdName?: string; skipped?: { customer?: boolean; at?: number } };
   const own = order.takenFor ? rest : { ...rest, ...(createdBy !== undefined ? { createdBy } : {}), ...(createdName !== undefined ? { createdName } : {}) };
@@ -353,10 +356,31 @@ export async function ordersToPrint(env: Env, query: URLSearchParams, { customer
 
 /** Changes an order's status, internal note and (optionally) tracking link, version-checked. Shared by Admin and the
  * staff orders page; only Admin may relink a staff preview to a customer. */
+export async function updatePackingLine(env: Env, id: string, body: Record<string, any>) {
+  const expected = version(body.ifVersion);
+  const order = await get<Order>(env, "order", id);
+  if (!order || order.deletedAt != null || order.preview !== false) throw new ApiError(404, "not_found", "Order not found.");
+  if (order.version !== expected) throw new ApiError(409, "conflict", "This order changed. Review the latest packing list before checking any more bags.");
+  if (order.status !== "Preparing") throw new ApiError(409, "packing_closed", "Start preparing this order before checking off its bags.");
+  if (!Number.isSafeInteger(body.line) || body.line < 0 || body.line >= order.lines.length || typeof body.packed !== "boolean") throw invalid("Choose a line from this order's packing list.");
+  const marks = new Set(order.packedLines || []);
+  if (marks.has(body.line) === body.packed) return order;
+  if (body.packed) marks.add(body.line);
+  else marks.delete(body.line);
+  const { id: savedId, version: oldVersion, updatedAt, ...data } = order;
+  return save(env, "order", savedId, { ...data, packedLines: [...marks].sort((a,b) => a-b) }, expected);
+}
+
 export async function updateOrderStatus(env: Env, id: string, body: Record<string, any>, actor: string, { allowRelink = false, customerOnly = false, allowSchedule = false, notify }: { allowRelink?: boolean; customerOnly?: boolean; allowSchedule?: boolean; notify?: { ctx?: ExecutionContext; ordersUrl: string } } = {}): Promise<Order & Versioned> {
   const order = await get<Order>(env, "order", id);
   if (!order || order.deletedAt != null || (customerOnly && order.preview !== false)) throw new ApiError(404, "not_found", "Order not found.");
   if (!STATUSES.includes(body.status)) throw invalid("Choose a listed order status.");
+  const expected = version(body.ifVersion);
+  if (order.version !== expected) throw new ApiError(409, "conflict", "This order changed on another device. Reload it before saving.");
+  if (body.requirePacked === true && (order.preview !== false || body.status !== "Ready" || order.status !== "Preparing" ||
+      !order.lines.length || !order.lines.every((_, index) => order.packedLines?.includes(index)))) {
+    throw new ApiError(409, "packing_incomplete", "Check off every coffee line before marking this order ready.");
+  }
   let customerId = order.customerId ?? null;
   if (allowRelink) {
     customerId = body.customerId ?? null;
@@ -371,9 +395,9 @@ export async function updateOrderStatus(env: Env, id: string, body: Record<strin
   // a unique durable event so going back and forth never sends it twice.
   const firstDispatch = body.status === "Dispatched" && order.status !== "Dispatched" && order.preview === false && !order.dispatchEmailedAt;
   const data: Order = { ...current, ...(schedule || {}), status: body.status, customerId, note, trackingUrl: body.trackingUrl === undefined ? order.trackingUrl || "" : trackingUrl(body.trackingUrl) };
+  if (data.status === "New" || data.status === "Cancelled") delete data.packedLines;
   for (const key of ["dispatchDate", "standing"] as const) if (data[key] === undefined) delete data[key];
   if (!data.standing) { delete data.standingIssue; delete data.standingRetryAt; }
-  const expected = version(body.ifVersion);
   const outgoing = firstDispatch && notify ? await prepareDispatchEmail(env, { ...data, id }, notify.ordersUrl) : null;
   let updated: Order & Versioned;
   if (outgoing) {
@@ -421,6 +445,11 @@ export async function handleWholesaleAdmin(req: Request, env: Env, route: string
   if (route === "orders/print" && req.method === "GET") {
     const orders = (await ordersToPrint(env, new URL(req.url).searchParams)).map((order) => visibleOrder(order, true));
     return json({ orders, printedAt: Date.now() });
+  }
+  if (route === "orders/packing-totals" && req.method === "GET") return json(await packingTotals(env, new URL(req.url).searchParams));
+  const packingOrder = /^orders\/(WS-[A-F0-9]{32})\/packing$/.exec(route);
+  if (packingOrder && req.method === "PATCH") {
+    return json({ order: visibleOrder(await updatePackingLine(env, packingOrder[1], object(await readJson(req, 2048))), true) });
   }
   if ((route === "orders" || route === "customers") && req.method === "GET") {
     const query = new URL(req.url).searchParams;

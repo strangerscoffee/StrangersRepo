@@ -30,7 +30,10 @@ for(const [device,viewport]of[['phone',{width:393,height:852}],['iPad',{width:11
   page.on('pageerror',e=>errors.push(e.message));
   await page.route('**/api/admin/wholesale/orders/**',async route=>{if(route.request().method()==='PATCH')patches++;await route.continue()});
   try{
-   await page.goto(srv.base+'/admin#wholesale');await page.locator(`[data-act="wh-order"][data-id="${order.id}"]`).click();
+   await page.goto(srv.base+'/admin#wholesale');
+   if(device==='desktop')await page.locator('[data-act="wh-status"][data-id="all"]').click();
+   await page.locator(`[data-act="wh-order"][data-id="${order.id}"]`).click();
+   if(device==='desktop')await page.getByRole('region',{name:'Order preview'}).getByRole('button',{name:'Open order'}).click();
    await page.locator('#wPackingTitle').waitFor();
    const rows=page.locator('.w-packing-line');assert.equal(await rows.count(),5);
    assert.equal(await page.locator('.w-grind-badge').filter({hasText:'Whole bean'}).count(),1);

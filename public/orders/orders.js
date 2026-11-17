@@ -7,6 +7,9 @@
  'use strict';
  const {el,svgi}=SC,{grindFor,decafLine,iconPaths,coffeeStyle}=SCWholesalePreparation,packing=SCWholesalePacking;
  const $=id=>document.getElementById(id);
+ const wideDesk=matchMedia('(min-width: 1340px)');
+ const packProblems=new Map();
+ let activeOrder=null,heldOrder=null,mobilePacking=false,deskTotals=null,totalsMode='remaining',dispatchReview=null,totalsSequence=0;
  let orderingIdentity=null;
  const pendingPrefix=()=>orderingIdentity?'sc.staffOrders.pending.'+orderingIdentity+'.':null;
  const pendingKey=p=>pendingPrefix()+p.payload.requestId;
@@ -34,18 +37,21 @@
  let rows=[],cursor=null,total=0,status='open',selected=null,sequence=0,timer=null,searchTimer=null,customerTimer=null,started=false;
  let view='orders',customers=[],customersMore=false,picking=false,busy=new Set(),editing=false;
  let ordersKey='';
+ const findOrder=id=>rows.find(row=>row.id===id)||(heldOrder?.id===id?heldOrder:null);
  let tabs={open:[],cleared:[],threshold:6000},tabSelected=null,tabConfirm=false;
  const picked=new Set();
  let draft=null; // the order being taken for a customer (in memory only)
  let batch=null; // {status, confirm, running, done} while marking selected orders
  const weight=grams=>new Intl.NumberFormat('en-GB',{maximumFractionDigits:2}).format(grams/1000)+' kg';
  const date=at=>new Date(at).toLocaleString('en-GB',{timeZone:'Europe/London',day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});
+ const dispatchDay=day=>new Date(day+'T12:00:00Z').toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short',timeZone:'UTC'});
  const pill=value=>el('span',{class:'pill '+String(value).toLowerCase()},value);
- function closeDialogs(){for(const id of ['orderDialog','customerDialog','totalsDialog','tabDialog','newOrderDialog'])if($(id).open)$(id).close();}
+ function closeDialogs(){for(const id of ['dispatchDialog','orderDialog','customerDialog','totalsDialog','tabDialog','newOrderDialog'])if($(id).open)$(id).close();}
  function lock(clear=false){
   document.documentElement.setAttribute('data-orders-locked','');closeDialogs();
   if(clear){rows=[];customers=[];tabs={open:[],cleared:[],threshold:6000};tabSelected=null;$('tabList').replaceChildren();$('clearedList').replaceChildren();$('tabDetail').replaceChildren();selected=null;cursor=null;picked.clear();picking=false;editing=false;batch=null;
-   for(const id of ['orderList','orderDetail','orderEdit','customerList','customerDetail','totalsBody','newOrderForm','newOrderFoot'])$(id).replaceChildren();draft=null;
+   activeOrder=heldOrder=null;mobilePacking=false;deskTotals=null;totalsSequence++;packProblems.clear();dispatchReview=null;
+   for(const id of ['orderList','orderDetail','orderEdit','mobilePacking','packingDesk','deskBagTotals','deskDispatchBody','customerList','customerDetail','totalsBody','newOrderForm','newOrderFoot'])$(id).replaceChildren();draft=null;
    $('signedIn').textContent='';$('ordersContent').hidden=true;}
  }
  function message(text,{retry=false,denied=false}={}){
@@ -72,13 +78,15 @@
      el('button',{type:'button',class:'btn soft sm',onclick:()=>openTotals([])},'Bags to process'));
  }
  // Dispatch day and standing order, set in Admin ("Dispatch Fri 20 Nov · Standing order, every 2 weeks").
- const dispatchText=(row)=>[row.dispatchDate?'Dispatch '+new Date(row.dispatchDate+'T12:00:00Z').toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short',timeZone:'UTC'}):'',row.standingEvery?`Standing order, every ${row.standingEvery===1?'week':row.standingEvery+' weeks'}`:''].filter(Boolean).join(' · ');
+ const dispatchText=(row)=>[row.dispatchDate?'Dispatch '+dispatchDay(row.dispatchDate):'',row.standingEvery?`Standing order, every ${row.standingEvery===1?'week':row.standingEvery+' weeks'}`:''].filter(Boolean).join(' · ');
  function orderRow(row){
   const chosen=picked.has(row.id),next=NEXT[row.status],working=busy.has(row.id);
-  const main=el('button',{type:'button',class:'order-row'+(picking?' is-picking':''),'data-order-id':row.id,...(picking?{'aria-pressed':String(chosen)}:{}),onclick:()=>picking?togglePick(row.id):openOrder(row.id)},
+  const bags=`${row.packs} ${row.packs===1?'bag':'bags'} · ${weight(row.grams)}`;
+  const deskMeta=[row.locationName===row.business?'':row.locationName,row.delivery==='Roastery collection'?'Collection':row.delivery,row.dispatchDate?dispatchDay(row.dispatchDate):'Unscheduled',row.customerNote||row.note?'Note':''].filter(Boolean).join(' · ');
+  const main=el('button',{type:'button',class:'order-row'+(picking?' is-picking':''),'data-order-id':row.id,...(picking?{'aria-pressed':String(chosen)}:wideDesk.matches?{'aria-current':row.id===activeOrder?'true':'false'}:{}),onclick:()=>picking?togglePick(row.id):wideDesk.matches?chooseDeskOrder(row.id):openOrder(row.id)},
    picking?el('span',{class:'pick '+(chosen?'on':'off'),'aria-hidden':'true'},chosen?svg('ok'):null):null,
-   el('span',{},el('b',{},row.business),el('span',{class:'row-meta'},`${row.locationName} · ${row.delivery} · ${row.packs} ${row.packs===1?'bag':'bags'} · ${weight(row.grams)}`),el('span',{class:'row-meta'},date(row.createdAt)),dispatchText(row)?el('span',{class:'row-meta row-dispatch'},dispatchText(row)):null,row.onTab?el('span',{class:'row-meta row-tab'},'On tab'):null,row.note?el('span',{class:'row-meta row-note'},'Note: '+row.note):null,warning(row.account)),
-   el('span',{class:'row-end'},pill(row.status),picking?null:svg('chev')));
+   el('span',{},el('b',{},row.business),el('span',{class:'row-desktop-meta'},deskMeta),el('span',{class:'row-meta'},`${row.locationName} · ${row.delivery} · ${bags}`),el('span',{class:'row-meta'},date(row.createdAt)),dispatchText(row)?el('span',{class:'row-meta row-dispatch'},dispatchText(row)):null,row.onTab?el('span',{class:'row-meta row-tab'},'On tab'):null,row.note?el('span',{class:'row-meta row-note'},'Note: '+row.note):null,warning(row.account)),
+   el('span',{class:'row-end'},pill(row.status),el('span',{class:'row-desktop-meta'},bags),picking?null:svg('chev')));
   return el('div',{class:'order-entry'+(picking?' is-picking':''),'aria-busy':String(working)},main,!picking&&next?el('button',{type:'button',class:'btn soft quick','data-quick':row.id,disabled:working,onclick:()=>quick(row.id)},working?'Saving…':next[1]):null);
  }
  // Batch actions: mark every selected order preparing, ready or dispatched, one at a time against the version on
@@ -120,12 +128,156 @@
  }
  function togglePick(id){if(batch?.running)return;picked.has(id)?picked.delete(id):picked.add(id);draw();document.querySelector(`[data-order-id="${CSS.escape(id)}"]`)?.focus({preventScroll:true});}
  function draw(){
-  $('statusFilters').replaceChildren(...filters.map(([id,label])=>el('button',{type:'button','aria-pressed':String(status===id),onclick:()=>{status=id;load()}},label)));
+  const choices=wideDesk.matches?[filters[0],['prepare','To pack'],...filters.slice(1)]:filters;
+  if(!findOrder(activeOrder))activeOrder=rows[0]?.id||null;
+  const active=document.activeElement;
+  const filter=active?.dataset.orderFilter;
+  const orderId=active?.dataset.orderId;
+  $('statusFilters').replaceChildren(...choices.map(([id,label])=>el('button',{type:'button','data-order-filter':id,'aria-pressed':String(status===id),onclick:()=>{status=id;load()}},label)));
   $('printBar').replaceChildren(printBar());batchBar();
   $('orderCount').textContent=rows.length<total?`${rows.length} of ${total} orders`:`${total} ${total===1?'order':'orders'}`;
   $('orderList').replaceChildren(...rows.map(orderRow));
   if(!rows.length)$('orderList').append(el('div',{class:'empty'},$('search').value.trim()?'No matching orders. Try another search or status.':'No orders in this view.'));
   $('loadMore').hidden=!cursor;
+  drawDesk();
+  if(filter)$('statusFilters').querySelector(`[data-order-filter="${CSS.escape(filter)}"]`)?.focus({preventScroll:true});
+  if(orderId)$('orderList').querySelector(`[data-order-id="${CSS.escape(orderId)}"]`)?.focus({preventScroll:true});
+ }
+ function chooseDeskOrder(id){
+  if(heldOrder?.id!==id)heldOrder=null;
+  activeOrder=id;
+  for(const button of $('orderList').querySelectorAll('[data-order-id]'))button.setAttribute('aria-current',String(button.dataset.orderId===id));
+  drawDesk();
+ }
+ function packingControls(row){
+  return packing.checklist(row,{
+   busy:busy.has(row.id),problem:packProblems.get(row.id)||'',
+   change:(line,packed)=>saveDeskProgress(row,{line,packed}),
+   advance:()=>row.status==='Ready'?reviewDispatch(row):saveDeskProgress(row,{status:NEXT[row.status]?.[0]}),
+   refresh:async()=>{await load();if(findOrder(row.id)){packProblems.delete(row.id);renderPackingProgress(row.id);}}
+  });
+ }
+ function packingOrderBody(row,mobile=false){
+  return el('div',{class:mobile?'mobile-pack-body':'desk-panel-body'},
+   el('div',{class:'business-title'},el('h3',mobile?{}:{id:'deskBusiness',tabindex:'-1'},row.business),pill(row.status)),
+   el('p',{class:'desk-meta'},`${row.reference?row.reference+' · ':''}${row.locationName} · ${row.packs} ${row.packs===1?'bag':'bags'} · ${weight(row.grams)}`),
+   packing.stageTrack(row.status),warning(row.account,true),
+   el('div',{class:'desk-destination'},el('b',{},row.delivery),el('span',{},dispatchText(row)||'No dispatch date set'),
+    row.delivery==='Delivery'&&(row.address||row.postcode)?el('span',{},[row.address,row.postcode].filter(Boolean).join(', ')):null),
+   ...[['Customer comments',row.customerNote],['Delivery notes',row.deliveryNotes],['Internal note',row.note]].filter(([,note])=>note).map(([label,note])=>el('p',{class:'wp-work-note'},el('b',{},label),note)),
+   packingControls(row),
+   mobile?null:el('div',{class:'desk-order-actions'},el('button',{type:'button',class:'btn sm soft',onclick:()=>openOrder(row.id)},'Open order'),el('button',{type:'button',class:'btn sm soft',onclick:()=>printOne(row.id)},svg('doc'),'Print order')));
+ }
+ function drawDesk(){
+  if(!wideDesk.matches)return;
+  const host=$('packingDesk'),row=findOrder(activeOrder);
+  const advance=rows.filter(item=>item.id!==activeOrder&&['New','Preparing'].includes(item.status));
+  const next=advance.find(item=>rows.indexOf(item)>rows.indexOf(row))||advance[0];
+  const focused=document.activeElement;
+  const line=host.contains(focused)?focused.dataset.packLine:undefined;
+  const nextFocused=host.contains(focused)&&focused.hasAttribute('data-pack-next');
+  host.replaceChildren(el('header',{class:'desk-panel-head'},el('h2',{},'Active order'),next?el('button',{type:'button',class:'btn soft sm',onclick:()=>{chooseDeskOrder(next.id);$('deskBusiness').focus({preventScroll:true});}},'Next to pack'):null));
+  if(row)host.append(packingOrderBody(row));
+  else host.append(el('p',{class:'empty'},'Choose an order to start packing.'));
+  if(line!==undefined)host.querySelector(`[data-pack-line="${line}"]:enabled`)?.focus({preventScroll:true});
+  if(nextFocused)host.querySelector('[data-pack-next]:enabled')?.focus({preventScroll:true});
+ }
+ function drawDeskTotals(){
+  if(!wideDesk.matches)return;
+  const host=$('deskBagTotals'),current=deskTotals?.[totalsMode]||[];
+  const toggle=el('div',{class:'filters desk-totals-switch',role:'group','aria-label':'Bag totals status'},...Object.entries({remaining:'To pack',packed:'Packed'}).map(([mode,label])=>el('button',{type:'button','data-totals-mode':mode,'aria-pressed':String(mode===totalsMode),onclick:()=>{totalsMode=mode;drawDeskTotals();host.querySelector(`[data-totals-mode="${mode}"]`).focus({preventScroll:true});}},label)));
+  const scope=$('orderDispatchScope').selectedOptions[0].textContent;
+  const count=current.reduce((sum,line)=>sum+line.quantity,0);
+  host.replaceChildren(el('header',{class:'desk-panel-head'},el('h2',{},'Bag totals')),
+   el('div',{class:'desk-panel-body'},toggle,el('p',{class:'desk-meta'},'Open orders · '+scope),
+    deskTotals===null?el('p',{class:'empty'},'Loading bag totals…'):
+    deskTotals.error?el('div',{class:'desk-totals-empty'},el('p',{},'Bag totals could not be loaded.'),el('button',{type:'button',class:'btn sm soft',onclick:loadDeskTotals},'Retry')):
+    el('div',{class:'desk-bag-summary'},el('div',{class:'desk-total-line'},el('p',{class:'desk-total'},el('strong',{},String(count)),count===1?' bag':' bags'),count?el('b',{class:'desk-meta'},weight(current.reduce((sum,line)=>sum+line.grams*line.quantity,0))):null),
+     current.length?el('ul',{class:'desk-bag-list'},...current.map(line=>el('li',{},el('span',{},el('b',{},line.title),el('small',{},line.packLabel+' · '+grindFor(line).label)),el('strong',{},'× '+line.quantity)))):el('p',{class:'desk-meta'},totalsMode==='packed'?'No bags packed in open orders.':'No bags left to pack.'))));
+ }
+ async function loadDeskTotals(){
+  if(!wideDesk.matches||view!=='orders')return;
+  const request=++totalsSequence,owner=orderingIdentity,scope=$('orderDispatchScope').value;
+  try{
+   const result=await staffJson('GET','packing-totals?'+new URLSearchParams({dispatch:scope}));
+   if(request!==totalsSequence||owner!==orderingIdentity)return;
+   if(!Array.isArray(result.remaining)||!Array.isArray(result.packed))throw new Error('Bag totals could not be verified.');
+   deskTotals=result;
+  }catch(error){
+   if(request!==totalsSequence||owner!==orderingIdentity||error.quiet)return;
+   deskTotals={error:true};
+  }
+  drawDeskTotals();
+ }
+ function renderPackingProgress(id){
+  if(id===activeOrder)drawDesk();
+  if(id===selected&&mobilePacking){
+   const row=findOrder(id);
+   if(row)$('mobilePacking').replaceChildren(packingOrderBody(row,true));
+  }
+ }
+ function setMobilePacking(active){
+  mobilePacking=active;
+  $('mobilePacking').hidden=!active;
+  $('orderDetail').hidden=$('orderEdit').hidden=active;
+  $('orderTitle').textContent=active?'Pack order':'Order details';
+  $('doneOrder').textContent=active?'Back to details':'Done';
+  if(active)renderPackingProgress(selected);
+  else $('mobilePacking').replaceChildren();
+ }
+ async function saveDeskProgress(row,change,report){
+  if(busy.has(row.id)||packProblems.has(row.id)||row.version!==findOrder(row.id)?.version)return false;
+  const owner=orderingIdentity;
+  const focusHost=mobilePacking&&selected===row.id?$('mobilePacking'):$('packingDesk');
+  busy.add(row.id);renderPackingProgress(row.id);
+  try{
+   if(change.status){
+    const order=await patch(row,change.status==='Ready'?{...change,requirePacked:true}:change);
+    if(change.status!=='Dispatched'&&(activeOrder===row.id||selected===row.id))heldOrder={...order,account:row.account};
+   }
+   else{
+    const {order}=await staffJson('PATCH','orders/'+encodeURIComponent(row.id)+'/packing',{ifVersion:row.version,...change});
+    if(owner!==orderingIdentity||!started)return false;
+    if(order?.id!==row.id||order.status!=='Preparing'||!Number.isSafeInteger(order.version)||order.version<row.version||!Array.isArray(order.packedLines)||order.packedLines.includes(change.line)!==change.packed)throw new Error('The packing update could not be confirmed.');
+    const index=rows.findIndex(item=>item.id===row.id);
+    if(index>=0&&rows[index].version<=order.version)rows[index]=order;
+    if(heldOrder?.id===row.id&&heldOrder.version<=order.version)heldOrder=order;
+   }
+   if(owner!==orderingIdentity||!started)return false;
+   if(change.status){
+    toast(`${row.business}: ${change.status}`);draw();
+    if(change.status==='Dispatched'){heldOrder=null;await load();}
+    else if(selected===row.id&&mobilePacking)renderDetail(findOrder(row.id));
+   }
+   loadDeskTotals();return true;
+  }catch(error){
+   if(owner!==orderingIdentity||!started||error.quiet)return false;
+   packProblems.set(row.id,error.message||'Could not confirm the update. Reload the order.');
+   if(report)report(packProblems.get(row.id));
+   return false;
+  }finally{
+   busy.delete(row.id);
+   if(owner===orderingIdentity&&started){
+    renderPackingProgress(row.id);
+    const selector=change.status?'[data-pack-next]:enabled':`[data-pack-line="${change.line}"]:enabled`;
+    const target=focusHost.querySelector(selector)||focusHost.querySelector('.wp-pack-problem button');
+    if(document.activeElement===document.body)target?.focus({preventScroll:true});
+   }
+  }
+ }
+ function reviewDispatch(row,changes={}){
+  if(busy.has(row.id))return;
+  const collection=row.delivery==='Roastery collection';
+  dispatchReview={row,changes};
+  $('deskDispatchTitle').textContent=collection?'Confirm collection':'Confirm dispatch';
+  $('confirmDeskDispatch').textContent=collection?'Mark collected':'Mark dispatched';
+  $('confirmDeskDispatch').disabled=false;
+  const tracking=collection?null:el('label',{class:'field'},el('span',{},'Tracking link (optional)'),el('input',{id:'deskTracking',type:'url',inputmode:'url',maxlength:'500',placeholder:'https://…',value:changes.trackingUrl??row.trackingUrl??''}));
+  const destination=[row.address,row.postcode].filter(Boolean).join(', ');
+  $('deskDispatchBody').replaceChildren(el('div',{class:'desk-dispatch-details'},el('h3',{},row.business),el('p',{},`${row.locationName} · ${row.packs} ${row.packs===1?'bag':'bags'} · ${weight(row.grams)}`),
+   el('p',{},collection?'Only confirm once the customer has collected the order.':destination||row.delivery),tracking,
+   el('p',{class:'hint'},'The customer will be notified where order emails are enabled.'),el('p',{id:'deskDispatchError',class:'edit-error',role:'alert',hidden:true})));
+  $('dispatchDialog').showModal();
  }
  const kv=(label,value)=>el('div',{class:'kv'},el('span',{},label),el('span',{},value||'None supplied'));
  function renderDetail(row){
@@ -134,6 +286,7 @@
   for(const [label,text]of[['Delivery notes',row.deliveryNotes],['Customer comments',row.customerNote]])if(text)$('orderDetail').append(el('div',{class:'detail-note'},el('b',{},label),text));
   if(row.trackingUrl){try{const url=new URL(row.trackingUrl);if(['http:','https:'].includes(url.protocol)&&!url.username&&!url.password)$('orderDetail').append(el('a',{href:url.href,target:'_blank',rel:'noopener noreferrer',class:'tracking'},'Track delivery ↗'))}catch{}}
   if(!editing)renderEdit(row);
+  if(mobilePacking)renderPackingProgress(row.id);
  }
  // Status, internal note and tracking link: saved together, against the version on screen.
  function renderEdit(row){
@@ -156,7 +309,9 @@
     row.customerId?el('button',{type:'button',class:'btn soft',id:'tabToggle',onclick:()=>toggleTab(row.id)},row.onTab?'Take off tab':'Put on tab'):null,
     row.customerId&&OPEN_STATUSES.includes(row.status)?el('button',{type:'button',class:'btn soft',id:'changeBags',onclick:()=>openAmend(row)},'Change bags'):null,
     row.standingEvery&&OPEN_STATUSES.includes(row.status)?el('button',{type:'button',class:'btn soft',id:'skipDelivery',onclick:()=>askSkip(row)},'Skip this delivery'):null,
-    next?el('button',{type:'button',class:'btn soft',onclick:()=>{statusSelect.value=next[0];save(row.id)}},next[1]):null,
+    next?el('button',{type:'button',class:'btn soft','data-open-packing':'',onclick:()=>{
+     setMobilePacking(true);$('mobilePacking').parentElement.scrollTop=0;$('orderTitle').focus({preventScroll:true});
+    }},row.status==='Ready'?'Process dispatch':'Pack order'):null,
     el('button',{type:'button',class:'btn',id:'saveOrder',onclick:()=>save(row.id)},'Save')));
  }
  // Changing the bags (until dispatched, no invoice: the server checks) and skipping a standing delivery. Bags only:
@@ -194,7 +349,7 @@
     amend.catalogue?el('button',{type:'button',class:'btn',id:'saveAmend',onclick:saveAmend},amend.busy?'Saving…':'Save bags'):null));
   $('orderEdit').replaceChildren(...parts.filter(Boolean));amendTotals();
  }
- function closeAmend(){const row=amend&&rows.find(r=>r.id===amend.row.id);amend=null;editing=false;if(row)renderEdit(row);}
+ function closeAmend(){const row=amend&&findOrder(amend.row.id);amend=null;editing=false;if(row)renderEdit(row);}
  async function saveAmend(){
   if(!amend||amend.busy)return;
   const row=amend.row,lines=amend.lines.filter(l=>l.productId&&l.quantity>0).map(({productId,pack,grind,quantity})=>({productId,pack,grind,quantity}));
@@ -207,7 +362,7 @@
    toast(`${order.business}: bags changed${once?' for this delivery':''}`);
   }catch(e){
    if(e.quiet||!amend)return;amend.busy=false;
-   if(e.code==='conflict'){amend=null;editing=false;await load();const r=rows.find(x=>x.id===row.id);if(r){renderDetail(r);const box=$('editError');if(box){box.textContent='Someone else changed this order. It has been reloaded: check it and change the bags again.';box.hidden=false;}}return;}
+   if(e.code==='conflict'){amend=null;editing=false;await load();const r=findOrder(row.id);if(r){renderDetail(r);const box=$('editError');if(box){box.textContent='Someone else changed this order. It has been reloaded: check it and change the bags again.';box.hidden=false;}}return;}
    amend.error=e.message;drawAmend();
   }
  }
@@ -223,7 +378,7 @@
   try{const {order}=await staffJson('POST','orders/'+encodeURIComponent(row.id)+'/skip',{ifVersion:row.version});editing=false;$('orderDialog').close();toast(`${order.business}: delivery skipped`);await load();}
   catch(e){if(e.quiet)return;const box=$('skipError');if(box){box.textContent=e.code==='conflict'?'Someone else changed this order. Close it and open it again.':e.message;box.hidden=false;}button.disabled=false;button.textContent='Skip this delivery';}
  }
- function openOrder(id){const row=rows.find(row=>row.id===id);if(!row)return;selected=id;editing=false;renderDetail(row);$('orderDialog').showModal();}
+ function openOrder(id){const row=findOrder(id);if(!row)return;selected=id;editing=false;setMobilePacking(false);renderDetail(row);$('orderDialog').showModal();}
  async function patch(row,changes){
   const owner=orderingIdentity,expectedStatus=changes.status||row.status;
   const response=await fetch('/api/staff-orders/orders/'+encodeURIComponent(row.id),{method:'PATCH',cache:'no-store',headers:{'content-type':'application/json'},body:JSON.stringify({ifVersion:row.version,status:row.status,note:row.note||'',trackingUrl:row.trackingUrl||'',...changes})});
@@ -232,15 +387,17 @@
   if(response.status===403){lock(true);message('You no longer have access to wholesale orders.',{denied:true});throw Object.assign(new Error('No access.'),{quiet:true});}
   if(!response.ok)throw Object.assign(new Error(data.message||'The order could not be saved. Check your connection and try again.'),{code:data.code});
   if(data.order?.id!==row.id||data.order.status!==expectedStatus||!Number.isSafeInteger(data.order.version)||data.order.version<=row.version)throw new Error('The update could not be confirmed. Refresh orders before trying again.');
-  const index=rows.findIndex(r=>r.id===row.id);if(index>=0)rows[index]={...rows[index],...data.order};
+  const index=rows.findIndex(r=>r.id===row.id);if(index>=0&&rows[index].version<=data.order.version)rows[index]={...rows[index],...data.order,account:rows[index].account};
+  if(heldOrder?.id===row.id&&heldOrder.version<=data.order.version)heldOrder={...data.order,account:heldOrder.account};
   return data.order;
  }
  async function save(id){
-  const row=rows.find(r=>r.id===id);if(!row)return;
+  const row=findOrder(id);if(!row)return;
+  if(row.status!=='Dispatched'&&$('editStatus').value==='Dispatched'){reviewDispatch(row,{note:$('editNote').value,trackingUrl:$('editTracking').value.trim()});return;}
   const button=$('saveOrder'),error=$('editError');error.hidden=true;button.disabled=true;button.textContent='Saving…';
   try{
    const order=await patch(row,{status:$('editStatus').value,note:$('editNote').value,trackingUrl:$('editTracking').value.trim()});
-   editing=false;draw();renderDetail(rows.find(r=>r.id===id)||order);toast(`${order.business}: ${order.status}`);
+   editing=false;draw();renderDetail(findOrder(id)||order);toast(`${order.business}: ${order.status}`);
   }catch(e){
    if(e.quiet)return;
    if(e.code==='conflict'){editing=false;await load();error.textContent='Someone else changed this order. It has been reloaded: check it and save again.';}
@@ -250,6 +407,7 @@
  }
  async function quick(id){
   const row=rows.find(r=>r.id===id),next=row&&NEXT[row.status];if(!next||busy.has(id))return;
+  if(next[0]==='Dispatched'){reviewDispatch(row);return;}
   busy.add(id);draw();
   try{const order=await patch(row,{status:next[0]});toast(`${order.business}: ${order.status}`);}
   catch(e){if(!e.quiet){toast(e.code==='conflict'?'That order was changed elsewhere. Reloaded: try again.':e.message);if(e.code==='conflict')await load();}}
@@ -269,7 +427,7 @@
   try{const {orders,printedAt}=await fetchPrint(scope);if(!orders.length){toast(scope.ids?'Those orders are no longer available.':`No ${scope.label.toLowerCase()} to print.`);return;}packing.printOrders(orders,scope.label,printedAt,options);}
   catch(e){if(!e.quiet)toast(e.message);}
  }
- function printOne(id){const row=rows.find(r=>r.id===id);if(row)printScope({ids:[id],label:row.business});}
+ function printOne(id){const row=findOrder(id);if(row)printScope({ids:[id],label:row.business});}
  async function openTotals(selectedIds){
   let current=selectedIds.length?'selected':'New';
   const scopes={New:{status:'New',label:'New orders'},open:{status:'New,Preparing',label:'New and preparing orders'},selected:{ids:selectedIds,label:`${selectedIds.length} selected ${selectedIds.length===1?'order':'orders'}`}};
@@ -296,7 +454,7 @@
   return data;
  }
  async function toggleTab(id){
-  const row=rows.find(r=>r.id===id),button=$('tabToggle');if(!row||!button)return;
+  const row=findOrder(id),button=$('tabToggle');if(!row||!button)return;
   button.disabled=true;
   try{const {order}=await tabRequest('PUT','orders/'+encodeURIComponent(id)+'/tab',{ifVersion:row.version,onTab:!row.onTab});
    const i=rows.findIndex(r=>r.id===id);if(i>=0)rows[i]={...rows[i],...order};draw();renderDetail(rows[i]);toast(order.onTab?`${order.business}: on the tab`:`${order.business}: off the tab`);if(view==='tabs')loadTabs();}
@@ -558,7 +716,8 @@
  function showView(next){
   view=next;$('ordersView').hidden=view!=='orders';$('customersView').hidden=view!=='customers';$('tabsView').hidden=view!=='tabs';
   for(const b of $('viewTabs').querySelectorAll('button'))b.setAttribute('aria-pressed',String(b.dataset.view===view));
-  SC.reveal($(view+'View'));
+  setWorkspaceTitle();SC.reveal($(view+'View'));
+  if(view==='orders')loadDeskTotals();
   if(view==='customers')loadCustomers();
   if(view==='tabs')loadTabs();
  }
@@ -576,33 +735,66 @@
   if(!started)return;
   const current=++sequence,wasOpen=$('orderDialog').open,wasSelected=selected;
   if(reverify){lock();$('accessStatus').hidden=false;$('accessStatus').replaceChildren(SC.skeleton({label:'Checking access…'}));}
-  const key=status+'|'+$('search').value.trim(),changed=key!==ordersKey;ordersKey=key;
+  const dispatch=$('orderDispatchScope').value,sort=wideDesk.matches?'dispatch':'updated';
+  const key=[status,$('search').value.trim(),dispatch,sort].join('|'),changed=key!==ordersKey;ordersKey=key;
+  if(changed)heldOrder=null;
   if(!more&&changed)$('orderList').replaceChildren(SC.skeleton({label:'Loading orders…'}));
   $('orderList').setAttribute('aria-busy','true');
   $('refresh').disabled=true;$('refresh').setAttribute('aria-busy','true');$('loadMore').disabled=true;
   try{
    if(!(await SC.ensureSession({force:reverify})))return;
-   const query=new URLSearchParams({status});if($('search').value.trim())query.set('q',$('search').value.trim());if(more&&cursor)query.set('cursor',cursor);
+   const query=new URLSearchParams({status,dispatch,sort});if($('search').value.trim())query.set('q',$('search').value.trim());if(more&&!changed&&cursor)query.set('cursor',cursor);
    const response=await fetch('/api/staff-orders/orders?'+query,{cache:'no-store'});
    if(current!==sequence)return;
    if(response.status===403){lock(true);message('You do not have access to wholesale orders. Ask an admin to enable it.',{denied:true});return;}
    if(!response.ok)throw new Error('Orders could not be loaded.');
    const data=await response.json();if(current!==sequence)return;
    if(!Array.isArray(data.orders))throw new Error('Orders could not be verified.');
-   rows=more?[...new Map([...rows,...data.orders].map(row=>[row.id,row])).values()]:data.orders;cursor=data.nextCursor;total=data.count;
+   if(heldOrder&&!data.orders.some(row=>row.id===heldOrder.id)&&!more){
+    const id=heldOrder.id;
+    const result=await staffJson('GET','orders?status=all&q='+encodeURIComponent(id));
+    if(current!==sequence)return;
+    if(heldOrder?.id===id)heldOrder=result.orders.find(row=>row.id===id&&OPEN_STATUSES.includes(row.status))||null;
+   }
+   rows=more&&!changed?[...new Map([...rows,...data.orders].map(row=>[row.id,row])).values()]:data.orders;cursor=data.nextCursor;total=data.count;
    draw();$('accessStatus').hidden=true;$('ordersContent').hidden=false;document.documentElement.removeAttribute('data-orders-locked');if(changed||reverify)SC.reveal($('orderList'));
-   if(wasOpen&&wasSelected){const row=rows.find(row=>row.id===wasSelected);if(row){selected=row.id;renderDetail(row);if(!$('orderDialog').open)$('orderDialog').showModal()}else{$('orderDialog').close();selected=null;}}
+   loadDeskTotals();
+   if(wasOpen&&wasSelected){const row=findOrder(wasSelected);if(row){selected=row.id;renderDetail(row);if(!$('orderDialog').open)$('orderDialog').showModal()}else{$('orderDialog').close();selected=null;}}
    if(reverify&&view==='customers')loadCustomers();
    if(view==='tabs')loadTabs();
   }catch(error){if(current===sequence){lock(true);message('Orders could not be verified. Reconnect, then try again.',{retry:true});}}
   finally{if(current===sequence){$('orderList').setAttribute('aria-busy','false');$('refresh').disabled=false;$('refresh').setAttribute('aria-busy','false');$('loadMore').disabled=false;}}
  }
  $('refresh').onclick=()=>load({reverify:true});$('loadMore').onclick=()=>load({more:true});
+ $('orderDispatchScope').onchange=()=>{totalsSequence++;deskTotals=null;drawDeskTotals();load();};
+ const setWorkspaceTitle=()=>{$('workspaceTitle').textContent=wideDesk.matches&&view==='orders'?'Packing desk':'Wholesale orders';};
+ wideDesk.addEventListener('change',()=>{setWorkspaceTitle();if(!wideDesk.matches&&status==='prepare')status='open';if(started)load();});
+ setWorkspaceTitle();
  $('search').oninput=()=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>load(),250)};
  $('customerSearch').oninput=()=>{clearTimeout(customerTimer);customerTimer=setTimeout(loadCustomers,250)};
  for(const b of $('viewTabs').querySelectorAll('button'))b.onclick=()=>showView(b.dataset.view);
- $('closeOrder').onclick=$('doneOrder').onclick=()=>{$('orderDialog').close()};
- $('orderDialog').addEventListener('close',()=>{selected=null;editing=false;amend=null;$('orderEdit').replaceChildren()});
+ $('closeOrder').onclick=()=>$('orderDialog').close();
+ $('doneOrder').onclick=()=>{
+  if(!mobilePacking){$('orderDialog').close();return;}
+  setMobilePacking(false);$('orderEdit').querySelector('[data-open-packing]')?.focus();
+ };
+ $('orderDialog').addEventListener('close',()=>{if($('orderDialog').open)return;selected=null;editing=false;amend=null;setMobilePacking(false);$('orderEdit').replaceChildren()});
+ $('closeDeskDispatch').onclick=$('cancelDeskDispatch').onclick=()=>$('dispatchDialog').close();
+ $('dispatchDialog').addEventListener('close',()=>{if(!$('dispatchDialog').open){dispatchReview=null;$('deskDispatchBody').replaceChildren();}});
+ $('deskDispatchForm').onsubmit=async event=>{
+  event.preventDefault();const review=dispatchReview;if(!review)return;
+  const button=$('confirmDeskDispatch'),error=$('deskDispatchError');
+  const report=message=>{if(dispatchReview===review){error.textContent=message;error.hidden=false;}};
+  const {row,changes}=review;
+  if(findOrder(row.id)?.version!==row.version||packProblems.has(row.id)){
+   report('Close this review and reload the order before confirming.');return;
+  }
+  error.hidden=true;button.disabled=true;
+  const saved=await saveDeskProgress(row,{...changes,status:'Dispatched',trackingUrl:$('deskTracking')?.value.trim()||''},report);
+  if(dispatchReview!==review)return;
+  if(saved){$('dispatchDialog').close();if($('orderDialog').open)$('orderDialog').close();}
+  else button.disabled=false;
+ };
  $('closeCustomer').onclick=$('doneCustomer').onclick=()=>$('customerDialog').close();
  $('refreshTabs').onclick=()=>load({reverify:true});$('closeTab').onclick=()=>$('tabDialog').close();$('tabDialog').addEventListener('close',()=>{tabSelected=null;tabConfirm=false;});
  $('closeTotals').onclick=()=>$('totalsDialog').close();
@@ -616,5 +808,5 @@
  document.addEventListener('visibilitychange',()=>{if(document.hidden){sequence++;lock()}else if(started)load({reverify:true})});
  addEventListener('pageshow',event=>{if(event.persisted&&started)load({reverify:true})});addEventListener('online',()=>load({reverify:true}));
  SC.recheckOnPageshow();
- (async()=>{const me=await SC.startSession({clear:()=>{sequence++;started=false;orderingIdentity=null;clearInterval(timer);lock(true)}});if(!me)return;orderingIdentity=me.user.id;$('signedIn').textContent=me.user.name;started=true;await load({reverify:true});if(started){try{if(savedAttempts().length)newOrder(null);else await openFromLink();}catch{newOrder(null);}}timer=setInterval(()=>{if(started&&!document.hidden&&!editing&&!busy.size)load()},15000)})();
+ (async()=>{const me=await SC.startSession({clear:()=>{sequence++;started=false;orderingIdentity=null;clearInterval(timer);lock(true)}});if(!me)return;orderingIdentity=me.user.id;$('signedIn').textContent=me.user.name;started=true;await load({reverify:true});if(started){try{if(savedAttempts().length)newOrder(null);else await openFromLink();}catch{newOrder(null);}}timer=setInterval(()=>{if(started&&!document.hidden&&!editing&&!busy.size&&!$('dispatchDialog').open)load()},15000)})();
 })();

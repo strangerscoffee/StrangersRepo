@@ -30,8 +30,8 @@ for(const[screen,viewport]of[['phone',{width:393,height:852}],['iPad',{width:118
    await page.goto(srv.base+'/orders');await page.locator('[data-order-id]').first().waitFor();assert.equal(await page.locator('.account-warning').filter({hasText:'Account overdue'}).count(),1);
    assert.equal(await page.locator('.order-row b').first().innerText(),'River & Roast <Cafe>');assert.equal(await page.locator('cafe').count(),0);
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
-   await page.locator('[data-order-id]').first().click();await page.locator('#orderDialog[open]').waitFor();
-   assert.match(await page.locator('#orderDetail').innerText(),/Account|overdue invoices/);assert.equal(await page.locator('.w-grind-badge').filter({hasText:'Whole bean'}).count(),1);assert.equal(await page.locator('.w-decaf-label').count(),1);
+   await page.locator('[data-order-id]').first().click();if(screen==='desktop')await page.locator('#packingDesk').getByRole('button',{name:'Open order'}).click();await page.locator('#orderDialog[open]').waitFor();
+   assert.match(await page.locator('#orderDetail').innerText(),/Account|overdue invoices/);assert.equal(await page.locator('.w-grind-badge').filter({hasText:'Whole bean'}).count(),1);assert.equal(await page.locator('#orderDetail .w-decaf-label').count(),1);
    const details=await page.locator('#orderDetail').innerText();for(const hidden of ['PRIVATE_CUSTOMER_NOTE','PRIVATE_INVOICE_ACTOR','hidden@example.test','£'])assert.ok(!details.includes(hidden),hidden);
    assert.equal(await page.locator('#editNote').inputValue(),'PRIVATE_ORDER_NOTE','granted staff read and edit the internal note');assert.ok(await page.locator('#editStatus').isVisible());
    assert.ok(!(await page.locator('#orderDialog').innerText()).includes('£'),'no prices anywhere in the order');
