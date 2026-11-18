@@ -60,6 +60,24 @@ test('Admin People controls access to Wholesale in Staff navigation',{timeout:60
  }finally{await ac.close();await sc.close()}
 });
 
+test('Diary and Rota reflect the first live change to Wholesale access',{timeout:60000},async()=>{
+ for(const [path,name] of [['/','Kitchen Diary'],['/rota/','Rota']]){
+  await setAccess(false);
+  const context=await contextFor(STAFF,{width:393,height:852},'light');
+  try{
+   const page=await context.newPage();
+   await page.goto(srv.base+path);
+   await workspace(page,name).and(page.locator('[aria-current="page"]')).waitFor();
+   await page.waitForFunction(()=>!document.hidden&&window.SC?.live().open());
+   assert.equal(await workspace(page,'Wholesale').count(),0);
+   await setAccess(true);
+   await workspace(page,'Wholesale').waitFor({timeout:10000});
+   await setAccess(false);
+   await workspace(page,'Wholesale').waitFor({state:'detached',timeout:10000});
+  }finally{await context.close()}
+ }
+});
+
 for(const viewport of [{width:320,height:650},{width:1512,height:900}]){
  test(`Staff workspace navigation keeps local sections and filters at ${viewport.width}px`,{timeout:60000},async()=>{
   await setAccess(true);

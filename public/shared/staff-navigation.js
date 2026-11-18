@@ -67,7 +67,8 @@
     SC.live(change => {
       if (!active) return;
       if (typeof change.accounts === "number") {
-        const changed = active.revision !== null && change.accounts !== active.revision;
+        // The socket sends revisions after writes, so the first frame can be an access change.
+        const changed = change.accounts !== active.revision;
         active.revision = change.accounts;
         if (changed) refreshAccess();
       } else if (change.open && active.revision !== null) refreshAccess();
