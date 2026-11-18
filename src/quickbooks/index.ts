@@ -11,6 +11,7 @@ import {browse,changed,mapping,saveMapping,verifiedMapping} from './mappings';
 import {approveLive,readiness,requireExportMode,settings,switchEnvironment} from './settings';
 import {handleExportRoutes} from './exportRoutes';
 import {health,processEvents,requestReconciliation} from './jobs';
+import { wakeIntegration } from '../integrationSignals';
 import {buildPayload} from './payload';
 import {publicAppSettings,saveAppSettings} from './appSettings';
 const sessionHash=(req:Request)=>digest((/(?:^|;\s*)sfbb_session=([^;]+)/.exec(req.headers.get('cookie')||'')||[])[1]||'');
@@ -35,7 +36,7 @@ export async function handleQuickBooks(req:Request,env:Env,route:string,user:Use
     const setup=await configuration(req,env,mode),row=await connection(env,mode),state=await settings(env),live=await readiness(req,env);
     return json({environment:mode,mode:'manual-export',configured:!!setup.config,missing:setup.missing,connection:publicConnection(row),activeEnvironment:state.active_environment,modeVersion:state.version,live:publicReadiness(live),health:await health(env,mode,row.realm_id),capabilities:{references:!!setup.config&&row.status==='connected',invoicePreview:!!setup.config&&row.status==='connected',invoiceExport:!!setup.config&&row.status==='connected'&&state.active_environment===mode&&(mode==='sandbox'||live.ready),paymentWrites:false}});
   }
-  if(action==='/refresh-payments'&&req.method==='POST'){await readJson(req,4096);const queued=await requestReconciliation(env,mode);if(ctx)ctx.waitUntil(processEvents(req,env,3));else await processEvents(req,env,3);return json({queued},202);}
+  if(action==='/refresh-payments'&&req.method==='POST'){await readJson(req,4096);const queued=await requestReconciliation(env,mode);const delivery=wakeIntegration(env.QUICKBOOKS_QUEUE, {}, () => processEvents(req,env,3));if(ctx)ctx.waitUntil(delivery);else await delivery;return json({queued},202);}
   if(action==='/readiness'&&req.method==='GET'){const ready=await readiness(req,env);return json({...publicReadiness(ready),activeEnvironment:ready.settings.active_environment,modeVersion:ready.settings.version});}
   if(action==='/approve-live'&&req.method==='POST'){
     const ready=await approveLive(req,env,object(await readJson(req,8192)),user.id);await audit(env,'quickbooks_live_review',user.name,`${user.name} reviewed the QuickBooks Live configuration.`);return json({...publicReadiness(ready),modeVersion:ready.settings.version});

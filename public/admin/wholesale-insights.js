@@ -159,6 +159,7 @@ window.WholesaleInsights = function ({ api, html, raw, svg, put, openSheet, clos
     const next = f.total.weeks.find(week => week.week === data.roast.week);
     const booked = data.roast.rows.reduce((total, row) => total + (row.committedGrams || 0), 0);
     return html`<section class="ins-section glass" aria-labelledby="insFc"><header class="ins-head"><h3 id="insFc">Forecast: ${data.customer ? `${data.customer.name}'s coffee` : "coffee"} for the next ${f.total.weeks.length} weeks</h3></header>
+      ${data.generatedAt ? html`<p class="hint">Calculated <time datetime="${new Date(data.generatedAt).toISOString()}">${new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "Europe/London" }).format(data.generatedAt)}</time></p>` : ""}
       <div class="ins-week-summary">${head4.map(p => html`<div><b>${day(p.week)}</b><strong>${kg(p.grams)}</strong><span>Likely range ${kgNum(p.low)}–${kg(p.high)}</span></div>`)}</div>
       ${next ? html`<p class="hint">Week of ${day(next.week)} · ${kg(booked)} booked · ${kg(data.roast.rows.reduce((total, row) => total + (row.additionalForecastGrams || 0), 0))} additional demand in the roast plan.</p>` : ""}
       <p class="hint">Models are compared against earlier completed weeks when enough history is available.${f.total.basis === "seasonal" ? " Last year's pattern also contributes where history supports it." : ""} This week's unfinished sales are shown separately and excluded from training. Shading shows an estimated range.</p>

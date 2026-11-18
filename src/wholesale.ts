@@ -15,6 +15,7 @@ import { manageWholesaleAccount, publicCustomer, wholesaleAccounts, wholesaleCus
 import { customerLocations, editedCustomerLocations, locationDefaults, validLocationId, type CustomerLocation } from "./wholesaleCustomers";
 import { notifyCustomerChange, standingChangeToCustomer, confirmToCustomer, prepareDispatchEmail, handleOrderEmailsAdmin, notifyNewOrder, orderEmailSettings } from "./email/orders";
 import { dispatchEvent, deliverDispatchEmails } from "./email/outbox";
+import { wakeIntegration } from "./integrationSignals";
 import { notifySlackChange, notifySlackNewOrder } from "./slackOrders";
 import { handleInsights } from "./insights";
 import { autoTabFor, clearTab, listTabs, setOnTab } from "./wholesaleTabs";
@@ -415,7 +416,7 @@ export async function updateOrderStatus(env: Env, id: string, body: Record<strin
     updated = { ...data, id, version: expected + 1, updatedAt: at };
   } else updated = await save(env, "order", id, data, expected);
   if (body.status === "Dispatched" && notify) {
-    const delivery = deliverDispatchEmails(env, "dispatch:" + id).catch(() => {});
+    const delivery = wakeIntegration(env.DISPATCH_EMAIL_QUEUE, { key: "dispatch:" + id }, () => deliverDispatchEmails(env, "dispatch:" + id)).catch(() => {});
     if (notify.ctx) notify.ctx.waitUntil(delivery); else await delivery;
   }
   await audit(env, "wholesale_preview_status", actor, `${actor} marked wholesale order ${id} as ${body.status}. No fulfilment action was sent.`);

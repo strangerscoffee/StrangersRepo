@@ -1,6 +1,9 @@
 // Strangers Coffee Kitchen Diary staff site.
 // Serves the diary page (public/index.html) and the API it uses through claude-shim.js, and, on its own
 // hostname (ROTA_HOST), the staff rota (public/rota/, src/rota.ts). One Worker, one database, one set of accounts.
+import { refreshInsights } from "./insights";
+import { deliverIntegrationBatch } from "./integrationConsumer";
+import type { IntegrationSignal } from "./integrationSignals";
 import { runHolidayReminders } from "./rota/leave/notify";
 import { repairStandingRuns } from "./wholesaleStanding";
 import { deliverSlackPosts } from "./slackOrders";
@@ -83,8 +86,16 @@ export default {
     return withSecurityHeaders(res, local);
   },
 
+  queue: deliverIntegrationBatch,
+
   // The daily backup, and the managers' Monday summary (crons in wrangler.jsonc).
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    if (event.cron === "*/15 * * * *") {
+      ctx.waitUntil(ensureSchema(env).then(() => refreshInsights(env)).catch(error => {
+        console.error("Insights snapshot refresh failed", error);
+      }));
+      return;
+    }
     if(event.cron === "*/5 * * * *"){
       ctx.waitUntil(ensureSchema(env).then(async()=>{
         const run = async (name: string, task: () => Promise<unknown>) => {
@@ -93,18 +104,18 @@ export default {
             await recordError(env, { source: "server", app: "worker", page: "scheduled / five-minute jobs", message: `${name} did not complete.` });
           }
         };
-        // App credentials can be saved in Admin instead of Worker vars. Keep idle cron runs small.
-        await run("Standing-order recovery", () => repairStandingRuns(env));
-        await run("Wholesale Slack notifications", () => deliverSlackPosts(env));
-        await run("Dispatch emails", () => deliverDispatchEmails(env));
-        await run("Diary reminders", () => deliverDiaryReminders(env));
-        // Holiday left to take, and the quarter's extra-hours holiday to review: once a day from 09:00 UK time.
         const domain = env.COOKIE_DOMAIN || "staffstrangerscoffee.com";
         const at = env.SLACK_TEST_HOOKS === "1" && env.HOLIDAY_NOW ? new Date(env.HOLIDAY_NOW) : new Date();
-        await run("Holiday reminders", () => runHolidayReminders(env, { diary: `https://${domain}/`, rota: env.ROTA_HOST ? `https://${env.ROTA_HOST}/` : `https://${domain}/rota/` }, at));
-        await run("QuickBooks jobs", async () => {
-          if (env.QUICKBOOKS_CLIENT_ID || env.QUICKBOOKS_PRODUCTION_CLIENT_ID || await env.DB.prepare('SELECT 1 FROM quickbooks_app_settings WHERE data IS NOT NULL LIMIT 1').first()) await runQuickBooksJobs(env);
-        });
+        await Promise.all([
+          run("Standing-order recovery", () => repairStandingRuns(env)),
+          run("Wholesale Slack notifications", () => deliverSlackPosts(env)),
+          run("Dispatch emails", () => deliverDispatchEmails(env)),
+          run("Diary reminders", () => deliverDiaryReminders(env)),
+          run("Holiday reminders", () => runHolidayReminders(env, { diary: `https://${domain}/`, rota: env.ROTA_HOST ? `https://${env.ROTA_HOST}/` : `https://${domain}/rota/` }, at)),
+          run("QuickBooks jobs", async () => {
+            if (env.QUICKBOOKS_CLIENT_ID || env.QUICKBOOKS_PRODUCTION_CLIENT_ID || await env.DB.prepare('SELECT 1 FROM quickbooks_app_settings WHERE data IS NOT NULL LIMIT 1').first()) await runQuickBooksJobs(env);
+          }),
+        ]);
       }));
       return;
     }
@@ -116,7 +127,7 @@ export default {
     }
     ctx.waitUntil(ensureSchema(env).then(() => makeBackup(env, "daily")));
   },
-} satisfies ExportedHandler<Env>;
+} satisfies ExportedHandler<Env, IntegrationSignal>;
 
 /** How far out a device's clock must be before the admin section mentions it. */
 const CLOCK_FLAG_MS = 5 * 60 * 1000;
@@ -163,6 +174,16 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
     req = new Request(target, req); url = target;
   }
   const p = url.pathname;
+  if (p.startsWith("/_releases/")) {
+    const asset = /^\/_releases\/[a-f0-9]{20}(\/[-\w/]+\.(?:js|css))$/.exec(p)?.[1];
+    const app = appForHost(url.hostname, env.ROTA_HOST, env.ADMIN_HOST, env.PREVIEW_HOST, env.LEGACY_PREVIEW_HOST);
+    const publicCode = asset && (isRetailShopPath(asset)
+      ? url.hostname === env.LEGACY_PREVIEW_HOST?.toLowerCase()
+      : isPublicAsset(asset) || isPublicCode(app, asset) ||
+        (app === "preview" && ["/theme.css", "/shared/core.js", "/shared/focus.js"].includes(asset)));
+    if (!isGet || !asset || !publicCode) return new Response("Not found", { status: 404 });
+    return staticFile(req, env, asset);
+  }
   if (isRetailShopPath(p)) {
     if (url.hostname !== env.LEGACY_PREVIEW_HOST?.toLowerCase()) return new Response("Not found", { status: 404 });
     return serveRetailShop(req, env, ctx, url);

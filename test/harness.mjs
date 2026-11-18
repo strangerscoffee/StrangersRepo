@@ -19,7 +19,7 @@ function freePort() {
   });
 }
 
-export async function startServer({ writeLimit, preSql, scheduled, vars = {}, host, config } = {}) {
+export async function startServer({ writeLimit, preSql, scheduled, vars = {}, host, config, readyPath = config ? "/shop/" : "/robots.txt" } = {}) {
   const state = mkdtempSync(join(tmpdir(), "kitchen-diary-test-"));
   // Optional SQL to run on the empty local database before the Worker starts (e.g. an older schema).
   if (preSql) {
@@ -55,7 +55,7 @@ export async function startServer({ writeLimit, preSql, scheduled, vars = {}, ho
         if (proc.exitCode != null) throw new Error("wrangler dev exited:\n" + log);
         // Do not mistake the process that stole the port for this fixture.
         if (/Ready on https?:\/\//.test(log)) try {
-          const r = await fetch(base + (config ? "/shop/" : "/robots.txt"));
+          const r = await fetch(base + readyPath);
           if (r.ok) break;
         } catch {}
         if (Date.now() > deadline) throw new Error("wrangler dev didn't start:\n" + log);

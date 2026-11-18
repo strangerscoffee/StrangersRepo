@@ -48,6 +48,8 @@ test("site orders on their own: this week's sales, open orders in the roast plan
   const r = await call("GET", "/api/admin/wholesale/insights");
   assert.equal(r.status, 200, r.text);
   const ins = r.body;
+  assert.ok(ins.generatedAt > 0);
+  assert.equal((await call("GET", "/api/admin/wholesale/insights")).body.generatedAt, ins.generatedAt);
   assert.equal(ins.sources.siteOrders, 2); assert.equal(ins.sources.historyRows, 0);
   assert.deepEqual(ins.settings, { batchKg: 10, yieldKg: 8, historyUntil: null, version: 0 });
   const week = ins.weekly.at(-1);

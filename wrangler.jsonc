@@ -7,6 +7,7 @@
   "compatibility_date": "2026-10-01",
   "workers_dev": false,
   "preview_urls": false,
+  "build": { "command": "node scripts/build-assets.mjs --workers-ci" },
 
   "assets": {
     "directory": "./public",
@@ -64,7 +65,7 @@
   // A backup of the diary every day at 03:17 UTC (src/backup.ts). Free on every plan.
   // The nightly backup; and the managers' Monday summary at 07:30 UK time (06:30 UTC in summer, 07:30 in winter: it
   // runs at both and sends only at 07:xx in London, once a week).
-  "triggers": { "crons": ["17 3 * * *", "30 6,7 * * 1", "*/5 * * * *"] },
+  "triggers": { "crons": ["17 3 * * *", "30 6,7 * * 1", "*/5 * * * *", "*/15 * * * *"] },
 
   "observability": { "enabled": true }
 }

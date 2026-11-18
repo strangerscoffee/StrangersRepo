@@ -5,7 +5,7 @@
   const delay = () => new Promise(resolve => setTimeout(resolve, 250));
   async function load(definition) {
     const url = new URL(definition.src, location.href);
-    if (url.origin !== location.origin || !/^\/(?:shared|admin)\/[\w-]+\.js$/.test(url.pathname)) throw new Error("Invalid Admin dependency.");
+    if (url.origin !== location.origin || !/^\/(?:_releases\/[a-f0-9]{20}\/)?(?:shared|admin)\/[\w-]+\.js$/.test(url.pathname)) throw new Error("Invalid Admin dependency.");
     for (let attempt = 0; attempt < 2; attempt++) {
       const script = document.createElement("script");
       script.dataset.scManaged = "1";

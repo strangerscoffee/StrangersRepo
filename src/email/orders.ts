@@ -10,6 +10,7 @@ import { emailDeliveryStatus } from "./delivery";
 import { orderSender } from "./sender";
 import { notificationStatus } from "../notificationStatus";
 import { deliverDispatchEmails, retryDispatchEmails, dispatchEvent } from "./outbox";
+import { wakeIntegration } from "../integrationSignals";
 import { cleanEmail, emailReady, send, type Outgoing } from "./send";
 import { esc } from "./templates";
 import { sendSlackTest, slackReady, retrySlackPosts, deliverSlackPosts } from "../slackOrders";
@@ -335,7 +336,7 @@ export async function handleOrderEmailsAdmin(req: Request, env: Env, route: stri
     const inserted = await dispatchEvent(env, order.id, order.version, outgoing).run();
     if (!inserted.meta.changes) throw new ApiError(409, "delivery_changed", "The order changed or its notification is already tracked. Reload before retrying.");
     await audit(env, "wholesale_email_retry", actor, `${actor} reviewed and retried the legacy dispatch email for ${order.id}.`);
-    const delivery = deliverDispatchEmails(env, "dispatch:" + order.id).catch(() => {});
+    const delivery = wakeIntegration(env.DISPATCH_EMAIL_QUEUE, { key: "dispatch:" + order.id }, () => deliverDispatchEmails(env, "dispatch:" + order.id)).catch(() => {});
     if (ctx) ctx.waitUntil(delivery); else await delivery;
     return json({ queued: 1, delivery: await notificationStatus(env) });
   }
@@ -344,7 +345,8 @@ export async function handleOrderEmailsAdmin(req: Request, env: Env, route: stri
     const body = object(await readJson(req, 2048));
     if (body.acknowledgeUnknown !== undefined && typeof body.acknowledgeUnknown !== "boolean") throw invalid("Explicitly confirm whether uncertain delivery was reviewed.");
     const queued = retry[1] === "email" ? await retryDispatchEmails(env, actor, body.acknowledgeUnknown === true) : await retrySlackPosts(env, actor, body.acknowledgeUnknown === true);
-    const delivery = (retry[1] === "email" ? deliverDispatchEmails(env) : deliverSlackPosts(env)).catch(() => {});
+    const delivery = (retry[1] === "email" ? wakeIntegration(env.DISPATCH_EMAIL_QUEUE, {}, () => deliverDispatchEmails(env))
+      : wakeIntegration(env.SLACK_ORDERS_QUEUE, {}, () => deliverSlackPosts(env))).catch(() => {});
     if (ctx) ctx.waitUntil(delivery); else await delivery;
     return json({ queued, delivery: await notificationStatus(env) });
   }

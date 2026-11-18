@@ -8,6 +8,7 @@
 // morning, or one Slack refused, still goes out. Staff previews and retries of an order already placed post nothing.
 import { audit } from "./audit";
 import { ApiError, Env } from "./http";
+import { wakeIntegration } from "./integrationSignals";
 import { buildSlackChange, buildSlackOrder, SlackChange, SlackOrder, slackPostTime } from "./slackOrderText";
 
 export const slackReady = (env: Env) => /^https:\/\/hooks\.slack\.com\/services\/[A-Za-z0-9/_-]+$/.test(env.SLACK_ORDERS_WEBHOOK_URL || "")
@@ -74,20 +75,20 @@ export async function retrySlackPosts(env: Env, actor: string, acknowledgeUnknow
   return queued;
 }
 
-/** Queues the Slack post for a new customer order and sends it now if it's business hours. Never throws. */
+/** Persists the Slack post for a new customer order before scheduling delivery. Never throws. */
 export async function notifySlackNewOrder(env: Env, ctx: ExecutionContext | undefined, order: SlackOrder, diaryBase: string) {
   if (!slackReady(env)) return;
-  const run = (async () => {
-    try {
-      const sendAfter = slackPostTime(order.createdAt);
-      const payload = JSON.stringify(buildSlackOrder(order, `${diaryBase.replace(/\/$/, "")}/orders`, sendAfter > order.createdAt));
-      await env.DB.prepare("INSERT OR IGNORE INTO slack_order_posts (order_id, payload, send_after, created_at, attempts) VALUES (?, ?, ?, ?, 0)").bind(order.id, payload, sendAfter, Date.now()).run();
-      if (sendAfter <= Date.now()) await deliver(env, { order_id: order.id, payload, attempts: 0 });
-    } catch (error) {
-      await audit(env, "slack_failed", null, `Couldn't post wholesale order ${order.id} to Slack: ${String((error as Error)?.message || error).slice(0, 160)}`).catch(() => {});
+  try {
+    const sendAfter = slackPostTime(order.createdAt);
+    const payload = JSON.stringify(buildSlackOrder(order, `${diaryBase.replace(/\/$/, "")}/orders`, sendAfter > order.createdAt));
+    await env.DB.prepare("INSERT OR IGNORE INTO slack_order_posts (order_id, payload, send_after, created_at, attempts) VALUES (?, ?, ?, ?, 0)").bind(order.id, payload, sendAfter, Date.now()).run();
+    if (sendAfter <= Date.now()) {
+      const delivery = wakeIntegration(env.SLACK_ORDERS_QUEUE, { key: order.id }, () => deliverSlackPosts(env, order.id));
+      if (ctx) ctx.waitUntil(delivery.catch(error => console.error("Slack delivery", error))); else await delivery;
     }
-  })();
-  if (ctx) ctx.waitUntil(run); else await run;
+  } catch (error) {
+    await audit(env, "slack_failed", null, `Couldn't post wholesale order ${order.id} to Slack: ${String((error as Error)?.message || error).slice(0, 160)}`).catch(() => {});
+  }
 }
 
 /** Queues (and in business hours sends) a post when a customer changes or skips a standing delivery themselves.
@@ -95,25 +96,25 @@ export async function notifySlackNewOrder(env: Env, ctx: ExecutionContext | unde
 export async function notifySlackChange(env: Env, ctx: ExecutionContext | undefined, order: SlackChange & { version?: number }, change: "skipped" | "once" | "ongoing", diaryBase: string) {
   if (!slackReady(env)) return;
   const key = `${order.id}:${change}:${order.version ?? Date.now()}`;
-  const run = (async () => {
-    try {
-      const now = Date.now(), sendAfter = slackPostTime(now);
-      const payload = JSON.stringify(buildSlackChange(order, change, `${diaryBase.replace(/\/$/, "")}/orders#${encodeURIComponent(order.id)}`, now, sendAfter > now));
-      await env.DB.prepare("INSERT OR IGNORE INTO slack_order_posts (order_id, payload, send_after, created_at, attempts) VALUES (?, ?, ?, ?, 0)").bind(key, payload, sendAfter, now).run();
-      if (sendAfter <= Date.now()) await deliver(env, { order_id: key, payload, attempts: 0 });
-    } catch (error) {
-      await audit(env, "slack_failed", null, `Couldn't post a standing order change ${order.id} to Slack: ${String((error as Error)?.message || error).slice(0, 160)}`).catch(() => {});
+  try {
+    const now = Date.now(), sendAfter = slackPostTime(now);
+    const payload = JSON.stringify(buildSlackChange(order, change, `${diaryBase.replace(/\/$/, "")}/orders#${encodeURIComponent(order.id)}`, now, sendAfter > now));
+    await env.DB.prepare("INSERT OR IGNORE INTO slack_order_posts (order_id, payload, send_after, created_at, attempts) VALUES (?, ?, ?, ?, 0)").bind(key, payload, sendAfter, now).run();
+    if (sendAfter <= Date.now()) {
+      const delivery = wakeIntegration(env.SLACK_ORDERS_QUEUE, { key }, () => deliverSlackPosts(env, key));
+      if (ctx) ctx.waitUntil(delivery.catch(error => console.error("Slack delivery", error))); else await delivery;
     }
-  })();
-  if (ctx) ctx.waitUntil(run); else await run;
+  } catch (error) {
+    await audit(env, "slack_failed", null, `Couldn't post a standing order change ${order.id} to Slack: ${String((error as Error)?.message || error).slice(0, 160)}`).catch(() => {});
+  }
 }
 
 /** The 5-minute cron: posts held for the morning, and retries of any Slack refused. */
-export async function deliverSlackPosts(env: Env) {
+export async function deliverSlackPosts(env: Env, key?: string) {
   if (!slackReady(env)) return;
   await reviewExpiredSlackClaims(env);
-  const due = await env.DB.prepare("SELECT p.order_id,p.payload,p.attempts FROM slack_order_posts p LEFT JOIN slack_order_delivery d ON d.order_id=p.order_id WHERE p.sent_at IS NULL AND p.send_after<=? AND p.attempts<? AND COALESCE(d.state,'queued')='queued' ORDER BY p.send_after,p.order_id LIMIT 25")
-    .bind(Date.now(), MAX_ATTEMPTS).all<{ order_id: string; payload: string; attempts: number }>();
+  const due = await env.DB.prepare("SELECT p.order_id,p.payload,p.attempts FROM slack_order_posts p LEFT JOIN slack_order_delivery d ON d.order_id=p.order_id WHERE p.sent_at IS NULL AND p.send_after<=? AND p.attempts<? AND COALESCE(d.state,'queued')='queued' AND (? IS NULL OR p.order_id=?) ORDER BY p.send_after,p.order_id LIMIT 25")
+    .bind(Date.now(), MAX_ATTEMPTS, key ?? null, key ?? null).all<{ order_id: string; payload: string; attempts: number }>();
   for (const row of due.results) await deliver(env, row);
 }
 

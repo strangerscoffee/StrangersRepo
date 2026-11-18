@@ -5,6 +5,7 @@
 import { audit } from "./audit";
 import { ApiError, type Env, invalid, json, readJson } from "./http";
 import { catalogue } from "./wholesaleCatalogue";
+import { reportSnapshot } from "./reporting";
 import { buildInsights, customerKey, type InsightSettings, type Mapping, type OpenLine, type Pack, type SaleLine, suggestMapping, ukDay } from "./insightsMath";
 
 const DEFAULTS: InsightSettings = { batchKg: 10, yieldKg: 8, historyUntil: null };
@@ -30,14 +31,14 @@ async function settings(env: Env) {
 }
 
 interface StoredOrder { business?: string; customerSnapshot?: { name?: string }; status: string; date?: string; dispatchDate?: string; previousRunId?: string; createdAt: number; lines: { productId: string; title: string; pack: Pack; quantity: number; grams: number; price: number }[] }
-async function siteOrders(env: Env) {
+async function siteOrders(env: Env, today: string) {
   const rows = await env.DB.prepare("SELECT id, data FROM wholesale_preview WHERE kind = 'order' AND json_extract(data, '$.preview') = 0 AND json_extract(data, '$.deletedAt') IS NULL AND json_extract(data, '$.status') <> 'Cancelled'").all<{ id: string; data: string }>();
   const lines: SaleLine[] = [], open: OpenLine[] = [];
   let first: string | null = null;
   for (const row of rows.results) {
     let o: StoredOrder; try { o = JSON.parse(row.data); } catch { continue; }
     const day = (o.previousRunId && o.dispatchDate) || o.date || ukDay(o.createdAt), customer = o.business || o.customerSnapshot?.name || "Unknown";
-    const futureRun = !!o.previousRunId && day > ukDay(Date.now());
+    const futureRun = !!o.previousRunId && day > today;
     if (!futureRun && (!first || day < first)) first = day;
     for (const l of o.lines || []) {
       const bags = Number(l.quantity) || 0, grams = (Number(l.grams) || 0) * bags;
@@ -66,13 +67,13 @@ async function historyLines(env: Env, until: string | null) {
   return lines;
 }
 
-async function insights(env: Env, only: string | null = null) {
-  const s = await settings(env), site = await siteOrders(env);
+async function calculateInsights(env: Env, today: string, only: string | null) {
+  const [s, site] = await Promise.all([settings(env), siteOrders(env, today)]);
   const until = s.historyUntil || site.first;
   const history = await historyLines(env, until);
   const span = await env.DB.prepare("SELECT COUNT(*) AS n, MIN(date) AS first, MAX(date) AS last FROM sales_history").first<{ n: number; first: string | null; last: string | null }>();
   const unreviewed = await env.DB.prepare("SELECT COUNT(*) AS n FROM sales_history_products WHERE reviewed = 0").first<{ n: number }>();
-  const today = ukDay(Date.now()), all = [...history, ...site.lines];
+  const all = [...history, ...site.lines];
   let result = buildInsights({ today, lines: all, open: site.open, settings: s });
   // One customer: their own sales, forecast and share of the roast plan; the customer list stays whole for choosing.
   let customer = null;
@@ -85,6 +86,12 @@ async function insights(env: Env, only: string | null = null) {
   // Each coffee's packaging colours as saved in Admin, so the page draws every coffee in its own colour.
   const palette = (await catalogue(env, true)).map((c: any) => ({ id: c.id, title: c.title, name: c.name, ...(Array.isArray(c.colours) && c.colours.length ? { colours: c.colours, colourStyle: c.colourStyle } : {}) }));
   return { ...result, customer, palette, settings: s, sources: { siteOrders: site.count, firstSiteOrder: site.first, historyRows: span?.n || 0, historyFirst: span?.first || null, historyLast: span?.last || null, historyUntil: until, historyUsed: history.length, unreviewedProducts: unreviewed?.n || 0 } };
+}
+
+export function refreshInsights(env: Env, only: string | null = null) {
+  const today = ukDay(Date.now());
+  // Advance the cache namespace when changing the forecast model or response shape.
+  return reportSnapshot(env, "insights-v1:" + (only === null ? "all" : "customer:" + only), today, () => calculateInsights(env, today, only));
 }
 
 function cleanRow(value: any) {
@@ -111,7 +118,7 @@ export async function handleInsights(req: Request, env: Env, route: string, acto
   if (route === "insights" && req.method === "GET") {
     const only = new URL(req.url).searchParams.get("customer");
     if (only !== null && (only.length > 200 || !only.trim())) throw invalid("Choose a customer.");
-    return json(await insights(env, only));
+    return json(await refreshInsights(env, only));
   }
   if (route === "insights/settings" && req.method === "PUT") {
     const body = await readJson<Record<string, any>>(req, 4096), current = await settings(env);
@@ -143,10 +150,10 @@ export async function handleInsights(req: Request, env: Env, route: string, acto
     const offset = Number.isSafeInteger(body.offset) && body.offset >= 0 ? body.offset : 0;
     const rows = body.rows.map(cleanRow), stmts = [];
     const coffees = (await catalogue(env, true)).map((c) => ({ id: c.id, name: c.name, title: c.title }));
-    for (const r of rows) stmts.push(env.DB.prepare("INSERT OR IGNORE INTO sales_history (id, import_id, date, customer, product, qty, pence, doc, kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(await rowId(r), id, r.date, r.customer, r.product, r.qty, r.pence, r.doc, r.kind));
+    for (const r of rows) stmts.push(env.DB.prepare("INSERT OR IGNORE INTO sales_history (id, import_id, date, customer, product, qty, pence, doc, kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id").bind(await rowId(r), id, r.date, r.customer, r.product, r.qty, r.pence, r.doc, r.kind));
     for (const product of new Set(rows.map((r) => r.product))) stmts.push(env.DB.prepare("INSERT OR IGNORE INTO sales_history_products (product, data, reviewed, updated_at) VALUES (?, ?, 0, ?)").bind(product, JSON.stringify(suggestMapping(product, coffees)), Date.now()));
     const results = await env.DB.batch(stmts);
-    const added = results.slice(0, rows.length).reduce((t, r) => t + (r.meta.changes || 0), 0);
+    const added = results.slice(0, rows.length).reduce((t, r) => t + r.results.length, 0);
     const dates = rows.map((r) => r.date).sort();
     // A file is listed once it adds something: importing the same report again leaves no empty entry behind.
     if (added) await env.DB.prepare(`INSERT INTO sales_history_imports (id, file_name, imported_at, imported_by, rows, first_date, last_date) VALUES (?, ?, ?, ?, ?, ?, ?)

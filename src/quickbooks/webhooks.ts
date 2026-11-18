@@ -1,3 +1,4 @@
+import { wakeIntegration } from "../integrationSignals";
 // Public machine endpoint: authenticated by Intuit's signature, never a staff/customer session.
 import {ApiError,type Env,invalid,json} from '../http';
 import {ensureSchema} from '../schema';
@@ -55,7 +56,8 @@ export async function handleWebhook(req:Request,env:Env,ctx:ExecutionContext,pro
   if(owned.length){
     // One durable insert handles a batch without one database request per event.
     await env.DB.prepare(`INSERT INTO quickbooks_events(event_key,environment,realm_id,entity,entity_id,operation,event_at,created_at) SELECT json_extract(value,'$.key'),json_extract(value,'$.environment'),json_extract(value,'$.realmId'),json_extract(value,'$.entity'),json_extract(value,'$.entityId'),json_extract(value,'$.operation'),json_extract(value,'$.at'),? FROM json_each(?) WHERE 1=1 ON CONFLICT(event_key) DO NOTHING`).bind(Date.now(),JSON.stringify(owned)).run();
-    ctx.waitUntil(process(req,env,2,owned.map(row=>row.key)));
+    const keys = owned.map(row => row.key);
+    ctx.waitUntil(wakeIntegration(env.QUICKBOOKS_QUEUE, { eventKeys: keys.slice(0, 100) }, () => process(req, env, 2, keys)));
   }
   return json({accepted:true});
 }

@@ -5,6 +5,7 @@ import {object} from '../wholesaleStore';
 import type {Environment} from './preview';
 import {adoptExisting,exportList,operation,operationResult,processExport,queueInvoice,retryExport} from './ledger';
 import {refreshObservation} from './observations';
+import { wakeIntegration } from '../integrationSignals';
 export async function handleExportRoutes(req:Request,env:Env,action:string,mode:Environment,user:User,ctx?:ExecutionContext):Promise<Response|null>{
   const url=new URL(req.url);
   if(action==='/exports'&&req.method==='GET'){
@@ -18,6 +19,10 @@ export async function handleExportRoutes(req:Request,env:Env,action:string,mode:
     const row=await queueInvoice(req,env,mode,Number(send[1]),object(await readJson(req,8192)),user);
     // The browser starts processing in a separate invocation after this durable acknowledgement.
     // Scheduled recovery also picks it up if that follow-up request never arrives.
+    if (env.QUICKBOOKS_QUEUE && row.state !== 'linked') {
+      const delivery = wakeIntegration(env.QUICKBOOKS_QUEUE, { exportId: row.id }, () => processExport(req, env, row.id));
+      if (ctx) ctx.waitUntil(delivery); else await delivery;
+    }
     return json({export:await operationResult(env,await operation(env,row.id))},row.state==='linked'?200:202);
   }
   const found=/^\/exports\/(\d+)(?:\/(retry|refresh|link-existing|review|process))?$/.exec(action);if(!found)return null;
@@ -26,7 +31,7 @@ export async function handleExportRoutes(req:Request,env:Env,action:string,mode:
   if(!found[2]&&req.method==='GET')return json({export:await operationResult(env,saved)});
   if(found[2]==='review'&&req.method==='GET')return json({export:await operationResult(env,saved),preview:JSON.parse(saved.preview)});
   if(found[2]==='process'&&req.method==='POST'){
-    await readJson(req,4096);if(ctx)ctx.waitUntil(processExport(req,env,id));else await processExport(req,env,id);
+    await readJson(req,4096);const delivery=wakeIntegration(env.QUICKBOOKS_QUEUE, { exportId:id }, () => processExport(req,env,id));if(ctx)ctx.waitUntil(delivery);else await delivery;
     return json({export:await operationResult(env,await operation(env,id))},202);
   }
   if(found[2]==='retry'&&req.method==='POST'){

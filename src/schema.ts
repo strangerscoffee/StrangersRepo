@@ -1,13 +1,12 @@
-// The database schema. The Worker applies it itself (once per Worker instance) so a fresh deploy needs no
-// migration step: first the tables (every statement idempotent), then any migrations not yet recorded in
-// schema_migrations (MIGRATIONS below). To change the schema, add a migration.
+// The release applies the schema before activating a Worker. Local and legacy environments can initialise it on demand.
+import { ApiError, type Env } from "./http";
 import { migrateHolidayReminders, migrateLeave } from "./rota/leave/schema";
 import { migrateSickness } from "./rota/sickness";
 import { migrateInvites } from "./wholesaleImport";
 import { migrateAnnouncement } from "./wholesaleAnnouncement";
 import { migrateResets } from "./wholesaleReset";
 import { migrateInsights } from "./insights";
-import { Env } from "./http";
+import { migrateReporting } from "./reporting";
 import { migrateQuickBooks } from "./quickbooks/schema";
 import { migrateQuickBooksRuntime } from "./quickbooks/runtimeSchema";
 
@@ -343,6 +342,7 @@ const MIGRATIONS: Migration[] = [
   { id: 35, name: "Published week snapshot", run: async (env) => {
     if (!(await columns(env, "rota_weeks")).has("published_shifts")) await env.DB.prepare("ALTER TABLE rota_weeks ADD COLUMN published_shifts TEXT").run();
   } },
+  { id: 36, name: "Operational totals and Insights snapshots", run: migrateReporting },
 ];
 
 async function migrate(env: Env): Promise<void> {
@@ -358,13 +358,33 @@ async function migrate(env: Env): Promise<void> {
 /** The migrations, for tests and the admin section. */
 export const MIGRATION_LIST = () => MIGRATIONS.map(({ id, name }) => ({ id, name }));
 
+export async function schemaCurrent(env: Env): Promise<boolean> {
+  try {
+    const version = await env.DB.prepare(`SELECT COUNT(*) AS applied FROM schema_migrations WHERE id IN (${MIGRATIONS.map(m => m.id).join(",")})`)
+      .first<{ applied: number }>();
+    return version?.applied === MIGRATIONS.length;
+  } catch (error) {
+    if (/no such table:\s*schema_migrations/i.test(String(error))) return false;
+    throw error;
+  }
+}
+
+export async function applySchema(env: Env): Promise<void> {
+  await env.DB.batch(SCHEMA.map(s => env.DB.prepare(s)));
+  await migrate(env);
+}
+
 // Only completed initialization can cross request lifetimes. A pending D1 promise
 // belongs to its creating request and may never settle after that request ends.
 const ready = new WeakSet<Env["DB"]>();
 
 export async function ensureSchema(env: Env): Promise<void> {
   if (ready.has(env.DB)) return;
-  await env.DB.batch(SCHEMA.map((s) => env.DB.prepare(s)));
-  await migrate(env);
+  if (!await schemaCurrent(env)) {
+    if (env.SCHEMA_DEPLOY_ONLY === "1") {
+      throw new ApiError(503, "schema_pending", "An update is being prepared. Try again shortly.");
+    }
+    await applySchema(env);
+  }
   ready.add(env.DB);
 }

@@ -27,13 +27,13 @@ export function dailySiteStatus(today: string, now: number, sites: Week["sites"]
 export async function dailyBusiness(env: Env, today: string, nextWeek: string) {
   const [orders, pending, leave, annualLeave, invoices] = await Promise.all([
     env.DB.prepare(`SELECT
-      COALESCE(SUM(CASE WHEN json_extract(data,'$.status') IN ('New','Preparing') THEN 1 ELSE 0 END),0) AS toPrepare,
-      COALESCE(SUM(CASE WHEN json_extract(data,'$.status') IN ('New','Preparing') THEN json_extract(data,'$.grams') ELSE 0 END),0) AS grams,
-      COALESCE(SUM(CASE WHEN json_extract(data,'$.status')='Ready' THEN 1 ELSE 0 END),0) AS ready,
-      MIN(CASE WHEN json_extract(data,'$.status') IN ('New','Preparing') THEN json_extract(data,'$.createdAt') END) AS oldestAt,
-      COALESCE(SUM(CASE WHEN json_extract(data,'$.status') IN ('New','Preparing') AND json_extract(data,'$.dispatchDate')=? THEN 1 ELSE 0 END),0) AS prepareToday,
-      COALESCE(SUM(CASE WHEN json_extract(data,'$.status')='Ready' AND json_extract(data,'$.dispatchDate')=? THEN 1 ELSE 0 END),0) AS readyToday
-      FROM wholesale_preview WHERE kind='order' AND json_extract(data,'$.preview')=0 AND json_extract(data,'$.deletedAt') IS NULL`).bind(today, today).first<{ toPrepare: number; grams: number; ready: number; oldestAt: number | null; prepareToday: number; readyToday: number }>(),
+      COALESCE(SUM(CASE WHEN status IN ('New','Preparing') THEN orders END),0) AS toPrepare,
+      COALESCE(SUM(CASE WHEN status IN ('New','Preparing') THEN grams END),0) AS grams,
+      COALESCE(SUM(CASE WHEN status='Ready' THEN orders END),0) AS ready,
+      (SELECT MIN(created_at) FROM reporting_open_orders WHERE status IN ('New','Preparing')) AS oldestAt,
+      COALESCE(SUM(CASE WHEN status IN ('New','Preparing') AND day=? THEN orders END),0) AS prepareToday,
+      COALESCE(SUM(CASE WHEN status='Ready' AND day=? THEN orders END),0) AS readyToday
+      FROM reporting_order_totals`).bind(today, today).first<{ toPrepare: number; grams: number; ready: number; oldestAt: number | null; prepareToday: number; readyToday: number }>(),
     env.DB.prepare("SELECT COUNT(*) AS n FROM wholesale_accounts WHERE approval_status='pending'").first<{ n: number }>(),
     env.DB.prepare("SELECT COALESCE(SUM(CASE WHEN kind='annual' THEN 1 ELSE 0 END),0) AS annual, COALESCE(SUM(CASE WHEN kind<>'annual' OR kind IS NULL THEN 1 ELSE 0 END),0) AS other FROM rota_time_off WHERE status='requested'").first<{ annual: number; other: number }>(),
     env.DB.prepare("SELECT COUNT(DISTINCT t.user_id) AS n FROM rota_time_off t JOIN users u ON u.id=t.user_id WHERE t.kind='annual' AND t.status='approved' AND u.active=1 AND t.from_day<=? AND t.to_day>=?").bind(nextWeek, nextWeek).first<{ n: number }>(),

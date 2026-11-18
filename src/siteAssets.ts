@@ -7,6 +7,18 @@ interface AssetEnv { ASSETS: Fetcher }
  * once per Worker instance (a deploy starts new ones).
  */
 const fingerprints = new Map<string, string>();
+type ReleaseAssets = { source: string; current: string; files: string[] };
+const releases = new WeakMap<Fetcher, { id: string; source: string; files: Set<string> } | null>();
+async function currentRelease(env: AssetEnv, url: URL) {
+  const cached = releases.get(env.ASSETS);
+  if (cached !== undefined) return cached;
+  const manifest = await env.ASSETS.fetch(new Request(new URL("/_releases/manifest.json", url)));
+  const release = manifest.ok ? await manifest.json<ReleaseAssets>() : null;
+  if (!release) await manifest.body?.cancel();
+  const result = release ? { id: release.current, source: release.source, files: new Set(release.files) } : null;
+  releases.set(env.ASSETS, result);
+  return result;
+}
 async function fingerprint(env: AssetEnv, url: URL, path: string): Promise<string | null> {
   if (fingerprints.has(path)) return fingerprints.get(path)!;
   const res = await env.ASSETS.fetch(new Request(new URL(path, url)));
@@ -18,16 +30,27 @@ async function fingerprint(env: AssetEnv, url: URL, path: string): Promise<strin
 }
 /** A page (HTML) with its own scripts and stylesheets linked by fingerprint. */
 export function withFingerprints(res: Response, env: AssetEnv, url: URL, aliases?: ReadonlyMap<string, string>): Response {
-  if (!res.ok || !(res.headers.get("content-type") || "").includes("text/html")) return res;
+  if (!res.ok || !res.body || !(res.headers.get("content-type") || "").includes("text/html")) return res;
+  const release = currentRelease(env, url).catch(() => null);
   const pin = (attr: string) => ({
     async element(e: Element) {
       const v = e.getAttribute(attr);
       if (!v || !/^\/[^/?#]*(\/[^/?#]+)*\.(js|css)$/.test(v)) return; // only this site's own files
+      const published = await release;
+      if (published?.files.has(v)) {
+        e.setAttribute(attr, "/_releases/" + published.id + v);
+        return;
+      }
       const tag = await fingerprint(env, url, aliases?.get(v) ?? v);
       if (tag) e.setAttribute(attr, `${v}?v=${tag}`);
     },
   });
-  return new HTMLRewriter().on("script[src]", pin("src")).on('link[rel="stylesheet"][href]', pin("href")).transform(res);
+  return new HTMLRewriter().on("head", { async element(element) {
+    const published = await release;
+    if (published && /^[a-f0-9]{40}$/.test(published.source)) {
+      element.prepend(`<meta name="sc-release" content="${published.source}">`, { html: true });
+    }
+  } }).on("script[src]", pin("src")).on('link[rel="stylesheet"][href]', pin("href")).transform(res);
 }
 
 /** A file from public/. Fingerprinted ones (?v=) are kept for a year; otherwise scripts and styles for a minute, then
@@ -36,7 +59,8 @@ export async function staticFile(req: Request, env: AssetEnv, p: string): Promis
   const res = await env.ASSETS.fetch(req);
   if (!res.ok || !/\.(js|css|svg|png|ico|webmanifest)$/.test(p)) return res;
   const out = new Response(res.body, res);
-  const pinned = new URL(req.url).searchParams.has("v");
+  const url = new URL(req.url);
+  const pinned = url.pathname.startsWith("/_releases/") || url.searchParams.has("v");
   out.headers.set("cache-control", pinned ? "private, max-age=31536000, immutable" : /\.(svg|png|ico)$/.test(p) ? "private, max-age=86400" : "private, max-age=60, must-revalidate");
   return out;
 }

@@ -1,5 +1,8 @@
 node_modules/
 dist/
+/public/_releases/
+/public/._releases-build/
+/.wrangler.production-*.json
 .wrangler/
 .dev.vars
 .dev.vars.*

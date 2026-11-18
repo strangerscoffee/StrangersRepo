@@ -1,8 +1,14 @@
+import type { IntegrationSignal } from "./integrationSignals";
+
 export interface Env {
   DB: D1Database;
   LIVE?: DurableObjectNamespace; // live updates (src/live.ts)
   FILES: KVNamespace;
   ASSETS: Fetcher;
+  SCHEMA_DEPLOY_ONLY?: string;
+  DISPATCH_EMAIL_QUEUE?: Queue<IntegrationSignal>;
+  SLACK_ORDERS_QUEUE?: Queue<IntegrationSignal>;
+  QUICKBOOKS_QUEUE?: Queue<IntegrationSignal>;
   SETUP_CODE?: string; // creates the first admin and resets an admin password
   SYNC_TOKEN?: string; // older name for SETUP_CODE, still accepted
   WRITE_LIMIT_PER_15_MIN?: string;
