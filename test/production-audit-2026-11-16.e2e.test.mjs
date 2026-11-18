@@ -72,7 +72,7 @@ for(const [screen,viewport,isMobile] of [['phone',{width:393,height:852},true],[
    await page.goto(srv.base+'/admin#wholesale');await selectWholesaleSection(page, "orders");
    await page.getByText('1 standing delivery needs review',{exact:true}).waitFor();
    if(process.env.SHOT_DIR)await page.screenshot({path:process.env.SHOT_DIR+`/standing-review-${screen}-${colorScheme}.png`,fullPage:true});
-   await page.locator(`[data-act="wh-standing-review"][data-id="${blockedStanding.id}"]`).click();await page.locator('#sheet').getByText(blockedStanding.id,{exact:true}).waitFor();await page.locator('#sheet [data-sheet="close"]').click();
+   await page.locator(`[data-act="wh-standing-review"][data-id="${blockedStanding.id}"]`).click();await page.locator('#sheet').getByText(blockedStanding.id,{exact:true}).waitFor();await page.getByRole('button',{name:'Close order details'}).click();
    await revealAdminOptions(page, ".w-order-settings"); await page.locator('[data-act="wh-order-emails"]').click();
    await page.locator('#wOrderEmailsTo').fill('unsaved-draft@example.invalid');
    const sheet=page.locator('#sheet'),review=page.locator('[data-sheet="review-email"]'),confirm=page.locator('#wRetryConfirm');

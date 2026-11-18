@@ -44,7 +44,10 @@ function renderSites(){
     b.replaceChildren(el("span",{class:"sdot "+st.cls}),el("span",{class:"sname",text:curSite().name}),svgi(ICON.chevD));
     b.setAttribute("aria-label",`Site: ${curSite().name}. Change site`);
   });
-  const box=$("#siteList"),focused=box.contains(document.activeElement)?document.activeElement.dataset.site:null;
+  const box=$("#siteList"),active=document.activeElement,focused=box.contains(active)?active.dataset.site:null;
+  const bounds=focused&&box.getBoundingClientRect(),previous=focused&&active.getBoundingClientRect();
+  const keepInView=previous&&previous.top>=bounds.top-1&&previous.bottom<=bounds.bottom+1;
+  let restored;
   box.replaceChildren();
   for(const x of SITES){
     const s=siteState(x.id),sm=S.sum[x.id];
@@ -52,8 +55,10 @@ function renderSites(){
       el("span",{class:"sdot big "+s.cls}),el("span",{class:"t"},el("b",{text:x.name}),el("span",{class:"s",text:siteAddr(x.id,sm&&sm.settings)})),
       S.db?el("span",{class:"pill "+s.cls,text:s.text}):null);
     box.append(row);
-    if(focused===x.id)row.focus({preventScroll:true});
+    if(focused===x.id)restored=row;
   }
+  restored?.focus({preventScroll:true});
+  if(keepInView)restored?.scrollIntoView({block:"nearest"});
 }
 // One line of live status for a section in the Records and More lists, so you can see where to go.
 function hubSub(id){
@@ -269,7 +274,7 @@ function placeDiaryMenu(){
   const room=Math.max(0,placeAbove?above:below);
   m.style.maxHeight=room+"px";
   const left=Math.max(leftEdge,Math.min(r.right-m.offsetWidth,rightEdge-m.offsetWidth));
-  m.style.left=left+"px";
+  m.style.right=Math.max(12,document.documentElement.clientWidth-left-m.offsetWidth)+"px";
   m.style.top=Math.max(topEdge,placeAbove?r.top-m.offsetHeight-8:r.bottom+8)+"px";
   m.style.transformOrigin=`${r.left+r.width/2-left}px ${placeAbove?"bottom":"top"}`;
 }
