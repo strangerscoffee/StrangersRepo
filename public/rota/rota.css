@@ -585,6 +585,17 @@ a.btn.sm{text-decoration:none}
 .leave-notice .note { margin:6px 0 0; }
 .leave-notice.override { border-color:color-mix(in srgb,var(--warn) 50%,transparent);background:var(--warn-bg); }
 .leave-notice.override .field { margin-top:10px; }
+/* Who else is off, beside an absence being reviewed (admins) */
+.team-off{display:grid;gap:0}
+.team-off-group .list{display:grid;gap:2px;margin-top:8px}
+.team-off-row{padding:8px 0;border-top:1px solid var(--line);align-items:flex-start;gap:10px}
+.team-off-row:first-child{border-top:0}
+.team-off-row .leave-dot{margin-top:6px;flex:none}
+.team-off-row .t{min-width:0;overflow-wrap:anywhere}
+.team-off-group.overlap{border-color:color-mix(in srgb,var(--warn) 55%,transparent);background:var(--warn-bg)}
+.team-off-group.overlap .team-off-when{color:var(--fg);font-weight:600}
+.team-off-group.nearby{border-style:dashed}
+.team-off-group.clear b{color:var(--muted);font-weight:600}
 .leave-notice.override .btn { margin-top:10px; }
 .leave-check { display:flex;align-items:center;gap:10px;min-height:44px;font-size:14px; }
 .leave-check input { width:20px;height:20px;min-height:0;flex:0 0 20px; }

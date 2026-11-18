@@ -1,6 +1,6 @@
 // Staff receive their own balances/absence records. A separate allowlist exposes only approved holiday names/dates.
 import { newId } from "../../auth";
-import { ApiError, invalid, json } from "../../http";
+import { ApiError, Env, invalid, json } from "../../http";
 import { activeUser, touchWeek } from "../load";
 import { RotaRequest, SITE_IDS } from "../types";
 import { actor, timeOffDecided } from "../../email/rota";
@@ -178,7 +178,8 @@ export async function leaveRoutes(r: RotaRequest): Promise<Response | null> {
                 start: string;
                 end: string;
             }>()]);
-        return json({ absence: await leaveView(env, t), balances: rows.filter(a => a.from_day <= t.to_day && a.to_day >= t.from_day).map(a => balance(a, days)), shiftConflicts: shifts.results.filter(s => !t.from_time || !t.to_time || (s.start < t.to_time && s.end > t.from_time)) });
+        return json({ absence: await leaveView(env, t), balances: rows.filter(a => a.from_day <= t.to_day && a.to_day >= t.from_day).map(a => balance(a, days)), shiftConflicts: shifts.results.filter(s => !t.from_time || !t.to_time || (s.start < t.to_time && s.end > t.from_time)),
+            ...(r.admin ? { teamOff: await teamOff(env, t) } : {}) });
     }
     if (route === "leave/preview" && m === "POST") {
         const b = await r.body(), uid = await person(r, b.userId), p = await prepare(r, b, uid);
@@ -422,4 +423,22 @@ export async function leaveRoutes(r: RotaRequest): Promise<Response | null> {
         return json({ events: (await env.DB.prepare("SELECT action,at,by_user,data FROM rota_leave_events WHERE user_id=? ORDER BY at DESC LIMIT 200").bind(uid).all()).results });
     }
     return null;
+}
+
+/** Admins reviewing an absence (the owner's request, 18 Nov 2026): everyone else's approved holiday and unpaid leave that
+ *  overlaps it, or falls within NEARBY_DAYS either side, so team availability can be judged before deciding. Overlapping
+ *  bookings carry the days they share; nearby ones how many days before or after. Admin-only: never sent to staff. */
+export const NEARBY_DAYS = 7;
+export async function teamOff(env: Env, t: { user_id: string; from_day: string; to_day: string }) {
+    const from = addDays(t.from_day, -NEARBY_DAYS), to = addDays(t.to_day, NEARBY_DAYS);
+    const rows = (await env.DB.prepare("SELECT t.id,u.name,t.kind,t.from_day,t.to_day,t.from_time,t.to_time FROM rota_time_off t JOIN users u ON u.id=t.user_id WHERE t.kind IN ('annual','unpaid') AND t.status='approved' AND u.active=1 AND t.user_id<>? AND t.from_day<=? AND t.to_day>=? ORDER BY t.from_day,u.name_key").bind(t.user_id, to, from).all<{
+        id: string; name: string; kind: "annual" | "unpaid"; from_day: string; to_day: string; from_time: string | null; to_time: string | null;
+    }>()).results;
+    const gap = (a: string, b: string) => Math.round((Date.parse(b + "T12:00:00Z") - Date.parse(a + "T12:00:00Z")) / 864e5);
+    return rows.map(o => {
+        const overlaps = o.from_day <= t.to_day && o.to_day >= t.from_day;
+        return { name: o.name, kind: o.kind, from: o.from_day, to: o.to_day, partDay: !!(o.from_time && o.to_time), overlaps,
+            ...(overlaps ? { shared: { from: o.from_day > t.from_day ? o.from_day : t.from_day, to: o.to_day < t.to_day ? o.to_day : t.to_day } }
+                : o.to_day < t.from_day ? { daysBefore: gap(o.to_day, t.from_day) } : { daysAfter: gap(t.to_day, o.from_day) }) };
+    });
 }
