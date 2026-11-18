@@ -48,11 +48,30 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     reload();
   });
   let orderPages = 1, customerPages = 1, loadingMore = false;
-  const sections = [["orders", "Orders"], ["customers", "Customers"], ["catalogue", "Coffee catalogue"], ["custom", "Custom coffees"], ["tabs", "Tabs"], ["invoices", "Invoicing"], ["insights", "Insights"]];
+  const sectionGroups = [
+    ["Order management", [["orders", "Orders", "doc"], ["customers", "Customers", "people"], ["tabs", "Tabs", "db"]]],
+    ["Catalogue and reporting", [["catalogue", "Coffee catalogue", "coffee"], ["custom", "Custom coffees", "pen"], ["invoices", "Invoicing", "doc"], ["insights", "Insights", "pulse"]]],
+  ];
+  const sections = sectionGroups.flatMap(([, group]) => group);
   const pendingReviews = () => data?.stats?.pendingAccounts ?? data?.accounts?.filter((row) => row.approvalStatus === "pending").length ?? 0;
-  function navigation({ sidebar = false, active = true } = {}) {
+  function navigation({ active = true } = {}) {
     const pending = pendingReviews();
-    return html`${sections.map(([id, label]) => html`<span class="${sidebar ? "nav-wholesale-item" : "w-section-item"}"><button class="${sidebar ? "nav nav-wholesale-child" : ""}" type="button" data-act="wh-tab" data-id="${id}" aria-pressed="${active && tab === id ? "true" : "false"}" ${sidebar ? html`aria-current="${active && tab === id ? "page" : "false"}"` : ""}>${label}</button>${id === "customers" && pending > 0 ? html`<button class="w-review-chip ${sidebar ? "nav-wholesale-review" : ""}" type="button" data-act="wh-pending" aria-label="${pending} ${pending === 1 ? "account awaits" : "accounts await"} review"><span>${pending}</span><span class="w-review-word"> ${pending === 1 ? "review" : "reviews"}</span></button>` : ""}</span>`)}`;
+    return html`${sections.map(([id, label]) => html`<span class="nav-wholesale-item"><button class="nav nav-wholesale-child" type="button" data-act="wh-tab" data-id="${id}" aria-current="${active && tab === id ? "page" : "false"}">${label}</button>${id === "customers" && pending > 0 ? html`<button class="nav-wholesale-review" type="button" data-act="wh-pending" aria-label="${pending} ${pending === 1 ? "account awaits" : "accounts await"} review">${pending}</button>` : ""}</span>`)}`;
+  }
+  function openNavigation(opener, onSelect) {
+    openSheet(html`<div class="w-section-list">
+      <div class="w-section-handle" aria-hidden="true"></div>
+      <div class="w-section-head"><h2 id="sheetTitle">Wholesale sections</h2><button class="w-section-close" type="button" data-sheet="close" aria-label="Close sections">${svg("x")}</button></div>
+      ${sectionGroups.map(([title, group]) => html`<section class="w-section-group" aria-label="${title}">
+        <h3 class="side-label">${title}</h3>
+        <div class="group">
+          ${group.map(([id, label, icon]) => html`<button class="item" type="button" data-sheet="${id}" aria-current="${tab === id ? "page" : "false"}">${svg(icon)}<span>${label}</span>${tab === id ? svg("ok") : ""}</button>`)}
+        </div>
+      </section>`)}
+    </div>`, (id) => {
+      closeSheet();
+      if (id !== tab) return onSelect(id);
+    }, opener);
   }
   function syncNavigation(desktop) {
     const checklist = $("#wPackChecklist");
@@ -61,10 +80,18 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     if (stages && !stages.hasChildNodes()) mountStages(stages);
     const host = $("#wSectionsHost");
     if (!host) return;
-    const key = JSON.stringify([desktop, tab, pendingReviews()]);
+    const pending = pendingReviews();
+    const key = JSON.stringify([desktop, tab, pending]);
     if (host.dataset.navigation === key) return;
     host.dataset.navigation = key; host.hidden = desktop;
-    put(host, desktop ? html`` : html`<div class="w-section-picker"><label for="wSection">Wholesale section</label><select id="wSection">${sections.map(([id, label]) => html`<option value="${id}" ${id === tab ? raw("selected") : ""}>${label}</option>`)}</select>${pendingReviews() ? html`<button class="btn sm soft" type="button" data-act="wh-pending">${pendingReviews()} awaiting review</button>` : ""}</div>`);
+    const current = sections.find(([id]) => id === tab)?.[1];
+    put(host, desktop ? html`` : html`
+      <div class="w-section-picker">
+        <button id="wSection" class="glass" type="button" data-act="wh-sections" aria-haspopup="dialog" aria-controls="sheet">
+          ${svg("grid")}<span class="w-section-label">Wholesale section</span><span class="w-section-value">${current}</span>${svg("chev")}
+        </button>
+        ${pending ? html`<button class="btn sm soft" type="button" data-act="wh-pending">${pending} awaiting review</button>` : ""}
+      </div>`);
   }
   function workspaceState() {
     return { tab, status, approval, query, orderQueue, orderPages, customerPages, previewOrder, packingOrder, hideOrderPreview, dispatchScope, orderSort, invoices: invoiceUI.state(), insights: insightsUI.state() };
@@ -1307,6 +1334,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     view,
     navigation,
     syncNavigation,
+    openNavigation,
     selectSection,
     currentSection: () => tab,
     workspaceState, restoreWorkspace,

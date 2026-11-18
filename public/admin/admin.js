@@ -63,7 +63,7 @@
   const DAYS = [["mon", "Mo", "Monday"], ["tue", "Tu", "Tuesday"], ["wed", "We", "Wednesday"], ["thu", "Th", "Thursday"], ["fri", "Fr", "Friday"], ["sat", "Sa", "Saturday"], ["sun", "Su", "Sunday"]];
   const TOPIC_NAMES = { hygiene: "Hygiene", cross: "Cross-contamination", cleaning: "Cleaning", chilling: "Chilling", cooking: "Cooking", allergens: "Allergens", diary: "Opening & closing", l2: "Level 2" };
   const ROLE = { admin: "Admin", manager: "Manager", staff: "Staff" };
-  const S = { me: null, links: { diary: "/", rota: "/rota/", admin: "/" }, page: "overview", open: null, filter: "all", q: "", feed: "all", fq: "", activityFrom: "", activityTo: "", locked: 0 };
+  const S = { me: null, links: { diary: "/", rota: "/rota/", admin: "/" }, staffOrdersUrl: "/orders", page: "overview", open: null, filter: "all", q: "", feed: "all", fq: "", activityFrom: "", activityTo: "", locked: 0 };
 
   const ini = (n) => String(n || "").split(/\s+/).filter(Boolean).map((p) => p[0]).join("").slice(0, 2).toUpperCase();
   const LON = { timeZone: "Europe/London" };
@@ -110,7 +110,7 @@
     sheet.replaceChildren();
     sheetDone = null;
     for (const root of sheetBackground) root.inert = false;
-    const opener = lastFocus;
+    const opener = lastFocus?.id === "wSection" ? $("#wSection") : lastFocus;
     lastFocus = null;
     if (S.me) (opener?.isConnected && opener.getClientRects().length ? opener : $("#main")).focus({ preventScroll: true });
   }
@@ -173,19 +173,44 @@
   }
 
   /* ---------- navigation ---------- */
-  const NAV = [["overview", "Overview", "grid"], ["people", "People", "people"], ["sites", "Sites", "house"], ["wholesale", "Wholesale", "coffee"], ["sickness", "Sickness", "heart"], ["activity", "Activity", "pulse"], ["security", "Security", "shield"], ["data", "Backups & exports", "db"]];
+  const NAV_GROUPS = [
+    ["Work", [["overview", "Overview", "grid"], ["wholesale", "Wholesale", "coffee"]]],
+    ["Team and sites", [["people", "People", "people"], ["sites", "Sites", "house"], ["sickness", "Sickness", "heart"]]],
+    ["System", [["activity", "Activity", "pulse"], ["security", "Security", "shield"], ["data", "Backups & exports", "db"]]],
+  ];
   const TABS = [["overview", "Overview", "grid"], ["wholesale", "Wholesale", "coffee"], ["people", "People", "people"], ["activity", "Activity", "pulse"], ["more", "More", "more"]];
-  const PAGES = ["overview", "people", "sites", "wholesale", "sickness", "activity", "security", "data", "more"];
+  const PAGES = [...NAV_GROUPS.flatMap(([, items]) => items.map(([id]) => id)), "more"];
   const desktopNav = matchMedia("(min-width:1024px)");
   let wholesaleExpanded = false;
+  const navMarkup = new WeakMap();
+  function updateNav(root, content) {
+    if (navMarkup.get(root) === content[RAW] && root.hasChildNodes()) return;
+    const focused = document.activeElement;
+    const key = root.contains(focused) ? ["data-go", "data-act", "data-id"]
+      .filter(attr => focused.hasAttribute(attr))
+      .map(attr => `[${attr}="${CSS.escape(focused.getAttribute(attr))}"]`).join("") : "";
+    navMarkup.set(root, content[RAW]);
+    put(root, content);
+    const next = key ? root.querySelector(key) : null;
+    if (next?.getClientRects().length) next.focus({ preventScroll: true });
+  }
   function renderNav() {
-    // Only one set of Wholesale section controls exists: sidebar on desktop, workspace on mobile.
-    if (desktopNav.matches) wholesale.syncNavigation(true);
     const badge = S.locked ? html`<span class="badge" aria-label="${plural(S.locked, "account")} locked">${S.locked}</span>` : "";
-    put($("#sideNav"), html`${NAV.map(([id, t, ic]) => id === "wholesale" && desktopNav.matches ? html`<div class="nav-wholesale ${S.page === id ? "is-current" : ""}"><div class="nav-wholesale-heading"><button class="nav" type="button" data-go="wholesale" aria-current="${S.page === id ? "page" : "false"}">${svg(ic)}${t}</button><button class="nav-wholesale-toggle" type="button" data-act="wh-sidebar-toggle" aria-expanded="${wholesaleExpanded ? "true" : "false"}" aria-controls="wholesaleSubnav" aria-label="${wholesaleExpanded ? "Collapse" : "Expand"} Wholesale sections">${svg("chev")}</button></div><div id="wholesaleSubnav" class="nav-wholesale-subnav" role="group" aria-label="Wholesale sections" ${wholesaleExpanded ? "" : raw("hidden")}>${wholesale.navigation({ sidebar: true, active: S.page === "wholesale" })}</div></div>` : html`<button class="nav" type="button" data-go="${id}" aria-current="${S.page === id ? "page" : "false"}">${svg(ic)}${t}${id === "security" ? badge : ""}</button>`)}`);
-    const tab = S.page === "security" || S.page === "data" || S.page === "sites" || S.page === "sickness" ? "more" : S.page;
-    put($("#tabBar"), html`${TABS.map(([id, t, ic]) => html`<button type="button" data-go="${id}" aria-current="${tab === id ? "page" : "false"}">${svg(ic)}${t}${id === "more" ? badge : ""}</button>`)}`);
-    if (!desktopNav.matches) wholesale.syncNavigation(false);
+    const sideButton = ([id, title, icon]) => {
+      if (id !== "wholesale") return html`<button class="nav" type="button" data-go="${id}" aria-current="${S.page === id ? "page" : "false"}">${svg(icon)}${title}${id === "security" ? badge : ""}</button>`;
+      const current = S.page === "wholesale";
+      return html`<div class="nav-wholesale">
+        <div class="nav-wholesale-heading ${current ? "is-current" : ""}">
+          <button class="nav" type="button" data-go="wholesale" aria-current="${current && !wholesaleExpanded ? "page" : "false"}">${svg(icon)}${title}</button>
+          <button class="nav-wholesale-toggle" type="button" data-act="wh-sidebar-toggle" aria-expanded="${wholesaleExpanded}" aria-controls="wholesaleSubnav" aria-label="${wholesaleExpanded ? "Collapse" : "Expand"} Wholesale sections">${svg("chev")}</button>
+        </div>
+        <div id="wholesaleSubnav" class="nav-wholesale-subnav" role="group" aria-label="Wholesale sections" ${wholesaleExpanded ? "" : raw("hidden")}>${wholesale.navigation({ active: current })}</div>
+      </div>`;
+    };
+    updateNav($("#sideNav"), html`${NAV_GROUPS.map(([title, items]) => html`<div class="side-group" role="group" aria-label="${title}"><p class="side-label" aria-hidden="true">${title}</p>${items.map(sideButton)}</div>`)}`);
+    const tab = TABS.some(([id]) => id === S.page) ? S.page : "more";
+    updateNav($("#tabBar"), html`${TABS.map(([id, t, ic]) => html`<button type="button" data-go="${id}" aria-current="${tab === id ? "page" : "false"}">${svg(ic)}${t}${id === "more" ? badge : ""}</button>`)}`);
+    wholesale.syncNavigation(desktopNav.matches);
   }
   async function refreshBadge() {
     try { S.locked = (await api("GET", "/api/admin/security")).locked.length; renderNav(); } catch (e) { /* keep the last count */ }
@@ -494,18 +519,19 @@
 
   VIEWS.more = async () => html`
     ${head("More", "")}
-    <div class="label">Operations</div>
+    <div class="label">Team and sites</div>
     <div class="group glass">
       <button class="item" type="button" data-go="sites"><span class="ic acc">${svg("house")}</span><span class="tx"><b>Sites</b><span>Site setup, diary settings and rota hours</span></span><span class="end"><span class="chev">${svg("chev")}</span></span></button>
       <button class="item" type="button" data-go="sickness"><span class="ic warn">${svg("heart")}</span><span class="tx"><b>Sickness</b><span>Sickness forms and the Bradford Factor</span></span><span class="end"><span class="chev">${svg("chev")}</span></span></button>
-    </div><div class="label">Administration</div><div class="group glass">
+    </div><div class="label">System</div><div class="group glass">
       <button class="item" type="button" data-go="security"><span class="ic ${S.locked ? "bad" : "ok"}">${svg("shield")}</span><span class="tx"><b>Security</b><span>${S.locked ? `${plural(S.locked, "account")} locked` : "Sign-ins, PINs and protections"}</span></span><span class="end">${S.locked ? html`<span class="badge">${S.locked}</span>` : ""}<span class="chev">${svg("chev")}</span></span></button>
       <button class="item" type="button" data-go="data"><span class="ic mut">${svg("db")}</span><span class="tx"><b>Backups &amp; exports</b><span>Nightly backups, payroll hours and other downloads</span></span><span class="end"><span class="chev">${svg("chev")}</span></span></button>
     </div>
-    <div class="label">Open</div>
+    <div class="label">Staff workspaces</div>
     <div class="group glass">
       <a class="item" href="${S.links.diary}"><span class="ic ok">${svg("cal")}</span><span class="tx"><b>Kitchen Diary</b></span><span class="end"><span class="chev">${svg("chev")}</span></span></a>
       <a class="item" href="${S.links.rota}"><span class="ic acc">${svg("clock")}</span><span class="tx"><b>Rota</b></span><span class="end"><span class="chev">${svg("chev")}</span></span></a>
+      <a class="item" href="${S.staffOrdersUrl}"><span class="ic acc">${svg("coffee")}</span><span class="tx"><b>Staff Wholesale</b></span><span class="end"><span class="chev">${svg("chev")}</span></span></a>
     </div>
     <div class="label">Account</div>
     <div class="group glass"><div class="item"><span class="av" aria-hidden="true">${ini(S.me.name)}</span><span class="tx"><b>${S.me.name}</b><span>Admin</span></span><span class="end"><button class="btn sm soft" type="button" data-act="logout">Sign out</button></span></div></div>`;
@@ -676,15 +702,24 @@
     }
     if (name.startsWith("sick-")) { await sickness.act(name, id); return; }
     if (name === "wh-sidebar-toggle") {
-      wholesaleExpanded = !wholesaleExpanded; renderNav();
-      $('#sideNav [data-act="wh-sidebar-toggle"]')?.focus({ preventScroll: true });
+      wholesaleExpanded = !wholesaleExpanded;
+      renderNav();
+      if (wholesaleExpanded) SC.reveal($("#wholesaleSubnav"), { offset: -4 });
       return;
     }
+    if (name === "wh-sections") { wholesale.openNavigation(el, (id) => act("wh-tab", id, el)); return; }
     if (name === "wh-tab" || name === "wh-pending") {
+      if (name === "wh-tab" && S.page === "wholesale" && id === wholesale.currentSection()) return;
+      const fromMobile = el?.closest("#wSectionsHost") || document.activeElement?.id === "wSection";
       saveRoute();
       const section = name === "wh-pending" ? "customers" : id;
       if (!wholesale.selectSection(section, { pending: name === "wh-pending" })) return;
-      wholesaleExpanded = true; await show("wholesale"); return;
+      wholesaleExpanded = true;
+      await show("wholesale");
+      if (fromMobile && S.page === "wholesale" && wholesale.currentSection() === section && document.activeElement === document.body) {
+        (desktopNav.matches ? $(`#sideNav [data-act="wh-tab"][data-id="${CSS.escape(section)}"]`) : $("#wSection"))?.focus({ preventScroll: true });
+      }
+      return;
     }
     if (name.startsWith("wh-")) {
       try { await wholesale.act(name, id); } catch (error) { toast(error.message); }
@@ -785,8 +820,13 @@
     const g = e.target.closest("[data-go]");
     if (g) {
       e.preventDefault();
+      if (g.dataset.go === S.page && g.closest("#tabBar,#sideNav")) {
+        if (S.page === "wholesale" && !wholesaleExpanded && g.closest("#sideNav")) {
+          wholesaleExpanded = true; renderNav(); SC.reveal($("#wholesaleSubnav"), { offset: -4 });
+        }
+        return;
+      }
       saveRoute();
-      if (g.dataset.go === "wholesale" && g.closest("#sideNav")) { wholesaleExpanded = true; wholesale.selectSection("orders"); }
       show(g.dataset.go); return;
     }
     const a = e.target.closest("[data-act]");
@@ -831,7 +871,6 @@
   window.addEventListener("popstate", routeChanged);
   window.addEventListener("hashchange", routeChanged);
   document.addEventListener("change", event => {
-    if (event.target.id === "wSection") act("wh-tab", event.target.value, event.target);
     if (event.target.id === "wOrderStatus") act("wh-status-select", event.target.value, event.target);
     if (event.target.id === "wDispatchScope") act("wh-dispatch-scope", event.target.value, event.target);
     if (["activityFrom", "activityTo"].includes(event.target.id)) {
@@ -845,15 +884,32 @@
     clearTimeout(routeTimer);
     routeTimer = setTimeout(() => { if (S.me && routeHash() === location.hash) saveRoute(); }, 100);
   }, { passive: true });
+  const navigationControls = '#tabBar [data-go],#sideNav [data-go],#sideNav [data-act^="wh-"],#wSection,#wSectionsHost [data-act="wh-pending"]';
+  let focusedNavigation = null;
+  document.addEventListener("focusin", (event) => { focusedNavigation = event.target.closest(navigationControls); });
   desktopNav.addEventListener("change", () => {
     if (!S.me) return;
-    const previous = document.activeElement, section = previous?.closest('#wSection,[data-act="wh-tab"],[data-act="wh-pending"]');
-    renderNav(); // Updates navigation only; the workspace and open sheet drafts stay in place.
-    if (section && (!previous.isConnected || !previous.getClientRects().length)) {
-      const selector = section.id === "wSection" ? `#sideNav [data-act="wh-tab"][data-id="${wholesale.currentSection()}"]` : section.dataset.act === "wh-pending" ? '[data-act="wh-pending"]' : `[data-act="wh-tab"][data-id="${section.dataset.id}"]`;
-      const target = desktopNav.matches ? document.querySelector(selector) : $("#wSection");
-      (target?.getClientRects().length ? target : $('#sideNav [data-act="wh-sidebar-toggle"]'))?.focus({ preventScroll: true });
+    const active = document.activeElement;
+    // Some browsers move focus to the body when the breakpoint hides the focused control.
+    const previous = active === document.body && focusedNavigation?.isConnected ? focusedNavigation : active?.closest(navigationControls);
+    const sectionPickerOpen = !scrim.hidden && !!sheet.querySelector(".w-section-list");
+    if (sectionPickerOpen) closeSheet();
+    if (desktopNav.matches && (previous?.dataset.act || sectionPickerOpen) && S.page === "wholesale") wholesaleExpanded = true;
+    renderNav(); // The open page and other sheet drafts stay in place.
+    if (!scrim.hidden || (!sectionPickerOpen && !previous)) return;
+    let target;
+    if (previous?.dataset.go) {
+      const id = previous.dataset.go === "more" && desktopNav.matches ? S.page : previous.dataset.go;
+      const selector = desktopNav.matches ? "#sideNav" : "#tabBar";
+      const tab = desktopNav.matches || TABS.some(([key]) => key === id) ? id : "more";
+      target = $(`${selector} [data-go="${CSS.escape(tab)}"]`);
+    } else {
+      const id = previous?.dataset.id || wholesale.currentSection();
+      const selector = previous?.dataset.act === "wh-pending" ? '#sideNav [data-act="wh-pending"]' :
+        `#sideNav [data-act="wh-tab"][data-id="${CSS.escape(id)}"]`;
+      target = desktopNav.matches ? $(selector) : $("#wSection");
     }
+    (target?.getClientRects().length ? target : $("#main")).focus({ preventScroll: true });
   });
 
   /* ---------- several admins (or devices) at once ----------
@@ -882,7 +938,10 @@
       if (me.user.role !== "admin") { location.replace((links && links.diary) || "/"); return; }
       S.me = me.user;
       if (links) S.links = links;
+      S.staffOrdersUrl = new URL("/orders", new URL(S.links.diary, location.href)).href;
       $("#sideDiary").href = S.links.diary; $("#sideRota").href = S.links.rota;
+      const sideOrders = $("#sideOrders");
+      if (sideOrders) sideOrders.href = S.staffOrdersUrl;
       $("#meBtn").textContent = ini(S.me.name); $("#meBtn").setAttribute("aria-label", `Signed in as ${S.me.name}`);
       $("#whoInit").textContent = ini(S.me.name); $("#whoName").textContent = S.me.name;
       const route = parseRoute(), quickbooksReview = new URLSearchParams(location.search).get("quickbooks") === "review";

@@ -1,0 +1,205 @@
+/* Staff workspace chrome shared by Kitchen Diary, Rota and Staff Wholesale. */
+.staff-app {
+  --staff-wide-top: calc(12px + env(safe-area-inset-top, 0px));
+  --staff-wide-content: calc(82px + env(safe-area-inset-top, 0px));
+  --staff-mobile-content: calc(68px + env(safe-area-inset-top, 0px));
+  --staff-sidebar-width: 250px;
+}
+.staff-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  color: var(--fg);
+  font-size: 17px;
+  font-weight: 750;
+  letter-spacing: -.02em;
+  text-decoration: none;
+}
+.staff-brand .brandmark { width: 30px; }
+.staff-workspaces[hidden] { display: none !important; }
+.staff-workspaces {
+  box-sizing: border-box;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 3px;
+  padding: 4px;
+  border-radius: 17px;
+  background: var(--sunk);
+}
+.staff-workspaces a {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: 13px;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.15;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.staff-workspaces a svg.i {
+  width: 19px;
+  height: 19px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.staff-workspaces a:hover { background: var(--sunk); color: var(--fg); }
+.staff-workspaces a[aria-current="page"] { background: var(--tint); color: var(--accent); }
+.staff-workspaces a:focus-visible,
+.staff-section-tabs .tab:focus-visible { outline-offset: -2px; }
+.staff-workspaces-wide { grid-auto-columns: auto; }
+.staff-workspaces-dock { display: none; }
+
+/* Local section shortcuts sit above content on phones. The apps' sidebars serve the wider layouts. */
+.staff-section-tabs {
+  display: flex;
+  gap: 3px;
+  min-width: 0;
+  padding: 4px;
+  margin-block-end: 4px;
+  border-radius: 16px;
+  background: var(--sunk);
+}
+.staff-section-tabs .tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  padding: 3px 4px;
+  border-radius: 12px;
+  text-align: center;
+  font-size: 13px;
+  line-height: 1.16;
+}
+.rwrap .staff-section-tabs .tab { font-size: 12px; }
+.staff-section-tabs .tab:hover { background: var(--sunk); }
+.staff-section-tabs .tab.on { background: var(--tint); }
+.staff-section-tabs .tab svg { display: none; }
+.staff-section-tabs .tab .n {
+  top: 2px;
+  left: auto;
+  right: 2px;
+  min-width: 16px;
+  height: 16px;
+  padding-inline: 3px;
+  font-size: 10px;
+}
+.staff-section-tabs .tab:has(.n) { padding-top: 12px; }
+.staff-section-tabs:empty { display: none; }
+.staff-app .staff-bell-mobile { display: inline-grid; }
+.staff-app .staff-bell-wide { display: none; }
+.staff-site-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.staff-site-row .staff-site-label {
+  color: var(--muted);
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+.staff-site-row .sitebtn { font-size: 15px; }
+
+@media (max-width: 1023px) {
+  .staff-app .appbar {
+    min-height: calc(60px + env(safe-area-inset-top, 0px));
+    padding: calc(7px + env(safe-area-inset-top, 0px)) max(14px, env(safe-area-inset-right, 0px)) 7px max(14px, env(safe-area-inset-left, 0px));
+    background: var(--glass-thick);
+    border-bottom: 1px solid var(--line);
+    -webkit-backdrop-filter: var(--blur);
+    backdrop-filter: var(--blur);
+  }
+  .staff-workspaces-wide { display: none; }
+  .staff-workspaces-dock {
+    position: fixed;
+    z-index: 20;
+    left: max(12px, env(safe-area-inset-left, 0px));
+    right: max(12px, env(safe-area-inset-right, 0px));
+    bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+    display: grid;
+    max-width: 520px;
+    margin-inline: auto;
+    padding: 5px;
+    border: 1px solid var(--glass-edge);
+    border-radius: 24px;
+    background: var(--glass-thick);
+    box-shadow: var(--glass-hi), var(--float);
+    -webkit-backdrop-filter: var(--blur);
+    backdrop-filter: var(--blur);
+  }
+  .staff-workspaces-dock a {
+    display: grid;
+    justify-items: center;
+    align-content: center;
+    gap: 4px;
+    min-height: 52px;
+    padding: 0 2px;
+    border-radius: 19px;
+    font-size: 11.5px;
+  }
+  .staff-workspaces-dock a svg.i { width: 21px; height: 21px; }
+  .staff-app .wrap:not(.staff-orders-wrap) { padding-top: var(--staff-mobile-content); }
+  .staff-app:has(.conn:not([hidden])) .wrap:not(.staff-orders-wrap) { padding-top: calc(var(--staff-mobile-content) + 38px); }
+}
+@media (min-width: 1024px) {
+  .staff-app:not(.staff-wholesale) { padding-left: var(--staff-sidebar-width); padding-top: var(--staff-wide-content); }
+  .staff-app .appbar {
+    inset: var(--staff-wide-top) max(clamp(14px, 3vw, 48px), env(safe-area-inset-right, 0px)) auto max(clamp(14px, 3vw, 48px), env(safe-area-inset-left, 0px));
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    align-items: center;
+    gap: 10px;
+    padding: 5px 14px 5px 16px;
+    border: 1px solid var(--glass-edge);
+    border-radius: var(--r-lg);
+    background: var(--glass-thick);
+    box-shadow: var(--glass-hi), var(--lift);
+    -webkit-backdrop-filter: var(--blur);
+    backdrop-filter: var(--blur);
+    z-index: 21;
+  }
+  .staff-app .appbar .staff-header-actions { grid-column: 3; justify-self: end; }
+  .staff-app .staff-bell-mobile { display: none; }
+  .staff-app .staff-bell-wide { display: inline-grid; }
+  .staff-app .staff-bell-wide > span:not(.n) { display: none; }
+  .staff-app .sidebar {
+    top: var(--staff-wide-content);
+    width: var(--staff-sidebar-width);
+    min-height: 0;
+    grid-template-rows: auto minmax(0, 1fr);
+    padding-top: 13px;
+  }
+  .staff-section-tabs,.staff-site-row { display: none; }
+  html:has(body.staff-app:not(.staff-wholesale)) { scroll-padding-top: calc(92px + env(safe-area-inset-top, 0px)); }
+  .staff-app .conn { top: var(--staff-wide-content); left: calc(50% + var(--staff-sidebar-width) / 2); }
+  .staff-app .toast { left: calc(50% + var(--staff-sidebar-width) / 2); }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .staff-workspaces a {
+    transition: color var(--motion-content), background-color var(--motion-content), scale var(--motion-press) var(--motion-spring);
+  }
+  .staff-workspaces a:active,.staff-section-tabs .tab:active { scale: .97; }
+}
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .staff-app .appbar,.staff-workspaces-dock {
+    background: var(--surface);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}

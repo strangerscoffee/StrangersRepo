@@ -619,7 +619,8 @@ test("staff journey on the real page", async () => {
   for (const t of ["Food safety records", "Daily diary", "Corrective actions", "Your training", "Allergen matrix"])
     assert.ok(inPdf.includes(Buffer.from(t, "latin1").toString("hex")), "PDF has " + t);
   await page.locator("#tabbar .tab", { hasText: "More" }).click();
-  assert.deepEqual(await page.locator("#moreHub .lrow b").allTextContents(), ["Last 4 weeks", "EHO inspection mode", "Fire safety log", "Accident book", "Last EHO inspection report", "HACCP & risk", "Suppliers", "Contacts", "Onboarding", "Rota", "Report sickness", "Switch person", "Set a quick PIN", "Change password", "Sign out"]);
+  assert.deepEqual(await page.locator("#moreHub .lrow b").allTextContents(), ["Last 4 weeks", "EHO inspection mode", "Fire safety log", "Accident book", "Last EHO inspection report", "HACCP & risk", "Suppliers", "Contacts", "Onboarding", "Report sickness", "Switch person", "Set a quick PIN", "Change password", "Sign out"]);
+  await page.getByRole("navigation", {name:"Staff workspaces"}).getByRole("link", {name:"Rota",exact:true}).waitFor();
   assert.equal(await page.locator("#moreHub .label", { hasText: "Admin" }).count(), 0, "staff don't see Setup");
   assert.match(await page.locator("#moreHub .lrow", { hasText: "Report sickness" }).getAttribute("href"), /#sick$/, "More links to the rota's sickness form");
   // Staff can open the management sections to read them, but there's nothing to change.

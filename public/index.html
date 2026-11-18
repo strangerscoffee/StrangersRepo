@@ -19,25 +19,24 @@
 <link rel="stylesheet" href="/app.css">
 <link rel="stylesheet" href="/theme.css">
 <link rel="stylesheet" href="/ui.css">
+<link rel="stylesheet" href="/shared/staff-navigation.css">
 <style>:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style>
 </head>
-<body>
-<!-- App chrome: top bar (phones and tablets), sidebar (wide screens), bottom tab bar (phones and tablets).
-     Filled in by diary/shell.js (renderNav, renderSites). -->
+<body class="staff-app">
 <header class="appbar" id="appbar">
-  <div class="abrand"><span class="brandmark" role="img" aria-label="Strangers Coffee"></span>
-    <button class="sitebtn" type="button" data-sitebtn aria-haspopup="dialog"></button></div>
-  <div class="aright"><button class="bellbtn" type="button" id="bellBtn" aria-haspopup="dialog" aria-label="Notifications"></button>
-  <button class="avatar" type="button" id="avatarBtn" aria-haspopup="menu" aria-label="Account"></button></div>
+  <div class="staff-brand"><span class="brandmark" aria-hidden="true"></span><span>Kitchen Diary</span></div>
+  <nav class="staff-workspaces staff-workspaces-wide" data-staff-workspaces aria-label="Staff workspaces" hidden></nav>
+  <div class="aright staff-header-actions">
+    <button class="bellbtn staff-bell-mobile" type="button" id="bellBtn" aria-haspopup="dialog" aria-label="Notifications"></button>
+    <button class="bellbtn staff-bell-wide" type="button" id="sideBell" aria-haspopup="dialog" aria-label="Notifications"></button>
+    <button class="avatar" type="button" id="avatarBtn" aria-haspopup="menu" aria-label="Account"></button>
+  </div>
 </header>
 <aside class="sidebar" id="sidebar">
-  <span class="brandlogo sbrand" role="img" aria-label="Strangers Coffee Company"></span>
   <button class="sitebtn" type="button" data-sitebtn aria-haspopup="dialog"></button>
-  <nav class="snav" id="snav" aria-label="Sections"></nav>
-  <button class="sbell" type="button" id="sideBell" aria-haspopup="dialog"></button>
-  <button class="mebox" type="button" id="meBox" aria-haspopup="menu"></button>
+  <nav class="snav" id="snav" aria-label="Kitchen Diary sections"></nav>
 </aside>
-<nav class="tabbar" id="tabbar" aria-label="Sections"></nav>
+<nav class="staff-workspaces staff-workspaces-dock" data-staff-workspaces aria-label="Staff workspaces" hidden></nav>
 
 <div class="sheetveil" id="sheetVeil" hidden></div>
 <div class="sheet" id="siteSheet" role="dialog" aria-modal="true" aria-labelledby="siteSheetTitle" hidden>
@@ -62,6 +61,11 @@
 <div class="conn" id="conn" role="status" hidden></div>
 
 <main class="wrap" id="main">
+  <div class="staff-site-row">
+    <span class="staff-site-label">Current site</span>
+    <button class="sitebtn" type="button" data-sitebtn aria-haspopup="dialog"></button>
+  </div>
+  <nav class="staff-section-tabs" id="tabbar" aria-label="Kitchen Diary sections"></nav>
   <div class="pagehead" id="pagehead">
     <button class="back" type="button" id="backBtn" hidden></button>
     <div class="trow"><div class="ptitle"><h1 id="pageTitle" tabindex="-1">Today</h1><p id="pageSub"></p></div><div id="pageAction">
@@ -529,6 +533,7 @@
 <div class="toast" id="toast" role="status" hidden></div>
 
 <script src="/shared/core.js"></script>
+<script src="/shared/staff-navigation.js"></script>
 <script src="/claude-shim.js"></script>
 <script src="/pinpad.js"></script>
 <script src="/pdf.js"></script>

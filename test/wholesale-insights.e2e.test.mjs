@@ -172,7 +172,7 @@ test("on a phone and an iPad, light and dark", async () => {
   for (const [name, viewport] of [["small-phone", { width: 320, height: 844 }], ["phone", { width: 390, height: 844 }], ["ipad", { width: 820, height: 1180 }]]) for (const colorScheme of ["light", "dark"]) {
     const { ctx, p, errors } = await adminPage(viewport, { isMobile: true, hasTouch: true, colorScheme });
     await p.locator("#insRoast").waitFor();
-    assert.equal(await p.locator("#wSection").inputValue(), "insights", "mobile section picker shows the current view");
+    assert.equal(await p.locator("#wSection .w-section-value").innerText(), "Insights", "mobile section picker shows the current view");
     if (name === "phone") {
       const row = p.locator("[data-roast]").first();
       const calculation = row.getByRole("button", { name: /Calculation/ });

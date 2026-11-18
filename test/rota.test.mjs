@@ -725,6 +725,9 @@ test("the rota host: / is the rota, diary pages go there, diary APIs are refused
     assert.equal((await get("/")).headers.get("location"), "/signin", "signed out: sign in on the rota host");
     assert.equal((await get("/rota/rota.js")).status, 200, "the rota's code loads signed out (no data in it)");
     assert.equal((await get("/shared/core.js")).status, 200, "and the helpers it shares with the diary");
+    for (const asset of ["/shared/staff-navigation.js", "/shared/staff-navigation.css"]) {
+      assert.equal((await get(asset)).status, 200, asset + " loads before sign-in");
+    }
     assert.equal((await get("/diary/core.js")).status, 302, "but not the diary's, on the rota's address");
     assert.equal((await get("/signin")).status, 200);
     const r = await fetch(host.base + "/api/auth/setup", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Host Admin", username: "host", password: "admin-pass-1", code: SETUP_CODE }) });
@@ -735,7 +738,7 @@ test("the rota host: / is the rota, diary pages go there, diary APIs are refused
     assert.equal((await get("/rota/", c)).headers.get("location"), "/");
     for (const p of ["/admin", "/index.html", "/diary/core.js", "/diary/start.js", "/claude-shim.js"]) assert.equal((await get(p, c)).headers.get("location"), "/", p + " goes to the rota");
     for (const p of ["/theme.css", "/ui.css", "/rota/rota.js", "/rota/sickness.js", "/rota/rota.css", "/pinpad.js", "/shared/core.js"]) assert.equal((await get(p, c)).status, 200, p);
-    assert.match(await (await get("/", c)).text(), /<script src="\/shared\/core.js\?v=\w+"><\/script>\n<script src="\/pinpad.js\?v=\w+"><\/script>\n<script src="\/rota\/leave.js\?v=\w+"><\/script>\n<script src="\/rota\/sickness.js\?v=\w+"><\/script>\n<script src="\/rota\/rota.js\?v=\w+"><\/script>/, "the shared helpers load before the rota's script");
+    assert.match(await (await get("/", c)).text(), /<script src="\/shared\/core.js\?v=\w+"><\/script>\n<script src="\/shared\/staff-navigation.js\?v=\w+"><\/script>\n<script src="\/pinpad.js\?v=\w+"><\/script>\n<script src="\/rota\/leave.js\?v=\w+"><\/script>\n<script src="\/rota\/sickness.js\?v=\w+"><\/script>\n<script src="\/rota\/rota.js\?v=\w+"><\/script>/, "the shared helpers load before the rota's script");
     const db = await fetch(host.base + "/api/db/get", { method: "POST", headers: { "content-type": "application/json", cookie: c }, body: JSON.stringify({ path: "days/x" }) });
     assert.equal(db.status, 404, "the diary's data API isn't on the rota host");
     assert.equal((await get("/api/rota/links", c).then((x) => x.json())).rota, "/");

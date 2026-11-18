@@ -114,11 +114,9 @@ function renderNav(){
     for(const n of items){const b=navBadge(n.id);
       sn.append(el("a",{href:"#"+n.id,class:S.tab===n.id?"on":"","data-diary-nav":n.id,"aria-current":S.tab===n.id?"page":null,onclick:e=>{e.preventDefault();show(n.id)}},svgi(ICON[n.ic]),el("span",{text:n.t}),b?el("span",{class:"n pill "+b.cls,text:b.text.split(" ")[0]}):null));}
   }
-  // The rota is its own app on its own address; it opens in the same tab.
-  // Report sickness opens the rota's self-certified sickness form (public/rota/sickness.js) for the person signed in.
+  // Report sickness is a shortcut into the form for the person signed in.
   const sickUrl=String(S.rotaUrl||"/rota/").replace(/#.*$/,"")+"#sick";
-  sn.append(el("div",{class:"h",text:"Rota"}),el("a",{href:S.rotaUrl},svgi(ICON.staff),el("span",{text:"Rota"})),el("a",{href:sickUrl},svgi(ICON.sick),el("span",{text:"Report sickness"})));
-  if(S.staffOrders)sn.append(el("div",{class:"h",text:"Wholesale"}),el("a",{href:"/orders"},svgi(ICON.records),el("span",{text:"Wholesale orders"})));
+  sn.append(el("div",{class:"h",text:"Shortcuts"}),el("a",{href:sickUrl},svgi(ICON.sick),el("span",{text:"Report sickness"})));
   const fade=()=>sn.classList.toggle("more",sn.scrollHeight-sn.scrollTop-sn.clientHeight>4);
   sn.onscroll=fade;requestAnimationFrame(fade);
   // tab bar
@@ -139,11 +137,9 @@ function renderNav(){
     if(rest.length)mh.append(el("div",{class:"label",text:"Management"}),el("div",{class:"list glass"},...rest.map(n=>navRow(n,()=>show(n.id)))));}
   const ad=vis.filter(n=>n.grp==="admin");
   if(ad.length)mh.append(el("div",{class:"label",text:"Admin"}),el("div",{class:"list glass"},...ad.map(n=>navRow(n,()=>show(n.id)))));
-  mh.append(el("div",{class:"label",text:"Rota"}),el("div",{class:"list glass"},el("a",{class:"lrow",href:S.rotaUrl},el("span",{class:"tile teal"},svgi(ICON.staff)),
-    el("span",{class:"t"},el("b",{text:"Rota"}),el("span",{class:"s",text:"Your shifts, open shifts, cover and time off"})),el("span",{class:"chev"},svgi(ICON.chevR))),
+  mh.append(el("div",{class:"label",text:"Shortcuts"}),el("div",{class:"list glass"},
     el("a",{class:"lrow",href:sickUrl},el("span",{class:"tile red"},svgi(ICON.sick)),
     el("span",{class:"t"},el("b",{text:"Report sickness"}),el("span",{class:"s",text:"Off sick or went home early"})),el("span",{class:"chev"},svgi(ICON.chevR)))));
-  if(S.staffOrders)mh.append(el("div",{class:"label",text:"Wholesale"}),el("div",{class:"list glass"},el("a",{class:"lrow",href:"/orders"},el("span",{class:"tile blue"},svgi(ICON.records)),el("span",{class:"t"},el("b",{text:"Wholesale orders"}),el("span",{class:"s",text:"Orders, preparation and account warnings"})),el("span",{class:"chev"},svgi(ICON.chevR)))));
   mh.append(el("div",{class:"label",text:"Account"}),el("div",{class:"list glass"},...accountItems().map(([t,ic,tile,fn,danger])=>
     el("button",{class:"lrow"+(danger?" danger":""),type:"button",onclick:fn},el("span",{class:"tile "+tile},svgi(ICON[ic])),el("span",{class:"t"},el("b",{text:t}),danger&&S.myName?el("span",{class:"s",text:"Signed in as "+S.myName}):null)))));
   if(nav&&focused)$("[data-diary-nav="+CSS.escape(focused)+"]",nav)?.focus({preventScroll:true});
@@ -239,11 +235,7 @@ window.addEventListener("diary:connection",e=>{
   if(c.hidden)S.droppedSince=0;
 });
 window.addEventListener("diary:dropped",e=>{S.droppedSince=(S.droppedSince||0)+1;toast("A change couldn't be saved: "+(e.detail.message||"refused by the diary"))});
-function renderMe(){
-  $("#avatarBtn").textContent=initials(S.myName);
-  $("#meBox").replaceChildren(el("span",{class:"avatar sm",text:initials(S.myName)}),
-    el("span",{class:"t"},el("b",{text:S.myName||"Signed in"}),el("span",{class:"s",text:{admin:"Admin",manager:"Manager",staff:"Staff"}[S.role]||""})),svgi(ICON.chevR));
-}
+function renderMe(){ $("#avatarBtn").textContent=initials(S.myName); }
 /* Sheets and menus keep interaction inside the window and restore the invoking control. */
 let diaryOverlay=null,peopleRequest=0;
 const overlayTabstops=panel=>[...panel.querySelectorAll("button:not(:disabled),a[href],[tabindex]:not([tabindex='-1'])")].filter(n=>n.getClientRects().length);
@@ -282,7 +274,7 @@ function placeDiaryMenu(){
 function openDiaryOverlay(selector,opener=document.activeElement,focus){
   closeSheets(false);
   const panel=$(selector),anchor=opener instanceof HTMLElement&&opener.matches("button,a[href]")?opener:null;
-  diaryOverlay={panel,opener:anchor,background:["#appbar","#sidebar","#tabbar","#main","#toast"].map(id=>[$(id),$(id).inert])};
+  diaryOverlay={panel,opener:anchor,background:[...document.querySelectorAll("#appbar,#sidebar,.staff-workspaces-dock,#main,#toast")].map(node=>[node,node.inert])};
   if(anchor){anchor.setAttribute("aria-controls",panel.id);anchor.setAttribute("aria-expanded","true")}
   $("#sheetVeil").hidden=false;panel.hidden=false;panel.inert=false;
   for(const [node] of diaryOverlay.background)node.inert=true;
@@ -303,7 +295,6 @@ function openAcctMenu(anchor){
 }
 document.querySelectorAll("[data-sitebtn]").forEach(b=>b.addEventListener("click",openSiteSheet));
 $("#avatarBtn").addEventListener("click",e=>openAcctMenu(e.currentTarget));
-$("#meBox").addEventListener("click",e=>openAcctMenu(e.currentTarget));
 $("#sheetVeil").addEventListener("click",()=>closeSheets());
 document.querySelectorAll("[data-close-sheet]").forEach(b=>b.addEventListener("click",()=>closeSheets()));
 window.addEventListener("resize",placeDiaryMenu);

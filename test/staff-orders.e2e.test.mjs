@@ -9,7 +9,7 @@ const cookieOf=r=>(r.headers.getSetCookie().find(v=>/^sf(?:bb|_wholesale)_sessio
 async function call(method,path,body,cookie=ADMIN){const r=await fetch(srv.base+path,{method,headers:{'content-type':'application/json',...(cookie?{cookie}:{})},body:body===undefined?undefined:JSON.stringify(body)});const data=await r.json();assert.ok(r.ok,`${path}: ${JSON.stringify(data)}`);return{data,cookie:cookieOf(r)}}
 async function setAccess(enabled){const current=(await call('GET',`/api/admin/users/${staffId}/orders-access`)).data;await call('PUT',`/api/admin/users/${staffId}/orders-access`,{ifVersion:current.version,enabled})}
 before(async()=>{
- srv=await startServer({writeLimit:4000});ADMIN=(await call('POST','/api/auth/setup',{name:'Staff Orders Owner',username:'owner',password:'staff-orders-owner',code:SETUP_CODE},null)).cookie;
+ srv=await startServer({writeLimit:4000,vars:{ROTA_HOST:'',COOKIE_DOMAIN:''}});ADMIN=(await call('POST','/api/auth/setup',{name:'Staff Orders Owner',username:'owner',password:'staff-orders-owner',code:SETUP_CODE},null)).cookie;
  staffId=(await call('POST','/api/admin/users',{name:'Orders Team Member',username:'orders.staff',role:'staff',password:'temporary-password'})).data.user.id;
  STAFF=(await call('POST','/api/auth/change',{username:'orders.staff',password:'temporary-password',newPassword:'orders-staff-own'},null)).cookie;
  const customer=(await call('POST','/api/admin/wholesale/customers',{business:'River & Roast <Cafe>',contact:'Hidden contact',email:'hidden@example.test',address:'10 Example Street',postcode:'NR1 1AA',status:'Active',note:'PRIVATE_CUSTOMER_NOTE'})).data.customer;
@@ -46,14 +46,58 @@ for(const[screen,viewport]of[['phone',{width:393,height:852}],['iPad',{width:118
   }finally{await context.close()}
  });
 }
-test('Admin People controls access and the staff More menu exposes only permitted orders',{timeout:60000},async()=>{
+const workspaces=page=>page.getByRole('navigation',{name:'Staff workspaces',exact:true});
+const workspace=(page,name)=>workspaces(page).getByRole('link',{name,exact:true});
+
+test('Admin People controls access to Wholesale in Staff navigation',{timeout:60000},async()=>{
  await setAccess(false);const ac=await contextFor(ADMIN,{width:1180,height:820},'light'),sc=await contextFor(STAFF,{width:393,height:852},'light');
  try{
-  const admin=await ac.newPage(),staff=await sc.newPage();await staff.goto(srv.base+'/#more');await staff.waitForFunction(()=>typeof S!=='undefined'&&S.myUserId);assert.equal(await staff.locator('#moreHub a[href="/orders"]').count(),0);
+  const admin=await ac.newPage(),staff=await sc.newPage();
+  await staff.goto(srv.base+'/#more');await workspace(staff,'Kitchen Diary').waitFor();assert.equal(await workspace(staff,'Wholesale').count(),0);
+  await workspace(staff,'Rota').click();await workspace(staff,'Rota').and(staff.locator('[aria-current="page"]')).waitFor();assert.equal(await workspace(staff,'Wholesale').count(),0);
   await admin.goto(srv.base+'/admin#people');await admin.locator(`[data-person="${staffId}"]`).click();await admin.locator(`[data-act="order-access"][data-id="${staffId}"]`).click();await admin.locator('#orderAccessEnabled').waitFor();assert.equal(await admin.locator('#orderAccessEnabled').isChecked(),false);await admin.locator('#orderAccessEnabled').check();await admin.getByRole('button',{name:'Save access',exact:true}).click();await admin.locator('#scrim').waitFor({state:'hidden'});
-  await staff.reload();await staff.locator('#moreHub a[href="/orders"]').waitFor();await staff.locator('#moreHub a[href="/orders"]').click();await staff.locator('[data-order-id]').waitFor();
+  await staff.reload();await workspace(staff,'Wholesale').click();await staff.locator('[data-order-id]').waitFor();
  }finally{await ac.close();await sc.close()}
 });
+
+for(const viewport of [{width:320,height:650},{width:1512,height:900}]){
+ test(`Staff workspace navigation keeps local sections and filters at ${viewport.width}px`,{timeout:60000},async()=>{
+  await setAccess(true);
+  const context=await contextFor(STAFF,viewport,'dark'),page=await context.newPage(),errors=[];
+  page.on('pageerror',error=>errors.push(error.message));
+  async function current(name){
+   const active=workspace(page,name).and(page.locator('[aria-current="page"]'));
+   await active.waitFor();
+   assert.equal(await workspaces(page).locator('[aria-current="page"]').count(),1);
+   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+  }
+  try{
+   await page.goto(srv.base+'/#week');await current('Kitchen Diary');
+   await workspace(page,'Rota').click();await current('Rota');
+   await page.getByRole('link',{name:'Holidays',exact:true}).or(page.getByRole('button',{name:'Holidays',exact:true})).filter({visible:true}).click();
+   await page.locator('body[data-page="leave"] #page[aria-busy=false]').waitFor();
+   await workspace(page,'Wholesale').click();await current('Wholesale');
+   await page.locator('#orderDispatchScope').selectOption('upcoming');
+   await page.getByRole('button',{name:'Tabs',exact:true}).click();
+   await page.locator('#tabsView').waitFor();
+   await workspace(page,'Kitchen Diary').click();await current('Kitchen Diary');
+   await page.locator('[data-panel="week"]').waitFor();
+   await workspace(page,'Rota').click();await current('Rota');
+   await page.locator('body[data-page="leave"] #page[aria-busy=false]').waitFor();
+   await workspace(page,'Wholesale').click();await current('Wholesale');
+   await page.locator('#tabsView').waitFor();
+   await page.getByRole('button',{name:'Orders',exact:true}).click();
+   assert.equal(await page.locator('#orderDispatchScope').inputValue(),'upcoming');
+   await page.goto(srv.base+'/orders#customers');
+   await page.locator('#customersView').waitFor();
+   await page.goto(srv.base+'/orders#'+sourceOrder.id);
+   await page.locator('#orderDialog[open] #orderDetail').filter({hasText:'STAFF-ORDER-TEST'}).waitFor();
+   await page.locator('#doneOrder').click();
+   assert.equal(await page.locator('#orderDispatchScope').inputValue(),'upcoming');
+   assert.deepEqual(errors,[]);
+  }finally{await context.close()}
+ });
+}
 test('an older authorized response cannot restore orders after access is revoked during a new check',{timeout:60000},async()=>{
  await setAccess(true);const context=await contextFor(STAFF,{width:1180,height:820},'dark'),page=await context.newPage();let release,arrive,held=false;const ready=new Promise(r=>arrive=r),gate=new Promise(r=>release=r);
  try{

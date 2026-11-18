@@ -2,6 +2,7 @@
 // details, status / internal note / tracking changes (version-checked, online only, never queued), printing orders
 // and bags to process, and customers' contact and delivery details (read-only). No prices. Nothing is stored
 // locally except an identity-bound, frozen pending order used to recover uncertain submissions.
+// The tab's remembered view, order status and date scope contain only navigation identifiers.
 // Private views are cleared or hidden when the session can't be verified.
 (()=>{
  'use strict';
@@ -33,9 +34,10 @@
  const svg=key=>svgi(paths[key]||paths.coffee);
  const filters=[['open','Open orders'],['New','New'],['Preparing','Preparing'],['Ready','Ready'],['Dispatched','Dispatched'],['all','All orders']];
  const STATUSES=['New','Preparing','Ready','Dispatched','Cancelled'];
+ const VIEWS=new Set(['orders','tabs','customers']);
  const NEXT={New:['Preparing','Mark preparing'],Preparing:['Ready','Mark ready'],Ready:['Dispatched','Mark dispatched']};
  let rows=[],cursor=null,total=0,status='open',selected=null,sequence=0,timer=null,searchTimer=null,customerTimer=null,started=false;
- let view='orders',customers=[],customersMore=false,customerRequest=0,picking=false,busy=new Set(),editing=false;
+ let view='orders',baseView='orders',pendingViewRoute=false,staffLinks,staffName='',workspaceAccess=false,customers=[],customersMore=false,customerRequest=0,picking=false,busy=new Set(),editing=false;
  let ordersKey='';
  const findOrder=id=>rows.find(row=>row.id===id)||(heldOrder?.id===id?heldOrder:null);
  let tabs={open:[],cleared:[],threshold:6000},tabSelected=null,tabConfirm=false;
@@ -52,9 +54,17 @@
   if(clear){rows=[];customers=[];customerRequest++;tabs={open:[],cleared:[],threshold:6000};tabSelected=null;$('tabList').replaceChildren();$('clearedList').replaceChildren();$('tabDetail').replaceChildren();selected=null;cursor=null;picked.clear();picking=false;editing=false;batch=null;
    activeOrder=heldOrder=null;mobilePacking=false;deskTotals=null;totalsSequence++;packProblems.clear();dispatchReview=null;
    for(const id of ['orderList','orderDetail','orderEdit','orderDialogAction','mobilePacking','packingDesk','deskBagTotals','deskDispatchBody','customerList','customerDetail','customerActions','customerCount','tabCount','totalsBody','newOrderForm','newOrderFoot'])$(id).replaceChildren();draft=null;
-   $('signedIn').textContent='';$('ordersContent').hidden=true;$('viewTabs').hidden=true;}
+   $('signedIn').textContent='';$('signedInInitials').textContent='';$('signedInInitials').removeAttribute('aria-label');
+   $('signedInInitials').hidden=true;$('ordersContent').hidden=true;}
+ }
+ function renderIdentity(){
+  $('signedIn').textContent=staffName;
+  $('signedInInitials').textContent=SC.initials(staffName);
+  $('signedInInitials').setAttribute('aria-label','Signed in as '+staffName);
+  $('signedInInitials').hidden=false;
  }
  function message(text,{retry=false,denied=false}={}){
+  if(denied&&workspaceAccess){workspaceAccess=false;SCStaffNavigation.render('orders',staffLinks,false);}
   $('accessStatus').hidden=false;$('accessStatus').replaceChildren(el('p',{},text),retry?el('button',{type:'button',class:'btn',onclick:()=>load({reverify:true})},'Try again'):null,denied?el('a',{href:'/'},'Back to Kitchen Diary'):null);
  }
  const toast=SC.makeToast(3500);
@@ -134,7 +144,7 @@
   const filter=active?.dataset.orderFilter;
   const orderId=active?.dataset.orderId;
   $('orderStatus').value=status;
-  $('statusFilters').replaceChildren(...choices.map(([id,label])=>el('button',{type:'button','data-order-filter':id,'aria-pressed':String(status===id),onclick:()=>{status=id;load()}},label)));
+  $('statusFilters').replaceChildren(...choices.map(([id,label])=>el('button',{type:'button','data-order-filter':id,'aria-pressed':String(status===id),onclick:()=>{status=id;saveNavigation();load()}},label)));
   $('printBar').replaceChildren(printBar());batchBar();
   $('orderCount').textContent=rows.length<total?`${rows.length} of ${total} orders`:`${total} ${total===1?'order':'orders'}`;
   $('orderList').replaceChildren(...rows.map(orderRow));
@@ -774,7 +784,7 @@
    try{removeAttempt(attempt);}catch{current.error='Order confirmed, but recovery details could not be cleared. Check the same order again before starting another.';current.sending=false;if(draft===current)drawNewOrder();return;}
    if(draft?.pending?.payload.requestId!==attempt.payload.requestId)return;
    draft=null;$('newOrderDialog').close();toast(`Order placed for ${attempt.business}`);
-   status='open';$('search').value='';if(view!=='orders')showView('orders');await load();if(rows.some(r=>r.id===order.id))openOrder(order.id);
+   status='open';$('search').value='';if(view!=='orders')showView('orders',{url:true});else saveNavigation();await load();if(rows.some(r=>r.id===order.id))openOrder(order.id);
   };
   try{
    if(wasUncertain){
@@ -810,25 +820,59 @@
   }catch{if(isCurrent()&&q===$('customerSearch').value.trim())$('customerList').replaceChildren(el('div',{class:'empty'},'Customers could not be loaded. Check your connection and try again.'));}
   finally{if(request===customerRequest){$('customerList').setAttribute('aria-busy','false');$('refreshCustomers').removeAttribute('aria-busy');$('refreshCustomers').disabled=false;}}
  }
- function showView(next){
+ function saveNavigation(){
+  SCStaffNavigation.save('orders',orderingIdentity,{view,status,dispatch:$('orderDispatchScope').value});
+ }
+ function showView(next,{url=false,fetchData=true,animate=true}={}){
+  const changed=view!==next;
   view=next;$('ordersView').hidden=view!=='orders';$('customersView').hidden=view!=='customers';$('tabsView').hidden=view!=='tabs';
-  for(const b of $('viewTabs').querySelectorAll('button'))b.setAttribute('aria-pressed',String(b.dataset.view===view));
-  $('workspaceHeading').hidden=view==='orders';
-  if(view!=='orders')$('workspaceTitle').textContent=view==='tabs'?'Customer tabs':'Customers';
-  SC.reveal($(view+'View'));
+  for(const button of $('viewTabs').querySelectorAll('button'))button.setAttribute('aria-pressed',String(button.dataset.view===view));
+  $('sectionNewOrder').hidden=view==='orders';
+  $('workspaceTitle').textContent={orders:'Wholesale orders',tabs:'Customer tabs',customers:'Customers'}[view];
+  if(url&&changed){history.pushState(null,'','#'+view);saveNavigation();}
+  if(changed&&animate)SC.reveal($(view+'View'));
+  if(!fetchData)return;
   if(view==='orders')loadDeskTotals();
-  if(view==='customers')loadCustomers();
-  if(view==='tabs')loadTabs();
+  else if(view==='customers')loadCustomers();
+  else loadTabs();
+ }
+ function routeView(){
+  const hash=location.hash.slice(1);
+  return VIEWS.has(hash)?hash:hash?'orders':baseView;
+ }
+ function restoreNavigation(){
+  const saved=SCStaffNavigation.read('orders',orderingIdentity);
+  if(VIEWS.has(saved?.view))baseView=saved.view;
+  if(filters.some(([value])=>value===saved?.status)||wideDesk.matches&&saved?.status==='prepare')status=saved.status;
+  if(Array.from($('orderDispatchScope').options).some(option=>option.value===saved?.dispatch))$('orderDispatchScope').value=saved.dispatch;
+  showView(routeView(),{fetchData:false,animate:false});
+  if(VIEWS.has(location.hash.slice(1)))saveNavigation();
  }
 
  // A link to one order (the new-order email's button: /orders#WS-…) opens it, searching all orders if needed.
  async function openFromLink(){
-  if(location.hash==='#tabs'){history.replaceState(null,'',location.pathname+location.search);showView('tabs');return;}
   if(location.hash==='#new'){history.replaceState(null,'',location.pathname+location.search);newOrder(null);return;}
-  const id=decodeURIComponent(location.hash.slice(1));if(!/^WS-[A-F0-9]{32}$/.test(id))return;
+  const link=location.hash,owner=orderingIdentity;
+  let id;
+  try{id=decodeURIComponent(link.slice(1));}catch{return;}
+  if(!/^WS-[A-F0-9]{32}$/.test(id))return;
+  if(!findOrder(id)){
+   try{
+    const lookup=await staffJson('GET','orders?'+new URLSearchParams({status:'all',dispatch:'all',q:id}));
+    if(!started||owner!==orderingIdentity||link!==location.hash)return;
+    if(document.documentElement.hasAttribute('data-orders-locked')){pendingViewRoute=true;return;}
+    heldOrder=lookup.orders?.find(row=>row.id===id)||null;
+   }catch(error){if(!error.quiet)toast(error.message||'That order could not be loaded.');return;}
+  }
   history.replaceState(null,'',location.pathname+location.search);
-  if(!rows.some(r=>r.id===id)){status='all';$('search').value=id;await load();}
-  if(rows.some(r=>r.id===id))openOrder(id);else toast('That order could not be found.');
+  if(findOrder(id))openOrder(id);else toast('That order could not be found.');
+ }
+ function followViewRoute(){
+  if(!started)return;
+  pendingViewRoute=document.documentElement.hasAttribute('data-orders-locked');
+  if(pendingViewRoute)return;
+  showView(routeView());saveNavigation();
+  openFromLink();
  }
  async function load({more=false,reverify=false}={}){
   if(!started)return;
@@ -853,26 +897,30 @@
     const id=heldOrder.id;
     const result=await staffJson('GET','orders?status=all&q='+encodeURIComponent(id));
     if(current!==sequence)return;
-    if(heldOrder?.id===id)heldOrder=result.orders.find(row=>row.id===id&&OPEN_STATUSES.includes(row.status))||null;
+    if(heldOrder?.id===id)heldOrder=result.orders.find(row=>row.id===id&&(OPEN_STATUSES.includes(row.status)||wasOpen&&wasSelected===id))||null;
    }
    rows=more&&!changed?[...new Map([...rows,...data.orders].map(row=>[row.id,row])).values()]:data.orders;cursor=data.nextCursor;total=data.count;
-   draw();$('accessStatus').hidden=true;$('ordersContent').hidden=false;$('viewTabs').hidden=false;document.documentElement.removeAttribute('data-orders-locked');if(changed||reverify)SC.reveal($('orderList'));
+   if(!workspaceAccess){workspaceAccess=true;SCStaffNavigation.render('orders',staffLinks,true);}
+   if($('signedInInitials').hidden)renderIdentity();
+   draw();$('accessStatus').hidden=true;$('ordersContent').hidden=false;document.documentElement.removeAttribute('data-orders-locked');if(changed||reverify)SC.reveal($('orderList'));
    loadDeskTotals();
    if(wasOpen&&wasSelected){const row=findOrder(wasSelected);if(row){selected=row.id;renderDetail(row);if(!$('orderDialog').open)$('orderDialog').showModal()}else{$('orderDialog').close();selected=null;}}
-   if(reverify&&view==='customers')loadCustomers();
-   if(view==='tabs')loadTabs();
+   if(pendingViewRoute)followViewRoute();
+   else if(reverify&&view==='customers')loadCustomers();
+   else if(view==='tabs')loadTabs();
   }catch(error){if(current===sequence){lock(true);message('Orders could not be verified. Reconnect, then try again.',{retry:true});}}
   finally{if(current===sequence){$('orderList').setAttribute('aria-busy','false');$('refresh').disabled=false;$('refresh').setAttribute('aria-busy','false');$('loadMore').disabled=false;}}
  }
  $('refresh').onclick=()=>load({reverify:true});$('loadMore').onclick=()=>load({more:true});
  $('orderStatus').replaceChildren(...filters.map(([value,label])=>el('option',{value},label)));
- $('orderStatus').onchange=event=>{status=event.target.value;load();};
- $('orderDispatchScope').onchange=()=>{totalsSequence++;deskTotals=null;drawDeskTotals();load();};
+ $('orderStatus').onchange=event=>{status=event.target.value;saveNavigation();load();};
+ $('orderDispatchScope').onchange=()=>{saveNavigation();totalsSequence++;deskTotals=null;drawDeskTotals();load();};
  wideDesk.addEventListener('change',()=>{if(!wideDesk.matches&&status==='prepare')status='open';if(started)load();});
  $('search').oninput=()=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>load(),250)};
  $('customerSearch').oninput=()=>{clearTimeout(customerTimer);customerTimer=setTimeout(loadCustomers,250)};
  $('refreshCustomers').onclick=loadCustomers;
- for(const b of $('viewTabs').querySelectorAll('button'))b.onclick=()=>showView(b.dataset.view);
+ for(const button of $('viewTabs').querySelectorAll('button'))button.onclick=()=>showView(button.dataset.view,{url:true});
+ addEventListener('hashchange',followViewRoute);
  $('closeOrder').onclick=()=>$('orderDialog').close();
  $('doneOrder').onclick=()=>{
   if(!mobilePacking){$('orderDialog').close();return;}
@@ -909,5 +957,18 @@
  document.addEventListener('visibilitychange',()=>{if(document.hidden){sequence++;lock()}else if(started)load({reverify:true})});
  addEventListener('pageshow',event=>{if(event.persisted&&started)load({reverify:true})});addEventListener('online',()=>load({reverify:true}));
  SC.recheckOnPageshow();
- (async()=>{const me=await SC.startSession({clear:()=>{sequence++;started=false;orderingIdentity=null;clearInterval(timer);lock(true)}});if(!me)return;orderingIdentity=me.user.id;$('signedIn').textContent=me.user.name;started=true;await load({reverify:true});if(started){try{if(savedAttempts().length)newOrder(null);else await openFromLink();}catch{newOrder(null);}}timer=setInterval(()=>{if(started&&!document.hidden&&!editing&&!busy.size&&!$('dispatchDialog').open)load()},15000)})();
+ (async()=>{
+  const me=await SC.startSession({clear:()=>{
+   sequence++;started=false;orderingIdentity=null;staffName='';workspaceAccess=false;clearInterval(timer);
+   SCStaffNavigation.clear();lock(true);
+  }});
+  if(!me)return;
+  orderingIdentity=me.user.id;staffLinks=me.links;staffName=me.user.name||'';
+  workspaceAccess=me.capabilities?.staffOrders===true;
+  SCStaffNavigation.render('orders',staffLinks,workspaceAccess);
+  restoreNavigation();started=true;await load({reverify:true});
+  if(!started)return;
+  try{if(savedAttempts().length)newOrder(null);else await openFromLink();}catch{newOrder(null);}
+  timer=setInterval(()=>{if(started&&!document.hidden&&!editing&&!busy.size&&!$('dispatchDialog').open)load()},15000);
+ })();
 })();

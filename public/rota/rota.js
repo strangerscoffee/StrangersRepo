@@ -182,7 +182,6 @@
       sn.append(link("mine", "My shifts", "mine"), link("leave", "Holidays", "plane"), link("swaps", "Open shifts & cover", "swap"), link("avail", "When I can work", "avail"), link("sick", "Report sickness", "sick"));
       if (siteManager()) sn.append(el("div", { class: "h", text: "Manage" }), link("settings", "Site rota settings", "setup"));
     }
-    sn.append(el("div", { class: "h", text: "Kitchen Diary" }), el("a", { href: R.links.diary, "data-rota-focus": "side:diary" }, svgi(ICON.diary), el("span", { text: "Open the diary" })));
     const tb = $("#tabbar"); tb.replaceChildren();
     const label = { week: "Week", mine: "My shifts", leave:"Holidays", swaps: "Open shifts", avail: "When I work", requests: "Requests", more: "More" };
     for (const t of TABS()) {
@@ -219,6 +218,10 @@
     let { page, args } = parseHash();
     if (!allowed(page)) page = mgr() ? "week" : "mine";
     const restore = page === R.tab ? rememberFocus($("#main")) : () => {};
+    if (page !== R.tab) {
+      if (R.tab) window.scrollTo({ top: 0 });
+      SCStaffNavigation.save("rota", R.auth?.user.id, PAGES[page].parent || page);
+    }
     R.tab = page;
     renderNav();
     closeSheets();
@@ -336,7 +339,7 @@
   /* ---------- sheets and the account menu ---------- */
 
   let activeOverlay = null, overlayTrigger = null, previousInert = [];
-  const overlayBackground = ["#main", "#appbar", "#sidebar", "#tabbar"];
+  const overlayBackground = ["#main", "#appbar", "#sidebar", ".staff-workspaces-dock"];
   function showOverlay(overlay, trigger = document.activeElement) {
     if (!activeOverlay) {
       overlayTrigger = trigger;
@@ -404,7 +407,6 @@
       ...(a.quickSwitch ? [["Switch person", "staff", openPeopleSheet]] : []),
       ...(R.me?.user?.role !== "admin" ? [[a.user?.quickPin ? "Change quick PIN" : "Set a quick PIN", "key", setQuickPin]] : []),
       ["Change password", "key", () => { location.href = "/signin#change"; }],
-      ["Open the diary", "diary", () => { location.href = R.links.diary; }],
       ...(isAdmin() ? [["Admin", "setup", () => { location.href = R.links.admin || "/admin"; }]] : []),
       ["Sign out", "out", signOut, true],
     ];
@@ -461,10 +463,8 @@
     m.replaceChildren(el("div", { class: "who" }, el("b", { text: u.name }), el("span", { class: "s", text: ROLE[u.role] || "" })),
       ...accountItems().map(([t, ic, fn, danger]) => el("button", { class: "m" + (danger ? " danger" : ""), type: "button", role: "menuitem", onclick: () => { closeSheets(); fn(); } }, svgi(ICON[ic]), el("span", { text: t }))));
     const r = anchor.getBoundingClientRect();
-    const above = anchor.id === "meBox";
-    m.style.top = above ? "" : r.bottom + 8 + "px";
-    m.style.bottom = above ? innerHeight - r.top + 8 + "px" : "";
-    m.style.maxHeight = Math.max(0, (above ? r.top : innerHeight - r.bottom) - 20) + "px";
+    m.style.top = r.bottom + 8 + "px";
+    m.style.maxHeight = Math.max(0, innerHeight - r.bottom - 20) + "px";
     anchor.setAttribute("aria-expanded", "true");
     showOverlay(m, anchor);
     m.style.left = Math.max(12, Math.min(r.left, innerWidth - m.offsetWidth - 12)) + "px";
@@ -1639,8 +1639,6 @@
       label("Your own shifts"),
       el("div", { class: "list glass" }, row("Open shifts & cover", "Pick up shifts, ask for cover", "swap", "teal", () => go("swaps")),
         row("When I can work", "Your weekly pattern and time off", "avail", "indigo", () => go("avail"))),
-      label("Kitchen Diary"),
-      el("div", { class: "list glass" }, row("Open the diary", "Today's checks and records", "diary", "green", () => { location.href = R.links.diary; })),
       label("Account"),
       el("div", { class: "list glass" }, ...accountItems().map(([t, ic, fn, danger]) => el("button", { class: "lrow" + (danger ? " danger" : ""), type: "button", onclick: fn },
         el("span", { class: "tile " + (danger ? "red" : "grey") }, svgi(ICON[ic])), el("span", { class: "t" }, el("b", { text: t }), danger ? el("span", { class: "s", text: "Signed in as " + R.me.user.name }) : null))))];
@@ -1799,7 +1797,8 @@
         renderSeq++; Leave.clear(); Sick.clear();
         R.me = null; R.auth = null; R.weekData = null; R.approvers = []; R.everyone = false; weekBody = null;
         for (const key of Object.keys(HUE.id)) delete HUE.id[key]; for (const key of Object.keys(HUE.name)) delete HUE.name[key];
-        closeSheets(); for (const id of ["#page", "#sheet", "#peopleList", "#acctMenu", "#snav", "#tabbar", "#meBox"]) $(id)?.replaceChildren();
+        closeSheets(); for (const id of ["#page", "#sheet", "#peopleList", "#acctMenu", "#snav", "#tabbar", "#avatarBtn"]) $(id)?.replaceChildren();
+        SCStaffNavigation.clear();
         $("#pageTitle").textContent = ""; $("#pageSub").textContent = ""; $("#pageAction").replaceChildren();
       } });
       if (!auth) return;
@@ -1811,9 +1810,10 @@
     }
     const u = R.me.user;
     $("#avatarBtn").textContent = initials(u.name);
-    $("#meBox").replaceChildren(avatar(u.name), el("span", { class: "t" }, el("b", { text: u.name }), el("span", { class: "s", text: ROLE[u.role] || "" })), svgi(ICON.chevR));
+    SCStaffNavigation.watch("rota", { userId: R.auth.user.id, role: R.auth.user.role, links: R.links, ordersAccess: R.auth.capabilities?.staffOrders === true });
+    const lastPage = SCStaffNavigation.read("rota", R.auth.user.id);
+    if (!location.hash && typeof lastPage === "string" && allowed(lastPage)) history.replaceState(null, "", "#" + lastPage);
     $("#avatarBtn").addEventListener("click", (e) => openAcctMenu(e.currentTarget));
-    $("#meBox").addEventListener("click", (e) => openAcctMenu(e.currentTarget));
     $("#sheetVeil").addEventListener("click", closeSheets);
     $("#closePeopleSheet").addEventListener("click", closeSheets);
     document.addEventListener("keydown", handleOverlayKeys);

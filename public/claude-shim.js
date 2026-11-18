@@ -488,8 +488,8 @@
 
   const user = {
     async me() {
-      const { user: u, quickSwitch, capabilities } = await mePromise;
-      return { id: u.recordId, userId: u.id, name: u.name, avatarUrl: "", role: u.role, quickPin: !!u.quickPin, quickSwitch: !!quickSwitch, notifSeen: u.notifSeen || 0, staffOrders: !!capabilities?.staffOrders };
+      const { user: u, quickSwitch, capabilities, links } = await mePromise;
+      return { id: u.recordId, userId: u.id, name: u.name, avatarUrl: "", role: u.role, quickPin: !!u.quickPin, quickSwitch: !!quickSwitch, notifSeen: u.notifSeen || 0, staffOrders: !!capabilities?.staffOrders, links };
     },
     async can(perm) { return perm === "data.write"; }, // every role records entries; section limits are separate
     async profiles(ids) {

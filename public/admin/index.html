@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<link rel="preload" href="/logo.svg" as="image" type="image/svg+xml" crossorigin="anonymous">
+<link rel="preload" href="/mark.svg" as="image" type="image/svg+xml" crossorigin="anonymous">
 <meta name="robots" content="noindex,nofollow">
 <title>Strangers Coffee - Admin</title>
 <meta name="theme-color" content="#edf1f6" media="(prefers-color-scheme: light)">
@@ -27,19 +27,22 @@
 </head>
 <body>
 <div class="app">
-  <aside class="side" aria-label="Admin sections">
-    <div class="brand"><span class="brandlogo" role="img" aria-label="Strangers Coffee"></span><b>Admin</b></div>
-    <nav class="sidenav" id="sideNav"></nav>
-    <div class="side-foot">
-      <div class="side-label">Open</div>
-      <a class="nav app-link" id="sideDiary" href="/"><span data-icon="cal"></span>Kitchen Diary</a>
-      <a class="nav app-link" id="sideRota" href="/rota/"><span data-icon="clock"></span>Rota</a>
-      <button class="who" type="button" id="whoBtn" aria-haspopup="dialog"><span class="me" id="whoInit" aria-hidden="true"></span><span class="nm"><b id="whoName"></b><span>Admin</span></span></button>
+  <aside class="side">
+    <div class="brand"><span class="brandmark" role="img" aria-label="Strangers Coffee"></span><b>Admin</b></div>
+    <div class="side-scroll">
+      <nav class="sidenav" id="sideNav" aria-label="Admin sections"></nav>
+      <nav class="side-foot" aria-labelledby="sideStaffLabel">
+        <p class="side-label" id="sideStaffLabel">Staff workspaces</p>
+        <a class="nav app-link" id="sideDiary" href="/"><span data-icon="cal"></span>Kitchen Diary</a>
+        <a class="nav app-link" id="sideRota" href="/rota/"><span data-icon="clock"></span>Rota</a>
+        <a class="nav app-link" id="sideOrders" href="/orders"><span data-icon="coffee"></span>Staff Wholesale</a>
+      </nav>
     </div>
+    <button class="who" type="button" id="whoBtn" aria-haspopup="dialog"><span class="me" id="whoInit" aria-hidden="true"></span><span class="nm"><b id="whoName"></b><span>Admin</span></span></button>
   </aside>
   <div class="col">
     <header class="topbar">
-      <div class="brand"><span class="brandlogo" role="img" aria-label="Strangers Coffee"></span><b>Admin</b></div>
+      <div class="brand"><span class="brandmark" role="img" aria-label="Strangers Coffee"></span><b>Admin</b></div>
       <button class="me" type="button" id="meBtn" aria-haspopup="dialog" aria-label="Account"></button>
     </header>
     <main id="main" tabindex="-1"><div class="sc-skeleton sc-skeleton-list" role="status" aria-label="Loading Admin…"><span class="sc-sr-only">Loading Admin…</span><div class="sc-sk-shapes" aria-hidden="true"><div class="sc-sk-card"><span class="sc-sk-bar sc-sk-icon"></span><div class="sc-sk-copy"><span class="sc-sk-bar sc-sk-title"></span><span class="sc-sk-bar sc-sk-line"></span><span class="sc-sk-bar sc-sk-short"></span></div></div><div class="sc-sk-card"><span class="sc-sk-bar sc-sk-icon"></span><div class="sc-sk-copy"><span class="sc-sk-bar sc-sk-title"></span><span class="sc-sk-bar sc-sk-line"></span><span class="sc-sk-bar sc-sk-short"></span></div></div><div class="sc-sk-card"><span class="sc-sk-bar sc-sk-icon"></span><div class="sc-sk-copy"><span class="sc-sk-bar sc-sk-title"></span><span class="sc-sk-bar sc-sk-line"></span><span class="sc-sk-bar sc-sk-short"></span></div></div></div></div></main>

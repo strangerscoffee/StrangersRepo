@@ -19,22 +19,20 @@
 <link rel="stylesheet" href="/theme.css">
 <link rel="stylesheet" href="/ui.css">
 <link rel="stylesheet" href="/rota/rota.css">
+<link rel="stylesheet" href="/shared/staff-navigation.css">
 <style>:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style>
 </head>
-<body>
-<!-- The staff rota (rota.js). Same look and chrome as the diary: top bar and tab bar on phones and tablets,
-     a sidebar on wide screens. Its data comes from /api/rota/* (src/rota.ts). -->
+<body class="staff-app">
 <header class="appbar" id="appbar">
-  <div class="abrand"><span class="brandmark" role="img" aria-label="Strangers Coffee"></span><span class="rtag">Rota</span></div>
-  <button class="avatar" type="button" id="avatarBtn" aria-haspopup="menu" aria-controls="acctMenu" aria-expanded="false" aria-label="Account"></button>
+  <div class="staff-brand"><span class="brandmark" aria-hidden="true"></span><span>Rota</span></div>
+  <nav class="staff-workspaces staff-workspaces-wide" data-staff-workspaces aria-label="Staff workspaces" hidden></nav>
+  <button class="avatar staff-header-actions" type="button" id="avatarBtn" aria-haspopup="menu" aria-controls="acctMenu" aria-expanded="false" aria-label="Account"></button>
 </header>
 <aside class="sidebar" id="sidebar">
-  <span class="brandlogo sbrand" role="img" aria-label="Strangers Coffee Company"></span>
   <div class="rtag big">Staff rota</div>
-  <nav class="snav" id="snav" aria-label="Sections"></nav>
-  <button class="mebox" type="button" id="meBox" aria-haspopup="menu" aria-controls="acctMenu" aria-expanded="false"></button>
+  <nav class="snav" id="snav" aria-label="Rota sections"></nav>
 </aside>
-<nav class="tabbar" id="tabbar" aria-label="Sections"></nav>
+<nav class="staff-workspaces staff-workspaces-dock" data-staff-workspaces aria-label="Staff workspaces" hidden></nav>
 
 <div class="sheetveil" id="sheetVeil" hidden></div>
 <div class="sheet rsheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle" tabindex="-1" hidden inert></div>
@@ -52,6 +50,7 @@
 <div class="conn" id="conn" role="status" hidden></div>
 
 <main class="wrap rwrap" id="main">
+  <nav class="staff-section-tabs" id="tabbar" aria-label="Rota sections"></nav>
   <div class="pagehead" id="pagehead">
     <button class="back" type="button" id="backBtn" hidden></button>
     <div class="trow"><div class="ptitle"><h1 id="pageTitle">Rota</h1><p id="pageSub"></p></div><div class="headctl" id="pageAction"></div></div>
@@ -60,6 +59,7 @@
 </main>
 <div class="toast" id="toast" role="status" hidden></div>
 <script src="/shared/core.js"></script>
+<script src="/shared/staff-navigation.js"></script>
 <script src="/pinpad.js"></script>
 <script src="/rota/leave.js"></script>
 <script src="/rota/sickness.js"></script>

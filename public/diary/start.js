@@ -208,7 +208,8 @@ window.addEventListener("sc:session-invalid",()=>{
   for(const key of Object.keys(BASE))delete BASE[key];
   closeSheets();
   for(const field of document.querySelectorAll("[data-panel] input,[data-panel] textarea,[data-panel] select")){field.value="";if("checked"in field)field.checked=false;field.disabled=true}
-  for(const id of ["#tList","#tMatrix","#cList","#cPrivacy","#obList","#obEditView","#inReport","#inJump","#onShift","#peopleList","#acctMenu","#snav","#tabbar","#meBox"])$(id)?.replaceChildren();
+  for(const id of ["#tList","#tMatrix","#cList","#cPrivacy","#obList","#obEditView","#inReport","#inJump","#onShift","#peopleList","#acctMenu","#snav","#tabbar","#avatarBtn"])$(id)?.replaceChildren();
+  SCStaffNavigation.clear();
   diaryLoading={ready:new Set(),failed:new Set()};diaryLoadingKey="";$("#diaryLoading")?.remove();
   for(const panel of document.querySelectorAll("[data-panel]"))panel.hidden=true;
 });
@@ -223,7 +224,9 @@ applyTabs();renderAll();
     const me=await S.user.me();S.me=me.id;
     const w=await S.user.can("data.write");if(w===false){S.canWrite=false;$("#readonly").hidden=false}
     S.notifSeen=me.notifSeen||0;
-    S.myUserId=me.userId||"";S.myName=me.name||"";S.role=me.role||"staff";S.quickPin=!!me.quickPin;S.quickSwitch=!!me.quickSwitch;S.staffOrders=!!me.staffOrders;renderMe();
+    S.myUserId=me.userId||"";S.myName=me.name||"";S.role=me.role||"staff";S.quickPin=!!me.quickPin;S.quickSwitch=!!me.quickSwitch;renderMe();
+    if(me.links?.rota)S.rotaUrl=me.links.rota;
+    SCStaffNavigation.watch("diary",{userId:S.myUserId,role:S.role,links:me.links,ordersAccess:me.staffOrders});
     if(!canTab(S.tab))show("day",{quiet:true});else renderNav();
     loadTeam();
   }
@@ -232,5 +235,4 @@ applyTabs();renderAll();
   subscribeSite();
   renderAll();
   loadRota();
-  window.claude.use("rota").then(r=>r&&r.links()).then(l=>{if(l&&l.rota){S.rotaUrl=l.rota;renderNav()}});
 })();
