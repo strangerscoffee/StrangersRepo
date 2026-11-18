@@ -195,9 +195,9 @@
     if (next?.getClientRects().length) next.focus({ preventScroll: true });
   }
   function renderNav() {
-    const badge = S.locked ? html`<span class="badge" aria-label="${plural(S.locked, "account")} locked">${S.locked}</span>` : "";
+    const badge = (limit = Infinity) => S.locked ? html`<span class="badge" aria-label="${plural(S.locked, "account")} locked">${S.locked > limit ? limit + "+" : S.locked}</span>` : "";
     const sideButton = ([id, title, icon]) => {
-      if (id !== "wholesale") return html`<button class="nav" type="button" data-go="${id}" aria-current="${S.page === id ? "page" : "false"}">${svg(icon)}${title}${id === "security" ? badge : ""}</button>`;
+      if (id !== "wholesale") return html`<button class="nav" type="button" data-go="${id}" aria-current="${S.page === id ? "page" : "false"}">${svg(icon)}${title}${id === "security" ? badge() : ""}</button>`;
       const current = S.page === "wholesale";
       return html`<div class="nav-wholesale">
         <div class="nav-wholesale-heading ${current ? "is-current" : ""}">
@@ -209,7 +209,10 @@
     };
     updateNav($("#sideNav"), html`${NAV_GROUPS.map(([title, items]) => html`<div class="side-group" role="group" aria-label="${title}"><p class="side-label" aria-hidden="true">${title}</p>${items.map(sideButton)}</div>`)}`);
     const tab = TABS.some(([id]) => id === S.page) ? S.page : "more";
-    updateNav($("#tabBar"), html`${TABS.map(([id, t, ic]) => html`<button type="button" data-go="${id}" aria-current="${tab === id ? "page" : "false"}">${svg(ic)}${t}${id === "more" ? badge : ""}</button>`)}`);
+    updateNav($("#tabBar"), html`${TABS.map(([id, title, icon]) => html`
+      <button type="button" data-go="${id}" aria-current="${tab === id ? "page" : "false"}">
+        ${svg(icon)}<span class="tab-label">${id === "wholesale" ? html`Whole<wbr>sale` : title}</span>${id === "more" ? badge(99) : ""}
+      </button>`)}`);
     wholesale.syncNavigation(desktopNav.matches);
   }
   async function refreshBadge() {

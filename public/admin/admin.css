@@ -29,10 +29,14 @@ main{max-width:1000px;margin:0 auto;display:grid;grid-template-columns:minmax(0,
   padding-block:8px calc(116px + env(safe-area-inset-bottom,0px));padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
 .tabbar{position:fixed;z-index:30;bottom:calc(10px + env(safe-area-inset-bottom,0px));left:calc(12px + env(safe-area-inset-left,0px));right:calc(12px + env(safe-area-inset-right,0px));
   max-width:520px;margin:0 auto;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:3px;border-radius:24px;padding:5px;background:var(--glass-thick);box-shadow:var(--glass-hi),var(--float)}
-.tabbar button{position:relative;border:0;background:none;font-size:11px;font-weight:600;color:var(--muted);display:grid;grid-template-columns:minmax(0,1fr);justify-items:center;align-content:center;gap:4px;border-radius:19px;cursor:pointer;min-height:52px;padding:0 2px}
+.tabbar button{position:relative;border:0;background:none;font-size:11px;font-weight:600;color:var(--muted);display:grid;grid-template-columns:minmax(0,1fr);justify-items:center;align-content:start;gap:4px;border-radius:19px;cursor:pointer;min-height:52px;padding:8px 2px}
 .tabbar button[aria-current="page"]{color:var(--accent);background:var(--tint)}
-.tabbar .badge{position:absolute;top:4px;inset-inline-end:3px}
-@media(max-width:350px){.tabbar button{font-size:10px;padding-inline:0}}
+.tab-label{max-width:100%;line-height:1.2;text-align:center;overflow-wrap:anywhere}
+.tabbar .badge{position:absolute;top:1px;inset-inline-end:2px;min-width:17px;height:15px;padding-inline:4px;font-size:10px;line-height:1}
+@media(max-width:350px){
+  .tabbar{grid-template-columns:minmax(0,1.06fr) minmax(0,1.13fr) minmax(0,.93fr) minmax(0,1fr) minmax(0,.88fr);gap:2px;padding-inline:4px}
+  .tabbar button{font-size:10px;padding-inline:0}
+}
 @media (min-width:1024px){
   .app{display:grid;grid-template-columns:268px minmax(0,1fr)}
   .side{display:flex;flex-direction:column;gap:2px;position:sticky;top:0;height:100vh;height:100dvh;padding:calc(18px + env(safe-area-inset-top,0px)) 14px 14px max(14px,env(safe-area-inset-left,0px));border-right:1px solid var(--line);background:color-mix(in srgb,var(--glass) 44%,transparent)}

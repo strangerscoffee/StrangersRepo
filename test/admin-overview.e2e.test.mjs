@@ -26,7 +26,24 @@ test('overview order queues open full real-customer results, support clearing, a
 test("Admin mobile section links restore the active order search when going back", async () => {
  const {ctx,page,errors}=await open(320,"dark");
  try {
-  assert.equal(await page.locator("#tabBar button").evaluateAll(buttons => buttons.every(button => button.scrollWidth <= button.clientWidth + 1)), true);
+  const dockOverruns = () => page.locator("#tabBar button").evaluateAll(buttons => buttons.flatMap(button => {
+    const bounds = button.getBoundingClientRect();
+    const label = button.querySelector(".tab-label");
+    const range = document.createRange();
+    range.selectNodeContents(label);
+    const content = [...range.getClientRects(), ...Array.from(button.querySelectorAll(".badge"), badge => badge.getBoundingClientRect())];
+    const outside = content.filter(rect => rect.left < bounds.left - 1 || rect.right > bounds.right + 1 || rect.top < bounds.top - 1 || rect.bottom > bounds.bottom + 1);
+    if (!outside.length && button.scrollWidth <= button.clientWidth + 1) return [];
+    return [{
+      label: label.textContent, width: bounds.width, scrollWidth: button.scrollWidth,
+      font: getComputedStyle(label).font,
+      outside: outside.map(({ left, right, top, bottom }) => ({ left, right, top, bottom })),
+    }];
+  }));
+  assert.deepEqual(await dockOverruns(), [], "each dock label stays within its button");
+  const widerFont = await page.addStyleTag({ content: "#tabBar .tab-label { font: 700 12px/1.2 monospace; letter-spacing: .04em }" });
+  assert.deepEqual(await dockOverruns(), [], "wider fallback text stays inside each dock button and can wrap");
+  await widerFont.evaluate(style => style.remove());
   await page.locator('.ov-work [data-id="prepare"]').click();
   await page.locator("#wSection").waitFor();
   assert.equal(await page.locator("#wSection .w-section-value").innerText(), "Orders");
