@@ -3,7 +3,7 @@ import { newId } from "../../auth";
 import { ApiError, Env, invalid, json } from "../../http";
 import { activeUser, touchWeek } from "../load";
 import { RotaRequest, SITE_IDS } from "../types";
-import { actor, timeOffDecided } from "../../email/rota";
+import { actor, leaveDatesChanged, timeOffDecided } from "../../email/rota";
 import { addDays, conflict, denied, isDay, isTime, londonToday, mondayOf, notFound, text } from "../util";
 import { AllowanceRow, LEAVE_TYPES, LeaveDay, LeaveKind, LeaveRow, allowanceData, allowanceInput, allowances, amount, balance, chargeDays, chargedDays, commitLeave, dates, enoughBalance, event, leaveView, leaveViews, ownLeave, policy, policyInput, range, requireVersion, revision, units } from "./model";
 import { calendarRules, checkCalendar, employeeSites } from "./rules";
@@ -195,6 +195,8 @@ export async function leaveRoutes(r: RotaRequest): Promise<Response | null> {
         return decideLeave(r, seg[2], await r.body());
     // Every remaining route is private employee administration; check before parsing IDs or returning data.
     r.needAdmin();
+    if (seg[1] === "requests" && seg[3] === "dates" && seg.length === 4 && m === "POST")
+        return changeDates(r, seg[2], await r.body());
     if (seg[1] === "requests" && seg[3] === "classify" && seg.length === 4 && m === "PATCH") {
         const ver = await revision(env), b = await r.body(), t = await ownLeave(env, seg[2], user.id, true);
         if (!t)
@@ -445,4 +447,45 @@ export async function teamOff(env: Env, t: { user_id: string; from_day: string; 
             ...(overlaps ? { shared: { from: o.from_day > t.from_day ? o.from_day : t.from_day, to: o.to_day < t.to_day ? o.to_day : t.to_day } }
                 : o.to_day < t.from_day ? { daysBefore: gap(o.to_day, t.from_day) } : { daysAfter: gap(t.to_day, o.from_day) }) };
     });
+}
+
+/** Admins change the dates of a booked or requested absence (the owner's request, 18 Nov 2026): the same booking, its
+ *  holiday charge worked out again for the new dates (checked against the balance, blackouts and limits like a new
+ *  booking, without counting its own old days), the old dates kept in the leave events, and the person emailed.
+ *  `{preview:true}` only works out the new charge. Sickness forms and unclassified or reconciled time off are changed
+ *  elsewhere. */
+export async function changeDates(r: RotaRequest, id: string, b: any) {
+    const ver = await revision(r.env), t = await ownLeave(r.env, id, r.user.id, true);
+    if (!t)
+        throw notFound("That absence is not available.");
+    if (!["requested", "approved"].includes(t.status))
+        throw conflict("Only a pending or booked absence can have its dates changed.");
+    if (t.kind === "legacy")
+        throw conflict("Classify this existing time off before changing its dates.");
+    if (t.covered_opening)
+        throw conflict("This absence is part of the opening holiday balance; change it there instead.");
+    if (t.kind === "sick" && await r.env.DB.prepare("SELECT 1 FROM rota_sickness WHERE time_off_id=? LIMIT 1").bind(id).first().catch(() => null))
+        throw conflict("This came from a sickness form. Change it in Sickness instead.");
+    const p = await prepare(r, { ...b, kind: t.kind, reason: t.reason }, t.user_id, id);
+    const charges = p.days.map(d => ({ day: d.day, amount: amount(d.units), unit: d.unit, year: d.year_start }));
+    const same = p.from === t.from_day && p.to === t.to_day && (p.fromTime ?? null) === (t.from_time ?? null) && (p.toTime ?? null) === (t.to_time ?? null);
+    if (b.preview === true)
+        return json({ from: p.from, to: p.to, kind: p.kind, days: charges, shiftConflicts: p.shifts, unchanged: same });
+    requireVersion(t.version, b.ifVersion);
+    if (same)
+        throw invalid("Those are the dates it already has.");
+    if (p.kind === "annual" && JSON.stringify(b.expectedCharges) !== JSON.stringify(charges))
+        throw conflict("The holiday charge changed or has not been reviewed. Review these dates again before saving.");
+    const before = { from: t.from_day, to: t.to_day, fromTime: t.from_time ?? null, toTime: t.to_time ?? null };
+    const after = { from: p.from, to: p.to, fromTime: p.fromTime ?? null, toTime: p.toTime ?? null };
+    const weeks = [...new Set([...dates(t.from_day, t.to_day), ...dates(p.from, p.to)].map(mondayOf))];
+    await commitLeave(r.env, ver, [
+        r.env.DB.prepare("UPDATE rota_time_off SET from_day=?,to_day=?,from_time=?,to_time=?,version=version+1 WHERE id=? AND version=?").bind(p.from, p.to, p.fromTime, p.toTime, id, t.version),
+        r.env.DB.prepare("DELETE FROM rota_leave_days WHERE time_off_id=?").bind(id),
+        ...p.days.map(d => r.env.DB.prepare("INSERT INTO rota_leave_days(time_off_id,day,units,unit,year_start) VALUES(?,?,?,?,?)").bind(id, d.day, d.units, d.unit, d.year_start)),
+        event(r.env, t.user_id, id, "dates_changed", r.user.id, { kind: t.kind, status: t.status, before, after, ...(p.overridden.length ? { overrideBlocked: { reason: text(b.overrideReason, "Reason for the exception", 300), days: p.overridden } } : {}) }),
+        ...weeks.map(w => touchWeek(r.env, w)),
+    ]);
+    await leaveDatesChanged(r.env, r.exec, r.mailLinks, t, before, after, await actor(r.env, r.user)).catch(() => { });
+    return json({ absence: await leaveView(r.env, (await ownLeave(r.env, id, r.user.id, true))!), shiftConflicts: p.shifts });
 }

@@ -183,6 +183,20 @@ export function timeOffEmail(o: { name: string; from: string; to: string; approv
   return { subject, html, text };
 }
 
+/** An admin changed the dates of this person's holiday or other absence (Holiday management → Change dates). */
+export function leaveDatesEmail(o: { name: string; kind: string; pending: boolean; before: { from: string; to: string; fromTime: string | null; toTime: string | null }; after: { from: string; to: string; fromTime: string | null; toTime: string | null }; by: string; links: Links }): Built {
+  const first = o.name.split(" ")[0];
+  const what = ({ annual: "holiday", unpaid: "unpaid leave", unauthorised: "absence", sick: "sickness absence" } as Record<string, string>)[o.kind] || "time off";
+  const when = (d: { from: string; to: string; fromTime: string | null; toTime: string | null }) =>
+    d.from === d.to ? `${longDay(d.from)}${d.fromTime && d.toTime ? ` (${d.fromTime}–${d.toTime})` : ""}` : `${longDay(d.from)} to ${longDay(d.to)}`;
+  const subject = `Your ${what} dates have changed: now ${when(o.after)}`;
+  const say = `Your ${o.pending ? "requested " : ""}${what} is now <b>${esc(when(o.after))}</b> (it was ${esc(when(o.before))}).${o.pending ? " It still needs approving." : ""}`;
+  const html = layout({ preheader: subject, heading: `Hi ${first}, your ${what} dates have changed`, links: o.links,
+    body: row(say) + row(`<span style="color:${MUTED};font-size:14px;">Changed by ${esc(o.by)}. If this isn't right, speak to them.</span>`) + row(button(o.links.rota, "See your holidays"), "14px 22px 22px") });
+  const text = `Hi ${first},\n\n${say.replace(/<[^>]+>/g, "")}\nChanged by ${o.by}. If this isn't right, speak to them.\n\nSee your holidays: ${o.links.rota}\n${textFooter(o.links)}`;
+  return { subject, html, text };
+}
+
 /** Open shifts this person could take (only for those who turned these emails on). */
 export function openShiftsEmail(o: { name: string; shifts: MailShift[]; links: Links }): Built {
   const first = o.name.split(" ")[0];

@@ -14,7 +14,7 @@ window.SCLeave = function createLeaveUI(c) {
     const message = () => el('p', { class: 'smsg', role: 'alert' });
     const span = (a, b) => a === b ? shortM(a) : `${shortM(a)} – ${shortM(b)}`;
     const amount = n => new Intl.NumberFormat('en-GB', { maximumFractionDigits: 2 }).format(n);
-    const chargeText = days => Object.entries(days.reduce((out, d) => { out[d.unit] = (out[d.unit] || 0) + d.amount; return out; }, {})).map(([u, n]) => `${amount(n)} ${u}`).join(' · ');
+    const chargeText = days => Object.entries(days.reduce((out, d) => { out[d.unit] = (out[d.unit] || 0) + d.amount; return out; }, {})).map(([u, n]) => `${amount(n)} ${n === 1 ? u.replace(/s$/, '') : u}`).join(' · ');
     const note = t => el('p', { class: 'note', text: t });
     const check = (name, text, checked = false) => { const i = input(name, '', { type: 'checkbox', checked }); return { input: i, node: el('label', { class: 'leave-check' }, i, el('span', { text })) }; };
     const errorText = e => e.message || "Couldn't save. Check your connection and try again.";
@@ -700,7 +700,50 @@ window.SCLeave = function createLeaveUI(c) {
         }
         catch (e) {
             msg.textContent = errorText(e);
-        } }) : null, t.status === 'approved' ? ghost('Cancel absence', () => action('cancelled')) : null)), { left: cancelLink(), trigger });
+        } }) : null, t.status === 'approved' ? ghost('Cancel absence', () => action('cancelled')) : null, ['requested', 'approved'].includes(t.status) && t.kind !== 'legacy' && !t.coveredByOpening ? ghost('Change dates', (ev) => changeDates(t, ev.currentTarget)) : null)), { left: cancelLink(), trigger });
+    }
+    // Change the dates of a booked or requested absence (the owner's request, 18 Nov 2026): check the new dates (the
+    // charge is worked out again, against the balance, blackouts and limits), then save. The person is emailed.
+    function changeDates(t, trigger) {
+        const from = input('change_from', t.from, { type: 'date' }), to = input('change_to', t.to, { type: 'date' });
+        const portion = select('change_portion', [['1', 'Full days'], ['0.5', 'Half day']], t.fromTime ? '0.5' : '1');
+        const fromTime = input('change_from_time', t.fromTime || '', { type: 'time' }), toTime = input('change_to_time', t.toTime || '', { type: 'time' });
+        const firstDate = field('change_from', 'First day', from), lastDate = field('change_to', 'Last day', to);
+        const timeFields = el('div', { class: 'sfields wide' }, field('change_from_time', 'Absence starts', fromTime), field('change_to_time', 'Absence ends', toTime));
+        const layout = () => { const half = portion.value === '0.5'; timeFields.hidden = !half; lastDate.hidden = half; firstDate.classList.toggle('wide', half); firstDate.querySelector('label').textContent = half ? 'Day' : 'First day'; if (half) to.value = from.value; };
+        const form = el('div', { class: 'sfields leave-request' }, field('change_portion', 'Length', portion, true), firstDate, lastDate, timeFields);
+        const output = el('div', { 'aria-live': 'polite' }), exceptionBox = el('div'), msg = message();
+        let reviewed = null, exception = null;
+        const body = () => ({ portion: Number(portion.value), from: from.value, to: portion.value === '0.5' ? from.value : to.value, fromTime: portion.value === '0.5' ? fromTime.value : null, toTime: portion.value === '0.5' ? toTime.value : null, ...(exception ? { overrideBlocked: true, overrideReason: exception } : {}) });
+        const reset = () => { reviewed = null; exception = null; save.hidden = true; output.replaceChildren(); exceptionBox.replaceChildren(); msg.textContent = ''; };
+        const blocked = (e, then) => { msg.textContent = ''; exceptionBox.replaceChildren(exceptionPanel(e, 'Use these dates anyway', async (text) => { exception = text; exceptionBox.replaceChildren(); await then(); })); };
+        const check = async () => {
+            msg.textContent = '';
+            try {
+                const r = await api('POST', `/api/rota/leave/requests/${t.id}/dates`, { ...body(), preview: true });
+                if (r.unchanged) { output.replaceChildren(note('Those are the dates it already has.')); return; }
+                reviewed = r;
+                output.replaceChildren(el('div', { class: 'leave-notice' }, el('b', { text: `New dates: ${span(r.from, r.to)}${body().fromTime ? ` · ${body().fromTime}–${body().toTime}` : ''}` }),
+                    note(t.kind === 'annual' ? (r.days.length ? `Uses ${chargeText(r.days)} (was ${t.days.length ? chargeText(t.days) : 'none'}).` : 'Uses no holiday allowance on these dates.') : `${TYPE[t.kind]}: no holiday allowance used.`),
+                    r.shiftConflicts.length ? note(`${r.shiftConflicts.length} assigned ${r.shiftConflicts.length === 1 ? 'shift' : 'shifts'} on these dates will need changing on the rota.`) : null));
+                save.hidden = false;
+            } catch (e) { if (e.code === 'leave_blocked' && !exception) blocked(e, check); else msg.textContent = errorText(e); }
+        };
+        const save = btn('Save new dates', async () => {
+            if (!reviewed) return;
+            try {
+                await api('POST', `/api/rota/leave/requests/${t.id}/dates`, { ...body(), ifVersion: t.version, expectedCharges: reviewed.days });
+                closeSheets();
+                toast(`Dates changed.${t.name ? ` ${t.name.split(' ')[0]} has been told.` : ''}`);
+                render();
+            } catch (e) { if (e.code === 'leave_blocked' && !exception) blocked(e, async () => { await check(); }); else msg.textContent = errorText(e); }
+        }, 'btn', { hidden: true });
+        [from, to, portion, fromTime, toTime].forEach(n => { n.addEventListener('input', reset); n.addEventListener('change', reset); });
+        portion.addEventListener('change', layout);
+        layout();
+        openSheet('Change dates', el('div', { class: 'sbody leave-request-body' }, el('h3', { text: t.name || TYPE[t.kind] }), note(`${TYPE[t.kind]} · now ${span(t.from, t.to)}${t.fromTime ? ` · ${t.fromTime}–${t.toTime}` : ''} · ${STAT[t.status]}`), form, output, exceptionBox, msg,
+            note(`${t.name ? t.name.split(' ')[0] : 'They'}'ll be emailed the new dates. The old dates stay in the absence's history.`),
+            el('div', { class: 'sfoot' }, ghost('Check new dates', check), save)), { left: cancelLink(), trigger });
     }
     return { dashboard, admin, request, clear, review };
 };

@@ -9,7 +9,7 @@ import { loadCtx } from "../rota/load";
 import { Ctx, DAY_KEYS, ROTA_SITES, ReqRow, Shift } from "../rota/types";
 import { londonToday } from "../rota/util";
 import { EmailKind, Outgoing, Recipient, emailReady, linksFor, recipients, sendAll, wants } from "./send";
-import { Change, MailShift, changedEmail, openShiftsEmail, publishedEmail, requestEmail, shiftsCalendar, shortDay, timeOffEmail } from "./templates";
+import { Change, MailShift, changedEmail, openShiftsEmail, publishedEmail, requestEmail, shiftsCalendar, shortDay, timeOffEmail, leaveDatesEmail } from "./templates";
 
 type Base = { rota: string; diary: string };
 type Snap = { id: string; day: string; start: string; end: string; site: string; job: string; hours: number };
@@ -133,6 +133,17 @@ export async function timeOffDecided(env: Env, exec: ExecutionContext | undefine
   const links = await linksFor(env, base, r.id, "requests");
   sendAll(env, exec, [{ to: r, kind: "requests", links, about: `time off from ${t.from_day} ${approved ? "approved" : "declined"}`,
     mail: timeOffEmail({ name: r.name, from: t.from_day, to: t.to_day, approved, by: by.name, links }) }]);
+}
+
+/** An admin changed the dates of someone's holiday or other absence: tell them the new dates (and the old). */
+export async function leaveDatesChanged(env: Env, exec: ExecutionContext | undefined, base: Base, t: { user_id: string; kind: string; status: string },
+  before: { from: string; to: string; fromTime: string | null; toTime: string | null }, after: { from: string; to: string; fromTime: string | null; toTime: string | null }, by: { name: string }) {
+  if (!emailReady(env)) return;
+  const r = (await recipients(env, [t.user_id])).get(t.user_id);
+  if (!wants(r, "requests")) return;
+  const links = await linksFor(env, base, r.id, "requests");
+  sendAll(env, exec, [{ to: r, kind: "requests", links, about: `absence dates changed to ${after.from}`,
+    mail: leaveDatesEmail({ name: r.name, kind: t.kind, pending: t.status === "requested", before, after, by: by.name, links }) }]);
 }
 
 /** The person acting, for attribution only. A private account email is never a shared reply address. */
