@@ -198,6 +198,14 @@ test("clear part of a tab: untick orders to keep them on it, and see what was cl
   assert.match(await p.locator("#tabFoot").innerText(), /3 kg to clear · 3 kg stays/);
   await p.locator("#clearTab", { hasText: "Clear 2 of 3" }).click();
   assert.match(await p.locator("#tabFoot").innerText(), /Clear 3 kg\? 1 order stays on the tab \(3 kg\)/);
+  await p.route(`**/api/staff-orders/tabs/${part.c.id}/clear`, async route => {
+    const request = route.request().postDataJSON();
+    assert.equal(Object.keys(request.seenVersions).length, 3);
+    await route.fulfill({ status: 503, json: { message: "Tab save temporarily unavailable." } });
+  }, { times: 1 });
+  await p.locator("#confirmClear").click();
+  await p.locator("#tabError", { hasText: "Tab save temporarily unavailable." }).waitFor();
+  await p.locator("#clearTab", { hasText: "Clear 2 of 3" }).click();
   await shot(p, "part-confirm-phone");
   assert.ok(await p.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth) <= 1);
   await p.locator("#confirmClear").click();

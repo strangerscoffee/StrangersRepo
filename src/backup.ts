@@ -9,7 +9,7 @@ const PREFIX = "backup:";
 const KEEP = 30;
 
 export interface BackupInfo {
-  id: string; // e.g. "2026-10-27T03-17-00Z"
+  id: string; // Timestamp and unique suffix. Older copies have only the timestamp.
   at: number;
   by: string;
   docs: number;
@@ -111,7 +111,7 @@ export async function makeBackup(env: Env, by: string): Promise<BackupInfo> {
     },
   });
   const gz = await gzip(body);
-  const id = new Date(at).toISOString().replace(/\.\d+Z$/, "Z").replace(/:/g, "-");
+  const id = new Date(at).toISOString().replace(/\.\d+Z$/, "Z").replace(/:/g, "-") + "-" + crypto.randomUUID();
   const info: BackupInfo = { id, at, by, docs: docs.length, bytes: gz.byteLength };
   await env.FILES.put(PREFIX + id, gz, { metadata: info });
   await prune(env);
@@ -142,7 +142,7 @@ export async function handleBackups(req: Request, env: Env, rest: string, by: st
     await audit(env, "backup", by, `${by} made a backup`);
     return json({ backup });
   }
-  if (/^[0-9TZ-]{20}$/.test(rest) && req.method === "GET") {
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z(?:-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})?$/.test(rest) && req.method === "GET") {
     const gz = await env.FILES.get(PREFIX + rest, "stream");
     if (!gz) throw new ApiError(404, "not_found", "No such backup.");
     return new Response(gz.pipeThrough(new DecompressionStream("gzip")), {

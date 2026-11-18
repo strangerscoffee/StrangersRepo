@@ -7,7 +7,7 @@
 import { Env, invalid, json } from "../../http";
 import { RotaRequest } from "../types";
 import { loadShifts } from "../load";
-import { conflict, londonToday, notFound, text } from "../util";
+import { conflict, isDay, londonToday, mondayOf, notFound, text } from "../util";
 import { AccrualDay, accrue, addDays, endedQuarters, quarterContaining, quarterLabel, round2 } from "./accrualMath";
 import { AllowanceRow, LeaveAccrual, allowanceData, balance, chargedDays, commitLeave, dates, event, policy, requireVersion, revision } from "./model";
 import { holidayAddedMail } from "./notify";
@@ -17,7 +17,8 @@ const keyOf = (quarter: string) => "hours:" + quarter;
 interface PersonRow { id: string; name: string; contract_min: number | null; contract_max: number | null }
 
 /** Everyone's figures for one quarter, from the rota and Holiday management as they stand now. */
-export async function quarterFigures(env: Env, quarterFrom: string) {
+export async function quarterFigures(env: Env, quarterFrom: unknown) {
+  if (!isDay(quarterFrom)) throw invalid("Choose one of the leave year's quarters.");
   const { settings } = await policy(env);
   const q = quarterContaining(quarterFrom, settings.yearStart);
   if (q.from !== quarterFrom) throw invalid("Choose one of the leave year's quarters.");
@@ -36,8 +37,17 @@ export async function quarterFigures(env: Env, quarterFrom: string) {
     env.DB.prepare("SELECT * FROM rota_leave_allowances WHERE from_day <= ? AND to_day >= ?").bind(creditDay, creditDay).all<AllowanceRow>(),
   ]);
   const pub = new Set(published.results.map((w) => w.week));
-  const mondayOf = (d: string) => addDays(d, -((new Date(d + "T12:00:00Z").getUTCDay() + 6) % 7));
-  const unpublished = [...new Set(shifts.results.map((s) => mondayOf(s.day)))].filter((w) => !pub.has(w)).sort();
+  const unpublished = new Set<string>();
+  const shiftHours = new Map<string, { worked: number; missed: number }>();
+  for (const shift of shifts.results) {
+    const week = mondayOf(shift.day);
+    if (!pub.has(week)) { unpublished.add(week); continue; }
+    const key = `${shift.userId}:${shift.day}`;
+    let hours = shiftHours.get(key);
+    if (!hours) { hours = { worked: 0, missed: 0 }; shiftHours.set(key, hours); }
+    hours.worked += shift.hours;
+    hours.missed += Math.max(0, shift.plannedHours - shift.hours);
+  }
   const rotaStart = firstWeek?.w ?? null;
   const out = people.results.map((p) => {
     const contracts = history.results.filter((h) => h.user_id === p.id);
@@ -54,12 +64,8 @@ export async function quarterFigures(env: Env, quarterFrom: string) {
     for (const c of charges.results) if (mine.has(c.time_off_id)) holidays.set(c.day, (holidays.get(c.day) || 0) + c.units / 100);
     const days: AccrualDay[] = from > q.to ? [] : dates(from, q.to).map((day) => {
       const c = contractOn(day);
-      let workedHours = 0, sickHours = 0;
-      for (const s of shifts.results) {
-        if (s.userId !== p.id || s.day !== day || !pub.has(mondayOf(day))) continue;
-        workedHours += s.hours; // amended on-the-day hours where there are any
-        if (sickOn(day)) sickHours += Math.max(0, s.plannedHours - s.hours);
-      }
+      const hours = shiftHours.get(`${p.id}:${day}`);
+      const workedHours = hours?.worked ?? 0, sickHours = hours && sickOn(day) ? hours.missed : 0;
       return { day, contractMin: c.min, contractMax: c.max, workedHours, sickHours, holidayDays: holidays.get(day) || 0 };
     });
     const result = accrue(days);
@@ -72,7 +78,7 @@ export async function quarterFigures(env: Env, quarterFrom: string) {
       added: added ? { units: added.units, days: added.units / 100, at: added.at } : null,
     };
   });
-  return { quarter: q, creditDay, rotaStart, unpublished, rateBp: 1207, people: out };
+  return { quarter: q, creditDay, rotaStart, unpublished: [...unpublished].sort(), rateBp: 1207, people: out };
 }
 
 export async function accrualRoutes(r: RotaRequest): Promise<Response | null> {
@@ -92,10 +98,13 @@ export async function accrualRoutes(r: RotaRequest): Promise<Response | null> {
     if (!Array.isArray(b.people) || !b.people.length || b.people.length > 200) throw invalid("Choose who to add holiday for.");
     const figures = await quarterFigures(env, b.quarter);
     const stmts: D1PreparedStatement[] = [], added: typeof figures.people = [];
+    const selected = new Set<string>();
     const now = Date.now();
     for (const want of b.people) {
       const p = figures.people.find((x) => x.userId === want?.userId);
       if (!p) throw notFound("Someone in this list is no longer active. Review the quarter again.");
+      if (selected.has(p.userId)) throw invalid("Choose each person only once.");
+      selected.add(p.userId);
       if (p.added) continue; // already added: approving again changes nothing
       if (p.status !== "ready" || !p.units) throw conflict(`${p.name} has no holiday to add for this quarter. Review it again.`);
       if (want.units !== p.units) throw conflict(`${p.name}'s hours changed since you reviewed this quarter. Review it again before adding.`);

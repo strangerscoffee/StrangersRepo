@@ -501,7 +501,7 @@
   // Cleared tabs open to show what was on them.
   $('clearedList').replaceChildren(...tabs.cleared.map(c=>el('button',{type:'button',class:'order-row cleared-row','data-cleared':c.id,onclick:()=>openCleared(c.id)},el('span',{},el('b',{},c.business),el('span',{class:'row-meta'},`${c.kept?.length?'Part cleared':'Cleared'} ${date(c.clearedAt)} by ${c.clearedBy}${c.kept?.length?` · ${c.kept.length} kept on the tab`:''}`)),el('span',{class:'row-end'},el('span',{class:'cleared-kg'},weight(c.grams)),c.kept?.length?pill('Part'):null,c.early?pill('Early'):null,svg('chev')))));
   if(!tabs.cleared.length)$('clearedList').append(el('div',{class:'empty'},'No tabs cleared yet.'));
-  if($('tabDialog').open&&tabSelected){const t=open.find(x=>x.customerId===tabSelected);if(t)renderTab(t);else $('tabDialog').close();}
+  if($('tabDialog').open&&tabSelected&&!tabConfirm){const t=open.find(x=>x.customerId===tabSelected);if(t)renderTab(t);else $('tabDialog').close();}
  }
  // Which orders on the open tab are ticked to clear (all of them unless someone unticks some); the rest stay on the tab.
  let tabPick=new Set();
@@ -553,15 +553,31 @@
  }
  function openTab(customerId){const t=tabs.open.find(x=>x.customerId===customerId);if(!t)return;tabSelected=customerId;tabConfirm=false;tabPick=new Set(t.orders.map(o=>o.id));renderTab(t);$('tabDialog').showModal();}
  async function clearTabNow(t){
-  const button=$('confirmClear');if(button){button.disabled=true;button.textContent='Clearing…';}
-  try{const {cleared}=await tabRequest('POST','tabs/'+encodeURIComponent(t.customerId)+'/clear',{orderIds:t.orders.filter(o=>tabPick.has(o.id)).map(o=>o.id),seen:t.orders.map(o=>o.id)});$('tabDialog').close();toast(cleared.keptIds?.length?`${cleared.business}: ${weight(cleared.grams)} cleared, ${cleared.keptIds.length} ${cleared.keptIds.length===1?'order stays':'orders stay'} on the tab`:`${cleared.business}: tab cleared at ${weight(cleared.grams)}`);await loadTabs();await load();}
-  catch(e){if(e.quiet)return;tabConfirm=false;if(e.code==='conflict'){await loadTabs();}const box=$('tabError');if(box){box.textContent=e.code==='conflict'?'This tab changed on another device. It has been reloaded: check it and clear again.':e.message;box.hidden=false;}}
+  const button=$('confirmClear');if(!button||button.disabled)return;
+  button.disabled=true;button.textContent='Clearing…';
+  try{
+   const {cleared}=await tabRequest('POST','tabs/'+encodeURIComponent(t.customerId)+'/clear',{
+    orderIds:t.orders.filter(o=>tabPick.has(o.id)).map(o=>o.id),seen:t.orders.map(o=>o.id),seenVersions:Object.fromEntries(t.orders.map(o=>[o.id,o.version])),
+   });
+   if(button.isConnected)$('tabDialog').close();
+   toast(cleared.keptIds?.length?`${cleared.business}: ${weight(cleared.grams)} cleared, ${cleared.keptIds.length} ${cleared.keptIds.length===1?'order stays':'orders stay'} on the tab`:`${cleared.business}: tab cleared at ${weight(cleared.grams)}`);await loadTabs();await load();
+  }
+  catch(e){
+   if(e.quiet||!button.isConnected||!$('tabDialog').open)return;
+   tabConfirm=false;
+   const conflicted=e.code==='conflict',refreshed=conflicted&&await loadTabs();
+   if(tabSelected!==t.customerId||!$('tabDialog').open)return;
+   if(!refreshed)renderTab(t,'clearTab');
+   const box=$('tabError');
+   box.textContent=conflicted?(refreshed?'This tab changed. Check the updated orders before clearing.':'This tab changed. Reload Tabs before trying again.'):e.message;
+   box.hidden=false;
+  }
  }
  async function loadTabs(){
   const current=sequence;
   if(!$('tabList').hasChildNodes())$('tabList').replaceChildren(SC.skeleton({label:'Loading customer tabs…'}));
   $('tabList').setAttribute('aria-busy','true');
-  try{const data=await tabRequest('GET','tabs');if(current!==sequence)return;tabs=data;drawTabs();}
+  try{const data=await tabRequest('GET','tabs');if(current!==sequence)return false;tabs=data;drawTabs();return true;}
   catch(e){if(!e.quiet&&current===sequence)$('tabList').replaceChildren(el('div',{class:'empty'},'Tabs could not be loaded. Check your connection and try again.'));}
   finally{if(current===sequence)$('tabList').setAttribute('aria-busy','false');}
  }

@@ -9,7 +9,7 @@ import {fileURLToPath} from 'node:url';
 const {build}=createRequire(import.meta.url)('esbuild');
 const root=fileURLToPath(new URL('..',import.meta.url)),bundle=await mkdtemp(join(tmpdir(),'audit-regressions-'));
 for(const file of ['assets','backup','http'])await build({entryPoints:[join(root,'src',file+'.ts')],bundle:true,platform:'node',format:'esm',outfile:join(bundle,file+'.mjs'),logLevel:'silent'});
-const {uploadAsset}=await import(join(bundle,'assets.mjs')),{makeBackup}=await import(join(bundle,'backup.mjs')),{readBytes}=await import(join(bundle,'http.mjs'));
+const {uploadAsset}=await import(join(bundle,'assets.mjs')),{makeBackup,handleBackups}=await import(join(bundle,'backup.mjs')),{readBytes}=await import(join(bundle,'http.mjs'));
 after(()=>rm(bundle,{recursive:true,force:true}));
 
 for(const [name,limit,upload] of [['PDF',20,(req,env)=>uploadAsset(req,env,'Synthetic Audit')],['photo',5,(req)=>readBytes(req,5*1024*1024,'Photos can be up to 5 MB.')]]){
@@ -45,4 +45,20 @@ test('backup reads one transaction: concurrent leave and invoice commits cannot 
  await makeBackup({DB,FILES},'Synthetic Audit');const saved=await new Response(new Blob([gz]).stream().pipeThrough(new DecompressionStream('gzip'))).json();
  assert.equal(batches,1);assert.equal(saved.rota.rota_time_off.length,saved.rota.rota_leave_days.length);assert.ok(saved.wholesaleInvoices.sequence>=Math.max(0,...saved.wholesaleInvoices.invoices.map(i=>i.seq)));
  assert.equal(state.invoices.length,1,'concurrent commit happened');assert.equal(saved.docs[0].employee_privacy_version,1);assert.equal(saved.docs[0].data.ownerUserId,'stable-owner');assert.ok(saved.documentSequence>=saved.docs[0].seq);
+});
+
+test('simultaneous backups retain separate content and older backup URLs still download', async t => {
+ t.mock.method(Date,'now',()=>Date.parse('2026-10-27T03:17:00.123Z'));
+ const files=new Map(),env={
+  DB:{prepare:sql=>sql,batch:async reads=>reads.map(()=>({success:true,results:[]}))},
+  FILES:{put:async(key,bytes)=>files.set(key,bytes),list:async()=>({keys:[],list_complete:true}),get:async key=>files.has(key)?new Blob([files.get(key)]).stream():null},
+ };
+ const [nightly,manual]=await Promise.all([makeBackup(env,'daily'),makeBackup(env,'Test administrator')]);
+ assert.notEqual(nightly.id,manual.id);
+ const read=async id=>(await handleBackups(new Request('https://synthetic.invalid/backup'),env,id,'Test administrator')).json();
+ assert.equal((await read(nightly.id)).by,'daily');
+ assert.equal((await read(manual.id)).by,'Test administrator');
+ const legacy='2026-10-27T03-17-00Z';
+ files.set('backup:'+legacy,files.get('backup:'+nightly.id));
+ assert.equal((await read(legacy)).by,'daily');
 });

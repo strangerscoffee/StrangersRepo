@@ -17,6 +17,7 @@ import { canOrder, recipeText } from "./wholesaleWhiteLabel";
 import { ApiError, type Env, invalid } from "./http";
 import { notifyNewOrder } from "./email/orders";
 import { notifySlackNewOrder } from "./slackOrders";
+import { isDay } from "./rota/util";
 
 export const STANDING_EVERY = [1, 2, 4] as const;
 export interface Standing { every: 1 | 2 | 4; seriesId: string; run: number }
@@ -26,7 +27,6 @@ const LABELS: Record<string, string> = { quarter: "250 g bag", half: "500 g bag"
 const OPEN = ["New", "Preparing", "Ready"];
 type AnyOrder = Record<string, any> & Versioned;
 const strip = ({ id, version, updatedAt, ...rest }: AnyOrder) => rest;
-const isDay = (value: unknown): value is string => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) && addDays(value, 0) === value;
 async function deferStanding(env: Env, saved: AnyOrder, actor: string, code = "catalogue_changed") {
   const now = Date.now(), data = { ...strip(saved), standingIssue: { code, at: now }, standingRetryAt: now + 15 * 60000 };
   const result = await env.DB.prepare("UPDATE wholesale_preview SET data=?,version=version+1,updated_at=? WHERE kind='order' AND id=? AND version=?")

@@ -69,6 +69,17 @@ test("wholesale: catalogue, ordering pages and every management route require th
   assert.equal(signin.status, 200); assert.match(signin.text, /Request a wholesale account/);
   assert.equal((await call("GET", "/wholesale/staff-signin", undefined, null)).headers.get("location"), "/signin?next=%2Fwholesale%2F");
   for (const path of ["/wholesale/", "/wholesale/index.html"]) assert.equal((await call("GET", path, undefined, null)).status, 302);
+  for (const prefix of ["/wholesale/", "/wholesale-preview/"]) {
+    const photo = prefix + "images/brazil.webp";
+    const unsigned = await call("GET", photo, undefined, null);
+    assert.equal(unsigned.status, 302);
+    assert.equal(unsigned.headers.get("location"), "/wholesale/signin");
+    const signed = await call("GET", photo, undefined, STAFF);
+    assert.equal(signed.status, 200);
+    assert.match(signed.headers.get("content-type"), /image\/webp/);
+    assert.match(signed.headers.get("cache-control"), /no-store/);
+    assert.equal((await call("GET", prefix + "images/logo.svg", undefined, null)).status, 200);
+  }
   assert.equal((await call("GET", "/api/wholesale/catalogue", undefined, null)).status, 401);
   assert.equal((await call("POST", "/api/wholesale/orders", payload(), null)).status, 401);
   const data = (await call("GET", "/api/wholesale/catalogue", undefined, STAFF)).body;

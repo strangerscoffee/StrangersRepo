@@ -61,11 +61,17 @@ window.WholesaleTabs = function ({ api, html, raw, svg, put, openSheet, closeShe
       const button = (element.closest("form") || element).querySelector('button[type="submit"]');
       if (button) { button.disabled = true; button.textContent = "Clearing…"; }
       try {
-        const { cleared } = await api("POST", `/api/admin/wholesale/tabs/${encodeURIComponent(customerId)}/clear`, { orderIds: picked.map((o) => o.id), seen: t.orders.map((o) => o.id) });
+        const { cleared } = await api("POST", `/api/admin/wholesale/tabs/${encodeURIComponent(customerId)}/clear`, {
+          orderIds: picked.map(o => o.id), seen: t.orders.map(o => o.id), seenVersions: Object.fromEntries(t.orders.map(o => [o.id, o.version])),
+        });
         pickFor = null;
         closeSheet(); toast(cleared.keptIds?.length ? `${cleared.business}: ${weight(cleared.grams)} cleared, ${cleared.keptIds.length} ${cleared.keptIds.length === 1 ? "order stays" : "orders stay"} on the tab.` : `${cleared.business}: tab cleared at ${weight(cleared.grams)}.`); await reload();
       } catch (error) {
-        if (error.code === "conflict") { try { data = await api("GET", "/api/admin/wholesale/tabs"); } catch {} return openTab(customerId, false, "This tab changed on another device. It has been reloaded: check it and clear again."); }
+        if (error.code === "conflict") {
+          try { data = await api("GET", "/api/admin/wholesale/tabs"); }
+          catch { return openTab(customerId, false, "This tab changed. Reload Tabs before trying again."); }
+          return openTab(customerId, false, "This tab changed. Check the updated orders before clearing.");
+        }
         openTab(customerId, false, error.message);
       }
     });

@@ -92,6 +92,15 @@ test("a quarter's extra hours: 12.07% above the minimum, full time and no contra
   CUR = from;
   await allowance("alice", from, yearEnd(from));
   const again = await ok("GET", "accrual?quarter=" + Q.from);
+  assert.equal((await leave("GET", "accrual?quarter=2026-02-31")).status, 400);
+  const entry = { userId: ids.alice, units: alice.units };
+  assert.equal((await leave("POST", "accrual", { people: [entry], ifVersion: again.version })).status, 400);
+  const emailsBefore = sent.length;
+  assert.equal((await leave("POST", "accrual", { quarter: Q.from, people: [entry, entry], ifVersion: again.version })).status, 400);
+  const stillPending = await ok("GET", "accrual?quarter=" + Q.from);
+  assert.equal(stillPending.version, again.version);
+  assert.equal(stillPending.people.find(p => p.userId === ids.alice).added, null);
+  assert.equal(sent.length, emailsBefore);
   assert.equal((await leave("POST", "accrual", { quarter: Q.from, people: [{ userId: ids.alice, units: alice.units + 1 }], ifVersion: again.version })).status, 409, "changed since reviewed");
   assert.equal((await leave("POST", "accrual", { quarter: Q.from, people: [{ userId: ids.beth, units: 10 }], ifVersion: again.version })).status, 409, "full time earns none");
   const mails = sent.length;

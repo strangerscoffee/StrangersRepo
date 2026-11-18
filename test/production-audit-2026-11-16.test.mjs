@@ -133,3 +133,14 @@ test('ordinary retries retain the original uncertain replay window; a backup exp
  srv.sql(`UPDATE wholesale_email_outbox SET state='queued',first_attempt_at=${Date.now()-864e5} WHERE order_id='${placed.id}'`);assert.equal((await call('POST','/api/admin/wholesale/order-emails/email-retry',{})).status,409);assert.equal(row().state,'unknown');
  emailFail=false;await ok('POST','/api/admin/wholesale/order-emails/email-retry',{acknowledgeUnknown:true});await waitFor(()=>row().state==='sent');await emailSettings(false);
 });
+
+test('a standing recovery failure is recorded and the same cron still delivers queued notifications',async()=>{
+ const queued='synthetic-cron-isolation';
+ srv.sql(`ALTER TABLE wholesale_preview RENAME TO synthetic_standing_unavailable;
+  INSERT INTO slack_order_posts(order_id,payload,send_after,created_at) VALUES('${queued}','{"text":"Synthetic queued notification"}',0,0)`);
+ try{
+  await fetch(srv.base+'/__scheduled?cron='+encodeURIComponent('*/5 * * * *'));
+  await waitFor(()=>srv.sql(`SELECT sent_at FROM slack_order_posts WHERE order_id='${queued}'`)[0]?.sent_at!=null);
+  assert.ok(srv.sql("SELECT 1 FROM errors WHERE source='server' AND message='Standing-order recovery did not complete.'").length);
+ }finally{srv.sql('ALTER TABLE synthetic_standing_unavailable RENAME TO wholesale_preview');}
+});

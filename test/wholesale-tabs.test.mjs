@@ -113,7 +113,16 @@ test("part of a tab: clear the ticked orders, keep the rest on the open tab, and
   // What was seen must still be the whole tab, and only orders seen can be cleared.
   assert.equal((await call("POST", `/api/staff-orders/tabs/${B.customer.id}/clear`, { orderIds: [first], seen: [first, second] }, STAFF)).status, 409, "stale view");
   assert.equal((await call("POST", `/api/staff-orders/tabs/${B.customer.id}/clear`, { orderIds: ["other"], seen }, STAFF)).status, 409, "not on the tab");
-  const part = await ok("POST", `/api/staff-orders/tabs/${B.customer.id}/clear`, { orderIds: [first, second], seen }, STAFF);
+  const versions = (view) => Object.fromEntries(view.orders.map((o) => [o.id, o.version]));
+  await ok("PATCH", `/api/staff-orders/orders/${third}`, { ifVersion: versions(tab)[third], status: "New", note: "Updated while the tab was open" }, STAFF);
+  const clear = `/api/staff-orders/tabs/${B.customer.id}/clear`;
+  const attempted = { orderIds: [first, second], seen, seenVersions: versions(tab) };
+  assert.equal((await call("POST", clear, attempted, STAFF)).status, 409, "an edited order left on the tab still invalidates the review");
+  const fresh = await tabOf(B);
+  assert.deepEqual(fresh.orders.map(o => o.id), seen);
+  const concurrent = await Promise.all([1, 2].map(() => call("POST", clear, { ...attempted, seenVersions: versions(fresh) }, STAFF)));
+  assert.deepEqual(concurrent.map(r => r.status).sort(), [200, 409]);
+  const part = concurrent.find(r => r.status === 200);
   assert.deepEqual([part.body.cleared.grams, part.body.cleared.keptIds, part.body.cleared.early], [3000, [third], true]);
   const after = await tabOf(B);
   assert.deepEqual(after.orders.map((o) => o.id), [third], "the unticked order stays on the open tab");

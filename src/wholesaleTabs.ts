@@ -118,26 +118,32 @@ export async function clearTab(env: Env, customerId: string, value: unknown, act
   const onTab = rows.results.map((row) => decode<Record<string, any>>(row) as AnyOrder);
   const seen = new Set((body.seen ?? body.orderIds) as string[]), chosen = new Set(body.orderIds as string[]);
   if (!onTab.length) throw new ApiError(404, "not_found", "This customer has nothing on their tab.");
-  if (onTab.length !== seen.size || onTab.some((o) => !seen.has(o.id)) || [...chosen].some((id) => !seen.has(id))) throw new ApiError(409, "conflict", "The tab changed on another device. Reload it before clearing.");
+  const changed = () => new ApiError(409, "conflict", "The tab changed on another device. Reload it before clearing.");
+  if (onTab.length !== seen.size || onTab.some((o) => !seen.has(o.id)) || [...chosen].some((id) => !seen.has(id))) throw changed();
+  if (body.seenVersions !== undefined) {
+    const reviewed = object(body.seenVersions);
+    if (onTab.some(o => reviewed[o.id] !== o.version)) throw changed();
+  }
   const orders = onTab.filter((o) => chosen.has(o.id)), kept = onTab.filter((o) => !chosen.has(o.id));
   const counted = orders.filter(counts);
   const customer = await get<Record<string, any>>(env, "customer", customerId);
   const tabId = crypto.randomUUID(), at = Date.now();
   const record: TabClear = { customerId, business: customer?.business || orders[0].business || "Customer", clearedAt: at, clearedBy: actor, orderIds: orders.map((o) => o.id), grams: counted.reduce((t, o) => t + (o.grams || 0), 0), packs: counted.reduce((t, o) => t + (o.packs || 0), 0), pence: counted.reduce((t, o) => t + (o.pence || 0), 0), early: false, ...(kept.length ? { keptIds: kept.map((o) => o.id) } : {}) };
   record.early = record.grams < TAB_GRAMS;
-  const statements = [
-    env.DB.prepare("INSERT INTO wholesale_tabs (id,customer_id,cleared_at,data) VALUES (?,?,?,?)").bind(tabId, customerId, at, JSON.stringify(record)),
-    ...orders.map((o) => { const { id, version: v, updatedAt, ...rest } = o; return env.DB.prepare("UPDATE wholesale_preview SET data=?,version=version+1,updated_at=? WHERE kind='order' AND id=? AND version=? AND json_extract(data,'$.tabClearedId') IS NULL").bind(JSON.stringify({ ...rest, tabClearedId: tabId }), at, id, v); }),
-  ];
-  // All or nothing: an order that changed since it was read matches no row, so the clear is undone (the cleared orders
-  // put back and the record removed) and refused.
-  const results = await env.DB.batch(statements);
-  if (results.slice(1).some((r) => !r.meta.changes)) {
-    const done = orders.filter((_, i) => results[i + 1].meta.changes);
-    const undo = done.map((o) => { const { id, version: v, updatedAt, ...rest } = o; return env.DB.prepare("UPDATE wholesale_preview SET data=?,version=version+1,updated_at=? WHERE kind='order' AND id=? AND json_extract(data,'$.tabClearedId')=?").bind(JSON.stringify(rest), Date.now(), id, tabId); });
-    await env.DB.batch([...undo, env.DB.prepare("DELETE FROM wholesale_tabs WHERE id=?").bind(tabId)]);
-    throw new ApiError(409, "conflict", "An order on the tab changed on another device. Reload it before clearing.");
-  }
+  const tab = `${OPEN_TAB} AND json_extract(data,'$.customerId')=?`;
+  const reviewed = Object.fromEntries(onTab.map(o => [o.id, o.version]));
+  // Claim only the full reviewed snapshot, including orders that stay on the tab. The record and selected order updates
+  // share one transaction, so a stale snapshot cannot partially clear orders or restore an older copy over a newer edit.
+  const [claim] = await env.DB.batch([
+    env.DB.prepare(`INSERT INTO wholesale_tabs (id,customer_id,cleared_at,data)
+      SELECT ?,?,?,? WHERE (SELECT COUNT(*) FROM wholesale_preview WHERE ${tab})=?
+      AND (SELECT COUNT(*) FROM wholesale_preview JOIN json_each(?) r ON r.key=wholesale_preview.id AND r.value=wholesale_preview.version WHERE ${tab})=?`)
+      .bind(tabId, customerId, at, JSON.stringify(record), customerId, onTab.length, JSON.stringify(reviewed), customerId, onTab.length),
+    env.DB.prepare(`UPDATE wholesale_preview SET data=json_set(data,'$.tabClearedId',?),version=version+1,updated_at=?
+      WHERE ${tab} AND id IN (SELECT value FROM json_each(?)) AND EXISTS(SELECT 1 FROM wholesale_tabs WHERE id=?)`)
+      .bind(tabId, at, customerId, JSON.stringify(record.orderIds), tabId),
+  ]);
+  if (!claim.meta.changes) throw changed();
   await audit(env, "wholesale_tab_cleared", actor, `${actor} cleared ${kept.length ? "part of " : ""}${record.business}'s tab: ${orders.length} ${orders.length === 1 ? "order" : "orders"}, ${(record.grams / 1000).toFixed(2)} kg${record.early ? " (before 6 kg)" : ""}${kept.length ? `; ${kept.length} ${kept.length === 1 ? "order stays" : "orders stay"} on the tab` : ""}.`);
   const { pence, ...visible } = record;
   return { id: tabId, ...visible, ...(admin ? { pence } : {}) };

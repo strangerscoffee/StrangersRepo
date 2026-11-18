@@ -75,3 +75,17 @@ test("a closed page is simply dropped; the next write still reaches the others",
   assert.ok(await until(() => counters(b.got).length), "the open one is told");
   b.ws.close();
 });
+
+test("staff wholesale writes immediately notify other open workspaces", async () => {
+  const post = (path, body) => fetch(srv.base + path, { method: "POST", headers: { "content-type": "application/json", cookie: ADMIN }, body: JSON.stringify(body) });
+  const created = await post("/api/admin/wholesale/customers", { business: "Live test shop", contact: "Test buyer", email: "live@example.test", address: "1 Test Road", postcode: "NR1 1AA", status: "Active" });
+  assert.equal(created.status, 201);
+  const { customer } = await created.json();
+  const before = await (await fetch(srv.base + "/api/changes", { headers: { cookie: ADMIN } })).json();
+  const { ws, got } = await connect();
+  try {
+    const order = await post("/api/staff-orders/orders", { customerId: customer.id, requestId: crypto.randomUUID(), source: "Phone", delivery: "Roastery collection", lines: [{ productId: "brazil", pack: "kilo", grind: "beans", quantity: 1 }] });
+    assert.equal(order.status, 201, await order.text());
+    assert.ok(await until(() => counters(got).some(update => update.accounts > before.accounts)));
+  } finally { ws.close(); }
+});

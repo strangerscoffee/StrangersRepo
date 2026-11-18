@@ -38,7 +38,7 @@ after(async () => { await srv?.stop(); });
 
 test("dispatch day and standing order are checked and saved on the order", async () => {
   let o = await order();
-  for (const [schedule, why] of [[{ dispatchDate: addDays(today, -1), every: 1 }, "past day"], [{ dispatchDate: "2026-02-30", every: 1 }, "not a day"], [{ dispatchDate: addDays(today, 3), every: 3 }, "every 3 weeks"], [{ dispatchDate: null, every: 2 }, "standing without a day"]]) {
+  for (const [schedule, why] of [[{ dispatchDate: addDays(today, -1), every: 1 }, "past day"], [{ dispatchDate: "2026-02-30", every: 1 }, "not a day"], [{ dispatchDate: "2026-13-01", every: 1 }, "not a month"], [{ dispatchDate: addDays(today, 3), every: 3 }, "every 3 weeks"], [{ dispatchDate: null, every: 2 }, "standing without a day"]]) {
     assert.equal((await patch(o, { schedule })).status, 400, why);
   }
   const r = await patch(o, { schedule: { dispatchDate: addDays(today, 3), every: 2 } });

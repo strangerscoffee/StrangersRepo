@@ -25,6 +25,7 @@ test("wholesale domain: canonical and legacy hosts share ordering while staff li
   assert.equal(wholesalePath("/wholesale-preview-other/order.js"), "/wholesale-preview-other/order.js");
   for (const path of ["/wholesale/catalogue.js", "/wholesale/index.html", "/wholesale/images/brazil.webp", "/admin/admin.js"]) assert.equal(isWholesaleCode(path), false, path);
   assert.equal(isPublicCode("diary", "/wholesale/catalogue.js"), false, "source prices are not public bootstrap code");
+  assert.equal(isPublicCode("diary", "/wholesale/images/catalogue-photo.png"), false, "a catalogue photo never enters the generic public code allowlist");
 });
 
 test("wholesale assets: expired sessions can load the entire app graph at new and cached URLs without exposing data", async () => {

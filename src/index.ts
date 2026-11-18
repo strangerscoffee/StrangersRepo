@@ -85,16 +85,24 @@ export default {
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     if(event.cron === "*/5 * * * *"){
       ctx.waitUntil(ensureSchema(env).then(async()=>{
+        const run = async (name: string, task: () => Promise<unknown>) => {
+          try { await task(); } catch {
+            console.error(`Scheduled task failed: ${name}`);
+            await recordError(env, { source: "server", app: "worker", page: "scheduled / five-minute jobs", message: `${name} did not complete.` });
+          }
+        };
         // App credentials can be saved in Admin instead of Worker vars. Keep idle cron runs small.
-        await repairStandingRuns(env);
-        await deliverSlackPosts(env).catch(() => {}); // new-order posts held for 07:50, and retries
-        await deliverDispatchEmails(env).catch(() => {});
-        await deliverDiaryReminders(env).catch(() => {}); // each site's morning and end-of-day diary reminder
+        await run("Standing-order recovery", () => repairStandingRuns(env));
+        await run("Wholesale Slack notifications", () => deliverSlackPosts(env));
+        await run("Dispatch emails", () => deliverDispatchEmails(env));
+        await run("Diary reminders", () => deliverDiaryReminders(env));
         // Holiday left to take, and the quarter's extra-hours holiday to review: once a day from 09:00 UK time.
         const domain = env.COOKIE_DOMAIN || "staffstrangerscoffee.com";
         const at = env.SLACK_TEST_HOOKS === "1" && env.HOLIDAY_NOW ? new Date(env.HOLIDAY_NOW) : new Date();
-        await runHolidayReminders(env, { diary: `https://${domain}/`, rota: env.ROTA_HOST ? `https://${env.ROTA_HOST}/` : `https://${domain}/rota/` }, at).catch(() => {});
-        if(env.QUICKBOOKS_CLIENT_ID||env.QUICKBOOKS_PRODUCTION_CLIENT_ID||await env.DB.prepare('SELECT 1 FROM quickbooks_app_settings WHERE data IS NOT NULL LIMIT 1').first())await runQuickBooksJobs(env);
+        await run("Holiday reminders", () => runHolidayReminders(env, { diary: `https://${domain}/`, rota: env.ROTA_HOST ? `https://${env.ROTA_HOST}/` : `https://${domain}/rota/` }, at));
+        await run("QuickBooks jobs", async () => {
+          if (env.QUICKBOOKS_CLIENT_ID || env.QUICKBOOKS_PRODUCTION_CLIENT_ID || await env.DB.prepare('SELECT 1 FROM quickbooks_app_settings WHERE data IS NOT NULL LIMIT 1').first()) await runQuickBooksJobs(env);
+        });
       }));
       return;
     }
@@ -121,7 +129,7 @@ async function flagClock(env: Env, user: { name: string }, diffMs: number, ua: s
 }
 
 /** The writes that move a change counter (diary saves, the rota, accounts and sites, stored files). */
-const LIVE_WRITES = /^\/api\/(db\/(set|update|delete)$|rota\/|admin\/|wholesale\/|assets)/;
+const LIVE_WRITES = /^\/api\/(db\/(set|update|delete)$|rota\/|admin\/|wholesale\/|staff-orders\/|assets)/;
 
 /** A database error that's worth one more try: the connection dropped or D1 was busy restarting. */
 function isTransient(e: unknown): boolean {
@@ -392,7 +400,10 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
       if (p.startsWith("/api/") || p.startsWith("/_blob/")) throw new ApiError(404, "not_found", "Not available on the admin address.");
       if (!isGet) return new Response("Method not allowed", { status: 405 });
       if (p === "/") return adminPage(req, env, url);
-      if (isAdminSharedFile(p)) return env.ASSETS.fetch(req);
+      if (isAdminSharedFile(p)) {
+        const asset = await env.ASSETS.fetch(req);
+        return p.startsWith("/wholesale/images/") ? noStore(asset) : asset;
+      }
       return redirect("/");
     }
   }

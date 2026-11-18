@@ -22,6 +22,8 @@ test('Admin HTML, APIs, snapshots, uploaded images and non-code files keep authe
  for(const path of ['/','/admin/','/admin/index.html','/admin/people.json','/wholesale/catalogue.js','/wholesale/images/brazil.webp'])assert.notEqual((await fetch(srv.base+path,{redirect:'manual'})).status,200,path);
  for(const path of ['/api/admin/people','/api/admin/wholesale','/api/rota/leave/admin'])assert.equal((await fetch(srv.base+path,{redirect:'manual'})).status,401,path);
  for(const path of ['/admin/index.html','/admin/data.json','/api/admin/people','/wholesale/catalogue.js'])assert.equal(isPublicCode('admin',path),false,path);
+ const photo=await fetch(srv.base+'/wholesale/images/brazil.webp',{headers:{cookie:admin}});
+ assert.equal(photo.status,200);assert.match(photo.headers.get('cache-control'),/private.*no-store/);
  for(const file of await readdir(new URL('../public/admin/',import.meta.url)))if(/\.(js|css)$/.test(file)){assert.equal(isPublicCode('admin','/admin/'+file),true);assert.equal(isPublicCode('rota','/admin/'+file),false);assert.equal(isPublicCode('preview','/admin/'+file),false);}
 });
 test('Admin code remains available when the account database is temporarily unavailable',async()=>{

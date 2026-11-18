@@ -48,8 +48,10 @@ export function isRotaSharedFile(path: string): boolean {
  * Pages, private images and every API still need sign-in. Admin JS/CSS contain implementation only, never saved data.
  */
 export function isPublicCode(app: string, path: string): boolean {
-  // The source-price snapshot is used by the server, never by the browser bootstrap.
-  if (path === "/wholesale/catalogue.js") return false;
+  if (path.startsWith("/wholesale/")) {
+    // Keep catalogue photos and the legacy price snapshot behind the ordering routes on every host.
+    return (app === "diary" || app === "preview") && (isWholesaleCode(path) || path === "/wholesale/images/logo.svg");
+  }
   if (path.startsWith("/admin/")) return (app === "admin" || app === "diary") && /^\/admin\/[\w-]+\.(?:js|css)$/.test(path);
   if (!/\.(js|css|svg|png|webmanifest)$/.test(path)) return false;
   if (app === "admin") return isSharedCode(path);
