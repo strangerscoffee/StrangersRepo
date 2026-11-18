@@ -1,7 +1,8 @@
 // Rota routes for whole weeks: the week view, copying, publishing, and hours (with the CSV).
 import { newId } from "../../auth";
 import { invalid, json } from "../../http";
-import { loadClosures, loadPeople, loadShifts, loadSites, touchWeek, weekRow } from "../load";
+import { loadClosures, loadCtx, loadPeople, loadShifts, loadSites, touchWeek, weekRow } from "../load";
+import { snapshotOf } from "../changes";
 import { openState } from "../problems";
 import { ROTA_SITES, RotaRequest } from "../types";
 import { weekView } from "../views";
@@ -63,10 +64,13 @@ export async function weekRoutes(r: RotaRequest): Promise<Response | null> {
     const b = await body();
     if (!isDay(b.week)) throw invalid("Choose a real week.");
     const week = mondayOf(b.week);
+    // What it looks like now, to show what's changed before it's next published (src/rota/changes.ts).
+    const ctx = await loadCtx(env, week), at = nowMs();
+    const snap = snapshotOf(ctx.shifts.filter((x) => x.day >= ctx.days[0] && x.day <= ctx.days[6]), ctx.timeOff, at);
     await env.DB.prepare(
-      `INSERT INTO rota_weeks (week, published_at, published_by, changed_at, changes) VALUES (?, ?, ?, ?, 0)
-       ON CONFLICT (week) DO UPDATE SET published_at = excluded.published_at, published_by = excluded.published_by, changes = 0`,
-    ).bind(week, nowMs(), user.id, nowMs()).run();
+      `INSERT INTO rota_weeks (week, published_at, published_by, changed_at, changes, published_shifts) VALUES (?, ?, ?, ?, 0, ?)
+       ON CONFLICT (week) DO UPDATE SET published_at = excluded.published_at, published_by = excluded.published_by, changes = 0, published_shifts = excluded.published_shifts`,
+    ).bind(week, at, user.id, at, JSON.stringify(snap)).run();
     // {email: true}: email the people on it (only those whose shifts changed, once it has been emailed before).
     let emailed = 0;
     if (b.email === true) emailed = await sendWeek(env, exec, await planWeek(env, week), week, mailLinks, await actor(env, user));

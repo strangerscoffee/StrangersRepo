@@ -7,6 +7,7 @@ import { visibleProblems, visibleShift } from "./privacy";
 import { markOvertime } from "./shift";
 import { Problem } from "./types";
 import { mondayOf } from "./util";
+import { diffWeek, readSnapshot } from "./changes";
 
 export async function weekView(env: Env, week: string, user: User) {
   const admin = user.role === "admin";
@@ -14,12 +15,16 @@ export async function weekView(env: Env, week: string, user: User) {
   const published = !!row?.published_at;
   const visible = admin || published;
   const inWeek = markOvertime(ctx.shifts.filter((s) => s.day >= ctx.days[0] && s.day <= ctx.days[6]), ctx.people);
+  // Admins: exactly what's changed since it was published (src/rota/changes.ts), when there's something to compare with.
+  const snap = admin && published ? readSnapshot(row?.published_shifts, row?.emailed) : null;
+  const changes = snap ? diffWeek(snap, inWeek, ctx.timeOff, (id) => (id ? ctx.people.get(id)?.name ?? "Someone" : null)) : null;
   return {
     week,
     days: ctx.days,
     published,
     publishedAt: row?.published_at ?? null,
-    changesSincePublish: published ? row?.changes ?? 0 : 0,
+    changesSincePublish: !published ? 0 : changes ? changes.length : row?.changes ?? 0,
+    ...(admin && published ? { changes, changesBasis: snap?.basis ?? null, edits: row?.changes ?? 0 } : {}),
     sites: [...ctx.sites.values()].map((s) => ({
       id: s.id, name: s.name, inUse: s.inUse, adHoc: s.adHoc, opensAt: s.opensAt, closesAt: s.closesAt, minPeople: s.minPeople, dayHours: s.dayHours,
       hours: ctx.days.map((d) => hoursOn(s, d)),

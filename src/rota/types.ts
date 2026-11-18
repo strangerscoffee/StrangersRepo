@@ -67,7 +67,7 @@ export interface Problem {
   kind: string; severity: "error" | "warn" | "info"; day?: string; site?: string; userId?: string; shiftIds: string[]; message: string;
 }
 
-export interface WeekRow { week: string; published_at: number | null; published_by: string | null; changed_at: number | null; changes: number }
+export interface WeekRow { week: string; published_at: number | null; published_by: string | null; changed_at: number | null; changes: number; emailed?: string | null; published_shifts?: string | null }
 
 /** Everything the checks need for one week (plus the days either side, for rest between shifts). */
 export interface Ctx {

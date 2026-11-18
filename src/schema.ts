@@ -339,6 +339,10 @@ const MIGRATIONS: Migration[] = [
       ...(people.has("primary_site") ? [] : ["ALTER TABLE rota_people ADD COLUMN primary_site TEXT"]),
     ]);
   } },
+  // What each week looked like when it was last published (src/rota/changes.ts), to show what's changed since.
+  { id: 35, name: "Published week snapshot", run: async (env) => {
+    if (!(await columns(env, "rota_weeks")).has("published_shifts")) await env.DB.prepare("ALTER TABLE rota_weeks ADD COLUMN published_shifts TEXT").run();
+  } },
 ];
 
 async function migrate(env: Env): Promise<void> {

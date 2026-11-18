@@ -817,7 +817,10 @@
     setHead("week", weekLabel(d.week), `${hrs(total)} hours · ${plural(d.shifts.length, "shift")} · ${plural(people, "person", "people")}${d.publishedAt ? ` · published ${fmt(new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London" }).format(new Date(d.publishedAt)), { weekday: "short", day: "numeric", month: "short" })}` : ""}`, {
       actions: weekNav(d.week, (w) => { R.week = w; render(); }),
     });
-    $("#pageTitle").append(" ", el("span", { class: "wstatus " + status[0], text: status[1] }));
+    // "n changes not sent" opens the list of what changed (in the publish sheet).
+    $("#pageTitle").append(" ", status[0] === "chg" && d.changes
+      ? el("button", { type: "button", class: "wstatus chg", "data-w": "", title: "See what's changed", onclick: () => publishSheet(d) }, status[1])
+      : el("span", { class: "wstatus " + status[0], text: status[1] }));
     if (R.pday > 6) R.pday = 0;
     const pub = settled ? btn("Up to date", null, "btn ghost pubbtn", { disabled: true, title: "Nothing to send: everyone has the latest" })
       : el("button", { type: "button", class: "btn pubbtn", "data-w": "", onclick: () => publishSheet(d) }, svgi(ICON.send), d.published ? `Publish ${plural(d.changesSincePublish, "change")}` : "Publish week");
@@ -830,6 +833,37 @@
       el("span", { class: "grow" }), copy, pub);
     weekBody = el("div", { class: "stack" }, ...weekBodyKids(d));
     return [toolbar, problemPanel(d), weekBody];
+  }
+
+  // What's changed since the week was published (d.changes from src/rota/changes.ts, admins only).
+  function changeList(d) {
+    if (!d.published || !d.changes) return null;
+    const sn = (id) => d.sites.find((x) => x.id === id)?.name || id;
+    const who = (n) => n || "Open shift";
+    const at = (c) => `${shortM(c.day)} · ${sn(c.site)} ${c.start}–${c.end}`;
+    const OFF = { annual: "holiday", unpaid: "unpaid leave", sick: "off sick", unauthorised: "unauthorised absence" };
+    const offText = (c) => `${OFF[c.type] || "time off"} ${c.to && c.to !== c.day ? `${shortM(c.day)} – ${shortM(c.to)}` : shortM(c.day)}`;
+    const wasText = (c) => {
+      const w = c.was, parts = [];
+      if (c.what.includes("person")) parts.push(`was ${who(w.name)}`);
+      const where = [c.what.includes("day") ? shortM(w.day) : "", c.what.includes("site") ? sn(w.site) : "", c.what.includes("time") ? `${w.start}–${w.end}` : ""].filter(Boolean).join(" ");
+      if (where) parts.push(`was ${where}`);
+      for (const [k, t] of [["break", "break changed"], ["job", "opens/closes changed"], ["note", "note changed"]]) if (c.what.includes(k)) parts.push(t);
+      return parts.join(" · ");
+    };
+    const row = (c) => {
+      const [tag, cls, title, sub] =
+        c.kind === "added" ? ["Added", "add", who(c.name), at(c)]
+        : c.kind === "removed" ? ["Removed", "del", who(c.name), at(c)]
+        : c.kind === "changed" ? ["Changed", "chg", who(c.name), at(c) + " · " + wasText(c)]
+        : c.kind === "off-added" ? ["Time off", "off", c.name, `${offText(c)} approved since publishing`]
+        : ["Time off", "off", c.name, `${offText(c)} cancelled since publishing`];
+      return el("div", { class: "lrow chgrow" }, el("span", { class: "chgtag " + cls, text: tag }), el("span", { class: "t" }, el("b", { text: title }), el("span", { class: "s", text: sub })));
+    };
+    return el("section", { class: "chglist", "aria-label": "What's changed" },
+      el("div", { class: "label", text: d.changes.length ? `What's changed · ${d.changes.length}` : "What's changed" }),
+      d.changes.length ? el("div", { class: "list glass" }, ...d.changes.map(row)) : el("p", { class: "note", text: "No shifts have changed since it was published." }),
+      d.changesBasis === "emailed" ? el("p", { class: "note", text: "Compared with the shifts staff were last emailed (people, days, sites and times). From the next time you publish, breaks, notes, open shifts and time off are compared too." }) : null);
   }
 
   // What goes out before it goes: the shifts and hours, who'll see it, and anything still to check.
@@ -858,6 +892,7 @@
     }).catch(() => {});
     openSheet(d.published ? `Publish ${changes}?` : `Publish the ${weekLabel(d.week).replace(/^W/, "w")}?`, el("div", { class: "sbody" },
       d.published ? el("p", { class: "note", text: "Everyone on the rota sees the updated week straight away." }) : null,
+      changeList(d),
       el("div", { class: "kvs" }, kv("Shifts", `${d.shifts.length} · ${hrs(total)} hours`), kv("People who'll see it", String(people)),
         kv("Still to check", still || "Nothing", errs ? "bad" : warns ? "warn" : "ok")),
       errs ? el("p", { class: "note", text: "You can publish with problems; open shifts go to Open shifts for staff to pick up." }) : null, emailRow, msg,
