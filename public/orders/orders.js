@@ -48,7 +48,25 @@
  const date=at=>new Date(at).toLocaleString('en-GB',{timeZone:'Europe/London',day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});
  const dispatchDay=day=>new Date(day+'T12:00:00Z').toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short',timeZone:'UTC'});
  const pill=value=>el('span',{class:'pill '+String(value).toLowerCase().replaceAll(' ','-')},value);
- function closeDialogs(){for(const id of ['dispatchDialog','orderDialog','customerDialog','totalsDialog','tabDialog','newOrderDialog'])if($(id).open)$(id).close();}
+ const dialogs=['dispatchDialog','orderDialog','customerDialog','totalsDialog','tabDialog','newOrderDialog'].map($);
+ function openDialog(dialog){
+  dialog.showModal();
+  dialog.querySelector('.dialog-body').scrollTop=0;
+  const heading=dialog.querySelector('.dialog-head h2');
+  heading.tabIndex=-1;
+  heading.focus({preventScroll:true});
+ }
+ function closeDialogs(){for(const dialog of dialogs)if(dialog.open)dialog.close();}
+ // At a modal boundary some browsers tab into their chrome and fire the session-protecting blur handler.
+ for(const dialog of dialogs)dialog.addEventListener('keydown',event=>{
+  if(event.key!=='Tab'||event.defaultPrevented)return;
+  const controls=[...dialog.querySelectorAll('button, input, select, textarea, a[href]')].filter(node=>node.tabIndex>=0&&!node.matches(':disabled')&&node.getClientRects().length);
+  if(!controls.length)return;
+  const index=controls.indexOf(document.activeElement);
+  if(event.shiftKey?index>0:index<controls.length-1)return;
+  event.preventDefault();
+  controls[event.shiftKey?controls.length-1:0].focus();
+ });
  function lock(clear=false){
   document.documentElement.setAttribute('data-orders-locked','');closeDialogs();
   if(clear){rows=[];customers=[];customerRequest++;tabs={open:[],cleared:[],threshold:6000};tabSelected=null;$('tabList').replaceChildren();$('clearedList').replaceChildren();$('tabDetail').replaceChildren();selected=null;cursor=null;picked.clear();picking=false;editing=false;batch=null;
@@ -292,7 +310,7 @@
   $('deskDispatchBody').replaceChildren(el('div',{class:'desk-dispatch-details'},el('h3',{},row.business),el('p',{},`${row.locationName} · ${row.packs} ${row.packs===1?'bag':'bags'} · ${weight(row.grams)}`),
    el('p',{},collection?'Only confirm once the customer has collected the order.':destination||row.delivery),tracking,
    el('p',{class:'hint'},'The customer will be notified where order emails are enabled.'),el('p',{id:'deskDispatchError',class:'edit-error',role:'alert',hidden:true})));
-  $('dispatchDialog').showModal();
+  openDialog($('dispatchDialog'));
  }
  const kv=(label,value)=>el('div',{class:'kv'},el('span',{},label),el('span',{},value||'None supplied'));
  function renderDetail(row){
@@ -393,7 +411,7 @@
   try{const {order}=await staffJson('POST','orders/'+encodeURIComponent(row.id)+'/skip',{ifVersion:row.version});editing=false;$('orderDialog').close();toast(`${order.business}: delivery skipped`);await load();}
   catch(e){if(e.quiet)return;const box=$('skipError');if(box){box.textContent=e.code==='conflict'?'Someone else changed this order. Close it and open it again.':e.message;box.hidden=false;}button.disabled=false;button.textContent='Skip this delivery';}
  }
- function openOrder(id){const row=findOrder(id);if(!row)return;selected=id;editing=false;setMobilePacking(false);renderDetail(row);$('orderDialog').showModal();}
+ function openOrder(id){const row=findOrder(id);if(!row)return;selected=id;editing=false;setMobilePacking(false);renderDetail(row);openDialog($('orderDialog'));}
  async function patch(row,changes){
   const owner=orderingIdentity,expectedStatus=changes.status||row.status;
   const response=await fetch('/api/staff-orders/orders/'+encodeURIComponent(row.id),{method:'PATCH',cache:'no-store',headers:{'content-type':'application/json'},body:JSON.stringify({ifVersion:row.version,status:row.status,note:row.note||'',trackingUrl:row.trackingUrl||'',...changes})});
@@ -473,7 +491,7 @@
   $('totalsScope').replaceChildren(segment);
   printTotals.onclick=()=>printScope(scopes[current],{onlyTotals:true});
   printSheets.onclick=()=>printScope(scopes[current]);
-  dialog.showModal();await drawTotals(current);
+  openDialog(dialog);await drawTotals(current);
  }
 
  // Customer tabs: a running tally of each customer's orders until 6 kg, then cleared (or sooner). No money here.
@@ -559,9 +577,9 @@
    c.orders?.length?tabOrderList(c.orders,false):el('p',{class:'hint'},'The orders on this tab are no longer available.'),
    ...(c.kept?.length?[el('h3',{class:'packing-heading'},'Kept on the tab'),el('div',{class:'order-list glass'},...c.kept.map(o=>el('div',{class:'order-row tab-order kept'},el('span',{},el('b',{},ordered(o)+(o.reference?' · '+o.reference:'')),el('span',{class:'row-meta'},`${o.packs} ${o.packs===1?'bag':'bags'} · ${weight(o.grams)}`),o.lines?.length?el('span',{class:'row-meta tab-order-lines'},orderLineText(o)):null),el('span',{class:'row-end'},pill(NOW[o.now]||o.now)))))]:[]));
   $('tabFoot').replaceChildren(el('span',{},c.kept?.length?'Part cleared':'Cleared'),el('button',{type:'button',class:'btn soft',onclick:()=>$('tabDialog').close()},'Done'));
-  $('tabDialog').showModal();
+  openDialog($('tabDialog'));
  }
- function openTab(customerId){const t=tabs.open.find(x=>x.customerId===customerId);if(!t)return;tabSelected=customerId;tabConfirm=false;tabPick=new Set(t.orders.map(o=>o.id));renderTab(t);$('tabDialog').showModal();}
+ function openTab(customerId){const t=tabs.open.find(x=>x.customerId===customerId);if(!t)return;tabSelected=customerId;tabConfirm=false;tabPick=new Set(t.orders.map(o=>o.id));renderTab(t);openDialog($('tabDialog'));}
  async function clearTabNow(t){
   const button=$('confirmClear');if(!button||button.disabled)return;
   button.disabled=true;button.textContent='Clearing…';
@@ -609,7 +627,7 @@
    el('h3',{class:'packing-heading'},c.locations.length===1?'Delivery location':'Delivery locations'),
    ...c.locations.map(l=>el('div',{class:'detail-note location'},el('b',{},l.name+(l.id===c.defaultLocationId&&c.locations.length>1?' (default)':'')),[l.address,l.postcode].filter(Boolean).join('\n')||'No address saved',(l.contact||l.phone)&&(l.contact!==c.contact||l.phone!==c.phone)?el('span',{class:'row-meta'},[l.contact,l.phone].filter(Boolean).join(' · ')):null,l.deliveryNotes?el('span',{class:'row-meta'},'Delivery notes: '+l.deliveryNotes):null)));
   $('customerActions').replaceChildren(el('button',{type:'button',class:'btn',disabled:c.status==='On hold',onclick:()=>{$('customerDialog').close();newOrder(c)}},c.status==='On hold'?'On hold: no new orders':'New order'));
-  $('customerDialog').showModal();
+  openDialog($('customerDialog'));
  }
 
  // Taking an order for a customer who emailed, phoned or came to the door. Bags and grinds only: the catalogue's
@@ -627,10 +645,10 @@
  function newOrder(customer){
   try{
    const p=savedAttempts()[0];
-   if(p){draft={customer:{id:p.payload.customerId,business:p.business},pending:{...p,uncertain:true},sending:false,error:''};drawNewOrder();$('newOrderDialog').showModal();return;}
-  }catch(e){draft={blockedRecovery:true,error:e.message||'Browser storage is unavailable. Enable it before placing orders, so an interrupted order can be recovered.',sending:false};drawNewOrder();$('newOrderDialog').showModal();return;}
+   if(p){draft={customer:{id:p.payload.customerId,business:p.business},pending:{...p,uncertain:true},sending:false,error:''};drawNewOrder();openDialog($('newOrderDialog'));return;}
+  }catch(e){draft={blockedRecovery:true,error:e.message||'Browser storage is unavailable. Enable it before placing orders, so an interrupted order can be recovered.',sending:false};drawNewOrder();openDialog($('newOrderDialog'));return;}
   draft={customer:customer||null,catalogue:null,lines:[],source:'Email',onTab:false,delivery:'Roastery collection',locationId:null,reference:'',note:'',emailCustomer:true,requestId:crypto.randomUUID(),sending:false,error:'',search:'',found:[]};
-  drawNewOrder();$('newOrderDialog').showModal();
+  drawNewOrder();openDialog($('newOrderDialog'));
   if(customer)chooseCustomer(customer);else $('newOrderForm').querySelector('input')?.focus();
  }
  async function findCustomers(q){
@@ -705,7 +723,7 @@
     draft.search=search.value;clearTimeout(draft.timer);draft.timer=setTimeout(()=>findCustomers(search.value.trim()),250);
    }});
    parts.push(el('section',{class:'no-customer-search','aria-labelledby':'noFindTitle'},el('h3',{id:'noFindTitle'},'Find the customer'),search,
-    el('div',{class:'order-list glass no-found',role:'list'},...draft.found.map(x=>el('button',{type:'button',class:'order-row',role:'listitem',disabled:x.status==='On hold',onclick:()=>chooseCustomer(x)},el('span',{},el('b',{},x.business),el('span',{class:'row-meta'},[x.contact,x.locations?.[0]?.postcode].filter(Boolean).join(' · '))),el('span',{class:'row-end'},x.status==='On hold'?pill('On hold'):svg('chev')))),
+    el('div',{class:'order-list glass no-found'},...draft.found.map(x=>el('button',{type:'button',class:'order-row',disabled:x.status==='On hold',onclick:()=>chooseCustomer(x)},el('span',{},el('b',{},x.business),el('span',{class:'row-meta'},[x.contact,x.locations?.[0]?.postcode].filter(Boolean).join(' · '))),el('span',{class:'row-end'},x.status==='On hold'?pill('On hold'):svg('chev')))),
      !draft.found.length?el('div',{class:'empty'},draft.search?'No matching customers.':'Type to find the customer.'):null)));
    if(!draft.found.length&&!draft.search&&!draft.loaded){draft.loaded=true;findCustomers('');}
   }else{
@@ -876,7 +894,8 @@
  }
  async function load({more=false,reverify=false}={}){
   if(!started)return;
-  const current=++sequence,wasOpen=$('orderDialog').open,wasSelected=selected;
+  const orderDialog=$('orderDialog');
+  const current=++sequence,wasOpen=orderDialog.open,wasSelected=selected;
   if(reverify){lock();$('accessStatus').hidden=false;$('accessStatus').replaceChildren(SC.skeleton({label:'Checking access…'}));}
   const dispatch=$('orderDispatchScope').value,sort=wideDesk.matches?'dispatch':'updated';
   const key=[status,$('search').value.trim(),dispatch,sort].join('|'),changed=key!==ordersKey;ordersKey=key;
@@ -904,7 +923,11 @@
    if($('signedInInitials').hidden)renderIdentity();
    draw();$('accessStatus').hidden=true;$('ordersContent').hidden=false;document.documentElement.removeAttribute('data-orders-locked');if(changed||reverify)SC.reveal($('orderList'));
    loadDeskTotals();
-   if(wasOpen&&wasSelected){const row=findOrder(wasSelected);if(row){selected=row.id;renderDetail(row);if(!$('orderDialog').open)$('orderDialog').showModal()}else{$('orderDialog').close();selected=null;}}
+   if(wasOpen&&wasSelected&&(reverify||orderDialog.open&&selected===wasSelected)){
+    const row=findOrder(wasSelected);
+    if(row){selected=row.id;renderDetail(row);if(!orderDialog.open)openDialog(orderDialog);}
+    else{orderDialog.close();selected=null;}
+   }
    if(pendingViewRoute)followViewRoute();
    else if(reverify&&view==='customers')loadCustomers();
    else if(view==='tabs')loadTabs();

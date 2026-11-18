@@ -49,6 +49,22 @@ for(const[screen,viewport]of[['phone',{width:393,height:852}],['iPad',{width:118
 const workspaces=page=>page.getByRole('navigation',{name:'Staff workspaces',exact:true});
 const workspace=(page,name)=>workspaces(page).getByRole('link',{name,exact:true});
 
+test('Staff workspace navigation keeps keyboard focus when it moves between the dock and header',{timeout:60000},async()=>{
+ await setAccess(true);
+ const context=await contextFor(STAFF,{width:1023,height:680},'dark');
+ try{
+  const page=await context.newPage();
+  for(const path of ['/#day','/rota/#mine','/orders']){
+   await page.goto(srv.base+path);
+   await workspace(page,'Rota').focus();
+   await page.setViewportSize({width:1024,height:680});
+   await page.waitForFunction(()=>document.activeElement.matches('.staff-workspaces-wide [data-workspace="rota"]'));
+   await page.setViewportSize({width:1023,height:680});
+   await page.waitForFunction(()=>document.activeElement.matches('.staff-workspaces-dock [data-workspace="rota"]'));
+  }
+ }finally{await context.close()}
+});
+
 test('Admin People controls access to Wholesale in Staff navigation',{timeout:60000},async()=>{
  await setAccess(false);const ac=await contextFor(ADMIN,{width:1180,height:820},'light'),sc=await contextFor(STAFF,{width:393,height:852},'light');
  try{

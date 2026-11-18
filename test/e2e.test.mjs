@@ -96,6 +96,20 @@ test("staff journey on the real page", async () => {
   assert.ok(await chooser.evaluate(sheet => sheet.contains(document.activeElement)), "Tab remains inside the site sheet");
   await chooser.getByRole("button", { name: "Close site chooser" }).click();
   assert.ok(await siteButton.evaluate(button => button === document.activeElement), "dismissal returns focus to the site button");
+  await switchSite(page, "Factory");
+  await page.reload();
+  await page.locator("#avatarBtn", { hasText: "SP" }).waitFor();
+  await siteButton.click();
+  assert.ok(await chooser.locator('button[aria-current="true"]').evaluate(button => {
+    const bounds = button.getBoundingClientRect();
+    const list = button.parentElement.getBoundingClientRect();
+    return button === document.activeElement && bounds.top >= list.top - 1 && bounds.bottom <= list.bottom + 1;
+  }), "the selected site is revealed in a short sheet");
+  await page.setViewportSize({ width: 1180, height: 650 });
+  await page.keyboard.press("Escape");
+  assert.ok(await siteButton.evaluate(button => button === document.activeElement), "resize returns focus to the visible site button");
+  await switchSite(page, "Roastery");
+  await page.setViewportSize({ width: 320, height: 280 });
 
   await page.locator("#tabbar").getByRole("button", { name: "More" }).click();
   await page.keyboard.press("Tab");

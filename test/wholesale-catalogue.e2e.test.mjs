@@ -137,7 +137,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       await admin.locator('#wPhotos [aria-label="Remove photo 2"]').click();
       await admin.locator('#wPhotos [data-sheet="photo-confirm"]').click();
       await admin.waitForFunction(() => document.querySelectorAll('#wPhotos .w-photo').length === 2);
-      await admin.locator('#sheet [data-sheet="close"]').click();
+      await admin.getByRole("button", { name: "Close coffee editor", exact: true }).click();
       await buyer.reload();
       await buyer.waitForFunction((id) => document.querySelector(`article[data-product="${id}"] [data-photo-count]`)?.textContent === '1 / 2', product.id);
       await card.locator('[data-photo-step="1"]').click();

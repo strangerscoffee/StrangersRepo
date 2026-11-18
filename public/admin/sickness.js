@@ -29,12 +29,12 @@ window.AdminSickness = function ({ api, html, raw, svg, put, head, openSheet, cl
     const flagged = data.employees.filter((e) => e.band.key !== "none").length;
     return html`${head("Sickness", "Every sickness absence, the self-certified forms and each person's Bradford Factor over the last 52 weeks. Only admins can see this page.", html`<a class="btn" href="${rotaLink()}">${svg("plus")}Record sickness</a>`)}
       <div class="sk-page">
-        <details class="sk-scale glass"><summary><b>Bradford Factor trigger points</b><span>${flagged ? `${flagged} ${flagged === 1 ? "person is" : "people are"} at a trigger point` : "No one is at a trigger point"}</span></summary>
+        <details class="sk-scale glass" data-preserve-open="sickness-scale"><summary><span class="sk-scale-copy"><b>Bradford Factor trigger points</b><span>${flagged ? `${flagged} ${flagged === 1 ? "person is" : "people are"} at a trigger point` : "No one is at a trigger point"}</span></span>${svg("chev")}</summary>
           <p class="hint">Score = spells × spells × days off, over the last 52 weeks, from every sickness absence (forms, the rota and WhosOff). Separate spells count most, so frequent short absences score higher than one long one. Absences on touching days are one spell. Part days (half days, going home early) don't count. Each day off stops counting 52 weeks after it. Reaching a trigger point starts a review, not automatic action: check for health, disability or pregnancy reasons first, and leave those absences out.</p>
           <div class="sk-bands">${data.bands.map((b) => html`<div class="sk-band-row"><span class="sk-band sk-${b.key}"><b>${b.max == null ? `${b.min}+` : `${b.min}–${b.max}`}</b>${b.label}</span><span>${b.action}</span></div>`)}</div>
         </details>
         ${data.review.length ? html`<section class="sk-review glass" aria-label="To check"><h2 class="sk-h">To check · ${data.review.length}</h2><p class="hint">Nothing here is changed automatically. Open the person to decide.</p><div class="group">${data.review.map((f) => html`<button class="item" type="button" data-act="sick-person" data-id="${f.userId}"><span class="tx"><b>${f.name}</b><span>${f.text}</span></span><span class="end"><span class="chev">${svg("chev")}</span></span></button>`)}</div></section>` : ""}
-        <div class="row sk-filter"><label class="search">${svg("search")}<input id="sickSearch" type="search" aria-label="Search sickness records" placeholder="Search by name" maxlength="120" value="${query}"></label><div class="seg" role="group" aria-label="Who to show"><button type="button" data-act="sick-filter" data-id="sick" aria-pressed="${filter === "sick"}">With sickness</button><button type="button" data-act="sick-filter" data-id="review" aria-pressed="${filter === "review"}">Needs follow-up</button><button type="button" data-act="sick-filter" data-id="all" aria-pressed="${filter === "all"}">Everyone</button></div></div>
+        <div class="row sk-filter"><label class="search">${svg("search")}<input id="sickSearch" type="search" aria-label="Search sickness records" placeholder="Search by name" maxlength="120" value="${query}"></label><div class="seg admin-filters" role="group" aria-label="Who to show"><button type="button" data-act="sick-filter" data-id="sick" aria-pressed="${filter === "sick"}">With sickness</button><button type="button" data-act="sick-filter" data-id="review" aria-pressed="${filter === "review"}">Needs follow-up</button><button type="button" data-act="sick-filter" data-id="all" aria-pressed="${filter === "all"}">Everyone</button></div></div>
         ${shown.length ? html`<div class="group glass sk-people">${shown.map((e) => html`<button class="item sk-person" type="button" data-act="sick-person" data-id="${e.userId}">
             <span class="tx"><b>${e.name}</b><span>${e.spells ? `${e.spells} ${e.spells === 1 ? "spell" : "spells"} · ${daysText(e.days)}` : "No counted sickness in the last 52 weeks"}${e.lastSick ? ` · last ${date(e.lastSick)}` : ""}${e.partDays ? ` · ${e.partDays} part ${e.partDays === 1 ? "day" : "days"} not counted` : ""}</span>${e.score ? html`<span>${when(e)}</span>` : ""}${e.toReview ? html`<span class="sk-action">${e.toReview} to check</span>` : ""}${e.band.key !== "none" ? html`<span class="sk-action">${e.band.action}</span>` : ""}</span>
             <span class="end">${band(e)}<span class="chev">${svg("chev")}</span></span></button>`)}</div>`
@@ -139,10 +139,7 @@ window.AdminSickness = function ({ api, html, raw, svg, put, head, openSheet, cl
     clear() { generation++; clearTimeout(timer); data = null; query = ""; },
     search(value) {
       query = value; clearTimeout(timer);
-      timer = setTimeout(async () => {
-        if (!document.getElementById("sickSearch")) return;
-        await reload(); document.getElementById("sickSearch")?.focus({ preventScroll: true });
-      }, 200);
+      timer = setTimeout(() => { if (document.getElementById("sickSearch")) reload(); }, 200);
     },
     async act(name, id) {
       if (name === "sick-filter") { if (["all","sick","review"].includes(id)) filter = id; await reload(); }

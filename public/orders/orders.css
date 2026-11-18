@@ -79,7 +79,9 @@ a { color: var(--accent); text-decoration: none; }
   border-radius: 50%;
   flex: none;
 }
-.refresh[aria-busy=true] .i { animation: spin 1s linear infinite; }
+@media (prefers-reduced-motion: no-preference) {
+  .refresh[aria-busy=true] .i { animation: spin 1s linear infinite; }
+}
 @keyframes spin { to { transform: rotate(360deg); } }
 .filters { display: flex; gap: 3px; min-width: 0; padding: 3px; background: var(--sunk); border-radius: 999px; }
 .filters button {
@@ -136,13 +138,13 @@ button.order-row:hover { background: var(--sunk); }
 .footer>span { min-width: 0; overflow-wrap: anywhere; }
 #signedIn { text-align: end; }
 
-dialog { width: min(760px, calc(100vw - 32px)); max-width: calc(100% - 16px - 2 * max(env(safe-area-inset-left, 0px), env(safe-area-inset-right, 0px))); max-height: calc(100dvh - 48px); border: 1px solid var(--glass-edge); border-radius: var(--r-lg); background: var(--glass-thick); box-shadow: var(--float); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); color: var(--fg); padding: 0; }
+dialog { --dialog-width: 760px; --dialog-gap: 48px; width: min(var(--dialog-width), calc(100vw - 32px)); max-width: calc(100% - 16px - 2 * max(env(safe-area-inset-left, 0px), env(safe-area-inset-right, 0px))); max-height: calc(100dvh - var(--dialog-gap) - 2 * max(env(safe-area-inset-top, 0px), env(safe-area-inset-bottom, 0px))); border: 1px solid var(--glass-edge); border-radius: var(--r-lg); background: var(--glass-thick); box-shadow: var(--float); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); color: var(--fg); padding: 0; }
 dialog[open] { display: flex; flex-direction: column; }
 dialog::backdrop { background: #0007; -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
 .dialog-head,.dialog-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 22px; flex: none; }
 .dialog-head { border-bottom: 1px solid var(--line); }
 .dialog-foot { border-top: 1px solid var(--line); }
-.dialog-head h2 { font-size: 20px; }
+.dialog-head h2 { font-size: 20px; min-width: 0; overflow-wrap: anywhere; }
 .dialog-foot>span { font-size: 12px; color: var(--muted); }
 .close { font-size: 27px; color: var(--muted); }
 .dialog-body { padding: 20px 22px; overflow: auto; min-height: 0; overscroll-behavior: contain; }
@@ -163,7 +165,7 @@ dialog::backdrop { background: #0007; -webkit-backdrop-filter: blur(8px); backdr
 @media (max-width: 690px) {
   .row-end { gap: 6px; }
   .footer { font-size: 11px; }
-  dialog { width: calc(100vw - 16px); max-height: calc(100dvh - 24px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); }
+  dialog { --dialog-gap: 24px; width: calc(100vw - 16px); }
   .dialog-head,.dialog-foot { padding: 10px 15px; }
   .dialog-body { padding: 16px; }
   .business-title h3 { font-size: 20px; }
@@ -195,15 +197,16 @@ dialog::backdrop { background: #0007; -webkit-backdrop-filter: blur(8px); backdr
 .order-edit{margin-top:22px;padding-top:18px;border-top:1px solid var(--line);display:grid;gap:12px}
 .order-edit:empty{display:none}
 .edit-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.4fr);gap:12px}
-.field{display:grid;gap:6px;font-size:13px;font-weight:600;color:var(--muted)}.field[hidden]{display:none}
+.field{display:grid;grid-template-columns:minmax(0,1fr);gap:6px;font-size:13px;font-weight:600;color:var(--muted)}.field[hidden]{display:none}
 .field select,.field input,.field textarea{font:inherit;font-size:16px;font-weight:400;color:var(--fg);background:var(--surface,var(--sunk));border:1px solid var(--line);border-radius:12px;padding:10px 12px;min-height:44px;width:100%;box-sizing:border-box}
+.field select{min-width:0;overflow:hidden;text-overflow:ellipsis}
 .field textarea{resize:vertical;min-height:72px}
 .field small{font-weight:400;font-size:12px}
 .field .field-hint{display:block;margin-top:6px;color:var(--muted);line-height:1.4}
 .edit-error{margin:0;padding:10px 12px;border-radius:12px;background:var(--warn-bg);color:var(--warn);font-size:14px;font-weight:600}.edit-error[hidden]{display:none}
 .edit-actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end}
 .location{white-space:pre-line}.location .row-meta{white-space:normal}
-#totalsDialog{width:min(820px,calc(100vw - 24px))}
+#totalsDialog{--dialog-width:820px}
 .totals-hint{margin:0 0 12px}
 #totalsScope .filters{display:flex;flex-wrap:wrap;margin:0 0 16px;border-radius:16px}
 #totalsScope .filters button{flex:1 0 auto;border-radius:99px}
@@ -216,7 +219,7 @@ dialog::backdrop { background: #0007; -webkit-backdrop-filter: blur(8px); backdr
  .order-entry .quick{margin:0 14px;flex:1 1 100%;min-width:0}
  .edit-grid{grid-template-columns:1fr}
  .print-bar .btn{flex:1 1 auto}.picked-count{flex-basis:100%}
- .totals-foot .btn{flex:1 1 100%}
+ .totals-foot .btn{flex:1 1 auto}
 }
 /* Customer tabs: a card per customer with kg towards 6 kg; ready tabs stand out. */
 .row-tab{color:var(--accent);font-weight:650}
@@ -255,7 +258,7 @@ button.cleared-row:hover{background:var(--sunk)}
 .row-dispatch{color:var(--accent);font-weight:600}
 
 /* New order for a customer */
-#newOrderDialog{width:min(1080px,calc(100vw - 32px))}
+#newOrderDialog{--dialog-width:1080px}
 #newOrderDialog .dialog-head{padding-inline:clamp(16px,3vw,28px)}
 #newOrderForm{display:grid;grid-template-columns:minmax(0,1fr);align-content:start;gap:16px;padding:clamp(14px,2.6vw,24px)}
 .no-customer-search{display:grid;gap:12px;max-width:640px;width:100%;margin-inline:auto}

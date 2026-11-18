@@ -250,7 +250,8 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["desk
       assert.equal((await api("GET", "/api/wholesale/invoices", undefined, owner.cookie)).body.invoices.length, 1);
       await admin.locator('#wiIssuedInvoice .wi-foot [data-sheet="wi-back"]').click();
       // Return from the old order editor, then open the independent invoicing work queue.
-      if (await admin.locator('#sheet [data-sheet="close"]').count()) await admin.locator('#sheet [data-sheet="close"]').click();
+      const closeOrder = admin.getByRole("button", { name: "Close order details", exact: true });
+      if (await closeOrder.isVisible()) await closeOrder.click();
       await selectWholesaleSection(admin, "invoices");
       await admin.locator(`[data-act="wh-invoice-open"][data-id="${issued.id}"]`).waitFor();
       assert.equal(await noOverflow(admin), true); assert.equal(await noOverflow(customer), true);

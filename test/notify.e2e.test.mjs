@@ -70,7 +70,9 @@ test("staff: a job assigned to them and their reported job done show by the bell
   // Opening one goes to Maintenance → All sites with the job opened.
   await a.page.locator("#notifSheet .lrow", { hasText: "Dishwasher leaking" }).click();
   await a.page.locator("#pageTitle", { hasText: "Maintenance" }).waitFor();
-  await a.page.locator("#mList .xrow.open", { hasText: "Dishwasher leaking" }).waitFor();
+  const assignedJob = a.page.locator("#mList .xrow.open .xmain", { hasText: "Dishwasher leaking" });
+  await assignedJob.waitFor();
+  assert.equal(await assignedJob.evaluate(button => document.activeElement === button), true, "opening a notice focuses the exact job");
   await a.page.locator("#bellBtn .n").waitFor({ state: "detached" });
   // Another of Alex's devices: already seen.
   const b = await device(ALEX, { viewport: { width: 1180, height: 820 } });

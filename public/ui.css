@@ -259,6 +259,7 @@ html{scroll-padding-top:calc(env(safe-area-inset-top,0px) + 72px);scroll-padding
 .fab[hidden]{display:none}
 .fab .avatar{width:32px;height:32px;font-size:12px;background:rgba(255,255,255,.22);color:inherit;border:0;cursor:inherit}
 @media (min-width:1024px){.fab{bottom:20px;width:auto;justify-self:end;padding:0 22px 0 12px}}
+@media (max-height:680px){.fab{position:static}}
 
 .days{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;padding:12px;border-radius:22px}
 .wday{display:grid;justify-items:center;gap:6px;padding:8px 0;border-radius:14px;border:0;background:none;font:inherit;font-size:12px;font-weight:650;color:var(--muted);cursor:pointer}
@@ -433,8 +434,8 @@ section.panel.onlywide{display:none}
 button.step{border:0;background:none;padding:4px 0;margin:-4px 0;font:inherit;font-size:12px;font-weight:600;color:var(--muted);text-align:left;cursor:pointer;border-radius:8px}
 button.step.on{color:var(--ok)} button.step.now{color:var(--accent)}
 /* When the sign-off button floats above the tab bar, the toast sits above it. */
-body.hasfab .toast{bottom:calc(env(safe-area-inset-bottom,0px) + 160px)}
-@media (min-width:1024px){body.hasfab .toast{bottom:92px}}
+@media (min-height:681px){body.hasfab .toast{bottom:calc(env(safe-area-inset-bottom,0px) + 160px)}}
+@media (min-width:1024px) and (min-height:681px){body.hasfab .toast{bottom:92px}}
 
 /* Connection status: shown only while offline or saving changes made offline. */
 .conn{position:fixed;left:50%;transform:translateX(-50%);top:calc(env(safe-area-inset-top,0px) + 62px);z-index:25;max-width:calc(100vw - 32px);box-sizing:border-box;pointer-events:none;
@@ -492,8 +493,9 @@ table.rep td.is-warn{color:var(--warn);background:var(--warn-bg)}
 table.rep td.is-ok{color:var(--ok)}
 table.rep td.is-muted{color:var(--muted)}
 table.rep.matrix td.c{color:var(--bad)}
-.injump{position:sticky;top:calc(env(safe-area-inset-top,0px) + 62px);z-index:5;padding-block:8px;background:linear-gradient(var(--bg) 70%,transparent)}
-@media (min-width:1024px){.injump{top:0}}
+.injump{--jump-top:calc(env(safe-area-inset-top,0px) + 62px);position:sticky;top:var(--jump-top);z-index:5;padding-block:8px;background:linear-gradient(var(--bg) 70%,transparent)}
+@media (min-width:1024px){.injump{--jump-top:var(--staff-wide-content)}}
+body:has(#conn:not([hidden])) .injump{top:calc(var(--jump-top) + 38px)}
 
 /* Risk assessments: the scoring key */
 .riskkey{display:grid;gap:12px;padding:12px 14px;border-radius:16px;background:var(--sunk)}

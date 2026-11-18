@@ -264,3 +264,85 @@ test("wide Staff and Admin desks share packing and only dispatch after confirmat
     assert.deepEqual(dispatch.errors,[]);
   }finally{await dispatch.context.close();}
 });
+
+test("Staff Wholesale dialogs keep their controls and keyboard focus on a small screen", async () => {
+  const business = "LongWholesaleBusiness".repeat(5);
+  await call("POST", "/api/admin/wholesale/customers", {
+    business, contact: "Tab holder", status: "Active", autoTab: true,
+  });
+  const context = await b.newContext({ viewport: { width: 320, height: 568 }, isMobile: true, hasTouch: true, reducedMotion: "reduce" });
+  const [name, value] = STAFF.split("=");
+  await context.addCookies([{ name, value, url: srv.base }]);
+  await context.addInitScript(() => {
+    const repeat = window.setInterval.bind(window);
+    window.setInterval = (callback, delay, ...args) => {
+      if (delay !== 15000) return repeat(callback, delay, ...args);
+      window.refreshOrders = callback;
+      return repeat(callback, 60000, ...args);
+    };
+  });
+  let finishRefresh;
+  try {
+    const page = await context.newPage();
+    await page.goto(srv.base + "/orders");
+    const row = page.locator("#orderList [data-order-id]").first();
+    await row.press("Enter");
+    const details = page.locator("#orderDialog .dialog-body");
+    await details.waitFor();
+    assert.ok(await details.evaluate(element => {
+      element.scrollTop = element.scrollHeight;
+      return element.scrollTop;
+    }) > 0, "order details can be scrolled");
+    await page.keyboard.press("Escape");
+    assert.equal(await row.evaluate(element => element === document.activeElement), true);
+    await row.press("Enter");
+    await details.waitFor();
+    assert.equal(await details.evaluate(element => element.scrollTop), 0, "reopened details start at the summary");
+    assert.equal(await page.evaluate(() => document.activeElement.id), "orderTitle");
+    let startedRefresh;
+    const waitingForRefresh = new Promise(resolve => { startedRefresh = resolve; });
+    const refreshCanFinish = new Promise(resolve => { finishRefresh = resolve; });
+    const ordersRequest = "**/api/staff-orders/orders?**";
+    await page.route(ordersRequest, async route => {
+      startedRefresh();
+      await refreshCanFinish;
+      await route.continue();
+    });
+    await page.evaluate(() => { window.refreshOrders(); });
+    await waitingForRefresh;
+    await page.keyboard.press("Escape");
+    finishRefresh();
+    await page.locator('#orderList[aria-busy="false"]').waitFor();
+    assert.equal(await page.locator("#orderDialog[open]").count(), 0, "background refresh does not reopen dismissed details");
+    await page.unroute(ordersRequest);
+
+    const newOrder = page.locator("#newOrder");
+    await newOrder.press("Enter");
+    const cancel = page.locator("#newOrderFoot").getByRole("button", { name: "Cancel", exact: true });
+    await page.locator("#newOrderForm .no-found button").first().waitFor();
+    await cancel.focus();
+    await page.keyboard.press("Tab");
+    assert.equal(await page.evaluate(() => document.activeElement.id), "closeNewOrder");
+    await page.keyboard.press("Shift+Tab");
+    assert.equal(await cancel.evaluate(element => element === document.activeElement), true);
+    await page.keyboard.press("Escape");
+    assert.equal(await newOrder.evaluate(element => element === document.activeElement), true);
+
+    await page.locator('#viewTabs [data-view="tabs"]').click();
+    await page.locator(".tab-card", { hasText: business }).press("Enter");
+    const tab = page.locator("#tabDialog[open]");
+    assert.equal(await tab.locator("#tabTitle").textContent(), business);
+    assert.equal(await tab.evaluate(element => {
+      const bounds = element.getBoundingClientRect();
+      const close = element.querySelector("#closeTab").getBoundingClientRect();
+      return element.scrollWidth <= element.clientWidth + 1 && close.right <= bounds.right;
+    }), true, "a long tab title leaves the close button inside the dialog");
+    const tabWidth = (await tab.boundingBox()).width;
+    await page.keyboard.press("Escape");
+    await page.locator("#sectionNewOrder").press("Enter");
+    assert.equal((await page.locator("#newOrderDialog[open]").boundingBox()).width, tabWidth, "phone dialogs use the same side gutters");
+  } finally {
+    finishRefresh?.();
+    await context.close();
+  }
+});

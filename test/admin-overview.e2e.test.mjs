@@ -163,3 +163,69 @@ test("People beside an open profile: names keep their width, badges sit under th
   } finally { await ctx.close(); }
  }
 });
+
+test("People opens a focused profile at intermediate desktop widths", async () => {
+ const {ctx,page,errors}=await open(1100,"light");
+ try {
+  await page.locator('#sideNav [data-go="people"]').click();
+  const row=page.locator(".people-directory [data-person]").first();
+  const id=await row.getAttribute("data-person");
+  await row.press("Enter");
+  await page.waitForFunction(() => document.activeElement.matches('[data-act="person-back"]'));
+  assert.equal(await page.locator(".people-directory").isHidden(),true);
+  assert.equal(await page.getByRole("searchbox",{name:"Search people"}).isHidden(),true);
+  await page.getByRole("button",{name:"Back to people"}).click();
+  await page.waitForFunction(id=>document.activeElement.dataset.person===id,id);
+  assert.equal(await page.getByRole("searchbox",{name:"Search people"}).isVisible(),true);
+  assert.deepEqual(errors,[]);
+ } finally { await ctx.close(); }
+});
+
+test("Compact Admin filters remain visible and an open site leaves its neighbour compact", async () => {
+ const {ctx,page,errors}=await open(320,"dark");
+ try {
+  await page.locator('#tabBar [data-go="activity"]').click();
+  await page.getByRole("button",{name:"Errors",exact:true}).click();
+  await page.locator('[data-feed="errors"][aria-pressed="true"]').waitFor();
+  const hiddenFilters=await page.getByRole("group",{name:"Activity type"}).locator("button").evaluateAll(buttons=>
+   buttons.filter(button=>{const rect=button.getBoundingClientRect();return rect.left<0||rect.right>document.documentElement.clientWidth;}).map(button=>button.textContent));
+  assert.deepEqual(hiddenFilters,[]);
+  await page.setViewportSize({width:820,height:1000});
+  await page.goto(srv.base+"/admin#sites");
+  const openSite=page.locator(".site").first(), otherSite=page.locator(".site").nth(1);
+  await openSite.locator("summary").click();
+  assert.equal(await openSite.getAttribute("open"),"");
+  assert.equal(await otherSite.getAttribute("open"),null);
+  assert.ok((await openSite.boundingBox()).height>(await otherSite.boundingBox()).height*2);
+  assert.deepEqual(errors,[]);
+ } finally { await ctx.close(); }
+});
+
+test("Activity search keeps the selected text and an open report through a redraw", async () => {
+ const message="Activity search fixture";
+ const response=await fetch(srv.base+"/api/errors",{
+  method:"POST",headers:{cookie:admin,"content-type":"application/json"},
+  body:JSON.stringify({app:"Admin",page:"/admin",message,detail:"Synthetic report for the Activity layout test"}),
+ });
+ assert.ok(response.ok);
+ const {ctx,page,errors}=await open(393,"light");
+ try {
+  await page.locator('#tabBar [data-go="activity"]').click();
+  await page.getByRole("button",{name:"Errors",exact:true}).click();
+  const report=page.locator(".haserr").filter({hasText:message}).locator(".errdetail");
+  await report.locator("summary").click();
+  const search=page.getByRole("searchbox",{name:"Search activity"});
+  const original=await search.elementHandle();
+  await search.evaluate((input,value)=>{
+   input.focus();
+   input.value=value;
+   input.setSelectionRange(1,4);
+   input.dispatchEvent(new Event("input",{bubbles:true}));
+  },message);
+  await page.waitForFunction(input=>!input.isConnected,original);
+  await original.dispose();
+  assert.equal(await report.getAttribute("open"),"");
+  assert.deepEqual(await search.evaluate(input=>[input===document.activeElement,input.selectionStart,input.selectionEnd]),[true,1,4]);
+  assert.deepEqual(errors,[]);
+ } finally { await ctx.close(); }
+});

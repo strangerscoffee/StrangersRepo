@@ -60,6 +60,11 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       const detail = page.locator(`[data-act="wh-order"][data-id="${order.id}"]`);
       const quick = page.locator(`[data-act="wh-next"][data-id="${order.id}"]`);
       await detail.waitFor();
+      if (device === "phone") {
+        const queueTops = await page.locator('.w-orders-panel [data-act="wh-queue"]').evaluateAll(buttons =>
+          buttons.map(button => Math.round(button.getBoundingClientRect().top)));
+        assert.equal(new Set(queueTops).size, 1, "phone order queues stay together above search");
+      }
       assert.match(await page.locator(`[data-act="wh-order"][data-id="${preview.id}"]`).textContent(), /Staff preview/);
       assert.equal(await page.locator(`[data-act="wh-next"][data-id="${preview.id}"]`).count(), 0, "staff tests cannot be advanced as customer packing work");
       assert.equal((await quick.textContent()).trim(), "Mark preparing");
@@ -74,7 +79,21 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       assert.equal(await page.locator("#wNote").inputValue(), originalNote);
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "packing sheet fits the screen");
       await screenshot(page, `packing-${device}-${color}`);
-      await page.locator('#sheet [data-sheet="close"]').click();
+      const pinned = await page.locator(".w-order-sheet").evaluate(form => {
+        const body = form.querySelector(".w-editor-body");
+        const controls = [...form.querySelectorAll(".w-editor-head button, .w-editor-footer button")];
+        const tops = controls.map(button => button.getBoundingClientRect().top);
+        body.scrollTop = body.scrollHeight;
+        return body.scrollTop > 0 && controls.every((button, index) => {
+          const { top, bottom } = button.getBoundingClientRect();
+          return top === tops[index] && top >= 0 && bottom <= innerHeight;
+        });
+      });
+      assert.equal(pinned, true, "order actions remain visible while the details scroll");
+      const dismiss = page.getByRole("button", { name: "Close order details", exact: true });
+      await dismiss.click({ trial: true });
+      await page.getByRole("button", { name: "Save order", exact: true }).click({ trial: true });
+      await dismiss.click();
 
       let patchCount = 0, nextGate = null;
       const patchPayloads = [];

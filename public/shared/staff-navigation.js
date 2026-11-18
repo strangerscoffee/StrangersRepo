@@ -9,7 +9,26 @@
   ];
   const publicRoutes = { diary: "/", rota: "/rota/" };
   const containers = () => document.querySelectorAll("[data-staff-workspaces]");
+  const workspaceLink = "[data-staff-workspaces] a[data-workspace]";
   let active, listening = false;
+  let focusedWorkspace;
+
+  document.addEventListener("focusin", event => {
+    focusedWorkspace = event.target.closest?.(workspaceLink);
+  });
+  document.addEventListener("focusout", event => {
+    if (event.target === focusedWorkspace && (event.relatedTarget || event.target.getClientRects().length)) {
+      focusedWorkspace = null;
+    }
+  });
+  matchMedia("(min-width: 1024px)").addEventListener("change", () => {
+    const previous = focusedWorkspace;
+    if (!previous?.isConnected || previous.getClientRects().length || !document.hasFocus()) return;
+    // Keyboard users keep the same destination when its navigation moves between the header and dock.
+    const next = [...document.querySelectorAll(workspaceLink)].find(link =>
+      link.dataset.workspace === previous.dataset.workspace && link.getClientRects().length && !link.closest("[inert]"));
+    next?.focus({ preventScroll: true });
+  });
 
   function render(current, links = publicRoutes, ordersAccess = false) {
     const hrefs = {

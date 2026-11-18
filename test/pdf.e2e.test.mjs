@@ -101,6 +101,11 @@ test("PDFs: long content wraps and carries over onto the next page, never off it
   await page.reload();
   await page.locator("#inChips button", { hasText: "Last 3 months" }).click();
   await page.locator("#in-daily table").waitFor();
+  await page.locator("#in-daily").evaluate(section => section.scrollIntoView({ block: "start" }));
+  assert.ok(await page.locator("#inJump button").first().evaluate(button => {
+    const bounds = button.getBoundingClientRect();
+    return button.contains(document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2));
+  }), "desktop inspection shortcuts stay accessible below the fixed header while scrolling");
   await page.evaluate(watchPdfText);
   await Promise.all([page.waitForEvent("download"), page.click("#inPdf")]);
   const eho = await page.evaluate(() => window.__pdfBoxes);

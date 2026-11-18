@@ -32,6 +32,18 @@ body:not([data-page="week"]):not([data-page="mine"]) .wrap.rwrap{max-width:760px
 .rseg{display:inline-flex;max-width:100%}
 .rseg button{min-height:36px}
 .rwrap,.rsheet,#acctMenu{overflow-wrap:anywhere}
+.rwrap .staff-section-tabs .tab:has(.n){padding-block-start:3px}
+.rwrap .staff-section-tabs .tab .n{top:1px;height:14px;line-height:1}
+@media (max-width:380px){
+  .rwrap #tabbar{gap:2px;padding-inline:3px}
+  .rwrap #tabbar .tab{min-inline-size:44px;padding-inline:2px;overflow-wrap:normal}
+  .rwrap #tabbar :is([data-rota-focus="tab:week"],[data-rota-focus="tab:more"]){flex:.7}
+  .rwrap #tabbar [data-rota-focus="tab:leave"]{flex:1.18}
+  .rwrap #tabbar [data-rota-focus="tab:requests"]{flex:1.32}
+}
+@media (pointer:coarse){
+  .rwrap .iconbtn{width:44px;height:44px}
+}
 /* WebKit can paint a long selected label past the native control's measured width. */
 :is(.rwrap,.rsheet) select{min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis}
 .rtool{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
@@ -120,6 +132,9 @@ button.shc:hover{border-color:var(--accent)}
 @media (min-width:1024px){
   .rsheet{--rota-sheet-top:max(6dvh,calc(env(safe-area-inset-top,0px) + 12px));width:560px;top:var(--rota-sheet-top);max-height:calc(100dvh - var(--rota-sheet-top) - env(safe-area-inset-bottom,0px) - 12px)}
 }
+@media (max-width:1023px){
+  .rsheet{left:max(8px,env(safe-area-inset-left,0px));right:max(8px,env(safe-area-inset-right,0px))}
+}
 #acctMenu{max-width:calc(100% - 24px);overflow:auto;overscroll-behavior:contain}
 .shead{display:grid;grid-template-columns:minmax(58px,1fr) minmax(0,3fr) minmax(58px,1fr);align-items:center;gap:8px;margin:0}
 .rsheet .shead h2{margin:0;text-align:center;font-size:20px;line-height:1.25;overflow-wrap:anywhere}
@@ -140,6 +155,7 @@ button.shc:hover{border-color:var(--accent)}
 /* The action bar stays at the bottom of the sheet and is solid edge to edge, with a soft fade above it, so text
    scrolling under it is hidden rather than showing through or half-covered by the button. */
 .leave-request-body .sfoot{grid-auto-flow:row;grid-template-columns:minmax(0,1fr);position:sticky;bottom:-18px;z-index:2;margin:0 -18px -18px;padding:12px 18px 18px;background:var(--surface);border-radius:0;box-shadow:0 -16px 14px -8px var(--surface)}
+.rsheet:has(.leave-request-body){scroll-padding-block-end:86px}
 .leave-request-body textarea{min-height:88px}
 /* iPhone Safari gives date and time boxes a width of their own that ignores the column, so side-by-side dates ran into
    each other and off the edge. Drop the native look so they take the column's width, and on phones put each date on a
@@ -655,6 +671,10 @@ body[data-page="leave"] .stat b { font-variant-numeric:tabular-nums; }
 .sick-send{position:sticky;bottom:calc(env(safe-area-inset-bottom) + 84px);z-index:2}
 .sick-submit{width:100%;min-height:52px;font-size:17px;border-radius:99px}
 @media (min-width:1024px){.sick-send{bottom:16px}}
+@media (max-height:460px){
+  .sick-send,.leave-request-body .sfoot{position:static}
+  .rsheet:has(.leave-request-body){scroll-padding-block-end:16px}
+}
 .sick-err:not(:empty){padding:10px 12px;border-radius:14px;background:var(--bad-bg)}
 .sick-done{display:grid;justify-items:center;text-align:center;gap:10px;padding:30px 20px;border-radius:24px}
 .sick-done h2{margin:0}.sick-done p{margin:0;max-width:44ch}

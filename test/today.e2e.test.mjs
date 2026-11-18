@@ -52,4 +52,23 @@ test("Today: reminders fold after two; closing checks wait folded on a phone in 
   await q.locator("#closeList label").first().waitFor();
   assert.equal(await shut(q), false, "an iPad keeps closing checks open beside opening");
   await ipad.close();
+
+  const short = await b.newContext({ viewport: { width: 320, height: 548 }, reducedMotion: "reduce" });
+  try {
+    await short.addCookies([{ name: "sfbb_session", value: C.split("=")[1], url: srv.base }]);
+    const week = await short.newPage();
+    await week.goto(srv.base + "/#week");
+    const signOff = week.locator("#wkSignFab");
+    await signOff.waitFor();
+    for (const viewport of [{ width: 320, height: 548 }, { width: 1023, height: 640 }]) {
+      await week.setViewportSize(viewport);
+      await week.evaluate(() => window.scrollTo(0, 0));
+      assert.ok(await signOff.evaluate(button => button.getBoundingClientRect().top >= document.getElementById("wkNoteCard").getBoundingClientRect().bottom), "week sign-off cannot obscure the weekly checks or notes on a short screen");
+      await signOff.evaluate(button => button.scrollIntoView({ block: "center" }));
+      assert.ok(await signOff.evaluate(button => {
+        const bounds = button.getBoundingClientRect();
+        return button.contains(document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2));
+      }), "sign-off remains reachable above the mobile dock");
+    }
+  } finally { await short.close(); }
 });

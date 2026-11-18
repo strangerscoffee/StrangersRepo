@@ -250,7 +250,9 @@ function closeSheets(restore=true){
   overlay.opener?.setAttribute("aria-expanded","false");
   if(restore&&!document.documentElement.hasAttribute("data-sc-session-locked")){
     const opener=overlay.opener;
-    (opener?.getClientRects().length&&!opener.disabled?opener:$("#pageTitle")).focus({preventScroll:true});
+    const counterpart=opener?.matches("[data-sitebtn]")?"[data-sitebtn]":opener?.matches("#bellBtn,#sideBell")?"#bellBtn,#sideBell":null;
+    const candidates=counterpart?[opener,...document.querySelectorAll(counterpart)]:[opener];
+    (candidates.find(button=>button?.getClientRects().length&&!button.disabled)||$("#pageTitle")).focus({preventScroll:true});
   }
 }
 function placeDiaryMenu(){
@@ -279,7 +281,9 @@ function openDiaryOverlay(selector,opener=document.activeElement,focus){
   $("#sheetVeil").hidden=false;panel.hidden=false;panel.inert=false;
   for(const [node] of diaryOverlay.background)node.inert=true;
   if(panel.id==="acctMenu")placeDiaryMenu();
-  (focus||overlayTabstops(panel)[0])?.focus({preventScroll:true});
+  const initial=focus||overlayTabstops(panel)[0];
+  initial?.focus({preventScroll:true});
+  initial?.scrollIntoView({block:"nearest"});
 }
 for(const id of ["#bellBtn","#sideBell"])$(id).addEventListener("click",openNotifs);
 function openSiteSheet(e){

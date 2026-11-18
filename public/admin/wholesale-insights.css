@@ -41,6 +41,7 @@
 
 /* Tables */
 .ins-table-wrap{overflow-x:auto;margin:0 -4px;padding:0 4px}
+.ins-table-wrap:focus-visible{outline:var(--focus-ring-width) solid var(--focus-ink);outline-offset:2px;border-radius:6px}
 .ins-table{width:100%;border-collapse:collapse;font-size:14px;font-variant-numeric:tabular-nums}
 .ins-table th,.ins-table td{padding:8px 10px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
 .ins-table thead th{font-size:12px;font-weight:650;color:var(--muted);white-space:nowrap}

@@ -148,7 +148,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       await page.locator('[data-act="wh-coffee"][data-id="brazil"]').click();
       assert.equal(await page.locator("#wPrice-quarter").inputValue(), "5.00");
       assert.equal(await page.locator("#wPrice-half").count(), 0, "no 500 g price: they are no longer sold");
-      await page.locator('[data-sheet="close"]').click();
+      await page.getByRole("button", { name: "Close coffee editor", exact: true }).click();
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "Admin wholesale fits viewport");
       if (process.env.WHOLESALE_SCREENSHOT_DIR) {
         await mkdir(process.env.WHOLESALE_SCREENSHOT_DIR, { recursive: true });

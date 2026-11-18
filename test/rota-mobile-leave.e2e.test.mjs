@@ -24,6 +24,20 @@ before(async()=>{
  await requested();
 });
 after(async()=>{await browser?.close();await srv?.stop();});
+test("leave on a short landscape phone keeps actions in flow and restores its keyboard opener", async () => {
+ const {c,page}=await context({width:667,height:375},"dark",staff);
+ try {
+  await page.goto(srv.base+"/rota/#leave");
+  const opener=page.getByRole("button",{name:"Request leave",exact:true});
+  await opener.press("Enter");
+  const sheet=page.getByRole("dialog",{name:"Request leave"});
+  await sheet.waitFor();
+  assert.equal(await sheet.locator(".sfoot").evaluate(node=>getComputedStyle(node).position),"static");
+  await page.keyboard.press("Escape");
+  await sheet.waitFor({state:"hidden"});
+  assert.equal(await opener.evaluate(node=>node===document.activeElement),true);
+ } finally {await c.close();}
+});
 for(const [device,viewport] of [['smallphone',{width:320,height:640}],['phone',{width:393,height:650}],['portrait-iPad',{width:820,height:1180}],['iPad',{width:1180,height:820}]])for(const scheme of ['light','dark'])test(`mobile leave ${device} ${scheme}: contained dates, half-day sync and reviewed decisions`,{timeout:90000},async()=>{
  const a=await context(viewport,scheme,staff),b=await context(viewport,scheme,admin);
  try{

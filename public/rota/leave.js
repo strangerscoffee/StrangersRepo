@@ -40,7 +40,7 @@ window.SCLeave = function createLeaveUI(c) {
         const b = yearPicked ? data.balances.find(b => b.from === year) || current : current;
         year = b?.from || '';
         setHead('leave', 'Holidays', b ? `${fmt(b.from, { day: "numeric", month: "short", year: "numeric" })} – ${fmt(b.to, { day: "numeric", month: "short", year: "numeric" })}` : 'Your holiday allowance and team calendar', {
-            actions: [mgr() ? ghost('Manage leave', () => go('leave-admin')) : null, btn('Request leave', () => request(), 'btn', { disabled: !data.enabled })].filter(Boolean)
+            actions: [mgr() ? ghost('Manage leave', () => go('leave-admin')) : null, btn('Request leave', (event) => request(undefined, undefined, event.currentTarget), 'btn', { disabled: !data.enabled })].filter(Boolean)
         });
         const out = [];
         if (!data.enabled)
@@ -204,12 +204,12 @@ window.SCLeave = function createLeaveUI(c) {
     function dayDetails(day, holidays, rules, enabled, runs) {
         // Each person's whole stretch when it's known (the Days and People views pass it).
         const stretch = h => (runs || []).find(r => r.name === h.name && r.kind === h.kind && r.mine === h.mine && r.from <= day && r.to >= day);
-        openSheet(fmt(day, { weekday: 'long', day: 'numeric', month: 'long' }), el('div', { class: 'sbody' }, holidays.length ? el('div', { class: 'list glass' }, ...holidays.map(h => el('div', { class: 'lrow' }, el('span', { class: 'leave-dot ' + (h.kind === 'unpaid' ? 'unpaid' : 'holiday'), 'aria-hidden': 'true' }), el('span', { class: 't' }, el('b', { text: h.mine ? 'You' : h.name }), el('span', { class: 's', text: `${h.kind === 'unpaid' ? 'Unpaid leave' : 'Holiday'}${stretch(h) ? ' · ' + runText(stretch(h)) : ''}` }))))) : note('No approved holiday or unpaid leave on this date.'), rules?.blackouts?.length ? el('div', { class: 'leave-notice blackout' }, el('b', { text: 'Blackout: no holiday on this day' }), ...rules.blackouts.map(note)) : null, rules?.full ? el('div', { class: 'leave-notice full' }, el('b', { text: rules.full.limit === 0 ? 'No holiday on this day' : `Full: ${rules.full.off} off, the limit is ${rules.full.limit}${rules.full.site ? ` at the ${SITES[rules.full.site] || rules.full.site}` : ''}` }), note('Holiday requests are closed for this day.')) : null, el('div', { class: 'sfoot' }, btn(rules?.full ? 'Day is full' : rules?.blackouts?.length ? 'No holiday this day' : 'Request leave', () => request(day), 'btn', { disabled: !enabled || rules?.blocked || day < londonToday() }))), { left: cancelLink() });
+        openSheet(fmt(day, { weekday: 'long', day: 'numeric', month: 'long' }), el('div', { class: 'sbody' }, holidays.length ? el('div', { class: 'list glass' }, ...holidays.map(h => el('div', { class: 'lrow' }, el('span', { class: 'leave-dot ' + (h.kind === 'unpaid' ? 'unpaid' : 'holiday'), 'aria-hidden': 'true' }), el('span', { class: 't' }, el('b', { text: h.mine ? 'You' : h.name }), el('span', { class: 's', text: `${h.kind === 'unpaid' ? 'Unpaid leave' : 'Holiday'}${stretch(h) ? ' · ' + runText(stretch(h)) : ''}` }))))) : note('No approved holiday or unpaid leave on this date.'), rules?.blackouts?.length ? el('div', { class: 'leave-notice blackout' }, el('b', { text: 'Blackout: no holiday on this day' }), ...rules.blackouts.map(note)) : null, rules?.full ? el('div', { class: 'leave-notice full' }, el('b', { text: rules.full.limit === 0 ? 'No holiday on this day' : `Full: ${rules.full.off} off, the limit is ${rules.full.limit}${rules.full.site ? ` at the ${SITES[rules.full.site] || rules.full.site}` : ''}` }), note('Holiday requests are closed for this day.')) : null, el('div', { class: 'sfoot' }, btn(rules?.full ? 'Day is full' : rules?.blackouts?.length ? 'No holiday this day' : 'Request leave', (event) => request(day, undefined, event.currentTarget), 'btn', { disabled: !enabled || rules?.blocked || day < londonToday() }))), { left: cancelLink() });
     }
     function absenceList(absences, admin) {
         if (!absences.length)
             return empty('No leave requests or absence records yet.');
-        return el('div', { class: 'list glass' }, ...absences.map(t => el('div', { class: 'lrow wraprow leave-record', 'data-absence': t.id }, el('span', { class: 'tile ' + ({ annual: 'blue', sick: 'orange', unpaid: 'grey', unauthorised: 'red', legacy: 'grey' }[t.kind] || 'grey'), text: t.kind === 'annual' ? '↗' : '–', 'aria-hidden': 'true' }), el('span', { class: 't' }, el('b', { text: (admin && t.name ? `${t.name} · ` : '') + (TYPE[t.kind] || 'Time off') }), el('span', { class: 's', text: span(t.from, t.to) + (t.fromTime ? ` · ${t.fromTime}–${t.toTime}` : '') }), t.days.length ? el('span', { class: 's', text: chargeText(t.days) }) : null, t.reason ? el('span', { class: 's', text: t.reason }) : null, t.coveredByOpening ? el('span', { class: 's', text: 'Past days reconciled in opening used balance' }) : null), el('span', { class: 'pill ' + ({ requested: 'warn', approved: 'ok', declined: 'bad' }[t.status] || ''), text: STAT[t.status] || t.status }), admin ? ghost('Review', () => review(t)) : (!t.coveredByOpening && ['requested', 'approved'].includes(t.status) && ['annual', 'unpaid', 'legacy'].includes(t.kind) && (t.status === 'requested' || t.from >= londonToday()) ? ghost('Cancel', () => cancel(t)) : null))));
+        return el('div', { class: 'list glass' }, ...absences.map(t => el('div', { class: 'lrow wraprow leave-record', 'data-absence': t.id }, el('span', { class: 'tile ' + ({ annual: 'blue', sick: 'orange', unpaid: 'grey', unauthorised: 'red', legacy: 'grey' }[t.kind] || 'grey'), text: t.kind === 'annual' ? '↗' : '–', 'aria-hidden': 'true' }), el('span', { class: 't' }, el('b', { text: (admin && t.name ? `${t.name} · ` : '') + (TYPE[t.kind] || 'Time off') }), el('span', { class: 's', text: span(t.from, t.to) + (t.fromTime ? ` · ${t.fromTime}–${t.toTime}` : '') }), t.days.length ? el('span', { class: 's', text: chargeText(t.days) }) : null, t.reason ? el('span', { class: 's', text: t.reason }) : null, t.coveredByOpening ? el('span', { class: 's', text: 'Past days reconciled in opening used balance' }) : null), el('span', { class: 'pill ' + ({ requested: 'warn', approved: 'ok', declined: 'bad' }[t.status] || ''), text: STAT[t.status] || t.status }), admin ? ghost('Review', (event) => review(t, event.currentTarget)) : (!t.coveredByOpening && ['requested', 'approved'].includes(t.status) && ['annual', 'unpaid', 'legacy'].includes(t.kind) && (t.status === 'requested' || t.from >= londonToday()) ? ghost('Cancel', () => cancel(t)) : null))));
     }
     function cancel(t) {
         const msg = message();
@@ -223,11 +223,11 @@ window.SCLeave = function createLeaveUI(c) {
             msg.textContent = errorText(e);
         } }, 'btn danger'))), { left: cancelLink() });
     }
-    async function request(day, uid, adminData) {
+    async function request(day, uid, trigger) {
         const token = generation;
         try {
             const data = await get('/api/rota/leave/dashboard' + (uid ? '?userId=' + encodeURIComponent(uid) : ''));
-            if (token !== generation)
+            if (token !== generation || !trigger.isConnected || trigger.closest('[hidden]'))
                 return;
             const from = input('leave_from', day || addDays(londonToday(), 14), { type: 'date', min: mgr() ? undefined : londonToday() }), to = input('leave_to', from.value, { type: 'date', min: from.value });
             from.onchange = () => { to.min = from.value; if (portion.value === '0.5' || to.value < from.value)
@@ -301,7 +301,7 @@ window.SCLeave = function createLeaveUI(c) {
             form.addEventListener('input', invalidateReview);
             form.addEventListener('change', invalidateReview);
             approved.input.onchange = invalidateReview;
-            openSheet(uid ? 'Record employee absence' : 'Request leave', el('div', { class: 'sbody leave-request-body' }, form, mgr() ? approved.node : null, note('Your note is private to you and admins. Only configured working days use holiday allowance. For a half day, enter the hours you’ll be away.'), output, msg, el('div', { class: 'sfoot' }, preview, confirm)), { left: cancelLink() });
+            openSheet(uid ? 'Record employee absence' : 'Request leave', el('div', { class: 'sbody leave-request-body' }, form, mgr() ? approved.node : null, note('Your note is private to you and admins. Only configured working days use holiday allowance. For a half day, enter the hours you’ll be away.'), output, msg, el('div', { class: 'sfoot' }, preview, confirm)), { left: cancelLink(), trigger });
         }
         catch (e) {
             toast(errorText(e));
@@ -316,12 +316,12 @@ window.SCLeave = function createLeaveUI(c) {
         const [own, takeBy, yearEnd] = await Promise.all([employee ? get('/api/rota/leave/dashboard?userId=' + encodeURIComponent(employee)) : null, get('/api/rota/leave/take-by'), get('/api/rota/leave/year-end')]);
         if (token !== generation)
             return [];
-        setHead('leave-admin', 'Holiday management', 'Allowances, requests and absence records', { back: ['Holidays', 'leave'], actions: [ghost('Policy & limits', () => settings(data)), btn('Record absence', () => request(undefined, employee, data), 'btn', { disabled: !employee || !data.settings.enabled })] });
+        setHead('leave-admin', 'Holiday management', 'Allowances, requests and absence records', { back: ['Holidays', 'leave'], actions: [ghost('Policy & limits', () => settings(data)), btn('Record absence', (event) => request(undefined, employee, event.currentTarget), 'btn', { disabled: !employee || !data.settings.enabled })] });
         const pick = select('leave_employee', data.people.map(p => [p.id, p.name]), employee);
         pick.setAttribute('aria-label', 'Employee');
         pick.onchange = () => { employee = pick.value; document.querySelectorAll('#page button,#pageAction button').forEach(b => b.disabled = true); render(); };
         const out = [el('section', { class: 'panel' }, el('div', { class: 'row between' }, el('h2', { text: 'Employee allowance' }), pick), note(`${data.setup.filter(p => !p.configured).length} employees need a current leave-year allowance.`), el('div', { class: 'row' }, btn('Set up a leave year', () => allowance(person, undefined, data.settings)), ghost('Add blackout dates', () => blackout())), ...(own?.balances || []).map(b => el('div', { class: 'leave-year-row' }, el('span', { class: 't' }, el('b', { text: `${b.from} – ${b.to}` }), el('span', { class: 's', text: `${amount(b.available)} days available · ${amount(b.used)} used · ${amount(b.booked)} booked · ${amount(b.pending)} pending${b.bankHolidayReserved ? ` · ${amount(b.bankHolidayReserved)} reserved for bank holidays` : ''}` })), ghost('Edit', () => allowance(person, b, data.settings)), b.bankHolidayEligible && data.settings.bankHolidayPolicy === 'credit-worked' ? ghost('Bank holiday worked', () => credit(person, b)) : null, ...(b.accruals || []).filter(a => !a.reversedAt).map(a => ghost(`${a.label} +${amount(a.amount)}`, () => reverseAccrual(person, b, a), { 'aria-label': `Holiday for extra hours, ${a.label}: take off` })))))];
-        out.push(el('section', { class: 'panel' }, el('div', { class: 'row between' }, el('h2', { text: 'Holiday for extra hours' }), btn('Review a quarter', () => accrualSheet())), note('Each quarter, hours worked above the minimum contract (contracts under 42 hours) earn holiday at 12.07%. Nothing is added until you approve it.')));
+        out.push(el('section', { class: 'panel' }, el('div', { class: 'row between' }, el('h2', { text: 'Holiday for extra hours' }), btn('Review a quarter', (event) => accrualSheet(undefined, event.currentTarget))), note('Each quarter, hours worked above the minimum contract (contracts under 42 hours) earn holiday at 12.07%. Nothing is added until you approve it.')));
         out.push(...takeByAdmin(takeBy), ...yearEndAdmin(yearEnd));
         out.push(label(`Requests awaiting a decision · ${data.requests.length}`), absenceList(data.requests, true));
         out.push(label(person ? `${person.name} · absence history` : 'Absence history'), absenceList((own?.absences || []).filter(a => a.status !== 'requested'), true));
@@ -358,15 +358,15 @@ window.SCLeave = function createLeaveUI(c) {
         } }, 'btn', { disabled: !p.next }))), { left: cancelLink() });
     }
     // One quarter: everyone's hours counted, their minimum, the extra and the holiday it earns. Approve to add it.
-    async function accrualSheet(quarter) {
+    async function accrualSheet(quarter, trigger) {
         const token = generation;
         let data;
         try { data = await get('/api/rota/leave/accrual' + (quarter ? '?quarter=' + encodeURIComponent(quarter) : '')); }
         catch (e) { toast(errorText(e)); return; }
-        if (token !== generation)
+        if (token !== generation || !trigger.isConnected || trigger.closest('[hidden]'))
             return;
         const pick = select('accrual_quarter', data.quarters.map(q => [q.from, q.label]), data.quarter.from);
-        pick.onchange = () => accrualSheet(pick.value);
+        pick.onchange = () => accrualSheet(pick.value, pick);
         const WHY = { 'full-time': 'Contract of 42 hours or more', 'no-contract': 'No contract hours set', 'no-hours': 'No hours on the rota' };
         const ticks = [], msg = message();
         const rows = data.people.filter(p => p.status === 'ready' || p.added).sort((a, b) => b.units - a.units).map(p => {
@@ -397,7 +397,7 @@ window.SCLeave = function createLeaveUI(c) {
             data.rotaStart && data.rotaStart > data.quarter.from ? note(`The rota starts on ${fmt(data.rotaStart, { day: 'numeric', month: 'short', year: 'numeric' })}: hours before then aren’t on it, so they aren’t counted.`) : null,
             rows.length ? el('div', { class: 'leave-accrual-list' }, ...rows) : empty('Nobody worked above their minimum this quarter.'),
             others.length ? el('details', { class: 'leave-accruals' }, el('summary', { text: `Not included · ${others.length}` }), ...others.map(p => note(`${p.name}: ${WHY[p.status] || p.status}`))) : null,
-            msg, el('div', { class: 'sfoot' }, add)), { left: cancelLink() });
+            msg, el('div', { class: 'sfoot' }, add)), { left: cancelLink(), trigger });
     }
     function reverseAccrual(person, b, a) {
         const reason = input('accrual_correction', '', { maxlength: 300 }), msg = message();
@@ -513,11 +513,11 @@ window.SCLeave = function createLeaveUI(c) {
             msg.textContent = errorText(e);
         } }))), { left: cancelLink() });
     }
-    async function review(t) {
+    async function review(t, trigger) {
         const token = generation;
         try {
             const data = await get('/api/rota/leave/requests/' + encodeURIComponent(t.id));
-            if (token !== generation)
+            if (token !== generation || !trigger.isConnected || trigger.closest('[hidden]'))
                 return;
             t = { ...t, ...data.absence, balances: data.balances, shiftConflicts: data.shiftConflicts };
         }
@@ -549,7 +549,7 @@ window.SCLeave = function createLeaveUI(c) {
         }
         catch (e) {
             msg.textContent = errorText(e);
-        } }) : null, t.status === 'approved' ? ghost('Cancel absence', () => action('cancelled')) : null)), { left: cancelLink() });
+        } }) : null, t.status === 'approved' ? ghost('Cancel absence', () => action('cancelled')) : null)), { left: cancelLink(), trigger });
     }
     return { dashboard, admin, request, clear, review };
 };

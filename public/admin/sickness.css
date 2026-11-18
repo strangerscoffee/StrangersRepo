@@ -7,12 +7,16 @@
 .sk-band b{font-variant-numeric:tabular-nums}
 .sk-none{background:var(--ok-bg);color:var(--ok)}.sk-monitor{background:var(--sk-monitor-bg);color:var(--sk-monitor)}.sk-stage1{background:var(--sk-stage1-bg);color:var(--sk-stage1)}.sk-stage2{background:var(--sk-stage2-bg);color:var(--sk-stage2)}.sk-stage3{background:var(--bad-bg);color:var(--bad)}
 .sk-scale{padding:14px 16px;border-radius:20px}
-.sk-scale summary{display:flex;flex-wrap:wrap;justify-content:space-between;gap:4px 12px;cursor:pointer;min-height:44px;align-items:center}.sk-scale summary span{color:var(--muted);font-size:14px}
+.sk-scale summary{display:flex;justify-content:space-between;gap:12px;cursor:pointer;min-height:44px;align-items:center;list-style:none}
+.sk-scale summary::-webkit-details-marker{display:none}
+.sk-scale-copy{display:flex;flex:1;flex-wrap:wrap;justify-content:space-between;gap:4px 12px;min-width:0}
+.sk-scale-copy>span{color:var(--muted);font-size:14px}
+.sk-scale summary>.i{color:var(--muted);transition:transform var(--motion-content) var(--motion-ease)}
+.sk-scale[open] summary>.i{transform:rotate(90deg)}
 .sk-bands{display:grid;gap:8px;margin-top:10px}
 .sk-band-row{display:grid;grid-template-columns:150px 1fr;gap:12px;align-items:center;font-size:14px}
 .sk-band-row .sk-band{justify-content:space-between}
 .sk-filter{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
-.sk-filter .seg{min-width:0;max-width:100%;flex-wrap:wrap;border-radius:20px}
 .sk-person .tx{min-width:0}
 .sk-action{color:var(--fg);font-size:13px}
 .sk-h{margin:8px 0 0;font-size:18px}
@@ -27,11 +31,15 @@
 .sk-confirm{flex:1 0 100%;font-weight:600}
 .sk-sheet .w-actions{flex-wrap:wrap}
 .btn.danger-fill{background:var(--bad);color:#fff}
-@media (max-width:560px){.sk-band-row{grid-template-columns:1fr;gap:4px}.sk-person .end{flex-direction:column;align-items:flex-end}}
+@media (max-width:560px){
+  .sk-band-row{grid-template-columns:minmax(0,1fr);gap:4px}
+  .sk-person{display:grid;grid-template-columns:minmax(0,1fr);gap:8px}
+  .sk-person .end{justify-content:space-between}
+}
 /* Absences in the Bradford Factor: counted, part day (not counted) or left out, always in words. */
 .sk-chip{display:inline-block;align-self:flex-start;width:fit-content;margin-top:4px;font-size:12px;font-weight:650;border-radius:99px;padding:3px 9px;background:var(--sunk);color:var(--muted)}
 .sk-chip.on{background:var(--tint);color:var(--accent)}
-.sk-review{border-radius:20px;padding:14px 16px;margin-bottom:16px}
+.sk-review{border-radius:20px;padding:14px 16px}
 .sk-review .sk-h{margin-top:0}
 .sk-sheet .field{display:grid;gap:6px;margin:14px 0 0}
 .sk-sheet .field select,.sk-sheet .field input{min-height:44px;border-radius:12px;border:1px solid var(--line);background:var(--sunk);color:var(--fg);padding:8px 12px;font:inherit;max-width:100%}

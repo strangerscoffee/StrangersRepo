@@ -156,6 +156,7 @@
   .staff-workspaces-dock a svg.i { width: 21px; height: 21px; }
   .staff-app .wrap:not(.staff-orders-wrap) { padding-top: var(--staff-mobile-content); }
   .staff-app:has(.conn:not([hidden])) .wrap:not(.staff-orders-wrap) { padding-top: calc(var(--staff-mobile-content) + 38px); }
+  html:has(.staff-app .conn:not([hidden])) { scroll-padding-top: calc(108px + env(safe-area-inset-top, 0px)); }
 }
 @media (min-width: 1024px) {
   .staff-app:not(.staff-wholesale) { padding-left: var(--staff-sidebar-width); padding-top: var(--staff-wide-content); }
@@ -187,6 +188,7 @@
   }
   .staff-section-tabs,.staff-site-row { display: none; }
   html:has(body.staff-app:not(.staff-wholesale)) { scroll-padding-top: calc(92px + env(safe-area-inset-top, 0px)); }
+  html:has(.staff-app .conn:not([hidden])) { scroll-padding-top: calc(128px + env(safe-area-inset-top, 0px)); }
   .staff-app .conn { top: var(--staff-wide-content); left: calc(50% + var(--staff-sidebar-width) / 2); }
   .staff-app .toast { left: calc(50% + var(--staff-sidebar-width) / 2); }
 }

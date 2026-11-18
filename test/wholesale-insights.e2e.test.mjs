@@ -186,6 +186,12 @@ test("on a phone and an iPad, light and dark", async () => {
       const labels = [...plot.querySelectorAll('.ins-x')].filter(node => node.getClientRects().length).map(node => node.getBoundingClientRect());
       return labels.slice(1).some((label, index) => label.left < labels[index].right);
     }), false, `${name} ${colorScheme}: forecast date labels do not collide`);
+    if (name === "small-phone") {
+      const forecastTable = p.getByRole("region", { name: "Forecast by coffee", exact: true });
+      await forecastTable.focus();
+      await p.keyboard.press("ArrowRight");
+      await p.waitForFunction(() => document.querySelector('[aria-label="Forecast by coffee"]').scrollLeft > 0);
+    }
     if (process.env.WHOLESALE_SCREENSHOT_DIR) await p.screenshot({ path: `${process.env.WHOLESALE_SCREENSHOT_DIR}/sections-${name}-${colorScheme}.png` });
     const overflow = await p.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     assert.ok(overflow <= 1, `${name} ${colorScheme}: the page doesn't scroll sideways (${overflow}px)`);

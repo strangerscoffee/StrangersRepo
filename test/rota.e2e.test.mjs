@@ -49,6 +49,59 @@ async function pageFor(viewport, cookies) {
   return { ctx, page, errors };
 }
 
+test("the Rota account menu stays inside the viewport when switching from desktop to phone", async () => {
+  const { ctx, page } = await pageFor({ width: 1440, height: 900 });
+  try {
+    await page.goto(srv.base + "/rota/#leave");
+    await page.locator("body[data-page=leave] #page[aria-busy=false]").waitFor();
+    const account = page.getByRole("button", { name: "Account", exact: true });
+    const menu = page.getByRole("menu", { name: "Account" });
+    await account.press("Enter");
+    await menu.waitFor();
+    await page.setViewportSize({ width: 320, height: 568 });
+    await page.waitForFunction(() => {
+      const box = document.querySelector("#acctMenu").getBoundingClientRect();
+      return box.width > 0 && box.left >= 0 && box.right <= innerWidth && box.bottom <= innerHeight;
+    }, null, { timeout: 3000 });
+    await page.keyboard.press("Escape");
+    await menu.waitFor({ state: "hidden" });
+    assert.equal(await account.evaluate(node => node === document.activeElement), true);
+  } finally { await ctx.close(); }
+});
+
+test("narrow Rota section buttons keep Holidays and Requests intact", async () => {
+  const { ctx, page } = await pageFor({ width: 320, height: 568 });
+  try {
+    await page.goto(srv.base + "/rota/#requests");
+    await page.locator("body[data-page=requests] #page[aria-busy=false]").waitFor();
+    await page.addStyleTag({ content: "#tabbar .tab { font-family: monospace; font-size: 12px; }" });
+    const labels = await page.locator("#tabbar .tab > span:first-of-type").evaluateAll(nodes => nodes.map(node => {
+      const range = new Range();
+      range.selectNodeContents(node);
+      return { text: node.textContent, lines: range.getClientRects().length, width: node.parentNode.getBoundingClientRect().width };
+    }));
+    for (const label of labels) assert.ok(label.width >= 44, JSON.stringify(label));
+    for (const word of ["Holidays", "Requests"]) assert.equal(labels.find(label => label.text === word).lines, 1, word);
+  } finally { await ctx.close(); }
+});
+
+test("rotating the Rota keeps the open shift draft and returns focus to the page after dismissal", async () => {
+  const { ctx, page } = await pageFor({ width: 1180, height: 820 });
+  try {
+    await page.goto(srv.base + "/rota/#week");
+    await page.locator(".gadd").first().click();
+    const note = page.getByLabel("Note", { exact: true });
+    await note.fill("Keep this draft");
+    await page.setViewportSize({ width: 393, height: 852 });
+    await page.locator(".sitecard").first().waitFor();
+    assert.equal(await note.inputValue(), "Keep this draft");
+    assert.equal(await note.evaluate(node => node === document.activeElement), true);
+    await page.keyboard.press("Escape");
+    await page.locator("#sheet").waitFor({ state: "hidden" });
+    assert.equal(await page.locator("#pageTitle").evaluate(node => node === document.activeElement), true);
+  } finally { await ctx.close(); }
+});
+
 for (const [label, viewport] of [["phone", { width: 393, height: 852 }], ["iPad", { width: 1180, height: 820 }]]) {
   test(`rota on a ${label}: plan, fill, publish; staff see it; Today shows who's on; a pickup is approved`, async () => {
     const today = londonToday();

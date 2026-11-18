@@ -186,8 +186,10 @@
     const label = { week: "Week", mine: "My shifts", leave:"Holidays", swaps: "Open shifts", avail: "When I work", requests: "Requests", more: "More" };
     for (const t of TABS()) {
       const on = tabOf(cur) === t;
-      tb.append(el("button", { type: "button", class: "tab" + (on ? " on" : ""), "data-rota-focus": "tab:" + t, "aria-current": on ? "page" : null, onclick: () => go(t) },
-        svgi(ICON[PAGES[t].ic]), el("span", { text: label[t] }), t === "requests" && R.badge ? el("span", { class: "n", text: String(R.badge) }) : null));
+      const count = t === "requests" ? R.badge : 0;
+      tb.append(el("button", { type: "button", class: "tab" + (on ? " on" : ""), "data-rota-focus": "tab:" + t, "aria-current": on ? "page" : null,
+        "aria-label": count ? `Requests, ${plural(count, "request")} to review` : null, onclick: () => go(t) },
+        svgi(ICON[PAGES[t].ic]), el("span", { text: label[t] }), count ? el("span", { class: "n", "aria-hidden": "true", text: count > 99 ? "99+" : String(count) }) : null));
     }
     restore();
   }
@@ -214,7 +216,7 @@
   }
 
   let renderSeq = 0, renderKey = "";
-  async function render({ animate = false } = {}) {
+  async function render({ animate = false, preserveOverlay = false } = {}) {
     let { page, args } = parseHash();
     if (!allowed(page)) page = mgr() ? "week" : "mine";
     const restore = page === R.tab ? rememberFocus($("#main")) : () => {};
@@ -224,7 +226,7 @@
     }
     R.tab = page;
     renderNav();
-    closeSheets();
+    if (!preserveOverlay) closeSheets();
     document.body.dataset.page = page;
     const seq = ++renderSeq;
     // The last page's buttons in the heading would act on what it showed: clear them while this one loads.
@@ -369,7 +371,8 @@
     for (const [node, inert] of previousInert) node.inert = inert;
     previousInert = [];
     if (overlayTrigger?.getAttribute("aria-haspopup") === "menu") overlayTrigger.setAttribute("aria-expanded", "false");
-    if (overlayTrigger?.isConnected) overlayTrigger.focus({ preventScroll: true });
+    const trigger = overlayTrigger?.matches("button:not(:disabled),a[href],input,select,textarea,[tabindex]") && overlayTrigger.getClientRects().length ? overlayTrigger : $("#pageTitle");
+    trigger.focus({ preventScroll: true });
     overlayTrigger = null;
   }
 
@@ -390,13 +393,13 @@
     (items[next] || activeOverlay).focus();
   }
 
-  function openSheet(title, body, { left, right } = {}) {
+  function openSheet(title, body, { left, right, trigger } = {}) {
     const s = $("#sheet");
     s.replaceChildren(el("div", { class: "grab", "aria-hidden": "true" }),
       el("div", { class: "shead" }, left || el("button", { type: "button", class: "linkbtn", onclick: closeSheets }, "Close"),
         el("h2", { id: "sheetTitle", text: title }), right || el("span")), body);
     if (activeOverlay === s) SC.reveal(s.querySelector(".shead"));
-    showOverlay(s);
+    showOverlay(s, trigger);
     return s;
   }
   const cancelLink = () => el("button", { type: "button", class: "linkbtn", onclick: closeSheets }, "Cancel");
@@ -458,16 +461,20 @@
     } }, avatar(p.name), el("span", { class: "t" }, el("b", { text: p.name }), p.name === me ? el("span", { class: "s", text: "Signed in now" }) : null))));
     if (!people.length) box.replaceChildren(empty("No one has a quick PIN yet. Each person sets one from the account menu."));
   }
+  function positionAccountMenu(anchor) {
+    const menu = $("#acctMenu"), bounds = anchor.getBoundingClientRect();
+    menu.style.top = bounds.bottom + 8 + "px";
+    menu.style.right = Math.max(12, document.documentElement.clientWidth - bounds.right) + "px";
+    menu.style.maxHeight = Math.max(0, innerHeight - bounds.bottom - 20) + "px";
+  }
+
   function openAcctMenu(anchor) {
     const m = $("#acctMenu"), u = R.me.user;
     m.replaceChildren(el("div", { class: "who" }, el("b", { text: u.name }), el("span", { class: "s", text: ROLE[u.role] || "" })),
       ...accountItems().map(([t, ic, fn, danger]) => el("button", { class: "m" + (danger ? " danger" : ""), type: "button", role: "menuitem", onclick: () => { closeSheets(); fn(); } }, svgi(ICON[ic]), el("span", { text: t }))));
-    const r = anchor.getBoundingClientRect();
-    m.style.top = r.bottom + 8 + "px";
-    m.style.maxHeight = Math.max(0, innerHeight - r.bottom - 20) + "px";
+    positionAccountMenu(anchor);
     anchor.setAttribute("aria-expanded", "true");
     showOverlay(m, anchor);
-    m.style.left = Math.max(12, Math.min(r.left, innerWidth - m.offsetWidth - 12)) + "px";
   }
 
   /* ---------- week planner (admins) ---------- */
@@ -1216,7 +1223,7 @@
         isAdmin() ? others.length ? el("div", { class: "with", text: "With " + others.map((o) => first(o.name) + (o.start !== nx.start ? ` from ${o.start}` : "")).join(", ") }) : el("div", { class: "with", text: "On your own" }) : null,
         nx.note ? el("div", { class: "with", text: nx.note }) : null,
         el("div", { class: "row" }, el("button", { type: "button", class: "hbtn", onclick: () => calendarFile(nx) }, svgi(ICON.cal), "Add to calendar"),
-          coverOf(nx) ? el("span", { class: "hbtn on", text: "Cover asked" }) : el("button", { type: "button", class: "hbtn", "data-w": "", onclick: () => askCover(nx) }, "Ask for cover"))));
+          coverOf(nx) ? el("span", { class: "hbtn on", text: "Cover asked" }) : el("button", { type: "button", class: "hbtn", "data-w": "", onclick: (event) => askCover(nx, event.currentTarget) }, "Ask for cover"))));
     } else {
       const anyAhead = r.published.some((w) => w >= monday(today));
       const last = [...r.shifts].filter((s) => s.day < today).pop();
@@ -1348,13 +1355,14 @@
       s.note ? el("p", { text: s.note }) : null,
       el("div", { class: "sfoot" }, ghost("Add to calendar", () => { calendarFile(s); closeSheets(); }),
         // Cover only for a shift that hasn't started.
-        cov ? btn("Cover asked", null, "btn", { disabled: true }) : s.day > londonToday() || (s.day === londonToday() && s.start > londonNow()) ? btn("Ask for cover", () => askCover(s)) : null)), { left: cancelLink() });
+        cov ? btn("Cover asked", null, "btn", { disabled: true }) : s.day > londonToday() || (s.day === londonToday() && s.start > londonNow()) ? btn("Ask for cover", (event) => askCover(s, event.currentTarget)) : null)), { left: cancelLink() });
   }
 
-  async function askCover(s) {
+  async function askCover(s, trigger) {
     // Everyone on the rota (names and account ids) comes with the week.
     let people = [];
     if (isAdmin()) try { people = (await get("/api/rota/week?start=" + monday(s.day))).people || []; } catch (e) {}
+    if (!R.me || !trigger.isConnected || trigger.closest("[hidden]")) return;
     const u = R.me.user;
     const sel = el("select", { id: "c_to" }, el("option", { value: "" }, "Anyone who can"), ...people.filter((p) => p.id !== u.id).map((p) => el("option", { value: p.id }, p.name)));
     const note = el("input", { type: "text", id: "c_msg", maxlength: 300, placeholder: "e.g. Family wedding, could you take my shift?" });
@@ -1369,7 +1377,7 @@
           await api("POST", "/api/rota/requests", { kind: "cover", shiftId: s.id, toUserId: sel.value || null, message: note.value.trim() });
           closeSheets(); toast("Asked. You'll see replies under Open shifts & cover."); render();
         } catch (e) { msg.textContent = e.message; }
-      }))), { left: cancelLink() });
+      }))), { left: cancelLink(), trigger });
   }
 
   /* ---------- open shifts and cover (everyone) ---------- */
@@ -1574,8 +1582,9 @@
     }) : [el("div", { class: "empty", text: "No time off booked." })]));
   }
 
-  function askTimeOff() {
-    if(R.me?.holidayManagement)return Leave.request();
+  function askTimeOff(event) {
+    const trigger = event.currentTarget;
+    if (R.me?.holidayManagement) return Leave.request(undefined, undefined, trigger);
     const t = londonToday();
     const from = el("input", { type: "date", id: "t_from", value: addDays(t, 14), min: t });
     const to = el("input", { type: "date", id: "t_to", value: addDays(t, 14), min: t });
@@ -1590,7 +1599,7 @@
       el("div", { class: "sfoot" }, btn("Send", async () => {
         try { await api("POST", "/api/rota/time-off", { from: from.value, to: to.value, reason: why.value.trim() }); closeSheets(); toast("Asked. You'll see the answer under Time off."); render(); }
         catch (e) { msg.textContent = e.message; }
-      }))), { left: cancelLink() });
+      }))), { left: cancelLink(), trigger });
   }
 
   /* ---------- requests (admins) ---------- */
@@ -1608,7 +1617,7 @@
       el("span", { class: "t" }, el("b", { text: t.name }), el("span", { class: "pill request-kind", text: types[t.kind] || "Time off" }),
         el("span", { class: "s", text: t.from === t.to ? shortM(t.from) : shortM(t.from) + " – " + shortM(t.to) }),
         t.reason ? el("span", { class: "request-note", text: t.reason }) : null),
-      el("span", { class: "acts" }, btn("Review request", () => Leave.review({...t,days:t.days||[]}), "btn request-review")))))
+      el("span", { class: "acts" }, btn("Review request", (event) => Leave.review({...t,days:t.days||[]}, event.currentTarget), "btn request-review")))))
       : noRequests("No leave requests waiting", "New requests will appear here for review."));
     out.push(label("Pickups and covers"));
     const rows = r.requests.map((q) => {
@@ -1819,7 +1828,12 @@
     document.addEventListener("keydown", handleOverlayKeys);
     $("#snav").addEventListener("click", (e) => { const a = e.target.closest("a[href^='#']"); if (a) { e.preventDefault(); go(a.getAttribute("href").slice(1)); } });
     window.addEventListener("hashchange", render);
-    wide.addEventListener("change", () => { if (R.tab === "week" || R.tab === "mine") render(); });
+    window.addEventListener("resize", () => {
+      if (activeOverlay === $("#acctMenu")) positionAccountMenu(overlayTrigger);
+    });
+    wide.addEventListener("change", () => {
+      if (R.tab === "week" || R.tab === "mine") render({ preserveOverlay: true });
+    });
     // Coming back to the tab (after a while) or back online refreshes the page, but never over something
     // half typed or an open sheet or menu.
     const busy = () => !$("#sheet").hidden || ($("#peopleSheet") && !$("#peopleSheet").hidden) || ($("#acctMenu") && !$("#acctMenu").hidden) ||
