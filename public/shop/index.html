@@ -16,19 +16,26 @@
   <div class="shop-wrap">
     <header class="shop-header glass">
       <a class="wordmark" href="/shop/" aria-label="Strangers Coffee Company home">
-        <img src="/shop/mark.svg" width="32" height="34" alt="">
+        <picture>
+          <source media="(max-width: 700px)" srcset="/shop/logo.svg">
+          <img src="/shop/mark.svg" width="32" height="34" alt="">
+        </picture>
         <span><strong>Strangers</strong><small>Coffee Company</small></span>
       </a>
-      <nav class="shop-nav" aria-label="Main navigation">
+      <nav class="shop-nav" id="shop-nav" aria-label="Main navigation">
         <a href="/shop/coffee/" data-nav="coffee">Shop coffee</a>
         <a href="/shop/locations/" data-nav="locations">Locations</a>
         <a href="/shop/brew-guides/" data-nav="brew-guides">Brew guides</a>
         <a href="/shop/about/" data-nav="about">About</a>
       </nav>
-      <a class="shop-button soft basket-link" href="/shop/basket/" id="basket-link">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5h17l-2 11h-13zM9 10V6a3 3 0 0 1 6 0v4"/></svg>
-        <span>Basket</span><span class="basket-count" id="basket-count" hidden></span>
+      <a class="shop-button soft basket-link" href="/shop/basket/" id="basket-link" aria-label="Basket, 0 items">
+        <svg class="basket-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5h17l-2 11h-13zM9 10V6a3 3 0 0 1 6 0v4"/></svg>
+        <svg class="cart-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 4h3l3.1 10.5h10.5l2.2-7.7H5.8M8.1 14.5l-1 2.2h11.4"/><circle cx="9" cy="20" r="1.35"/><circle cx="17.6" cy="20" r="1.35"/></svg>
+        <span class="basket-label">Basket</span><span class="basket-count" id="basket-count" data-empty aria-hidden="true">0</span>
       </a>
+      <button class="menu-toggle" type="button" aria-label="Menu" aria-controls="shop-nav" aria-expanded="false">
+        <span class="menu-icon" aria-hidden="true"><span></span><span></span><span></span></span>
+      </button>
     </header>
     <main id="main" tabindex="-1" aria-busy="true">
       <div class="loading" role="status">Loading the shop…</div>

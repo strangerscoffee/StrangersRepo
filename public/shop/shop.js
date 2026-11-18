@@ -4,7 +4,11 @@ const basketKey = 'strangers.retail-preview.basket.v1';
 const quantityLimit = 30;
 const main = document.querySelector('#main');
 const header = document.querySelector('.shop-header');
+const basketLink = header.querySelector('#basket-link');
 const countBadge = document.querySelector('#basket-count');
+const menuToggle = header.querySelector('.menu-toggle');
+const navigation = header.querySelector('.shop-nav');
+const mobileHeader = matchMedia('(max-width: 700px)');
 const toast = document.querySelector('.shop-toast');
 const currency = new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' });
 const price = pence => currency.format(pence / 100);
@@ -39,6 +43,51 @@ const [requestedPage = '', ...segments] = location.pathname.slice(shop.length).s
 const aliases = { home: '', location: 'locations', brewguides: 'brew-guides', cart: 'basket' };
 const page = aliases[requestedPage] ?? requestedPage;
 const slug = segments[0] === 'p' ? segments[1] : segments[0];
+
+const menuIsOpen = () => menuToggle.getAttribute('aria-expanded') === 'true';
+
+function setMenuOpen(open) {
+  menuToggle.setAttribute('aria-expanded', String(open));
+  navigation.inert = mobileHeader.matches && !open;
+}
+
+function syncHeaderLayout() {
+  const focus = document.activeElement;
+  // Keep Tab order aligned with the visible controls in both layouts.
+  if (mobileHeader.matches) header.append(navigation);
+  else basketLink.before(navigation);
+  setMenuOpen(false);
+  if (focus === menuToggle || navigation.contains(focus)) {
+    (mobileHeader.matches ? menuToggle : navigation.querySelector('a')).focus({ preventScroll: true });
+  }
+}
+
+function closeMenu() {
+  if (navigation.contains(document.activeElement)) menuToggle.focus({ preventScroll: true });
+  setMenuOpen(false);
+}
+
+syncHeaderLayout();
+mobileHeader.addEventListener('change', syncHeaderLayout);
+menuToggle.addEventListener('click', () => {
+  if (menuIsOpen()) closeMenu();
+  else setMenuOpen(true);
+});
+document.addEventListener('keydown', event => {
+  if (event.key !== 'Escape' || !menuIsOpen()) return;
+  event.preventDefault();
+  menuToggle.focus({ preventScroll: true });
+  setMenuOpen(false);
+});
+document.addEventListener('click', event => {
+  if (menuIsOpen() && !header.contains(event.target)) closeMenu();
+});
+header.addEventListener('focusout', event => {
+  if (menuIsOpen() && event.relatedTarget && !header.contains(event.relatedTarget)) setMenuOpen(false);
+});
+window.addEventListener('pageshow', event => {
+  if (event.persisted && menuIsOpen()) closeMenu();
+});
 
 document.addEventListener('focusin', ({ target }) => {
   if (!target.matches(':focus-visible') || !target.closest('main, footer')) return;
@@ -77,10 +126,9 @@ function readBasket() {
 
 function updateBadge() {
   const count = basket.reduce((total, line) => total + line.quantity, 0);
-  countBadge.textContent = count ? String(count) : '';
-  countBadge.hidden = !count;
-  const link = document.querySelector('#basket-link');
-  link.setAttribute('aria-label', count ? `Basket, ${count} ${count === 1 ? 'item' : 'items'}` : 'Basket');
+  countBadge.textContent = String(count);
+  countBadge.toggleAttribute('data-empty', count === 0);
+  basketLink.setAttribute('aria-label', `Basket, ${count} ${count === 1 ? 'item' : 'items'}`);
 }
 
 function saveBasket(entries) {

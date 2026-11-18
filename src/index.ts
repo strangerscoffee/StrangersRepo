@@ -220,7 +220,10 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
     if (p === "/shop/instagram.json") return retailInstagram(req, env, ctx, url);
     const instagramPhoto = p.match(/^\/shop\/instagram-photo\/([A-Za-z0-9_-]{3,35})$/);
     if (instagramPhoto) return retailInstagram(req, env, ctx, url, instagramPhoto[1]);
-    if (p === "/shop/mark.svg") return staticFile(new Request(new URL("/mark.svg", url), req), env, "/mark.svg");
+    if (p === "/shop/mark.svg" || p === "/shop/logo.svg") {
+      const logo = p.slice("/shop".length);
+      return staticFile(new Request(new URL(logo, url), req), env, logo);
+    }
     if (SHOP_FILE.test(p)) return staticFile(req, env, p);
     if (!p.endsWith("/") && SHOP_PAGE.test(p + "/")) return redirect(p + "/" + url.search);
     if (!SHOP_PAGE.test(p)) return new Response("Not found", { status: 404 });
