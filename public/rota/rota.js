@@ -12,6 +12,7 @@
   const ICON = {
     week: '<rect x="4" y="5" width="16" height="15" rx="3"/><path d="M4 10h16M9 3v4M15 3v4M8 14h.01M12 14h.01M16 14h.01M8 17h.01M12 17h.01"/>',
     mine: '<circle cx="12" cy="8" r="3.5"/><path d="M5 20c0-3.9 3.1-6.5 7-6.5s7 2.6 7 6.5"/>',
+    profile: '<rect x="5" y="3" width="14" height="18" rx="3"/><circle cx="12" cy="9" r="2.5"/><path d="M8.5 17a3.5 3.5 0 017 0"/>',
     swap: '<path d="M7 7h11l-3-3M17 17H6l3 3"/>',
     avail: '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>',
     requests: '<path d="M5 5h14v10H9l-4 4z"/><path d="M9 9h6M9 12h4"/>',
@@ -143,7 +144,7 @@
     "leave-admin": {t: "Holiday management", ic:"plane", mgr:true, parent:"leave"},
     swaps: { t: "Open shifts", nav: "Open shifts", ic: "swap" },
     avail: { t: "When I can work", ic: "avail" },
-    profile: { t: "My profile", ic: "mine", parent: "more" },
+    profile: { t: "My profile", ic: "profile", parent: "more" },
     requests: { t: "Requests", ic: "requests", mgr: true },
     more: { t: "More", ic: "more", site: true },
     hours: { t: "Hours", ic: "hours", mgr: true, parent: "more" },
@@ -177,10 +178,10 @@
     if (mgr()) {
       sn.append(link("week", "Week", "week"), link("mine", "My shifts", "mine"), link("leave", "Holidays", "plane"), link("requests", "Requests", "requests", R.badge),
         link("swaps", "Open shifts", "swap"), link("avail", "When I can work", "avail"),
-        link("sick", "Report sickness", "sick"), link("profile", "My profile", "mine"),
+        link("sick", "Report sickness", "sick"), link("profile", "My profile", "profile"),
         el("div", { class: "h", text: "Manage" }), link("leave-admin", "Holiday management", "plane"), link("hours", "Hours", "hours"), link("settings", "Rota settings", "setup"));
     } else {
-      sn.append(link("mine", "My shifts", "mine"), link("leave", "Holidays", "plane"), link("swaps", "Open shifts", "swap"), link("avail", "When I can work", "avail"), link("sick", "Report sickness", "sick"), link("profile", "My profile", "mine"));
+      sn.append(link("mine", "My shifts", "mine"), link("leave", "Holidays", "plane"), link("swaps", "Open shifts", "swap"), link("avail", "When I can work", "avail"), link("sick", "Report sickness", "sick"), link("profile", "My profile", "profile"));
       if (siteManager()) sn.append(el("div", { class: "h", text: "Manage" }), link("settings", "Site rota settings", "setup"));
     }
     const tb = $("#tabbar"); tb.replaceChildren();
@@ -223,7 +224,7 @@
     const restore = page === R.tab ? rememberFocus($("#main")) : () => {};
     if (page !== R.tab) {
       if (R.tab) window.scrollTo({ top: 0 });
-      SCStaffNavigation.save("rota", R.auth?.user.id, PAGES[page].parent || page);
+      SCStaffNavigation.save("rota", R.auth?.user.id, TABS().includes(page) ? page : PAGES[page].parent || page);
     }
     R.tab = page;
     renderNav();
@@ -1325,7 +1326,7 @@
     return [toggle, el("div", { class: "mgrid" }, el("div", { class: "mcol" }, ...left), el("div", { class: "mcol" }, ...right))];
   }
 
-  const SITE_NAMES = { roastery: "Roastery", cafe: "Cafe", asg: "ASG", factory: "Factory" };
+  const SITE_NAMES = { roastery: "Roastery", cafe: "Cafe", asg: "ASG", factory: "Factory", office: "Office" };
   const siteName = (id) => SITE_NAMES[id] || id;
   // "Mon from 07:00, Sun off".
   function availText(pattern) {
@@ -1403,8 +1404,7 @@
     }
 
     const asked = me.requests.filter((q) => q.kind === "cover" && q.status === "open" && q.fromUser !== u.id && (!q.toUser || q.toUser === u.id) && q.shift && q.shift.day >= today);
-    out.push(label("Asked of you"));
-    if (!asked.length) out.push(el("section", { class: "panel" }, el("p", { class: "note", text: "No one has asked you to cover a shift." })));
+    if (asked.length) out.push(label("Cover requests for you"));
     for (const q of asked) {
       const s = q.shift;
       const clash = mine.shifts.some((m) => m.day === s.day && mins(m.start) < mins(s.end) && mins(s.start) < mins(m.end));
@@ -1434,43 +1434,61 @@
     return out;
   }
 
-  /* ---------- when I can work (everyone) ---------- */
+  /* ---------- my profile (everyone) ---------- */
 
-  // Which days and sites someone can work. Only admins change it (their own, or anyone's from Rota settings:
-  // #avail/<userId>); everyone else sees theirs read-only, and still books their own time off here.
   // My profile (src/profile.ts): the signed-in person's own start date (set by an admin) and the contact number,
   // email and home address they keep up to date. Private to them and admins; saving tells the admins what changed.
   async function renderProfile() {
     setHead("profile", "My profile", "Private to you and admins");
     const { profile: p } = await get("/api/rota/me/profile");
     if (!p) return [el("section", { class: "panel" }, el("p", { class: "note", text: "Your profile isn't available." }))];
+    let version = p.version;
     const fld = (id, t, input, hint) => el("div", { class: "field" }, el("label", { class: "label", for: id, text: t }), input, hint ? el("p", { class: "note", text: hint }) : null);
-    const phone = el("input", { type: "tel", id: "pf_phone", autocomplete: "tel", maxlength: 30, value: p.phone, placeholder: "e.g. 07700 900123" });
-    const email = el("input", { type: "email", id: "pf_email", autocomplete: "email", maxlength: 254, value: p.email, placeholder: "name@example.com" });
-    const address = el("textarea", { id: "pf_address", autocomplete: "street-address", maxlength: 300, rows: 4, placeholder: "House, street, town, postcode" });
+    const phone = el("input", { type: "tel", id: "pf_phone", "data-rota-focus": "profile:phone", autocomplete: "tel", maxlength: 30, value: p.phone, placeholder: "e.g. 07700 900123" });
+    const email = el("input", { type: "email", id: "pf_email", "data-rota-focus": "profile:email", autocomplete: "email", maxlength: 254, value: p.email, placeholder: "name@example.com" });
+    const address = el("textarea", { id: "pf_address", "data-rota-focus": "profile:address", autocomplete: "street-address", maxlength: 300, rows: 4, placeholder: "House, street, town, postcode" });
     address.value = p.address;
     const msg = el("p", { class: "smsg", role: "alert" });
-    const save = btn("Save my details", async () => {
+    const save = btn("Save my details", null, "btn", { type: "submit", "data-rota-focus": "profile:save" });
+    const submit = async (event) => {
+      event.preventDefault();
+      if (save.hasAttribute("aria-disabled")) return;
       msg.textContent = "";
-      save.disabled = true;
+      const fields = { phone, email, address };
+      const details = Object.fromEntries(Object.entries(fields).map(([name, field]) => [name, field.value]));
+      save.setAttribute("aria-disabled", "true");
+      save.setAttribute("data-dirty", "");
       try {
-        const r = await api("PUT", "/api/rota/me/profile", { phone: phone.value, email: email.value, address: address.value, ifVersion: p.version });
+        const r = await api("PUT", "/api/rota/me/profile", { ...details, ifVersion: version });
+        version = r.profile.version;
+        for (const [name, field] of Object.entries(fields)) {
+          if (field.value === details[name]) {
+            field.value = r.profile[name];
+            field.removeAttribute("data-dirty");
+          }
+        }
         toast(r.changed.length ? "Saved. An admin has been told what changed." : "Nothing changed.");
-        render();
-      } catch (e) { msg.textContent = e.code === "conflict" ? "Your details were changed somewhere else. Reload the page to see them." : e.message; save.disabled = false; }
-    });
+      } catch (e) {
+        msg.textContent = e.code === "conflict" ? "Your details were changed somewhere else. Reload the page to see them." : e.message;
+      } finally {
+        save.removeAttribute("aria-disabled");
+        save.removeAttribute("data-dirty");
+      }
+    };
     const startText = p.startDate ? fmt(p.startDate, { day: "numeric", month: "long", year: "numeric" }) : "Not set yet";
     return [
       label("About you"),
-      el("section", { class: "panel" }, el("div", { class: "lrow" }, el("span", { class: "t" }, el("b", { text: "Start date" }), el("span", { class: "s", text: "Set by an admin" })), el("span", { class: "grow" }), el("b", { text: startText }))),
+      el("section", { class: "panel profile-start" }, el("div", {}, el("b", { text: "Start date" }), el("p", { class: "note", text: "Set by an admin" })), el("b", { text: startText })),
       label("Contact details"),
-      el("section", { class: "panel profile-form" }, el("div", { class: "sfields" },
+      el("form", { class: "panel profile-form", onsubmit: submit }, el("div", { class: "sfields" },
         fld("pf_phone", "Contact number", phone), fld("pf_email", "Contact email", email, "Rota emails go to this address too."),
         el("div", { class: "field wide" }, el("label", { class: "label", for: "pf_address", text: "Home address" }), address)),
         msg, el("div", { class: "row" }, save)),
       el("p", { class: "note", text: "Only you and admins can see these details. When you change them, an admin is told which details changed." }),
     ];
   }
+
+  /* ---------- when I can work (everyone) ---------- */
 
   async function renderAvail([uid] = []) {
     const me = await get("/api/rota/me");
@@ -1494,7 +1512,7 @@
       if (ok && R.weekData) R.weekData._at = 0;
     }, 500); };
     const dayText = (v) => v === "off" ? "Can't work" : v === "any" ? "Any time" : v.from && v.to ? `${v.from}–${v.to}` : v.from ? `From ${v.from}` : `Until ${v.to}`;
-    const SITES = [["roastery", "Roastery"], ["cafe", "Cafe"], ["asg", "ASG"], ["factory", "Factory"]];
+    const SITES = Object.entries(SITE_NAMES);
     if (!canEdit) {
       const rowsRO = el("div", { class: "list glass" }, ...DAYS.map((k, i) => el("div", { class: "lrow avrow" },
         el("b", { class: "dn", text: fmt(addDays("2026-11-09", i), { weekday: "short" }) }), el("span", { class: "s", text: dayText(pattern[k] ?? "any") }))));
@@ -1527,17 +1545,33 @@
     drawRows();
 
     // A primary site (one), then other sites they can also work at. Only those, or any site if none is chosen.
-    const primaryBox = el("div", { class: "fchips", role: "radiogroup", "aria-label": "Primary site" });
-    const siteBox = el("div", { class: "fchips", role: "group", "aria-label": "Can also work at" });
+    const primaryBox = el("div", { class: "fchips availability-sites", role: "radiogroup", "aria-label": "Primary site" });
+    const siteBox = el("div", { class: "fchips availability-sites", role: "group", "aria-label": "Can also work at" });
     const siteNote = el("p", { class: "note" });
-    const drawSites = () => {
-      primaryBox.replaceChildren(...[["", "Not set"], ...SITES].map(([id, nm]) => el("button", { type: "button", class: "fchip", "data-w": "", role: "radio", "aria-checked": String((primary || "") === id), "aria-pressed": String((primary || "") === id),
-        onclick: () => { primary = id || null; sites = sites.filter((x) => x !== primary); drawSites(); saveSoon(); } }, nm)));
-      siteBox.replaceChildren(...SITES.filter(([id]) => id !== primary).map(([id, nm]) => el("button", { type: "button", class: "fchip", "data-w": "", "aria-pressed": String(sites.includes(id)),
-        onclick: () => { sites = sites.includes(id) ? sites.filter((x) => x !== id) : [...sites, id]; drawSites(); saveSoon(); } }, nm)));
+    const secondaryChips = SITES.map(([id, name]) => [id, el("button", {
+      type: "button", class: "fchip", "data-w": "", "data-rota-focus": "secondary-site:" + id, onclick: () => {
+        sites = sites.includes(id) ? sites.filter((site) => site !== id) : [...sites, id];
+        updateSites();
+        saveSoon();
+      },
+    }, name)]);
+    const updateSites = () => {
+      for (const [id, chip] of secondaryChips) {
+        chip.hidden = id === primary;
+        chip.setAttribute("aria-pressed", String(sites.includes(id)));
+      }
       siteNote.textContent = primary ? "Only put on shifts at the primary site and any sites ticked." : "With no primary site and none ticked, any site.";
     };
-    drawSites();
+    primaryBox.append(...[["", "Not set"], ...SITES].map(([id, name]) => el("label", { class: "fchip primary-site", "data-w": "" },
+      el("input", { type: "radio", name: "primary-site", value: id, "data-rota-focus": "primary-site:" + id, checked: (primary || "") === id, onchange: (event) => {
+        event.currentTarget.removeAttribute("data-dirty");
+        primary = id || null;
+        sites = sites.filter((site) => site !== primary);
+        updateSites();
+        saveSoon();
+      } }), name)));
+    siteBox.append(...secondaryChips.map(([, chip]) => chip));
+    updateSites();
 
     if (other) {
       return [label("Each week"), rows, el("p", { class: "note", text: "Switch off days they can't work. Tap a day's time to give a from or until time." }),
@@ -1591,7 +1625,7 @@
     }
     return [label("Emails"), el("div", { class: "list glass" },
       el("div", { class: "lrow emrow" }, el("span", { class: "t" }, el("b", { text: m.address || "No email address yet" }),
-        el("span", { class: "s", text: m.address ? "Only an admin can change it." : "Ask an admin to add your email address to get rota emails." }))), ...rows),
+        el("span", { class: "s" }, m.address ? "Change it in " : "Add an email address in ", el("a", { href: "#profile", class: "profile-link" }, "My profile"), "."))), ...rows),
       !m.ready ? el("p", { class: "note", text: "Rota emails aren't switched on for the team yet." }) : null].filter(Boolean);
   }
 
@@ -1674,7 +1708,7 @@
       label("Your own shifts"),
       el("div", { class: "list glass" }, row("Open shifts", "Shifts you could pick up", "swap", "teal", () => go("swaps")),
         row("When I can work", "Your weekly pattern and time off", "avail", "indigo", () => go("avail")),
-        row("My profile", "Your contact details and start date", "mine", "blue", () => go("profile"))),
+        row("My profile", "Your contact details and start date", "profile", "blue", () => go("profile"))),
       label("Account"),
       el("div", { class: "list glass" }, ...accountItems().map(([t, ic, fn, danger]) => el("button", { class: "lrow" + (danger ? " danger" : ""), type: "button", onclick: fn },
         el("span", { class: "tile " + (danger ? "red" : "grey") }, svgi(ICON[ic])), el("span", { class: "t" }, el("b", { text: t }), danger ? el("span", { class: "s", text: "Signed in as " + R.me.user.name }) : null))))];
@@ -1870,7 +1904,9 @@
       if (document.hidden) { hiddenAt = Date.now(); return; }
       if (Date.now() - hiddenAt > 30000 && !busy()) { refreshBadge(); render(); }
     });
-    window.addEventListener("online", () => { if (!busy()) render(); });
+    window.addEventListener("online", async () => {
+      if (await SC.ensureSession() && !busy()) render();
+    });
     // Several devices at once: every 10 seconds while the page is in view, ask whether the rota (or anyone's
     // account) has changed elsewhere, and if so redraw, unless someone is in the middle of something here.
     SC.watchChanges(10000, (c) => `${c.rota}.${c.accounts}`, () => !busy(), () => { if (R.weekData) R.weekData._at = 0; refreshBadge(); render(); }, true);

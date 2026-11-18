@@ -20,6 +20,38 @@ async function call(method, path, body, cookie = ADMIN) {
   assert.ok(r.ok, `${method} ${path}: ${JSON.stringify(j)}`);
   return j;
 }
+
+test("Rota sites support keyboard selection and keep focus", async () => {
+  await call("PUT", `/api/rota/people/${ALEX_ID}`, { primarySite: "cafe", sites: ["asg"] });
+  const { ctx, page } = await pageFor({ width: 1440, height: 900 }, ADMIN, "dark");
+  try {
+    await page.goto(srv.base + `/rota/#avail/${ALEX_ID}`);
+    const primary = page.getByRole("radiogroup", { name: "Primary site" });
+    const cafe = primary.getByRole("radio", { name: "Cafe", exact: true });
+    const asg = primary.getByRole("radio", { name: "ASG", exact: true });
+    await cafe.focus();
+    await cafe.press("ArrowRight");
+    assert.ok(await asg.isChecked(), "the arrow selects the next primary site");
+    assert.ok(await asg.evaluate((radio) => document.activeElement === radio), "focus follows the selected site");
+    const secondary = page.getByRole("group", { name: "Can also work at" });
+    assert.equal(await secondary.getByRole("button", { name: "ASG", exact: true }).count(), 0);
+    const office = secondary.getByRole("button", { name: "Office", exact: true });
+    await office.focus();
+    await office.press("Space");
+    assert.equal(await office.getAttribute("aria-pressed"), "true");
+    assert.ok(await office.evaluate((button) => document.activeElement === button), "toggling another site keeps focus");
+    await page.getByRole("status").filter({ hasText: "Saved" }).waitFor();
+    const person = (await call("GET", "/api/admin/people")).people.find((p) => p.id === ALEX_ID);
+    assert.equal(person.rota.primarySite, "asg");
+    assert.deepEqual(person.rota.sites, ["office"]);
+    const beforeRefresh = await office.elementHandle();
+    await page.evaluate(() => window.dispatchEvent(new Event("online")));
+    await page.waitForFunction((button) => !button.isConnected, beforeRefresh);
+    assert.ok(await office.evaluate((button) => document.activeElement === button), "the same site retains focus after a full availability refresh");
+  } finally {
+    await ctx.close();
+  }
+});
 const shot = (page, name) => process.env.SHOT_DIR ? page.screenshot({ path: join(process.env.SHOT_DIR, name + ".png"), fullPage: false }) : null;
 
 before(async () => {
@@ -54,10 +86,17 @@ for (const [label, viewport, scheme] of [["phone", { width: 393, height: 852 }, 
     await s.page.goto(srv.base + "/rota/#profile");
     await s.page.locator("#pf_phone").waitFor();
     assert.equal(await s.page.locator("text=Ask for cover").count(), 0);
-    await s.page.fill("#pf_phone", phone);
+    const phoneField = s.page.getByLabel("Contact number");
+    await phoneField.fill(phone);
     await s.page.fill("#pf_address", "1 Elm Hill\nNorwich\nNR3 1HN");
-    await s.page.locator("button", { hasText: "Save my details" }).click();
+    await phoneField.press("Enter");
     await s.page.locator("#toast", { hasText: /admin has been told/ }).waitFor();
+    assert.ok(await phoneField.evaluate((field) => document.activeElement === field), "Enter saves without losing focus");
+    const save = s.page.getByRole("button", { name: "Save my details" });
+    await save.focus();
+    await save.press("Enter");
+    await s.page.locator("#toast", { hasText: "Nothing changed." }).waitFor();
+    assert.ok(await save.evaluate((button) => document.activeElement === button), "the Save button retains focus after another save");
     assert.ok(await noOverflow(s.page), "no sideways scroll");
     await shot(s.page, `profile-staff-${label}-${scheme}`);
     // No "Ask for cover" on My shifts either.
@@ -67,7 +106,12 @@ for (const [label, viewport, scheme] of [["phone", { width: 393, height: 852 }, 
     assert.deepEqual(s.errors, []);
     await s.ctx.close();
 
-    // The admin sees it on People, sets the start date and a primary site.
+    // The admin sees it on People and can edit availability without dropping an existing Office assignment.
+    const originalSites = label === "phone"
+      ? { primarySite: "office", sites: ["asg"] }
+      : { primarySite: "cafe", sites: ["office"] };
+    const primaryName = label === "phone" ? "Office" : "Cafe";
+    await call("PUT", "/api/rota/people/" + ALEX_ID, originalSites);
     const a = await pageFor(viewport, ADMIN, scheme);
     await a.page.goto(srv.base + "/admin#people");
     await a.page.locator(`[data-person="${ALEX_ID}"]`).first().click();
@@ -75,23 +119,33 @@ for (const [label, viewport, scheme] of [["phone", { width: 393, height: 852 }, 
     await card.waitFor();
     assert.match(await card.innerText(), new RegExp(phone));
     assert.match(await card.innerText(), /Elm Hill/);
-    await card.locator("button[data-act=profile]").click();
+    await card.getByRole("button", { name: "Edit profile", exact: true }).click();
     await a.page.fill("#fStart", start);
     await a.page.locator("#sheet button[type=submit]").click();
     await a.page.locator("#toast", { hasText: "Saved" }).waitFor();
     await a.page.locator("section[aria-label='Staff profile']", { hasText: new RegExp(start.slice(0, 4)) }).waitFor();
 
-    await a.page.locator("button[data-act=avail]").click();
-    await a.page.selectOption("#fPrimary", label === "phone" ? "roastery" : "cafe");
-    await a.page.selectOption("#fPrimary", "cafe");
-    assert.ok(await a.page.locator("#sheet .checks input[value=cafe]").evaluate((i) => i.closest("label").hidden), "the primary site isn't offered twice");
-    await a.page.locator("#sheet .checks input[value=asg]").check();
+    assert.match(await a.page.getByRole("region", { name: "Rota", exact: true }).innerText(), /\bOffice\b/);
+    await a.page.getByRole("button", { name: "Edit sites and availability" }).click();
+    const primary = a.page.getByLabel("Primary site");
+    const otherSites = a.page.getByRole("group", { name: "Can also work at" });
+    assert.equal(await primary.inputValue(), originalSites.primarySite);
+    assert.equal(await otherSites.getByRole("checkbox", { name: primaryName, exact: true }).count(), 0, "the primary site isn't offered twice");
+    const roastery = otherSites.getByRole("checkbox", { name: "Roastery" });
+    await roastery.check();
+    await primary.selectOption("roastery");
+    assert.equal(await roastery.count(), 0);
+    await primary.selectOption(originalSites.primarySite);
+    assert.ok(await roastery.isChecked(), "changing the draft primary site back keeps the original additional selection");
+    await roastery.uncheck();
+    await a.page.getByRole("group", { name: "Monday", exact: true }).getByRole("button", { name: "Can't work", exact: true }).click();
     await shot(a.page, `profile-avail-${label}-${scheme}`);
     await a.page.locator("#sheet button[type=submit]").click();
     await a.page.locator("#toast", { hasText: "Saved" }).waitFor();
     const person = (await call("GET", "/api/admin/people")).people.find((p) => p.id === ALEX_ID);
-    assert.equal(person.rota.primarySite, "cafe");
-    assert.deepEqual(person.rota.sites, ["asg"]);
+    assert.equal(person.rota.primarySite, originalSites.primarySite);
+    assert.deepEqual(person.rota.sites, originalSites.sites);
+    assert.equal(person.rota.pattern.mon, "off");
     assert.equal(person.profile.startDate, start);
     await a.page.locator("text=Can also work at").first().waitFor();
     await a.page.waitForTimeout(300);

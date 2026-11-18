@@ -34,12 +34,14 @@ body:not([data-page="week"]):not([data-page="mine"]) .wrap.rwrap{max-width:760px
 .rwrap,.rsheet,#acctMenu{overflow-wrap:anywhere}
 .rwrap .staff-section-tabs .tab:has(.n){padding-block-start:3px}
 .rwrap .staff-section-tabs .tab .n{top:1px;height:14px;line-height:1}
+.rwrap #tabbar:has([data-rota-focus="tab:avail"]) .tab{flex:1 1 auto}
 @media (max-width:380px){
   .rwrap #tabbar{gap:2px;padding-inline:3px}
   .rwrap #tabbar .tab{min-inline-size:44px;padding-inline:2px;overflow-wrap:normal}
   .rwrap #tabbar :is([data-rota-focus="tab:week"],[data-rota-focus="tab:more"]){flex:.7}
   .rwrap #tabbar [data-rota-focus="tab:leave"]{flex:1.18}
   .rwrap #tabbar [data-rota-focus="tab:requests"]{flex:1.32}
+  .rwrap #tabbar:has([data-rota-focus="tab:avail"]) [data-rota-focus="tab:leave"]{flex:0 0 max-content}
 }
 @media (pointer:coarse){
   .rwrap .iconbtn{width:44px;height:44px}
@@ -265,6 +267,11 @@ button.shc:hover{border-color:var(--accent)}
 .avtimes input{min-height:40px;font-size:16px}
 .fchips{display:flex;flex-wrap:wrap;gap:8px}
 .fchip[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);border-color:transparent}
+.availability-sites .fchip{min-height:44px}
+.primary-site{position:relative;display:inline-flex;align-items:center}
+.primary-site input{position:absolute;inline-size:1px;block-size:1px;margin:0;opacity:0}
+.primary-site:has(input:checked){background:var(--accent);color:var(--accent-ink)}
+.primary-site:has(input:focus-visible){outline:var(--focus-ring-width) solid var(--focus-ink);outline-offset:2px}
 
 /* Hours and settings */
 .hstats{grid-template-columns:repeat(auto-fit,minmax(90px,1fr))}
@@ -792,7 +799,12 @@ body[data-page="leave"] .stat b { font-variant-numeric:tabular-nums; }
 .leave-accrual-row .leave-check { min-width:0; }
 .leave-accrual-days { flex:none;font-variant-numeric:tabular-nums; }
 .leave-takeby-list .lrow .t { min-width:0; }
+.profile-start{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 16px}
+.profile-start .note{margin:2px 0 0}
 .profile-form .sfields{grid-template-columns:minmax(0,1fr);align-items:start}
 .profile-form .field{align-self:start;justify-content:flex-start}
 .profile-form .row{margin-top:12px}
+.profile-form .smsg:not(:empty){margin-top:12px}
+.profile-form .btn[aria-disabled="true"]{opacity:.55;cursor:wait}
+.profile-link{color:var(--accent);font-weight:600}
 @media (min-width:700px){.profile-form .sfields{grid-template-columns:repeat(2,minmax(0,1fr))}}

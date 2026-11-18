@@ -240,6 +240,11 @@ html:has(#scrim:not([hidden])){overflow:hidden}
 .field{display:grid;gap:6px;min-width:0}
 .field>label,.field>.fl{font-size:13.5px;font-weight:600;color:var(--muted)}
 .field input,.field select{width:100%;min-height:44px;border-radius:12px;border:1px solid var(--line);background:var(--surface);padding:0 12px;font-size:16px}
+.staff-profile-edit textarea{min-width:0;resize:vertical;font:inherit;font-size:16px}
+.site-options{min-inline-size:0;margin:0;padding:0;border:0}
+.site-options legend{margin-bottom:6px;padding:0;font-size:13.5px;font-weight:600;color:var(--muted)}
+.site-options .checks label{min-height:44px}
+.availability-heading{margin:4px 0 0;padding-top:12px;border-top:1px solid var(--line);font-size:16px}
 .err{color:var(--bad);font-weight:600;font-size:14px}
 .err:empty{display:none}
 .secret{display:grid;gap:4px;padding:14px 16px;border-radius:16px;background:var(--ok-bg)}
