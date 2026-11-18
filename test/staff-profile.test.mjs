@@ -94,7 +94,8 @@ test("staff see and change only their own contact details; the start date is the
   const mail = JSON.stringify(sent[0]);
   assert.match(mail, /Alex Brown/);
   assert.match(mail, /contact number, contact email and home address/);
-  assert.doesNotMatch(mail, /07700|Elm Hill|NR3|alex\.brown@/i, "the email names the fields, not the details");
+  // Exact details only: the unsubscribe link's random token can contain any short run of letters and digits.
+  assert.doesNotMatch(mail, /07700 900123|1 Elm Hill|NR3 1HN|alex\.brown@example\.test/, "the email names the fields, not the details");
 
   // …and on Admin → Activity and the Overview, until dismissed.
   const overview = (await req("GET", "/api/admin/overview")).body;
