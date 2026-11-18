@@ -44,6 +44,12 @@ export function checkSites(v: unknown): string[] {
   if (!Array.isArray(v) || v.some((s) => typeof s !== "string" || !SITE_IDS.has(s))) throw invalid("Choose sites from the list.");
   return [...new Set(v as string[])];
 }
+/** One primary site, or null for none. */
+export function checkPrimarySite(v: unknown): string | null {
+  if (v == null || v === "") return null;
+  if (typeof v !== "string" || !SITE_IDS.has(v)) throw invalid("Choose the primary site from the list.");
+  return v;
+}
 export function checkContract(v: unknown): number | null {
   if (v == null || v === "") return null;
   const n = Number(v);

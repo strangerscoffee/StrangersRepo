@@ -55,17 +55,20 @@ export async function loadClosures(env: Env, from: string, to: string): Promise<
  *  so people next to each other in that order are far apart in colour, and a new person never changes anyone's. */
 export const personHue = (seq: number) => Math.round(210 + seq * 137.508) % 360;
 
+/** The sites someone can be rota'd at: their primary site first, then the others ticked. */
+export const withPrimary = (primary: string | null | undefined, others: string[]) => (primary ? [primary, ...others.filter((s) => s !== primary)] : others);
+
 export async function loadPeople(env: Env): Promise<Map<string, Person>> {
   const r = await env.DB.prepare(
-    `SELECT u.id, u.name, u.role, p.contract_min, p.contract_max, p.sites, p.pattern,
+    `SELECT u.id, u.name, u.role, p.contract_min, p.contract_max, p.sites, p.pattern, p.primary_site,
        (SELECT COUNT(*) FROM users o WHERE o.created_at < u.created_at OR (o.created_at = u.created_at AND o.id < u.id)) AS seq
      FROM users u LEFT JOIN rota_people p ON p.user_id = u.id WHERE u.active = 1 ORDER BY u.name_key`,
-  ).all<{ id: string; name: string; role: string; contract_min: number | null; contract_max: number | null; sites: string | null; pattern: string | null; seq: number }>();
+  ).all<{ id: string; name: string; role: string; contract_min: number | null; contract_max: number | null; sites: string | null; pattern: string | null; primary_site: string | null; seq: number }>();
   const out = new Map<string, Person>();
   for (const u of r.results) {
     out.set(u.id, {
       id: u.id, name: u.name, role: u.role, contractMin: u.contract_min ?? null, contractMax: u.contract_max ?? null, contractHours: u.contract_max ?? null,
-      sites: parseJson(u.sites, []), pattern: parseJson(u.pattern, {}), hue: personHue(u.seq),
+      sites: withPrimary(u.primary_site, parseJson(u.sites, [])), primarySite: u.primary_site || null, pattern: parseJson(u.pattern, {}), hue: personHue(u.seq),
     });
   }
   return out;

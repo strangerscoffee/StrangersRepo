@@ -328,6 +328,17 @@ const MIGRATIONS: Migration[] = [
   { id: 33, name: "Bradford Factor review", run: async (env) => {
     await env.DB.prepare("CREATE TABLE IF NOT EXISTS rota_bradford_review (time_off_id TEXT PRIMARY KEY, excluded_reason TEXT, continues INTEGER NOT NULL DEFAULT 0, version INTEGER NOT NULL, updated_at INTEGER NOT NULL, updated_by TEXT NOT NULL)").run();
   } },
+  // The private staff profile (src/profile.ts) and each person's primary site on the rota.
+  { id: 34, name: "Staff profile and primary site", run: async (env) => {
+    const users = await columns(env, "users"), people = await columns(env, "rota_people");
+    await runAll(env, [
+      ...(users.has("start_date") ? [] : ["ALTER TABLE users ADD COLUMN start_date TEXT"]),
+      ...(users.has("phone") ? [] : ["ALTER TABLE users ADD COLUMN phone TEXT"]),
+      ...(users.has("home_address") ? [] : ["ALTER TABLE users ADD COLUMN home_address TEXT"]),
+      ...(users.has("profile_version") ? [] : ["ALTER TABLE users ADD COLUMN profile_version INTEGER NOT NULL DEFAULT 0"]),
+      ...(people.has("primary_site") ? [] : ["ALTER TABLE rota_people ADD COLUMN primary_site TEXT"]),
+    ]);
+  } },
 ];
 
 async function migrate(env: Env): Promise<void> {

@@ -81,6 +81,9 @@
   const hrs = (n) => `${Math.round(n * 10) / 10}h`;
   const meter = (pct, cls = "") => html`<span class="meter ${cls}" role="img" aria-label="${Math.round(pct)}%"><i style="width:${Math.max(0, Math.min(100, pct))}%"></i></span>`;
   const kv = (k, v) => html`<div class="kv"><span>${k}</span><span>${v}</span></div>`;
+  // Where someone works: their primary site first, then the others they can also work at.
+  const worksAt = (r) => r.primarySite ? [siteName(r.primarySite) + " (primary)", ...r.sites.map(siteName)].join(", ") : r.sites.length ? r.sites.map(siteName).join(", ") : "Any site";
+  const dmyIso = (d) => new Date(d + "T12:00:00Z").toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
   const rolePill = (r) => html`<span class="pill ${r === "admin" ? "acc" : r === "manager" ? "ok" : ""}">${ROLE[r] || r}</span>`;
   const head = (title, sub, action) => html`<div class="pagehead"><h1>${title}</h1>${action || raw("<span></span>")}${sub ? html`<p>${sub}</p>` : ""}</div>`;
   const contract = (r) => (r.contractMin != null && r.contractMax != null ? (r.contractMin === r.contractMax ? `${r.contractMax}h a week` : `${r.contractMin}–${r.contractMax}h a week`) : r.contractMax != null ? `up to ${r.contractMax}h a week` : r.contractMin != null ? `at least ${r.contractMin}h a week` : "None set");
@@ -349,7 +352,7 @@
   function personRow(p) {
     const flag = !p.active ? html`<span class="pill">Switched off</span>` : p.locked ? html`<span class="pill bad">Locked</span>`
       : !p.lastLoginAt ? html`<span class="pill warn">Not signed in yet</span>` : p.rota.weekOvertime ? html`<span class="pill warn">${hrs(p.rota.weekOvertime)} overtime</span>` : "";
-    const where = p.rota.sites.length ? p.rota.sites.map(siteName).join(", ") : "Any site";
+    const where = worksAt(p.rota);
     const open = S.open === p.id;
     return html`
       <button class="item ${p.active ? "" : "off"}" type="button" data-person="${p.id}" aria-expanded="${open}">
@@ -380,10 +383,18 @@
         <div class="cards">
           <section class="card" aria-label="Account">
             <div class="chead"><h3><span class="ic acc">${svg("user")}</span>Account</h3></div>
-            ${kv("Username", p.username)}${kv("Email", p.email || "None: no rota emails")}${kv("Role", rolePill(p.role))}${kv("Last sign-in", p.lastLoginAt ? cap(when(p.lastLoginAt)) : "Never")}
+            ${kv("Username", p.username)}${kv("Role", rolePill(p.role))}${kv("Last sign-in", p.lastLoginAt ? cap(when(p.lastLoginAt)) : "Never")}
             ${kv("Quick PIN", p.role === "admin" ? "Admins use their password" : p.quickPin ? "Set" : "Not set")}
             ${p.role !== "staff" ? html`<div class="kv"><span>Monday summary</span><span class="kvact">${summaryText(p)} <button class="btn sm soft" type="button" data-act="summary" data-id="${p.id}">Change</button></span></div>` : ""}
             ${kv("Added", `${dmy(p.createdAt)}${p.createdBy ? ` by ${p.createdBy}` : ""}`)}
+          </section>
+          <section class="card" aria-label="Staff profile">
+            <div class="chead"><h3><span class="ic acc">${svg("user")}</span>Staff profile</h3><button class="btn sm soft" type="button" data-act="profile" data-id="${p.id}">${svg("pen")}Edit</button></div>
+            ${kv("Start date", p.profile.startDate ? dmyIso(p.profile.startDate) : "Not set")}
+            ${kv("Contact number", p.profile.phone || "Not given")}
+            ${kv("Contact email", p.email || "None: no rota emails")}
+            <div class="kv stack"><span>Home address</span><span class="addr">${p.profile.address || "Not given"}</span></div>
+            <p class="hint">Private to ${p.name} and admins. ${p.name.split(" ")[0]} can change their contact number, email and address on My profile in the rota; only admins set the start date.</p>
           </section>
           <section class="card" aria-label="Rota">
             <div class="chead"><h3><span class="ic acc">${svg("clock")}</span>Rota</h3><a class="link" href="${S.links.rota}">Open</a></div>
@@ -391,7 +402,8 @@
               <div class="big"><b>${hrs(r.weekHours)}</b><span>this week · contract ${contract(r)}</span>${over ? html`<span class="pill warn">${hrs(over)} overtime</span>` : ""}</div>
               ${max ? html`${meter((r.weekHours / max) * 100, over ? "over" : "")}<div class="scale"><span>0</span><span>${max}h max</span></div>` : ""}
             </div>
-            ${kv("Works at", r.sites.length ? html`<span class="chips">${r.sites.map((s) => html`<span class="chip">${siteName(s)}</span>`)}</span>` : "Any site")}
+            ${kv("Primary site", r.primarySite ? siteName(r.primarySite) : "Not set")}
+            ${kv(r.primarySite ? "Can also work at" : "Works at", r.sites.length ? html`<span class="chips">${r.sites.map((s) => html`<span class="chip">${siteName(s)}</span>`)}</span>` : r.primarySite ? "No other sites" : "Any site")}
             <div class="kv stack"><span>When they can work</span>
               <div class="week">${DAYS.map(([k, ab, full]) => { const v = pat[k]; const off = v === "off"; const t = v && typeof v === "object" ? `${v.from || ""}–${v.to || ""}` : "";
                 return html`<span class="${off ? "off" : ""}" title="${full}: ${off ? "can't work" : t || "any time"}" aria-label="${full}: ${off ? "can't work" : t || "any time"}">${ab}${t ? html`<small>${t}</small>` : ""}</span>`; })}</div></div>
@@ -604,6 +616,30 @@
     });
   }
 
+  // The private staff profile (src/profile.ts): admins set the start date and can correct the rest.
+  function editProfile(p) {
+    const pr = p.profile;
+    openSheet(html`<form class="sheetform" novalidate><h2 id="sheetTitle">${p.name}'s profile</h2>
+      <p>Private to ${p.name} and admins.</p>
+      <label class="field"><span class="fl">Start date</span><input id="fStart" type="date" value="${pr.startDate || ""}"></label>
+      <label class="field"><span class="fl">Contact number</span><input id="fPhone" type="tel" autocomplete="off" maxlength="30" value="${pr.phone}"></label>
+      <label class="field"><span class="fl">Contact email (rota emails go here too)</span><input id="fPEmail" type="email" autocomplete="off" maxlength="254" value="${p.email || ""}"></label>
+      <label class="field"><span class="fl">Home address</span><textarea id="fAddress" rows="4" maxlength="300">${pr.address}</textarea></label>
+      <p class="err" id="fErr" role="alert"></p>
+      <div class="row"><button class="btn soft" type="button" data-sheet="close">Cancel</button><button class="btn" type="submit">Save</button></div></form>`,
+    async (act) => {
+      if (act !== "submit") return;
+      const body = {}, start = $("#fStart").value, phone = $("#fPhone").value.trim(), email = $("#fPEmail").value.trim(), address = $("#fAddress").value.trim();
+      if (start !== (pr.startDate || "")) body.startDate = start;
+      if (phone !== pr.phone) body.phone = phone;
+      if (email !== (p.email || "")) body.email = email;
+      if (address !== pr.address) body.address = address;
+      if (!Object.keys(body).length) { closeSheet(); return; }
+      try { await api("PATCH", `/api/admin/users/${p.id}`, body); closeSheet(); toast("Saved"); reload(); }
+      catch (e) { $("#fErr").textContent = e.message; }
+    });
+  }
+
   async function editOrderAccess(p) {
     try {
       const access=await api("GET",`/api/admin/users/${p.id}/orders-access`);
@@ -655,8 +691,9 @@
           <div class="seg" role="group" aria-label="${full}">${[["any", "Any time"], ["times", "Times"], ["off", "Can't work"]].map(([mk, t]) => html`<button type="button" data-sheet="mode" data-mode="${mk}" aria-pressed="${m === mk}">${t}</button>`)}</div>
           <div class="times" ${m === "times" ? "" : raw("hidden")}><input type="time" aria-label="${full} from" value="${v && v.from ? v.from : ""}"><span>to</span><input type="time" aria-label="${full} until" value="${v && v.to ? v.to : ""}"></div>
         </div>`; })}</div>
-      <div class="field"><span class="fl">Sites they can get to</span><div class="checks">${SITES.map(([id, n]) => html`<label><input type="checkbox" value="${id}" ${p.rota.sites.includes(id) ? raw("checked") : ""}>${n}</label>`)}</div></div>
-      <p>None ticked means any site.</p>
+      <label class="field"><span class="fl">Primary site</span><select id="fPrimary"><option value="">Not set</option>${SITES.map(([id, n]) => html`<option value="${id}" ${p.rota.primarySite === id ? raw("selected") : ""}>${n}</option>`)}</select></label>
+      <div class="field"><span class="fl">Can also work at</span><div class="checks">${SITES.map(([id, n]) => html`<label ${p.rota.primarySite === id ? raw("hidden") : ""}><input type="checkbox" value="${id}" ${p.rota.sites.includes(id) ? raw("checked") : ""}>${n}</label>`)}</div></div>
+      <p id="fSitesNote">${p.rota.primarySite ? "They're only put on shifts at their primary site and the sites ticked." : "With no primary site and none ticked, they can work at any site."}</p>
       <p class="err" id="fErr" role="alert"></p>
       <div class="row"><button class="btn soft" type="button" data-sheet="close">Cancel</button><button class="btn" type="submit">Save</button></div></form>`,
     async (act, el) => {
@@ -673,10 +710,17 @@
         const [a, b] = row.querySelectorAll(".times input");
         pattern[row.dataset.day] = m === "off" ? "off" : m === "times" ? { from: a.value, to: b.value } : "any";
       });
-      const sites = [...document.querySelectorAll("#sheet .checks input:checked")].map((i) => i.value);
-      try { await api("PUT", `/api/rota/people/${p.id}`, { pattern, sites }); closeSheet(); toast("Saved"); reload(); }
+      const primarySite = $("#fPrimary").value || null;
+      const sites = [...document.querySelectorAll("#sheet .checks input:checked")].map((i) => i.value).filter((v) => v !== primarySite);
+      try { await api("PUT", `/api/rota/people/${p.id}`, { pattern, sites, primarySite }); closeSheet(); toast("Saved"); reload(); }
       catch (e) { $("#fErr").textContent = e.message; }
     });
+    // The primary site isn't offered again under "Can also work at".
+    const primary = $("#fPrimary");
+    if (primary) primary.onchange = () => {
+      document.querySelectorAll("#sheet .checks input").forEach((i) => { const hide = i.value === primary.value; i.closest("label").hidden = hide; if (hide) i.checked = false; });
+      $("#fSitesNote").textContent = primary.value ? "They're only put on shifts at their primary site and the sites ticked." : "With no primary site and none ticked, they can work at any site.";
+    };
   }
 
   async function copySetup(siteId) {
@@ -777,6 +821,7 @@
       case "edit": if (p) editPerson(p); return;
       case "order-access": if(p)editOrderAccess(p);return;
       case "avail": if (p) editAvailability(p); return;
+      case "profile": if (p) editProfile(p); return;
       case "copy": copySetup(id); return;
       case "slacktest": {
         const [site, slot] = String(id).split(":");

@@ -928,3 +928,5 @@ html[data-sc-staff] .sheet:has(.w-section-list){width:min(480px,100%);padding:7p
   .w-order-controls .w-picking{grid-row:auto;grid-column:1/-1}
   .w-order-controls .w-dispatch-scope select{min-height:40px}
 }
+.card .hint{overflow-wrap:anywhere}
+.kv .addr{white-space:pre-line;overflow-wrap:anywhere}

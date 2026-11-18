@@ -46,7 +46,10 @@ export type Pattern = Record<string, "any" | "off" | { from?: string; to?: strin
 /** `contractHours` is kept for older pages: it's the maximum. */
 export interface Person {
   id: string; name: string; role: string; contractMin: number | null; contractMax: number | null; contractHours: number | null;
+  /** Sites they can be rota'd at: their primary site plus the other sites ticked (empty: any site). */
   sites: string[]; pattern: Pattern;
+  /** Where they mainly work (rota_people.primary_site), or null if not set. */
+  primarySite?: string | null;
   /** Their colour on the rota, a hue (0–359): fixed by the order accounts were made, so it never changes. */
   hue: number;
 }
