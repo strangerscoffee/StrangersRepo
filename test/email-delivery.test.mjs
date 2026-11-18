@@ -36,7 +36,9 @@ test('verified delivery and delayed events are idempotent and cannot downgrade a
 });
 test('forged, stale, future, tampered and oversized webhooks change no delivery state',async()=>{
  const email=await send(),before=srv.sql('SELECT count(*) AS n FROM email_delivery_events')[0].n;
- for(const options of [{signature:'v1,invalid'},{timestamp:Math.floor(Date.now()/1000)-301},{timestamp:Math.floor(Date.now()/1000)+301},{raw:'not JSON'}])assert.equal((await feedback('email.delivered',email,options)).status,400);
+ const now=Math.floor(Date.now()/1000),outsideTolerance=6*60; // Leave room for the earlier requests to complete.
+ const invalid=[['forged signature',{signature:'v1,invalid'}],['stale timestamp',{timestamp:now-outsideTolerance}],['future timestamp',{timestamp:now+outsideTolerance}],['invalid JSON',{raw:'not JSON'}]];
+ for(const [label,options] of invalid)assert.equal((await feedback('email.delivered',email,options)).status,400,label);
  const payload=JSON.stringify({type:'email.delivered'}),id='msg_'+randomUUID();const wrong=createHmac('sha256',Buffer.from(secret.slice(6),'base64')).update(id+'.'+Math.floor(Date.now()/1000)+'.'+payload).digest('base64');assert.equal((await feedback('email.delivered',email,{id,signature:'v1,'+wrong})).status,400);
  assert.equal((await feedback('email.delivered',email,{raw:' '.repeat(65537)})).status,413);
  assert.equal(srv.sql('SELECT count(*) AS n FROM email_delivery_events')[0].n,before);assert.equal(await status(email.id),'accepted');
