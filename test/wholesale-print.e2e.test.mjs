@@ -32,7 +32,7 @@ before(async () => {
 });
 after(async () => { await b?.close(); await srv?.stop(); });
 
-for (const [screen, viewport] of [["small phone", { width: 320, height: 844 }], ["phone", { width: 393, height: 852 }], ["compact tablet", { width: 701, height: 1024 }], ["tablet", { width: 820, height: 1180 }], ["desktop", { width: 1440, height: 900 }]]) for (const colorScheme of ["light", "dark"]) {
+for (const [screen, viewport] of [["small phone", { width: 320, height: 844 }], ["phone", { width: 393, height: 852 }], ["compact tablet", { width: 701, height: 1024 }], ["tablet", { width: 820, height: 1180 }], ["split desktop", { width: 1340, height: 900 }], ["desktop", { width: 1440, height: 900 }], ["wide toolbar", { width: 1560, height: 1000 }], ["wide desktop", { width: 1920, height: 1080 }]]) for (const colorScheme of ["light", "dark"]) {
   test(`wholesale order controls stay inside the panel on ${screen} ${colorScheme}`, async () => {
     const ctx = await b.newContext({ viewport, colorScheme, isMobile: viewport.width < 600, hasTouch: viewport.width < 1024 });
     const [name, value] = ADMIN.split("="); await ctx.addCookies([{ name, value, url: srv.base }]);
@@ -47,18 +47,56 @@ for (const [screen, viewport] of [["small phone", { width: 320, height: 844 }], 
       });
       assert.ok(geometry.overflow <= 1, `the panel must not clip its contents: ${JSON.stringify(geometry)}`);
       assert.deepEqual(geometry.outside, [], 'actions, prices and order rows fit inside the panel');
-      await revealAdminOptions(p, '.w-order-settings');
+      const settings = panel.locator(".w-order-settings");
+      const trigger = settings.locator("summary");
+      const header = panel.locator(".w-list-header");
+      await trigger.scrollIntoViewIfNeeded();
+      const layout = () => panel.evaluate(node => {
+        const header = node.querySelector('.w-list-header').getBoundingClientRect();
+        const order = node.querySelector('.w-order').getBoundingClientRect();
+        return { height: header.height, width: header.width, toFirstOrder: Math.round(order.top - header.top) };
+      });
+      const before = await layout();
+      if (viewport.width >= 1340) {
+        const centred = await header.evaluate(node => [...node.querySelectorAll("h2, .w-result-count, .w-header-actions > button, .w-new-order, summary")]
+          .map(el => { const bounds = el.getBoundingClientRect(); return bounds.top + bounds.height / 2; }));
+        assert.ok(Math.max(...centred) - Math.min(...centred) < 12, "the title, count and actions share one row");
+      }
+      await revealAdminOptions(p, ".w-order-settings");
+      assert.deepEqual(await layout(), before, "opening settings leaves the header size and queue position stable");
+      if (process.env.WHOLESALE_SCREENSHOT_DIR) await p.screenshot({ path: `${process.env.WHOLESALE_SCREENSHOT_DIR}/order-settings-${screen}-${colorScheme}.png`, animations: "disabled" });
+      await settings.getByRole("button", { name: "Announcement" }).focus();
+      await p.keyboard.press("Escape");
+      assert.equal(await settings.getAttribute("open"), null);
+      assert.equal(await trigger.evaluate(node => node === document.activeElement), true);
+      await trigger.click();
+      await header.getByRole("heading", { name: "Order queue" }).click();
+      assert.equal(await settings.getAttribute("open"), null, "clicking outside dismisses settings");
       for (const action of ['wh-announcement', 'wh-order-emails']) {
+        await revealAdminOptions(p, ".w-order-settings");
         const button = p.locator(`[data-act="${action}"]`); await button.scrollIntoViewIfNeeded();
         const target = await button.evaluate(node => { const r = node.getBoundingClientRect(), hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2); return { width: r.width, height: r.height, overflow: node.scrollWidth - node.clientWidth, exposed: hit === node || node.contains(hit) }; });
         assert.ok(target.width >= 44 && target.height >= 44 && target.overflow <= 1 && target.exposed, `${action} is a visible touch target with its label inside`);
         await button.click(); await p.locator(action === 'wh-announcement' ? '#wAnnForm' : '#wOrderEmailsForm').waitFor();
+        assert.ok(await p.locator('#sheet').evaluate(node => node.scrollWidth <= node.clientWidth + 1), `${action} fits the window width`);
         await p.locator('#sheet [data-sheet="close"]').first().click(); await p.locator('#scrim').waitFor({ state: 'hidden' });
+        assert.equal(await settings.getAttribute("open"), null, "settings close when an action opens");
+        assert.equal(await trigger.evaluate(node => node === document.activeElement), true, "closing the sheet returns focus to Order settings");
       }
-      const lastFilter = p.locator('[data-act="wh-status"]').last(), lastStatus = await lastFilter.getAttribute('data-id'); await lastFilter.scrollIntoViewIfNeeded(); await lastFilter.click();
-      await p.locator(`[data-act="wh-status"][data-id="${lastStatus}"][aria-pressed="true"]`).waitFor();
-      assert.equal(await lastFilter.getAttribute('aria-pressed'), 'true', 'the last status remains reachable in its own scroller');
-      await p.locator('[data-act="wh-status"][data-id="all"]').click(); await p.locator('[data-act="wh-order"]').first().waitFor();
+      if (viewport.width >= 1560) {
+        const toolbar = p.locator(".w-order-controls");
+        assert.ok(await toolbar.evaluate(node => node.scrollWidth <= node.clientWidth + 1), "the wide filter toolbar fits");
+        const status = p.locator("#wOrderStatus");
+        await status.selectOption("Cancelled");
+        await p.getByRole("heading", { name: "No matching orders" }).waitFor();
+        await status.selectOption("all");
+      } else {
+        const lastFilter = p.locator('[data-act="wh-status"]').last(), lastStatus = await lastFilter.getAttribute('data-id'); await lastFilter.scrollIntoViewIfNeeded(); await lastFilter.click();
+        await p.locator(`[data-act="wh-status"][data-id="${lastStatus}"][aria-pressed="true"]`).waitFor();
+        assert.equal(await lastFilter.getAttribute('aria-pressed'), 'true', 'the last status remains reachable in its own scroller');
+        await p.locator('[data-act="wh-status"][data-id="all"]').click();
+      }
+      await p.locator('[data-act="wh-order"]').first().waitFor();
       assert.equal(await p.evaluate(() => document.documentElement.scrollWidth - innerWidth), 0);
       if (process.env.WHOLESALE_SCREENSHOT_DIR) { await panel.evaluate(node => node.scrollIntoView({ block: 'start' })); await p.screenshot({ path: `${process.env.WHOLESALE_SCREENSHOT_DIR}/orders-${screen}-${colorScheme}.png` }); }
       assert.deepEqual(errors, []);

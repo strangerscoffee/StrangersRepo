@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en-GB">
+<html lang="en-GB" data-sc-staff>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
@@ -42,19 +42,19 @@
 <div class="sheetveil" id="sheetVeil" hidden></div>
 <div class="sheet" id="siteSheet" role="dialog" aria-modal="true" aria-labelledby="siteSheetTitle" hidden>
   <div class="grab" aria-hidden="true"></div>
-  <h2 id="siteSheetTitle">Choose a site</h2>
+  <div class="sheethead"><h2 id="siteSheetTitle">Choose a site</h2><button class="sheet-close" type="button" data-close-sheet aria-label="Close site chooser">×</button></div>
   <div class="list" id="siteList"></div>
   <p class="note">This device remembers the site you choose.</p>
 </div>
 <div class="sheet" id="peopleSheet" role="dialog" aria-modal="true" aria-labelledby="peopleSheetTitle" hidden>
   <div class="grab" aria-hidden="true"></div>
-  <h2 id="peopleSheetTitle">Who's recording?</h2>
-  <div class="list" id="peopleList"></div>
+  <div class="sheethead"><h2 id="peopleSheetTitle">Who's recording?</h2><button class="sheet-close" type="button" data-close-sheet aria-label="Close person chooser">×</button></div>
+  <div class="list" id="peopleList" aria-busy="false"></div>
   <p class="note" id="peopleNote"></p>
 </div>
 <div class="sheet" id="notifSheet" role="dialog" aria-modal="true" aria-labelledby="notifSheetTitle" hidden>
   <div class="grab" aria-hidden="true"></div>
-  <h2 id="notifSheetTitle">Notifications</h2>
+  <div class="sheethead"><h2 id="notifSheetTitle">Notifications</h2><button class="sheet-close" type="button" data-close-sheet aria-label="Close notifications">×</button></div>
   <div class="list" id="notifList"></div>
   <p class="note" id="notifNote">Maintenance jobs at every site: assigned to you, new, done, and ones left open too long.</p>
 </div>
@@ -64,7 +64,7 @@
 <main class="wrap" id="main">
   <div class="pagehead" id="pagehead">
     <button class="back" type="button" id="backBtn" hidden></button>
-    <div class="trow"><div class="ptitle"><h1 id="pageTitle">Today</h1><p id="pageSub"></p></div><div id="pageAction">
+    <div class="trow"><div class="ptitle"><h1 id="pageTitle" tabindex="-1">Today</h1><p id="pageSub"></p></div><div id="pageAction">
       <button class="addbtn" type="button" id="addBtn" hidden></button>
       <div class="headctl" id="dayCtl" hidden>
         <button class="iconbtn" type="button" id="dayPrev" aria-label="Previous day"></button>
@@ -151,7 +151,7 @@
     <div class="stat3" id="histStats"></div>
     <section class="cal glass">
       <div class="calg" id="strip"></div>
-      <div class="legend"><span><i class="ok"></i>Signed off</span><span><i class="part"></i>Part done</span><span><i class="bad"></i>Missed</span><span><i class="closed"></i>Closed</span></div>
+      <div class="legend"><span id="history-ok"><i class="ok"></i>Signed off</span><span id="history-part"><i class="part"></i>Part done</span><span id="history-bad"><i class="bad"></i>Missed</span><span id="history-closed"><i class="closed"></i>Closed</span></div>
     </section>
     <div class="label">Exceptions</div>
     <div class="list glass" id="excList"></div>
@@ -526,7 +526,7 @@
     </section>
   </div>
 </main>
-<div class="toast" id="toast" hidden></div>
+<div class="toast" id="toast" role="status" hidden></div>
 
 <script src="/shared/core.js"></script>
 <script src="/claude-shim.js"></script>

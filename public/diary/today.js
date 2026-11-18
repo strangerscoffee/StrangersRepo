@@ -124,7 +124,7 @@ function renderDayInner(){
     const[u,v]=bad[0];
     adv.append(el("div",{class:"advice"},el("b",{text:bad.length>1?`${bad.length} readings out of range`:`${u.name} is out of range (${v}°C)`}),
       el("span",{text:`Move high-risk food to a unit that's in range, check the door seal and setting, then take the reading again in 30 minutes. If it's still ${u.kind==="freezer"?"above −15°C":"above 8°C"}, call the engineer and decide what to throw away.`}),
-      R?null:el("button",{class:"btn ghost sm",type:"button",onclick:()=>{openSec($("#probCard"),"problems");renderDay();const pb=$("#problems");if(!pb.value)pb.value=`${u.name} read ${v}°C at ${time(Date.now())}. `;pb.focus();pb.scrollIntoView({block:"center",behavior:"smooth"})}},"Write down what you did")));
+      R?null:el("button",{class:"btn ghost sm",type:"button",onclick:()=>{openSec($("#probCard"),"problems");renderDay();const pb=$("#problems");if(!pb.value)pb.value=`${u.name} read ${v}°C at ${time(Date.now())}. `;pb.focus();pb.scrollIntoView({block:"center",behavior:diaryScroll()})}},"Write down what you did")));
   }
   const tDone=st.tN>=st.tTot&&st.tTot>0;
   secCard(tc,"temps",tDone&&!bad.length,bad.length?badgeEl("bad"):tDone?badgeEl("done"):ringEl(st.tN,st.tTot),"Temperatures",
@@ -179,7 +179,7 @@ function renderDayInner(){
 function goStep(t){
   const[card,key]={Temps:["#tempsCard","temps"],Opening:["#openCard","opening"],Closing:["#closeCard","closing"]}[t]||["#signCard",null];
   if(key)openSec($(card),key);renderDay();
-  const n=$(card);n.scrollIntoView({behavior:"smooth",block:"start"});
+  const n=$(card);n.scrollIntoView({behavior:diaryScroll(),block:"start"});
   const i=n.querySelector("input:not(:checked):not([disabled])");if(i&&key==="temps")i.focus({preventScroll:true});
 }
 function alertEl(title,sub,action,cls,ic){

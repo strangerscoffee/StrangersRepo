@@ -192,7 +192,10 @@ th,td{border-bottom-color:var(--line)}
 /* Reduce Transparency (iOS Settings → Accessibility): solid surfaces, no blur. */
 @media (prefers-reduced-transparency:reduce){
   :root{--glass:var(--surface);--glass-thick:var(--surface);--ambient:none}
+  html[data-sc-staff]{--blur:none}
   section.panel,.ehohead,.savebar,.toast,.btn.ghost{-webkit-backdrop-filter:none;backdrop-filter:none}
+  html[data-sc-staff] dialog::backdrop,
+  html[data-sc-staff] .sheetveil{-webkit-backdrop-filter:none;backdrop-filter:none}
 }
 /* Increase Contrast: firmer edges and text. */
 @media (prefers-contrast:more){
@@ -204,10 +207,14 @@ th,td{border-bottom-color:var(--line)}
 }
 
 /* ---------- PIN pad (pinpad.js), on the diary and the sign-in page ---------- */
-.pp-veil{position:fixed;inset:0;z-index:60;background:rgba(8,12,20,.32);-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}
-.pp-sheet{position:fixed;left:8px;right:8px;bottom:calc(env(safe-area-inset-bottom,0px) + 8px);z-index:61;max-width:400px;margin:0 auto;box-sizing:border-box;
-  display:grid;justify-items:center;gap:10px;padding:10px 16px 16px;border-radius:32px;background:var(--glass-thick);
+.pp-sheet{--pp-key-size:clamp(48px,min(16vw,11dvh),76px);position:fixed;inset:auto 8px calc(env(safe-area-inset-bottom,0px) + 8px);
+  width:min(400px,calc(100% - 16px));max-height:calc(100dvh - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px) - 16px);margin:0 auto;box-sizing:border-box;
+  justify-items:center;gap:clamp(6px,1.3dvh,10px);padding:10px 16px 16px;border-radius:32px;background:var(--glass-thick);color:var(--fg);
+  overflow:auto;overscroll-behavior:contain;overflow-wrap:anywhere;
   -webkit-backdrop-filter:var(--blur);backdrop-filter:var(--blur);border:1px solid var(--glass-edge);box-shadow:var(--glass-hi),var(--float)}
+.pp-sheet[open]{display:grid}
+body:has(.pp-sheet[open]){overflow:hidden}
+.pp-sheet::backdrop{background:rgba(8,12,20,.32);-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}
 .pp-grab{width:38px;height:5px;border-radius:99px;background:color-mix(in srgb,var(--muted) 45%,transparent)}
 .pp-sheet h2{margin:4px 0 0;font-size:20px;text-align:center}
 .pp-sub{margin:-4px 0 0;color:var(--muted);font-size:14px;text-align:center}
@@ -216,22 +223,20 @@ th,td{border-bottom-color:var(--line)}
 .pp-dots i.on{background:var(--accent);border-color:var(--accent)}
 .pp-live{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 .pp-msg{margin:0;min-height:20px;color:var(--bad);font-weight:600;font-size:14px;text-align:center}
-.pp-keys{display:grid;grid-template-columns:repeat(3,76px);gap:12px 22px}
-.pp-key{width:76px;height:76px;border-radius:50%;border:0;background:var(--sunk);color:var(--fg);font:inherit;font-size:30px;font-weight:500;cursor:pointer;
+.pp-sheet[aria-busy=true] .pp-msg{color:var(--muted)}
+.pp-keys{display:grid;grid-template-columns:repeat(3,var(--pp-key-size));gap:clamp(4px,1.6dvh,12px) clamp(8px,5vw,22px)}
+.pp-key{width:var(--pp-key-size);height:var(--pp-key-size);border-radius:50%;border:0;padding:0;background:var(--sunk);color:var(--fg);font:inherit;font-size:clamp(23px,4dvh,30px);font-weight:500;cursor:pointer;
   transition:transform .12s,background-color .15s}
 .pp-key:active{transform:scale(.94);background:color-mix(in srgb,var(--fg) 14%,transparent)}
-.pp-key.alt{background:none;font-size:16px;font-weight:600;color:var(--accent)}
+.pp-key.alt{background:none;font-size:clamp(12px,3dvh,16px);font-weight:600;color:var(--accent)}
 .pp-key[aria-label="Delete"]{font-size:26px}
 .pp-sheet.busy .pp-keys{opacity:.5;pointer-events:none}
-@media (min-width:1024px){.pp-sheet{left:50%;right:auto;bottom:auto;top:12vh;width:380px;transform:translateX(-50%)}.pp-grab{display:none}}
+@media (min-width:1024px){.pp-sheet{inset-block:12dvh auto;max-height:calc(88dvh - 8px);width:380px}.pp-grab{display:none}}
 @media (prefers-reduced-motion:no-preference){
-  .pp-sheet{animation:pp-up .3s cubic-bezier(.2,.8,.2,1)}
-  @keyframes pp-up{from{transform:translateY(24px);opacity:0}}
-  @media (min-width:1024px){@keyframes pp-up{from{transform:translate(-50%,12px);opacity:0}}}
   .pp-sheet.shake{animation:pp-shake .4s}
-  @keyframes pp-shake{20%,60%{translate:-10px 0}40%,80%{translate:10px 0}}
+  @keyframes pp-shake{20%,60%{transform:translateX(-6px)}40%,80%{transform:translateX(6px)}}
 }
-@media (prefers-reduced-transparency:reduce){.pp-sheet{-webkit-backdrop-filter:none;backdrop-filter:none}}
+@media (prefers-reduced-transparency:reduce){.pp-sheet,.pp-sheet::backdrop{-webkit-backdrop-filter:none;backdrop-filter:none}}
 
 /* ---------- Strangers Coffee logo ----------
    Drawn as a mask filled with the text colour, so it's black in light mode and white in dark mode.
@@ -253,26 +258,51 @@ th,td{border-bottom-color:var(--line)}
    https://transitions.dev/transitions/modal-open-close/
    https://transitions.dev/transitions/menu-dropdown/
    https://github.com/Jakubantalik/transitions.dev/blob/main/LICENSE */
-:root { --motion-open:250ms; --motion-close:150ms; --motion-ease:cubic-bezier(.22,1,.36,1); }
+:root {
+  --motion-open:250ms; --motion-close:150ms; --motion-press:130ms; --motion-content:200ms;
+  --motion-ease:cubic-bezier(.22,1,.36,1); --motion-spring:cubic-bezier(.23,1.12,.36,1);
+}
+html[data-sc-staff] {
+  --dialog-offset:12px; --dialog-start-scale:.985; --dialog-open-scale:1;
+  --dialog-spatial-ease:var(--motion-spring);
+}
+html[data-sc-staff] :is(dialog:not(#sc-session-shield),.sheet[role="dialog"],.menu[role="menu"]) {
+  background-color:var(--surface);
+  background-color:color-mix(in srgb,var(--surface) 85%,var(--glass-thick));
+}
 :is(button,a.btn,[role="tab"],summary) { -webkit-tap-highlight-color:transparent; }
 :is(button,a.btn,[role="tab"]) { transition-timing-function:var(--motion-ease); }
 dialog:not(#sc-session-shield) {
-  opacity:0; translate:0 6px; pointer-events:none;
-  transition:opacity var(--motion-close) var(--motion-ease),translate var(--motion-close) var(--motion-ease),display var(--motion-close) allow-discrete,overlay var(--motion-close) allow-discrete;
+  opacity:0; translate:0 var(--dialog-offset,6px); scale:var(--dialog-start-scale,none); pointer-events:none;
+  transition:opacity var(--motion-close) var(--motion-ease),
+    translate var(--motion-close) var(--dialog-spatial-ease,var(--motion-ease)),
+    scale var(--motion-close) var(--dialog-spatial-ease,var(--motion-ease)),
+    display var(--motion-close) allow-discrete,overlay var(--motion-close) allow-discrete;
 }
-dialog:not(#sc-session-shield)[open] { opacity:1;translate:0 0;pointer-events:auto;transition-duration:var(--motion-open); }
+dialog:not(#sc-session-shield)[open] { opacity:1;translate:0 0;scale:var(--dialog-open-scale,none);pointer-events:auto;transition-duration:var(--motion-open); }
 dialog:not(#sc-session-shield)::backdrop { opacity:0;transition:opacity var(--motion-close) var(--motion-ease),display var(--motion-close) allow-discrete,overlay var(--motion-close) allow-discrete; }
 dialog:not(#sc-session-shield)[open]::backdrop { opacity:1;transition-duration:var(--motion-open); }
 dialog:not(#sc-session-shield):not([open])::backdrop { pointer-events:none; }
 @starting-style {
-  dialog:not(#sc-session-shield)[open] { opacity:0;translate:0 6px; }
+  dialog:not(#sc-session-shield)[open] { opacity:0;translate:0 var(--dialog-offset,6px);scale:var(--dialog-start-scale,none); }
   dialog:not(#sc-session-shield)[open]::backdrop { opacity:0; }
 }
 @media(prefers-reduced-motion:no-preference) {
   .scrim:not([hidden]) > .sheet { animation:sc-sheet-enter var(--motion-open) var(--motion-ease); }
+  html[data-sc-staff] .scrim:not([hidden]) { animation:sc-veil-enter var(--motion-open) var(--motion-ease); }
+  html[data-sc-staff] .scrim:not([hidden]) > .sheet { animation-name:sc-window-enter;animation-timing-function:var(--motion-spring); }
+  :where(html[data-sc-staff]) :where(button,a[href],summary) {
+    transition:background-color var(--motion-press),border-color var(--motion-press),
+      box-shadow var(--motion-press),color var(--motion-press),scale var(--motion-press);
+  }
+  :where(html[data-sc-staff]) :where(button:not(.btn,.pp-key,[role="switch"]),summary):not(:disabled,[aria-disabled="true"]):active { scale:.98; }
+  html[data-sc-staff] details[open] > :not(summary) { animation:sc-disclose-enter var(--motion-content) var(--motion-ease); }
   :is(.toast,#toast):not([hidden]):not(:empty) { animation:sc-toast-enter 220ms var(--motion-ease); }
   details[open] > :not(summary) { animation:sc-content-enter 180ms var(--motion-ease); }
   @keyframes sc-sheet-enter { from { opacity:0;translate:0 14px; } to { opacity:1;translate:0 0; } }
+  @keyframes sc-window-enter { from { opacity:0;translate:0 14px;scale:.985; } to { opacity:1;translate:0 0;scale:1; } }
+  @keyframes sc-veil-enter { from { background-color:transparent; } }
+  @keyframes sc-disclose-enter { from { opacity:0;translate:0 -4px; } to { opacity:1;translate:0 0; } }
   @keyframes sc-toast-enter { from { opacity:0;translate:0 6px; } to { opacity:1;translate:0 0; } }
   @keyframes sc-content-enter { from { opacity:.3; } to { opacity:1; } }
 }
@@ -296,17 +326,25 @@ dialog:not(#sc-session-shield):not([open])::backdrop { pointer-events:none; }
 @media(prefers-reduced-transparency:reduce),(prefers-contrast:more) { .sc-sk-card { background:var(--surface,var(--bg));border-color:var(--muted); } }
 @media(forced-colors:active) { .sc-sk-bar { background:GrayText; }.sc-sk-bar::after { display:none; }.sc-sk-card { border-color:CanvasText; } }
 /* Authentication/permission concealment must always be immediate, including exit animations. */
-html:is([data-sc-session-locked],[data-orders-locked]) :is(dialog,[popover],.sheet,.menu,.sc-skeleton),
+html:is([data-sc-session-locked],[data-orders-locked]) :is(dialog,[popover],.scrim,.sheet,.menu,.sc-skeleton),
 html:is([data-sc-session-locked],[data-orders-locked]) dialog::backdrop,
 html:is([data-sc-session-locked],[data-orders-locked]) .sc-sk-bar::after { transition:none!important;animation:none!important; }
 @media(prefers-reduced-motion:reduce) {
   dialog:not(#sc-session-shield),dialog:not(#sc-session-shield)[open],dialog:not(#sc-session-shield)::backdrop { transition:none;translate:none;scale:none; }
+  :where(html[data-sc-staff],html[data-sc-staff] *) { scroll-behavior:auto!important; }
   .sc-sk-bar::after { animation:none;display:none; }
 }
 @media print { .sc-skeleton { display:none!important; } }
 
 @media(prefers-reduced-motion:no-preference) {
   [popover]:popover-open:not(.sort-menu) { animation:sc-content-enter var(--motion-open) var(--motion-ease); }
+  html[data-sc-staff] [popover]:popover-open { animation:sc-disclose-enter var(--motion-content) var(--motion-ease); }
   button:is([aria-busy="true"],[data-busy="1"]):not(:has(svg))::after { content:"";display:inline-block;width:12px;height:12px;margin-inline-start:8px;vertical-align:middle;border:2px solid currentColor;border-inline-end-color:transparent;border-radius:50%;animation:sc-busy-spin .8s linear infinite; }
   @keyframes sc-busy-spin { to { rotate:360deg; } }
+}
+
+@supports not (transition-behavior:allow-discrete) {
+  @media (prefers-reduced-motion:no-preference) {
+    html[data-sc-staff] dialog:not(#sc-session-shield)[open] { animation:sc-window-enter var(--motion-open) var(--motion-spring); }
+  }
 }

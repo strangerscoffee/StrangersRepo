@@ -158,10 +158,20 @@
   }
   function go(hash) { if (location.hash === "#" + hash) render(); else location.hash = hash; }
 
+  function rememberFocus(root) {
+    const before = document.activeElement;
+    const key = before?.dataset.rotaFocus;
+    if (!key || !root.contains(before)) return () => {};
+    return () => {
+      if (document.activeElement === document.body) root.querySelector(`[data-rota-focus="${CSS.escape(key)}"]`)?.focus({ preventScroll: true });
+    };
+  }
+
   function renderNav() {
     const cur = R.tab;
+    const restore = rememberFocus(document.body);
     const sn = $("#snav"); sn.replaceChildren();
-    const link = (id, label, ic, badge) => el("a", { href: "#" + id, class: cur === id || tabOf(cur) === id && !TABS().includes(cur) && PAGES[cur]?.parent === id ? "on" : "", "aria-current": cur === id ? "page" : null },
+    const link = (id, label, ic, badge) => el("a", { href: "#" + id, "data-rota-focus": "side:" + id, class: cur === id || tabOf(cur) === id && !TABS().includes(cur) && PAGES[cur]?.parent === id ? "on" : "", "aria-current": cur === id ? "page" : null },
       svgi(ICON[ic]), el("span", { text: label }), badge ? el("span", { class: "n pill bad", text: String(badge) }) : null);
     if (mgr()) {
       sn.append(link("week", "Week", "week"), link("mine", "My shifts", "mine"), link("leave", "Holidays", "plane"), link("requests", "Requests", "requests", R.badge),
@@ -172,14 +182,15 @@
       sn.append(link("mine", "My shifts", "mine"), link("leave", "Holidays", "plane"), link("swaps", "Open shifts & cover", "swap"), link("avail", "When I can work", "avail"), link("sick", "Report sickness", "sick"));
       if (siteManager()) sn.append(el("div", { class: "h", text: "Manage" }), link("settings", "Site rota settings", "setup"));
     }
-    sn.append(el("div", { class: "h", text: "Kitchen Diary" }), el("a", { href: R.links.diary }, svgi(ICON.diary), el("span", { text: "Open the diary" })));
+    sn.append(el("div", { class: "h", text: "Kitchen Diary" }), el("a", { href: R.links.diary, "data-rota-focus": "side:diary" }, svgi(ICON.diary), el("span", { text: "Open the diary" })));
     const tb = $("#tabbar"); tb.replaceChildren();
     const label = { week: "Week", mine: "My shifts", leave:"Holidays", swaps: "Open shifts", avail: "When I work", requests: "Requests", more: "More" };
     for (const t of TABS()) {
       const on = tabOf(cur) === t;
-      tb.append(el("button", { type: "button", class: "tab" + (on ? " on" : ""), "aria-current": on ? "page" : null, onclick: () => go(t) },
+      tb.append(el("button", { type: "button", class: "tab" + (on ? " on" : ""), "data-rota-focus": "tab:" + t, "aria-current": on ? "page" : null, onclick: () => go(t) },
         svgi(ICON[PAGES[t].ic]), el("span", { text: label[t] }), t === "requests" && R.badge ? el("span", { class: "n", text: String(R.badge) }) : null));
     }
+    restore();
   }
 
   // Each page sets its own heading; one that finishes loading after someone has moved on leaves it alone.
@@ -204,9 +215,10 @@
   }
 
   let renderSeq = 0, renderKey = "";
-  async function render() {
+  async function render({ animate = false } = {}) {
     let { page, args } = parseHash();
     if (!allowed(page)) page = mgr() ? "week" : "mine";
+    const restore = page === R.tab ? rememberFocus($("#main")) : () => {};
     R.tab = page;
     renderNav();
     closeSheets();
@@ -226,7 +238,8 @@
       if (seq !== renderSeq) return;
       // The way into the sickness form, at the top of My shifts and Holidays.
       box.replaceChildren(...[page === "mine" || page === "leave" ? Sick.link() : null, out].flat().filter(Boolean));
-      if (changed) SC.reveal(box);
+      if (changed || animate) SC.reveal(box);
+      restore();
     } catch (e) {
       if (seq !== renderSeq) return;
       box.replaceChildren(el("div", { class: "empty", text: e.message || "Couldn't load this page." }));
@@ -269,7 +282,7 @@
 
   function seg(options, value, onchange, aria) {
     const box = el("div", { class: "seg rseg", role: "group", "aria-label": aria || "" });
-    for (const [v, t] of options) box.append(el("button", { type: "button", "aria-pressed": String(v === value), onclick: () => onchange(v) }, t));
+    for (const [v, t] of options) box.append(el("button", { type: "button", "aria-pressed": String(v === value), "data-rota-focus": `${aria}:${v}`, onclick: () => onchange(v) }, t));
     return box;
   }
 
@@ -277,6 +290,7 @@
     const box = el("div", { class: "days glass", role: "group", "aria-label": "Day" });
     days.forEach((d, i) => box.append(el("button", {
       type: "button", class: "wday" + (i === idx ? " today" : "") + (marks[i] ? " " + marks[i] : ""), "aria-pressed": String(i === idx),
+      "data-rota-focus": "day:" + d,
       "aria-label": longD(d) + (marks[i] === "bad" ? ", has problems" : marks[i] === "part" ? ", has warnings" : ""), onclick: () => onpick(i),
     }, fmt(d, { weekday: "narrow" }), el("b", { text: fmt(d, { day: "numeric" }) }), el("span", { class: "d" }))));
     return box;
@@ -321,15 +335,65 @@
 
   /* ---------- sheets and the account menu ---------- */
 
-  function closeSheets() {
-    $("#sheetVeil").hidden = true; $("#sheet").hidden = true; $("#peopleSheet").hidden = true; $("#acctMenu").hidden = true;
+  let activeOverlay = null, overlayTrigger = null, previousInert = [];
+  const overlayBackground = ["#main", "#appbar", "#sidebar", "#tabbar"];
+  function showOverlay(overlay, trigger = document.activeElement) {
+    if (!activeOverlay) {
+      overlayTrigger = trigger;
+      previousInert = overlayBackground.map(selector => {
+        const node = $(selector), inert = node.inert;
+        node.inert = true;
+        return [node, inert];
+      });
+    } else if (activeOverlay !== overlay) {
+      activeOverlay.inert = true;
+      activeOverlay.hidden = true;
+    }
+    activeOverlay = overlay;
+    $("#sheetVeil").hidden = false;
+    overlay.inert = false;
+    overlay.hidden = false;
+    overlay.scrollTop = 0;
+    (overlay.matches("[role=menu]") ? overlay.querySelector("[role=menuitem]") : overlay)?.focus({ preventScroll: true });
   }
+
+  function closeSheets() {
+    if (!activeOverlay) return;
+    activeOverlay.inert = true;
+    activeOverlay.hidden = true;
+    activeOverlay = null;
+    $("#sheetVeil").hidden = true;
+    for (const [node, inert] of previousInert) node.inert = inert;
+    previousInert = [];
+    if (overlayTrigger?.getAttribute("aria-haspopup") === "menu") overlayTrigger.setAttribute("aria-expanded", "false");
+    if (overlayTrigger?.isConnected) overlayTrigger.focus({ preventScroll: true });
+    overlayTrigger = null;
+  }
+
+  function handleOverlayKeys(event) {
+    if (!activeOverlay) return;
+    if (event.key === "Escape") { event.preventDefault(); closeSheets(); return; }
+    const menu = activeOverlay.matches("[role=menu]");
+    if (menu && event.key === "Tab") { closeSheets(); return; }
+    if (event.key !== "Tab" && (!menu || !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key))) return;
+    const selector = menu ? "[role=menuitem]" : "button:not(:disabled),a[href],input:not(:disabled),select:not(:disabled),textarea:not(:disabled),summary,[tabindex]";
+    const items = [...activeOverlay.querySelectorAll(selector)].filter(item => item.tabIndex >= 0 && item.getClientRects().length && getComputedStyle(item).visibility === "visible");
+    const index = items.indexOf(document.activeElement), last = items.length - 1;
+    if (event.key === "Tab" && index >= 0 && (event.shiftKey ? index > 0 : index < last)) return;
+    event.preventDefault();
+    const next = event.key === "Home" ? 0 : event.key === "End" ? last
+      : event.key === "ArrowUp" || event.shiftKey ? (index > 0 ? index - 1 : last)
+        : (index < last ? index + 1 : 0);
+    (items[next] || activeOverlay).focus();
+  }
+
   function openSheet(title, body, { left, right } = {}) {
     const s = $("#sheet");
     s.replaceChildren(el("div", { class: "grab", "aria-hidden": "true" }),
-      el("div", { class: "shead" }, left || el("span"), el("h2", { id: "sheetTitle", text: title }), right || el("span")), body);
-    $("#sheetVeil").hidden = false; s.hidden = false; s.scrollTop = 0;
-    const f = s.querySelector("input,select,button:not(.linkbtn)"); if (f && wide.matches) f.focus({ preventScroll: true });
+      el("div", { class: "shead" }, left || el("button", { type: "button", class: "linkbtn", onclick: closeSheets }, "Close"),
+        el("h2", { id: "sheetTitle", text: title }), right || el("span")), body);
+    if (activeOverlay === s) SC.reveal(s.querySelector(".shead"));
+    showOverlay(s);
     return s;
   }
   const cancelLink = () => el("button", { type: "button", class: "linkbtn", onclick: closeSheets }, "Cancel");
@@ -345,18 +409,18 @@
       ["Sign out", "out", signOut, true],
     ];
   }
-  async function authPost(route, body) {
+  async function authPost(route, body, signal) {
     let r;
-    try { r = await fetch("/api/auth/" + route, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }); }
+    try { r = await fetch("/api/auth/" + route, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal }); }
     catch (e) { return { ok: false, message: "Couldn't reach the rota. Check your connection." }; }
     const j = await r.json().catch(() => ({}));
-    return r.ok ? { ok: true, ...j } : { ok: false, message: j.message || "Something went wrong." };
+    return r.ok && !signal.aborted ? { ok: true, ...j } : { ok: false, message: j.message || "Something went wrong." };
   }
   function setQuickPin() {
     PinPad.open({ title: "Choose a quick PIN", sub: "4 digits, to switch to yourself on shared devices", onPin: async (firstPin) => {
-      setTimeout(() => PinPad.open({ title: "Enter it again", sub: "To check it", onPin: async (again) => {
+      setTimeout(() => PinPad.open({ title: "Enter it again", sub: "To check it", onPin: async (again, signal) => {
         if (again !== firstPin) return "Those didn't match. Start again by choosing a PIN.";
-        const r = await authPost("pin", { pin: firstPin }); if (!r.ok) return r.message;
+        const r = await authPost("pin", { pin: firstPin }, signal); if (!r.ok || signal.aborted) return r.message;
         if (R.auth?.user) R.auth.user.quickPin = true;
         toast("Quick PIN set. Use Switch person on a shared device."); return null;
       } }), 250);
@@ -364,29 +428,46 @@
     } });
   }
   async function openPeopleSheet() {
-    const box = $("#peopleList"); box.replaceChildren(SC.skeleton({label:"Loading people…"}));
-    $("#sheetVeil").hidden = false; $("#peopleSheet").hidden = false;
-    let people = [];
-    try { people = (await (await fetch("/api/auth/people")).json()).people || []; } catch (e) {}
+    const box = $("#peopleList"), overlay = $("#peopleSheet"), note = $("#peopleNote");
+    const loading = SC.skeleton({label:"Loading people…"});
+    box.replaceChildren(loading);
+    note.replaceChildren("Not listed? ", el("a", { href: "#", onclick: (e) => { e.preventDefault(); signOut(); } }, "Sign in with your password"), ".");
+    if (activeOverlay !== overlay) showOverlay(overlay);
+    const current = () => activeOverlay === overlay && box.contains(loading) && R.me;
+    let people;
+    try {
+      const response = await fetch("/api/auth/people");
+      if (!response.ok) throw new Error();
+      ({ people } = await response.json());
+      if (!Array.isArray(people)) throw new Error();
+    } catch {
+      if (current()) box.replaceChildren(el("p", { class: "empty", role: "status", text: "Couldn't load people." }),
+        el("button", { class: "btn ghost", type: "button", onclick: () => { overlay.focus({ preventScroll: true }); openPeopleSheet(); } }, "Try again"));
+      return;
+    }
+    if (!current()) return;
     const me = R.me.user.name;
     box.replaceChildren(...people.map((p) => el("button", { class: "lrow" + (p.name === me ? " on" : ""), type: "button", onclick: () => {
       closeSheets(); if (p.name === me) return;
-      PinPad.open({ title: `Hi ${first(p.name)}`, sub: "Enter your quick PIN", onPin: async (pin) => {
-        const r = await authPost("switch", { id: p.id, pin }); if (!r.ok) return r.message;
+      PinPad.open({ title: `Hi ${first(p.name)}`, sub: "Enter your quick PIN", onPin: async (pin, signal) => {
+        const r = await authPost("switch", { id: p.id, pin }, signal); if (!r.ok || signal.aborted) return r.message;
         location.reload(); return null;
       } });
     } }, avatar(p.name), el("span", { class: "t" }, el("b", { text: p.name }), p.name === me ? el("span", { class: "s", text: "Signed in now" }) : null))));
     if (!people.length) box.replaceChildren(empty("No one has a quick PIN yet. Each person sets one from the account menu."));
-    $("#peopleNote").replaceChildren("Not listed? ", el("a", { href: "#", onclick: (e) => { e.preventDefault(); signOut(); } }, "Sign in with your password"), ".");
   }
   function openAcctMenu(anchor) {
     const m = $("#acctMenu"), u = R.me.user;
     m.replaceChildren(el("div", { class: "who" }, el("b", { text: u.name }), el("span", { class: "s", text: ROLE[u.role] || "" })),
       ...accountItems().map(([t, ic, fn, danger]) => el("button", { class: "m" + (danger ? " danger" : ""), type: "button", role: "menuitem", onclick: () => { closeSheets(); fn(); } }, svgi(ICON[ic]), el("span", { text: t }))));
     const r = anchor.getBoundingClientRect();
-    m.style.top = r.bottom + 8 + "px"; m.style.left = Math.max(12, Math.min(r.left, innerWidth - 272)) + "px";
-    if (anchor.id === "meBox") { m.style.top = ""; m.style.bottom = innerHeight - r.top + 8 + "px"; } else m.style.bottom = "";
-    $("#sheetVeil").hidden = false; m.hidden = false; m.querySelector("button").focus();
+    const above = anchor.id === "meBox";
+    m.style.top = above ? "" : r.bottom + 8 + "px";
+    m.style.bottom = above ? innerHeight - r.top + 8 + "px" : "";
+    m.style.maxHeight = Math.max(0, (above ? r.top : innerHeight - r.bottom) - 20) + "px";
+    anchor.setAttribute("aria-expanded", "true");
+    showOverlay(m, anchor);
+    m.style.left = Math.max(12, Math.min(r.left, innerWidth - m.offsetWidth - 12)) + "px";
   }
 
   /* ---------- week planner (admins) ---------- */
@@ -629,7 +710,7 @@
       return ps.some((p) => p.severity === "error") ? "bad" : ps.some((p) => p.severity === "warn") ? "part" : d.shifts.some((s) => s.day === day) ? "ok" : "";
     });
   }
-  function phoneDay(d, ro, onPick = rerenderWeekBody) {
+  function phoneDay(d, ro, onPick = () => rerenderWeekBody(true)) {
     const day = d.days[R.pday], i = R.pday;
     const clashes = clashIds(d);
     const out = [dayStrip(d.days, R.pday, (k) => { R.pday = k; onPick(); }, ro ? [] : dayMarks(d))];
@@ -688,7 +769,13 @@
   }
 
   let weekBody = null;
-  function rerenderWeekBody() { if (weekBody && R.weekData) weekBody.replaceChildren(...weekBodyKids(R.weekData)); }
+  function rerenderWeekBody(animate = false) {
+    if (!weekBody || !R.weekData) return;
+    const restore = rememberFocus(weekBody);
+    weekBody.replaceChildren(...weekBodyKids(R.weekData));
+    if (animate) [...weekBody.children].slice(1).forEach(SC.reveal);
+    restore();
+  }
   function weekBodyKids(d) {
     if (!wide.matches) return phoneDay(d, false);
     const legend = el("div", { class: "legend rlegend" }, el("span", { class: "lg" }, el("i", { class: "sw" }), "Shift"), el("span", { class: "lg" }, el("i", { class: "sw open" }), "Open shift"),
@@ -730,7 +817,7 @@
       ? twoTap("Copy last week", `Replace ${plural(d.shifts.length, "shift")}?`, () => copyWeek(prevWeek, d.week, true), "btn soft")
       : btn("Copy last week", () => copyWeek(prevWeek, d.week, false), "btn soft");
     const toolbar = el("div", { class: "rtool" },
-      seg([["site", "By site"], ["person", "By person"]], R.view, (v) => { R.view = v; try { localStorage.setItem("rota.view", v); } catch (e) {} render(); }, "View"),
+      seg([["site", "By site"], ["person", "By person"]], R.view, (v) => { if (v === R.view) return; R.view = v; try { localStorage.setItem("rota.view", v); } catch (e) {} render({ animate: true }); }, "View"),
       el("span", { class: "grow" }), copy, pub);
     weekBody = el("div", { class: "stack" }, ...weekBodyKids(d));
     return [toolbar, problemPanel(d), weekBody];
@@ -954,15 +1041,18 @@
       const nm = nameOf(d, x.userId);
       const other = x.userId ? d.shifts.filter((o) => o.userId === x.userId && o.day === day && o.id !== x.id) : [];
       const xs = mins(effS(x)), xe = Math.max(mins(effE(x)), xs + 1);
-      return el("div", { class: "tl-row" }, el("span", { class: "tl-name", text: nm ? first(nm) : "Open" }),
+      const text = `${shownSpan(x)}${x.job ? " · " + jobWord(x.job) : ""}${amendWhy(x) ? " · " + amendWhy(x).small : ""}${x.overtime > 0 ? " · Overtime" : ""}${clashes.has(x.id) ? " · Clash" : ""}`;
+      const who = el("span", { class: "tl-who", "aria-hidden": "true", title: nm || "Open shift" }, el("span", { class: "tl-name", text: nm ? first(nm) : "Open" }),
+        el("span", { class: "tl-time", text: shownSpan(x) }));
+      return el("div", { class: "tl-row" }, who,
         el("div", { class: "tl-track" },
           ...other.map((o) => el("span", { class: "tl-bar ghost", style: `left:${pos(Math.max(a, mins(o.start)))}%;width:${pos(Math.min(b, mins(o.end))) - pos(Math.max(a, mins(o.start)))}%` }, `At ${d.sites.find((z) => z.id === o.site).name} till ${o.end}`)),
           // Amended: the plan stays as an outline behind what was worked.
           x.adjusted ? el("span", { class: "tl-plan", "aria-hidden": "true", style: `left:${pos(mins(x.start))}%;width:${pos(mins(x.end)) - pos(mins(x.start))}%` }) : null,
-          el("button", { type: "button", class: "tl-bar" + (!x.userId ? " open" : "") + (clashes.has(x.id) ? " clash" : "") + (x.overtime > 0 ? " ot" : "") + (x.adjusted ? " amended" : "") + (amendWhy(x)?.key === "sick" && !clashes.has(x.id) ? " why-sick" : ""),
-            style: `left:${pos(xs)}%;width:${pos(xe) - pos(xs)}%`,
+          el("button", { type: "button", class: "tl-hit", title: text,
             onclick: () => openShift(x, d), "aria-label": `${nm || "Open shift"} ${span(x)}${x.adjusted ? `, amended from ${x.start} to ${x.end}` : ""}${x.job ? ", " + x.job : ""}${clashes.has(x.id) ? ", clash" : ""}${x.overtime > 0 ? ", overtime" : ""}` },
-          `${shownSpan(x)}${x.job ? " · " + jobWord(x.job) : ""}${amendWhy(x) ? " · " + amendWhy(x).small : ""}${x.overtime > 0 ? " · Overtime" : ""}${clashes.has(x.id) ? " · Clash" : ""}`)));
+            el("span", { class: "tl-bar" + (!x.userId ? " open" : "") + (clashes.has(x.id) ? " clash" : "") + (x.overtime > 0 ? " ot" : "") + (x.adjusted ? " amended" : "") + (amendWhy(x)?.key === "sick" && !clashes.has(x.id) ? " why-sick" : ""),
+              "aria-hidden": "true", style: `left:${pos(xs)}%;width:${pos(xe) - pos(xs)}%` }, el("span", { class: "tl-bar-label", text })))));
     });
     rows.push(el("div", { class: "tl-row" }, el("span", { class: "tl-name", text: "Add" }),
       el("button", { type: "button", class: "tl-track tl-add", "data-w": "", "aria-label": `Add a shift at ${s.name} on ${longD(day)}`, onclick: () => newShift(d, site, day) })));
@@ -1477,7 +1567,7 @@
       const range = o.from === o.to ? fmt(o.from, { weekday: "short", day: "numeric", month: "long" }) : `${fmt(o.from, { day: "numeric", month: "short" })}–${fmt(o.to, { day: "numeric", month: "short" })}`;
       const ap = approverText();
       const st = { approved: ["Approved", "ok"], requested: [`Waiting for ${ap === "An admin" ? "an admin" : ap}`, "warn"], declined: ["Declined", "bad"], cancelled: ["Cancelled", ""] }[o.status] || [o.status, ""];
-      return el("div", { class: "lrow" }, el("span", { class: "t" }, el("b", { text: range }), el("span", { class: "s", text: [o.reason, plural(days, "day")].filter(Boolean).join(" · ") })),
+      return el("div", { class: "lrow timeoff-row" }, el("span", { class: "t" }, el("b", { text: range }), el("span", { class: "s", text: [o.reason, plural(days, "day")].filter(Boolean).join(" · ") })),
         el("span", { class: "pill " + st[1], text: st[0] }),
         // Only an admin can change time off that has already started.
         ["requested", "approved"].includes(o.status) && o.to >= londonToday() && (mgr() || o.status === "requested" || o.from >= londonToday()) ? ghost("Cancel", async () => { if (await act(() => api("PATCH", "/api/rota/time-off/" + o.id, { status: "cancelled", ifVersion:o.version }), "Cancelled")) render(); }, { class: "btn ghost sm" }) : null);
@@ -1725,7 +1815,8 @@
     $("#avatarBtn").addEventListener("click", (e) => openAcctMenu(e.currentTarget));
     $("#meBox").addEventListener("click", (e) => openAcctMenu(e.currentTarget));
     $("#sheetVeil").addEventListener("click", closeSheets);
-    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("#sheetVeil").hidden) closeSheets(); });
+    $("#closePeopleSheet").addEventListener("click", closeSheets);
+    document.addEventListener("keydown", handleOverlayKeys);
     $("#snav").addEventListener("click", (e) => { const a = e.target.closest("a[href^='#']"); if (a) { e.preventDefault(); go(a.getAttribute("href").slice(1)); } });
     window.addEventListener("hashchange", render);
     wide.addEventListener("change", () => { if (R.tab === "week" || R.tab === "mine") render(); });

@@ -295,8 +295,8 @@ function renderInspect(){
   box.setAttribute("aria-busy",String(!R&&!IN.err));
   if(!R){box.replaceChildren(IN.err?el("div",{class:"empty glass",text:"Couldn't gather the records. Check the connection and try again."}):SC.skeleton({label:"Gathering the records…"}));$("#inJump").replaceChildren();return}
   const secs=inspectSections(R);
-  $("#inJump").replaceChildren(...secs.filter(x=>!x.plan).map(x=>el("button",{type:"button",class:"fchip",onclick:()=>{const n=document.getElementById("in-"+x.id);if(n)n.scrollIntoView({behavior:"smooth",block:"start"})}},x.title)),
-    ...(secs.some(x=>x.plan)?[el("button",{type:"button",class:"fchip",onclick:()=>{const n=document.querySelector("[id^='in-plan-']");if(n)n.scrollIntoView({behavior:"smooth",block:"start"})}},"HACCP & risk")]:[]));
+  $("#inJump").replaceChildren(...secs.filter(x=>!x.plan).map(x=>el("button",{type:"button",class:"fchip",onclick:()=>{const n=document.getElementById("in-"+x.id);if(n)n.scrollIntoView({behavior:diaryScroll(),block:"start"})}},x.title)),
+    ...(secs.some(x=>x.plan)?[el("button",{type:"button",class:"fchip",onclick:()=>{const n=document.querySelector("[id^='in-plan-']");if(n)n.scrollIntoView({behavior:diaryScroll(),block:"start"})}},"HACCP & risk")]:[]));
   box.replaceChildren(...secs.map(x=>{
     const sec=el("section",{class:"panel inrep",id:"in-"+x.id});
     sec.append(el("h2",{text:x.title}));

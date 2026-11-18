@@ -64,3 +64,38 @@ test("Admin desktop shows a live order alongside the queue and can open its exis
   assert.deepEqual(errors,[]);
  } finally { await ctx.close(); }
 });
+
+test("Admin profile and sheets contain long names, email addresses and keyboard focus on a small phone", async () => {
+ const name="A".repeat(60);
+ const email="m".repeat(64)+"@"+"x".repeat(63)+".example.invalid";
+ const response=await fetch(srv.base+"/api/admin/users",{
+  method:"POST",headers:{cookie:admin,"content-type":"application/json"},
+  body:JSON.stringify({name,email,username:"long.profile",role:"manager",password:"temporary-password"}),
+ });
+ assert.ok(response.ok);
+ const {user}=await response.json();
+ const {ctx,page,errors}=await open(320,"dark");
+ try {
+  await page.locator('#tabBar [data-go="people"]').click();
+  const person=page.locator(`[data-person="${user.id}"]`);
+  await person.press("Enter");
+  await page.locator(".person-workspace").waitFor();
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+  const edit=page.locator('.person-workspace [data-act="edit"]');
+  await edit.click();
+  const sheet=page.locator("#sheet");
+  await sheet.waitFor();
+  assert.equal(await sheet.evaluate(element=>element.scrollWidth<=element.clientWidth),true);
+  assert.equal(await page.locator(".app").evaluate(element=>element.inert),true);
+  assert.equal(await page.evaluate(()=>document.activeElement.id),"sheetTitle");
+  await page.keyboard.press("Shift+Tab");
+  assert.equal(await page.evaluate(()=>document.activeElement.type),"submit");
+  await page.keyboard.press("Tab");
+  assert.equal(await page.evaluate(()=>document.activeElement.id),"fName");
+  await page.keyboard.press("Escape");
+  assert.equal(await page.locator("#scrim").isHidden(),true);
+  assert.equal(await page.locator(".app").evaluate(element=>element.inert),false);
+  assert.equal(await edit.evaluate(element=>element===document.activeElement),true);
+  assert.deepEqual(errors,[]);
+ } finally { await ctx.close(); }
+});

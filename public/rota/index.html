@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en-GB">
+<html lang="en-GB" data-sc-staff>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
@@ -26,25 +26,29 @@
      a sidebar on wide screens. Its data comes from /api/rota/* (src/rota.ts). -->
 <header class="appbar" id="appbar">
   <div class="abrand"><span class="brandmark" role="img" aria-label="Strangers Coffee"></span><span class="rtag">Rota</span></div>
-  <button class="avatar" type="button" id="avatarBtn" aria-haspopup="menu" aria-label="Account"></button>
+  <button class="avatar" type="button" id="avatarBtn" aria-haspopup="menu" aria-controls="acctMenu" aria-expanded="false" aria-label="Account"></button>
 </header>
 <aside class="sidebar" id="sidebar">
   <span class="brandlogo sbrand" role="img" aria-label="Strangers Coffee Company"></span>
   <div class="rtag big">Staff rota</div>
   <nav class="snav" id="snav" aria-label="Sections"></nav>
-  <button class="mebox" type="button" id="meBox" aria-haspopup="menu"></button>
+  <button class="mebox" type="button" id="meBox" aria-haspopup="menu" aria-controls="acctMenu" aria-expanded="false"></button>
 </aside>
 <nav class="tabbar" id="tabbar" aria-label="Sections"></nav>
 
 <div class="sheetveil" id="sheetVeil" hidden></div>
-<div class="sheet rsheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle" hidden></div>
-<div class="sheet" id="peopleSheet" role="dialog" aria-modal="true" aria-labelledby="peopleSheetTitle" hidden>
+<div class="sheet rsheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle" tabindex="-1" hidden inert></div>
+<div class="sheet rsheet" id="peopleSheet" role="dialog" aria-modal="true" aria-labelledby="peopleSheetTitle" tabindex="-1" hidden inert>
   <div class="grab" aria-hidden="true"></div>
-  <h2 id="peopleSheetTitle">Switch person</h2>
+  <div class="shead">
+    <button type="button" class="linkbtn" id="closePeopleSheet">Close</button>
+    <h2 id="peopleSheetTitle">Switch person</h2>
+    <span></span>
+  </div>
   <div class="list" id="peopleList"></div>
   <p class="note" id="peopleNote"></p>
 </div>
-<div class="menu" id="acctMenu" role="menu" aria-label="Account" hidden></div>
+<div class="menu" id="acctMenu" role="menu" aria-label="Account" tabindex="-1" hidden inert></div>
 <div class="conn" id="conn" role="status" hidden></div>
 
 <main class="wrap rwrap" id="main">

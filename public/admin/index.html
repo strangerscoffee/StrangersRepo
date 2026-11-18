@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en-GB">
+<html lang="en-GB" data-sc-staff>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
@@ -34,19 +34,19 @@
       <div class="side-label">Open</div>
       <a class="nav app-link" id="sideDiary" href="/"><span data-icon="cal"></span>Kitchen Diary</a>
       <a class="nav app-link" id="sideRota" href="/rota/"><span data-icon="clock"></span>Rota</a>
-      <button class="who" type="button" id="whoBtn" aria-haspopup="menu"><span class="me" id="whoInit" aria-hidden="true"></span><span class="nm"><b id="whoName"></b><span>Admin</span></span></button>
+      <button class="who" type="button" id="whoBtn" aria-haspopup="dialog"><span class="me" id="whoInit" aria-hidden="true"></span><span class="nm"><b id="whoName"></b><span>Admin</span></span></button>
     </div>
   </aside>
   <div class="col">
     <header class="topbar">
       <div class="brand"><span class="brandlogo" role="img" aria-label="Strangers Coffee"></span><b>Admin</b></div>
-      <button class="me" type="button" id="meBtn" aria-haspopup="menu" aria-label="Account"></button>
+      <button class="me" type="button" id="meBtn" aria-haspopup="dialog" aria-label="Account"></button>
     </header>
     <main id="main" tabindex="-1"><div class="sc-skeleton sc-skeleton-list" role="status" aria-label="Loading Admin…"><span class="sc-sr-only">Loading Admin…</span><div class="sc-sk-shapes" aria-hidden="true"><div class="sc-sk-card"><span class="sc-sk-bar sc-sk-icon"></span><div class="sc-sk-copy"><span class="sc-sk-bar sc-sk-title"></span><span class="sc-sk-bar sc-sk-line"></span><span class="sc-sk-bar sc-sk-short"></span></div></div><div class="sc-sk-card"><span class="sc-sk-bar sc-sk-icon"></span><div class="sc-sk-copy"><span class="sc-sk-bar sc-sk-title"></span><span class="sc-sk-bar sc-sk-line"></span><span class="sc-sk-bar sc-sk-short"></span></div></div><div class="sc-sk-card"><span class="sc-sk-bar sc-sk-icon"></span><div class="sc-sk-copy"><span class="sc-sk-bar sc-sk-title"></span><span class="sc-sk-bar sc-sk-line"></span><span class="sc-sk-bar sc-sk-short"></span></div></div></div></div></main>
   </div>
 </div>
 <nav class="tabbar glass" id="tabBar" aria-label="Admin sections"></nav>
-<div class="scrim" id="scrim" hidden><div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle"></div></div>
+<div class="scrim" id="scrim" hidden><div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle" tabindex="-1"></div></div>
 <div class="toast" id="toast" role="status" hidden></div>
 <script type="application/x-sc-script" data-sc-module="" src="/shared/focus.js"></script>
 <script type="application/x-sc-script" data-sc-module="SC" src="/shared/core.js"></script>

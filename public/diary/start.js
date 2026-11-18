@@ -28,6 +28,7 @@ function show(tab,opts){
   if(!TABS.includes(tab))tab="day";
   if(!canTab(tab)){if(S.role==="staff"&&MANAGER_TABS.has(tab)&&!(opts&&opts.quiet))toast("That section is for managers.");tab="day"}
   const changed=S.tab!==tab;
+  const focusTitle=changed&&!opts?.quiet&&document.activeElement?.matches("button:focus-visible,a:focus-visible");
   S.tab=tab;
   document.querySelectorAll("[data-panel]").forEach(p=>p.hidden=p.dataset.panel!==tab);
   if(changed)for(const n of[document.querySelector(`[data-panel="${tab}"]`),$("#pagehead")])SC.reveal(n);
@@ -41,6 +42,7 @@ function show(tab,opts){
   if(tab==="deliveries"||tab==="prove")needHistory(); // the full lists
   if(tab==="maintenance"||tab==="staff")loadTeam();
   if(changed&&!(opts&&opts.keepScroll))window.scrollTo({top:0});
+  if(focusTitle)$("#pageTitle").focus({preventScroll:true});
   try{localStorage.setItem("sfbb.tab",tab)}catch(e){}
 }
 // The large title, its subtitle and (on phones) a back link to Records or More.

@@ -10,8 +10,9 @@
 .w-order-entry.is-picking .w-order[aria-pressed=true]{background:var(--tint,var(--sunk))}
 .wp-sheet{display:grid;gap:16px;min-width:0;width:min(760px,100%)}
 #sheet:has(>.wp-sheet){width:min(800px,calc(100vw - 32px))}
-.wp-sheet-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}
+.wp-sheet-head{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:12px}
 .wp-sheet-head h2{margin:0}
+.wp-sheet-head>.btn[aria-label]{width:44px;padding:0}
 .wp-body{display:grid;gap:16px;min-width:0}
 .wp-sheet .w-actions{justify-content:flex-end;flex-wrap:wrap}
 .w-order-entry.is-picking{grid-template-columns:minmax(0,1fr)!important}

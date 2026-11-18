@@ -89,7 +89,7 @@ window.SCLeave = function createLeaveUI(c) {
             t.nextReminder ? note(`Next reminder: ${t.nextReminder.label.toLowerCase()}, ${fmt(t.nextReminder.on, { day: 'numeric', month: 'long' })}.`) : null,
             t.reminders.length ? el('div', { class: 'leave-reminders' }, ...t.reminders.map(r => el('span', { class: 'leave-tag', text: `${r.label} · ${new Date(r.at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'Europe/London' })}` }))) : null);
     }
-    function changeMonth(delta) { const d = new Date(month + 'T12:00:00Z'); d.setUTCMonth(d.getUTCMonth() + delta); month = d.toISOString().slice(0, 7) + '-01'; render(); }
+    function changeMonth(delta) { const d = new Date(month + 'T12:00:00Z'); d.setUTCMonth(d.getUTCMonth() + delta); month = d.toISOString().slice(0, 7) + '-01'; render({ animate: true }); }
     const KIND_WORD = { annual: 'holiday', unpaid: 'unpaid leave' };
     const BLACKOUT_REASONS = ['Christmas', 'New Year', 'Bank holiday', 'Peak trading', 'Stocktake', 'Staff training', 'Short-staffed'];
     // Days (who's off, day by day) and People (each stretch of leave once) suit a phone; Month is the grid. The choice is
@@ -101,7 +101,7 @@ window.SCLeave = function createLeaveUI(c) {
         try { const saved = localStorage.getItem('sc.rota.leaveView'); if (VIEWS.some(([v]) => v === saved)) return (view = saved); } catch { }
         return (view = matchMedia('(max-width: 700px)').matches ? 'days' : 'month');
     }
-    function setView(v) { view = v; try { localStorage.setItem('sc.rota.leaveView', v); } catch { } render(); }
+    function setView(v) { if (v === view) return; view = v; try { localStorage.setItem('sc.rota.leaveView', v); } catch { } render({ animate: true }); }
     // Whole stretches of leave: each booking once, joined with the same person's next one when they touch.
     function stretches(data, everyone = false) {
         const out = [];
@@ -123,7 +123,7 @@ window.SCLeave = function createLeaveUI(c) {
     function calendarView(data) {
         const mode = viewMode(), today = londonToday(), thisMonth = month.slice(0, 7) === today.slice(0, 7);
         const nav = el('div', { class: 'row' }, ghost('‹', () => { earlier = false; changeMonth(-1); }, { 'aria-label': 'Previous month' }), ghost('Today', () => { earlier = false; month = today.slice(0, 7) + '-01'; render(); }), ghost('›', () => { earlier = false; changeMonth(1); }, { 'aria-label': 'Next month' }));
-        const switcher = el('div', { class: 'seg leave-views', role: 'group', 'aria-label': 'How to show leave' }, ...VIEWS.map(([v, t]) => el('button', { type: 'button', 'aria-pressed': String(v === mode), text: t, onclick: () => setView(v) })));
+        const switcher = el('div', { class: 'seg leave-views', role: 'group', 'aria-label': 'How to show leave' }, ...VIEWS.map(([v, t]) => el('button', { type: 'button', 'aria-pressed': String(v === mode), text: t, 'data-rota-focus': 'leave-view:' + v, onclick: () => setView(v) })));
         const heading = el('div', { class: 'leave-calendar-head' }, el('div', {}, el('h2', { text: mode === 'month' ? fmt(month, { month: 'long', year: 'numeric' }) : "Who's off" }), mode === 'month' ? null : el('span', { class: 's', text: fmt(month, { month: 'long', year: 'numeric' }) })), nav);
         if (mode === 'month')
             return monthGrid(data, heading, switcher);
@@ -138,7 +138,7 @@ window.SCLeave = function createLeaveUI(c) {
         // A strip of the first week, with a dot for each person off; tapping a day goes to it.
         const strip = el('div', { class: 'leave-strip' }, ...Array.from({ length: 7 }, (_, i) => addDays(from, i)).map(d => {
             const people = on(d), rules = data.days.find(x => x.day === d);
-            return el('button', { type: 'button', class: 'leave-strip-day' + (d === today ? ' today' : '') + (rules?.blocked ? ' blocked' : ''), 'aria-label': `${fmt(d, { weekday: 'long', day: 'numeric', month: 'long' })}: ${people.length ? people.length + ' off' : 'nobody off'}`, onclick: () => { const card = document.getElementById('leave-d-' + d); if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' }); else dayDetails(d, dayHolidays(data, d), rules, data.enabled, stretches(data, true)); } }, el('span', { text: fmt(d, { weekday: 'short' }) }), el('b', { text: String(Number(d.slice(8))) }), el('span', { class: 'dots', 'aria-hidden': 'true' }, ...people.slice(0, 4).map(r => el('i', { class: r.kind === 'unpaid' ? 'unpaid' : 'holiday' }))));
+            return el('button', { type: 'button', class: 'leave-strip-day' + (d === today ? ' today' : '') + (rules?.blocked ? ' blocked' : ''), 'aria-label': `${fmt(d, { weekday: 'long', day: 'numeric', month: 'long' })}: ${people.length ? people.length + ' off' : 'nobody off'}`, onclick: () => { const card = document.getElementById('leave-d-' + d); if (card) card.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'center' }); else dayDetails(d, dayHolidays(data, d), rules, data.enabled, stretches(data, true)); } }, el('span', { text: fmt(d, { weekday: 'short' }) }), el('b', { text: String(Number(d.slice(8))) }), el('span', { class: 'dots', 'aria-hidden': 'true' }, ...people.slice(0, 4).map(r => el('i', { class: r.kind === 'unpaid' ? 'unpaid' : 'holiday' }))));
         }));
         out.push(strip);
         if (from === today) {

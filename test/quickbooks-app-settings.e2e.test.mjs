@@ -14,15 +14,17 @@ before(async()=>{
  browser=await chromium.launch(process.env.CHROMIUM_PATH?{executablePath:process.env.CHROMIUM_PATH}:{});
 });
 after(async()=>{await browser?.close();await srv?.stop();await provider?.stop();});
-for(const [device,viewport] of [['phone',{width:393,height:852}],['iPad',{width:820,height:1180}],['desktop',{width:1440,height:1000}]])for(const colorScheme of ['light','dark']){
+for(const [device,viewport] of [['small-phone',{width:320,height:852}],['phone',{width:393,height:852}],['iPad',{width:820,height:1180}],['desktop',{width:1440,height:1000}]])for(const colorScheme of ['light','dark']){
  test(`QuickBooks app setup ${device} ${colorScheme}: editable environment settings, hidden saved secrets and copyable URLs`,async()=>{
   const context=await browser.newContext({viewport,colorScheme});const [name,value]=ADMIN.split('=');await context.addCookies([{name,value,url:srv.base}]);const page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
   async function open(){await page.goto(srv.base+'/admin#wholesale');await selectWholesaleSection(page, "invoices");await page.locator('[data-act="wh-invoice-quickbooks"]').click();await page.locator('#qbConnectionForm').waitFor();}
   try{
    await open();
+   assert.ok(await page.locator('#sheet').evaluate(node=>node.scrollWidth<=node.clientWidth+1),'the connection window fits');
    for(const [scope,label]of [['sandbox','Sandbox'],['production','Live']]){
     if(scope==='production'){await page.locator('[data-sheet="qb-scope"]').click();await page.locator('#qbConnectionForm h3',{hasText:'Live connection'}).waitFor();}
     await page.locator('[data-sheet="qb-app-settings"]').click();await page.locator('#qbAppSettingsForm').waitFor();
+    assert.ok(await page.locator('#sheet').evaluate(node=>node.scrollWidth<=node.clientWidth+1),'the settings window fits');
     assert.match(await page.locator('#sheetTitle').textContent(),new RegExp(label+' app settings'));
     assert.equal(await page.locator('#qbAppClientSecret').inputValue(),'');assert.equal(await page.locator('#qbAppWebhookToken').inputValue(),'');
     const id=`test-${scope}-client-${device.toLowerCase()}-${colorScheme}`,secret=`ui-${scope}-client-secret-${device}-${colorScheme}`,verifier=`ui-${scope}-verifier-token-${device}-${colorScheme}`;

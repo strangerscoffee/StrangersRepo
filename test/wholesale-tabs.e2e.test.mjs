@@ -191,7 +191,9 @@ test("clear part of a tab: untick orders to keep them on it, and see what was cl
   assert.equal(await boxes.count(), 3);
   assert.match(await p.locator("#tabDetail").innerText(), /Untick any orders that should stay on the tab[\s\S]*Ordered /);
   // Keep the newest (3 kg) on the tab.
+  await boxes.nth(2).focus();
   await boxes.nth(2).uncheck();
+  assert.equal(await boxes.nth(2).evaluate(box => document.activeElement === box), true, "tab selection keeps keyboard focus");
   assert.match(await p.locator("#tabDetail .tab-order").nth(2).innerText(), /Stays on tab/);
   assert.match(await p.locator("#tabFoot").innerText(), /3 kg to clear · 3 kg stays/);
   await p.locator("#clearTab", { hasText: "Clear 2 of 3" }).click();

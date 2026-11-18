@@ -59,7 +59,8 @@ function renderHistory(){
     if(closure(d))exc.push([date,"Closed: "+closure(d).reason,""]);
     if(!shut){trading++;if(st.complete)complete++;else if(date<end&&!st.any)missed++}
     const cls=shut?"closed":st.complete||(d&&d.signed)?"ok":st.any?"part":date<end?"bad":"";
-    grid.append(el("button",{class:"cd "+cls+(date===end?" today":"")+(st.issue?" hot":""),type:"button",title:nice(date),"aria-label":nice(date),onclick:()=>goDay(date)},String(dd.getDate())));
+    grid.append(el("button",{class:"cd "+cls+(date===end?" today":"")+(st.issue?" hot":""),type:"button",title:nice(date),"aria-label":nice(date),
+      "aria-current":date===end?"date":null,"aria-describedby":cls?`history-${cls}`:null,onclick:()=>goDay(date)},String(dd.getDate())));
     if(d&&d.temps)for(const u of S.settings.units){const r=d.temps[u.id]&&d.temps[u.id].am;if(r&&tempState(u.kind,r.v)==="bad"){hot++;exc.push([date,`${u.name} read ${r.v}°C`,"bad"])}}
     if(date<end&&!st.complete&&!shut)exc.push([date,st.any?"Diary not completed":"No diary entry",st.any?"warn":"bad"]);
     if(d&&d.problems&&d.problems.text)exc.push([date,d.problems.text,""]);

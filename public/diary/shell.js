@@ -44,12 +44,15 @@ function renderSites(){
     b.replaceChildren(el("span",{class:"sdot "+st.cls}),el("span",{class:"sname",text:curSite().name}),svgi(ICON.chevD));
     b.setAttribute("aria-label",`Site: ${curSite().name}. Change site`);
   });
-  const box=$("#siteList");box.replaceChildren();
+  const box=$("#siteList"),focused=box.contains(document.activeElement)?document.activeElement.dataset.site:null;
+  box.replaceChildren();
   for(const x of SITES){
     const s=siteState(x.id),sm=S.sum[x.id];
-    box.append(el("button",{class:"lrow"+(x.id===S.site?" on":""),type:"button","aria-current":x.id===S.site?"true":null,onclick:()=>{closeSheets();switchSite(x.id)}},
+    const row=el("button",{class:"lrow"+(x.id===S.site?" on":""),type:"button","data-site":x.id,"aria-current":x.id===S.site?"true":null,onclick:()=>{closeSheets();switchSite(x.id)}},
       el("span",{class:"sdot big "+s.cls}),el("span",{class:"t"},el("b",{text:x.name}),el("span",{class:"s",text:siteAddr(x.id,sm&&sm.settings)})),
-      S.db?el("span",{class:"pill "+s.cls,text:s.text}):null));
+      S.db?el("span",{class:"pill "+s.cls,text:s.text}):null);
+    box.append(row);
+    if(focused===x.id)row.focus({preventScroll:true});
   }
 }
 // One line of live status for a section in the Records and More lists, so you can see where to go.
@@ -93,10 +96,11 @@ function hubSub(id){
 }
 function navRow(n,onclick){
   const b=navBadge(n.id),sub=hubSub(n.id)||n.sub;
-  return el("button",{class:"lrow",type:"button",onclick},el("span",{class:"tile "+(n.tile||"blue")},svgi(ICON[n.ic])),
+  return el("button",{class:"lrow",type:"button","data-diary-nav":n.id,onclick},el("span",{class:"tile "+(n.tile||"blue")},svgi(ICON[n.ic])),
     el("span",{class:"t"},el("b",{text:n.t}),sub?el("span",{class:"s",text:sub}):null),b?el("span",{class:"pill "+b.cls,text:b.text}):null,el("span",{class:"chev"},svgi(ICON.chevR)));
 }
 function renderNav(){
+  const active=document.activeElement,nav=active?.closest("#snav,#tabbar,#recordsHub,#moreHub"),focused=active?.dataset.diaryNav;
   // Until we know who is signed in, list only what every role can open.
   const vis=NAV.filter(n=>canTab(n.id)&&(S.role||!MANAGER_TABS.has(n.id)&&!ADMIN_TABS.has(n.id)));
   // sidebar
@@ -108,7 +112,7 @@ function renderNav(){
     if(!items.length)continue;
     if(label)sn.append(el("div",{class:"h",text:label}));
     for(const n of items){const b=navBadge(n.id);
-      sn.append(el("a",{href:"#"+n.id,class:S.tab===n.id?"on":"","aria-current":S.tab===n.id?"page":null,onclick:e=>{e.preventDefault();show(n.id)}},svgi(ICON[n.ic]),el("span",{text:n.t}),b?el("span",{class:"n pill "+b.cls,text:b.text.split(" ")[0]}):null));}
+      sn.append(el("a",{href:"#"+n.id,class:S.tab===n.id?"on":"","data-diary-nav":n.id,"aria-current":S.tab===n.id?"page":null,onclick:e=>{e.preventDefault();show(n.id)}},svgi(ICON[n.ic]),el("span",{text:n.t}),b?el("span",{class:"n pill "+b.cls,text:b.text.split(" ")[0]}):null));}
   }
   // The rota is its own app on its own address; it opens in the same tab.
   // Report sickness opens the rota's self-certified sickness form (public/rota/sickness.js) for the person signed in.
@@ -124,7 +128,7 @@ function renderNav(){
   const tb=$("#tabbar");tb.replaceChildren();
   for(const[t,label,ic]of[["day","Today","today"],["week","Week","week"],["records","Records","records"],["more","More","more"]]){
     if(!canTab(t))continue;
-    tb.append(el("button",{type:"button",class:"tab"+(cur===t?" on":""),"aria-current":cur===t?"page":null,onclick:()=>show(t)},svgi(ICON[ic]),el("span",{text:label}),t==="records"&&recCount?el("span",{class:"n",text:String(recCount)}):null));
+    tb.append(el("button",{type:"button",class:"tab"+(cur===t?" on":""),"data-diary-nav":t,"aria-current":cur===t?"page":null,onclick:()=>show(t)},svgi(ICON[ic]),el("span",{text:label}),t==="records"&&recCount?el("span",{class:"n",text:String(recCount)}):null));
   }
   // Records and More pages
   const rh=$("#recordsHub");rh.replaceChildren(...vis.filter(n=>n.grp==="records").map(n=>navRow(n,()=>show(n.id))));
@@ -142,6 +146,7 @@ function renderNav(){
   if(S.staffOrders)mh.append(el("div",{class:"label",text:"Wholesale"}),el("div",{class:"list glass"},el("a",{class:"lrow",href:"/orders"},el("span",{class:"tile blue"},svgi(ICON.records)),el("span",{class:"t"},el("b",{text:"Wholesale orders"}),el("span",{class:"s",text:"Orders, preparation and account warnings"})),el("span",{class:"chev"},svgi(ICON.chevR)))));
   mh.append(el("div",{class:"label",text:"Account"}),el("div",{class:"list glass"},...accountItems().map(([t,ic,tile,fn,danger])=>
     el("button",{class:"lrow"+(danger?" danger":""),type:"button",onclick:fn},el("span",{class:"tile "+tile},svgi(ICON[ic])),el("span",{class:"t"},el("b",{text:t}),danger&&S.myName?el("span",{class:"s",text:"Signed in as "+S.myName}):null)))));
+  if(nav&&focused)$("[data-diary-nav="+CSS.escape(focused)+"]",nav)?.focus({preventScroll:true});
 }
 function accountItems(){
   return[...(S.quickSwitch?[["Switch person","staff","teal",openPeopleSheet]]:[]),
@@ -154,35 +159,54 @@ function accountItems(){
 /* ---------- quick switching (shared devices) ----------
  * On a device someone has signed in on with a password, staff and managers switch to themselves with a
  * 4-digit quick PIN (pinpad.js) instead of signing out and in. */
-async function authPost(route,body){
-  let r;try{r=await fetch("/api/auth/"+route,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)})}
+async function authPost(route,body,signal){
+  let r;try{r=await fetch("/api/auth/"+route,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body),signal})}
   catch(e){return{ok:false,message:"Couldn't reach the diary. Check your connection."}}
-  const j=await r.json().catch(()=>({}));return r.ok?{ok:true,...j}:{ok:false,message:j.message||"Something went wrong."};
+  const j=await r.json().catch(()=>({}));return r.ok&&!signal.aborted?{ok:true,...j}:{ok:false,message:j.message||"Something went wrong."};
 }
 function setQuickPin(){
   PinPad.open({title:"Choose a quick PIN",sub:"4 digits, to switch to yourself on shared devices",onPin:async first=>{
-    setTimeout(()=>PinPad.open({title:"Enter it again",sub:"To check it",onPin:async again=>{
+    setTimeout(()=>PinPad.open({title:"Enter it again",sub:"To check it",onPin:async(again,signal)=>{
       if(again!==first)return "Those didn't match. Start again by choosing a PIN.";
-      const r=await authPost("pin",{pin:first});if(!r.ok)return r.message;
+      const r=await authPost("pin",{pin:first},signal);if(!r.ok||signal.aborted)return r.message;
       S.quickPin=true;renderNav();toast("Quick PIN set. Use Switch person on a shared device.");return null;
     }}),250);
     return null;
   }});
 }
-async function openPeopleSheet(){
-  const box=$("#peopleList");box.replaceChildren(SC.skeleton({label:"Loading people…"}));
-  $("#sheetVeil").hidden=false;$("#peopleSheet").hidden=false;
-  let people=[];try{people=(await (await fetch("/api/auth/people")).json()).people||[]}catch(e){}
+async function openPeopleSheet(e){
+  const box=$("#peopleList"),note=$("#peopleNote");
+  const retrying=box.contains(document.activeElement);
+  box.setAttribute("aria-busy","true");
+  box.replaceChildren(SC.skeleton({label:"Loading people…"}));
+  note.replaceChildren("Not listed? ",el("a",{href:"#",onclick:e=>{e.preventDefault();signOut()}},"Sign in with your password"),".");
+  if(diaryOverlay?.panel.id!=="peopleSheet")openDiaryOverlay("#peopleSheet",e?.currentTarget||document.activeElement);
+  else if(retrying)$("#peopleSheet [data-close-sheet]").focus({preventScroll:true});
+  const request=++peopleRequest;
+  let people;
+  try{
+    const response=await fetch("/api/auth/people");
+    if(!response.ok)throw new Error("Could not load people");
+    ({people}=await response.json());
+    if(!Array.isArray(people))throw new Error("Could not load people");
+  }catch(e){
+    if(request!==peopleRequest)return;
+    box.setAttribute("aria-busy","false");
+    box.replaceChildren(el("div",{class:"empty",role:"status"},el("p",{text:"Couldn't load people. Check the connection and try again."}),
+      el("button",{class:"btn ghost",type:"button",onclick:openPeopleSheet},"Try again")));
+    return;
+  }
+  if(request!==peopleRequest)return;
+  box.setAttribute("aria-busy","false");
   box.replaceChildren(...people.map(p=>el("button",{class:"lrow"+(p.name===S.myName?" on":""),type:"button","aria-current":p.name===S.myName?"true":null,onclick:()=>{
       if(p.name===S.myName){closeSheets();return}
       closeSheets();
-      PinPad.open({title:`Hi ${firstName(p.name)}`,sub:"Enter your quick PIN",onPin:async pin=>{
-        const r=await authPost("switch",{id:p.id,pin});if(!r.ok)return r.message;
+      PinPad.open({title:`Hi ${firstName(p.name)}`,sub:"Enter your quick PIN",onPin:async(pin,signal)=>{
+        const r=await authPost("switch",{id:p.id,pin},signal);if(!r.ok||signal.aborted)return r.message;
         location.reload();return null;
       }});
     }},el("span",{class:"avatar sm",text:initials(p.name)}),el("span",{class:"t"},el("b",{text:p.name}),p.name===S.myName?el("span",{class:"s",text:"Recording now"}):null))));
   if(!people.length)box.replaceChildren(el("div",{class:"empty",text:"No one has a quick PIN yet. Each person sets one from this menu."}));
-  $("#peopleNote").replaceChildren("Not listed? ",el("a",{href:"#",onclick:e=>{e.preventDefault();signOut()}},"Sign in with your password"),".");
 }
 
 /* ---------- midnight: a kitchen iPad left open overnight moves on to the new day ---------- */
@@ -220,21 +244,82 @@ function renderMe(){
   $("#meBox").replaceChildren(el("span",{class:"avatar sm",text:initials(S.myName)}),
     el("span",{class:"t"},el("b",{text:S.myName||"Signed in"}),el("span",{class:"s",text:{admin:"Admin",manager:"Manager",staff:"Staff"}[S.role]||""})),svgi(ICON.chevR));
 }
-/* sheets and the account menu */
-function closeSheets(){$("#sheetVeil").hidden=true;$("#siteSheet").hidden=true;$("#peopleSheet").hidden=true;$("#notifSheet").hidden=true;$("#acctMenu").hidden=true}
-$("#bellBtn").addEventListener("click",openNotifs);$("#sideBell").addEventListener("click",openNotifs);
-function openSiteSheet(){renderSites();$("#sheetVeil").hidden=false;$("#siteSheet").hidden=false;const on=$("#siteList .on")||$("#siteList button");if(on)on.focus()}
+/* Sheets and menus keep interaction inside the window and restore the invoking control. */
+let diaryOverlay=null,peopleRequest=0;
+const overlayTabstops=panel=>[...panel.querySelectorAll("button:not(:disabled),a[href],[tabindex]:not([tabindex='-1'])")].filter(n=>n.getClientRects().length);
+function closeSheets(restore=true){
+  const overlay=diaryOverlay;
+  diaryOverlay=null;peopleRequest++;
+  $("#sheetVeil").hidden=true;
+  for(const id of ["#siteSheet","#peopleSheet","#notifSheet","#acctMenu"])$(id).hidden=true;
+  if(!overlay)return;
+  overlay.panel.inert=true;
+  for(const [node,inert] of overlay.background)node.inert=inert;
+  overlay.opener?.setAttribute("aria-expanded","false");
+  if(restore&&!document.documentElement.hasAttribute("data-sc-session-locked")){
+    const opener=overlay.opener;
+    (opener?.getClientRects().length&&!opener.disabled?opener:$("#pageTitle")).focus({preventScroll:true});
+  }
+}
+function placeDiaryMenu(){
+  const {panel:m,opener}=diaryOverlay||{};
+  if(m?.id!=="acctMenu"||!opener?.getClientRects().length)return;
+  const r=opener.getBoundingClientRect(),view=window.visualViewport;
+  const vx=view?.offsetLeft||0,vy=view?.offsetTop||0;
+  const leftEdge=vx+12,rightEdge=vx+(view?.width||innerWidth)-12;
+  const topEdge=vy+12,bottomEdge=vy+(view?.height||innerHeight)-12;
+  m.style.maxWidth=Math.max(0,rightEdge-leftEdge)+"px";
+  m.style.maxHeight="";
+  const below=bottomEdge-r.bottom-8,above=r.top-topEdge-8;
+  const placeAbove=below<m.offsetHeight&&above>below;
+  const room=Math.max(0,placeAbove?above:below);
+  m.style.maxHeight=room+"px";
+  const left=Math.max(leftEdge,Math.min(r.right-m.offsetWidth,rightEdge-m.offsetWidth));
+  m.style.left=left+"px";
+  m.style.top=Math.max(topEdge,placeAbove?r.top-m.offsetHeight-8:r.bottom+8)+"px";
+  m.style.transformOrigin=`${r.left+r.width/2-left}px ${placeAbove?"bottom":"top"}`;
+}
+function openDiaryOverlay(selector,opener=document.activeElement,focus){
+  closeSheets(false);
+  const panel=$(selector),anchor=opener instanceof HTMLElement&&opener.matches("button,a[href]")?opener:null;
+  diaryOverlay={panel,opener:anchor,background:["#appbar","#sidebar","#tabbar","#main","#toast"].map(id=>[$(id),$(id).inert])};
+  if(anchor){anchor.setAttribute("aria-controls",panel.id);anchor.setAttribute("aria-expanded","true")}
+  $("#sheetVeil").hidden=false;panel.hidden=false;panel.inert=false;
+  for(const [node] of diaryOverlay.background)node.inert=true;
+  if(panel.id==="acctMenu")placeDiaryMenu();
+  (focus||overlayTabstops(panel)[0])?.focus({preventScroll:true});
+}
+for(const id of ["#bellBtn","#sideBell"])$(id).addEventListener("click",openNotifs);
+function openSiteSheet(e){
+  renderSites();
+  openDiaryOverlay("#siteSheet",e.currentTarget,$("#siteList .on")||$("#siteList button"));
+}
 function openAcctMenu(anchor){
   const m=$("#acctMenu");
+  m.setAttribute("aria-label","Account");
   m.replaceChildren(el("div",{class:"who"},el("b",{text:S.myName||""}),el("span",{class:"s",text:{admin:"Admin",manager:"Manager",staff:"Staff"}[S.role]||""})),
     ...accountItems().map(([t,ic,,fn,danger])=>el("button",{class:"m"+(danger?" danger":""),type:"button",role:"menuitem",onclick:()=>{closeSheets();fn()}},svgi(ICON[ic]),el("span",{text:t}))));
-  const r=anchor.getBoundingClientRect();
-  m.style.top=(r.bottom+8)+"px";m.style.left=Math.max(12,Math.min(r.left,innerWidth-272))+"px";
-  if(anchor.id==="meBox"){m.style.top="";m.style.bottom=(innerHeight-r.top+8)+"px"}else m.style.bottom="";
-  $("#sheetVeil").hidden=false;m.hidden=false;m.querySelector("button").focus();
+  openDiaryOverlay("#acctMenu",anchor);
 }
 document.querySelectorAll("[data-sitebtn]").forEach(b=>b.addEventListener("click",openSiteSheet));
 $("#avatarBtn").addEventListener("click",e=>openAcctMenu(e.currentTarget));
 $("#meBox").addEventListener("click",e=>openAcctMenu(e.currentTarget));
-$("#sheetVeil").addEventListener("click",closeSheets);
-document.addEventListener("keydown",e=>{if(e.key==="Escape"&&!$("#sheetVeil").hidden)closeSheets()});
+$("#sheetVeil").addEventListener("click",()=>closeSheets());
+document.querySelectorAll("[data-close-sheet]").forEach(b=>b.addEventListener("click",()=>closeSheets()));
+window.addEventListener("resize",placeDiaryMenu);
+window.visualViewport?.addEventListener("resize",placeDiaryMenu);
+window.visualViewport?.addEventListener("scroll",placeDiaryMenu);
+document.addEventListener("keydown",e=>{
+  const panel=diaryOverlay?.panel;if(!panel)return;
+  if(e.key==="Escape"){e.preventDefault();closeSheets();return}
+  const items=overlayTabstops(panel),index=items.indexOf(document.activeElement);
+  if(panel.id==="acctMenu"){
+    if(e.key==="Tab"){closeSheets();return}
+    if(!["ArrowDown","ArrowUp","Home","End"].includes(e.key)||!items.length)return;
+    e.preventDefault();
+    const next=e.key==="Home"?0:e.key==="End"?items.length-1:(index+(e.key==="ArrowDown"?1:items.length-1))%items.length;
+    items[next].focus();
+  }else if(e.key==="Tab"&&items.length&&(index<0||e.shiftKey&&index===0||!e.shiftKey&&index===items.length-1)){
+    e.preventDefault();items[e.shiftKey?items.length-1:0].focus();
+  }
+});

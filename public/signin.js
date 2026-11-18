@@ -67,7 +67,21 @@
     return "/";
   })();
 
+  function showPassword(button, visible) {
+    const input = document.getElementById(button.getAttribute("aria-controls"));
+    input.type = visible ? "text" : "password";
+    button.textContent = visible ? "Hide" : "Show";
+    button.setAttribute("aria-pressed", String(visible));
+    return input;
+  }
+
   function show(id, focus) {
+    $("#signinLoading").hidden = true;
+    const previous = $("form:not([hidden])");
+    if (previous && previous.id !== id) {
+      previous.querySelectorAll(".pw .show").forEach((button) => showPassword(button, false));
+      previous.querySelectorAll("input[type=password]").forEach((input) => { input.value = ""; });
+    }
     for (const f of FORMS) $("#" + f).hidden = f !== id;
     if ($("#quick").dataset.ready) $("#quick").hidden = id !== "signin"; // quick sign-in sits above the sign-in form only
     document.querySelectorAll(".err").forEach((e) => { e.textContent = ""; });
@@ -75,15 +89,16 @@
     if (el) el.focus();
   }
 
-  async function post(url, body) {
+  async function post(url, body, signal) {
     if (pendingLogout() && !(await finishPendingLogout())) throw new Error("Finish signing out before signing in.");
     let res;
     try {
-      res = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+      res = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal });
     } catch (e) {
       throw new Error("Couldn't reach the site. Check your connection.");
     }
     const data = await res.json().catch(() => ({}));
+    if (signal?.aborted) throw new Error("Couldn't finish checking the PIN.");
     if (!res.ok) throw new Error(data.message || "Something went wrong. Try again.");
     if (data.user) notifySession();
     return data;
@@ -91,13 +106,27 @@
 
   // Runs a form's submit handler with its button disabled and errors shown in its .err.
   function onSubmit(id, fn) {
-    $("#" + id).addEventListener("submit", async (e) => {
+    const form = $("#" + id);
+    form.addEventListener("submit", async (e) => {
       e.preventDefault();
       const err = $(`#${id} .err`), btn = $(`#${id} button[type=submit]`);
+      if (btn.disabled) return;
+      const label = btn.textContent;
       err.textContent = "";
       btn.disabled = true;
+      btn.textContent = "Please wait…";
+      form.setAttribute("aria-busy", "true");
+      const links = form.querySelectorAll("[data-go]");
+      links.forEach((button) => { button.disabled = true; });
+      if (id === "signin") $("#quick").inert = true;
       try { await fn(err); } catch (x) { err.textContent = x.message; }
-      btn.disabled = !!pendingLogout();
+      finally {
+        form.removeAttribute("aria-busy");
+        btn.textContent = label;
+        btn.disabled = !!pendingLogout();
+        links.forEach((button) => { button.disabled = false; });
+        if (id === "signin") $("#quick").inert = false;
+      }
     });
   }
 
@@ -106,18 +135,15 @@
   const checkNew = (a, b) => (a.length < 8 ? "Passwords need at least 8 characters." : a !== b ? "The two passwords don't match." : "");
 
   document.querySelectorAll("[data-go]").forEach((b) => b.addEventListener("click", () => {
+    if (b.form.getAttribute("aria-busy") === "true") return;
     if (b.dataset.go === "change" && $("#username").value) $("#cuser").value = $("#username").value;
     if (b.dataset.go === "recover" && $("#username").value) $("#ruser").value = $("#username").value;
     show(b.dataset.go);
   }));
 
-  document.querySelectorAll(".pw .show").forEach((b) => b.addEventListener("click", () => {
-    const input = $("#" + b.getAttribute("aria-controls"));
-    const showing = input.type === "text";
-    input.type = showing ? "password" : "text";
-    b.textContent = showing ? "Show" : "Hide";
-    b.setAttribute("aria-pressed", String(!showing));
-    input.focus();
+  document.querySelectorAll(".pw .show").forEach((b) => b.addEventListener("click", (event) => {
+    const input = showPassword(b, b.getAttribute("aria-pressed") !== "true");
+    if (event.detail) input.focus({ preventScroll: true });
   }));
 
   /* ---------- sign in ---------- */
@@ -215,8 +241,9 @@
       b.append(av, nm);
       b.addEventListener("click", () => PinPad.open({
         title: `Hi ${p.name.split(" ")[0]}`, sub: "Enter your quick PIN",
-        onPin: async (pin) => {
-          try { await post("/api/auth/switch", { id: p.id, pin }); } catch (e) { return e.message; }
+        onPin: async (pin, signal) => {
+          try { await post("/api/auth/switch", { id: p.id, pin }, signal); } catch (e) { return e.message; }
+          if (signal.aborted) return "Couldn't finish checking the PIN.";
           location.replace(next);
           return null;
         },

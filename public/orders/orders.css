@@ -10,7 +10,8 @@ a { color: var(--accent); text-decoration: none; }
   --panel-padding: clamp(14px, 1.5vw, 22px);
   max-width: 1580px;
   margin-inline: auto;
-  padding: 20px clamp(14px, 3vw, 48px) 30px;
+  padding-block: calc(20px + env(safe-area-inset-top, 0px)) calc(30px + env(safe-area-inset-bottom, 0px));
+  padding-inline: max(clamp(14px, 3vw, 48px), env(safe-area-inset-left, 0px)) max(clamp(14px, 3vw, 48px), env(safe-area-inset-right, 0px));
 }
 .glass {
   background: var(--glass);
@@ -137,8 +138,10 @@ button.order-row:hover { background: var(--sunk); }
 .hint { color: var(--muted); font-size: 13px; margin: 12px 0 0; }
 .empty { padding: 24px var(--panel-padding, 20px); color: var(--muted); font-size: 14px; }
 .footer { display: flex; justify-content: space-between; gap: 16px; color: var(--muted); font-size: 12px; border-top: 1px solid var(--line); margin-top: 28px; padding-top: 15px; }
+.footer>span { min-width: 0; overflow-wrap: anywhere; }
+#signedIn { text-align: end; }
 
-dialog { width: min(760px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); border: 1px solid var(--glass-edge); border-radius: var(--r-lg); background: var(--glass-thick); box-shadow: var(--float); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); color: var(--fg); padding: 0; }
+dialog { width: min(760px, calc(100vw - 32px)); max-width: calc(100% - 16px - 2 * max(env(safe-area-inset-left, 0px), env(safe-area-inset-right, 0px))); max-height: calc(100dvh - 48px); border: 1px solid var(--glass-edge); border-radius: var(--r-lg); background: var(--glass-thick); box-shadow: var(--float); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); color: var(--fg); padding: 0; }
 dialog[open] { display: flex; flex-direction: column; }
 dialog::backdrop { background: #0007; -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
 .dialog-head,.dialog-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 22px; flex: none; }
@@ -173,7 +176,7 @@ dialog::backdrop { background: #0007; -webkit-backdrop-filter: blur(8px); backdr
   .heading .btn { padding-inline: 12px; }
   .row-end { gap: 6px; }
   .footer { font-size: 11px; }
-  dialog { width: calc(100vw - 16px); max-height: calc(100dvh - 24px); }
+  dialog { width: calc(100vw - 16px); max-height: calc(100dvh - 24px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); }
   .dialog-head,.dialog-foot { padding: 10px 15px; }
   .dialog-body { padding: 16px; }
   .business-title h3 { font-size: 20px; }
@@ -215,10 +218,11 @@ dialog::backdrop { background: #0007; -webkit-backdrop-filter: blur(8px); backdr
 .location{white-space:pre-line}.location .row-meta{white-space:normal}
 #totalsDialog{width:min(820px,calc(100vw - 24px))}
 .totals-hint{margin:0 0 12px}
-#totalsScope .filters{margin:0 0 16px}
+#totalsScope .filters{display:flex;flex-wrap:wrap;margin:0 0 16px;border-radius:16px}
+#totalsScope .filters button{flex:1 0 auto;border-radius:99px}
 .totals-foot{justify-content:flex-end;flex-wrap:wrap}
-.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(env(safe-area-inset-bottom,0px) + 24px);z-index:40;display:flex;align-items:center;gap:12px;max-width:calc(100vw - 32px);box-sizing:border-box;white-space:nowrap}
-.toast span{overflow:hidden;text-overflow:ellipsis}.toast[hidden]{display:none}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(env(safe-area-inset-bottom,0px) + 24px);z-index:40;display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;width:max-content;max-width:min(560px,calc(100% - 32px));box-sizing:border-box}
+.toast span{flex:1 1 210px;min-width:0;overflow-wrap:anywhere}.toast[hidden]{display:none}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 @media(max-width:600px){
  .order-entry{flex-wrap:wrap;padding:0 0 12px}.order-entry.is-picking{padding:0}
@@ -266,12 +270,12 @@ button.cleared-row:hover{background:var(--sunk)}
 /* New order for a customer */
 #newOrderDialog{width:min(1080px,calc(100vw - 32px))}
 #newOrderDialog .dialog-head{padding-inline:clamp(16px,3vw,28px)}
-#newOrderForm{display:grid;align-content:start;gap:16px;padding:clamp(14px,2.6vw,24px)}
+#newOrderForm{display:grid;grid-template-columns:minmax(0,1fr);align-content:start;gap:16px;padding:clamp(14px,2.6vw,24px)}
 .no-customer-search{display:grid;gap:12px;max-width:640px;width:100%;margin-inline:auto}
 .no-customer-search>input{width:100%;min-height:44px;padding:10px 13px;border:1px solid var(--line);border-radius:12px;background:var(--sunk);color:var(--fg)}
 .no-customer{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;padding:12px 14px;border:1px solid var(--line);border-radius:16px;background:var(--tint)}
 .no-customer-name{display:flex;align-items:center;gap:11px;min-width:0}
-.no-customer-name>div{display:grid;gap:2px;overflow-wrap:anywhere}
+.no-customer-name>div{display:grid;gap:2px;min-width:0;overflow-wrap:anywhere}
 .no-customer-icon{display:grid;place-items:center;flex:none;width:40px;height:40px;border-radius:12px;background:var(--glass-thick);color:var(--accent)}
 .no-found{max-height:360px;overflow:auto}
 .no-workspace{display:grid;gap:14px;min-width:0}

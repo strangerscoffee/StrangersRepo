@@ -67,11 +67,12 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
         await confirmation.waitFor();
         assert.equal((await confirm.textContent()).trim(), "Confirm delete order");
       }
-      async function assertDraft(status, note, customerId) {
+      async function assertDraft(status, note, previewCustomerId = null) {
         await page.locator("#wStatus").waitFor();
         assert.equal(await page.locator("#wStatus").inputValue(), status);
         assert.equal(await page.locator("#wNote").inputValue(), note);
-        assert.equal(await page.locator("#wCustomer").inputValue(), customerId);
+        if (previewCustomerId) assert.equal(await page.locator("#wCustomer").inputValue(), previewCustomerId);
+        else assert.equal(await page.locator("#wCustomerName").textContent(), business);
       }
       await page.goto(srv.base + "/admin#wholesale");
       await detail(first.id).click();
@@ -84,11 +85,11 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       assert.match(copy, /history/i); assert.match(copy, /payment/i); assert.match(copy, /refund/i);
       assert.equal(deletes.length, 0, "opening confirmation sends no delete request");
       await confirmation.locator('[data-sheet="cancel-delete"]').click();
-      await assertDraft("Preparing", draft, customer.id);
+      await assertDraft("Preparing", draft);
       await openConfirmation(); await page.keyboard.press("Escape");
-      await assertDraft("Preparing", draft, customer.id);
+      await assertDraft("Preparing", draft);
       await openConfirmation(); await page.mouse.click(4, 4);
-      await assertDraft("Preparing", draft, customer.id);
+      await assertDraft("Preparing", draft);
       assert.equal(deletes.length, 0, "Cancel, Escape and backdrop preserve the order and unsaved editor fields");
       const unchanged = (await dashboard()).orders.find((row) => row.id === first.id);
       assert.equal(unchanged.status, "New"); assert.equal(unchanged.note, ""); assert.equal(unchanged.version, first.version);
@@ -135,7 +136,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       assert.equal(retained.version, changed.version); assert.equal(retained.status, "Ready"); assert.equal(retained.note, otherNote);
       await screenshot(page, `delete-conflict-${device}-${color}`);
       await confirmation.locator('[data-sheet="cancel-delete"]').click();
-      await assertDraft("Preparing", staleDraft, customer.id);
+      await assertDraft("Preparing", staleDraft);
       await openConfirmation(); await confirm.click();
       await confirmation.locator('[data-sheet="reload-delete"]').waitFor();
       assert.equal(await confirm.isDisabled(), true, "a rejected deletion requires an explicit reload before confirming this form again");
@@ -143,7 +144,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["iPad
       assert.equal(await confirmation.locator('[data-sheet="reload-delete"]').isEnabled(), true);
       assert.equal(deletes.at(-1).body.ifVersion, stale.version, "cancelling a failed confirmation does not silently promote its version");
       await confirmation.locator('[data-sheet="reload-delete"]').click();
-      await assertDraft("Ready", otherNote, customer.id);
+      await assertDraft("Ready", otherNote);
       const countBeforeFreshConfirmation = deletes.length;
       await openConfirmation();
       assert.equal(deletes.length, countBeforeFreshConfirmation, "reloading latest still requires explicit confirmation");

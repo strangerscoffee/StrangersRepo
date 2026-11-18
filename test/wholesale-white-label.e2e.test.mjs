@@ -84,14 +84,14 @@ test("Admin makes a white-label coffee for one business, made from two coffees",
 
 test("the coffee editor fits phones and iPads, light and dark", async () => {
   const product = (await call("GET", "/api/admin/wholesale")).body.products.find((row) => row.title === "Lune House Blend");
-  for (const [name, viewport] of [["phone", { width: 390, height: 844 }], ["ipad", { width: 820, height: 1180 }]]) for (const colorScheme of ["light", "dark"]) {
+  for (const [name, viewport] of [["small-phone", { width: 320, height: 844 }], ["phone", { width: 390, height: 844 }], ["ipad", { width: 820, height: 1180 }]]) for (const colorScheme of ["light", "dark"]) {
     const { ctx, p, errors } = await page(ADMIN, viewport, { colorScheme, isMobile: true, hasTouch: true });
     await p.goto(srv.base + "/admin#wholesale");
     await selectWholesaleSection(p, "custom");
     await p.locator(`[data-act="wh-coffee"][data-id="${product.id}"]`).click();
     await p.locator("#wWlList [data-wl]").first().waitFor();
     await p.locator("#wRecipeTitle").scrollIntoViewIfNeeded();
-    const overflow = await p.evaluate(() => [...document.querySelectorAll("#wCoffeeForm .w-recipe-row, #wWlPick")].some((n) => n.scrollWidth > n.clientWidth + 1 || n.getBoundingClientRect().right > innerWidth + 1));
+    const overflow = await p.evaluate(() => [...document.querySelectorAll("#sheet, #wCoffeeForm .w-recipe-row, #wWlPick")].some((n) => n.scrollWidth > n.clientWidth + 1 || n.getBoundingClientRect().right > innerWidth + 1));
     assert.equal(overflow, false, `${name} ${colorScheme}: no sideways overflow`);
     await shot(p, `editor-${name}-${colorScheme}`);
     assert.deepEqual(errors, []);

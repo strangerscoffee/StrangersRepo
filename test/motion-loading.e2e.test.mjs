@@ -62,3 +62,32 @@ test('diary first-load outage ends the shimmer and reconnect recovers without un
   unavailable=false;await page.evaluate(()=>dispatchEvent(new Event('online')));await page.waitForFunction(()=>document.querySelector('#diaryLoading')?.hidden&&!document.documentElement.hasAttribute('data-sc-session-locked'));assert.equal(await page.locator('[data-panel="day"]').evaluate(n=>n.inert),false);assert.deepEqual(errors,[]);
  }finally{unavailable=false;await context.close();}
 });
+
+test('staff windows use the shared motion and respond to a live reduced-motion change', async () => {
+  const {context, page, errors} = await screen({width: 393, height: 640}, 'dark');
+  try {
+    await page.goto(srv.base + '/orders');
+    const trigger = page.locator('#newOrder');
+    const dialog = page.locator('#newOrderDialog');
+    await trigger.click();
+    const opening = await dialog.evaluate(node => {
+      const style = getComputedStyle(node);
+      return {
+        open: node.open,
+        scale: style.getPropertyValue('--dialog-start-scale').trim(),
+        transitions: style.transitionProperty.split(', '),
+      };
+    });
+    assert.equal(opening.open, true);
+    assert.equal(opening.scale, '.985');
+    assert.ok(opening.transitions.includes('scale'));
+    await page.emulateMedia({reducedMotion: 'reduce'});
+    await page.waitForFunction(() => getComputedStyle(document.getElementById('newOrderDialog')).transitionProperty === 'none');
+    assert.equal(await dialog.evaluate(node => getComputedStyle(node).scale), 'none');
+    await page.keyboard.press('Escape');
+    await dialog.waitFor({state: 'hidden'});
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});

@@ -85,6 +85,28 @@ test("staff journey on the real page", async () => {
   await page.locator("#avatarBtn", { hasText: "SP" }).waitFor();
   assert.deepEqual(await accountMenu(page), ["Switch person", "Change password", "Admin", "Sign out"]);
 
+  // Dialogs fit a short mobile viewport, keep keyboard focus inside, and return it on dismissal.
+  await page.setViewportSize({ width: 320, height: 280 });
+  const chooser = page.locator("#siteSheet"), siteButton = page.locator("[data-sitebtn]:visible");
+  await siteButton.click();
+  await chooser.evaluate(sheet => Promise.all(sheet.getAnimations().map(animation => animation.finished)));
+  const sheetBounds = await chooser.boundingBox();
+  assert.ok(sheetBounds.y >= 0 && sheetBounds.y + sheetBounds.height <= 280, "site sheet stays inside the viewport");
+  for (let i = 0; i < 7; i++) await page.keyboard.press("Tab");
+  assert.ok(await chooser.evaluate(sheet => sheet.contains(document.activeElement)), "Tab remains inside the site sheet");
+  await chooser.getByRole("button", { name: "Close site chooser" }).click();
+  assert.ok(await siteButton.evaluate(button => button === document.activeElement), "dismissal returns focus to the site button");
+
+  await page.locator("#tabbar").getByRole("button", { name: "More" }).click();
+  await page.keyboard.press("Tab");
+  await page.locator("#moreHub").getByRole("button", { name: /^Last 4 weeks/ }).focus();
+  await page.keyboard.press("Enter");
+  await page.locator("#strip .cd:not(.out)").first().waitFor();
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), 320, "history fits without horizontal scrolling");
+  assert.ok(await page.locator("#pageTitle").evaluate(heading => heading === document.activeElement), "keyboard navigation focuses the new page title");
+  await page.locator("#tabbar").getByRole("button", { name: "Today" }).click();
+  await page.setViewportSize({ width: 393, height: 852 });
+
   // Switch to the Cafe and tick an opening check.
   await switchSite(page, "Cafe");
   await page.locator("#openList label", { hasText: "Hands washed" }).waitFor();
@@ -441,7 +463,10 @@ test("staff journey on the real page", async () => {
   await switchSite(page, "Roastery");
 
   // A closing check added today counts from today: yesterday's completed day stays complete.
-  const yd = await page.evaluate(() => { const d = new Date(); d.setDate(d.getDate() - 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; });
+  const { date: checkDay, yesterday: yd } = await page.evaluate(() => {
+    const date = today();
+    return { date, yesterday: addDays(date, -1) };
+  });
   const rs = (await api("get", { path: "settings/main" })).data;
   await api("set", { path: `days/${yd}`, data: { date: yd, opening: { items: Object.fromEntries(rs.opening.map((c) => [c.id, true])), by: "web:Sam Patel", at: 1 },
     closing: { items: Object.fromEntries(rs.closing.map((c) => [c.id, true])), by: "web:Sam Patel", at: 1 }, temps: Object.fromEntries(rs.units.map((u) => [u.id, { am: { v: u.kind === "freezer" ? -19 : 3, by: "web:Sam Patel", at: 1 } }])),
@@ -452,7 +477,7 @@ test("staff journey on the real page", async () => {
   await page.click("#saveSetup");
   await page.locator("#setupMsg", { hasText: "Setup saved for the Roastery." }).waitFor();
   const added = (await api("get", { path: "settings/main" })).data.closing.find((c) => c.t === "Coffee grounds bin emptied");
-  assert.equal(added.from, t0d, "new check counts from today");
+  assert.equal(added.from, checkDay, "new check counts from today");
   assert.ok((await api("get", { path: "settings/main" })).data.closing.filter((c) => c.t !== "Coffee grounds bin emptied").every((c) => !c.from), "existing checks keep no date");
   await openSection(page, "history");
   assert.match(await page.locator(`#strip .cd[aria-label="${await page.evaluate((d) => new Date(d + "T12:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }), yd)}"]`).getAttribute("class"), /\bok\b/, "yesterday still complete");
@@ -460,7 +485,7 @@ test("staff journey on the real page", async () => {
   await page.fill("#dayDate", yd); await page.locator("#dayDate").dispatchEvent("change");
   await page.locator("#closeList label").first().waitFor({ state: "attached" });
   assert.equal(await page.locator("#closeList label", { hasText: "Coffee grounds bin emptied" }).count(), 0, "not on yesterday's list");
-  await page.fill("#dayDate", t0d); await page.locator("#dayDate").dispatchEvent("change");
+  await page.fill("#dayDate", checkDay); await page.locator("#dayDate").dispatchEvent("change");
   await page.locator("#closeList label", { hasText: "Coffee grounds bin emptied" }).waitFor({ state: "attached" });
 
   // Sign out, then sign in as the new member of staff: username + temporary password, then their own.
@@ -696,19 +721,19 @@ test("staff journey on the real page", async () => {
 
   // Quick switching: Alex sets a 4-digit PIN, signs out, then signs back in from the list with the PIN.
   await accountMenu(page, "Set a quick PIN");
-  for (const pin of ["4826", "4826"]) {
-    await page.locator(".pp-sheet").waitFor();
-    for (const d of pin) await page.locator(".pp-key", { hasText: d }).first().click();
-    await page.waitForTimeout(400);
+  const pinPad = page.locator(".pp-sheet[open]");
+  for (const prompt of ["Choose a quick PIN", "Enter it again"]) {
+    const sheet = pinPad.filter({ has: page.getByRole("heading", { name: prompt, exact: true }) });
+    for (const d of "4826") await sheet.getByRole("button", { name: d, exact: true }).click();
   }
   await page.locator("#toast", { hasText: "Quick PIN set" }).waitFor();
   assert.ok((await accountMenu(page)).includes("Switch person"), "this device can switch person");
   await accountMenu(page, "Sign out");
   await page.waitForURL(/\/signin(?:\?[^#]*)?$/);
   await page.locator("#quick .person", { hasText: "Alex Brown" }).click();
-  for (const d of "1357") await page.locator(".pp-key", { hasText: d }).first().click();
-  await page.locator(".pp-msg", { hasText: "Wrong PIN" }).waitFor();
-  for (const d of "4826") await page.locator(".pp-key", { hasText: d }).first().click();
+  for (const d of "1357") await pinPad.getByRole("button", { name: d, exact: true }).click();
+  await pinPad.getByRole("alert").filter({ hasText: "Wrong PIN" }).waitFor();
+  for (const d of "4826") await pinPad.getByRole("button", { name: d, exact: true }).click();
   await page.waitForURL(srv.base + "/");
   await page.locator("#avatarBtn", { hasText: "AB" }).waitFor();
 

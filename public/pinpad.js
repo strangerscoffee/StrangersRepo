@@ -1,9 +1,11 @@
 // A 4-digit PIN pad in a bottom sheet, used by the diary (switch person, set a quick PIN) and the sign-in
-// page (quick sign-in). PinPad.open({title, sub, onPin}) shows it; onPin(pin) returns a Promise that
-// resolves to null when the PIN is accepted (the pad closes) or to a message to show (the pad clears).
+// page (quick sign-in). onPin(pin, signal) should pass the signal to any request and return null
+// on success or an error message to show.
 (() => {
   "use strict";
   let open = null;
+  let activeRequest = null;
+  const locked = () => document.documentElement.hasAttribute("data-sc-session-locked");
 
   function el(tag, attrs = {}, ...kids) {
     const e = document.createElement(tag);
@@ -18,13 +20,18 @@
 
   function close() {
     if (!open) return;
-    open.veil.remove();
-    open.sheet.remove();
-    document.removeEventListener("keydown", open.onKey);
+    const sheet = open;
     open = null;
+    activeRequest?.abort();
+    activeRequest = null;
+    if (sheet.open) sheet.close();
+    const animations = sheet.getAnimations?.().filter((animation) => animation.transitionProperty === "opacity") ?? [];
+    if (animations.length) Promise.allSettled(animations.map((animation) => animation.finished)).then(() => sheet.remove());
+    else sheet.remove();
   }
 
   function show({ title, sub, onPin }) {
+    if (locked()) return;
     close();
     let pin = "", busy = false;
     const dots = el("div", { class: "pp-dots", "aria-hidden": "true" }, ...[0, 1, 2, 3].map(() => el("i")));
@@ -43,10 +50,20 @@
       if (pin.length < 4) return;
       busy = true;
       sheet.classList.add("busy");
+      sheet.setAttribute("aria-busy", "true");
+      msg.textContent = "Checking PIN…";
+      const request = new AbortController();
+      activeRequest = request;
+      const deadline = setTimeout(() => request.abort(), 10000);
       let err;
-      try { err = await onPin(pin); } catch (e) { err = (e && e.message) || "Something went wrong. Try again."; }
+      try { err = await onPin(pin, request.signal); } catch (e) { err = (e && e.message) || "Something went wrong. Try again."; }
+      finally { clearTimeout(deadline); }
+      if (open !== sheet) return;
+      activeRequest = null;
       busy = false;
       sheet.classList.remove("busy");
+      sheet.removeAttribute("aria-busy");
+      if (request.signal.aborted) err = "The PIN check took too long. Try again.";
       if (!err) return close();
       msg.textContent = err;
       pin = "";
@@ -55,27 +72,37 @@
       void sheet.offsetWidth;
       sheet.classList.add("shake");
     }
-    const key = (k, label, extra) => el("button", { type: "button", class: "pp-key" + (extra ? " " + extra : ""), "aria-label": label || k, onclick: () => press(k) }, label === "Delete" ? "⌫" : k);
+    const cancel = () => { if (!busy && open === sheet) close(); };
+    const key = (k, label, extra) => el("button", { type: "button", class: "pp-key" + (extra ? " " + extra : ""), "aria-label": label || k, autofocus: k === "1", onclick: () => press(k) }, label === "Delete" ? "⌫" : k);
     const keys = el("div", { class: "pp-keys" },
       ...["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((k) => key(k)),
-      el("button", { type: "button", class: "pp-key alt", onclick: close }, "Cancel"),
+      el("button", { type: "button", class: "pp-key alt", onclick: cancel }, "Cancel"),
       key("0"), key("del", "Delete", "alt"));
-    const veil = el("div", { class: "pp-veil", onclick: close });
-    const sheet = el("div", { class: "pp-sheet", role: "dialog", "aria-modal": "true", "aria-label": title },
+    const sheet = el("dialog", { class: "pp-sheet", "aria-label": title },
       el("div", { class: "pp-grab", "aria-hidden": "true" }),
       el("h2", { text: title }), sub ? el("p", { class: "pp-sub", text: sub }) : null,
       dots, live, msg, keys);
-    const onKey = (e) => {
-      if (/^\d$/.test(e.key)) press(e.key);
-      else if (e.key === "Backspace") press("del");
-      else if (e.key === "Escape") close();
-    };
-    document.addEventListener("keydown", onKey);
-    document.body.append(veil, sheet);
-    open = { veil, sheet, onKey };
+    sheet.addEventListener("keydown", (event) => {
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      const digit = /^\d$/.test(event.key);
+      if (!digit && event.key !== "Backspace") return;
+      event.preventDefault();
+      press(digit ? event.key : "del");
+    });
+    sheet.addEventListener("cancel", (event) => { event.preventDefault(); cancel(); });
+    sheet.addEventListener("click", (event) => {
+      if (event.target !== sheet) return;
+      const bounds = sheet.getBoundingClientRect();
+      if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) cancel();
+    });
+    sheet.addEventListener("close", () => { if (open === sheet) close(); });
+    document.body.append(sheet);
+    open = sheet;
     paint();
-    sheet.querySelector(".pp-key").focus();
+    sheet.showModal();
   }
 
+  new MutationObserver(() => { if (locked()) close(); })
+    .observe(document.documentElement, { attributes: true, attributeFilter: ["data-sc-session-locked"] });
   window.PinPad = { open: show, close };
 })();

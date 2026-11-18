@@ -88,25 +88,55 @@
   /* ---------- toasts and sheets ---------- */
   let toastT;
   function toast(msg) { const t = $("#toast"); t.textContent = msg; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => { t.hidden = true; }, 3200); }
+  const sheet = $("#sheet"), scrim = $("#scrim");
+  const sheetBackground = [$(".app"), $("#tabBar")];
   let sheetDone = null, lastFocus = null;
-  function openSheet(content, onAct) {
-    lastFocus = document.activeElement;
-    put($("#sheet"), content);
-    $("#scrim").hidden = false;
+  function openSheet(content, onAct, opener = document.activeElement) {
+    const replacing = !scrim.hidden;
+    if (!replacing) lastFocus = opener;
+    put(sheet, content);
     sheetDone = onAct || null;
-    const f = $("#sheet input, #sheet select, #sheet button");
-    if (f) f.focus();
+    scrim.hidden = false;
+    for (const root of sheetBackground) root.inert = true;
+    sheet.scrollTop = 0;
+    const heading = sheet.querySelector("#sheetTitle");
+    if (heading) heading.tabIndex = -1;
+    (heading || sheet).focus({ preventScroll: true });
+    if (replacing) SC.reveal(sheet);
   }
-  function closeSheet() { $("#scrim").hidden = true; $("#sheet").innerHTML = ""; sheetDone = null; if (lastFocus && lastFocus.isConnected) lastFocus.focus(); }
-  $("#scrim").addEventListener("click", (e) => { if (e.target.id === "scrim") closeSheet(); });
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("#scrim").hidden) closeSheet(); });
-  $("#sheet").addEventListener("click", (e) => {
+  function closeSheet() {
+    if (scrim.hidden) return;
+    scrim.hidden = true;
+    sheet.replaceChildren();
+    sheetDone = null;
+    for (const root of sheetBackground) root.inert = false;
+    const opener = lastFocus;
+    lastFocus = null;
+    if (S.me) (opener?.isConnected && opener.getClientRects().length ? opener : $("#main")).focus({ preventScroll: true });
+  }
+  scrim.addEventListener("click", (e) => { if (e.target === scrim) closeSheet(); });
+  document.addEventListener("keydown", (e) => {
+    if (scrim.hidden || e.defaultPrevented) return;
+    if (e.key === "Escape") { e.preventDefault(); closeSheet(); return; }
+    if (e.key !== "Tab") return;
+    const stops = [...sheet.querySelectorAll("button,a[href],input,select,textarea,summary,[tabindex]")].filter(
+      (el) => el.tabIndex >= 0 && !el.matches(":disabled") && el.getClientRects().length &&
+        getComputedStyle(el).visibility === "visible" && !el.closest("[inert]") &&
+        (!el.closest("details:not([open])") || !!el.closest("summary")),
+    );
+    const first = stops[0], last = stops.at(-1), active = document.activeElement;
+    if (!first || !stops.includes(active) || active === (e.shiftKey ? first : last)) {
+      e.preventDefault();
+      ((e.shiftKey ? last : first) || sheet).focus();
+    }
+  });
+  sheet.addEventListener("click", (e) => {
     const b = e.target.closest("[data-sheet]");
     if (!b) return;
     if (b.dataset.sheet === "close") { closeSheet(); return; }
     if (sheetDone) once(b, () => sheetDone(b.dataset.sheet, b));
   });
-  $("#sheet").addEventListener("submit", (e) => { e.preventDefault(); if (sheetDone) once(e.target, () => sheetDone("submit", e.target)); });
+  sheet.addEventListener("submit", (e) => { e.preventDefault(); if (sheetDone) once(e.target, () => sheetDone("submit", e.target)); });
   // While a sheet's action is running, a second tap (or Enter) does nothing, so nothing is sent twice.
   async function once(owner, fn) {
     if (owner.dataset.busy) return;
@@ -212,10 +242,22 @@
       saveRoute();
     } catch (e) {
       if (my !== seq) return;
-      put(main, html`${head("Couldn't load this page", "")}<div class="group glass"><div class="empty">${svg("warn")}<span>${e.message}</span></div></div>`);
+      put(main, html`${head("Couldn't load this page", "")}<div class="group glass"><div class="item has-action"><span class="ic warn">${svg("warn")}</span><span class="tx"><span>${e.message}</span></span><span class="end"><button class="btn soft" type="button" data-act="retry-page">Try again</button></span></div></div>`);
     } finally { if (my === seq) main.setAttribute("aria-busy", "false"); }
   }
-  const reload = () => show(S.page, { keepScroll: true });
+  async function reload() {
+    const page = S.page, previous = document.activeElement, main = $("#main");
+    const key = previous && main.contains(previous) && previous !== main
+      ? ["id", "data-act", "data-id", "data-filter", "data-feed", "data-person"]
+        .filter((attr) => previous.hasAttribute(attr))
+        .map((attr) => `[${attr}="${CSS.escape(previous.getAttribute(attr))}"]`).join("")
+      : "";
+    await show(page, { keepScroll: true });
+    if (key && S.page === page && !previous.isConnected && document.activeElement === document.body) {
+      const target = main.querySelector(key);
+      (target?.getClientRects().length ? target : main).focus({ preventScroll: true });
+    }
+  }
 
   /* ---------- views ---------- */
   const VIEWS = {};
@@ -413,8 +455,8 @@
       </details>
       <div class="label">For everyone</div>
       <div class="group glass">
-        <div class="item"><span class="ic warn">${svg("key")}</span><span class="tx"><b>Reset all quick PINs</b><span>For example when an iPad is lost. People set a new PIN after signing in with their password.</span></span><span class="end"><button class="btn sm soft" type="button" data-act="resetpins">Reset quick PINs</button></span></div>
-        <div class="item"><span class="ic bad">${svg("out")}</span><span class="tx"><b>Sign everyone out</b><span>Ends every session on every device, including yours.</span></span><span class="end"><button class="btn sm bad" type="button" data-act="signoutall">Sign everyone out</button></span></div>
+        <div class="item has-action"><span class="ic warn">${svg("key")}</span><span class="tx"><b>Reset all quick PINs</b><span>For example when an iPad is lost. People set a new PIN after signing in with their password.</span></span><span class="end"><button class="btn sm soft" type="button" data-act="resetpins">Reset quick PINs</button></span></div>
+        <div class="item has-action"><span class="ic bad">${svg("out")}</span><span class="tx"><b>Sign everyone out</b><span>Ends every session on every device, including yours.</span></span><span class="end"><button class="btn sm bad" type="button" data-act="signoutall">Sign everyone out</button></span></div>
       </div>`;
   };
 
@@ -435,10 +477,10 @@
       <p class="hint">A backup holds every diary record, the rota and the list of accounts (never passwords). Allergen PDFs aren't included.</p>
       <div class="label">Exports</div>
       <div class="group glass">
-        <div class="item"><span class="ic acc">${svg("clock")}</span><span class="tx"><b>Hours for payroll</b><span>Rota · CSV per person and site for a week, with overtime</span>
+        <div class="item has-action"><span class="ic acc">${svg("clock")}</span><span class="tx"><b>Hours for payroll</b><span>Rota · CSV per person and site for a week, with overtime</span>
           <span class="inline"><label class="fl" for="hoursWeek">Week of</label><select id="hoursWeek">${weeks.map((w, i) => html`<option value="${w}">${isoShort(w)}${i === 0 ? " (this week)" : i === 1 ? " (last week)" : ""}</option>`)}</select></span></span>
           <span class="end"><button class="btn sm soft" type="button" data-act="hours" aria-label="Download payroll hours CSV">${svg("dl")}Download CSV</button></span></div>
-        <div class="item"><span class="ic acc">${svg("clock")}</span><span class="tx"><b>All shifts</b><span>Rota · CSV, planned and as worked</span>
+        <div class="item has-action"><span class="ic acc">${svg("clock")}</span><span class="tx"><b>All shifts</b><span>Rota · CSV, planned and as worked</span>
           <span class="inline"><input type="date" id="shFrom" value="${monthAgo}" aria-label="From"><span>to</span><input type="date" id="shTo" value="${today}" aria-label="To"></span></span>
           <span class="end"><button class="btn sm soft" type="button" data-act="shifts" aria-label="Download all shifts CSV">${svg("dl")}Download CSV</button></span></div>
         <div class="item"><span class="ic warn">${svg("people")}</span><span class="tx"><b>People</b><span>Accounts · CSV of names, roles, sites and contracted hours. Never passwords.</span></span>
@@ -524,7 +566,7 @@
     try {
       const access=await api("GET",`/api/admin/users/${p.id}/orders-access`);
       if(S.page!=="people"||S.open!==p.id)return;
-      openSheet(html`<form class="sheetform"><h2 id="sheetTitle">Wholesale orders access</h2><p>${p.name}</p><p class="hint">View orders and overdue-account warnings; update order statuses, notes and tracking; manage tabs; and print packing lists and bag totals.</p><p class="hint">Includes customer contact and delivery details. This does not grant access to Admin or employee information.</p><fieldset id="orderAccessControls" ${access.inherited?raw("disabled"):""}><label class="field"><span><input id="orderAccessEnabled" type="checkbox" ${access.enabled?raw("checked"):""}> Allow wholesale orders dashboard</span></label></fieldset>${access.inherited?html`<p class="hint">Admins already have access through their role.</p>`:""}<p class="err" id="orderAccessErr" role="alert"></p><div class="row"><button class="btn soft" type="button" data-sheet="close">Cancel</button>${access.inherited?"":html`<button class="btn" type="submit">Save access</button>`}</div></form>`,async(act,element)=>{
+      openSheet(html`<form class="sheetform"><h2 id="sheetTitle">Wholesale orders access</h2><p>${p.name}</p><p class="hint">View orders and overdue-account warnings; update order statuses, notes and tracking; manage tabs; and print packing lists and bag totals.</p><p class="hint">Includes customer contact and delivery details. This does not grant access to Admin or employee information.</p><fieldset id="orderAccessControls" ${access.inherited?raw("disabled"):""}><label class="checkrow"><input id="orderAccessEnabled" type="checkbox" ${access.enabled?raw("checked"):""}><span>Allow wholesale orders dashboard</span></label></fieldset>${access.inherited?html`<p class="hint">Admins already have access through their role.</p>`:""}<p class="err" id="orderAccessErr" role="alert"></p><div class="row"><button class="btn soft" type="button" data-sheet="close">Cancel</button>${access.inherited?"":html`<button class="btn" type="submit">Save access</button>`}</div></form>`,async(act,element)=>{
         if(act!=="submit"||access.inherited)return;
         const form=element.closest("form"),controls=form.querySelector("#orderAccessControls"),enabled=form.querySelector("#orderAccessEnabled").checked;
         controls.disabled=true;
@@ -543,7 +585,7 @@
   }
   function editSummary(p) {
     const on = !!(p.emailPrefs && p.emailPrefs.weekly), sites = p.weeklySites || SITES.map(([id]) => id);
-    openSheet(html`<form novalidate><h2 id="sheetTitle">${p.name}'s Monday summary</h2>
+    openSheet(html`<form class="sheetform" novalidate><h2 id="sheetTitle">${p.name}'s Monday summary</h2>
       <p>Every Monday at 07:30: what needs them at their sites, and last week's diary.${p.email ? "" : " They need an email address first."}</p>
       <label class="checkrow"><input type="checkbox" id="fWeekly" ${on ? raw("checked") : ""}> Send ${p.name.split(" ")[0]} the Monday summary</label>
       <div class="field"><span class="fl">Sites it covers</span><div class="checks">${SITES.map(([id, n]) => html`<label><input type="checkbox" name="wsite" value="${id}" ${sites.includes(id) ? raw("checked") : ""}>${n}</label>`)}</div></div>
@@ -564,7 +606,7 @@
   function editAvailability(p) {
     const pat = p.rota.pattern || {};
     const mode = (v) => (v === "off" ? "off" : v && typeof v === "object" ? "times" : "any");
-    openSheet(html`<form novalidate><h2 id="sheetTitle">When ${p.name} can work</h2>
+    openSheet(html`<form class="sheetform" novalidate><h2 id="sheetTitle">When ${p.name} can work</h2>
       <p>Only admins and ${p.name} can see this information. ${p.name} sees it read-only and still asks for time off themselves.</p>
       <div class="avail">${DAYS.map(([k, , full]) => { const v = pat[k], m = mode(v); return html`
         <div class="arow" data-day="${k}"><b>${full.slice(0, 3)}</b>
@@ -598,7 +640,7 @@
   async function copySetup(siteId) {
     const target = (cache.sites || []).find((s) => s.id === siteId);
     const from = (cache.sites || []).filter((s) => s.setUp);
-    openSheet(html`<form novalidate><h2 id="sheetTitle">Set up the ${target.name}</h2>
+    openSheet(html`<form class="sheetform" novalidate><h2 id="sheetTitle">Set up the ${target.name}</h2>
       <p>Copies another site's checks, fridges and freezers and closed days into the ${target.name}'s diary Setup. Its diary starts today; managers can change anything in Setup afterwards.</p>
       <div class="field"><label for="fFrom">Copy from</label><select id="fFrom">${from.map((s) => html`<option value="${s.id}">${s.name}</option>`)}</select></div>
       <p class="err" id="fErr" role="alert"></p>
@@ -649,6 +691,7 @@
     const p = person(id);
     switch (name) {
       case "go": saveRoute(); show(id); return;
+      case "retry-page": await show(S.page); $("#main").focus({ preventScroll: true }); return;
       case "errors": saveRoute(); S.feed = "errors"; show("activity"); return;
       case "dismiss":
         try { await api("POST", "/api/admin/overview/dismiss", { key: id }); reload(); }
@@ -724,12 +767,13 @@
   }
 
   function accountMenu() {
-    openSheet(html`<h2 id="sheetTitle">${S.me.name}</h2>
-      <div class="menu" role="menu">
-        <a role="menuitem" href="${S.links.diary}">${svg("cal")}Kitchen Diary</a>
-        <a role="menuitem" href="${S.links.rota}">${svg("clock")}Rota</a>
-        <a role="menuitem" href="/signin#change">${svg("key")}Change password</a>
-        <button role="menuitem" type="button" class="danger" data-sheet="logout">${svg("out")}Sign out</button>
+    if (!S.me) return;
+    openSheet(html`<header class="account-sheet-header"><h2 id="sheetTitle">${S.me.name}</h2><button class="btn soft" type="button" data-sheet="close" aria-label="Close account menu">${svg("x")}</button></header>
+      <div class="menu">
+        <a href="${S.links.diary}">${svg("cal")}Kitchen Diary</a>
+        <a href="${S.links.rota}">${svg("clock")}Rota</a>
+        <a href="/signin#change">${svg("key")}Change password</a>
+        <button type="button" class="danger" data-sheet="logout">${svg("out")}Sign out</button>
       </div>`, (a) => { if (a === "logout") act("logout"); });
   }
 

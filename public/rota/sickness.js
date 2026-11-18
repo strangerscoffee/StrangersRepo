@@ -16,7 +16,7 @@ window.SCSickness = function createSicknessUI(c) {
     ["workAccident", "Was it caused by an accident or injury at work?"],
   ];
   let f = null, key = null, people = null;
-  const fresh = (userId) => ({ userId, kind: "", from: londonToday(), to: londonToday(), leftAt: londonNow(), category: "", details: "", vomiting: null, doctor: null, workAccident: null, declared: false, changes: null, error: "", sent: null });
+  const fresh = (userId) => ({ userId, kind: "", from: londonToday(), to: londonToday(), leftAt: londonNow(), category: "", details: "", vomiting: null, doctor: null, workAccident: null, declared: false, changes: null, previewError: "", error: "", sent: null });
   const days = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 864e5) + 1;
   const dayText = (d) => d === londonToday() ? "Today" : d === addDays(londonToday(), -1) ? "Yesterday" : d === addDays(londonToday(), 1) ? "Tomorrow" : fmt(d, { weekday: "short", day: "numeric", month: "short" });
   const hours = (n) => `${Math.round(n * 100) / 100} h`;
@@ -24,17 +24,22 @@ window.SCSickness = function createSicknessUI(c) {
 
   function choice(name, value, title, sub, icon) {
     const on = f[name] === value;
-    return el("button", { type: "button", class: "sick-choice" + (on ? " on" : ""), "aria-pressed": String(on), onclick: () => { f[name] = value; paint(); preview(); } },
+    return el("button", { type: "button", class: "sick-choice" + (on ? " on" : ""), "data-sick-focus": `${name}:${value}`, "aria-pressed": String(on), onclick: () => {
+      if (f[name] === value) return;
+      const reveal = !f[name];
+      f[name] = value; paint(); preview();
+      if (reveal) [...box.querySelectorAll(".sick-step")].slice(1).forEach(SC.reveal);
+    } },
       el("span", { class: "sick-choice-ic", "aria-hidden": "true" }, svgi(ICONS[icon])), el("span", {}, el("b", { text: title }), el("span", { text: sub })));
   }
-  const chip = (text, on, onclick) => el("button", { type: "button", class: "sick-chip" + (on ? " on" : ""), "aria-pressed": String(on), onclick }, text);
+  const chip = (text, on, onclick) => el("button", { type: "button", class: "sick-chip" + (on ? " on" : ""), "data-sick-focus": `chip:${text}`, "aria-pressed": String(on), onclick: () => { if (!on) onclick(); } }, text);
   function yesNo(name, question) {
     return el("div", { class: "sick-q" }, el("span", { class: "sick-q-text", id: "q-" + name, text: question }),
       el("div", { class: "seg sick-yn", role: "group", "aria-labelledby": "q-" + name },
-        ...[[true, "Yes"], [false, "No"]].map(([v, t]) => el("button", { type: "button", "aria-pressed": String(f[name] === v), onclick: () => { f[name] = v; paint(); } }, t))));
+        ...[[true, "Yes"], [false, "No"]].map(([v, t]) => el("button", { type: "button", "data-sick-focus": `${name}:${v}`, "aria-pressed": String(f[name] === v), onclick: () => { if (f[name] !== v) { f[name] = v; paint(); } } }, t))));
   }
   const dateInput = (name, label, extra = {}) => el("label", { class: "sick-field" }, el("span", { text: label }),
-    el("input", { type: "date", value: f[name], min: addDays(londonToday(), isAdmin() ? -365 : -28), max: addDays(londonToday(), 14), ...extra, onchange: (e) => { f[name] = e.target.value; if (name === "from" && f.to < f.from) f.to = f.from; paint(); preview(); } }));
+    el("input", { type: "date", "data-sick-focus": name, value: f[name], min: addDays(londonToday(), isAdmin() ? -365 : -28), max: addDays(londonToday(), 14), ...extra, onchange: (e) => { f[name] = e.target.value; if (name === "from" && f.to < f.from) f.to = f.from; paint(); preview(); } }));
 
   // The shifts the form would change. Only an answer for the dates and time still on the form is used.
   const previewQuery = () => new URLSearchParams({ userId: f.userId, kind: f.kind, from: f.from, to: f.kind === "early" ? f.from : f.to, ...(f.kind === "early" ? { leftAt: f.leftAt } : {}) }).toString();
@@ -43,18 +48,28 @@ window.SCSickness = function createSicknessUI(c) {
     if (!f?.kind) return;
     const query = previewQuery();
     if (query === asked) return; // already on its way, or answered
-    asked = query; f.changes = null;
+    const form = f;
+    asked = query; f.changes = null; f.previewError = "";
+    drawPreview();
     try {
       const r = await get("/api/rota/sickness/preview?" + query);
-      if (!f || previewQuery() !== query) return;
-      f.changes = r.changes; f.error = "";
-    } catch (e) { if (!f || previewQuery() !== query) return; asked = ""; f.changes = null; f.error = e.message; }
-    paint();
+      if (f !== form || previewQuery() !== query) return;
+      f.changes = r.changes;
+    } catch (e) { if (f !== form || previewQuery() !== query) return; asked = ""; f.previewError = e.message; }
+    drawPreview(true);
+  }
+
+  function drawPreview(animate = false) {
+    const preview = box?.querySelector(".sick-shift-preview");
+    if (!preview) return;
+    const card = shiftsCard();
+    preview.replaceChildren(card);
+    if (animate) SC.reveal(card);
   }
 
   function shiftsCard() {
-    if (!f.kind) return null;
-    if (f.changes === null) return el("p", { class: "sick-muted", text: f.error ? "" : "Checking your shifts…" });
+    if (f.previewError) return el("div", { class: "row" }, el("p", { class: "sick-muted", text: f.previewError }), btn("Try again", () => preview(), "btn ghost"));
+    if (f.changes === null) return el("p", { class: "sick-muted", text: "Checking your shifts…" });
     if (!f.changes.length) return el("p", { class: "sick-muted", text: "No shifts on the rota to change. Your sickness is still recorded." });
     return el("div", { class: "sick-shifts" }, el("span", { class: "sick-shifts-h", text: "Your hours on the rota will change to:" }),
       ...f.changes.map((s) => el("div", { class: "sick-shift" }, el("span", {}, el("b", { text: `${dayText(s.day)} · ${s.start}–${s.end}` }), el("span", { text: s.site[0].toUpperCase() + s.site.slice(1) })),
@@ -64,26 +79,42 @@ window.SCSickness = function createSicknessUI(c) {
   const ready = () => f.kind && f.category && f.details.trim() && QUESTIONS.every(([k]) => typeof f[k] === "boolean") && f.declared;
   async function send(e) {
     e?.preventDefault?.();
+    if (f.sending) return;
     if (!ready()) { f.error = !f.kind ? "Choose whether you were off sick or went home early." : !f.category ? "Choose what was wrong." : !f.details.trim() ? "Tell us a little about what was wrong." : !f.declared ? "Tick the declaration to send the form." : "Answer the three quick questions."; paint(); return; }
+    const form = f;
+    f.sending = true;
+    paint();
     key = key || (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2));
     const body = { requestKey: key, userId: f.userId, kind: f.kind, from: f.from, to: f.kind === "early" ? f.from : f.to, leftAt: f.kind === "early" ? f.leftAt : undefined, category: f.category, details: f.details.trim(), vomiting: f.vomiting, doctor: f.doctor, workAccident: f.workAccident, declared: true };
     try {
       const r = await api("POST", "/api/rota/sickness", body);
+      if (f !== form) return;
       f.sent = r; f.error = ""; key = null;
       toast("Sickness form sent");
-    } catch (err) { f.error = err.message; }
+    } catch (err) { if (f !== form) return; f.error = err.message; }
+    finally { form.sending = false; }
     paint();
+    if (f.sent) {
+      SC.reveal(box.firstElementChild);
+      box.querySelector("h2").focus({ preventScroll: true });
+    }
   }
 
   let box = null;
   // Any tap or change on the form clears the last "please answer…" message; sending checks again.
-  const touched = () => { if (f && !f.sent && f.error && !f.error.startsWith("Couldn")) f.error = ""; };
+  const touched = () => {
+    if (f && !f.sent && f.error && !f.error.startsWith("Couldn")) {
+      f.error = "";
+      box.querySelector(".sick-err").textContent = "";
+    }
+  };
   function paint() {
     if (!box || !f) return;
+    const focus = box.contains(document.activeElement) && document.activeElement.dataset.sickFocus;
     const who = f.userId === me().id ? me().name : (people?.find((p) => p.id === f.userId)?.name || "");
     if (f.sent) {
       box.replaceChildren(el("div", { class: "sick-done glass" }, el("div", { class: "sick-tick", "aria-hidden": "true" }, svgi(ICONS.done)),
-        el("h2", { text: f.userId === me().id ? `Thanks, ${who.split(" ")[0]}. Get well soon.` : `Saved for ${who}.` }),
+        el("h2", { tabindex: -1, text: f.userId === me().id ? `Thanks, ${who.split(" ")[0]}. Get well soon.` : `Saved for ${who}.` }),
         el("p", { text: "Your form has gone to the office. Only admins can read it." }),
         f.sent.changes?.length ? el("p", { class: "sick-muted", text: `${f.sent.changes.length === 1 ? "1 shift" : f.sent.changes.length + " shifts"} on the rota now ${f.sent.changes.length === 1 ? "shows" : "show"} the hours you worked.` }) : null,
         f.vomiting ? el("p", { class: "sick-warn", text: "Food safety: please don't come back to work until you've had no sickness or diarrhoea for 48 hours." }) : null,
@@ -94,7 +125,7 @@ window.SCSickness = function createSicknessUI(c) {
     const form = el("form", { class: "sick-form", novalidate: true, onsubmit: send },
       el("p", { class: "sick-lead", text: "Off sick or had to go home? Fill this in as soon as you can. It takes a minute, and only the office (admins) can see what you write." }),
       isAdmin() && people ? el("label", { class: "sick-field sick-who" }, el("span", { text: "Who is this for?" }),
-        el("select", { onchange: (e) => { f.userId = e.target.value; paint(); preview(); } }, ...people.map((p) => el("option", { value: p.id, selected: p.id === f.userId, text: p.id === me().id ? `${p.name} (me)` : p.name })))) : null,
+        el("select", { "data-sick-focus": "person", onchange: (e) => { f.userId = e.target.value; paint(); preview(); } }, ...people.map((p) => el("option", { value: p.id, selected: p.id === f.userId, text: p.id === me().id ? `${p.name} (me)` : p.name })))) : null,
 
       el("section", { class: "sick-step glass" }, el("h2", {}, el("span", { class: "sick-n", text: "1" }), "What happened?"),
         el("div", { class: "sick-choices" }, choice("kind", "off", "I'm off sick", "A whole day or more", "off"), choice("kind", "early", "I went home early", "Part-way through a shift", "early"))),
@@ -112,7 +143,7 @@ window.SCSickness = function createSicknessUI(c) {
               chip("Yesterday", f.from === addDays(londonToday(), -1), () => { f.from = addDays(londonToday(), -1); paint(); preview(); })),
             el("div", { class: "sick-row" }, dateInput("from", "Day", { max: londonToday() }),
               el("label", { class: "sick-field" }, el("span", { text: "Time you left" }), el("input", { type: "time", value: f.leftAt, step: 300, onchange: (e) => { f.leftAt = e.target.value; preview(); } })))],
-        shiftsCard()) : null,
+        el("div", { class: "sick-shift-preview", role: "status" }, shiftsCard())) : null,
 
       f.kind ? el("section", { class: "sick-step glass" }, el("h2", {}, el("span", { class: "sick-n", text: "3" }), "What was wrong?"),
         el("div", { class: "sick-chips", role: "group", "aria-label": "What was wrong" }, ...CATEGORIES.map((cat) => chip(cat, f.category === cat, () => { f.category = cat; paint(); }))),
@@ -125,14 +156,16 @@ window.SCSickness = function createSicknessUI(c) {
         f.workAccident ? el("p", { class: "sick-note", text: "Please also record what happened in the Accident book in the diary." }) : null) : null,
 
       f.kind ? el("section", { class: "sick-step glass" }, el("h2", {}, el("span", { class: "sick-n", text: "5" }), "Declaration"),
-        el("label", { class: "sick-declare" }, el("input", { type: "checkbox", checked: f.declared, onchange: (e) => { f.declared = e.target.checked; paint(); } }),
+        el("label", { class: "sick-declare" }, el("input", { type: "checkbox", "data-sick-focus": "declaration", checked: f.declared, onchange: (e) => { f.declared = e.target.checked; } }),
           el("span", { text: `I confirm I was unfit for work because of the sickness above, and what I've said is true. Signed: ${me().name}, ${fmt(londonToday(), { day: "numeric", month: "long", year: "numeric" })}.` }))) : null,
 
       el("p", { class: "smsg sick-err", role: "alert", text: f.error }),
-      f.kind ? el("div", { class: "sick-send" }, el("button", { type: "submit", class: "btn sick-submit" }, "Send to the office")) : null,
+      f.kind ? el("div", { class: "sick-send" }, el("button", { type: "submit", class: "btn sick-submit", "data-sick-focus": "submit", "aria-disabled": f.sending ? "true" : null }, f.sending ? "Sending…" : "Send to the office")) : null,
     );
+    if (f.sending) form.querySelectorAll("input,select,textarea,button:not([type=submit])").forEach(control => { control.disabled = true; });
     form.addEventListener("click", touched, true); form.addEventListener("change", touched, true);
     box.replaceChildren(form);
+    if (focus) box.querySelector(`[data-sick-focus="${CSS.escape(focus)}"]`)?.focus({ preventScroll: true });
   }
 
   async function page(args) {

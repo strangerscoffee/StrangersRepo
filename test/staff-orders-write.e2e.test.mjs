@@ -111,6 +111,44 @@ test("granted staff move orders along, keep notes, print and look up customers",
   await ctx.close();
 });
 
+test("bag totals keep the current selection while an earlier request finishes", async () => {
+  const ctx = await b.newContext({ viewport: { width: 320, height: 568 }, isMobile: true, hasTouch: true });
+  const [name, value] = STAFF.split("=");
+  await ctx.addCookies([{ name, value, url: srv.base }]);
+  const page = await ctx.newPage();
+  let releaseOld, markOld;
+  const oldRequest = new Promise(resolve => { markOld = resolve; });
+  const holdOld = new Promise(resolve => { releaseOld = resolve; });
+  const scope = response => new URL(response.url()).searchParams.get("status");
+  await page.route("**/api/staff-orders/print?*", async route => {
+    if (scope(route.request()) !== "New") { await route.continue(); return; }
+    markOld();
+    await holdOld;
+    await route.fulfill({ status: 200, json: { orders: [] } });
+  });
+  try {
+    await page.goto(srv.base + "/orders");
+    await page.getByRole("button", { name: "Bags to process" }).click();
+    await oldRequest;
+    assert.equal(await page.locator("#printTotals").isDisabled(), true);
+    const newScope = page.getByRole("button", { name: "New & preparing" });
+    await newScope.focus();
+    await newScope.press("Space");
+    await page.locator("#totalsBody .wp-meta").filter({ hasText: "new and preparing orders" }).waitFor();
+    assert.equal(await newScope.evaluate(node => document.activeElement === node), true);
+    const response = page.waitForResponse(item => new URL(item.url()).pathname === "/api/staff-orders/print" && scope(item) === "New");
+    releaseOld();
+    await (await response).finished();
+    await page.evaluate(() => new Promise(requestAnimationFrame));
+    assert.match(await page.locator("#totalsBody").innerText(), /new and preparing orders/);
+    assert.equal(await page.locator("#printTotals").isEnabled(), true);
+  } finally {
+    releaseOld();
+    await page.unrouteAll({ behavior: "wait" });
+    await ctx.close();
+  }
+});
+
 // A tracking link can be added while the order is still being prepared (delivery orders only), and it's saved with
 // the next step, so the customer's shipped email can include it.
 test("staff add a tracking link while preparing a delivery order", async () => {

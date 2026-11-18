@@ -26,7 +26,8 @@ async function adminPage(viewport, extra = {}) {
   const p = await ctx.newPage(), errors = []; p.on("pageerror", (e) => errors.push(String(e)));
   await p.goto(srv.base + "/admin#wholesale");
   await selectWholesaleSection(p, "insights");
-  await p.locator("#insTitle").waitFor();
+  await p.locator(".ins-workspace").waitFor();
+  assert.equal(await p.getByRole("heading", { name: "Insights", exact: true }).count(), 1);
   return { ctx, p, errors };
 }
 const CUSTOMER_CSV = [
@@ -58,6 +59,11 @@ after(async () => { await b?.close(); await srv?.stop(); });
 test("import QuickBooks history, confirm products, then read the insights and plan the roast", async () => {
   const { ctx, p, errors } = await adminPage({ width: 1280, height: 900 });
   assert.match(await p.locator(".ins-workspace").innerText(), /1 site order since/);
+  assert.ok(await p.locator(".ins-workspace > .toolbar").evaluate(toolbar => {
+    const coverage = toolbar.querySelector(".hint").getBoundingClientRect();
+    const exportMenu = toolbar.querySelector("summary").getBoundingClientRect();
+    return coverage.right <= exportMenu.left && Math.abs(coverage.top + coverage.height / 2 - exportMenu.top - exportMenu.height / 2) <= 1;
+  }), "the data coverage and export trigger share a row");
   // Excel export: preview, import, then the product matches open.
   await revealAdminOptions(p, ".ins-tools");
   await p.locator('[data-act="wh-ins-import"]').first().click();
@@ -163,7 +169,7 @@ test("import QuickBooks history, confirm products, then read the insights and pl
 });
 
 test("on a phone and an iPad, light and dark", async () => {
-  for (const [name, viewport] of [["phone", { width: 390, height: 844 }], ["ipad", { width: 820, height: 1180 }]]) for (const colorScheme of ["light", "dark"]) {
+  for (const [name, viewport] of [["small-phone", { width: 320, height: 844 }], ["phone", { width: 390, height: 844 }], ["ipad", { width: 820, height: 1180 }]]) for (const colorScheme of ["light", "dark"]) {
     const { ctx, p, errors } = await adminPage(viewport, { isMobile: true, hasTouch: true, colorScheme });
     await p.locator("#insRoast").waitFor();
     assert.equal(await p.locator("#wSection").inputValue(), "insights", "mobile section picker shows the current view");
@@ -176,6 +182,10 @@ test("on a phone and an iPad, light and dark", async () => {
     }
     await p.locator('[data-act="wh-ins-view"][data-id="forecast"]').click();
     await p.locator("#insFc").waitFor();
+    assert.equal(await p.locator('section[aria-labelledby="insFc"] .ins-plot').evaluate(plot => {
+      const labels = [...plot.querySelectorAll('.ins-x')].filter(node => node.getClientRects().length).map(node => node.getBoundingClientRect());
+      return labels.slice(1).some((label, index) => label.left < labels[index].right);
+    }), false, `${name} ${colorScheme}: forecast date labels do not collide`);
     if (process.env.WHOLESALE_SCREENSHOT_DIR) await p.screenshot({ path: `${process.env.WHOLESALE_SCREENSHOT_DIR}/sections-${name}-${colorScheme}.png` });
     const overflow = await p.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     assert.ok(overflow <= 1, `${name} ${colorScheme}: the page doesn't scroll sideways (${overflow}px)`);
@@ -189,7 +199,10 @@ test("on a phone and an iPad, light and dark", async () => {
     if (process.env.WHOLESALE_SCREENSHOT_DIR) await p.screenshot({ path: `${process.env.WHOLESALE_SCREENSHOT_DIR}/insights-one-${name}-${colorScheme}.png`, fullPage: true });
     assert.ok(await p.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth) <= 1, "one customer: no sideways scroll");
     await p.locator('[aria-label="Show all customers"]').click(); await p.locator("#insCust").waitFor();
+    const toolbar = p.locator('.ins-workspace > .toolbar');
+    const closedHeight = (await toolbar.boundingBox()).height;
     await revealAdminOptions(p, ".ins-tools");
+    assert.equal((await toolbar.boundingBox()).height, closedHeight, "opening Data & export keeps the toolbar height");
     await p.locator('[data-act="wh-ins-products"]').first().click(); await p.locator(".ins-products").waitFor();
     if (process.env.WHOLESALE_SCREENSHOT_DIR) await p.screenshot({ path: `${process.env.WHOLESALE_SCREENSHOT_DIR}/insights-products-${name}-${colorScheme}.png` });
     assert.deepEqual(errors, []);

@@ -14,6 +14,15 @@ window.WholesaleInsights = function ({ api, html, raw, svg, put, openSheet, clos
   const day = (iso, opts = { day: "numeric", month: "short" }) => iso ? new Intl.DateTimeFormat("en-GB", { ...opts, timeZone: "UTC" }).format(new Date(iso + "T12:00:00Z")) : "–";
   const longDay = (iso) => day(iso, { day: "numeric", month: "short", year: "numeric" });
   const month = (iso) => day(iso, { month: "short", year: "2-digit" });
+  const chartNumber = new Intl.NumberFormat("en-GB", { notation: "compact", maximumFractionDigits: 1 });
+  const chartMoney = new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP", notation: "compact", maximumFractionDigits: 1 });
+  const chartWeight = (grams) => `${chartNumber.format(grams / 1000)} kg`;
+  const tick = (point, index, count) => {
+    const step = Math.ceil(count / 8);
+    if (index % step) return "";
+    const wide = count > 4 && index % (2 * step);
+    return html`<span class="ins-x ${wide ? "ins-x-wide" : ""}">${point.label}</span>`;
+  };
   const PERIODS = [["4", "4 weeks"], ["13", "3 months"], ["52", "12 months"], ["all", "All"]];
   let period = "13", measure = "pence", data = null, stock = {}, loadedAt = 0, loadedFor = null;
   // One customer at a time (their key from the customer list), or everyone.
@@ -79,13 +88,13 @@ window.WholesaleInsights = function ({ api, html, raw, svg, put, openSheet, clos
   const nice = (max) => { if (max <= 0) return 1; const p = Math.pow(10, Math.floor(Math.log10(max))), f = max / p; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * p; };
   function bars(points, fmt, label, forecast = []) {
     const all = [...points.map((p) => p.value), ...forecast.map((p) => p.high)], top = nice(Math.max(...all, 0));
-    const every = Math.ceil((points.length + forecast.length) / 8);
+    const count = points.length + forecast.length;
     const col = (p, i, kind) => html`<div class="ins-col ${kind}" title="${p.tip}: ${fmt(p.value)}${kind === "fc" ? ` (estimated ${fmt(p.low)}–${fmt(p.high)})` : ""}">
       ${kind === "fc" ? html`<span class="ins-range" style="bottom:${(p.low / top) * 100}%;height:${((p.high - p.low) / top) * 100}%"></span>` : ""}
       <span class="ins-bar" style="height:${Math.max(p.value > 0 ? 1.5 : 0, (p.value / top) * 100)}%"></span>
-      <span class="ins-x ${i % every ? "hide" : ""}">${p.label}</span></div>`;
+      ${tick(p, i, count)}</div>`;
     return html`<figure class="ins-chart" aria-label="${label}"><div class="ins-plot">
-      ${[1, 0.5].map((f) => html`<div class="ins-grid" style="bottom:${f * 100}%"><span>${fmt(top * f)}</span></div>`)}<div class="ins-grid base" style="bottom:0"><span>0</span></div>
+      ${[1, 0.5].map((f) => html`<div class="ins-grid" style="bottom:${f * 100}%"><span>${chartWeight(top * f)}</span></div>`)}<div class="ins-grid base" style="bottom:0"><span>0</span></div>
       <div class="ins-cols">${points.map((p, i) => col(p, i, p.partial ? "partial" : ""))}${forecast.map((p, i) => col(p, points.length + i, "fc"))}</div></div>
       ${forecast.length ? html`<figcaption class="ins-key"><span class="ins-key-item"><span class="ins-swatch"></span>Sold</span>${points.some(p => p.partial) ? html`<span class="ins-key-item"><span class="ins-swatch partial"></span>This week so far</span>` : ""}<span class="ins-key-item"><span class="ins-swatch fc"></span>Forecast and estimated range</span></figcaption>` : ""}</figure>`;
   }
@@ -97,12 +106,13 @@ window.WholesaleInsights = function ({ api, html, raw, svg, put, openSheet, clos
     const keys = ranked.slice(0, TOP).map(([k]) => k), rest = ranked.slice(TOP).map(([k]) => k);
     const series = rest.length ? [...keys, OTHER] : keys;
     const value = (p, k) => k === OTHER ? rest.reduce((t, r) => t + (p.byCoffee[r]?.[idx] || 0), 0) : p.byCoffee[k]?.[idx] || 0;
-    const top = nice(Math.max(...points.map((p) => series.reduce((t, k) => t + value(p, k), 0)), 0)), every = Math.ceil(points.length / 8);
+    const top = nice(Math.max(...points.map((p) => series.reduce((t, k) => t + value(p, k), 0)), 0));
+    const axis = idx === 1 ? (pence) => chartMoney.format(pence / 100) : chartWeight;
     const sumOf = (k) => k === OTHER ? rest.reduce((t, r) => t + totals.get(r)[idx], 0) : totals.get(k)[idx];
     return html`<figure class="ins-chart" aria-label="${label}"><div class="ins-plot">
-      ${[1, 0.5].map((f) => html`<div class="ins-grid" style="bottom:${f * 100}%"><span>${fmt(top * f)}</span></div>`)}<div class="ins-grid base" style="bottom:0"><span>0</span></div>
+      ${[1, 0.5].map((f) => html`<div class="ins-grid" style="bottom:${f * 100}%"><span>${axis(top * f)}</span></div>`)}<div class="ins-grid base" style="bottom:0"><span>0</span></div>
       <div class="ins-cols">${points.map((p, i) => { const all = series.reduce((t, k) => t + value(p, k), 0);
-        return html`<div class="ins-col" title="${p.tip}: ${fmt(all)}${series.filter((k) => value(p, k) > 0).map((k) => `\n${titleOf(k)}: ${fmt(value(p, k))}`).join("")}"><span class="ins-stack" style="height:${Math.max(all > 0 ? 1.5 : 0, (all / top) * 100)}%">${series.filter((k) => value(p, k) > 0).map((k) => html`<span class="ins-seg" style="flex-grow:${value(p, k)};--w-coffee:${fillOf(k, titleOf(k))}"></span>`)}</span><span class="ins-x ${i % every ? "hide" : ""}">${p.label}</span></div>`; })}</div></div>
+        return html`<div class="ins-col" title="${p.tip}: ${fmt(all)}${series.filter((k) => value(p, k) > 0).map((k) => `\n${titleOf(k)}: ${fmt(value(p, k))}`).join("")}"><span class="ins-stack" style="height:${Math.max(all > 0 ? 1.5 : 0, (all / top) * 100)}%">${series.filter((k) => value(p, k) > 0).map((k) => html`<span class="ins-seg" style="flex-grow:${value(p, k)};--w-coffee:${fillOf(k, titleOf(k))}"></span>`)}</span>${tick(p, i, points.length)}</div>`; })}</div></div>
       <figcaption class="ins-legend">${series.map((k) => html`<span class="ins-legend-item">${swatch(k, titleOf(k))}<span class="ins-legend-name">${titleOf(k)}</span><b>${fmt(sumOf(k))}</b></span>`)}</figcaption></figure>`;
   }
   function overTime({ now }) {
@@ -255,7 +265,7 @@ window.WholesaleInsights = function ({ api, html, raw, svg, put, openSheet, clos
   }
   async function choose(key) {
     customer = key || null; await reload();
-    $("#insTitle")?.scrollIntoView({ block: "start" });
+    $(".ins-workspace")?.scrollIntoView({ block: "start" });
   }
 
   /* ---------- the page ---------- */
@@ -264,14 +274,14 @@ window.WholesaleInsights = function ({ api, html, raw, svg, put, openSheet, clos
     const s = data.sources, cut = slice();
     const sourceText = [s.siteOrders ? `${n(s.siteOrders)} site ${s.siteOrders === 1 ? "order" : "orders"} since ${longDay(s.firstSiteOrder)}` : "no site orders yet", s.historyRows ? `QuickBooks history ${longDay(s.historyFirst)} to ${longDay(s.historyUntil && s.historyUntil <= s.historyLast ? s.historyUntil : s.historyLast)}` : "no QuickBooks history imported"].join(" · ");
     const empty = !data.weekly.length && !data.roast.rows.length;
-    return html`<section class="ins-workspace" aria-labelledby="insTitle"><div class="toolbar"><div><h2 id="insTitle">Insights</h2><p class="hint">${sourceText}</p></div>
-      <details class="ins-tools"><summary class="btn soft">Data &amp; export</summary><div class="row ins-actions"><button class="btn soft" type="button" data-act="wh-ins-import">${svg("plus")}Import QuickBooks history</button>${s.historyRows ? html`<button class="btn soft" type="button" data-act="wh-ins-products">QuickBooks products${s.unreviewedProducts ? html` <span class="badge">${s.unreviewedProducts}</span>` : ""}</button>` : ""}${empty ? "" : html`<button class="btn soft" type="button" data-act="wh-ins-csv">${svg("dl")}Download CSV</button>`}</div></details></div>
+    return html`<div class="ins-workspace"><div class="toolbar"><p class="hint">${sourceText}</p>
+      <details class="ins-tools"><summary class="btn soft">Data &amp; export ${svg("chev")}</summary><div class="row ins-actions"><button class="btn soft" type="button" data-act="wh-ins-import">${svg("plus")}Import QuickBooks history</button>${s.historyRows ? html`<button class="btn soft" type="button" data-act="wh-ins-products">QuickBooks products${s.unreviewedProducts ? html` <span class="badge">${s.unreviewedProducts}</span>` : ""}</button>` : ""}${empty ? "" : html`<button class="btn soft" type="button" data-act="wh-ins-csv">${svg("dl")}Download CSV</button>`}</div></details></div>
       ${s.unreviewedProducts ? html`<div class="ins-note group"><p><b>${s.unreviewedProducts} QuickBooks ${s.unreviewedProducts === 1 ? "product needs" : "products need"} checking.</b> The site guessed which coffee and bag size each one is; check them so the history counts the right coffee.</p><button class="btn sm soft" type="button" data-act="wh-ins-products">Check products</button></div>` : ""}
       ${empty ? html`<div class="w-empty"><span class="ic mut">${svg("pulse")}</span><h3>No sales to show yet</h3><p>Insights fill in as customer orders arrive. Import your QuickBooks sales history to see past years and a seasonal forecast straight away.</p><button class="btn" type="button" data-act="wh-ins-import">Import QuickBooks history</button></div>` : html`
       <div class="w-queue-controls" role="group" aria-label="Insights views">${[["roast","Roast plan"],["forecast","Forecast"],["sales","Sales"]].map(([id,label]) => html`<button class="btn sm soft" type="button" data-act="wh-ins-view" data-id="${id}" aria-pressed="${workspace === id}">${label}</button>`)}</div>
       <div class="ins-filters"><button class="btn soft ins-pick ${data.customer ? "on" : ""}" type="button" data-act="wh-ins-pick" aria-haspopup="dialog">${svg("search")}${data.customer ? data.customer.name : "All customers"}</button>${data.customer ? html`<button class="btn soft sm" type="button" data-act="wh-ins-customer" data-id="" aria-label="Show all customers">${svg("x")}All customers</button>` : ""}</div>
       ${workspace === "sales" ? html`<div class="segwrap ins-periods"><div class="seg" role="group" aria-label="Period">${PERIODS.map(([v, l]) => html`<button type="button" data-act="wh-ins-period" data-id="${v}" aria-pressed="${period === v}">${l}</button>`)}</div></div>
-      ${data.customer ? customerCard(data.customer) : ""}${tiles(cut)}${movers(cut)}${overTime(cut)}${byCoffee(cut)}${data.customer ? "" : customers()}` : workspace === "forecast" ? forecast() : roast()}`}</section>`;
+      ${data.customer ? customerCard(data.customer) : ""}${tiles(cut)}${movers(cut)}${overTime(cut)}${byCoffee(cut)}${data.customer ? "" : customers()}` : workspace === "forecast" ? forecast() : roast()}`}</div>`;
   }
 
   /* ---------- CSV ---------- */

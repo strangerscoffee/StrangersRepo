@@ -98,18 +98,19 @@ function renderNotifs(){
 }
 function fillNotifs(){
   const list=maintNotifs(),seen=S.notifSeen0||0,box=$("#notifList");
+  const focused=box.contains(document.activeElement)?document.activeElement.dataset.notice:null;
   resolveNames(list.flatMap(x=>x.ids));
-  box.replaceChildren(...(list.length?list.slice(0,40).map(x=>el("button",{class:"lrow",type:"button",onclick:()=>{closeSheets();openMaintJob(x)}},
+  box.replaceChildren(...(list.length?list.slice(0,40).map(x=>el("button",{class:"lrow",type:"button","data-notice":x.key,onclick:()=>{closeSheets();openMaintJob(x)}},
     el("span",{class:"nic "+x.cls},svgi(ICON[x.ic])),
     el("span",{class:"nt"},el("b",{text:x.title}),el("span",{class:"s",text:x.text}),el("span",{class:"w",text:when(x.at)})),
     x.at>seen?el("span",{class:"unread",role:"img","aria-label":"New"}):null)):[el("div",{class:"empty",text:"Nothing new. Maintenance jobs that need you show up here."})]));
+  if(focused)([...box.children].find(n=>n.dataset.notice===focused)||$("#notifSheet [data-close-sheet]")).focus({preventScroll:true});
 }
-function openNotifs(){
+function openNotifs(e){
   // Show what's new with its dot, then count it as seen (here and on this person's other devices).
   S.notifSeen0=S.notifSeen||0;
   fillNotifs();
-  $("#sheetVeil").hidden=false;$("#notifSheet").hidden=false;
-  const f=$("#notifList button");if(f)f.focus();
+  openDiaryOverlay("#notifSheet",e?.currentTarget,$("#notifList button"));
   markNotifsSeen();
 }
 function markNotifsSeen(){
@@ -124,7 +125,7 @@ function openMaintJob(x){
   if(x.site!==S.site)maintAll=true;
   xOpen["m"+x.site+x.id]=true;
   show("maintenance");
-  requestAnimationFrame(()=>{const r=[...document.querySelectorAll("#mList .xrow.open")].pop();if(r)r.scrollIntoView({block:"center",behavior:"smooth"})});
+  requestAnimationFrame(()=>{const r=[...document.querySelectorAll("#mList .xrow.open")].pop();if(r)r.scrollIntoView({block:"center",behavior:diaryScroll()})});
 }
 
 function renderMaint(){

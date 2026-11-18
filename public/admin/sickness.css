@@ -7,7 +7,7 @@
 .sk-band b{font-variant-numeric:tabular-nums}
 .sk-none{background:var(--ok-bg);color:var(--ok)}.sk-monitor{background:var(--sk-monitor-bg);color:var(--sk-monitor)}.sk-stage1{background:var(--sk-stage1-bg);color:var(--sk-stage1)}.sk-stage2{background:var(--sk-stage2-bg);color:var(--sk-stage2)}.sk-stage3{background:var(--bad-bg);color:var(--bad)}
 .sk-scale{padding:14px 16px;border-radius:20px}
-.sk-scale summary{display:flex;flex-wrap:wrap;justify-content:space-between;gap:4px 12px;cursor:pointer;min-height:32px;align-items:center}.sk-scale summary span{color:var(--muted);font-size:14px}
+.sk-scale summary{display:flex;flex-wrap:wrap;justify-content:space-between;gap:4px 12px;cursor:pointer;min-height:44px;align-items:center}.sk-scale summary span{color:var(--muted);font-size:14px}
 .sk-bands{display:grid;gap:8px;margin-top:10px}
 .sk-band-row{display:grid;grid-template-columns:150px 1fr;gap:12px;align-items:center;font-size:14px}
 .sk-band-row .sk-band{justify-content:space-between}

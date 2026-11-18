@@ -1,9 +1,8 @@
 /* Admin → Wholesale → Insights (public/admin/wholesale-insights.js). One hue for the bars (the accent), the forecast
    hatched with its likely range behind it; tables carry the exact numbers. Theme tokens only. */
 .ins-workspace{display:grid;gap:16px;min-width:0}
-.ins-workspace>.toolbar{justify-content:space-between;align-items:flex-start}
-.ins-workspace>.toolbar h2{margin:0}
-.ins-workspace>.toolbar .row{flex-wrap:wrap;gap:8px}
+.ins-workspace>.toolbar{justify-content:space-between}
+.ins-workspace>.toolbar>.hint{flex:1;min-width:0;margin:0;padding:0;overflow-wrap:anywhere}
 .ins-workspace .btn svg.i{width:16px;height:16px}
 .ins-note{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;justify-content:space-between;padding:12px 16px;border-radius:var(--r);background:var(--warn-bg);color:var(--fg)}
 .ins-note p{margin:0;flex:1 1 260px}
@@ -13,7 +12,7 @@
 .ins-change.up{color:var(--ok)}.ins-change.down{color:var(--bad)}
 .ins-section{border-radius:var(--r-lg);padding:16px;display:grid;gap:12px;min-width:0}
 .ins-head{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;justify-content:space-between}
-.ins-head h3{margin:0;font-size:17px}
+.ins-head h3{margin:0;font-size:17px;min-width:0;overflow-wrap:anywhere}
 .ins-head .row{gap:8px;flex-wrap:wrap}
 .ins-section>.hint{margin:0}
 
@@ -30,7 +29,12 @@
 .ins-col.fc .ins-bar{background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--accent) 70%,transparent) 0 3px,color-mix(in srgb,var(--accent) 25%,transparent) 3px 7px);box-shadow:inset 0 0 0 1.5px var(--accent)}
 .ins-range{position:absolute;width:min(100%,28px);background:color-mix(in srgb,var(--accent) 14%,transparent);border-radius:4px}
 .ins-x{position:absolute;top:calc(100% + 5px);font-size:11px;color:var(--muted);white-space:nowrap}
-.ins-x.hide{display:none}
+.ins-col:first-child .ins-x{left:0}
+.ins-col:last-child .ins-x{right:0}
+@media (prefers-reduced-motion:no-preference){
+  .ins-plot :is(.ins-bar,.ins-range,.ins-stack){transform-origin:bottom;animation:ins-chart-reveal var(--motion-content,200ms) var(--motion-ease,ease)}
+  @keyframes ins-chart-reveal{from{opacity:0;transform:scaleY(.9)}}
+}
 .ins-key{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;font-size:13px;color:var(--muted)}
 .ins-swatch{display:inline-block;width:12px;height:12px;border-radius:3px;background:var(--accent);margin-right:-8px}
 .ins-swatch.fc{background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--accent) 70%,transparent) 0 2px,color-mix(in srgb,var(--accent) 25%,transparent) 2px 5px);box-shadow:inset 0 0 0 1.5px var(--accent);margin-left:6px}
@@ -66,7 +70,8 @@
 .ins-imports .row{justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--line);font-size:14px}
 @media (max-width:600px){
   .ins-section{padding:14px 12px}
-  .ins-plot{height:170px;margin-left:44px}
+  .ins-plot{height:170px;margin-left:50px}
+  .ins-x-wide{display:none}
   .ins-table{font-size:13.5px}
   .ins-table th,.ins-table td{padding:7px 6px}
   .ins-table tbody th,.ins-table tfoot th{min-width:132px}
@@ -107,26 +112,34 @@
 .ins-filters{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .ins-pick svg.i{width:16px;height:16px}
 .ins-pick.on{background:var(--tint);color:var(--accent);font-weight:650}
-.ins-pick{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ins-pick{max-width:100%;min-width:0;white-space:normal;overflow-wrap:anywhere}
+.ins-pick svg.i{flex:none}
 .ins-picker{display:grid;gap:12px}
 .ins-pick-list{max-height:min(60vh,520px);overflow:auto}
 .ins-pick-row{width:100%;text-align:left;display:flex;align-items:center;gap:10px}
 .ins-pick-row .tx{flex:1;min-width:0}
 .ins-pick-row .tx span{display:block;color:var(--muted);font-size:13px}
-.ins-cust-link{padding:0;font-size:inherit;font-weight:600;text-align:left}
+.ins-cust-link{padding:0;font-size:inherit;font-weight:600;text-align:left;overflow-wrap:anywhere}
 .ins-customer h3{margin:2px 0 0;font-size:20px}
 .ins-cust-kvs{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:4px 16px}
 
-/* Buttons: the admin page has no global .row, so Insights lays out its own rows (with gaps between buttons). On a
-   phone the actions sit in a tidy two-column grid, and the customer picker and periods fill the width. */
+/* Keep export tools anchored to their trigger so opening them leaves the charts in place. */
 .ins-workspace .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
-.ins-actions .btn{white-space:nowrap}
+.ins-tools{position:relative;flex:none;max-width:100%}
+.ins-tools[open]{z-index:2}
+.ins-tools>.ins-actions{
+  position:absolute;inset-block-start:calc(100% + 6px);inset-inline-end:0;
+  display:grid;grid-template-columns:minmax(0,1fr);gap:4px;
+  width:min(260px,calc(100vw - 36px));padding:6px;
+  border:1px solid var(--line);border-radius:16px;background:var(--surface);box-shadow:var(--float);
+}
+.ins-tools:not([open])>.ins-actions{display:none}
+.ins-actions .btn{justify-content:flex-start;min-width:0;white-space:normal;overflow-wrap:anywhere}
 .ins-imports .row{flex-wrap:nowrap}
 @media (max-width:600px){
   .ins-workspace>.toolbar{flex-direction:column;align-items:stretch;gap:12px}
-  .ins-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
-  .ins-actions .btn{justify-content:center;width:100%;min-width:0;padding-inline:12px;font-size:15px}
-  .ins-actions .btn:first-child{grid-column:1/-1}
+  .ins-tools{align-self:flex-start}
+  .ins-tools>.ins-actions{inset-inline-start:0;inset-inline-end:auto}
   .ins-filters{display:grid;grid-template-columns:minmax(0,1fr);gap:8px}
   .ins-filters .btn{justify-content:center}
   .ins-periods .seg{display:flex;width:100%}
@@ -139,7 +152,6 @@
 .ins-key-item{display:inline-flex;align-items:center;gap:6px}
 .ins-key .ins-swatch{margin:0;flex:none}
 
-.ins-tools .ins-actions { margin-top:8px; }
 .ins-week-summary { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,140px),1fr)); gap:8px; }
 .ins-week-summary>div { display:grid; gap:3px; padding:12px; border-radius:12px; background:var(--sunk); }
 .ins-week-summary span { color:var(--muted); font-size:13px; }

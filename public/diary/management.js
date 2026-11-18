@@ -596,7 +596,7 @@ function renderOnbEditor(){
     if(ml.length)view.append(el("div",{class:"metaline"},...ml.map(t=>el("span",{text:t}))));
     if(d.summary)view.append(el("p",{class:"lead",text:d.summary}));
     const named=d.sections.map((s,i)=>[s,i]).filter(([s])=>s.heading);
-    if(named.length>3)view.append(el("div",{class:"toc"},...named.map(([s,i])=>el("button",{type:"button",onclick:()=>{const n=document.getElementById("obs"+i);if(n)n.scrollIntoView({behavior:"smooth",block:"start"})}},s.heading))));
+    if(named.length>3)view.append(el("div",{class:"toc"},...named.map(([s,i])=>el("button",{type:"button",onclick:()=>{const n=document.getElementById("obs"+i);if(n)n.scrollIntoView({behavior:diaryScroll(),block:"start"})}},s.heading))));
     d.sections.forEach((s,i)=>{if(s.heading)view.append(el("h3",{id:"obs"+i,text:s.heading}));if(s.body)view.append(renderBody(s.body))});
     if(!d.sections.some(s=>s.heading||s.body))view.append(el("p",{class:"note",text:R?"This document is empty.":"This document is empty. Switch to Edit to add content."}));
     if(d.notes){view.append(el("h3",{text:"Notes"}));view.append(renderBody(d.notes))}

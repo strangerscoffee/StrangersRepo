@@ -149,6 +149,7 @@
   activeOrder=id;
   for(const button of $('orderList').querySelectorAll('[data-order-id]'))button.setAttribute('aria-current',String(button.dataset.orderId===id));
   drawDesk();
+  SC.reveal($('packingDesk').querySelector('.desk-panel-body'));
  }
  function packingControls(row){
   return packing.checklist(row,{
@@ -186,7 +187,8 @@
  function drawDeskTotals(){
   if(!wideDesk.matches)return;
   const host=$('deskBagTotals'),current=deskTotals?.[totalsMode]||[];
-  const toggle=el('div',{class:'filters desk-totals-switch',role:'group','aria-label':'Bag totals status'},...Object.entries({remaining:'To pack',packed:'Packed'}).map(([mode,label])=>el('button',{type:'button','data-totals-mode':mode,'aria-pressed':String(mode===totalsMode),onclick:()=>{totalsMode=mode;drawDeskTotals();host.querySelector(`[data-totals-mode="${mode}"]`).focus({preventScroll:true});}},label)));
+  const focusedMode=host.contains(document.activeElement)?document.activeElement.dataset.totalsMode:null;
+  const toggle=el('div',{class:'filters desk-totals-switch',role:'group','aria-label':'Bag totals status'},...Object.entries({remaining:'To pack',packed:'Packed'}).map(([mode,label])=>el('button',{type:'button','data-totals-mode':mode,'aria-pressed':String(mode===totalsMode),onclick:()=>{totalsMode=mode;drawDeskTotals();}},label)));
   const scope=$('orderDispatchScope').selectedOptions[0].textContent;
   const count=current.reduce((sum,line)=>sum+line.quantity,0);
   host.replaceChildren(el('header',{class:'panel-head'},el('h2',{},'Bag totals')),
@@ -195,6 +197,7 @@
     deskTotals.error?el('div',{class:'desk-totals-empty'},el('p',{},'Bag totals could not be loaded.'),el('button',{type:'button',class:'btn sm soft',onclick:loadDeskTotals},'Retry')):
     el('div',{class:'desk-bag-summary'},el('div',{class:'desk-total-line'},el('p',{class:'desk-total'},el('strong',{},String(count)),count===1?' bag':' bags'),count?el('b',{class:'desk-meta'},weight(current.reduce((sum,line)=>sum+line.grams*line.quantity,0))):null),
      current.length?el('ul',{class:'desk-bag-list'},...current.map(line=>el('li',{},el('span',{},el('b',{},line.title),el('small',{},line.packLabel+' · '+grindFor(line).label)),el('strong',{},'× '+line.quantity)))):el('p',{class:'desk-meta'},totalsMode==='packed'?'No bags packed in open orders.':'No bags left to pack.'))));
+  if(focusedMode)toggle.querySelector(`[data-totals-mode="${CSS.escape(focusedMode)}"]`)?.focus({preventScroll:true});
  }
  async function loadDeskTotals(){
   if(!wideDesk.matches||view!=='orders')return;
@@ -431,20 +434,36 @@
  }
  function printOne(id){const row=findOrder(id);if(row)printScope({ids:[id],label:row.business});}
  async function openTotals(selectedIds){
-  let current=selectedIds.length?'selected':'New';
+  let current=selectedIds.length?'selected':'New',revision=0;
+  const dialog=$('totalsDialog'),body=$('totalsBody'),printTotals=$('printTotals'),printSheets=$('printSheets');
   const scopes={New:{status:'New',label:'New orders'},open:{status:'New,Preparing',label:'New and preparing orders'},selected:{ids:selectedIds,label:`${selectedIds.length} selected ${selectedIds.length===1?'order':'orders'}`}};
   const choices=[['New','New'],['open','New & preparing'],...(selectedIds.length?[['selected','Selected']]:[])];
   const segment=el('div',{class:'filters seg',role:'group','aria-label':'Which orders'});
-  async function drawTotals(){
-   segment.replaceChildren(...choices.map(([key,label])=>el('button',{type:'button','aria-pressed':String(current===key),onclick:()=>{current=key;drawTotals()}},label)));
-   $('totalsBody').replaceChildren(SC.skeleton({label:'Loading bag totals…',rows:2}));
-   try{const {orders}=await fetchPrint(scopes[current]);if(!$('totalsDialog').open)return;$('totalsBody').replaceChildren(packing.summaryBody(orders,scopes[current].label));$('printTotals').disabled=$('printSheets').disabled=!orders.length;}
-   catch(e){if(!e.quiet)$('totalsBody').replaceChildren(el('p',{class:'edit-error'},e.message));}
+  const options=new Map(choices.map(([key,label])=>[key,el('button',{type:'button','aria-pressed':String(current===key),onclick:()=>drawTotals(key)},label)]));
+  segment.append(...options.values());
+  async function drawTotals(key){
+   current=key;
+   const request=++revision,scope=scopes[key];
+   const active=()=>dialog.open&&segment.isConnected&&request===revision;
+   for(const [id,button] of options)button.setAttribute('aria-pressed',String(key===id));
+   printTotals.disabled=printSheets.disabled=true;
+   body.setAttribute('aria-busy','true');
+   body.replaceChildren(SC.skeleton({label:'Loading bag totals…',rows:2}));
+   try{
+    const {orders}=await fetchPrint(scope);
+    if(!active())return;
+    body.replaceChildren(packing.summaryBody(orders,scope.label));
+    SC.reveal(body);
+    printTotals.disabled=printSheets.disabled=!orders.length;
+   }catch(e){
+    if(!e.quiet&&active())body.replaceChildren(el('p',{class:'edit-error',role:'alert'},e.message),
+     el('button',{type:'button',class:'btn soft',onclick:()=>{options.get(key).focus();drawTotals(key);}},'Retry'));
+   }finally{if(active())body.removeAttribute('aria-busy');}
   }
   $('totalsScope').replaceChildren(segment);
-  $('printTotals').onclick=()=>printScope(scopes[current],{onlyTotals:true});
-  $('printSheets').onclick=()=>printScope(scopes[current]);
-  $('totalsDialog').showModal();await drawTotals();
+  printTotals.onclick=()=>printScope(scopes[current],{onlyTotals:true});
+  printSheets.onclick=()=>printScope(scopes[current]);
+  dialog.showModal();await drawTotals(current);
  }
 
  // Customer tabs: a running tally of each customer's orders until 6 kg, then cleared (or sooner). No money here.
@@ -488,7 +507,9 @@
  let tabPick=new Set();
  const ordered=o=>'Ordered '+new Date(o.createdAt).toLocaleDateString('en-GB',{timeZone:'Europe/London',weekday:'short',day:'numeric',month:'short',year:'numeric'});
  const sumOf=list=>{const c=list.filter(o=>o.counts);return{orders:list.length,grams:c.reduce((t,o)=>t+(o.grams||0),0),packs:c.reduce((t,o)=>t+(o.packs||0),0)};};
- function renderTab(t){
+ function renderTab(t,focusTarget){
+  const focused=document.activeElement,orderId=focused?.dataset.tabOrder;
+  const actionId=$('tabFoot').contains(focused)?focused.id:null;
   $('tabTitle').textContent=t.business;
   tabPick=new Set([...tabPick].filter(id=>t.orders.some(o=>o.id===id)));
   const picked=t.orders.filter(o=>tabPick.has(o.id)),keep=t.orders.filter(o=>!tabPick.has(o.id)),pick=sumOf(picked),rest=sumOf(keep),all=!keep.length;
@@ -504,12 +525,14 @@
    el('p',{class:'edit-error',id:'tabError',role:'alert',hidden:true}));
   const label=all?(t.ready?'Clear tab':'Clear tab early'):`Clear ${picked.length} of ${t.orders.length}`;
   const question=all?(t.ready?`Clear ${weight(t.grams)}?`:`Clear early at ${weight(t.grams)}?`):`Clear ${weight(pick.grams)}? ${rest.orders} ${rest.orders===1?'order stays':'orders stay'} on the tab (${weight(rest.grams)}).`;
-  $('tabFoot').replaceChildren(...(t.orders.length?(tabConfirm&&picked.length?[el('span',{},question),el('div',{class:'edit-actions'},el('button',{type:'button',class:'btn soft',onclick:()=>{tabConfirm=false;renderTab(t)}},'Cancel'),el('button',{type:'button',class:'btn',id:'confirmClear',onclick:()=>clearTabNow(t)},all?'Clear tab':'Clear these'))]
-   :[el('span',{},!picked.length?'Tick the orders to clear':all?(t.ready?'Ready to clear':'Not at 6 kg yet'):`${weight(pick.grams)} to clear · ${weight(rest.grams)} stays`),el('button',{type:'button',class:'btn'+(t.ready||!all?'':' soft'),id:'clearTab',disabled:!picked.length,onclick:()=>{tabConfirm=true;renderTab(t)}},label)]):[el('span',{}),el('button',{type:'button',class:'btn soft',onclick:()=>$('tabDialog').close()},'Done')]));
+  $('tabFoot').replaceChildren(...(t.orders.length?(tabConfirm&&picked.length?[el('span',{},question),el('div',{class:'edit-actions'},el('button',{type:'button',class:'btn soft',id:'cancelClear',onclick:()=>{tabConfirm=false;renderTab(t,'clearTab')}},'Cancel'),el('button',{type:'button',class:'btn',id:'confirmClear',onclick:()=>clearTabNow(t)},all?'Clear tab':'Clear these'))]
+   :[el('span',{},!picked.length?'Tick the orders to clear':all?(t.ready?'Ready to clear':'Not at 6 kg yet'):`${weight(pick.grams)} to clear · ${weight(rest.grams)} stays`),el('button',{type:'button',class:'btn'+(t.ready||!all?'':' soft'),id:'clearTab',disabled:!picked.length,onclick:()=>{tabConfirm=true;renderTab(t,'cancelClear');SC.reveal($('tabFoot'));}},label)]):[el('span',{}),el('button',{type:'button',class:'btn soft',id:'doneTab',onclick:()=>$('tabDialog').close()},'Done')]));
+  const restored=orderId?$('tabDetail').querySelector(`[data-tab-order="${CSS.escape(orderId)}"]`):$(focusTarget||actionId);
+  restored?.focus({preventScroll:true});
  }
  function tabOrderList(orders,open,t){
   return el('div',{class:'order-list glass'},...orders.map(o=>{
-   const box=open&&t?el('input',{type:'checkbox',class:'tab-pick','aria-label':`Clear the order of ${date(o.createdAt)}`,...(tabPick.has(o.id)?{checked:true}:{}),onchange:e=>{e.target.checked?tabPick.add(o.id):tabPick.delete(o.id);tabConfirm=false;renderTab(t);}}):null;
+   const box=open&&t?el('input',{type:'checkbox',class:'tab-pick','data-tab-order':o.id,'aria-label':`Clear the order of ${date(o.createdAt)}`,...(tabPick.has(o.id)?{checked:true}:{}),onchange:e=>{e.target.checked?tabPick.add(o.id):tabPick.delete(o.id);tabConfirm=false;renderTab(t);}}):null;
    const body=el('span',{},el('b',{},ordered(o)+(o.reference?' · '+o.reference:'')),el('span',{class:'row-meta'},`${o.packs} ${o.packs===1?'bag':'bags'} · ${weight(o.grams)}${o.counts?'':' · cancelled, not counted'}`),o.lines?.length?el('span',{class:'row-meta tab-order-lines'},orderLineText(o)):null,open?el('span',{class:'row-meta'},o.addedBy==='Automatically'?'Added automatically':`Added by ${o.addedBy}`):null);
    return el(box?'label':'div',{class:'order-row tab-order'+(o.counts?'':' not-counted')+(box?' pickable':'')+(box&&!tabPick.has(o.id)?' kept':'')},box,body,el('span',{class:'row-end'},box&&!tabPick.has(o.id)?pill('Stays on tab'):null,pill(o.status)));
   }));
