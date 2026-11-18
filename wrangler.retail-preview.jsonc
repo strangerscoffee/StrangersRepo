@@ -1,0 +1,15 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "strangers-dev-preview",
+  "main": "src/retailPreview.ts",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": true,
+  "preview_urls": true,
+  "version_metadata": { "binding": "VERSION" },
+  "assets": {
+    "directory": "./dist/retail-preview",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+  "observability": { "enabled": true }
+}

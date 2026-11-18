@@ -19,7 +19,7 @@ function freePort() {
   });
 }
 
-export async function startServer({ writeLimit, preSql, scheduled, vars = {}, host } = {}) {
+export async function startServer({ writeLimit, preSql, scheduled, vars = {}, host, config } = {}) {
   const state = mkdtempSync(join(tmpdir(), "kitchen-diary-test-"));
   // Optional SQL to run on the empty local database before the Worker starts (e.g. an older schema).
   if (preSql) {
@@ -33,12 +33,15 @@ export async function startServer({ writeLimit, preSql, scheduled, vars = {}, ho
     const port = await freePort();
     // Let the OS allocate the inspector socket too: parallel Workers must not race for 9229.
     const args = ["dev", "--local", "--port", String(port), "--inspector-port", "0", "--ip", "127.0.0.1", "--persist-to", state,
-      "--var", `SETUP_CODE:${SETUP_CODE}`, "--show-interactive-dev-session=false"];
+      "--show-interactive-dev-session=false"];
+    if (config) args.push("--config", config);
+    else args.push("--var", `SETUP_CODE:${SETUP_CODE}`);
     if (host) args.push("--host", host);
     if (writeLimit) args.push("--var", `WRITE_LIMIT_PER_15_MIN:${writeLimit}`);
     // Wholesale tests place small orders: the 6 kg minimum is off unless a test sets WHOLESALE_MINIMUM_ORDER_GRAMS.
     // The admin section's own address is for the real site: here it's at /admin on the diary's (unless a test sets it).
-    for (const [k, v] of Object.entries({ ADMIN_HOST: "", PREVIEW_HOST: "", WHOLESALE_MINIMUM_ORDER_GRAMS: "0", ...(typeof vars === "function" ? vars({ port, base: `http://127.0.0.1:${port}` }) : vars) })) args.push("--var", `${k}:${v}`);
+    const defaults = config ? {} : { ADMIN_HOST: "", PREVIEW_HOST: "", WHOLESALE_MINIMUM_ORDER_GRAMS: "0" };
+    for (const [k, v] of Object.entries({ ...defaults, ...(typeof vars === "function" ? vars({ port, base: `http://127.0.0.1:${port}` }) : vars) })) args.push("--var", `${k}:${v}`);
     if (scheduled) args.push("--test-scheduled"); // GET /__scheduled runs the Worker's scheduled() handler
     const proc = spawn(WRANGLER, args, { cwd: ROOT, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, CI: "1" } });
     let log = "";
@@ -52,7 +55,7 @@ export async function startServer({ writeLimit, preSql, scheduled, vars = {}, ho
         if (proc.exitCode != null) throw new Error("wrangler dev exited:\n" + log);
         // Do not mistake the process that stole the port for this fixture.
         if (/Ready on https?:\/\//.test(log)) try {
-          const r = await fetch(base + "/robots.txt");
+          const r = await fetch(base + (config ? "/shop/" : "/robots.txt"));
           if (r.ok) break;
         } catch {}
         if (Date.now() > deadline) throw new Error("wrangler dev didn't start:\n" + log);

@@ -33,7 +33,8 @@ import { isWholesaleCode, wholesalePath } from "./hosts";
 import { catalogueRetrievedAt } from "./wholesale/catalogue.js";
 import { catalogue } from "./wholesaleCatalogue";
 import { catalogueFor } from "./wholesaleWhiteLabel";
-import { retailInstagram } from "./retailInstagram";
+import { isRetailShopPath, serveRetailShop } from "./retailPreview";
+import { noStore, pageRequest, staticFile, withFingerprints } from "./siteAssets";
 export { LiveHub } from "./live";
 
 export default {
@@ -142,55 +143,7 @@ async function bumpChanges(env: Env, ...keys: string[]) {
   await env.DB.prepare(`UPDATE meta SET v = v + 1 WHERE k IN (${keys.map(() => "?").join(",")})`).bind(...keys).run();
 }
 
-/*
- * Fingerprinted files. Each page's scripts and stylesheets are linked as /diary/core.js?v=<the file's own hash> (from its
- * ETag), and a file asked for with ?v= is kept by the browser for a year: opening a page again costs no requests for
- * them at all, and a changed file has a new address, so a deploy reaches everyone straight away. Hashes are looked up
- * once per Worker instance (a deploy starts new ones).
- */
-const fingerprints = new Map<string, string>();
-async function fingerprint(env: Env, url: URL, path: string): Promise<string | null> {
-  if (fingerprints.has(path)) return fingerprints.get(path)!;
-  const res = await env.ASSETS.fetch(new Request(new URL(path, url)));
-  const tag = res.ok ? (res.headers.get("etag") || "").replace(/[^A-Za-z0-9]/g, "").slice(0, 16) : "";
-  await res.body?.cancel();
-  if (!tag) return null;
-  fingerprints.set(path, tag);
-  return tag;
-}
-/** A page (HTML) with its own scripts and stylesheets linked by fingerprint. */
-function withFingerprints(res: Response, env: Env, url: URL): Response {
-  if (!res.ok || !(res.headers.get("content-type") || "").includes("text/html")) return res;
-  const pin = (attr: string) => ({
-    async element(e: Element) {
-      const v = e.getAttribute(attr);
-      if (!v || !/^\/[^/?#]*(\/[^/?#]+)*\.(js|css)$/.test(v)) return; // only this site's own files
-      const tag = await fingerprint(env, url, v);
-      if (tag) e.setAttribute(attr, `${v}?v=${tag}`);
-    },
-  });
-  return new HTMLRewriter().on("script[src]", pin("src")).on('link[rel="stylesheet"][href]', pin("href")).transform(res);
-}
-
-/** A file from public/. Fingerprinted ones (?v=) are kept for a year; otherwise scripts and styles for a minute, then
- * checked again, and images for a day. */
-async function staticFile(req: Request, env: Env, p: string): Promise<Response> {
-  const res = await env.ASSETS.fetch(req);
-  if (!res.ok || !/\.(js|css|svg|png|ico|webmanifest)$/.test(p)) return res;
-  const out = new Response(res.body, res);
-  const pinned = new URL(req.url).searchParams.has("v");
-  out.headers.set("cache-control", pinned ? "private, max-age=31536000, immutable" : /\.(svg|png|ico)$/.test(p) ? "private, max-age=86400" : "private, max-age=60, must-revalidate");
-  return out;
-}
-
-const noStore = (res: Response) => {
-  const out = new Response(res.body, res);
-  out.headers.set("cache-control", "private, no-store");
-  out.headers.delete("etag"); out.headers.delete("last-modified");
-  return out;
-};
 const redirect = (location: string) => new Response(null, { status: 302, headers: { location, "cache-control": "no-store" } });
-const pageRequest=(req:Request,target:URL|string=req.url)=>{const fresh=new Request(target,req);fresh.headers.delete("if-none-match");fresh.headers.delete("if-modified-since");return fresh;};
 // The rota app's page. Served at /rota/ on any host (local dev and tests) and at / on the rota's own host.
 const rotaPage = (req: Request, env: Env, url: URL) => env.ASSETS.fetch(pageRequest(req,new URL("/rota/", url))).then(noStore).then((r) => withFingerprints(r, env, url));
 // The admin section's page. Served at / on its own host (ADMIN_HOST), and at /admin on the diary's when there's none.
@@ -199,9 +152,6 @@ const wholesalePage = (req: Request, env: Env, url: URL) => env.ASSETS.fetch(pag
 const ADMIN_PAGES = new Set(["/admin", "/admin/", "/admin.html", "/admin/index.html"]);
 const WHOLESALE_PAGES = new Set(["/wholesale", "/wholesale/", "/wholesale/index.html"]);
 const OLD_WHOLESALE_DASHBOARD = new Set(["/wholesale/dashboard", "/wholesale/dashboard/", "/wholesale/dashboard/index.html"]);
-const SHOP_PAGE = /^\/shop\/(?:(?:home|information|location|locations|brewguides|brew-guides|about|contact|shipping|privacy-policy|terms-conditions|wholesale|norwich-racing-team|basket|cart|checkout)\/|coffee\/(?:[a-z0-9-]+\/|p\/[a-z0-9-]+\/)?|blog\/(?:tag\/[a-z0-9+%_-]+\/|\d{4}\/\d{1,2}\/\d{1,2}\/[a-z0-9-]+\/)?)?$/i;
-const SHOP_FILE = /^\/shop\/(?:shop\.(?:css|js)|(?:catalogue|site-content)\.json|content\/[a-f0-9]{12}\.json|photos\/[a-z0-9-]+\.webp)$/;
-
 async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): Promise<Response> {
   const isGet = req.method === "GET" || req.method === "HEAD";
   const canonical = wholesalePath(url.pathname);
@@ -213,22 +163,9 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
     req = new Request(target, req); url = target;
   }
   const p = url.pathname;
-  // Public retail preview, independent of wholesale accounts, catalogue, orders and browser storage.
-  if (p === "/shop" || p.startsWith("/shop/")) {
+  if (isRetailShopPath(p)) {
     if (url.hostname !== env.LEGACY_PREVIEW_HOST?.toLowerCase()) return new Response("Not found", { status: 404 });
-    if (!isGet) return new Response("Method not allowed", { status: 405, headers: { allow: "GET, HEAD" } });
-    if (p === "/shop/instagram.json") return retailInstagram(req, env, ctx, url);
-    const instagramPhoto = p.match(/^\/shop\/instagram-photo\/([A-Za-z0-9_-]{3,35})$/);
-    if (instagramPhoto) return retailInstagram(req, env, ctx, url, instagramPhoto[1]);
-    if (p === "/shop/mark.svg" || p === "/shop/logo.svg") {
-      const logo = p.slice("/shop".length);
-      return staticFile(new Request(new URL(logo, url), req), env, logo);
-    }
-    if (SHOP_FILE.test(p)) return staticFile(req, env, p);
-    if (!p.endsWith("/") && SHOP_PAGE.test(p + "/")) return redirect(p + "/" + url.search);
-    if (!SHOP_PAGE.test(p)) return new Response("Not found", { status: 404 });
-    const page = await env.ASSETS.fetch(pageRequest(req, new URL("/shop/", url)));
-    return withFingerprints(noStore(page), env, url);
+    return serveRetailShop(req, env, ctx, url);
   }
   if (p === "/api/email/resend-webhook") return handleResendWebhook(req, env, () => ensureSchema(env));
   if(p.startsWith("/api/quickbooks/webhook/"))return handleWebhook(req,env,ctx,processEvents);

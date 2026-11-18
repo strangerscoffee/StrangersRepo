@@ -7,9 +7,12 @@ import { startServer } from './harness.mjs';
 
 const { chromium } = createRequire(import.meta.url)('playwright');
 const legacy = 'preview.staffstrangerscoffee.com';
+const standalone = process.env.RETAIL_PREVIEW_STANDALONE === '1';
 let server, browser;
 before(async () => {
-  server = await startServer({ host: legacy, vars: { PREVIEW_HOST: 'strangerscoffee.trade', LEGACY_PREVIEW_HOST: legacy } });
+  server = standalone
+    ? await startServer({ config: 'wrangler.retail-preview.jsonc' })
+    : await startServer({ host: legacy, vars: { PREVIEW_HOST: 'strangerscoffee.trade', LEGACY_PREVIEW_HOST: legacy } });
   browser = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
   if (process.env.SHOT_DIR) await mkdir(process.env.SHOT_DIR, { recursive: true });
 });
@@ -241,7 +244,7 @@ test('public shop keyboard focus stays below the sticky header', async () => {
   }
 });
 
-test('public preview only serves read-only shop routes and keeps wholesale sign-in available', async () => {
+test('public preview serves read-only retail assets within the shop', async () => {
   const request = (path, options) => fetch(server.base + path, { redirect: 'manual', ...options });
   const shortcut = await request('/shop?category=decaf');
   assert.equal(shortcut.headers.get('location'), '/shop/?category=decaf');
@@ -250,9 +253,29 @@ test('public preview only serves read-only shop routes and keeps wholesale sign-
   const logo = await request('/shop/logo.svg');
   assert.equal(logo.status, 200);
   assert.match(logo.headers.get('content-type'), /image\/svg\+xml/);
+  const home = await request('/shop/');
+  assert.match(await home.text(), /href="\/shop\/theme\.css\?v=[A-Za-z0-9]+"/);
+  const theme = await request('/shop/theme.css');
+  assert.equal(theme.status, 200);
+  assert.match(theme.headers.get('content-type'), /text\/css/);
   assert.equal((await request('/shop/photos/unknown.webp')).status, 404);
+  assert.equal((await request('/shop/unknown')).status, 404);
+  const head = await request('/shop/', { method: 'HEAD' });
+  assert.equal(head.status, 200);
+  assert.equal(await head.text(), '');
+});
+
+test('retail and wholesale entry points follow the active Worker boundary', async () => {
+  const request = path => fetch(server.base + path, { redirect: 'manual' });
   const entry = await request('/');
   assert.equal(entry.status, 302);
+  if (standalone) {
+    assert.equal(entry.headers.get('location'), '/shop/');
+    for (const path of ['/signin', '/theme.css', '/wholesale/', '/api/wholesale/catalogue', '/admin/']) {
+      assert.equal((await request(path)).status, 404, path);
+    }
+    return;
+  }
   assert.equal(entry.headers.get('location'), '/signin');
   assert.match(await (await request('/signin')).text(), /Wholesale sign-in/);
   assert.equal((await request('/api/wholesale/catalogue')).status, 401);

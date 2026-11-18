@@ -1,4 +1,6 @@
-import { Env, readBytes } from "./http";
+import { readBytes } from "./http";
+
+type InstagramEnv = { RETAIL_INSTAGRAM_ACCESS_TOKEN?: string };
 
 const homepage = "https://strangerscoffee.com/";
 const graph = "https://graph.instagram.com/v22.0";
@@ -81,7 +83,7 @@ async function fromPublicHomepage(): Promise<Post[]> {
 }
 
 let pending: Promise<Post[]> | undefined;
-async function getPosts(url: URL, env: Env, ctx: ExecutionContext): Promise<Post[]> {
+async function getPosts(url: URL, env: InstagramEnv, ctx: ExecutionContext): Promise<Post[]> {
   const key = new Request(new URL("/shop/instagram-cache", url));
   const cached = await caches.default.match(key).catch(() => undefined);
   if (cached) return cached.json<Post[]>();
@@ -100,7 +102,7 @@ async function getPosts(url: URL, env: Env, ctx: ExecutionContext): Promise<Post
   return pending;
 }
 
-export async function retailInstagram(req: Request, env: Env, ctx: ExecutionContext, url: URL, code?: string): Promise<Response> {
+export async function retailInstagram(req: Request, env: InstagramEnv, ctx: ExecutionContext, url: URL, code?: string): Promise<Response> {
   if (!code) {
     const posts = await getPosts(url, env, ctx);
     const headers = { "cache-control": `public, max-age=${posts.length ? feedSeconds : 120}` };
