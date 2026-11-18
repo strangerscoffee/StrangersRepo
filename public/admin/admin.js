@@ -520,6 +520,13 @@
     const weeks = Array.from({ length: 8 }, (_, i) => { const w = new Date(mon); w.setUTCDate(w.getUTCDate() - 7 * i); return w.toISOString().slice(0, 10); });
     const today = dayKey(Date.now());
     const monthAgo = dayKey(Date.now() - 30 * 864e5);
+    // Payroll months (the owner's request, 18 Nov 2026): this month and the 11 before; early in a month, last month is
+    // the one being paid, so it's chosen first.
+    const thisMonth = londonToday().slice(0, 7);
+    const months = Array.from({ length: 12 }, (_, i) => { const d = new Date(Date.UTC(Number(thisMonth.slice(0, 4)), Number(thisMonth.slice(5, 7)) - 1 - i, 1)); return d.toISOString().slice(0, 7); });
+    const pickMonth = Number(londonToday().slice(8, 10)) <= 10 ? months[1] : months[0];
+    const monthName = (m) => new Intl.DateTimeFormat("en-GB", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(m + "-01T12:00:00Z"));
+    const hoursMode = S.hoursMode === "week" ? "week" : "month";
     return html`
       ${head("Backups & exports", "Everything is backed up every night. Download a copy now and then and keep it somewhere safe.", html`<button class="btn" type="button" data-act="backup">${svg("db")}Back up now</button>`)}
       <div class="group glass"><div class="item"><span class="ic ${d.backups.length ? "ok" : "warn"}">${svg("db")}</span><span class="tx"><b>${d.backups.length ? "Last completed backup" : "No completed backup"}</b><span>${d.backups.length ? cap(when(d.backups[0].at)) + " · Diary, rota, wholesale and account records" : "Use Back up now to create the first copy."}</span></span></div></div>
@@ -531,8 +538,10 @@
       <p class="hint">A backup holds every diary record, the rota and the list of accounts (never passwords). Allergen PDFs aren't included.</p>
       <div class="label">Exports</div>
       <div class="group glass">
-        <div class="item has-action"><span class="ic acc">${svg("clock")}</span><span class="tx"><b>Hours for payroll</b><span>Rota · CSV per person and site for a week, with overtime</span>
-          <span class="inline"><label class="fl" for="hoursWeek">Week of</label><select id="hoursWeek">${weeks.map((w, i) => html`<option value="${w}">${isoShort(w)}${i === 0 ? " (this week)" : i === 1 ? " (last week)" : ""}</option>`)}</select></span></span>
+        <div class="item has-action"><span class="ic acc">${svg("clock")}</span><span class="tx"><b>Hours for payroll</b><span id="hoursHint">${hoursMode === "month" ? "Rota · CSV for a calendar month: hours by site, basic and overtime, holiday and sick days" : "Rota · CSV per person and site for a week, with overtime"}</span>
+          <span class="inline"><span class="seg" role="group" aria-label="Payroll period">${[["month", "Month"], ["week", "Week"]].map(([v, t]) => html`<button type="button" data-act="hours-mode" data-id="${v}" aria-pressed="${String(v === hoursMode)}">${t}</button>`)}</span>
+            <span class="inline" id="hoursMonthPick" ${hoursMode === "month" ? "" : raw("hidden")}><label class="fl" for="hoursMonth">Month</label><select id="hoursMonth">${months.map((m, i) => html`<option value="${m}" ${m === pickMonth ? raw("selected") : ""}>${monthName(m)}${i === 0 ? " (this month)" : i === 1 ? " (last month)" : ""}</option>`)}</select></span>
+            <span class="inline" id="hoursWeekPick" ${hoursMode === "week" ? "" : raw("hidden")}><label class="fl" for="hoursWeek">Week of</label><select id="hoursWeek">${weeks.map((w, i) => html`<option value="${w}">${isoShort(w)}${i === 0 ? " (this week)" : i === 1 ? " (last week)" : ""}</option>`)}</select></span></span></span>
           <span class="end"><button class="btn sm soft" type="button" data-act="hours" aria-label="Download payroll hours CSV">${svg("dl")}Download CSV</button></span></div>
         <div class="item has-action"><span class="ic acc">${svg("clock")}</span><span class="tx"><b>All shifts</b><span>Rota · CSV, planned and as worked</span>
           <span class="inline"><input type="date" id="shFrom" value="${monthAgo}" aria-label="From"><span>to</span><input type="date" id="shTo" value="${today}" aria-label="To"></span></span>
@@ -863,7 +872,14 @@
         el.disabled = true;
         try { await api("POST", "/api/admin/backups"); toast("Backup made"); reload(); } catch (e) { toast(e.message); el.disabled = false; }
         return;
-      case "hours": location.href = `/api/rota/hours?start=${encodeURIComponent($("#hoursWeek").value)}&format=csv`; return;
+      case "hours": location.href = S.hoursMode === "week" ? `/api/rota/hours?start=${encodeURIComponent($("#hoursWeek").value)}&format=csv` : `/api/rota/hours?month=${encodeURIComponent($("#hoursMonth").value)}&format=csv`; return;
+      case "hours-mode": {
+        S.hoursMode = id === "week" ? "week" : "month";
+        document.querySelectorAll('[data-act="hours-mode"]').forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.id === S.hoursMode)));
+        $("#hoursMonthPick").hidden = S.hoursMode !== "month"; $("#hoursWeekPick").hidden = S.hoursMode !== "week";
+        $("#hoursHint").textContent = S.hoursMode === "month" ? "Rota · CSV for a calendar month: hours by site, basic and overtime, holiday and sick days" : "Rota · CSV per person and site for a week, with overtime";
+        return;
+      }
       case "shifts": {
         const a = $("#shFrom").value, b = $("#shTo").value;
         if (!a || !b || b < a) { toast("Choose a start date before the end date."); return; }
