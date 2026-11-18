@@ -1,6 +1,30 @@
 // Today: the day's checks, who's on shift (the rota), needs attention per site, and closures.
 
 /* ---------- today ---------- */
+// Opening and closing ticks show at once (the owner's request, 18 Nov 2026): the day on screen is updated before the
+// save goes, then saved as before. While a save is on its way, any copy of the day that arrives from the server keeps
+// the tick showing (withPending, used by start.js); if the save is refused, the day goes back to how the server has it
+// (the error says why). Offline, the shim keeps the tick queued and showing.
+const pendingTicks=[];
+const mergePart=(day,key,part)=>{const prev=day[key]||{},next={...prev,...part,items:{...(prev.items||{}),...(part.items||{})}};if(next.allDone===null)delete next.allDone;return{...day,[key]:next}};
+function withPending(days){
+  let out=days;
+  for(const p of pendingTicks)if(p.site===S.site){if(out===days)out={...days};out[p.date]=mergePart(out[p.date]||{date:p.date},p.key,p.part)}
+  return out;
+}
+function instantPatch(date,key,part){
+  const entry={site:S.site,date,key,part};
+  pendingTicks.push(entry);
+  S.days={...S.days,[date]:mergePart(S.days[date]||{date},key,part)};
+  const focus=document.activeElement&&document.activeElement.id;
+  renderDay();
+  if(focus)document.getElementById(focus)?.focus({preventScroll:true});
+  return patchDay(date,{[key]:part}).then(ok=>{
+    pendingTicks.splice(pendingTicks.indexOf(entry),1);
+    if(ok===false&&S.site===entry.site&&S.daysRaw){S.days=withPending(S.daysRaw);renderDay()}
+    return ok;
+  });
+}
 function renderDay(){
   const ae=document.activeElement,keep=ae&&ae.id&&ae.closest&&ae.closest("#units")?{id:ae.id,v:ae.value}:null;
   try{renderDayInner()}finally{if(keep){const n=document.getElementById(keep.id);if(n){n.value=keep.v;n.focus()}}}
@@ -134,11 +158,11 @@ function renderDayInner(){
   let openDone=false;
   for(const[key,list,card,box,foot,title]of[["opening",checksOn(s.opening,S.date),"#openCard","#openList","#openFoot","Opening checks"],["closing",checksOn(s.closing,S.date),"#closeCard","#closeList","#closeFoot","Closing checks"]]){
     const part=d[key]||{};const items=part.items||{};
-    checklist($(box),list,items,key,(cid,v)=>patchDay(S.date,{[key]:{items:{[cid]:v},...stamp(),...(v?{}:{allDone:null})}}));roundChecks($(box));
+    checklist($(box),list,items,key,(cid,v)=>instantPatch(S.date,key,{items:{[cid]:v},...stamp(),...(v?{}:{allDone:null})}));roundChecks($(box));
     if(part.by)ids.push(part.by);if(part.allDone&&part.allDone.by)ids.push(part.allDone.by);
     const n=list.filter(c=>items[c.id]).length,all=list.length>0&&n===list.length;
     checkFoot($(foot),list,items,part,()=>{const set={},back={},date=S.date;for(const c of list){set[c.id]=true;back[c.id]=!!items[c.id]}
-      patchDay(date,{[key]:{items:set,...stamp(),allDone:stamp()}});toast(`All ${key} checks done`,["Undo",()=>patchDay(date,{[key]:{items:back,allDone:null}})])});
+      instantPatch(date,key,{items:set,...stamp(),allDone:stamp()});toast(`All ${key} checks done`,["Undo",()=>patchDay(date,{[key]:{items:back,allDone:null}})])});
     const who=rotaWho(key==="opening"?"opens":"closes");
     // On a phone, closing checks wait folded while the opening checks are still to do in the morning.
     const later=key==="closing"&&!n&&S.date===today()&&ukHour()<14&&!openDone&&matchMedia("(max-width:1023px)").matches;

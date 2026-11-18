@@ -210,7 +210,8 @@ function patchDoc(col,id,patch,exists,base,site=S.site){
   chain=p;
   return p;
 }
-const patchDay=(date,p)=>patchDoc("days",date,p,!!S.days[date],{date});
+// Whether the day exists on the server: S.days may hold ticks still on their way (instantPatch in today.js).
+const patchDay=(date,p)=>patchDoc("days",date,p,!!(S.daysRaw||S.days)[date],{date});
 const patchWeek=(wk,p)=>patchDoc("weeks",wk,p,!!S.weeks[wk],{week:wk});
 async function save(fn){if(ro())return false;try{return (await fn())!==false}catch(e){fail(e);return false}}
 
@@ -336,7 +337,8 @@ function checklist(box,checks,items,prefix,onToggle){
     const id=`${prefix}_${c.id}`;
     const cb=el("input",{type:"checkbox",id,disabled:ro()});cb.checked=!!items[c.id];
     if(cb.checked&&box._ctx===ctx&&box._prev[c.id]===false)cb.classList.add("pop"); // just ticked, here or on another device
-    cb.addEventListener("change",()=>onToggle(c.id,cb.checked));
+    // Your own tick doesn't "pop" when the day redraws: that's for ticks from another device.
+    cb.addEventListener("change",()=>{if(box._prev)box._prev[c.id]=cb.checked;onToggle(c.id,cb.checked)});
     box.append(el("li",{},el("label",{for:id},cb,el("span",{text:c.t}))));
   }
   if(!checks.length)box.append(el("li",{class:"empty",text:"No checks set up. Add them in Setup."}));
