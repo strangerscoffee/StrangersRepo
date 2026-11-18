@@ -756,6 +756,14 @@ button:focus-visible,a:focus-visible,summary:focus-visible,input:focus-visible,s
 @media (min-width:1150px) {
   .people-workspace.has-profile { display:grid; grid-template-columns:minmax(245px,1fr) minmax(0,2fr); gap:14px; align-items:start; }
   .people-workspace .person-workspace .cards { grid-template-columns:repeat(auto-fit,minmax(min(100%,245px),1fr)); }
+  /* Beside an open profile the list is narrow: the name and site get the full width, and the badges sit on a line
+     under them, so a badge never squeezes the name into one letter per line. */
+  .people-workspace.has-profile>.people-directory>.item { display:grid; grid-template-columns:auto minmax(0,1fr); column-gap:12px; row-gap:6px; align-items:center; }
+  .people-workspace.has-profile>.people-directory>.item>.av { grid-row:1 / span 2; align-self:start; }
+  .people-workspace.has-profile>.people-directory>.item>.end { grid-column:2; flex-wrap:wrap; justify-content:flex-start; gap:6px; min-width:0; }
+  .people-workspace.has-profile>.people-directory>.item>.end:not(:has(.pill)) { display:none; }
+  .people-workspace.has-profile>.people-directory>.item>.end .chev { display:none; }
+  .people-workspace.has-profile>.people-directory>.item[aria-expanded="true"] { background:var(--tint); }
 }
 @media (max-width:1023px) { .people-workspace.has-profile>.people-directory { display:none; } }
 @media (max-width:600px) {
