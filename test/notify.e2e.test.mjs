@@ -54,8 +54,9 @@ before(async () => {
 });
 after(async () => { await browser?.close(); await srv?.stop(); });
 
-test("staff: a job assigned to them and their reported job done show by the bell and on Today; seen on one device, cleared on the next", async () => {
+test("staff: a job assigned to them and their reported job done show by the bell and on Today; seen on one device, cleared on the next", async t => {
   const a = await device(ALEX, { ...devices["iPhone 15 Pro"] });
+  t.after(() => a.ctx.close());
   await a.page.goto(srv.base + "/");
   await a.page.locator("#bellBtn .n", { hasText: "2" }).waitFor();
   await a.page.locator("#dayAlerts .alert", { hasText: "Dishwasher leaking" }).waitFor();
@@ -70,42 +71,50 @@ test("staff: a job assigned to them and their reported job done show by the bell
   // Opening one goes to Maintenance → All sites with the job opened.
   await a.page.locator("#notifSheet .lrow", { hasText: "Dishwasher leaking" }).click();
   await a.page.locator("#pageTitle", { hasText: "Maintenance" }).waitFor();
-  const assignedJob = a.page.locator("#mList .xrow.open .xmain", { hasText: "Dishwasher leaking" });
-  await assignedJob.waitFor();
-  assert.equal(await assignedJob.evaluate(button => document.activeElement === button), true, "opening a notice focuses the exact job");
+  await a.page.locator("#mList .xrow.open .xmain:focus", { hasText: "Dishwasher leaking" }).waitFor();
   await a.page.locator("#bellBtn .n").waitFor({ state: "detached" });
   // Another of Alex's devices: already seen.
   const b = await device(ALEX, { viewport: { width: 1180, height: 820 } });
+  t.after(() => b.ctx.close());
   await b.page.goto(srv.base + "/");
   await b.page.locator("#sideBell").waitFor();
   await b.page.waitForTimeout(1500);
   assert.equal(await b.page.locator("#sideBell .n").count(), 0, "seen on the other device");
   assert.deepEqual([...a.errors, ...b.errors], []);
-  await a.ctx.close(); await b.ctx.close();
 });
 
-test("a maintenance alert hands focus to its job after the first list finishes loading", async () => {
+test("a maintenance alert hands focus to its job after the first list finishes loading", { timeout: 45000 }, async () => {
   const { ctx, page, errors } = await device(ALEX, { ...devices["iPhone 15 Pro"] });
+  let arm = false, arrived, release;
+  const receivingMaintenance = new Promise(resolve => { arrived = resolve; });
+  const maintenanceReady = new Promise(resolve => { release = resolve; });
   try {
     // The Cafe alert can arrive in the all-site summary before the Roastery list is ready.
-    const poll = "**/api/db/poll";
-    await page.route(poll, route => {
+    await page.route("**/api/db/poll", async route => {
       const body = route.request().postDataJSON();
+      if (!body.queries.some(query => query.path === "maintenance")) return route.continue();
+      if (arm) {
+        arrived();
+        await maintenanceReady;
+        return route.continue();
+      }
       body.queries = body.queries.filter(query => query.path !== "maintenance");
       return route.continue({ postData: JSON.stringify(body) });
     });
     await page.goto(srv.base + "/");
     await page.locator("#bellBtn").click();
-    await page.locator("#notifSheet .lrow", { hasText: "Dishwasher leaking" }).click();
+    const alert = page.locator("#notifSheet .lrow", { hasText: "Dishwasher leaking" });
+    await alert.waitFor();
+    arm = true;
+    await alert.click();
     await page.locator('[data-panel="maintenance"][aria-busy="true"]').waitFor({ state: "attached" });
     assert.equal(await page.evaluate(() => document.activeElement.id), "pageTitle");
-    await page.unroute(poll);
-    await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
-    const job = page.locator('#mList .xrow.open [aria-expanded="true"]', { hasText: "Dishwasher leaking" });
-    await job.waitFor();
-    assert.equal(await job.evaluate(button => document.activeElement === button), true);
+    await receivingMaintenance;
+    release();
+    await page.locator("#mList .xrow.open .xmain:focus", { hasText: "Dishwasher leaking" }).waitFor();
     assert.deepEqual(errors, []);
   } finally {
+    release();
     await ctx.close();
   }
 });

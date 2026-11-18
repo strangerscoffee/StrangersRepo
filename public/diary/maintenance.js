@@ -15,7 +15,7 @@ const ROLE_NAME={staff:"Staff",manager:"Manager",admin:"Admin"};
    Equipment problems and general jobs, per site. All sites shows every site's open and finished jobs together. */
 const MT_PRI=[["urgent","Urgent","Unsafe, or stops us working","bad"],["soon","Soon","Needs doing this week","warn"],["later","When possible","Not holding anything up",""]];
 const mtPri=k=>MT_PRI.find(p=>p[0]===k)||MT_PRI[1];
-let editMt=null,maintAll=false,pendingMaintJob=null;
+let editMt=null,maintAll=false,pendingMaintJob=null,maintFocusQueued=false;
 function maintForm(){
   const pr=$("#mPri");pr.replaceChildren();
   for(const[k,l,h]of MT_PRI)pr.append(el("button",{type:"button",role:"radio","data-pri":k,onclick:()=>setMtPri(k)},el("b",{text:l}),el("span",{text:h})));
@@ -100,7 +100,7 @@ function fillNotifs(){
   const list=maintNotifs(),seen=S.notifSeen0||0,box=$("#notifList");
   const focused=box.contains(document.activeElement)?document.activeElement.dataset.notice:null;
   resolveNames(list.flatMap(x=>x.ids));
-  box.replaceChildren(...(list.length?list.slice(0,40).map(x=>el("button",{class:"lrow",type:"button","data-notice":x.key,onclick:()=>{closeSheets();openMaintJob(x)}},
+  box.replaceChildren(...(list.length?list.slice(0,40).map(x=>el("button",{class:"lrow",type:"button","data-notice":x.key,onclick:()=>{closeSheets(false);openMaintJob(x)}},
     el("span",{class:"nic "+x.cls},svgi(ICON[x.ic])),
     el("span",{class:"nt"},el("b",{text:x.title}),el("span",{class:"s",text:x.text}),el("span",{class:"w",text:when(x.at)})),
     x.at>seen?el("span",{class:"unread",role:"img","aria-label":"New"}):null)):[el("div",{class:"empty",text:"Nothing new. Maintenance jobs that need you show up here."})]));
@@ -125,20 +125,29 @@ function openMaintJob(x){
   if(x.site!==S.site)maintAll=true;
   xOpen["m"+x.site+x.id]=true;
   show("maintenance");
+  $("#pageTitle").focus({preventScroll:true});
   if(S.tab!=="maintenance")return;
   pendingMaintJob=x.site+"/"+x.id;
-  $("#pageTitle").focus({preventScroll:true});
   renderMaint();
 }
 const maintJobButton=key=>$(`#mList [data-maint-job="${CSS.escape(key)}"] .xmain`);
 function focusPendingMaintJob(){
-  if(!pendingMaintJob||S.tab!=="maintenance"||$("#mList").closest("[inert]"))return;
-  if(document.activeElement!==$("#pageTitle")){pendingMaintJob=null;return}
-  const job=maintJobButton(pendingMaintJob);
-  if(!job)return;
-  pendingMaintJob=null;
-  job.focus({preventScroll:true});
-  job.scrollIntoView({block:"center",behavior:diaryScroll()});
+  if(maintFocusQueued||!pendingMaintJob||S.tab!=="maintenance"||$("#mList").closest("[inert]"))return;
+  maintFocusQueued=true;
+  requestAnimationFrame(async()=>{
+    try{
+      if(document.documentElement.hasAttribute("data-sc-session-locked")&&!(await SC.ensureSession()))return;
+      if(!pendingMaintJob||S.tab!=="maintenance")return;
+      const active=document.activeElement;
+      if(active!==$("#pageTitle")&&active!==document.body){pendingMaintJob=null;return}
+      const job=maintJobButton(pendingMaintJob);
+      if(!job||job.closest("[inert]"))return;
+      job.focus({preventScroll:true});
+      if(document.activeElement!==job)return;
+      pendingMaintJob=null;
+      job.scrollIntoView({block:"center",behavior:diaryScroll()});
+    }finally{maintFocusQueued=false}
+  });
 }
 
 function renderMaint(){

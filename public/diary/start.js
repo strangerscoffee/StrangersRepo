@@ -210,6 +210,7 @@ document.querySelectorAll(".note.intro").forEach(n=>{n.setAttribute("title","Tap
 window.addEventListener("sc:session-invalid",()=>{
   Object.assign(S,{staff:[],contacts:[],onboarding:[],accidents:[],team:[],days:{},weeks:{},reviews:[],plans:[],inspections:[],sum:{},names:{},plan:null,onb:null,insp:null,rota:null,editStaff:null,myUserId:"",myName:"",role:"",me:null,db:null,canWrite:false});
   contactPrivacy={};editCon=null;IN.data=null;IN.loading=null;IN.key="";
+  pendingMaintJob=null;
   for(const key of Object.keys(BASE))delete BASE[key];
   closeSheets();
   for(const field of document.querySelectorAll("[data-panel] input,[data-panel] textarea,[data-panel] select")){field.value="";if("checked"in field)field.checked=false;field.disabled=true}
