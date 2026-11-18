@@ -128,10 +128,10 @@
   motionPreference.addEventListener("change", () => { if (motionPreference.matches) stopReveals(); });
   new MutationObserver(() => { if (document.documentElement.hasAttribute("data-sc-session-locked") || document.documentElement.hasAttribute("data-orders-locked")) stopReveals(); })
     .observe(document.documentElement, { attributes: true, attributeFilter: ["data-sc-session-locked", "data-orders-locked"] });
-  function reveal(node) {
+  function reveal(node, { offset = 6 } = {}) {
     if (!node?.animate || motionPreference.matches || document.documentElement.hasAttribute("data-sc-session-locked") || document.documentElement.hasAttribute("data-orders-locked")) return;
     revealFor.get(node)?.cancel();
-    const animation = node.animate([{ opacity: .25, translate: "0 6px" }, { opacity: 1, translate: "0 0" }], { duration: 220, easing: "cubic-bezier(.22,1,.36,1)" });
+    const animation = node.animate([{ opacity: .25, translate: `0 ${offset}px` }, { opacity: 1, translate: "0 0" }], { duration: 220, easing: "cubic-bezier(.22,1,.36,1)" });
     animation.id = "sc-reveal"; revealFor.set(node, animation); reveals.add(animation);
     animation.finished.then(() => reveals.delete(animation), () => reveals.delete(animation));
   }

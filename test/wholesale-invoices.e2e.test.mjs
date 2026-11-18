@@ -112,6 +112,18 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["desk
       await admin.locator("#wiDeliveryPounds").fill("5.00");
       await admin.locator("#wiDeliveryDescription").fill("Delivery to the café");
       assert.match(await admin.locator("#wiInvoiceForm").textContent(), /14 days from invoice/);
+      await admin.locator("#sheet").evaluate(sheet => {
+        const observer = new MutationObserver(() => {
+          if (!sheet.querySelector("#wiPreviewForm")) return;
+          observer.disconnect();
+          const reveal = sheet.getAnimations().find(animation => animation.id === "sc-reveal");
+          if (reveal) {
+            reveal.pause();
+            reveal.currentTime = 0;
+          }
+        });
+        observer.observe(sheet, { childList: true });
+      });
       await admin.locator('#wiInvoiceForm button[type="submit"]').click();
       await admin.locator("#wiPreviewForm").waitFor();
       assert.deepEqual(await admin.locator("#wiPreviewForm .wi-totals dd").allTextContents(), ["£41.00", "£1.00", "£42.00"]);
@@ -121,8 +133,16 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["desk
       assert.ok(invoiceTable.visibleHeight + 1 >= invoiceTable.tableHeight, "invoice lines use their full height; only the window body scrolls vertically");
       assert.equal((await api("GET", `/api/admin/wholesale/orders/${order.id}/invoice`)).body.invoice, null, "preview is a readonly review and does not allocate an invoice");
       assert.equal(await noOverflow(admin), true);
-      const footer = await admin.locator("#wiPreviewForm .wi-foot").boundingBox();
-      assert.ok(footer.y >= 0 && footer.y + footer.height <= viewport.height + 1, "the issue controls stay inside the invoice window");
+      const footerFrames = await admin.locator("#wiPreviewForm .wi-foot").evaluate(footer => {
+        const reveal = footer.closest("#sheet").getAnimations().find(animation => animation.id === "sc-reveal");
+        const fits = () => { const box = footer.getBoundingClientRect(); return box.top >= 0 && box.bottom <= innerHeight + 1; };
+        if (!reveal) return [];
+        const duration = reveal.effect.getTiming().duration;
+        const frames = [0, duration / 2, duration].map(time => { reveal.currentTime = time; return fits(); });
+        reveal.finish();
+        return frames;
+      });
+      assert.deepEqual(footerFrames, [true, true, true], "issue controls stay inside the viewport throughout the invoice reveal");
       await screenshot(admin, `invoice-preview-${device}-${color}`);
 
       let issueCount = 0, arrived;

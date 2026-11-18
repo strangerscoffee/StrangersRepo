@@ -102,7 +102,7 @@
     const heading = sheet.querySelector("#sheetTitle");
     if (heading) heading.tabIndex = -1;
     (heading || sheet).focus({ preventScroll: true });
-    if (replacing) SC.reveal(sheet);
+    if (replacing) SC.reveal(sheet, { offset: 0 });
   }
   function closeSheet() {
     if (scrim.hidden) return;
