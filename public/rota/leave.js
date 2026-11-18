@@ -320,7 +320,7 @@ window.SCLeave = function createLeaveUI(c) {
         const pick = select('leave_employee', data.people.map(p => [p.id, p.name]), employee);
         pick.setAttribute('aria-label', 'Employee');
         pick.onchange = () => { employee = pick.value; document.querySelectorAll('#page button,#pageAction button').forEach(b => b.disabled = true); render(); };
-        const out = [el('section', { class: 'panel' }, el('div', { class: 'row between' }, el('h2', { text: 'Employee allowance' }), pick), note(`${data.setup.filter(p => !p.configured).length} employees need a current leave-year allowance.`), el('div', { class: 'row' }, btn('Set up a leave year', () => allowance(person, undefined, data.settings)), ghost('Add blackout dates', () => blackout())), ...(own?.balances || []).map(b => el('div', { class: 'leave-year-row' }, el('span', { class: 't' }, el('b', { text: `${b.from} – ${b.to}` }), el('span', { class: 's', text: `${amount(b.available)} days available · ${amount(b.used)} used · ${amount(b.booked)} booked · ${amount(b.pending)} pending${b.bankHolidayReserved ? ` · ${amount(b.bankHolidayReserved)} reserved for bank holidays` : ''}` })), ghost('Edit', () => allowance(person, b, data.settings)), b.bankHolidayEligible && data.settings.bankHolidayPolicy === 'credit-worked' ? ghost('Bank holiday worked', () => credit(person, b)) : null, ...(b.accruals || []).filter(a => !a.reversedAt).map(a => ghost(`${a.label} +${amount(a.amount)}`, () => reverseAccrual(person, b, a), { 'aria-label': `Holiday for extra hours, ${a.label}: take off` })))))];
+        const out = [el('section', { class: 'panel' }, el('div', { class: 'row between' }, el('h2', { text: 'Employee allowance' }), pick), note(`${data.setup.filter(p => !p.configured).length} employees need a current leave-year allowance.`), el('div', { class: 'row' }, btn('Set up a leave year', () => allowance(person, undefined, data.settings)), ghost('Start next year for everyone', (event) => nextYearSheet(event.currentTarget)), ghost('Add blackout dates', () => blackout())), ...(own?.balances || []).map(b => el('div', { class: 'leave-year-row' }, el('span', { class: 't' }, el('b', { text: `${b.from} – ${b.to}` }), el('span', { class: 's', text: `${amount(b.available)} days available · ${amount(b.used)} used · ${amount(b.booked)} booked · ${amount(b.pending)} pending${b.bankHolidayReserved ? ` · ${amount(b.bankHolidayReserved)} reserved for bank holidays` : ''}` })), ghost('Edit', () => allowance(person, b, data.settings)), b.bankHolidayEligible && data.settings.bankHolidayPolicy === 'credit-worked' ? ghost('Bank holiday worked', () => credit(person, b)) : null, ...(b.accruals || []).filter(a => !a.reversedAt).map(a => ghost(`${a.label} +${amount(a.amount)}`, () => reverseAccrual(person, b, a), { 'aria-label': `Holiday for extra hours, ${a.label}: take off` })))))];
         out.push(el('section', { class: 'panel' }, el('div', { class: 'row between' }, el('h2', { text: 'Holiday for extra hours' }), btn('Review a quarter', (event) => accrualSheet(undefined, event.currentTarget))), note('Each quarter, hours worked above the minimum contract (contracts under 42 hours) earn holiday at 12.07%. Nothing is added until you approve it.')));
         out.push(...takeByAdmin(takeBy), ...yearEndAdmin(yearEnd));
         out.push(label(`Requests awaiting a decision · ${data.requests.length}`), absenceList(data.requests, true));
@@ -408,6 +408,94 @@ window.SCLeave = function createLeaveUI(c) {
             render();
         }
         catch (e) { msg.textContent = errorText(e); } }))), { left: cancelLink() });
+    }
+    // "Start next year for everyone" (src/rota/leave/nextYear.ts): copies each person's entitlement, working week and
+    // bank-holiday eligibility into the next leave year. Anyone who started part way through this year is proposed at a
+    // full year and must be ticked as checked. Two steps: edit, then a summary to confirm; nothing is saved before Create.
+    const SHORT_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    const weekText = w => { const on = w.map((d, i) => d ? SHORT_DAYS[i] + (d < 1 ? ' ½' : '') : null).filter(Boolean); const full = w.map(d => d === 1); const run = full.slice(0, 5).every(Boolean) && !w[5] && !w[6]; return run ? 'Mon–Fri' : on.join(', ') || 'No working days'; };
+    async function nextYearSheet(trigger) {
+        const token = generation;
+        let data;
+        try { data = await get('/api/rota/leave/next-year'); }
+        catch (e) { toast(errorText(e)); return; }
+        if (token !== generation || !trigger.isConnected || trigger.closest('[hidden]'))
+            return;
+        const msg = message(), list = v => v.split(',').map(s => s.trim()).filter(Boolean);
+        const banks = input('ny_banks', '', { placeholder: 'YYYY-MM-DD, YYYY-MM-DD' });
+        const bankMsg = el('p', { class: 'note', role: 'status' });
+        const loadBanks = ghost('Load England/Wales bank holidays', async () => { try {
+            const r = await api('GET', `/api/rota/leave/bank-holidays?from=${data.from}&to=${data.to}`, undefined, { optionalDependency: true });
+            if (!r.holidays.length) { bankMsg.textContent = 'No published dates were found for that year yet. Enter them by hand, or leave blank and add them later.'; return; }
+            banks.value = [...new Set([...list(banks.value), ...r.holidays.map(h => h.day)])].sort().join(', ');
+            bankMsg.textContent = `${r.holidays.length} government dates added. Check them before you go on.`;
+        } catch (e) { bankMsg.textContent = errorText(e); } });
+        const ready = data.people.filter(p => p.status === 'ready'), others = data.people.filter(p => p.status !== 'ready');
+        const rows = ready.map(p => {
+            const id = 'ny_' + p.userId;
+            const include = input(id + '_on', '', { type: 'checkbox', checked: true, 'aria-label': `Start next year for ${p.name}` });
+            const ent = number(id + '_ent', p.proposed.entitlement, { step: '0.5', max: 366 });
+            const reserve = check(id + '_bh', 'Reserve bank holidays in this allowance', p.proposed.reserveBankHolidays);
+            const lieu = check(id + '_lieu', 'Day in lieu if they work a bank holiday', p.proposed.bankHolidayEligible);
+            const week = p.proposed.weekly.map((d, i) => select(`${id}_w${i}`, [['0', 'Off'], ['0.5', '½ day'], ['1', '1 day']], String(d)));
+            week.forEach((w, i) => w.setAttribute('aria-label', `${p.name}: ${DAYS[i]}`));
+            const weekSummary = el('span', { class: 's', text: weekText(p.proposed.weekly) });
+            week.forEach(w => w.addEventListener('change', () => { weekSummary.textContent = weekText(week.map(x => Number(x.value))); }));
+            const checked = p.partYear ? check(id + '_checked', `I've checked ${p.name}'s full-year allowance`) : null;
+            const started = p.startDate ? `Started ${longDate(p.startDate)}` : 'Start date not set (Admin → People)';
+            const node = el('div', { class: 'ny-person' + (p.partYear ? ' part' : ''), 'data-next-year': p.userId },
+                el('div', { class: 'row between' }, el('label', { class: 'leave-check' }, include, el('b', { text: p.name })), el('span', { class: 's ny-start' + (p.startDate ? '' : ' missing'), text: started })),
+                el('p', { class: 'note', text: `This year: ${amount(p.source.entitlement)} days · ${weekText(p.source.weekly)}${p.source.bankHolidays ? ' · bank holidays reserved' : ''}${p.source.carry ? ` · ${amount(p.source.carry)} carried over (not copied)` : ''}` }),
+                p.partYear ? el('div', { class: 'leave-notice ny-part' }, el('b', { text: 'Started part way through this leave year' }),
+                    note(`${p.name} started on ${longDate(p.startDate)}, so this year's ${amount(p.source.entitlement)} days covered ${Math.round(p.partYear.share * 100)}% of the year. Scaled up to a full year that's ${amount(p.partYear.scaled)} days${p.partYear.capped ? `, so the full-year most of ${amount(p.partYear.fullYear)} days is proposed` : ', proposed below'}. Check it against their contract and change it if it's different.`), checked.node) : null,
+                el('div', { class: 'sfields ny-fields' }, field(id + '_ent', 'Next year’s entitlement in days', ent),
+                    el('div', { class: 'field wide' }, el('span', { class: 'label', text: 'Working week (holiday charge each day)' }), el('details', { class: 'ny-week' }, el('summary', {}, weekSummary, el('span', { class: 'ny-change', text: 'Change' })), el('div', { class: 'ny-days' }, ...week.map((w, i) => el('label', {}, el('span', { text: SHORT_DAYS[i] }), w)))))),
+                reserve.node, lieu.node);
+            include.onchange = () => node.classList.toggle('off', !include.checked);
+            return { p, include, ent, reserve, lieu, week, checked, node };
+        });
+        const otherText = p => p.status === 'exists' ? 'Next year already set up' : p.startsLater ? `Starts ${longDate(p.startDate)}: set up their first year by hand` : 'No allowance this year to start from: set up by hand';
+        const edit = el('div', { class: 'ny-edit' },
+            note(`Next leave year: ${longDate(data.from)} – ${longDate(data.to)}. Each person's entitlement, working week and bank-holiday setting is copied from this year. Carry-over isn't copied: agree it separately at the year end.`),
+            el('section', { class: 'leave-notice' }, el('b', { text: 'Bank holidays next year' }), note('Reserved in the allowance of everyone with "Reserve bank holidays" ticked.'), field('ny_banks', 'Dates', banks, true), loadBanks, bankMsg),
+            ready.length ? el('div', { class: 'ny-list' }, ...rows.map(r => r.node)) : note('Nobody has an allowance this year to start from.'),
+            others.length ? el('div', { class: 'ny-others' }, label(`Not included · ${others.length}`), el('div', { class: 'list glass' }, ...others.map(p => el('div', { class: 'lrow' }, el('span', { class: 't' }, el('b', { text: p.name }), el('span', { class: 's', text: otherText(p) })))))) : null);
+        const summary = el('div', { class: 'ny-summary', hidden: true, tabindex: '-1' });
+        let payload = [];
+        const create = btn('Create', async () => {
+            create.disabled = true;
+            try {
+                const r = await api('POST', '/api/rota/leave/next-year', { from: data.from, version: data.version, people: payload });
+                closeSheets();
+                toast(`Next leave year set up for ${r.created} ${r.created === 1 ? 'person' : 'people'}.`);
+                render();
+            } catch (e) { msg.textContent = errorText(e); create.disabled = false; }
+        }, 'btn', { hidden: true });
+        const back = ghost('Back to edit', () => { summary.hidden = true; edit.hidden = false; back.hidden = true; create.hidden = true; review.hidden = false; msg.textContent = ''; review.focus(); }, { hidden: true });
+        const review = btn('Check and confirm', () => {
+            msg.textContent = '';
+            const dates = list(banks.value);
+            if (dates.some(d => !/^\d{4}-\d{2}-\d{2}$/.test(d) || d < data.from || d > data.to)) { msg.textContent = `Bank holidays must be dates between ${shortM(data.from)} and ${shortM(data.to)}, like ${data.from}.`; banks.focus(); return; }
+            const chosen = rows.filter(r => r.include.checked);
+            if (!chosen.length) { msg.textContent = 'Tick at least one person.'; return; }
+            for (const r of chosen) {
+                const v = Number(r.ent.value);
+                if (r.ent.value === '' || !(v > 0) || Math.round(v * 100) !== v * 100) { msg.textContent = `Enter ${r.p.name}'s entitlement in days.`; r.ent.focus(); return; }
+                if (!r.week.some(w => Number(w.value) > 0)) { msg.textContent = `Give ${r.p.name} at least one working day.`; return; }
+                if (r.checked && !r.checked.input.checked) { msg.textContent = `Tick that you've checked ${r.p.name}'s full-year allowance.`; r.checked.input.focus(); return; }
+            }
+            payload = chosen.map(r => ({ userId: r.p.userId, entitlement: Number(r.ent.value), weekly: r.week.map(w => Number(w.value)), bankHolidayEligible: r.lieu.input.checked, bankHolidays: r.reserve.input.checked ? dates : [], partYearChecked: !!r.checked?.input.checked }));
+            const changed = r => { const out = [], w = r.week.map(x => Number(x.value)); if (Number(r.ent.value) !== r.p.source.entitlement) out.push(`was ${amount(r.p.source.entitlement)} days`); if (w.join() !== r.p.source.weekly.join()) out.push(`week changed from ${weekText(r.p.source.weekly)}`); if (r.lieu.input.checked !== r.p.source.bankHolidayEligible) out.push(r.lieu.input.checked ? 'now gets days in lieu' : 'no longer gets days in lieu'); return out.join(' · '); };
+            summary.replaceChildren(
+                el('div', { class: 'leave-notice' }, el('b', { text: `Check before you create ${chosen.length} leave ${chosen.length === 1 ? 'year' : 'years'}` }), note(`${longDate(data.from)} – ${longDate(data.to)}. Nothing has been saved yet.`), note(dates.length ? `${dates.length} bank holidays: ${dates.map(d => shortM(d)).join(', ')}` : 'No bank-holiday dates: none will be reserved. You can add them to each person later.')),
+                el('div', { class: 'list glass ny-confirm' }, ...chosen.map(r => el('div', { class: 'lrow' + (r.checked ? ' part' : '') }, el('span', { class: 't' }, el('b', { text: r.p.name }), el('span', { class: 's', text: `${weekText(r.week.map(x => Number(x.value)))} · ${r.reserve.input.checked && dates.length ? 'bank holidays reserved' : 'no bank holidays reserved'}${r.lieu.input.checked ? ' · days in lieu' : ''}` }), changed(r) ? el('span', { class: 's ny-diff', text: changed(r) }) : null, r.checked ? el('span', { class: 's ny-diff', text: 'Full year: started part way through this year, checked' }) : null), el('b', { class: 'leave-accrual-days', text: `${amount(Number(r.ent.value))} days` })))),
+                rows.length > chosen.length ? note(`Not ticked, so left alone: ${rows.filter(r => !r.include.checked).map(r => r.p.name).join(', ')}.`) : null);
+            create.textContent = `Create ${chosen.length} leave ${chosen.length === 1 ? 'year' : 'years'}`;
+            edit.hidden = true; summary.hidden = false; review.hidden = true; back.hidden = false; create.hidden = false;
+            summary.focus({ preventScroll: true });
+            summary.scrollIntoView({ block: 'start' });
+        });
+        openSheet('Start next year for everyone', el('div', { class: 'sbody' }, edit, summary, msg, el('div', { class: 'sfoot' }, back, review, create)), { left: cancelLink(), trigger });
     }
     function leaveYearStart(policy) { const today = londonToday(), md = policy.yearStart || '04-01'; return (today.slice(5) < md ? Number(today.slice(0, 4)) - 1 : Number(today.slice(0, 4))) + '-' + md; }
     function allowance(person, b, policy) {

@@ -8,6 +8,7 @@ import { addDays, conflict, denied, isDay, isTime, londonToday, mondayOf, notFou
 import { AllowanceRow, LEAVE_TYPES, LeaveDay, LeaveKind, LeaveRow, allowanceData, allowanceInput, allowances, amount, balance, chargeDays, chargedDays, commitLeave, dates, enoughBalance, event, leaveView, leaveViews, ownLeave, policy, policyInput, range, requireVersion, revision, units } from "./model";
 import { calendarRules, checkCalendar, employeeSites } from "./rules";
 import { accrualRoutes } from "./accrual";
+import { nextYearRoutes } from "./nextYear";
 import { holidayStatus, ownHolidayStatus } from "./notify";
 import { addMonths } from "./accrualMath";
 const canRequest = (kind: string) => kind === "annual" || kind === "unpaid";
@@ -139,6 +140,9 @@ export async function leaveRoutes(r: RotaRequest): Promise<Response | null> {
     const accrual = await accrualRoutes(r);
     if (accrual)
         return accrual;
+    const nextYear = await nextYearRoutes(r);
+    if (nextYear)
+        return nextYear;
     if (route === "leave/dashboard" && m === "GET") {
         const uid = await person(r, q("userId") ?? undefined);
         const [p, rows, days, absences, legacy] = await Promise.all([

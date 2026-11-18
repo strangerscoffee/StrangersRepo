@@ -39,6 +39,10 @@ Credits require explicit contract eligibility, a configured reserved date alread
 
 The government feed request contains no employee identifiers, allowance data, account details or individual request dates. It is a fixed public URL, bounded by a timeout, and does not add a new browser connection origin.
 
+## Starting the next leave year
+
+Each leave year is its own allowance, so the next one has to be created. Holiday management → **Start next year for everyone** proposes it for every active person with an allowance this year: the same entitlement, working week (holiday charge each weekday) and bank-holiday setting, with no carry-over (agreed separately at the year end). Anyone whose start date (Admin → People → Staff profile) falls after this leave year began probably had a pro-rated allowance, so they are flagged and proposed at a full year: this year's days divided by the share of the year they were employed, to the nearest half day and at most 28 days. Each flagged person must be ticked as checked. Bank-holiday dates for next year are entered once (or loaded from GOV.UK) and reserved for everyone with "Reserve bank holidays" ticked. "Check and confirm" shows a summary of every year to be created and what changed; nothing is saved until **Create**, which creates them all together or none. People already set up, or with no allowance this year, are listed but left to be set up by hand.
+
 ## Requests, approvals and rota integration
 
 Employees request annual leave or unpaid leave; admins may also record sick leave and unauthorised absence, for themselves or another employee. Only annual leave consumes holiday allowance. Notes remain private.
