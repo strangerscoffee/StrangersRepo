@@ -513,13 +513,29 @@ window.SCLeave = function createLeaveUI(c) {
             msg.textContent = errorText(e);
         } }))), { left: cancelLink() });
     }
+    // Who else is off (admins reviewing an absence; `teamOff` from the server): approved holiday and unpaid leave that
+    // overlaps these dates, then bookings within a week either side that don't. Words always beside the colours.
+    function teamOffPanel(t) {
+        const kindWord = o => o.kind === 'unpaid' ? 'Unpaid leave' : 'Holiday';
+        const days = n => `${n} day${n === 1 ? '' : 's'}`;
+        const row = (o, detail) => el('div', { class: 'lrow team-off-row' }, el('span', { class: 'leave-dot ' + (o.kind === 'unpaid' ? 'unpaid' : 'holiday'), 'aria-hidden': 'true' }), el('span', { class: 't' }, el('b', { text: o.name }), el('span', { class: 's', text: `${kindWord(o)} · ${span(o.from, o.to)}${o.partDay ? ' · part of a day' : ''}` }), el('span', { class: 's team-off-when', text: detail })));
+        const same = t.teamOff.filter(o => o.overlaps), near = t.teamOff.filter(o => !o.overlaps);
+        return el('section', { class: 'team-off', 'aria-label': 'Who else is off' },
+            el('div', { class: 'leave-notice team-off-group' + (same.length ? ' overlap' : ' clear') },
+                el('b', { text: same.length ? `${same.length} ${same.length === 1 ? 'person is' : 'people are'} already off on these dates` : 'Nobody else is off on these dates' }),
+                same.length ? el('div', { class: 'list' }, ...same.map(o => row(o, o.shared.from === o.shared.to ? `Overlaps on ${shortM(o.shared.from)}` : `Overlaps ${span(o.shared.from, o.shared.to)}`))) : null),
+            near.length ? el('div', { class: 'leave-notice team-off-group nearby' },
+                el('b', { text: 'Nearby, not overlapping' }),
+                note('Within a week either side of this request.'),
+                el('div', { class: 'list' }, ...near.map(o => row(o, o.daysBefore != null ? `Back ${days(o.daysBefore)} before this starts` : `Starts ${days(o.daysAfter)} after this ends`)))) : null);
+    }
     async function review(t, trigger) {
         const token = generation;
         try {
             const data = await get('/api/rota/leave/requests/' + encodeURIComponent(t.id));
             if (token !== generation || !trigger.isConnected || trigger.closest('[hidden]'))
                 return;
-            t = { ...t, ...data.absence, balances: data.balances, shiftConflicts: data.shiftConflicts };
+            t = { ...t, ...data.absence, balances: data.balances, shiftConflicts: data.shiftConflicts, teamOff: data.teamOff };
         }
         catch (e) {
             toast(errorText(e));
@@ -542,7 +558,7 @@ window.SCLeave = function createLeaveUI(c) {
             else
                 msg.textContent = errorText(e);
         } };
-        openSheet('Review absence', el('div', { class: 'sbody' }, el('h3', { text: t.name || TYPE[t.kind] }), note(`${TYPE[t.kind]} · ${span(t.from, t.to)}${t.fromTime ? ` · ${t.fromTime}–${t.toTime}` : ''} · ${STAT[t.status]}`), t.days.length ? note(chargeText(t.days)) : null, t.reason ? note(t.reason) : null, t.coveredByOpening ? note('Historical days are included in the opening used balance. If you cancel this record, reconcile the opening used figure separately; it cannot be refunded twice automatically.') : null, ...(t.balances || []).map(b => note(`${b.from} leave year: ${amount(b.available)} days available after pending requests.`)), (t.shiftConflicts || []).length ? el('div', { class: 'leave-notice' }, el('b', { text: 'Assigned shifts need review' }), ...t.shiftConflicts.map(s => note(`${shortM(s.day)} · ${SITES[s.site] || s.site} · ${s.start}–${s.end}`)), note('Approval marks this absence on the rota. Existing assignments are retained for you to resolve.')) : null, t.kind === 'legacy' ? field('absence_classification', 'Classify existing time off', classification, true) : null, t.kind === 'legacy' ? covered.node : null, t.kind === 'legacy' && t.status === 'approved' ? field('classify_reason', 'Reason for reconciliation', why, true) : null, exceptionBox, msg, el('div', { class: 'sfoot' }, t.status === 'requested' ? ghost('Decline', () => action('declined')) : null, t.status === 'requested' ? btn('Approve', () => action('approved')) : null, t.kind === 'legacy' && t.status === 'approved' ? btn('Reconcile record', async () => { try {
+        openSheet('Review absence', el('div', { class: 'sbody' }, el('h3', { text: t.name || TYPE[t.kind] }), note(`${TYPE[t.kind]} · ${span(t.from, t.to)}${t.fromTime ? ` · ${t.fromTime}–${t.toTime}` : ''} · ${STAT[t.status]}`), t.days.length ? note(chargeText(t.days)) : null, t.reason ? note(t.reason) : null, t.coveredByOpening ? note('Historical days are included in the opening used balance. If you cancel this record, reconcile the opening used figure separately; it cannot be refunded twice automatically.') : null, ...(t.balances || []).map(b => note(`${b.from} leave year: ${amount(b.available)} days available after pending requests.`)), t.teamOff ? teamOffPanel(t) : null, (t.shiftConflicts || []).length ? el('div', { class: 'leave-notice' }, el('b', { text: 'Assigned shifts need review' }), ...t.shiftConflicts.map(s => note(`${shortM(s.day)} · ${SITES[s.site] || s.site} · ${s.start}–${s.end}`)), note('Approval marks this absence on the rota. Existing assignments are retained for you to resolve.')) : null, t.kind === 'legacy' ? field('absence_classification', 'Classify existing time off', classification, true) : null, t.kind === 'legacy' ? covered.node : null, t.kind === 'legacy' && t.status === 'approved' ? field('classify_reason', 'Reason for reconciliation', why, true) : null, exceptionBox, msg, el('div', { class: 'sfoot' }, t.status === 'requested' ? ghost('Decline', () => action('declined')) : null, t.status === 'requested' ? btn('Approve', () => action('approved')) : null, t.kind === 'legacy' && t.status === 'approved' ? btn('Reconcile record', async () => { try {
             await api('PATCH', `/api/rota/leave/requests/${t.id}/classify`, { kind: classification.value, changeReason: why.value, coveredByOpening: covered.input.checked, ifVersion: t.version });
             closeSheets();
             render();
