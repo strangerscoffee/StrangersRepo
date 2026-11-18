@@ -43,12 +43,34 @@ for (const [name, viewport, colorScheme] of layouts) {
       await page.waitForFunction(() => document.querySelector('.hero-visual img')?.naturalWidth > 0);
       assert.ok(await layoutFits());
       await shot('home');
+      const best = page.getByRole('region', { name: 'Best selling coffees' });
+      const brazil = best.getByRole('form', { name: 'Buy Brazil Fazenda Bom Jesus Natural' });
+      await brazil.getByLabel('Bag weight').selectOption('250 g');
+      await brazil.getByLabel('Grind').selectOption('Whole bean');
+      assert.ok(await layoutFits());
+      if (process.env.SHOT_DIR) {
+        await best.evaluate(node => window.scrollTo(0, node.getBoundingClientRect().top + scrollY - 156));
+        await best.locator('img').first().evaluate(image => image.decode());
+      }
+      await shot('best-sellers');
+      await brazil.getByRole('button', { name: 'Add to basket' }).click();
+      await page.getByRole('link', { name: 'Basket, 1 item' }).click();
+      await page.getByText('250 g · Whole bean').waitFor();
+      await page.getByRole('button', { name: 'Remove Brazil Fazenda Bom Jesus Natural' }).click();
+      await page.getByRole('heading', { name: 'Your basket is empty' }).waitFor();
+      await page.goto(`${server.base}/shop/`);
+      const photo = page.locator('.social-grid img').first();
+      await photo.scrollIntoViewIfNeeded();
+      await page.waitForFunction(() => document.querySelector('.social-grid img')?.naturalWidth > 0);
+      assert.match(await page.locator('footer').innerText(), /122 Ber Street, Norwich NR1 3ES/);
 
       await page.getByRole('navigation', { name: 'Main navigation' }).getByText('Shop coffee').click();
       await page.getByRole('searchbox', { name: 'Search coffee' }).fill('cherry bomb');
       assert.equal(await page.locator('#products .product-card').count(), 1);
       await page.getByRole('link', { name: /Ethiopia Cherry Bomb/ }).click();
       await page.getByRole('heading', { name: 'Ethiopia Cherry Bomb' }).waitFor();
+      await page.getByText('Provenance', { exact: true }).click();
+      await page.getByText(/Altitude: 1900 - 2200 MASL/).waitFor();
       await page.getByRole('button', { name: 'Photo 2' }).click();
       assert.match(await page.locator('.detail-photo').getAttribute('src'), /ethiopia-cherry-bomb-detail\.webp$/);
       await page.getByRole('button', { name: 'Photo 1' }).click();
@@ -89,6 +111,14 @@ for (const [name, viewport, colorScheme] of layouts) {
         await page.getByRole('heading', { level: 1, name: title }).waitFor();
         assert.ok(await layoutFits(), `${path} fits the viewport`);
       }
+      for (const [path, title] of [['privacy-policy', 'Privacy policy'], ['terms-conditions', 'Terms & conditions'], ['wholesale', 'Wholesale coffee'], ['norwich-racing-team', 'Norwich Racing Team'], ['coffee/washed', 'Washed'], ['blog/tag/EK43', 'Blog · EK43']]) {
+        await page.goto(`${server.base}/shop/${path}/`);
+        await page.getByRole('heading', { level: 1, name: title }).waitFor();
+        assert.ok(await layoutFits(), `${path} fits the viewport`);
+      }
+      assert.equal(await page.locator('.archive-card').count(), 1);
+      await page.locator('.archive-card').click();
+      await page.locator('.article-content').waitFor();
       assert.deepEqual(api, []);
       assert.deepEqual(errors, []);
     } finally { await context.close(); }

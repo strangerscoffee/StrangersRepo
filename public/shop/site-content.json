@@ -1,0 +1,545 @@
+{
+  "categories": {
+    "accessories": {
+      "title": "Accessories",
+      "products": [
+        "in-store-gift-card",
+        "online-gift-card"
+      ]
+    },
+    "award-winning": {
+      "title": "Award winning",
+      "products": [
+        "brazil-fazenda-bom-jesus-natural",
+        "ethiopia-rocko-mountain-natural",
+        "fine-city-blend",
+        "twin-peaks-blend"
+      ]
+    },
+    "best-sellers": {
+      "title": "Best sellers",
+      "products": [
+        "christmas-blend",
+        "brazil-fazenda-bom-jesus-natural",
+        "honduras-rosalina-ramos-natural",
+        "ethiopia-rocko-mountain-natural",
+        "colombia-campo-santo-washed",
+        "house-blend",
+        "roasters-blend",
+        "ethiopia-idido-anaerobic-natural"
+      ]
+    },
+    "blends": {
+      "title": "Blends",
+      "products": [
+        "christmas-blend",
+        "half-caff-blend",
+        "house-blend",
+        "fine-city-blend",
+        "roasters-blend",
+        "twin-peaks-blend"
+      ]
+    },
+    "clothing": {
+      "title": "Clothing",
+      "products": []
+    },
+    "fruity": {
+      "title": "Fruity",
+      "products": [
+        "ethiopia-cherry-bomb",
+        "christmas-blend",
+        "ethiopia-rocko-mountain-natural",
+        "fine-city-blend",
+        "twin-peaks-blend",
+        "ethiopia-idido-anaerobic-natural",
+        "colombia-anserma-natural"
+      ]
+    },
+    "gift-vouchers": {
+      "title": "Gift vouchers",
+      "products": [
+        "in-store-gift-card",
+        "online-gift-card"
+      ]
+    },
+    "natural": {
+      "title": "Natural",
+      "products": [
+        "ethiopia-cherry-bomb",
+        "christmas-blend",
+        "brazil-fazenda-bom-jesus-natural",
+        "honduras-rosalina-ramos-natural",
+        "ethiopia-rocko-mountain-natural",
+        "fine-city-blend",
+        "twin-peaks-blend",
+        "ethiopia-idido-anaerobic-natural",
+        "colombia-anserma-natural"
+      ]
+    },
+    "single-origin": {
+      "title": "Single origin",
+      "products": [
+        "ethiopia-cherry-bomb",
+        "brazil-fazenda-bom-jesus-natural",
+        "honduras-rosalina-ramos-natural",
+        "ethiopia-rocko-mountain-natural",
+        "colombia-campo-santo-washed",
+        "decaf-colombia-san-lorenzo",
+        "ethiopia-idido-anaerobic-natural",
+        "colombia-anserma-natural"
+      ]
+    },
+    "strong": {
+      "title": "Strong",
+      "products": [
+        "honduras-rosalina-ramos-natural",
+        "brazil-fazenda-bom-jesus-natural",
+        "colombia-campo-santo-washed",
+        "house-blend",
+        "roasters-blend"
+      ]
+    },
+    "washed": {
+      "title": "Washed",
+      "products": [
+        "house-blend",
+        "colombia-campo-santo-washed",
+        "fine-city-blend",
+        "roasters-blend"
+      ]
+    }
+  },
+  "pages": {
+    "about": {
+      "title": "About",
+      "key": "979bddc4a8ca"
+    },
+    "brewguides": {
+      "title": "Brew Guides",
+      "key": "f05af8f0326c"
+    },
+    "contact": {
+      "title": "Get in Touch With Us",
+      "key": "4eb950636535"
+    },
+    "shipping": {
+      "title": "SHIPPING",
+      "key": "484f220c2475"
+    },
+    "privacy-policy": {
+      "title": "PRIVACY POLICY",
+      "key": "81e51d8c796f"
+    },
+    "terms-conditions": {
+      "title": "TERMS & CONDITIONS",
+      "key": "0c32b952aedf"
+    },
+    "wholesale": {
+      "title": "WHOLESALE",
+      "key": "28af49988bca"
+    },
+    "norwich-racing-team": {
+      "title": "Norwich Racing Team",
+      "key": "5810b5d9e1bb"
+    }
+  },
+  "posts": [
+    {
+      "path": "/blog/2022/11/30/its-begining-to-look-a-lot-like-christmas",
+      "title": "It's begining to look a lot like Christmas",
+      "date": "2022-11-30",
+      "excerpt": "",
+      "photo": "source-5211d81fc71eb4",
+      "key": "76a3234ccfa9"
+    },
+    {
+      "path": "/blog/2022/11/30/royal-mail-strikes",
+      "title": "Royal Mail Strikes",
+      "date": "2022-11-30",
+      "excerpt": "",
+      "photo": "source-b8df6476546a02",
+      "key": "aefc282bb15f"
+    },
+    {
+      "path": "/blog/2022/8/18/dp8cvtc9gnsya38qk9m3zbpihs5afx",
+      "title": "Great Taste Awards",
+      "date": "2022-08-18",
+      "excerpt": "",
+      "photo": "source-47c2f910816507",
+      "key": "5aa81b1464e1"
+    },
+    {
+      "path": "/blog/2022/1/18/new-coffees-to-brighten-up-your-january",
+      "title": "New coffees to brighten up your January",
+      "date": "2022-01-18",
+      "excerpt": "",
+      "photo": "source-8b5301392ba051",
+      "key": "30b93ad5d87b"
+    },
+    {
+      "path": "/blog/2021/12/7/a-little-bit-of-booze-with-your-coffee",
+      "title": "A Little Bit Of Booze With Your Coffee?",
+      "date": "2021-12-07",
+      "excerpt": "",
+      "photo": "source-70272e86badbf6",
+      "key": "6d43feb0e48d"
+    },
+    {
+      "path": "/blog/2021/11/23/b8e2vynb7djkzi4b8tuaippvr1urqa",
+      "title": "It’s November and so it can only mean one thing...",
+      "date": "2021-11-23",
+      "excerpt": "",
+      "photo": "source-fb637b5634b1b1",
+      "key": "9a8d732da033"
+    },
+    {
+      "path": "/blog/2021/11/23/new-coffees-and-the-dreaded-prices-increases",
+      "title": "New coffees and the dreaded price increases",
+      "date": "2021-11-23",
+      "excerpt": "",
+      "photo": "source-ef5f77e03cf76e",
+      "key": "495503b04841"
+    },
+    {
+      "path": "/blog/2021/9/12/a-strangers-update",
+      "title": "A Strangers Update",
+      "date": "2021-09-12",
+      "excerpt": "",
+      "photo": "source-863435d3101c0d",
+      "key": "23ffb0e6f6d2"
+    },
+    {
+      "path": "/blog/2021/2/15/environmental-impact",
+      "title": "Environmental Impact",
+      "date": "2021-02-15",
+      "excerpt": "",
+      "photo": "source-7fe5d5487f3488",
+      "key": "1704b9176713"
+    },
+    {
+      "path": "/blog/2021/2/14/guats-up",
+      "title": "Guats’ Up",
+      "date": "2021-02-14",
+      "excerpt": "",
+      "photo": "source-9b0f9acf06dd5f",
+      "key": "f6a16ef280a0"
+    },
+    {
+      "path": "/blog/2021/2/7/coffee-processing-and-how-it-affects-flavour",
+      "title": "Coffee Processing &amp; How It Affects Flavour",
+      "date": "2021-02-07",
+      "excerpt": "",
+      "photo": "source-347499edd8233d",
+      "key": "76c427c32c59"
+    },
+    {
+      "path": "/blog/2021/1/27/edp-article-how-to-make-the-perfect-lockdown-coffee",
+      "title": "EDP article: How to make the perfect lockdown coffee",
+      "date": "2021-01-27",
+      "excerpt": "",
+      "photo": "source-cda778fac60944",
+      "key": "ef80e1c9fa8a"
+    },
+    {
+      "path": "/blog/2017/2/16/new-coffee-colombia-los-congos",
+      "title": "New Coffee: Colombia Los Congos",
+      "date": "2017-02-16",
+      "excerpt": "",
+      "photo": "source-67cd094381ff17",
+      "key": "0e4c2c98fae9"
+    },
+    {
+      "path": "/blog/2017/2/9/new-coffee-fazenda-santa-barbara",
+      "title": "New Coffee: Fazenda Santa Barbara",
+      "date": "2017-02-16",
+      "excerpt": "",
+      "photo": "source-81c67dd5237cf7",
+      "key": "b3ff7ef059de"
+    },
+    {
+      "path": "/blog/2017/1/30/new-coffee-ethiopia-konjo",
+      "title": "New Coffee: Ethiopia Konjo",
+      "date": "2017-02-09",
+      "excerpt": "",
+      "photo": "source-1959aae7d3a6a7",
+      "key": "376264e82c9f"
+    },
+    {
+      "path": "/blog/2017/1/30/new-coffee-kenya-kainamui-aa",
+      "title": "New Coffee: Kenya Kainamui AA",
+      "date": "2017-02-01",
+      "excerpt": "",
+      "photo": "source-de5cebf66e1ad5",
+      "key": "a0e98dd7fe09"
+    },
+    {
+      "path": "/blog/2017/1/16/new-coffee-burundi-buziraguhindwa",
+      "title": "New Coffee: Burundi Buziraguhindwa",
+      "date": "2017-01-16",
+      "excerpt": "",
+      "photo": "source-ad3285836ddba4",
+      "key": "b09aa62729ba"
+    },
+    {
+      "path": "/blog/2017/1/16/new-coffee-rwanda-kilimbi-natural",
+      "title": "New Coffee: Rwanda Kilimbi Natural",
+      "date": "2017-01-16",
+      "excerpt": "",
+      "photo": "source-eb9df24166a332",
+      "key": "a423ed4c653d"
+    },
+    {
+      "path": "/blog/2017/1/3/the-sparkling-water-decaffeination-process",
+      "title": "The Sparkling Water Decaffeination Process",
+      "date": "2017-01-03",
+      "excerpt": "",
+      "photo": "source-b0b84b7084956f",
+      "key": "1de579a09d35"
+    },
+    {
+      "path": "/blog/2016/12/5/new-coffee-christmas-coffees",
+      "title": "New Coffee: Christmas Coffees",
+      "date": "2016-12-05",
+      "excerpt": "",
+      "photo": "source-374c9580761e5a",
+      "key": "ae984ab3380c"
+    },
+    {
+      "path": "/blog/2016/11/10/rwanda-muhura-natural",
+      "title": "New Coffee: Rwanda Muhura Natural",
+      "date": "2016-11-10",
+      "excerpt": "",
+      "photo": "source-b5b9562404a5f9",
+      "key": "319e61e24e4f"
+    },
+    {
+      "path": "/blog/2015/2/16/s1znfyx2b8lus0dw9df0wj33z7xj77",
+      "title": "Speciality coffee in Norwich on a Sunday? ",
+      "date": "2015-02-16",
+      "excerpt": "",
+      "photo": "source-87041c258e141c",
+      "key": "475ae52f5b28"
+    },
+    {
+      "path": "/blog/2015/1/25/milk",
+      "title": "Got Milk?",
+      "date": "2015-01-30",
+      "excerpt": "",
+      "photo": "source-e734c24bd07c6b",
+      "key": "900c18560705"
+    },
+    {
+      "path": "/blog/2014/12/12/christmas-coffee-selection",
+      "title": "Christmas Coffee Selection",
+      "date": "2014-12-12",
+      "excerpt": "",
+      "photo": "source-57c66ad742c5cd",
+      "key": "dd4b2d48c5e1"
+    },
+    {
+      "path": "/blog/2014/3/6/ek43",
+      "title": "EK43: Taste the rainbow",
+      "date": "2014-03-06",
+      "excerpt": "",
+      "photo": "source-44f3ff902e00be",
+      "key": "3b259c30ea9d"
+    },
+    {
+      "path": "/blog/2013/12/12/a-christmas-coffee",
+      "title": "A Christmas Coffee",
+      "date": "2013-12-13",
+      "excerpt": "",
+      "photo": "source-e55288e40d5e11",
+      "key": "2fc8c99faf57"
+    },
+    {
+      "path": "/blog/2013/8/25/welcome-to-our-new-website",
+      "title": "Welcome to our new website!",
+      "date": "2013-08-25",
+      "excerpt": "",
+      "photo": "source-824abb9951aaf0",
+      "key": "fa6dcb822a24"
+    }
+  ],
+  "tags": {
+    "Africa": {
+      "title": "Africa",
+      "articles": [
+        "/blog/2017/1/30/new-coffee-ethiopia-konjo",
+        "/blog/2017/1/30/new-coffee-kenya-kainamui-aa",
+        "/blog/2017/1/16/new-coffee-burundi-buziraguhindwa",
+        "/blog/2017/1/16/new-coffee-rwanda-kilimbi-natural",
+        "/blog/2016/12/5/new-coffee-christmas-coffees"
+      ]
+    },
+    "Alex": {
+      "title": "Alex",
+      "articles": [
+        "/blog/2014/3/6/ek43"
+      ]
+    },
+    "Brazil": {
+      "title": "Brazil",
+      "articles": [
+        "/blog/2017/2/9/new-coffee-fazenda-santa-barbara"
+      ]
+    },
+    "Burundi": {
+      "title": "Burundi",
+      "articles": [
+        "/blog/2017/1/16/new-coffee-burundi-buziraguhindwa"
+      ]
+    },
+    "Buziraguhindwa": {
+      "title": "Buziraguhindwa",
+      "articles": [
+        "/blog/2017/1/16/new-coffee-burundi-buziraguhindwa"
+      ]
+    },
+    "Christmas": {
+      "title": "Christmas",
+      "articles": [
+        "/blog/2016/12/5/new-coffee-christmas-coffees"
+      ]
+    },
+    "Coffee": {
+      "title": "Coffee",
+      "articles": [
+        "/blog/2014/3/6/ek43"
+      ]
+    },
+    "Colombia": {
+      "title": "Colombia",
+      "articles": [
+        "/blog/2017/2/16/new-coffee-colombia-los-congos"
+      ]
+    },
+    "Decaf": {
+      "title": "Decaf",
+      "articles": [
+        "/blog/2017/1/3/the-sparkling-water-decaffeination-process"
+      ]
+    },
+    "Decaf+Coffee": {
+      "title": "Decaf Coffee",
+      "articles": [
+        "/blog/2017/1/3/the-sparkling-water-decaffeination-process"
+      ]
+    },
+    "Decaffeination": {
+      "title": "Decaffeination",
+      "articles": [
+        "/blog/2017/1/3/the-sparkling-water-decaffeination-process"
+      ]
+    },
+    "EK43": {
+      "title": "EK43",
+      "articles": [
+        "/blog/2014/3/6/ek43"
+      ]
+    },
+    "Ethiopia": {
+      "title": "Ethiopia",
+      "articles": [
+        "/blog/2017/1/30/new-coffee-ethiopia-konjo"
+      ]
+    },
+    "Illustration": {
+      "title": "Illustration",
+      "articles": [
+        "/blog/2014/3/6/ek43"
+      ]
+    },
+    "Kenya": {
+      "title": "Kenya",
+      "articles": [
+        "/blog/2017/1/30/new-coffee-kenya-kainamui-aa"
+      ]
+    },
+    "Kilimbi": {
+      "title": "Kilimbi",
+      "articles": [
+        "/blog/2017/1/16/new-coffee-rwanda-kilimbi-natural"
+      ]
+    },
+    "Los+Congos": {
+      "title": "Los Congos",
+      "articles": [
+        "/blog/2017/2/16/new-coffee-colombia-los-congos"
+      ]
+    },
+    "Natural": {
+      "title": "Natural",
+      "articles": [
+        "/blog/2017/1/16/new-coffee-rwanda-kilimbi-natural",
+        "/blog/2016/12/5/new-coffee-christmas-coffees",
+        "/blog/2016/11/10/rwanda-muhura-natural"
+      ]
+    },
+    "New+Coffee": {
+      "title": "New Coffee",
+      "articles": [
+        "/blog/2017/2/9/new-coffee-fazenda-santa-barbara",
+        "/blog/2017/1/30/new-coffee-ethiopia-konjo",
+        "/blog/2017/1/30/new-coffee-kenya-kainamui-aa",
+        "/blog/2017/1/16/new-coffee-burundi-buziraguhindwa",
+        "/blog/2017/1/16/new-coffee-rwanda-kilimbi-natural",
+        "/blog/2016/12/5/new-coffee-christmas-coffees",
+        "/blog/2016/11/10/rwanda-muhura-natural"
+      ]
+    },
+    "Rwanda": {
+      "title": "Rwanda",
+      "articles": [
+        "/blog/2017/1/16/new-coffee-rwanda-kilimbi-natural",
+        "/blog/2016/11/10/rwanda-muhura-natural"
+      ]
+    },
+    "Sou": {
+      "title": "Sou",
+      "articles": [
+        "/blog/2017/2/16/new-coffee-colombia-los-congos"
+      ]
+    },
+    "South+America": {
+      "title": "South America",
+      "articles": [
+        "/blog/2017/2/9/new-coffee-fazenda-santa-barbara"
+      ]
+    },
+    "Sparkling+Water": {
+      "title": "Sparkling Water",
+      "articles": [
+        "/blog/2017/1/3/the-sparkling-water-decaffeination-process"
+      ]
+    },
+    "Washed": {
+      "title": "Washed",
+      "articles": [
+        "/blog/2017/2/16/new-coffee-colombia-los-congos",
+        "/blog/2017/1/30/new-coffee-ethiopia-konjo",
+        "/blog/2017/1/30/new-coffee-kenya-kainamui-aa",
+        "/blog/2017/1/16/new-coffee-burundi-buziraguhindwa"
+      ]
+    }
+  },
+  "productDetails": {
+    "ethiopia-cherry-bomb": "dc8889609e62",
+    "christmas-blend": "a55d0fd2180b",
+    "brazil-fazenda-bom-jesus-natural": "8c8010db2630",
+    "colombia-anserma-natural": "31daebb87616",
+    "ethiopia-idido-anaerobic-natural": "158d8ab59762",
+    "honduras-rosalina-ramos-natural": "b5b0a55d0057",
+    "ethiopia-rocko-mountain-natural": "9ea03d063613",
+    "colombia-campo-santo-washed": "c70cc019ce16",
+    "decaf-colombia-san-lorenzo": "77d924f0a074",
+    "half-caff-blend": "b00a578177ca",
+    "house-blend": "6c4b521b5a26",
+    "fine-city-blend": "0f3d8faf12bf",
+    "roasters-blend": "3250ea7d98c6",
+    "twin-peaks-blend": "003c236c1fa3",
+    "in-store-gift-card": "8f91fba28f26",
+    "online-gift-card": "6d97fa99ba22"
+  }
+}

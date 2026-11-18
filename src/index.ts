@@ -198,8 +198,8 @@ const wholesalePage = (req: Request, env: Env, url: URL) => env.ASSETS.fetch(pag
 const ADMIN_PAGES = new Set(["/admin", "/admin/", "/admin.html", "/admin/index.html"]);
 const WHOLESALE_PAGES = new Set(["/wholesale", "/wholesale/", "/wholesale/index.html"]);
 const OLD_WHOLESALE_DASHBOARD = new Set(["/wholesale/dashboard", "/wholesale/dashboard/", "/wholesale/dashboard/index.html"]);
-const SHOP_PAGE = /^\/shop\/(?:coffee(?:\/[a-z0-9-]+)?\/|(?:locations|brew-guides|about|contact|shipping|basket|checkout)\/)?$/;
-const SHOP_FILE = /^\/shop\/(?:shop\.(?:css|js)|catalogue\.json|photos\/[a-z0-9-]+\.webp)$/;
+const SHOP_PAGE = /^\/shop\/(?:(?:home|information|location|locations|brewguides|brew-guides|about|contact|shipping|privacy-policy|terms-conditions|wholesale|norwich-racing-team|basket|cart|checkout)\/|coffee\/(?:[a-z0-9-]+\/|p\/[a-z0-9-]+\/)?|blog\/(?:tag\/[a-z0-9+%_-]+\/|\d{4}\/\d{1,2}\/\d{1,2}\/[a-z0-9-]+\/)?)?$/i;
+const SHOP_FILE = /^\/shop\/(?:shop\.(?:css|js)|(?:catalogue|site-content)\.json|content\/[a-f0-9]{12}\.json|photos\/[a-z0-9-]+\.webp)$/;
 
 async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): Promise<Response> {
   const isGet = req.method === "GET" || req.method === "HEAD";
