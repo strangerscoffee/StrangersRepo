@@ -144,8 +144,28 @@ function home() {
   </section>
   <section class="partner glass"><div><h2>Become a wholesale partner</h2><p class="muted">Speciality coffee for cafés, shops and other businesses.</p></div><a class="shop-button soft" href="${shop}wholesale/">Explore wholesale ${arrow}</a></section>
   <section class="home-section" aria-labelledby="social-heading"><div class="section-head"><h2 id="social-heading">From our Instagram</h2><a href="https://www.instagram.com/strangerscoffee/">@strangerscoffee ${arrow}</a></div>
-    <div class="social-grid">${socialPosts.map(([code, title]) => `<a href="https://www.instagram.com/p/${code}/" aria-label="${title} on Instagram"><img src="${photo(`social-${code.toLowerCase()}`)}" alt="" loading="lazy"></a>`).join('')}</div>
+    <div class="social-grid" id="instagram-posts">${socialPosts.map(([code, title]) => `<a href="https://www.instagram.com/p/${code}/" aria-label="${title} on Instagram"><img src="${photo(`social-${code.toLowerCase()}`)}" alt="" loading="lazy"></a>`).join('')}</div>
   </section>`;
+}
+
+async function refreshInstagram() {
+  const grid = document.querySelector('#instagram-posts');
+  try {
+    const { posts } = await loadJson(`${shop}instagram.json`);
+    if (!posts.length || grid.contains(document.activeElement)) return;
+    const fallback = grid.innerHTML;
+    grid.innerHTML = posts.map(post => {
+      const cached = socialPosts.some(([code]) => code === post.code);
+      const image = cached ? photo(`social-${post.code.toLowerCase()}`) : `${shop}instagram-photo/${encodeURIComponent(post.code)}`;
+      return `<a href="${escape(post.href)}" aria-label="${escape(post.label)} · Instagram"><img src="${image}" alt="" loading="lazy"></a>`;
+    }).join('');
+    for (const image of grid.querySelectorAll('img')) image.addEventListener('error', () => {
+      image.closest('a').remove();
+      if (!grid.childElementCount) grid.innerHTML = fallback;
+    }, { once: true });
+  } catch {
+    // The locally stored gallery is available if the feed cannot be refreshed.
+  }
 }
 
 function catalogue(collection) {
@@ -447,6 +467,7 @@ async function render() {
       const product = products.find(item => item.slug === card.dataset.quickProduct);
       mountProductForm(card.querySelector('form'), product);
     }
+    void refreshInstagram();
   }
   const title = contentPages[page]?.[1] ?? ({ coffee: 'Shop coffee', basket: 'Basket', checkout: 'Checkout', locations: 'Locations', blog: 'Blog', information: 'Information' })[page];
   if (title && !slug) document.title = `${title} · Strangers Coffee Company`;

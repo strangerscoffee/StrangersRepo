@@ -13,6 +13,7 @@ export interface Env {
   ROTA_HOST?: string; // the rota app's own hostname, e.g. rota.staffstrangerscoffee.com (wrangler.jsonc vars)
   PREVIEW_HOST?: string; // canonical customer ordering hostname, strangerscoffee.trade
   LEGACY_PREVIEW_HOST?: string; // keeps old-origin baskets and pending checkout recovery accessible
+  RETAIL_INSTAGRAM_ACCESS_TOKEN?: string; // optional Instagram Login token, held only in the Worker
   QUICKBOOKS_CLIENT_ID?: string;
   QUICKBOOKS_CLIENT_SECRET?: string;
   QUICKBOOKS_TOKEN_KEY?: string; // base64 32-byte AES key, held outside D1/backups
@@ -60,8 +61,8 @@ export function errorResponse(e: ApiError): Response {
   return json({ ...(e.extra || {}), code: e.code, message: e.message }, e.status);
 }
 
-/** Bound binary uploads while reading, including requests without Content-Length. */
-export async function readBytes(req: Request, maxBytes: number, message: string): Promise<Uint8Array> {
+/** Bound binary bodies while reading, including streams without Content-Length. */
+export async function readBytes(req: Request | Response, maxBytes: number, message: string): Promise<Uint8Array> {
   if (Number(req.headers.get("content-length") || 0) > maxBytes) throw new ApiError(413, "too_large", message);
   const reader = req.body?.getReader(), chunks: Uint8Array[] = [];
   let length = 0;

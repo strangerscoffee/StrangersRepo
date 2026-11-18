@@ -33,6 +33,7 @@ import { isWholesaleCode, wholesalePath } from "./hosts";
 import { catalogueRetrievedAt } from "./wholesale/catalogue.js";
 import { catalogue } from "./wholesaleCatalogue";
 import { catalogueFor } from "./wholesaleWhiteLabel";
+import { retailInstagram } from "./retailInstagram";
 export { LiveHub } from "./live";
 
 export default {
@@ -216,6 +217,9 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
   if (p === "/shop" || p.startsWith("/shop/")) {
     if (url.hostname !== env.LEGACY_PREVIEW_HOST?.toLowerCase()) return new Response("Not found", { status: 404 });
     if (!isGet) return new Response("Method not allowed", { status: 405, headers: { allow: "GET, HEAD" } });
+    if (p === "/shop/instagram.json") return retailInstagram(req, env, ctx, url);
+    const instagramPhoto = p.match(/^\/shop\/instagram-photo\/([A-Za-z0-9_-]{3,35})$/);
+    if (instagramPhoto) return retailInstagram(req, env, ctx, url, instagramPhoto[1]);
     if (p === "/shop/mark.svg") return staticFile(new Request(new URL("/mark.svg", url), req), env, "/mark.svg");
     if (SHOP_FILE.test(p)) return staticFile(req, env, p);
     if (!p.endsWith("/") && SHOP_PAGE.test(p + "/")) return redirect(p + "/" + url.search);

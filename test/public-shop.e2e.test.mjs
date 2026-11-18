@@ -23,6 +23,7 @@ for (const [name, viewport, colorScheme] of layouts) {
   test(`public shop preview on ${name}: browse, choose retail options and complete a demo checkout`, async () => {
     const context = await browser.newContext({ viewport, colorScheme, hasTouch: name === 'mobile', isMobile: name === 'mobile' });
     try {
+      await context.route('**/shop/instagram.json', route => route.fulfill({ json: { posts: [] } }));
       const page = await context.newPage();
       const errors = [];
       const api = [];
@@ -130,10 +131,29 @@ test('public preview only serves read-only shop routes and keeps wholesale sign-
   const shortcut = await request('/shop?category=decaf');
   assert.equal(shortcut.headers.get('location'), '/shop/?category=decaf');
   assert.equal((await request('/shop/checkout/', { method: 'POST' })).status, 405);
+  assert.equal((await request('/shop/instagram.json', { method: 'POST' })).status, 405);
   assert.equal((await request('/shop/photos/unknown.webp')).status, 404);
   const entry = await request('/');
   assert.equal(entry.status, 302);
   assert.equal(entry.headers.get('location'), '/signin');
   assert.match(await (await request('/signin')).text(), /Wholesale sign-in/);
   assert.equal((await request('/api/wholesale/catalogue')).status, 401);
+});
+
+test('the homepage replaces its Instagram gallery when the feed returns newer posts', async () => {
+  const page = await browser.newPage();
+  try {
+    await page.route('**/shop/instagram.json', route => route.fulfill({ json: { posts: [{
+      code: 'a-NewPost', href: 'https://www.instagram.com/p/a-NewPost/', label: 'A newer roasting photo',
+    }] } }));
+    await page.route('**/shop/instagram-photo/a-NewPost', route => route.fulfill({
+      path: join(import.meta.dirname, '../public/shop/photos/roastery.webp'), contentType: 'image/webp',
+    }));
+    await page.goto(`${server.base}/shop/`);
+    const photo = page.getByRole('link', { name: 'A newer roasting photo · Instagram' });
+    await photo.scrollIntoViewIfNeeded();
+    await page.waitForFunction(() => document.querySelector('#instagram-posts img')?.naturalWidth > 0);
+    assert.equal(await photo.getAttribute('href'), 'https://www.instagram.com/p/a-NewPost/');
+    assert.equal(await page.locator('#instagram-posts a').count(), 1);
+  } finally { await page.close(); }
 });
