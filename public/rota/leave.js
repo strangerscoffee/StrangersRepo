@@ -1,6 +1,7 @@
 // Holiday dashboard. Private state lives only in memory and is cleared with the shared session guard.
 window.SCLeave = function createLeaveUI(c) {
     const { el, btn, ghost, label, empty, api, get, openSheet, closeSheets, cancelLink, setHead, go, R, mgr, toast, render, fmt, shortM, addDays, monday, londonToday } = c;
+    let reviewView = (() => { try { return localStorage.getItem('sc.rota.reviewView') === 'calendar' ? 'calendar' : 'list'; } catch (e) { return 'list'; } })();
     let month = '', year = '', yearPicked = false, employee = '', generation = 0, view = '', who = 'all', earlier = false;
     const TYPE = { annual: 'Annual leave', sick: 'Sick leave', unpaid: 'Unpaid leave', unauthorised: 'Unauthorised absence', legacy: 'Unclassified time off' };
     const STAT = { requested: 'Pending', approved: 'Approved', declined: 'Declined', cancelled: 'Cancelled' };
@@ -608,7 +609,7 @@ window.SCLeave = function createLeaveUI(c) {
         const days = n => `${n} day${n === 1 ? '' : 's'}`;
         const row = (o, detail) => el('div', { class: 'lrow team-off-row' }, el('span', { class: 'leave-dot ' + (o.kind === 'unpaid' ? 'unpaid' : 'holiday'), 'aria-hidden': 'true' }), el('span', { class: 't' }, el('b', { text: o.name }), el('span', { class: 's', text: `${kindWord(o)} · ${span(o.from, o.to)}${o.partDay ? ' · part of a day' : ''}` }), el('span', { class: 's team-off-when', text: detail })));
         const same = t.teamOff.filter(o => o.overlaps), near = t.teamOff.filter(o => !o.overlaps);
-        return el('section', { class: 'team-off', 'aria-label': 'Who else is off' },
+        const list = el('div', { class: 'team-off-list' },
             el('div', { class: 'leave-notice team-off-group' + (same.length ? ' overlap' : ' clear') },
                 el('b', { text: same.length ? `${same.length} ${same.length === 1 ? 'person is' : 'people are'} already off on these dates` : 'Nobody else is off on these dates' }),
                 same.length ? el('div', { class: 'list' }, ...same.map(o => row(o, o.shared.from === o.shared.to ? `Overlaps on ${shortM(o.shared.from)}` : `Overlaps ${span(o.shared.from, o.shared.to)}`))) : null),
@@ -616,6 +617,52 @@ window.SCLeave = function createLeaveUI(c) {
                 el('b', { text: 'Nearby, not overlapping' }),
                 note('Within a week either side of this request.'),
                 el('div', { class: 'list' }, ...near.map(o => row(o, o.daysBefore != null ? `Back ${days(o.daysBefore)} before this starts` : `Starts ${days(o.daysAfter)} after this ends`)))) : null);
+        // List or Calendar (the owner's request, 18 Nov 2026): the same people, either way; the choice is remembered here.
+        const cal = teamOffCalendar(t);
+        cal.hidden = reviewView !== 'calendar';
+        list.hidden = reviewView === 'calendar';
+        const buttons = [['list', 'List'], ['calendar', 'Calendar']].map(([v, text]) => el('button', { type: 'button', 'aria-pressed': String(v === reviewView), text, onclick: () => {
+            reviewView = v;
+            try { localStorage.setItem('sc.rota.reviewView', v); } catch (e) { /* a convenience only */ }
+            buttons.forEach(b => b.setAttribute('aria-pressed', String(b.textContent.toLowerCase() === v)));
+            list.hidden = v === 'calendar'; cal.hidden = v !== 'calendar';
+        } }));
+        return el('section', { class: 'team-off', 'aria-label': 'Who else is off' },
+            el('div', { class: 'seg team-off-switch', role: 'group', 'aria-label': 'Show who else is off as' }, ...buttons), list, cal);
+    }
+    // A calendar of the request's weeks (a week either side): the requested days outlined, and everyone else's
+    // approved holiday and unpaid leave on each day. Tap a day to list who's off.
+    function teamOffCalendar(t) {
+        const from = monday(addDays(t.from, -7)), last = addDays(monday(addDays(t.to, 7)), 6);
+        const off = d => t.teamOff.filter(o => o.from <= d && o.to >= d);
+        const inReq = d => d >= t.from && d <= t.to;
+        const detail = el('div', { class: 'tcal-detail', 'aria-live': 'polite' });
+        const show = d => {
+            const people = off(d);
+            detail.replaceChildren(el('b', { text: fmt(d, { weekday: 'long', day: 'numeric', month: 'long' }) + (inReq(d) ? ' · requested' : '') }),
+                people.length ? el('div', { class: 'list' }, ...people.map(o => el('div', { class: 'lrow team-off-row' }, el('span', { class: 'leave-dot ' + (o.kind === 'unpaid' ? 'unpaid' : 'holiday'), 'aria-hidden': 'true' }),
+                    el('span', { class: 't' }, el('b', { text: o.name }), el('span', { class: 's', text: `${o.kind === 'unpaid' ? 'Unpaid leave' : 'Holiday'} · ${span(o.from, o.to)}${o.partDay ? ' · part of a day' : ''}` })))))
+                    : note('Nobody else is off.'));
+            cells.forEach(c => c.setAttribute('aria-pressed', String(c.dataset.day === d)));
+        };
+        const cells = [];
+        for (let d = from; d <= last; d = addDays(d, 1)) {
+            const people = off(d), req = inReq(d), clash = req && people.length;
+            const cell = el('button', { type: 'button', class: 'tcal-day' + (req ? ' req' : '') + (clash ? ' clash' : '') + (d === londonToday() ? ' today' : ''), 'data-day': d,
+                'aria-label': `${fmt(d, { weekday: 'long', day: 'numeric', month: 'long' })}${req ? ', requested' : ''}: ${people.length ? people.map(o => `${o.name} on ${o.kind === 'unpaid' ? 'unpaid leave' : 'holiday'}`).join(', ') : 'nobody else off'}`,
+                onclick: () => show(d) },
+                el('span', { class: 'tcal-num' }, el('b', { text: String(Number(d.slice(8))) }), Number(d.slice(8)) === 1 || d === from ? el('small', { text: fmt(d, { month: 'short' }) }) : null),
+                req ? el('span', { class: 'tcal-req', text: 'Request' }) : null,
+                ...people.slice(0, 2).map(o => el('span', { class: 'leave-person ' + (o.kind === 'unpaid' ? 'unpaid' : 'holiday'), text: o.name.split(' ')[0], title: o.name })),
+                people.length > 2 ? el('span', { class: 'leave-more', text: `+${people.length - 2}` }) : null);
+            cells.push(cell);
+        }
+        const firstClash = cells.find(c => c.classList.contains('clash'))?.dataset.day;
+        show(firstClash || t.from);
+        return el('div', { class: 'tcal' },
+            el('div', { class: 'tcal-legend', 'aria-hidden': 'true' }, el('span', {}, el('i', { class: 'req' }), 'Requested'), el('span', {}, el('i', { class: 'clash' }), 'Requested, others off'), el('span', {}, el('i', { class: 'leave-dot holiday' }), 'Holiday'), el('span', {}, el('i', { class: 'leave-dot unpaid' }), 'Unpaid leave')),
+            el('div', { class: 'tcal-grid' }, ...['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(w => el('span', { class: 'tcal-dow', text: w })), ...cells),
+            detail);
     }
     async function review(t, trigger) {
         const token = generation;

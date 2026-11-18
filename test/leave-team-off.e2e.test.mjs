@@ -76,6 +76,22 @@ for (const [label, viewport] of [['phone', { width: 393, height: 852 }], ['iPad'
         // The decision buttons are still there.
         await page.locator('#sheet').getByRole('button', { name: 'Approve', exact: true }).waitFor();
         if (process.env.SHOT_DIR) await page.screenshot({ path: join(process.env.SHOT_DIR, `team-off-${label}-${scheme}.png`) });
+        // The same people as a calendar: the request outlined, a week either side, tap a day for who's off.
+        await panel.getByRole('button', { name: 'Calendar', exact: true }).click();
+        const cal = panel.locator('.tcal');
+        await cal.waitFor();
+        assert.equal(await panel.locator('.team-off-list').isHidden(), true);
+        assert.equal(await cal.locator('.tcal-day.req').count(), 3, 'Wed 15 – Fri 17 Jan requested');
+        assert.equal(await cal.locator('.tcal-day.clash').count(), 2, 'Beth is off on two of them');
+        assert.match(await cal.locator('.tcal-detail').innerText(), /Thursday 16 January · requested[\s\S]*Beth/);
+        await cal.locator('.tcal-day[data-day="2031-01-09"]').click();
+        assert.match(await cal.locator('.tcal-detail').innerText(), /Thursday 9 January[\s\S]*Carol[\s\S]*Unpaid leave/);
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+        await cal.scrollIntoViewIfNeeded();
+        await page.waitForTimeout(250);
+        if (process.env.SHOT_DIR) await page.screenshot({ path: join(process.env.SHOT_DIR, `team-off-calendar-${label}-${scheme}.png`) });
+        // Back to the list for the next run (the choice is remembered on the device).
+        await panel.getByRole('button', { name: 'List', exact: true }).click();
         assert.deepEqual(errors, []);
     } finally { await ctx.close(); }
 });
