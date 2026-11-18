@@ -84,6 +84,32 @@ test("staff: a job assigned to them and their reported job done show by the bell
   await a.ctx.close(); await b.ctx.close();
 });
 
+test("a maintenance alert hands focus to its job after the first list finishes loading", async () => {
+  const { ctx, page, errors } = await device(ALEX, { ...devices["iPhone 15 Pro"] });
+  try {
+    // The Cafe alert can arrive in the all-site summary before the Roastery list is ready.
+    const poll = "**/api/db/poll";
+    await page.route(poll, route => {
+      const body = route.request().postDataJSON();
+      body.queries = body.queries.filter(query => query.path !== "maintenance");
+      return route.continue({ postData: JSON.stringify(body) });
+    });
+    await page.goto(srv.base + "/");
+    await page.locator("#bellBtn").click();
+    await page.locator("#notifSheet .lrow", { hasText: "Dishwasher leaking" }).click();
+    await page.locator('[data-panel="maintenance"][aria-busy="true"]').waitFor({ state: "attached" });
+    assert.equal(await page.evaluate(() => document.activeElement.id), "pageTitle");
+    await page.unroute(poll);
+    await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+    const job = page.locator('#mList .xrow.open [aria-expanded="true"]', { hasText: "Dishwasher leaking" });
+    await job.waitFor();
+    assert.equal(await job.evaluate(button => document.activeElement === button), true);
+    assert.deepEqual(errors, []);
+  } finally {
+    await ctx.close();
+  }
+});
+
 test("managers: new and long-open urgent jobs, with a count on Maintenance in the menu", async () => {
   const m = await device(MGR, { viewport: { width: 1180, height: 820 } });
   await m.page.goto(srv.base + "/");

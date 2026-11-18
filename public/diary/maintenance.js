@@ -15,7 +15,7 @@ const ROLE_NAME={staff:"Staff",manager:"Manager",admin:"Admin"};
    Equipment problems and general jobs, per site. All sites shows every site's open and finished jobs together. */
 const MT_PRI=[["urgent","Urgent","Unsafe, or stops us working","bad"],["soon","Soon","Needs doing this week","warn"],["later","When possible","Not holding anything up",""]];
 const mtPri=k=>MT_PRI.find(p=>p[0]===k)||MT_PRI[1];
-let editMt=null,maintAll=false;
+let editMt=null,maintAll=false,pendingMaintJob=null;
 function maintForm(){
   const pr=$("#mPri");pr.replaceChildren();
   for(const[k,l,h]of MT_PRI)pr.append(el("button",{type:"button",role:"radio","data-pri":k,onclick:()=>setMtPri(k)},el("b",{text:l}),el("span",{text:h})));
@@ -126,12 +126,20 @@ function openMaintJob(x){
   xOpen["m"+x.site+x.id]=true;
   show("maintenance");
   if(S.tab!=="maintenance")return;
+  pendingMaintJob=x.site+"/"+x.id;
+  $("#pageTitle").focus({preventScroll:true});
   renderMaint();
-  const job=maintJobButton(x.site+"/"+x.id);
-  (job||$("#pageTitle")).focus({preventScroll:true});
-  job?.scrollIntoView({block:"center",behavior:diaryScroll()});
 }
 const maintJobButton=key=>$(`#mList [data-maint-job="${CSS.escape(key)}"] .xmain`);
+function focusPendingMaintJob(){
+  if(!pendingMaintJob||S.tab!=="maintenance"||$("#mList").closest("[inert]"))return;
+  if(document.activeElement!==$("#pageTitle")){pendingMaintJob=null;return}
+  const job=maintJobButton(pendingMaintJob);
+  if(!job)return;
+  pendingMaintJob=null;
+  job.focus({preventScroll:true});
+  job.scrollIntoView({block:"center",behavior:diaryScroll()});
+}
 
 function renderMaint(){
   const box=$("#mList");if(!box)return;
@@ -181,5 +189,6 @@ function renderMaint(){
   renderMtWho();
   if(focused?.matches("input[data-maint-note]")&&box.contains(focused))focused.focus({preventScroll:true});
   if(focusedJob)maintJobButton(focusedJob)?.focus({preventScroll:true});
+  focusPendingMaintJob();
   resolveNames(ids.filter(Boolean));
 }

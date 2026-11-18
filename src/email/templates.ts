@@ -90,6 +90,7 @@ function totals(shifts: MailShift[], min: number | null, max: number | null): st
   return `${hrs(total)} hours after breaks${c ? ` · your contract is ${c}` : ""}`;
 }
 const textShift = (s: MailShift) => `- ${shortDay(s.day)}, ${s.start}–${s.end} at the ${s.siteName}${detail(s) ? ` (${detail(s)})` : ""}`;
+const shiftChangeHelp = "To change one of your shifts, ask an admin.";
 
 export interface WeekMail { name: string; week: string; shifts: MailShift[]; contractMin: number | null; contractMax: number | null; links: Links }
 
@@ -105,9 +106,9 @@ export function publishedEmail(m: WeekMail): Built {
     heading, links: m.links,
     body: strip(m.week, sorted, new Set()) + lines(sorted.map((s) => shiftLine(s)).join("")) +
       row(`<span style="font-size:14px;color:${MUTED};">${esc(totals(sorted, m.contractMin, m.contractMax))}</span>`) +
-      row(`${button(m.links.rota, "Open the rota")}<br><span style="font-size:13px;color:${MUTED};">A calendar file with these shifts is attached. Need a swap? Ask for cover from the shift in the rota.</span>`, "14px 22px 22px"),
+      row(`${button(m.links.rota, "Open the rota")}<br><span style="font-size:13px;color:${MUTED};">A calendar file with these shifts is attached. ${shiftChangeHelp}</span>`, "14px 22px 22px"),
   });
-  const text = `Hi ${first},\n\nThe rota for the week of ${dayMonth(m.week)} is out. Your shifts:\n\n${sorted.map(textShift).join("\n")}\n\n${totals(sorted, m.contractMin, m.contractMax)}.\n\nOpen the rota: ${m.links.rota}\nNeed a swap? Ask for cover from the shift in the rota.\n${textFooter(m.links)}`;
+  const text = `Hi ${first},\n\nThe rota for the week of ${dayMonth(m.week)} is out. Your shifts:\n\n${sorted.map(textShift).join("\n")}\n\n${totals(sorted, m.contractMin, m.contractMax)}.\n\nOpen the rota: ${m.links.rota}\n${shiftChangeHelp}\n${textFooter(m.links)}`;
   return { subject, html, text };
 }
 
@@ -175,9 +176,9 @@ export function timeOffEmail(o: { name: string; from: string; to: string; approv
   const first = o.name.split(" ")[0];
   const span = o.from === o.to ? longDay(o.from) : `${longDay(o.from)} to ${longDay(o.to)}`;
   const subject = `Time off ${o.from === o.to ? "on" : "from"} ${o.from === o.to ? longDay(o.from) : `${longDay(o.from)} to ${longDay(o.to)}`}: ${o.approved ? "approved" : "declined"}`;
-  const say = o.approved ? `You're off ${o.from === o.to ? "on" : "from"} <b>${esc(span)}</b>.` : `Your time off for <b>${esc(span)}</b> was declined. You can still ask someone to cover your shifts from the rota.`;
+  const say = o.approved ? `You're off ${o.from === o.to ? "on" : "from"} <b>${esc(span)}</b>.` : `Your time off for <b>${esc(span)}</b> was declined. ${shiftChangeHelp}`;
   const html = layout({ preheader: subject, heading: `Hi ${first}, your time off was ${o.approved ? "approved" : "declined"}`, links: o.links,
-    body: notice(o.approved, say) + row(`<span style="color:${MUTED};font-size:14px;">Decided by ${esc(o.by)}.</span>`) + row(button(o.links.rota, o.approved ? "Open the rota" : "Ask for cover"), "14px 22px 22px") });
+    body: notice(o.approved, say) + row(`<span style="color:${MUTED};font-size:14px;">Decided by ${esc(o.by)}.</span>`) + row(button(o.links.rota, "Open the rota"), "14px 22px 22px") });
   const text = `Hi ${first},\n\n${say.replace(/<[^>]+>/g, "")}\nDecided by ${o.by}.\n\nOpen the rota: ${o.links.rota}\n${textFooter(o.links)}`;
   return { subject, html, text };
 }

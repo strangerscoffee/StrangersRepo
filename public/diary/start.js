@@ -21,7 +21,10 @@ function updateDiaryLoading(){
     loader.hidden=false;
   }else if(loader){loader.hidden=true;loader.replaceChildren();}
   $("#pageAction").inert=pending;
-  if(wasPending&&!pending)SC.reveal(panel);
+  if(wasPending&&!pending){
+    SC.reveal(panel);
+    if(S.tab==="maintenance")focusPendingMaintJob();
+  }
 }
 
 function show(tab,opts){
@@ -29,6 +32,7 @@ function show(tab,opts){
   if(!canTab(tab)){if(S.role==="staff"&&MANAGER_TABS.has(tab)&&!(opts&&opts.quiet))toast("That section is for managers.");tab="day"}
   const changed=S.tab!==tab;
   const focusTitle=changed&&!opts?.quiet&&document.activeElement?.matches("button:focus-visible,a:focus-visible");
+  if(tab!=="maintenance")pendingMaintJob=null;
   S.tab=tab;
   document.querySelectorAll("[data-panel]").forEach(p=>p.hidden=p.dataset.panel!==tab);
   if(changed)for(const n of[document.querySelector(`[data-panel="${tab}"]`),$("#pagehead")])SC.reveal(n);
@@ -67,6 +71,7 @@ function switchSite(id){
   if((S.plan&&S.plan.dirty)||(S.insp&&S.insp.dirty)||(S.onb&&S.onb.dirty)||setupDirty){toast("Save or discard your changes before switching site.");return}
   if(S.plan)closePlan();if(S.insp)closeInsp();if(S.onb)closeOnb();
   $("#toast").hidden=true; // an Undo still showing belongs to the site being left
+  pendingMaintJob=null;
   S.site=id;diaryLoading={ready:new Set(),failed:new Set()};updateDiaryLoading();try{localStorage.setItem("sfbb.site",id)}catch(e){}
   Object.assign(S,{days:{},weeks:{},allergens:[],allergenDocs:[],reviews:[],extras:[],cleaning:[],deliveries:[],maintenance:[],fire:[],accidents:[],suppliers:[],contacts:[],plans:[],onboarding:[],inspections:[],staff:[],prove:[],rev:{}});
   S.settings=S.sum[id]&&S.sum[id].ready?S.sum[id].settings:normSettings(null);S.cfg=activeCfg(S.settings);

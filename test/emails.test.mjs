@@ -119,6 +119,7 @@ test("publishing a week emails everyone on it: their own shifts, a calendar file
   assert.match(alex.text, /your contract is 32–36h/, "own contract remains available");
   assert.doesNotMatch(alex.html, /Pat|Sam Okafor/, "nobody else's shifts or full names");
   assert.match(alex.text, /07:30–15:30 at the Roastery/);
+  for (const version of [alex.html, alex.text]) assert.match(version, /To change one of your shifts, ask an admin\./);
   const ics = Buffer.from(alex.attachments[0].content, "base64").toString();
   assert.match(ics, /BEGIN:VCALENDAR[\s\S]*UID:shift-[\s\S]*SUMMARY:Strangers: Roastery \(opening\)/);
   // (Under wrangler dev the Worker sees the live address, so links name it; the tests swap in their own.)
@@ -187,6 +188,13 @@ test("time off and cover decisions are emailed to the people they're about", asy
   assert.match(m.subject, /^Time off from .* approved$/);
   assert.match(m.html, /your time off was approved/);
   privateRecipient(m, "sam@example.com", /Alex Brown|Pat Lee|giles@example\.com|publisher-private@example\.test/);
+  const declined = await req("POST", "/api/rota/time-off", { from: addDays(WEEK, 16), to: addDays(WEEK, 16), reason: "Personal" }, SAM);
+  assert.equal(declined.status, 200, declined.text);
+  assert.equal((await req("PATCH", `/api/rota/time-off/${declined.body.id}`, { status: "declined" }, ADMIN)).status, 200);
+  await waitFor(1);
+  const [declineEmail] = take();
+  assert.match(declineEmail.html, /Open the rota/);
+  for (const version of [declineEmail.html, declineEmail.text]) assert.match(version, /To change one of your shifts, ask an admin\./);
   // Open shifts: only for those who turned them on, and are free.
   assert.equal((await req("PUT", "/api/rota/me/emails", { prefs: { open: true } }, SAM)).status, 200);
   await req("POST", "/api/rota/shifts", { site: "roastery", day: addDays(WEEK, 5), start: "10:00", end: "14:00", breakMins: 0, job: "", userId: null }, ADMIN);
