@@ -44,6 +44,11 @@ for (const [name, viewport, colorScheme] of layouts) {
       await page.waitForFunction(() => document.querySelector('.hero-visual img')?.naturalWidth > 0);
       assert.ok(await layoutFits());
       await shot('home');
+      const shelf = page.getByRole('region', { name: 'On the coffee shelf' });
+      const more = shelf.getByText('More from the coffee shelf', { exact: true });
+      await more.click();
+      assert.equal(await shelf.locator('.product-card:visible').count(), 10);
+      await more.click();
       const best = page.getByRole('region', { name: 'Best selling coffees' });
       const brazil = best.getByRole('form', { name: 'Buy Brazil Fazenda Bom Jesus Natural' });
       await brazil.getByLabel('Bag weight').selectOption('250 g');
@@ -125,6 +130,36 @@ for (const [name, viewport, colorScheme] of layouts) {
     } finally { await context.close(); }
   });
 }
+
+test('public shop keyboard focus stays below the sticky header', async () => {
+  for (const viewport of [{ width: 320, height: 568 }, { width: 768, height: 1024 }]) {
+    const page = await browser.newPage({ viewport });
+    try {
+      await page.goto(`${server.base}/shop/coffee/`);
+      await page.getByRole('heading', { name: 'Shop coffee' }).waitFor();
+      await page.keyboard.press('Tab');
+      await page.keyboard.press('Enter');
+      const focusIsClear = () => page.waitForFunction(() => {
+        const header = document.querySelector('.shop-header').getBoundingClientRect();
+        return document.activeElement.getBoundingClientRect().top >= header.bottom;
+      });
+      assert.equal(await page.locator(':focus').getAttribute('id'), 'main');
+      await focusIsClear();
+
+      await page.getByRole('searchbox', { name: 'Search coffee' }).focus();
+      const previous = page.getByRole('button', { name: 'Gift cards' });
+      await previous.evaluate(async button => {
+        await new Promise(requestAnimationFrame);
+        const header = document.querySelector('.shop-header').getBoundingClientRect();
+        const bounds = button.getBoundingClientRect();
+        window.scrollBy({ top: bounds.bottom - header.bottom + 2, behavior: 'instant' });
+      });
+      await page.keyboard.press('Shift+Tab');
+      assert.equal(await page.locator(':focus').textContent(), 'Gift cards');
+      await focusIsClear();
+    } finally { await page.close(); }
+  }
+});
 
 test('public preview only serves read-only shop routes and keeps wholesale sign-in available', async () => {
   const request = (path, options) => fetch(server.base + path, { redirect: 'manual', ...options });

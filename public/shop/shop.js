@@ -3,6 +3,7 @@ const liveSite = 'https://strangerscoffee.com';
 const basketKey = 'strangers.retail-preview.basket.v1';
 const quantityLimit = 30;
 const main = document.querySelector('#main');
+const header = document.querySelector('.shop-header');
 const countBadge = document.querySelector('#basket-count');
 const toast = document.querySelector('.shop-toast');
 const currency = new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' });
@@ -38,6 +39,16 @@ const [requestedPage = '', ...segments] = location.pathname.slice(shop.length).s
 const aliases = { home: '', location: 'locations', brewguides: 'brew-guides', cart: 'basket' };
 const page = aliases[requestedPage] ?? requestedPage;
 const slug = segments[0] === 'p' ? segments[1] : segments[0];
+
+document.addEventListener('focusin', ({ target }) => {
+  if (!target.matches(':focus-visible') || !target.closest('main, footer')) return;
+  requestAnimationFrame(() => {
+    if (document.activeElement !== target || getComputedStyle(header).position !== 'sticky') return;
+    const clearTop = header.getBoundingClientRect().bottom + 8;
+    const targetTop = target.getBoundingClientRect().top;
+    if (targetTop < clearTop) window.scrollBy({ top: targetTop - clearTop, behavior: 'instant' });
+  });
+});
 
 function announce(message) {
   clearTimeout(toastTimer);
@@ -132,7 +143,9 @@ function home() {
       <span class="hero-caption">Dove Street roastery, Norwich</span></div>
   </section>
   <section class="home-section" aria-labelledby="featured-heading"><div class="section-head"><h2 id="featured-heading">On the coffee shelf</h2><a href="${shop}coffee/">View all coffee <span aria-hidden="true">→</span></a></div>
-    <div class="product-grid">${products.slice(0, 3).map(card).join('')}</div></section>
+    <div class="product-grid">${products.slice(0, 3).map(card).join('')}</div>
+    <details class="directory featured-more glass"><summary>More from the coffee shelf</summary><div class="product-grid">${products.slice(3, 10).map(card).join('')}</div></details>
+  </section>
   <section class="home-section" aria-labelledby="best-sellers-heading"><div class="section-head best-sellers-head">
     <div><h2 id="best-sellers-heading">Best selling coffees</h2><p class="muted">Choose from 250 g, 500 g or 1 kg bags, whole bean or ground to suit your brew.</p></div>
     <a href="${shop}coffee/">Shop all <span aria-hidden="true">→</span></a></div>
