@@ -42,9 +42,16 @@ a { color: var(--accent); text-decoration: none; }
   font-size: 13px;
   font-weight: 750;
 }
-.heading { display: flex; align-items: center; gap: 12px; margin: 0 0 13px; padding-inline: 2px; }
+.heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 0 0 13px;
+  padding-inline: 2px;
+}
 .heading h1 { font-size: clamp(26px, 3vw, 34px); }
-.heading .btn { flex: none; }
+.heading .btn { grid-column: 2; justify-self: end; }
 .access-status { padding: 24px; border-radius: var(--r-lg); background: var(--glass); color: var(--muted); display: grid; justify-items: start; gap: 14px; }
 
 .toolbar { display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -436,8 +443,6 @@ button.cleared-row:hover{background:var(--sunk)}
   .staff-wholesale .staff-brand .brandmark { width: 27px; }
   .staff-orders-initials { grid-column: 2; }
   .heading {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
     gap: 7px;
     padding: 0;
     margin-bottom: 10px;
