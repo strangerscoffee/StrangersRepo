@@ -137,9 +137,15 @@ button.shc:hover{border-color:var(--accent)}
 .sfields input:is([type=date],[type=time]){display:block;text-align:left}
 .sfields input:is([type=date],[type=time])::-webkit-date-and-time-value{text-align:left;min-height:1.25em}
 .sfields input:is([type=date],[type=time])::-webkit-datetime-edit{padding:0}
-.leave-request-body .sfoot{grid-auto-flow:row;grid-template-columns:minmax(0,1fr);position:sticky;bottom:0;z-index:1;padding-top:10px;background:var(--glass-thick);border-radius:18px}
+/* The action bar stays at the bottom of the sheet and is solid edge to edge, with a soft fade above it, so text
+   scrolling under it is hidden rather than showing through or half-covered by the button. */
+.leave-request-body .sfoot{grid-auto-flow:row;grid-template-columns:minmax(0,1fr);position:sticky;bottom:-18px;z-index:2;margin:0 -18px -18px;padding:12px 18px 18px;background:var(--surface);border-radius:0;box-shadow:0 -16px 14px -8px var(--surface)}
 .leave-request-body textarea{min-height:88px}
-@media (max-width:380px){.leave-request,.leave-request .sfields{grid-template-columns:minmax(0,1fr)}}
+/* iPhone Safari gives date and time boxes a width of their own that ignores the column, so side-by-side dates ran into
+   each other and off the edge. Drop the native look so they take the column's width, and on phones put each date on a
+   line of its own. */
+.sfields input:is([type=date],[type=time]){-webkit-appearance:none;appearance:none;inline-size:100%;min-inline-size:0}
+@media (max-width:480px){.leave-request,.leave-request .sfields,.rsheet .sfields:has(input[type=date]){grid-template-columns:minmax(0,1fr)}}
 .sfields.flash{animation:rflash .9s}
 @keyframes rflash{0%,100%{box-shadow:none}30%{box-shadow:0 0 0 4px var(--tint);border-radius:14px}}
 .who{display:grid;gap:8px}

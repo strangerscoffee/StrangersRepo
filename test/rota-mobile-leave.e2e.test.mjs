@@ -28,6 +28,9 @@ for(const [device,viewport] of [['smallphone',{width:320,height:640}],['phone',{
  const a=await context(viewport,scheme,staff),b=await context(viewport,scheme,admin);
  try{
   const p=a.page,request=p.locator('#sheet');await p.goto(srv.base+'/rota/#leave');await p.getByRole('button',{name:'Request leave',exact:true}).click();await p.locator('#leave_from').waitFor();await fits(p);
+  // The two date boxes never overlap (on phones each has its own line), and the action bar hides what scrolls under it.
+  const [f,t]=await Promise.all(['#leave_from','#leave_to'].map(id=>p.locator(id).boundingBox()));assert.ok(f.x+f.width<=t.x+1||f.y+f.height<=t.y+1,JSON.stringify([f,t]));if(viewport.width<=480)assert.ok(t.y>=f.y+f.height,'dates stack on phones');
+  assert.equal(await p.locator('.leave-request-body .sfoot').evaluate(n=>getComputedStyle(n).backgroundColor.includes('rgba')&&!getComputedStyle(n).backgroundColor.endsWith(', 1)')),false,'solid action bar');
   const insets=await p.locator('#sheet').evaluate(s=>{const r=s.getBoundingClientRect(),h=s.querySelector('.shead').getBoundingClientRect(),body=s.querySelector('.sbody').getBoundingClientRect();return [h.left-r.left,r.right-h.right,body.left-r.left,r.right-body.right];});assert.ok(insets.every(n=>n>=16),JSON.stringify(insets));
   const action=await p.getByRole('button',{name:'Review request',exact:true}).boundingBox(),sheet=await p.locator('#sheet').boundingBox();assert.ok(action.y+action.height<=sheet.y+sheet.height-12,'the full action stays inside the short sheet');
   assert.ok(await request.getByRole('button',{name:'Cancel',exact:true}).evaluate(button=>button.offsetHeight)>=44);await screenshot(p,`leave-request-${device}-${scheme}`);
