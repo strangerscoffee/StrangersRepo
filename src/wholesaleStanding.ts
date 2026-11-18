@@ -90,7 +90,7 @@ export async function rollStanding(env: Env, saved: AnyOrder, actor: string, ctx
     Object.assign(fresh, { business: customer.business, customerSnapshot: { ...profile, contact: location.contact, phone: location.phone, address: location.address, postcode: location.postcode, deliveryNotes: location.deliveryNotes }, deliveryNotes: location.deliveryNotes, paymentTerms: paymentTermsFor(customer), locationId: location.id, locationSnapshot: { ...location } });
   }
   // A new run starts clean: no emails sent yet, not on a (possibly cleared) tab, no changes, no tracking or notes.
-  const now = Date.now(), { nextRunId, amendedAt, amendedBy, amendedByCustomer, originalLines, repeatLines, packedLines, skipped, trackingUrl, note, dispatchEmailedAt, standingIssue, standingRetryAt, tab, tabClearedId, ...base } = strip(saved);
+  const now = Date.now(), { nextRunId, amendedAt, amendedBy, amendedByCustomer, originalLines, repeatLines, packedLines, skipped, trackingUrl, note, dispatchEmailedAt, dispatchedAt, standingIssue, standingRetryAt, tab, tabClearedId, ...base } = strip(saved);
   const next = {
     ...base, ...fresh, status: "New", note: "", trackingUrl: "", createdAt: now, date: ukDay(now), requestKey: `standing:${id}`, lines,
     ...totals(lines, saved.delivery),

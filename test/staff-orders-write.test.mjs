@@ -105,3 +105,26 @@ test('packing progress is shared, version checked, private, and reset when the b
  const adminTotals=await ok('GET','/api/admin/wholesale/orders/packing-totals?dispatch=today');
  assert.equal(adminTotals.body.remaining.find(row=>row.productId==='brazil').quantity,3);
 });
+
+// Dispatched orders list newest dispatched first, on every screen and in Admin (the owner's request, 18 Nov 2026).
+test('dispatched orders are newest dispatched first',async()=>{
+ await grant(true);
+ const made=[];for(const n of ['one','two','three'])made.push((await customer('dispatch.'+n)).order);
+ const dispatch=async(o,status='Dispatched')=>{const cur=(await ok('GET','/api/admin/wholesale')).body.orders.find(x=>x.id===o.id);return(await ok('PATCH','/api/admin/wholesale/orders/'+o.id,{ifVersion:cur.version,status,customerId:cur.customerId,note:cur.note||''})).body.order;};
+ // An early dispatch date doesn't put an order first: when it was dispatched does.
+ const first=await dispatch(made[0]);assert.ok(Number.isInteger(first.dispatchedAt));
+ await new Promise(r=>setTimeout(r,20));await dispatch(made[2]);await new Promise(r=>setTimeout(r,20));await dispatch(made[1]);
+ const order=async(path,cookie)=>(await ok('GET',path,undefined,cookie)).body.orders.map(o=>o.id).filter(id=>made.some(m=>m.id===id));
+ const expected=[made[1].id,made[2].id,made[0].id];
+ for(const sort of ['dispatch','updated',''])assert.deepEqual(await order(`/api/staff-orders/orders?status=Dispatched${sort?'&sort='+sort:''}`,STAFF),expected,sort||'default');
+ assert.deepEqual(await order('/api/admin/wholesale/orders?status=Dispatched'),expected,'Admin too');
+ // A later edit (a note) doesn't move it; going back and dispatching again does.
+ const cur=(await ok('GET','/api/admin/wholesale')).body.orders.find(x=>x.id===made[0].id);
+ await ok('PATCH','/api/admin/wholesale/orders/'+made[0].id,{ifVersion:cur.version,status:'Dispatched',customerId:cur.customerId,note:'After dispatch'});
+ assert.deepEqual(await order('/api/staff-orders/orders?status=Dispatched',STAFF),expected,'a note after dispatch keeps its place');
+ const back=await dispatch(made[0],'Ready');assert.equal(back.dispatchedAt,undefined);
+ await new Promise(r=>setTimeout(r,20));await dispatch(made[0]);
+ assert.deepEqual(await order('/api/staff-orders/orders?status=Dispatched',STAFF),[made[0].id,made[1].id,made[2].id]);
+ // Other lists keep their own order.
+ assert.equal((await call('GET','/api/staff-orders/orders?status=open&sort=dispatch',undefined,STAFF)).status,200);
+});

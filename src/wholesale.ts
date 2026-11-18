@@ -58,6 +58,8 @@ interface Order {
   customerNote?: string;
   /** Legacy marker retained for historical dispatch mail. New mail uses the durable outbox. */
   dispatchEmailedAt?: number;
+  /** When it was last marked Dispatched (cleared if it's moved back): sorts the Dispatched list newest first. */
+  dispatchedAt?: number;
   /** On the customer's open tab (src/wholesaleTabs.ts), and the cleared tab it went into. Staff/admin only. */
   tab?: { at: number; by: string; auto?: boolean }; tabClearedId?: string;
   /** Admin only to set (src/wholesaleStanding.ts): the day it's due to go out, and the standing order it belongs to. */
@@ -396,6 +398,8 @@ export async function updateOrderStatus(env: Env, id: string, body: Record<strin
   const firstDispatch = body.status === "Dispatched" && order.status !== "Dispatched" && order.preview === false && !order.dispatchEmailedAt;
   const data: Order = { ...current, ...(schedule || {}), status: body.status, customerId, note, trackingUrl: body.trackingUrl === undefined ? order.trackingUrl || "" : trackingUrl(body.trackingUrl) };
   if (data.status === "New" || data.status === "Cancelled") delete data.packedLines;
+  if (data.status === "Dispatched") { if (order.status !== "Dispatched" || !data.dispatchedAt) data.dispatchedAt = Date.now(); }
+  else delete data.dispatchedAt;
   for (const key of ["dispatchDate", "standing"] as const) if (data[key] === undefined) delete data[key];
   if (!data.standing) { delete data.standingIssue; delete data.standingRetryAt; }
   const outgoing = firstDispatch && notify ? await prepareDispatchEmail(env, { ...data, id }, notify.ordersUrl) : null;

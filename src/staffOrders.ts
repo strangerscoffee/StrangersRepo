@@ -163,6 +163,8 @@ export async function handleStaffOrders(req:Request,env:Env,route:string,user:Us
   const scope=dispatchFilter(query);
   const base=where.join(' AND ')+scope.sql;
   values.push(...scope.args);
+  // Dispatched orders are always newest dispatched first, on every screen.
+  if(status==='Dispatched')query.set('sort','dispatched');
   const sort=orderSort(query);
   const [rows,total]=await Promise.all([
     env.DB.prepare(`SELECT id,data,version,${sort.key} AS sort_key FROM wholesale_preview WHERE ${base}${sort.after} ORDER BY sort_key ${sort.direction},id LIMIT 101`).bind(...values,...sort.values).all<{id:string;data:string;version:number;sort_key:string|number}>(),
