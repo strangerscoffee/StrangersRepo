@@ -781,6 +781,28 @@ body[data-page="leave"] .stat b { font-variant-numeric:tabular-nums; }
 .leave-accrual-list { display:flex;flex-direction:column;margin-block:10px; }
 .leave-accrual-row { display:flex;flex-direction:column;gap:3px;padding:12px 0;border-top:1px solid var(--line);min-width:0; }
 .leave-accrual-row .leave-check { min-width:0; }
+/* Start next year for everyone (leave.js nextYearSheet) */
+.ny-list { display:grid;gap:12px;margin-top:12px; }
+.ny-person { padding:12px 14px;border:1px solid var(--line);border-radius:14px;background:var(--sunk);min-width:0; }
+.ny-person.off { opacity:.55; }
+.ny-person.off > :not(:first-child) { display:none; }
+.ny-person .row.between { flex-wrap:wrap;gap:4px 12px;align-items:center; }
+.ny-person .leave-check { min-width:0;overflow-wrap:anywhere; }
+.ny-start { color:var(--muted);font-size:13px; }
+.ny-start.missing { color:var(--warn);font-weight:600; }
+.ny-person > .note { margin:4px 0 0; }
+.ny-part { border-color:color-mix(in srgb,var(--warn) 55%,transparent);background:var(--warn-bg);margin-block:10px; }
+.ny-fields { margin-top:10px; }
+.ny-week summary { display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:44px;cursor:pointer;list-style:none;padding:0 12px;border:1px solid var(--line);border-radius:12px;background:var(--card); }
+.ny-week summary::-webkit-details-marker { display:none; }
+.ny-change { color:var(--accent);font-weight:600;font-size:14px; }
+.ny-days { display:grid;grid-template-columns:repeat(auto-fill,minmax(88px,1fr));gap:8px;margin-top:8px; }
+.ny-days label { display:grid;gap:4px;font-size:13px;color:var(--muted); }
+.ny-days select { min-width:0;width:100%; }
+.ny-others { margin-top:16px; }
+.ny-confirm .lrow { align-items:flex-start;gap:10px; }
+.ny-confirm .t { min-width:0;overflow-wrap:anywhere; }
+.ny-diff { color:var(--warn);font-weight:600; }
 .leave-accrual-days { flex:none;font-variant-numeric:tabular-nums; }
 .leave-takeby-list .lrow .t { min-width:0; }
 .profile-form .sfields{grid-template-columns:minmax(0,1fr);align-items:start}
