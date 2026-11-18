@@ -1,5 +1,5 @@
 // The staff rota (rota.staffstrangerscoffee.com): who works where and when across the four sites.
-// Admins plan and publish each week; everyone sees their own shifts, picks up open shifts, asks for cover and
+// Admins plan and publish each week; everyone sees their own shifts, picks up open shifts and
 // says when they can work. Talks to /api/rota/* (src/rota.ts) and /api/auth/* with fetch, like admin.js.
 // Shares the diary's look: /app.css, /theme.css, /ui.css, plus rota.css.
 (() => {
@@ -141,14 +141,15 @@
     leave: { t: "Holidays", ic: "plane" },
     sick: { t: "Report sickness", ic: "sick", parent: "mine" },
     "leave-admin": {t: "Holiday management", ic:"plane", mgr:true, parent:"leave"},
-    swaps: { t: "Open shifts & cover", nav: "Open shifts & cover", ic: "swap" },
+    swaps: { t: "Open shifts", nav: "Open shifts", ic: "swap" },
     avail: { t: "When I can work", ic: "avail" },
+    profile: { t: "My profile", ic: "mine", parent: "more" },
     requests: { t: "Requests", ic: "requests", mgr: true },
     more: { t: "More", ic: "more", site: true },
     hours: { t: "Hours", ic: "hours", mgr: true, parent: "more" },
     settings: { t: "Rota settings", ic: "setup", site: true, parent: "more" },
   };
-  const TABS = () => (mgr() ? ["week", "mine", "leave", "requests", "more"] : siteManager() ? ["mine", "leave", "swaps", "avail", "more"] : ["mine", "leave", "swaps", "avail"]);
+  const TABS = () => (mgr() ? ["week", "mine", "leave", "requests", "more"] : siteManager() ? ["mine", "leave", "swaps", "avail", "more"] : ["mine", "leave", "swaps", "avail", "profile"]);
   const allowed = (p) => PAGES[p] && (!PAGES[p].mgr || mgr()) && (!PAGES[p].site || siteManager());
   const tabOf = (p) => (TABS().includes(p) ? p : PAGES[p]?.parent && TABS().includes(PAGES[p].parent) ? PAGES[p].parent : mgr() ? "more" : p);
 
@@ -175,15 +176,15 @@
       svgi(ICON[ic]), el("span", { text: label }), badge ? el("span", { class: "n pill bad", text: String(badge) }) : null);
     if (mgr()) {
       sn.append(link("week", "Week", "week"), link("mine", "My shifts", "mine"), link("leave", "Holidays", "plane"), link("requests", "Requests", "requests", R.badge),
-        link("swaps", "Open shifts & cover", "swap"), link("avail", "When I can work", "avail"),
-        link("sick", "Report sickness", "sick"),
+        link("swaps", "Open shifts", "swap"), link("avail", "When I can work", "avail"),
+        link("sick", "Report sickness", "sick"), link("profile", "My profile", "mine"),
         el("div", { class: "h", text: "Manage" }), link("leave-admin", "Holiday management", "plane"), link("hours", "Hours", "hours"), link("settings", "Rota settings", "setup"));
     } else {
-      sn.append(link("mine", "My shifts", "mine"), link("leave", "Holidays", "plane"), link("swaps", "Open shifts & cover", "swap"), link("avail", "When I can work", "avail"), link("sick", "Report sickness", "sick"));
+      sn.append(link("mine", "My shifts", "mine"), link("leave", "Holidays", "plane"), link("swaps", "Open shifts", "swap"), link("avail", "When I can work", "avail"), link("sick", "Report sickness", "sick"), link("profile", "My profile", "mine"));
       if (siteManager()) sn.append(el("div", { class: "h", text: "Manage" }), link("settings", "Site rota settings", "setup"));
     }
     const tb = $("#tabbar"); tb.replaceChildren();
-    const label = { week: "Week", mine: "My shifts", leave:"Holidays", swaps: "Open shifts", avail: "When I work", requests: "Requests", more: "More" };
+    const label = { week: "Week", mine: "My shifts", leave:"Holidays", swaps: "Open shifts", avail: "When I work", requests: "Requests", more: "More", profile: "Profile" };
     for (const t of TABS()) {
       const on = tabOf(cur) === t;
       tb.append(el("button", { type: "button", class: "tab" + (on ? " on" : ""), "data-rota-focus": "tab:" + t, "aria-current": on ? "page" : null, onclick: () => go(t) },
@@ -1216,7 +1217,8 @@
         isAdmin() ? others.length ? el("div", { class: "with", text: "With " + others.map((o) => first(o.name) + (o.start !== nx.start ? ` from ${o.start}` : "")).join(", ") }) : el("div", { class: "with", text: "On your own" }) : null,
         nx.note ? el("div", { class: "with", text: nx.note }) : null,
         el("div", { class: "row" }, el("button", { type: "button", class: "hbtn", onclick: () => calendarFile(nx) }, svgi(ICON.cal), "Add to calendar"),
-          coverOf(nx) ? el("span", { class: "hbtn on", text: "Cover asked" }) : el("button", { type: "button", class: "hbtn", "data-w": "", onclick: () => askCover(nx) }, "Ask for cover"))));
+          // Asking for cover is switched off (an admin changes shifts); one already asked still shows.
+          coverOf(nx) ? el("span", { class: "hbtn on", text: "Cover asked" }) : null)));
     } else {
       const anyAhead = r.published.some((w) => w >= monday(today));
       const last = [...r.shifts].filter((s) => s.day < today).pop();
@@ -1310,7 +1312,7 @@
       const t = v && typeof v === "object" ? `${v.from ? v.from.replace(/:00$/, "") : ""}–${v.to ? v.to.replace(/:00$/, "") : ""}` : "";
       return el("span", { "aria-label": `${DAY_NAMES[i]}: ${t ? (v.from ? "from " + v.from : "") + (v.to ? " until " + v.to : "") : "any time"}` }, dn, t ? el("small", { text: t }) : null);
     };
-    const sitesText = (me.sites || []).length ? joinAnd(me.sites.map(siteName)) : "Any site";
+    const sitesText = me.primarySite ? `${siteName(me.primarySite)} (primary)${(me.sites || []).length ? ", also " + joinAnd(me.sites.map(siteName)) : ""}` : (me.sites || []).length ? joinAnd(me.sites.map(siteName)) : "Any site";
     right.push(el("section", { class: "panel mavail" }, el("div", { class: "avail" }, ...DAYS.map(chip)), el("p", { class: "note", text: `${sitesText} · set by an admin` })));
 
     return [toggle, el("div", { class: "mgrid" }, el("div", { class: "mcol" }, ...left), el("div", { class: "mcol" }, ...right))];
@@ -1347,32 +1349,11 @@
       s.adjusted ? el("p", { class: "note", text: `Amended from ${s.start}–${s.end}${s.adjustNote ? ": " + s.adjustNote : ""}` }) : null,
       s.note ? el("p", { text: s.note }) : null,
       el("div", { class: "sfoot" }, ghost("Add to calendar", () => { calendarFile(s); closeSheets(); }),
-        // Cover only for a shift that hasn't started.
-        cov ? btn("Cover asked", null, "btn", { disabled: true }) : s.day > londonToday() || (s.day === londonToday() && s.start > londonNow()) ? btn("Ask for cover", () => askCover(s)) : null)), { left: cancelLink() });
+        // Asking for cover is switched off: an admin changes who works a shift.
+        cov ? btn("Cover asked", null, "btn", { disabled: true }) : null)), { left: cancelLink() });
   }
 
-  async function askCover(s) {
-    // Everyone on the rota (names and account ids) comes with the week.
-    let people = [];
-    if (isAdmin()) try { people = (await get("/api/rota/week?start=" + monday(s.day))).people || []; } catch (e) {}
-    const u = R.me.user;
-    const sel = el("select", { id: "c_to" }, el("option", { value: "" }, "Anyone who can"), ...people.filter((p) => p.id !== u.id).map((p) => el("option", { value: p.id }, p.name)));
-    const note = el("input", { type: "text", id: "c_msg", maxlength: 300, placeholder: "e.g. Family wedding, could you take my shift?" });
-    const msg = el("p", { class: "smsg", role: "alert" });
-    openSheet("Ask for cover", el("div", { class: "sbody" },
-      el("p", { class: "note", text: `${shortM(s.day)} · ${s.start}–${s.end} at ${s.siteName}` }),
-      isAdmin() ? el("div", { class: "field" }, el("label", { class: "label", for: "c_to", text: "Ask" }), sel) : el("p", { class: "note", text: "An admin reviews your request and arranges cover." }),
-      el("div", { class: "field" }, el("label", { class: "label", for: "c_msg", text: "Message (optional)" }), note), msg,
-      el("p", { class: "note", text: `${approverText()} approves it before it changes hands. It stays your shift until then.` }),
-      el("div", { class: "sfoot" }, btn("Send request", async () => {
-        try {
-          await api("POST", "/api/rota/requests", { kind: "cover", shiftId: s.id, toUserId: sel.value || null, message: note.value.trim() });
-          closeSheets(); toast("Asked. You'll see replies under Open shifts & cover."); render();
-        } catch (e) { msg.textContent = e.message; }
-      }))), { left: cancelLink() });
-  }
-
-  /* ---------- open shifts and cover (everyone) ---------- */
+  /* ---------- open shifts (everyone) ---------- */
 
   const statusText = (q, u) => {
     const ap = approverText();
@@ -1384,12 +1365,13 @@
     return [q.toUser ? `Waiting for ${first(q.toName)}` : "Offered to anyone", "warn"];
   };
 
+
   async function renderSwaps() {
     const u = R.me.user;
     const today = londonToday();
     const [open, me, mine] = await Promise.all([get("/api/rota/open"), get("/api/rota/me"), get(`/api/rota/mine?from=${monday(today)}&to=${addDays(today, 41)}`)]);
     R.approvers = me.approvers;
-    setHead("swaps", "Open shifts & cover", "Open shifts you can pick up, and cover requests", mgr() ? {} : {});
+    setHead("swaps", "Open shifts", "Open shifts you can pick up. To change one of your shifts, ask an admin.", mgr() ? {} : {});
     const weekHours = (day) => r2(mine.shifts.filter((s) => monday(s.day) === monday(day)).reduce((a, s) => a + s.hours, 0));
     let hidden = []; try { hidden = JSON.parse(localStorage.getItem("rota.notForMe") || "[]"); } catch (e) {}
     const ap = approverText();
@@ -1432,7 +1414,7 @@
 
     const own = me.requests.filter((q) => (q.fromUser === u.id || (q.taker === u.id && q.kind === "cover")) && q.shift);
     out.push(label("Your requests"));
-    if (!own.length) out.push(el("section", { class: "panel" }, el("p", { class: "note", text: "Nothing yet. Ask for cover from a shift under My shifts." })));
+    if (!own.length) out.push(el("section", { class: "panel" }, el("p", { class: "note", text: "Nothing yet. Shifts you ask to pick up show here." })));
     else out.push(el("div", { class: "list glass" }, ...own.map((q) => {
       const s = q.shift;
       const [txt, cls] = statusText({ ...q, takerId: q.taker }, u.id);
@@ -1449,6 +1431,40 @@
 
   // Which days and sites someone can work. Only admins change it (their own, or anyone's from Rota settings:
   // #avail/<userId>); everyone else sees theirs read-only, and still books their own time off here.
+  // My profile (src/profile.ts): the signed-in person's own start date (set by an admin) and the contact number,
+  // email and home address they keep up to date. Private to them and admins; saving tells the admins what changed.
+  async function renderProfile() {
+    setHead("profile", "My profile", "Private to you and admins");
+    const { profile: p } = await get("/api/rota/me/profile");
+    if (!p) return [el("section", { class: "panel" }, el("p", { class: "note", text: "Your profile isn't available." }))];
+    const fld = (id, t, input, hint) => el("div", { class: "field" }, el("label", { class: "label", for: id, text: t }), input, hint ? el("p", { class: "note", text: hint }) : null);
+    const phone = el("input", { type: "tel", id: "pf_phone", autocomplete: "tel", maxlength: 30, value: p.phone, placeholder: "e.g. 07700 900123" });
+    const email = el("input", { type: "email", id: "pf_email", autocomplete: "email", maxlength: 254, value: p.email, placeholder: "name@example.com" });
+    const address = el("textarea", { id: "pf_address", autocomplete: "street-address", maxlength: 300, rows: 4, placeholder: "House, street, town, postcode" });
+    address.value = p.address;
+    const msg = el("p", { class: "smsg", role: "alert" });
+    const save = btn("Save my details", async () => {
+      msg.textContent = "";
+      save.disabled = true;
+      try {
+        const r = await api("PUT", "/api/rota/me/profile", { phone: phone.value, email: email.value, address: address.value, ifVersion: p.version });
+        toast(r.changed.length ? "Saved. An admin has been told what changed." : "Nothing changed.");
+        render();
+      } catch (e) { msg.textContent = e.code === "conflict" ? "Your details were changed somewhere else. Reload the page to see them." : e.message; save.disabled = false; }
+    });
+    const startText = p.startDate ? fmt(p.startDate, { day: "numeric", month: "long", year: "numeric" }) : "Not set yet";
+    return [
+      label("About you"),
+      el("section", { class: "panel" }, el("div", { class: "lrow" }, el("span", { class: "t" }, el("b", { text: "Start date" }), el("span", { class: "s", text: "Set by an admin" })), el("span", { class: "grow" }), el("b", { text: startText }))),
+      label("Contact details"),
+      el("section", { class: "panel profile-form" }, el("div", { class: "sfields" },
+        fld("pf_phone", "Contact number", phone), fld("pf_email", "Contact email", email, "Rota emails go to this address too."),
+        el("div", { class: "field wide" }, el("label", { class: "label", for: "pf_address", text: "Home address" }), address)),
+        msg, el("div", { class: "row" }, save)),
+      el("p", { class: "note", text: "Only you and admins can see these details. When you change them, an admin is told which details changed." }),
+    ];
+  }
+
   async function renderAvail([uid] = []) {
     const me = await get("/api/rota/me");
     R.approvers = me.approvers;
@@ -1463,9 +1479,11 @@
       other ? { back: ["Rota settings", "settings"] } : {});
     let pattern = JSON.parse(JSON.stringify((other ? person.pattern : me.pattern) || {}));
     let sites = [...((other ? person.sites : me.sites) || [])];
+    let primary = (other ? person.primarySite : me.primarySite) || null;
+    sites = sites.filter((x) => x !== primary);
     let t;
     const saveSoon = () => { clearTimeout(t); t = setTimeout(async () => {
-      const ok = await act(() => other ? api("PUT", "/api/rota/people/" + uid, { pattern, sites }) : api("PUT", "/api/rota/me/availability", { pattern, sites }), "Saved");
+      const ok = await act(() => other ? api("PUT", "/api/rota/people/" + uid, { pattern, sites, primarySite: primary }) : api("PUT", "/api/rota/me/availability", { pattern, sites, primarySite: primary }), "Saved");
       if (ok && R.weekData) R.weekData._at = 0;
     }, 500); };
     const dayText = (v) => v === "off" ? "Can't work" : v === "any" ? "Any time" : v.from && v.to ? `${v.from}–${v.to}` : v.from ? `From ${v.from}` : `Until ${v.to}`;
@@ -1473,7 +1491,8 @@
     if (!canEdit) {
       const rowsRO = el("div", { class: "list glass" }, ...DAYS.map((k, i) => el("div", { class: "lrow avrow" },
         el("b", { class: "dn", text: fmt(addDays("2026-11-09", i), { weekday: "short" }) }), el("span", { class: "s", text: dayText(pattern[k] ?? "any") }))));
-      const siteText = sites.length ? SITES.filter(([id]) => sites.includes(id)).map(([, n]) => n).join(", ") : "Any site";
+      const names = (ids) => SITES.filter(([id]) => ids.includes(id)).map(([, n]) => n).join(", ");
+      const siteText = primary ? `Primary site: ${names([primary])}${sites.length ? ` · also ${names(sites)}` : ""}` : sites.length ? names(sites) : "Any site";
       return [label("Each week"), rowsRO,
         label("Sites"), el("section", { class: "panel" }, el("p", { text: siteText })),
         el("p", { class: "note", text: "Only an admin can change which days and sites you work. Ask them if something here is wrong." }),
@@ -1500,17 +1519,25 @@
     }));
     drawRows();
 
-    const siteBox = el("div", { class: "fchips", role: "group", "aria-label": other ? "Sites they can work at" : "Sites I can get to" });
-    const drawSites = () => siteBox.replaceChildren(...SITES.map(([id, nm]) => el("button", { type: "button", class: "fchip", "data-w": "", "aria-pressed": String(sites.includes(id)),
-      onclick: () => { sites = sites.includes(id) ? sites.filter((x) => x !== id) : [...sites, id]; drawSites(); saveSoon(); } }, nm)));
+    // A primary site (one), then other sites they can also work at. Only those, or any site if none is chosen.
+    const primaryBox = el("div", { class: "fchips", role: "radiogroup", "aria-label": "Primary site" });
+    const siteBox = el("div", { class: "fchips", role: "group", "aria-label": "Can also work at" });
+    const siteNote = el("p", { class: "note" });
+    const drawSites = () => {
+      primaryBox.replaceChildren(...[["", "Not set"], ...SITES].map(([id, nm]) => el("button", { type: "button", class: "fchip", "data-w": "", role: "radio", "aria-checked": String((primary || "") === id), "aria-pressed": String((primary || "") === id),
+        onclick: () => { primary = id || null; sites = sites.filter((x) => x !== primary); drawSites(); saveSoon(); } }, nm)));
+      siteBox.replaceChildren(...SITES.filter(([id]) => id !== primary).map(([id, nm]) => el("button", { type: "button", class: "fchip", "data-w": "", "aria-pressed": String(sites.includes(id)),
+        onclick: () => { sites = sites.includes(id) ? sites.filter((x) => x !== id) : [...sites, id]; drawSites(); saveSoon(); } }, nm)));
+      siteNote.textContent = primary ? "Only put on shifts at the primary site and any sites ticked." : "With no primary site and none ticked, any site.";
+    };
     drawSites();
 
     if (other) {
       return [label("Each week"), rows, el("p", { class: "note", text: "Switch off days they can't work. Tap a day's time to give a from or until time." }),
-        label("Sites they can work at"), el("section", { class: "panel" }, siteBox, el("p", { class: "note", text: "None ticked means any site." }))];
+        label("Primary site"), el("section", { class: "panel" }, primaryBox), label("Can also work at"), el("section", { class: "panel" }, siteBox, siteNote)];
     }
     return [label("Each week"), rows, el("p", { class: "note", text: "Switch off days you can't work. Tap a day's time to give a from or until time." }),
-      label("Sites I can get to"), el("section", { class: "panel" }, siteBox, el("p", { class: "note", text: "None ticked means any site." })),
+      label("Primary site"), el("section", { class: "panel" }, primaryBox), label("Can also work at"), el("section", { class: "panel" }, siteBox, siteNote),
       label("Time off"), timeOffList(me), el("div", { class: "row" }, btn("Ask for time off", askTimeOff)), ...emailSettings(me)];
   }
 
@@ -1637,8 +1664,9 @@
         isAdmin() ? row("Hours", "Weekly hours against contracts, monthly hours for payroll", "hours", "blue", () => go("hours")) : null,
         row(isAdmin() ? "Rota settings" : "Site rota settings", isAdmin() ? "Opening times, minimum cover and contract hours" : "Opening times and minimum cover", "setup", "grey", () => go("settings"))),
       label("Your own shifts"),
-      el("div", { class: "list glass" }, row("Open shifts & cover", "Pick up shifts, ask for cover", "swap", "teal", () => go("swaps")),
-        row("When I can work", "Your weekly pattern and time off", "avail", "indigo", () => go("avail"))),
+      el("div", { class: "list glass" }, row("Open shifts", "Shifts you could pick up", "swap", "teal", () => go("swaps")),
+        row("When I can work", "Your weekly pattern and time off", "avail", "indigo", () => go("avail")),
+        row("My profile", "Your contact details and start date", "mine", "blue", () => go("profile"))),
       label("Account"),
       el("div", { class: "list glass" }, ...accountItems().map(([t, ic, fn, danger]) => el("button", { class: "lrow" + (danger ? " danger" : ""), type: "button", onclick: fn },
         el("span", { class: "tile " + (danger ? "red" : "grey") }, svgi(ICON[ic])), el("span", { class: "t" }, el("b", { text: t }), danger ? el("span", { class: "s", text: "Signed in as " + R.me.user.name }) : null))))];
@@ -1784,7 +1812,7 @@
 
   const Leave = SCLeave({el,btn,ghost,label,empty,api,get,openSheet,closeSheets,cancelLink,setHead,go,R,mgr,toast,render,fmt,shortM,addDays,monday,londonToday});
   const Sick = SCSickness({ el, svgi, btn, api, get, setHead, go, toast, fmt, addDays, monday, londonToday, londonNow, isAdmin, me: () => R.me.user });
-  const PAGE_RENDER = {sick: (args) => Sick.page(args), leave:Leave.dashboard, "leave-admin":Leave.admin, week: renderWeek, day: renderDay, mine: renderMine, swaps: renderSwaps, avail: renderAvail, requests: renderRequests, more: renderMore, hours: renderHours, settings: renderSettings };
+  const PAGE_RENDER = {sick: (args) => Sick.page(args), leave:Leave.dashboard, "leave-admin":Leave.admin, week: renderWeek, day: renderDay, mine: renderMine, swaps: renderSwaps, avail: renderAvail, profile: renderProfile, requests: renderRequests, more: renderMore, hours: renderHours, settings: renderSettings };
 
   /* ---------- start ---------- */
 

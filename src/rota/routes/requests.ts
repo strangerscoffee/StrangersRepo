@@ -52,7 +52,9 @@ export async function requestRoutes(r: RotaRequest): Promise<Response | null> {
     const shift = await getShift(env, typeof b.shiftId === "string" ? b.shiftId : "");
     // Authorize before date, publication or conflict checks, which otherwise disclose another person's rota.
     if (!mgr && shift.userId && shift.userId !== user.id) throw denied("You can only request changes to your own shifts or claim an open shift.");
-    if (!mgr && b.kind === "cover" && b.toUserId != null && b.toUserId !== "") throw denied("An admin arranges cover with another employee.");
+    // Asking for cover is switched off for staff and managers (the owner's decision, 18 Nov 2026): an admin changes
+    // who works a shift. Cover requests already made can still be settled.
+    if (!r.admin && b.kind === "cover") throw denied("Asking for cover is switched off. Ask an admin if you need a shift changed.");
     const today = londonToday();
     if (shift.day < today) throw invalid("That shift has already happened.");
     const row = await weekRow(env, mondayOf(shift.day));

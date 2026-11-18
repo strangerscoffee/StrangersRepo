@@ -26,7 +26,7 @@ export async function makeBackup(env: Env, by: string): Promise<BackupInfo> {
   // D1 batches run in one transaction: every table and sequence belongs to the same snapshot.
   const reads = [
     { key: "docs", sql: "SELECT path, data, seq, employee_privacy_version, updated_at, updated_by FROM docs WHERE deleted = 0 ORDER BY path" },
-    { key: "users", sql: "SELECT id, name, username, role, active, created_at, last_login_at, email, email_prefs FROM users ORDER BY name_key" },
+    { key: "users", sql: "SELECT id, name, username, role, active, created_at, last_login_at, email, email_prefs, start_date, phone, home_address FROM users ORDER BY name_key" },
     { key: "documentSequence", sql: "SELECT v FROM meta WHERE k = 'seq'" },
     { key: "wholesalePreview", sql: "SELECT kind, id, data, version, updated_at FROM wholesale_preview ORDER BY kind, id" },
     { key: "wholesaleAccounts", sql: "SELECT id, customer_id, username, active, approval_status, created_at, last_login_at FROM wholesale_accounts ORDER BY username" },

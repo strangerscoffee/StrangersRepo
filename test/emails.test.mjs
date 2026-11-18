@@ -203,10 +203,11 @@ async function acceptedCover(day, message) {
   const shift = await req("POST", "/api/rota/shifts", { site: "roastery", day, start: "05:20", end: "06:25", breakMins: 0, userId: ids.sam, note: "PRIVATE_PREDECESSOR_SHIFT_NOTE" });
   assert.equal(shift.status, 200, shift.text);
   assert.equal((await req("POST", "/api/rota/week/publish", { week: monday(day) })).status, 200);
-  const cover = await req("POST", "/api/rota/requests", { kind: "cover", shiftId: shift.body.shift.id, message }, SAM);
-  assert.equal(cover.status, 200, cover.text);
-  srv.sql(`UPDATE rota_requests SET taker = ${sqlValue(ids.alex)}, status = 'accepted' WHERE id = ${sqlValue(cover.body.request.id)}`);
-  return { id: cover.body.request.id, shiftId: shift.body.shift.id };
+  // Asking for cover is switched off for staff (18 Nov 2026): seed one made before then.
+  assert.equal((await req("POST", "/api/rota/requests", { kind: "cover", shiftId: shift.body.shift.id, message }, SAM)).status, 403);
+  const id = "cv" + Math.random().toString(36).slice(2, 12);
+  srv.sql(`INSERT INTO rota_requests (id, kind, shift_id, from_user, to_user, taker, message, status, created_at) VALUES (${sqlValue(id)}, 'cover', ${sqlValue(shift.body.shift.id)}, ${sqlValue(ids.sam)}, NULL, ${sqlValue(ids.alex)}, ${sqlValue(message)}, 'accepted', ${Date.now()})`);
+  return { id, shiftId: shift.body.shift.id };
 }
 
 test("declined cover notices disclose only the recipient's own request, with no predecessor shift for a taker", async () => {

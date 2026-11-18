@@ -1,6 +1,7 @@
 // Admin API (/api/admin/*): manage accounts. Admins only (enforced in index.ts).
 import { ROLES, Role, User, UserRow, checkPassword, checkUsername, cleanName, hashPassword, nameKey, newId, tempPassword, usernameFrom } from "./auth";
 import { audit } from "./audit";
+import { cleanAddress, cleanPhone, cleanStartDate, listOf, profileRow } from "./profile";
 import { cleanEmail, emailReady, linksFor, savePrefs, send } from "./email/send";
 import { testEmail } from "./email/templates";
 import { sendSummary } from "./email/weekly";
@@ -80,7 +81,7 @@ export async function handleAdmin(req: Request, env: Env, route: string, admin: 
     return json({ user: listItem(await getRow(env, id)), ...(body.password ? {} : { password }) });
   }
 
-  // PATCH /api/admin/users/<id> {name?, username?, email?, role?, active?, password?: "..." | "generate", unlock?, signOut?}
+  // PATCH /api/admin/users/<id> {name?, username?, email?, startDate?, phone?, address?, role?, active?, password?: "..." | "generate", unlock?, signOut?}
   const m = route.match(/^users\/([0-9a-f]{24})$/);
   if (m && req.method === "PATCH") {
     const body = await readJson<any>(req, 4096);
@@ -107,6 +108,16 @@ export async function handleAdmin(req: Request, env: Env, route: string, admin: 
       args.push(email || null);
       emailChanged = (email || null) !== ((row as any).email || null);
     }
+    // The private staff profile (src/profile.ts): only admins set the start date; they can also edit the contact
+    // number and home address. Any change bumps the profile's version so an open My profile page reloads.
+    let profileChanged: string[] = [];
+    if (body.startDate !== undefined || body.phone !== undefined || body.address !== undefined) {
+      const cur = (await profileRow(env, row.id))!;
+      if (body.startDate !== undefined) { const v = cleanStartDate(body.startDate); sets.push("start_date = ?"); args.push(v); if (v !== (cur.start_date || null)) profileChanged.push("start date"); }
+      if (body.phone !== undefined) { const v = cleanPhone(body.phone); sets.push("phone = ?"); args.push(v || null); if (v !== (cur.phone || "")) profileChanged.push("contact number"); }
+      if (body.address !== undefined) { const v = cleanAddress(body.address); sets.push("home_address = ?"); args.push(v || null); if (v !== (cur.home_address || "")) profileChanged.push("home address"); }
+    }
+    if (profileChanged.length || emailChanged) sets.push("profile_version = COALESCE(profile_version, 0) + 1");
     if (body.username !== undefined) {
       const username = checkUsername(body.username);
       if (await usernameTaken(env, username, row.id)) throw new ApiError(409, "username_taken", `The username ${username} is taken.`);
@@ -170,6 +181,7 @@ export async function handleAdmin(req: Request, env: Env, route: string, admin: 
     if (body.signOut) events.push(["signed_out", `${admin.name} signed ${newName} out everywhere`]);
     if (summaryChanged) events.push(["email_changed", `${admin.name} changed ${newName}'s Monday summary`]);
     if (emailChanged) events.push(["email_changed", `${admin.name} ${cleanEmail(body.email) ? "set" : "removed"} ${newName}'s email address`]);
+    if (profileChanged.length) events.push(["profile_edited", `${admin.name} updated ${newName}'s ${listOf(profileChanged)}`]);
     for (const [k, t] of events) await audit(env, k, admin.name, t);
     return json({ user: listItem(await getRow(env, row.id)), ...(body.password === "generate" ? { password: passwordOut } : {}) });
   }

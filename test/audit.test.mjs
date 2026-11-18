@@ -4,6 +4,15 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { startServer, SETUP_CODE } from "./harness.mjs";
 
+// Asking for cover is switched off for staff and managers (src/rota/routes/requests.ts, 18 Nov 2026); cover requests
+// made before then can still be settled, so tests seed one directly.
+const seedCover = (shiftId, fromUser, message = "") => {
+  const id = "cv" + Math.random().toString(36).slice(2, 12);
+  srv.sql(`INSERT INTO rota_requests (id, kind, shift_id, from_user, to_user, taker, message, status, created_at) VALUES ('${id}', 'cover', '${shiftId}', '${fromUser}', NULL, NULL, '${String(message).replace(/'/g, "''")}', 'open', ${Date.now()})`);
+  return id;
+};
+
+
 const WEEK = "2030-01-07"; // a Monday well ahead, so requests are allowed
 const day = (i, w = WEEK) => { const d = new Date(w + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() + i); return d.toISOString().slice(0, 10); };
 const londonToday = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London" }).format(new Date());
@@ -113,7 +122,8 @@ test("rota: a pickup or cover is cancelled when the shift moves, changes or its 
 
   // Times changed after someone agreed to cover: approval is refused.
   const b = await shift({ day: day(2), userId: ids.Alex });
-  const cover = await rota("POST", "requests", { kind: "cover", shiftId: b.id }, ALEX);
+  assert.equal((await rota("POST", "requests", { kind: "cover", shiftId: b.id }, ALEX)).status, 403, "asking for cover is switched off");
+  const cover = { body: { request: { id: seedCover(b.id, ids.Alex) } } };
   assert.equal((await rota("PATCH", "requests/" + cover.body.request.id, { action: "accept" }, SAM)).status, 403, "cross-person cover acceptance is admin-only");
   assert.equal((await rota("PATCH", "requests/" + cover.body.request.id, { action: "accept" }, ADMIN)).status, 200);
   assert.equal((await rota("PATCH", "shifts/" + b.id, { start: "06:00", end: "18:00" })).status, 200);

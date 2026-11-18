@@ -274,3 +274,14 @@ export function holidayAdminEmail(o: { name: string; people: { name: string; lef
   const text = `Hi ${first},\n\n${o.people.length ? `These people still have holiday to book before the leave year ends:\n${o.people.map((p) => `- ${p.name}: ${daysText(p.left)} (${p.stage}; require by ${shortDay(p.cutoff)})`).join("\n")}\n\n` : ""}${o.quarter ? `Holiday for extra hours worked in ${o.quarter} is ready to review and approve.\n\n` : ""}Open Holiday management: ${o.links.rota}#leave-admin\n${textFooter(o.links)}`;
   return { subject, html, text };
 }
+
+/** For admins: a member of staff changed their own profile details. Names the fields, never the new values. */
+export function profileChangedEmail(o: { name: string; who: string; fields: string[]; adminUrl: string; links: Links }): Built {
+  const first = o.name.split(" ")[0];
+  const list = o.fields.length < 2 ? o.fields.join("") : `${o.fields.slice(0, -1).join(", ")} and ${o.fields[o.fields.length - 1]}`;
+  const subject = `${o.who} updated their ${list}`;
+  const html = layout({ preheader: subject, heading: `Hi ${first}, a profile was updated`, links: o.links,
+    body: row(`<b>${esc(o.who)}</b> changed their <b>${esc(list)}</b> on their staff profile.`) + row(`<span style="color:${MUTED};font-size:14px;">The new details are in Admin → People. They aren't included in this email.</span>`) + row(button(o.adminUrl, "Open People in Admin"), "14px 22px 22px") });
+  const text = `Hi ${first},\n\n${o.who} changed their ${list} on their staff profile.\nThe new details are in Admin → People; they aren't included in this email.\n\nOpen People in Admin: ${o.adminUrl}\n${textFooter(o.links)}`;
+  return { subject, html, text };
+}

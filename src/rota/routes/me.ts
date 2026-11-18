@@ -1,4 +1,5 @@
 // Rota routes for the person signed in: their shifts, who's on today, their details, and their availability.
+import { profileRow, profileView, saveOwnProfile, tellAdmins } from "../../profile";
 import { policy } from "../leave/model";
 import { invalid, json } from "../../http";
 import { approvers, loadPeople, loadShifts, publishedWeeks, weekRow } from "../load";
@@ -6,7 +7,7 @@ import { visibleRequests } from "../requests";
 import { visibleShift } from "../privacy";
 import { markOvertime } from "../shift";
 import { ReqRow, RotaRequest, SITE_IDS } from "../types";
-import { checkPattern, checkSites } from "../validate";
+import { checkPattern, checkSites, checkPrimarySite } from "../validate";
 import { addDays, dateOf, denied, isDay, londonToday, mondayOf, nowMs, parseJson, round2, siteName } from "../util";
 
 import { emailReady, prefsOf, savePrefs, weeklySitesOf } from "../../email/send";
@@ -63,7 +64,7 @@ export async function meRoutes(r: RotaRequest): Promise<Response | null> {
 
   if (route === "me" && m === "GET") {
     const [p, offs, reqs, appr, mail, leavePolicy] = await Promise.all([
-      env.DB.prepare("SELECT * FROM rota_people WHERE user_id = ?").bind(user.id).first<{ contract_min: number | null; contract_max: number | null; sites: string; pattern: string }>(),
+      env.DB.prepare("SELECT * FROM rota_people WHERE user_id = ?").bind(user.id).first<{ contract_min: number | null; contract_max: number | null; sites: string; pattern: string; primary_site: string | null }>(),
       env.DB.prepare("SELECT id, user_id, from_day, to_day, reason, status, decided_at, kind, version, from_time, to_time FROM rota_time_off WHERE user_id = ? AND to_day >= ? ORDER BY from_day")
         .bind(user.id, addDays(londonToday(), -30)).all<any>(),
       env.DB.prepare("SELECT * FROM rota_requests WHERE (from_user = ? OR to_user = ? OR taker = ?) AND created_at > ? ORDER BY created_at DESC LIMIT 100")
@@ -75,7 +76,7 @@ export async function meRoutes(r: RotaRequest): Promise<Response | null> {
     return json({
       holidayManagement: leavePolicy.settings.enabled,
       user: { id: user.id, name: user.name, role: user.role, manager: mgr, admin, siteManager }, links, today: londonToday(), approvers: appr,
-      contractMin: p?.contract_min ?? null, contractMax: p?.contract_max ?? null, contractHours: p?.contract_max ?? null, sites: parseJson(p?.sites, []), pattern: parseJson(p?.pattern, {}),
+      contractMin: p?.contract_min ?? null, contractMax: p?.contract_max ?? null, contractHours: p?.contract_max ?? null, sites: parseJson(p?.sites, []), primarySite: p?.primary_site || null, pattern: parseJson(p?.pattern, {}),
       timeOff: offs.results.map((t) => ({ id: t.id, from: t.from_day, to: t.to_day, reason: t.reason, status: t.status, decidedAt: t.decided_at, kind:t.kind, version:t.version,fromTime:t.from_time,toTime:t.to_time })),
       requests: await visibleRequests(env, reqs.results, user),
       // Rota emails: their address (set by an admin) and which emails they get, which they choose themselves.
@@ -91,15 +92,32 @@ export async function meRoutes(r: RotaRequest): Promise<Response | null> {
     return json(await savePrefs(env, user.id, { prefs: b.prefs ?? {}, weeklySites: b.weeklySites }));
   }
 
+  // The private staff profile (src/profile.ts): only ever the signed-in person's own.
+  if (route === "me/profile" && m === "GET") {
+    const row = await profileRow(env, user.id);
+    return json({ profile: row ? profileView(row) : null });
+  }
+  if (route === "me/profile" && m === "PUT") {
+    const b = await body();
+    const { changed, profile } = await saveOwnProfile(env, user, b);
+    if (changed.length) {
+      const work = tellAdmins(env, r.exec, r.mailLinks, user, changed).catch(() => {});
+      if (r.exec) r.exec.waitUntil(work); else await work;
+    }
+    return json({ profile, changed });
+  }
+
   if (route === "me/availability" && m === "PUT") {
     needAdmin();
     const b = await body();
-    const pattern = checkPattern(b.pattern), sites = checkSites(b.sites);
+    const cur = await env.DB.prepare("SELECT primary_site FROM rota_people WHERE user_id = ?").bind(user.id).first<{ primary_site: string | null }>();
+    const primary = "primarySite" in b ? checkPrimarySite(b.primarySite) : cur?.primary_site ?? null;
+    const pattern = checkPattern(b.pattern), sites = checkSites(b.sites).filter((s) => s !== primary);
     await env.DB.prepare(
-      `INSERT INTO rota_people (user_id, sites, pattern, updated_at) VALUES (?, ?, ?, ?)
-       ON CONFLICT (user_id) DO UPDATE SET sites = excluded.sites, pattern = excluded.pattern, updated_at = excluded.updated_at`,
-    ).bind(user.id, JSON.stringify(sites), JSON.stringify(pattern), nowMs()).run();
-    return json({ pattern, sites });
+      `INSERT INTO rota_people (user_id, sites, pattern, primary_site, updated_at) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT (user_id) DO UPDATE SET sites = excluded.sites, pattern = excluded.pattern, primary_site = excluded.primary_site, updated_at = excluded.updated_at`,
+    ).bind(user.id, JSON.stringify(sites), JSON.stringify(pattern), primary, nowMs()).run();
+    return json({ pattern, sites, primarySite: primary });
   }
 
   return null;

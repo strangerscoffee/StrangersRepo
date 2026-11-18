@@ -4,6 +4,15 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { startServer, SETUP_CODE } from "./harness.mjs";
 
+// Asking for cover is switched off for staff and managers (src/rota/routes/requests.ts, 18 Nov 2026); cover requests
+// made before then can still be settled, so tests seed one directly.
+const seedCover = (shiftId, fromUser, message = "") => {
+  const id = "cv" + Math.random().toString(36).slice(2, 12);
+  srv.sql(`INSERT INTO rota_requests (id, kind, shift_id, from_user, to_user, taker, message, status, created_at) VALUES ('${id}', 'cover', '${shiftId}', '${fromUser}', NULL, NULL, '${String(message).replace(/'/g, "''")}', 'open', ${Date.now()})`);
+  return id;
+};
+
+
 // A week well in the future, so requests (which must be for shifts from today on) are allowed.
 const WEEK = "2030-01-07"; // Monday
 const day = (i) => { const d = new Date(WEEK + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() + i); return d.toISOString().slice(0, 10); };
@@ -287,12 +296,14 @@ test("claims and covers: employees request for themselves; admins handle cross-p
   assert.equal((await rota("POST", "requests", { kind: "claim", shiftId: open.id }, SAM)).status, 403, "an assigned colleague shift is private before conflict checks");
 
   assert.equal((await rota("POST", "requests", { kind: "cover", shiftId: open.id, toUserId: ids.Priya, message: "Wedding" }, ALEX)).status, 403, "employees cannot target another employee");
-  const cancelled = await rota("POST", "requests", { kind: "cover", shiftId: open.id, message: "Own cover request" }, ALEX);
-  assert.equal(cancelled.status, 200, cancelled.text);
-  assert.equal((await rota("PATCH", "requests/" + cancelled.body.request.id, { action: "cancel" }, ALEX)).body.request.status, "cancelled");
-  const cover = await rota("POST", "requests", { kind: "cover", shiftId: open.id }, ALEX);
-  assert.equal(cover.status, 200, cover.text);
-  assert.equal(cover.body.request.toUser, null);
+  // Asking for cover is switched off for staff and managers; ones made before can still be cancelled or settled.
+  for (const cookie of [ALEX, MGR]) {
+    const off = await rota("POST", "requests", { kind: "cover", shiftId: open.id, message: "Own cover request" }, cookie);
+    assert.equal(off.status, 403, off.text);
+  }
+  const cancelledId = seedCover(open.id, ids.Alex, "Own cover request");
+  assert.equal((await rota("PATCH", "requests/" + cancelledId, { action: "cancel" }, ALEX)).body.request.status, "cancelled");
+  const cover = { body: { request: { id: seedCover(open.id, ids.Alex) } } };
   for (const cookie of [SAM, MGR]) {
     assert.equal((await rota("PATCH", "requests/" + cover.body.request.id, { action: "accept" }, cookie)).status, 403, "cross-person acceptance requires an admin");
     assert.equal((await rota("PATCH", "requests/" + cover.body.request.id, { action: "decline" }, cookie)).status, 403);
@@ -645,8 +656,8 @@ test("privacy: requests retain own state without colleague identities, messages 
     for (const cookie of [SAM, MGR]) assert.ok(!(await rota("GET", route, undefined, cookie)).body.requests.some((x) => x.id === targetId));
   }
   for (const action of ["accept", "decline", "cancel", "approve"]) assert.equal((await rota("PATCH", "requests/" + targetId, { action }, ALEX)).status, 403);
-  const ownCover = await rota("POST", "requests", { kind: "cover", shiftId: alexShift.id, message: "ALEX_OWN_REQUEST_MESSAGE" }, ALEX);
-  assert.equal(ownCover.status, 200, ownCover.text);
+  const ownCoverId = seedCover(alexShift.id, ids.Alex, "ALEX_OWN_REQUEST_MESSAGE");
+  const ownCover = { body: { request: (await rota("GET", "me", undefined, ALEX)).body.requests.find((x) => x.id === ownCoverId) } };
   assert.equal(ownCover.body.request.shift.note, "ALEX_PRIVATE_COVER_SHIFT");
   assert.equal(ownCover.body.request.message, "ALEX_OWN_REQUEST_MESSAGE");
   for (const cookie of [SAM, MGR]) {

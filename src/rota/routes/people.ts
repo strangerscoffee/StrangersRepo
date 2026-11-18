@@ -2,7 +2,7 @@
 import { invalid, json } from "../../http";
 import { activeUser, loadSites } from "../load";
 import { DAY_KEYS, ROTA_SITES, RotaRequest, SITE_IDS } from "../types";
-import { checkContract, checkPattern, checkSites } from "../validate";
+import { checkContract, checkPattern, checkPrimarySite, checkSites } from "../validate";
 import { isTime, londonToday, mins, nowMs, parseJson } from "../util";
 
 export async function peopleRoutes(r: RotaRequest): Promise<Response | null> {
@@ -14,25 +14,27 @@ export async function peopleRoutes(r: RotaRequest): Promise<Response | null> {
     const b = await body();
     if ("sites" in b || "pattern" in b) needAdmin();
     const cur = await env.DB.prepare("SELECT * FROM rota_people WHERE user_id = ?").bind(uid)
-      .first<{ sites: string; pattern: string; contract_min: number | null; contract_max: number | null }>();
+      .first<{ sites: string; pattern: string; contract_min: number | null; contract_max: number | null; primary_site: string | null }>();
     // {contractMin, contractMax}; or the older single {contractHours}, which sets both. Leaving them out keeps them.
     let min = cur?.contract_min ?? null, max = cur?.contract_max ?? null;
     if ("contractHours" in b && !("contractMin" in b) && !("contractMax" in b)) min = max = checkContract(b.contractHours);
     if ("contractMin" in b) min = checkContract(b.contractMin);
     if ("contractMax" in b) max = checkContract(b.contractMax);
     if (min != null && max != null && min > max) throw invalid("The minimum contracted hours can't be more than the maximum.");
-    const sites = "sites" in b ? checkSites(b.sites) : parseJson(cur?.sites, []);
+    // A primary site, plus other sites they can also work at (kept without the primary one).
+    const primary = "primarySite" in b ? checkPrimarySite(b.primarySite) : cur?.primary_site ?? null;
+    const sites = ("sites" in b ? checkSites(b.sites) : parseJson<string[]>(cur?.sites, [])).filter((s) => s !== primary);
     const pattern = "pattern" in b ? checkPattern(b.pattern) : parseJson(cur?.pattern, {});
     await env.DB.prepare(
-      `INSERT INTO rota_people (user_id, contract_hours, contract_min, contract_max, sites, pattern, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO rota_people (user_id, contract_hours, contract_min, contract_max, sites, pattern, primary_site, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (user_id) DO UPDATE SET contract_hours = excluded.contract_hours, contract_min = excluded.contract_min, contract_max = excluded.contract_max,
-         sites = excluded.sites, pattern = excluded.pattern, updated_at = excluded.updated_at`,
-    ).bind(uid, max, min, max, JSON.stringify(sites), JSON.stringify(pattern), nowMs()).run();
+         sites = excluded.sites, pattern = excluded.pattern, primary_site = excluded.primary_site, updated_at = excluded.updated_at`,
+    ).bind(uid, max, min, max, JSON.stringify(sites), JSON.stringify(pattern), primary, nowMs()).run();
     // Each contract change from today, so holiday for extra hours uses the contract in force on each day.
     if ((cur?.contract_min ?? null) !== min || (cur?.contract_max ?? null) !== max)
       await env.DB.prepare("INSERT INTO rota_contract_history(user_id, from_day, contract_min, contract_max, at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id, from_day) DO UPDATE SET contract_min = excluded.contract_min, contract_max = excluded.contract_max, at = excluded.at")
         .bind(uid, londonToday(), min, max, nowMs()).run();
-    return json({ userId: uid, contractMin: min, contractMax: max, contractHours: max, sites, pattern });
+    return json({ userId: uid, contractMin: min, contractMax: max, contractHours: max, sites, primarySite: primary, pattern });
   }
 
   if (route === "sites" && m === "GET") {

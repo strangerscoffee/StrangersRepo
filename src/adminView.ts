@@ -44,9 +44,10 @@ const shortDate = (day: string) => new Date(day + "T00:00:00Z").toLocaleDateStri
 interface UserRow {
   id: string; name: string; username: string; role: string; active: number; must_change: number; locked_until: number;
   created_at: number; created_by: string | null; last_login_at: number | null; quick_hash: string | null; email: string | null; email_prefs: string;
+  start_date: string | null; phone: string | null; home_address: string | null;
 }
 const allUsers = (env: Env) => env.DB.prepare(
-  "SELECT id, name, username, role, active, must_change, locked_until, created_at, created_by, last_login_at, quick_hash, email, email_prefs FROM users ORDER BY active DESC, name_key",
+  "SELECT id, name, username, role, active, must_change, locked_until, created_at, created_by, last_login_at, quick_hash, email, email_prefs, start_date, phone, home_address FROM users ORDER BY active DESC, name_key",
 ).all<UserRow>().then((r) => r.results);
 
 /* ---------- the diary today ---------- */
@@ -134,6 +135,9 @@ export async function overview(env: Env, links: { rota: string; diary: string })
       detail: `Seen ${errs.times} time${errs.times === 1 ? "" : "s"} on staff devices or the server. See what and where.`, action: { label: "See errors", act: "errors" }, dismiss: "errors" });
   }
   // Devices whose own clock is well out (src/index.ts flagClock): the site corrects for it; the device should be fixed.
+  // Staff who changed their own profile details (src/profile.ts): who and which fields, never the values.
+  const profiles = await env.DB.prepare("SELECT id, text FROM audit_log WHERE kind = 'profile_changed' AND at > ? ORDER BY at DESC LIMIT 5").bind(now - 7 * 864e5).all<{ id: number; text: string }>().catch(() => null);
+  for (const c of (profiles?.results || []).filter((c) => !dismissed.has(`profile:${c.id}`))) attention.push({ dismiss: `profile:${c.id}`, tone: "info", icon: "user", title: c.text.replace(/\.$/, ""), detail: "Their new details are on their profile in People.", action: { label: "See people", go: "people" } });
   const clocks = await env.DB.prepare("SELECT id, text FROM audit_log WHERE kind = 'clock_off' AND at > ? ORDER BY at DESC LIMIT 5").bind(now - 864e5).all<{ id: number; text: string }>().catch(() => null);
   for (const c of (clocks?.results || []).filter((c) => !dismissed.has(`clock:${c.id}`))) attention.push({ dismiss: `clock:${c.id}`, tone: "warn", icon: "clock", title: c.text.split(". ")[0], detail: "The site uses the right UK time anyway. On the device: Settings → General → Date & Time → Set Automatically.", action: { label: "See activity", go: "activity" } });
   const mailFails = await env.DB.prepare("SELECT COUNT(*) AS n, MAX(text) AS t FROM audit_log WHERE kind = 'email_failed' AND at > ?").bind(since("email_failed")).first<{ n: number; t: string }>().catch(() => null);
@@ -187,7 +191,7 @@ export async function people(env: Env) {
   const staffCols = SITES.map((s) => `${s.prefix}staff`);
   const [users, rota, staffDocs, summary, offs] = await Promise.all([
     allUsers(env),
-    env.DB.prepare("SELECT user_id, contract_min, contract_max, sites, pattern FROM rota_people").all<{ user_id: string; contract_min: number | null; contract_max: number | null; sites: string; pattern: string }>(),
+    env.DB.prepare("SELECT user_id, contract_min, contract_max, sites, pattern, primary_site FROM rota_people").all<{ user_id: string; contract_min: number | null; contract_max: number | null; sites: string; pattern: string; primary_site: string | null }>(),
     env.DB.prepare("SELECT collection, data FROM docs WHERE deleted = 0 AND collection IN (SELECT value FROM json_each(?))").bind(JSON.stringify(staffCols)).all<{ collection: string; data: string }>(),
     rotaWeekSummary(env, week),
     env.DB.prepare("SELECT user_id, from_day, to_day, status FROM rota_time_off WHERE status IN ('requested', 'approved') AND to_day >= ? ORDER BY from_day").bind(today).all<{ user_id: string; from_day: string; to_day: string; status: string }>(),
@@ -216,8 +220,10 @@ export async function people(env: Env) {
         locked: u.locked_until > now, lockedUntil: u.locked_until > now ? u.locked_until : null,
         lastLoginAt: u.last_login_at, createdAt: u.created_at, createdBy: u.created_by, quickPin: !!u.quick_hash,
         email: u.email || null, emailPrefs: prefsOf(u.email_prefs), weeklySites: weeklySitesOf(u.email_prefs),
+        // The private staff profile (src/profile.ts): admins only, like everything on this page.
+        profile: { startDate: u.start_date || null, phone: u.phone || "", address: u.home_address || "" },
         rota: {
-          contractMin: r?.contract_min ?? null, contractMax: r?.contract_max ?? null, sites: parse(r?.sites, []), pattern: parse(r?.pattern, {}),
+          contractMin: r?.contract_min ?? null, contractMax: r?.contract_max ?? null, sites: parse(r?.sites, []), primarySite: r?.primary_site || null, pattern: parse(r?.pattern, {}),
           weekHours: Math.round(mine.reduce((h, s) => h + s.hours, 0) * 10) / 10, weekOvertime: Math.round(mine.reduce((h, s) => h + (s.overtime || 0), 0) * 10) / 10,
           timeOff: offs.results.filter((o) => o.user_id === u.id).slice(0, 3).map((o) => ({ from: o.from_day, to: o.to_day, status: o.status })),
         },
@@ -233,10 +239,10 @@ export async function sites(env: Env) {
   const [docs, rotaSites, rotaPeople, users] = await Promise.all([
     docsByPath(env, SITES.map((s) => `${s.prefix}settings/main`)),
     env.DB.prepare("SELECT site, opens_at, closes_at, min_people, day_hours FROM rota_sites").all<{ site: string; opens_at: string | null; closes_at: string | null; min_people: number; day_hours: string }>(),
-    env.DB.prepare("SELECT user_id, sites FROM rota_people").all<{ user_id: string; sites: string }>(),
+    env.DB.prepare("SELECT user_id, sites, primary_site FROM rota_people").all<{ user_id: string; sites: string; primary_site: string | null }>(),
     env.DB.prepare("SELECT id FROM users WHERE active = 1").all<{ id: string }>(),
   ]);
-  const sitesOf = new Map(rotaPeople.results.map((r) => [r.user_id, parse(r.sites, []) as string[]]));
+  const sitesOf = new Map(rotaPeople.results.map((r) => [r.user_id, [...(r.primary_site ? [r.primary_site] : []), ...(parse(r.sites, []) as string[])]]));
   const count = (list: unknown) => (Array.isArray(list) ? list.filter((c: any) => c && !c.off).length : 0);
   return {
     sites: SITES.map((s) => {
@@ -334,7 +340,7 @@ export async function activity(env: Env, kind: string, query = new URLSearchPara
   for (const t of offs?.results || []) items.push({ kind: "rota", at: t.decided_at, text: `${t.by || "Someone"} ${t.status} ${t.who}'s time off, ${shortDate(t.from_day)}${t.to_day !== t.from_day ? `–${shortDate(t.to_day)}` : ""}`, where: "Rota" });
   for (const r of reqs?.results || []) items.push({ kind: "rota", at: r.decided_at, text: `${r.by || "Someone"} ${r.status} ${r.taker ? `${r.taker} taking` : "a request for"} a shift on ${shortDate(r.day)}`, where: `Rota · ${siteOf(r.site)?.name || r.site}` });
   for (const s of adjusted?.results || []) items.push({ kind: "rota", at: s.adjusted_at, text: `${s.by || "Someone"} amended ${s.who ? `${s.who}'s` : "a"} shift on ${shortDate(s.day)}: ${s.actual_start}–${s.actual_end}${s.adjust_note ? `, ${s.adjust_note}` : ""}`, where: `Rota · ${siteOf(s.site)?.name || s.site}` });
-  for (const l of log?.results || []) items.push({ kind: "account", at: l.at, text: l.text, where: l.kind === "backup" ? "Backups" : l.kind === "setup_copied" ? "Kitchen Diary" : l.kind.startsWith("email_") && l.kind !== "email_changed" ? "Rota emails" : l.kind === "clock_off" ? "Devices" : "Accounts" });
+  for (const l of log?.results || []) items.push({ kind: "account", at: l.at, text: l.text, where: l.kind === "backup" ? "Backups" : l.kind === "setup_copied" ? "Kitchen Diary" : l.kind.startsWith("email_") && l.kind !== "email_changed" ? "Rota emails" : l.kind === "clock_off" ? "Devices" : l.kind.startsWith("profile_") ? "Staff profiles" : "Accounts" });
   // Errors: only on their own tab (they're for whoever looks after the site, not the day's activity).
   if (kind === "errors") {
     const APP: Record<string, string> = { diary: "Kitchen Diary", rota: "Rota", admin: "Admin", signin: "Staff Login", wholesale: "Strangers Wholesale", worker: "Server" };
@@ -404,7 +410,7 @@ async function exportPeople(env: Env) {
   const { people: list } = await people(env);
   return csv("people.csv", [
     ["name", "username", "role", "active", "rota_sites", "contract_min", "contract_max", "training_topics", "last_sign_in"],
-    ...list.map((p) => [p.name, p.username, p.role, p.active ? "yes" : "no", p.rota.sites.map((s: string) => siteOf(s)?.name || s).join("; ") || "any",
+    ...list.map((p) => [p.name, p.username, p.role, p.active ? "yes" : "no", [...(p.rota.primarySite ? [p.rota.primarySite] : []), ...p.rota.sites].map((s: string) => siteOf(s)?.name || s).join("; ") || "any",
       p.rota.contractMin ?? "", p.rota.contractMax ?? "", p.training.topics.length, p.lastLoginAt ? new Date(p.lastLoginAt).toISOString() : ""]),
   ]);
 }
@@ -433,7 +439,7 @@ async function exportShifts(env: Env, url: URL) {
 
 /** The notices on the Overview that can be dismissed: things that happened, not things still to do. Errors and
  *  failed emails come back when there's a new one; a device's clock or a site closed today don't come back. */
-const DISMISSIBLE = /^(errors|email_failed|slack_failed|clock:\d{1,12}|closed:[a-z]{1,20}:\d{4}-\d{2}-\d{2})$/;
+const DISMISSIBLE = /^(errors|email_failed|slack_failed|clock:\d{1,12}|profile:\d{1,12}|closed:[a-z]{1,20}:\d{4}-\d{2}-\d{2})$/;
 async function dismiss(env: Env, user: User, body: any) {
   const key = body?.key;
   if (typeof key !== "string" || !DISMISSIBLE.test(key)) throw invalid("That notice can't be dismissed.");
