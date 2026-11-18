@@ -709,6 +709,18 @@ button:focus-visible,a:focus-visible,summary:focus-visible,input:focus-visible,s
   .w-queue-heading h2 { font-size:clamp(17px,4.8vw,19px); }
   .w-order-settings-actions { inset-inline-start:0; inset-inline-end:auto; }
 }
+@media (min-width:1340px) {
+  .w-orders-panel .w-list-header { display:grid; grid-template-columns:minmax(0,1fr) auto; }
+  .w-orders-panel .w-header-actions { flex-wrap:nowrap; }
+  .w-queue-heading { align-items:center; flex-wrap:nowrap; }
+  .w-queue-heading h2 { flex:none; white-space:nowrap; }
+  .w-queue-heading .w-result-count { min-width:0; overflow:hidden; text-overflow:ellipsis; }
+}
+@media (min-width:1340px) and (max-width:1439px) {
+  .w-orders-panel .w-list-header { padding-inline:16px; column-gap:10px; }
+  .w-orders-panel .w-header-actions { gap:6px; }
+  .w-orders-panel .w-header-actions :is(.w-expand-queue,.w-new-order,summary) { padding-inline:10px; font-size:14px; }
+}
 .w-order-layout { display:grid; min-width:0; }
 .w-order-preview,.w-preview-trigger { display:none; }
 .w-preview-panel header { padding:14px; border-bottom:1px solid var(--line); }

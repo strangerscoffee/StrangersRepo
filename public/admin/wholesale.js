@@ -332,21 +332,43 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
       <div class="row w-actions"><button class="btn soft" type="button" data-sheet="test" ${settings.sending ? "" : raw("disabled")}>Send a test email</button><button class="btn" type="button" data-sheet="save">Save</button></div>
       <h3>Slack</h3><p class="hint" id="wSlackState">${settings.slack ? "Each new order is posted to the orders channel: straight away from 07:45 to 16:45 (Sunday 10:00 to 15:30), otherwise at 07:50 (Sunday 10:00)." : "Not set up: add the SLACK_ORDERS_WEBHOOK_URL secret in Cloudflare (README-deploy.md)."}</p>
       <div class="row w-actions"><button class="btn soft" type="button" data-sheet="slack-test" ${settings.slack ? "" : raw("disabled")}>Send a test to Slack</button></div></div>`;
-    const deliveryView = () => html`<section class="w-order-section" aria-label="Notification delivery"><h3>Notification delivery</h3><p class="hint">Provider acceptance is separate from delivery and inbox placement.</p><button class="btn sm soft" type="button" data-sheet="email-health">Email health and setup</button>${["email", "slack"].map(channel => { const counts = settings.delivery?.[channel] || {pending:0,failed:0,unknown:0}; return html`<p id="wDelivery-${channel}" class="hint">${channel === "email" ? "Dispatch emails" : "Slack posts"}: ${counts.pending} waiting · ${counts.failed} retrying or failed · ${counts.unknown} need review</p><div class="toolbar">${counts.failed ? html`<button class="btn sm soft" type="button" data-sheet="retry-${channel}">Retry failed ${channel === "email" ? "emails" : "posts"}</button>` : ""}${counts.unknown ? html`<button class="btn sm soft" type="button" data-sheet="review-${channel}">Review uncertain ${channel === "email" ? "emails" : "posts"}</button>` : ""}</div>`; })}<div id="wLegacyDispatch">${(settings.delivery?.legacyDispatch || []).map(row => html`<button class="btn sm soft" type="button" data-sheet="review-legacy" data-id="${row.id}">Review previous failed dispatch: ${row.business}</button>`)}</div><div id="wRetryConfirm" class="w-order-feedback" hidden><p>Check whether these notifications already arrived. Retrying an uncertain delivery may send a duplicate.</p><div class="toolbar"><button class="btn sm" type="button" data-sheet="retry-reviewed">Retry after checking</button><button class="btn sm soft" type="button" data-sheet="retry-cancel">Cancel</button></div></div></section>`;
-    let reviewedChannel = null, reviewedOrder = null, retrying = false;
+    const deliveryView = () => html`<section class="w-order-section" aria-label="Notification delivery"><h3 id="wDeliveryTitle" tabindex="-1">Notification delivery</h3><p class="hint">Provider acceptance is separate from delivery and inbox placement.</p><button class="btn sm soft" type="button" data-sheet="email-health">Email health and setup</button>${["email", "slack"].map(channel => { const counts = settings.delivery?.[channel] || {pending:0,failed:0,unknown:0}; return html`<p id="wDelivery-${channel}" class="hint">${channel === "email" ? "Dispatch emails" : "Slack posts"}: ${counts.pending} waiting · ${counts.failed} retrying or failed · ${counts.unknown} need review</p><div class="toolbar">${counts.failed ? html`<button class="btn sm soft" type="button" data-sheet="retry-${channel}">Retry failed ${channel === "email" ? "emails" : "posts"}</button>` : ""}${counts.unknown ? html`<button class="btn sm soft" type="button" data-sheet="review-${channel}">Review uncertain ${channel === "email" ? "emails" : "posts"}</button>` : ""}</div>`; })}<div id="wLegacyDispatch">${(settings.delivery?.legacyDispatch || []).map(row => html`<button class="btn sm soft" type="button" data-sheet="review-legacy" data-id="${row.id}">Review previous failed dispatch: ${row.business}</button>`)}</div><div id="wRetryConfirm" class="w-order-feedback" role="group" aria-label="Confirm notification retry" aria-describedby="wRetryWarning" tabindex="-1" hidden><p id="wRetryWarning">Check whether these notifications already arrived. Retrying an uncertain delivery may send a duplicate.</p><div class="toolbar"><button class="btn sm" type="button" data-sheet="retry-reviewed">Retry after checking</button><button class="btn sm soft" type="button" data-sheet="retry-cancel">Cancel</button></div></div></section>`;
+    let reviewedChannel = null, reviewedOrder = null, reviewTrigger = null, retrying = false;
     const fail = (error) => { const box = $("#wOrderEmailsErr"); if (box) { box.textContent = error.message; box.hidden = false; } };
     openSheet(view(), async (action, button) => {
       if (action === "close") { closeSheet(); return; }
       $("#wOrderEmailsErr").hidden = true;
       if (action === "email-health") { emailDraft = {settings,enabled:$("#wOrderEmailsOn").checked,toText:$("#wOrderEmailsTo").value,confirmCustomers:$("#wConfirmCustomers").checked}; try { await openEmailHealth(); } catch(error) { fail(error); } return; }
-      if (action === "retry-cancel") { reviewedChannel = null; $("#wRetryConfirm").hidden = true; return; }
-      if (action.startsWith("review-")) { reviewedChannel = action.slice(7); reviewedOrder = button?.dataset.id || null; $("#wRetryConfirm").hidden = false; $("#wRetryConfirm").scrollIntoView({ block: "nearest" }); return; }
+      if (action === "retry-cancel") {
+        $("#wRetryConfirm").hidden = true;
+        reviewTrigger?.focus();
+        reviewedChannel = reviewedOrder = reviewTrigger = null;
+        return;
+      }
+      if (action.startsWith("review-")) {
+        reviewedChannel = action.slice(7);
+        reviewedOrder = button?.dataset.id || null;
+        reviewTrigger = button;
+        const confirmation = $("#wRetryConfirm");
+        confirmation.hidden = false;
+        confirmation.scrollIntoView({ block: "center", behavior: "instant" });
+        confirmation.focus({ preventScroll: true });
+        return;
+      }
       if (action.startsWith("retry-") && action !== "retry-cancel") {
         if (retrying) return;
         const unknown = action === "retry-reviewed", channel = unknown ? reviewedChannel : action.slice(6);
         if (!["email", "slack", "legacy"].includes(channel)) return;
         retrying = true;
-        try { const result = await api("POST", `/api/admin/wholesale/order-emails/${channel}-retry`, { acknowledgeUnknown: unknown, ...(channel === "legacy" ? { orderId: reviewedOrder } : {}) }); settings.delivery = result.delivery; reviewedChannel = null; reviewedOrder = null; put(deliveryHost, deliveryView()); toast(`${result.queued} notifications queued for retry`); }
+        try {
+          const result = await api("POST", `/api/admin/wholesale/order-emails/${channel}-retry`, { acknowledgeUnknown: unknown, ...(channel === "legacy" ? { orderId: reviewedOrder } : {}) });
+          settings.delivery = result.delivery;
+          reviewedChannel = reviewedOrder = reviewTrigger = null;
+          const active = document.activeElement;
+          put(deliveryHost, deliveryView());
+          if (active === document.body || !active?.isConnected) deliveryHost.querySelector("#wDeliveryTitle").focus();
+          toast(`${result.queued} notifications queued for retry`);
+        }
         catch (error) { fail(error); } finally { retrying = false; }
         return;
       }

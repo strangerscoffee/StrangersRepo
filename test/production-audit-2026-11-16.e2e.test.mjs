@@ -74,8 +74,35 @@ for(const [screen,viewport,isMobile] of [['phone',{width:393,height:852},true],[
    if(process.env.SHOT_DIR)await page.screenshot({path:process.env.SHOT_DIR+`/standing-review-${screen}-${colorScheme}.png`,fullPage:true});
    await page.locator(`[data-act="wh-standing-review"][data-id="${blockedStanding.id}"]`).click();await page.locator('#sheet').getByText(blockedStanding.id,{exact:true}).waitFor();await page.locator('#sheet [data-sheet="close"]').click();
    await revealAdminOptions(page, ".w-order-settings"); await page.locator('[data-act="wh-order-emails"]').click();
-   await page.locator('#wOrderEmailsTo').fill('unsaved-draft@example.invalid');await page.locator('[data-sheet="review-email"]').click();await page.locator('#wRetryConfirm').waitFor();
-   assert.match(await page.locator('#wRetryConfirm').innerText(),/may send a duplicate/);assert.ok(await page.locator('#wRetryConfirm').evaluate(e=>e.getBoundingClientRect().bottom<=innerHeight+1),'review confirmation is visible without an extra scroll');
+   await page.locator('#wOrderEmailsTo').fill('unsaved-draft@example.invalid');
+   const sheet=page.locator('#sheet'),review=page.locator('[data-sheet="review-email"]'),confirm=page.locator('#wRetryConfirm');
+   if(isMobile)await sheet.evaluate(e=>{
+    // Restart and pause the entrance to exercise an interaction before the phone sheet has settled.
+    e.style.animation='none';e.getBoundingClientRect();e.style.animation='';
+    const animation=e.getAnimations().find(a=>a.animationName==='sc-window-enter');
+    animation.pause();animation.currentTime=0;
+   });
+   await review.click();await confirm.waitFor();
+   assert.match(await confirm.innerText(),/may send a duplicate/);
+   const confirmationFits=()=>confirm.evaluate(e=>{
+    const box=e.getBoundingClientRect(),sheet=e.closest('#sheet').getBoundingClientRect();
+    return box.top>=Math.max(0,sheet.top)-1&&box.bottom<=Math.min(innerHeight,sheet.bottom)+1;
+   });
+   assert.ok(await confirmationFits(),'review confirmation is visible without an extra scroll');
+   if(isMobile){
+    await sheet.evaluate(e=>{const a=e.getAnimations().find(a=>a.animationName==='sc-window-enter');a.currentTime=a.effect.getTiming().duration/2;});
+    assert.ok(await confirmationFits(),'review confirmation stays visible halfway through the entrance');
+    await sheet.evaluate(e=>e.getAnimations().find(a=>a.animationName==='sc-window-enter').finish());
+    assert.ok(await confirmationFits(),'review confirmation stays visible after the entrance');
+   }
+   assert.equal(await confirm.evaluate(e=>document.activeElement===e),true);
+   await page.keyboard.press('Tab');
+   assert.equal(await page.evaluate(()=>document.activeElement?.dataset.sheet),'retry-reviewed');
+   await page.keyboard.press('Tab');
+   assert.equal(await page.evaluate(()=>document.activeElement?.dataset.sheet),'retry-cancel');
+   await page.keyboard.press('Enter');await confirm.waitFor({state:'hidden'});
+   assert.equal(await review.evaluate(e=>document.activeElement===e),true);
+   await page.keyboard.press('Enter');await confirm.waitFor();
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth-innerWidth),0);
    assert.ok(await page.locator('#sheet').evaluate(e=>e.scrollWidth<=e.clientWidth+1),'notification sheet fits');
    assert.ok(await page.locator('#wLegacyDispatch .btn').evaluate(e=>e.getBoundingClientRect().right<=e.parentElement.getBoundingClientRect().right+1),'long business name fits the recovery section');

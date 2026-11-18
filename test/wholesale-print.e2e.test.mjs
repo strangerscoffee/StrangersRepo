@@ -39,6 +39,10 @@ for (const [screen, viewport] of [["small phone", { width: 320, height: 844 }], 
     const p = await ctx.newPage(), errors = []; p.on("pageerror", e => errors.push(e.message));
     try {
       await p.goto(srv.base + "/admin#wholesale"); await p.locator('[data-act="wh-order"]').first().waitFor();
+      if (screen === "split desktop") {
+        // Exercise wider system font metrics at the first split-layout width.
+        await p.addStyleTag({ content: ':root { --body:"DejaVu Sans",system-ui; --display:"DejaVu Sans",system-ui; }' });
+      }
       const panel = p.locator('.w-list-panel[aria-labelledby="wOrdersTitle"]');
       const geometry = await panel.evaluate(node => {
         const bounds = node.getBoundingClientRect();
@@ -58,9 +62,13 @@ for (const [screen, viewport] of [["small phone", { width: 320, height: 844 }], 
       });
       const before = await layout();
       if (viewport.width >= 1340) {
-        const centred = await header.evaluate(node => [...node.querySelectorAll("h2, .w-result-count, .w-header-actions > button, .w-new-order, summary")]
-          .map(el => { const bounds = el.getBoundingClientRect(); return bounds.top + bounds.height / 2; }));
-        assert.ok(Math.max(...centred) - Math.min(...centred) < 12, "the title, count and actions share one row");
+        const slots = await header.evaluate(node => [...node.querySelectorAll("h2, .w-result-count, .w-header-actions > button, .w-new-order, summary")]
+          .map(el => { const box = el.getBoundingClientRect(); return { text: el.textContent.trim(), center: box.top + box.height / 2, left: box.left, right: box.right }; }));
+        const centres = slots.map(slot => slot.center);
+        assert.ok(Math.max(...centres) - Math.min(...centres) < 12, `the title, count and actions share one row: ${JSON.stringify(slots)}`);
+        for (const [i, slot] of slots.entries()) {
+          assert.ok(slot.right > slot.left && (!i || slot.left >= slots[i - 1].right - 1), `${slot.text} has room beside the preceding control`);
+        }
       }
       await revealAdminOptions(p, ".w-order-settings");
       assert.deepEqual(await layout(), before, "opening settings leaves the header size and queue position stable");

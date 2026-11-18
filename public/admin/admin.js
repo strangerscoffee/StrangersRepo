@@ -125,7 +125,9 @@
         (!el.closest("details:not([open])") || !!el.closest("summary")),
     );
     const first = stops[0], last = stops.at(-1), active = document.activeElement;
-    if (!first || !stops.includes(active) || active === (e.shiftKey ? first : last)) {
+    const edge = e.shiftKey ? first : last;
+    const pastEdge = edge && active && (active.compareDocumentPosition(edge) & (e.shiftKey ? Node.DOCUMENT_POSITION_FOLLOWING : Node.DOCUMENT_POSITION_PRECEDING));
+    if (!edge || !sheet.contains(active) || active === edge || pastEdge) {
       e.preventDefault();
       ((e.shiftKey ? last : first) || sheet).focus();
     }
