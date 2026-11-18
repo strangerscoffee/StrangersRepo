@@ -29,6 +29,9 @@ test("wholesale domain: canonical and legacy hosts share ordering while staff li
 });
 
 test("wholesale assets: expired sessions can load the entire app graph at new and cached URLs without exposing data", async () => {
+  for (const path of ["/shop/", "/shop/catalogue.json"]) {
+    assert.equal((await call("GET", path)).response.status, 404, "the retail preview is served only on its own address");
+  }
   for (const prefix of ["/wholesale/", "/wholesale-preview/"]) {
     for (const file of ["wholesale.js", "order.js", "grinds.js", "shipping.js", "limits.js", "catalogue-ui.js", "signin.js", "terms.js", "wholesale.css", "catalogue.css"]) {
       const result = await call("GET", prefix + file + "?v=cached-version");
