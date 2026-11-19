@@ -44,10 +44,20 @@ for (const [name, viewport, colorScheme] of layouts) {
       assert.equal(response.status(), 200);
       assert.match(response.headers()['x-robots-tag'], /noindex/);
       await page.getByRole('heading', { name: 'Coffee from the heart of Norwich.' }).waitFor();
-      await page.waitForFunction(() => document.querySelector('.hero-visual img')?.naturalWidth > 0);
+      await page.locator('.orb-disc').waitFor();
+      await page.evaluate(() => document.fonts.ready);
+      assert.ok(await page.evaluate(() => document.fonts.check('400 48px "Instrument Serif"')));
       assert.ok(await layoutFits());
       await shot('home');
       const shelf = page.getByRole('region', { name: 'On the coffee shelf' });
+      const nextCoffee = shelf.getByRole('button', { name: 'Next coffee' });
+      if (name === 'mobile') {
+        await nextCoffee.click();
+        await page.waitForFunction(() => document.querySelector('#featured-rail').scrollLeft > 10);
+        assert.ok(await layoutFits());
+      } else {
+        assert.equal(await nextCoffee.isVisible(), false);
+      }
       const more = shelf.getByText('More from the coffee shelf', { exact: true });
       await more.click();
       assert.equal(await shelf.locator('.product-card:visible').count(), 10);
@@ -258,6 +268,16 @@ test('public preview serves read-only retail assets within the shop', async () =
   const theme = await request('/shop/theme.css');
   assert.equal(theme.status, 200);
   assert.match(theme.headers.get('content-type'), /text\/css/);
+  const orb = await request('/shop/home-orb.js');
+  assert.equal(orb.status, 200);
+  assert.match(orb.headers.get('content-type'), /javascript/);
+  const lettering = await request('/shop/cup-lettering.svg');
+  assert.equal(lettering.status, 200);
+  assert.match(lettering.headers.get('content-type'), /image\/svg\+xml/);
+  const font = await request('/shop/fonts/instrument-serif.woff2');
+  assert.equal(font.status, 200);
+  assert.match(font.headers.get('content-type'), /woff2/);
+  assert.equal((await request('/shop/fonts/unknown.woff2')).status, 404);
   assert.equal((await request('/shop/photos/unknown.webp')).status, 404);
   assert.equal((await request('/shop/unknown')).status, 404);
   const head = await request('/shop/', { method: 'HEAD' });

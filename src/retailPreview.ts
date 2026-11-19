@@ -8,7 +8,7 @@ interface RetailEnv {
 }
 
 const SHOP_PAGE = /^\/shop\/(?:(?:home|information|location|locations|brewguides|brew-guides|about|contact|shipping|privacy-policy|terms-conditions|wholesale|norwich-racing-team|basket|cart|checkout)\/|coffee\/(?:[a-z0-9-]+\/|p\/[a-z0-9-]+\/)?|blog\/(?:tag\/[a-z0-9+%_-]+\/|\d{4}\/\d{1,2}\/\d{1,2}\/[a-z0-9-]+\/)?)?$/i;
-const SHOP_FILE = /^\/shop\/(?:shop\.(?:css|js)|(?:catalogue|site-content)\.json|content\/[a-f0-9]{12}\.json|photos\/[a-z0-9-]+\.webp)$/;
+const SHOP_FILE = /^\/shop\/(?:shop\.(?:css|js)|home-orb\.js|cup-lettering\.svg|fonts\/instrument-serif(?:-italic)?\.woff2|(?:catalogue|site-content)\.json|content\/[a-f0-9]{12}\.json|photos\/[a-z0-9-]+\.webp)$/;
 
 const assetAliases = new Map([
   ["/shop/theme.css", "/theme.css"],
@@ -62,7 +62,7 @@ export default {
     out.headers.set("cross-origin-resource-policy", "same-origin");
     const shop = url.origin + "/shop/";
     out.headers.set("content-security-policy", [
-      "default-src 'none'", `script-src ${shop}`, `style-src ${shop}`, `img-src ${shop}`,
+      "default-src 'none'", `script-src ${shop}`, `style-src ${shop}`, `img-src ${shop} data:`, `font-src ${shop}`,
       `connect-src ${shop}`, "base-uri 'none'", "form-action 'none'", "frame-ancestors 'none'",
     ].join("; "));
     return out;

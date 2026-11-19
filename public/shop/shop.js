@@ -43,6 +43,7 @@ const [requestedPage = '', ...segments] = location.pathname.slice(shop.length).s
 const aliases = { home: '', location: 'locations', brewguides: 'brew-guides', cart: 'basket' };
 const page = aliases[requestedPage] ?? requestedPage;
 const slug = segments[0] === 'p' ? segments[1] : segments[0];
+document.body.classList.toggle('retail-home', page === '');
 
 const menuIsOpen = () => menuToggle.getAttribute('aria-expanded') === 'true';
 
@@ -174,8 +175,7 @@ function card(product, index) {
 
 function home() {
   const links = [
-    ['coffee/', 'Shop coffee', 'Single origins, blends and decaf.', 'brazil-fazenda-bom-jesus-natural'],
-    ['locations/', 'Our locations', 'Find our roastery and coffee shops in Norwich.', 'dove-street'],
+    ['locations/', 'Visit us in Norwich', 'Find our roastery and coffee shops in Norwich.', 'pottergate'],
     ['brew-guides/', 'Brew guides', 'Recipes for AeroPress, filter and French press.', 'filter'],
   ];
   const approach = [
@@ -183,30 +183,88 @@ function home() {
     ['Quality and traceability', 'We share where each coffee comes from and how it was grown and processed, so you can follow its journey from farm to roastery.'],
     ['A changing coffee shelf', 'Our single origins follow the harvests. Familiar favourites stay on the shelf alongside seasonal coffees.'],
   ];
-  return `<section class="hero glass">
-    <div class="hero-copy"><p class="eyebrow">Independent since 2009</p><h1>Coffee from the heart of Norwich.</h1>
-      <p>Speciality coffee made with 100% arabica beans, roasted at our Dove Street roastery and delivered across the UK.</p>
-      <a class="shop-button" href="${shop}coffee/">Shop coffee <span aria-hidden="true">→</span></a></div>
-    <div class="hero-visual"><img src="${photo('roastery')}" width="1000" height="750" fetchpriority="high" alt="Inside the Strangers Coffee roastery">
-      <span class="hero-caption">Dove Street roastery, Norwich</span></div>
+  return `<section class="retail-hero" aria-labelledby="retail-hero-title">
+    <div class="hero-title">
+      <p class="eyebrow">Independent coffee roasters · Est. 2009</p>
+      <h1 id="retail-hero-title"><span class="hero-line"><span>Coffee from the</span></span>
+        <span class="hero-line"><span>heart of <em>Norwich.</em></span></span></h1>
+    </div>
+    <div class="hero-visual" aria-hidden="true">
+      <div class="orb-field">
+        <div class="orb-drift">
+          <div class="orb-lettering"></div>
+          <div class="orb-disc"><div class="orb-static"></div><canvas class="orb-canvas"></canvas></div>
+        </div>
+      </div>
+    </div>
+    <div class="hero-copy">
+      <p>100% arabica coffee, roasted on Dove Street and delivered across the UK.</p>
+      <div class="hero-actions"><a class="shop-button" href="${shop}coffee/">Shop coffee <span aria-hidden="true">→</span></a>
+        <a class="editorial-link" href="${shop}locations/">Our locations <span aria-hidden="true">↗</span></a></div>
+    </div>
+    <button class="orb-motion" type="button" hidden>
+      <span class="orb-motion-icon" aria-hidden="true"></span><span class="orb-motion-label">Pause motion</span>
+    </button>
   </section>
-  <section class="home-section" aria-labelledby="featured-heading"><div class="section-head"><h2 id="featured-heading">On the coffee shelf</h2><a href="${shop}coffee/">View all coffee <span aria-hidden="true">→</span></a></div>
-    <div class="product-grid">${products.slice(0, 3).map(card).join('')}</div>
+  <section class="home-section editorial-shelf" aria-labelledby="featured-heading">
+    <div class="section-head"><h2 id="featured-heading">On the coffee shelf</h2>
+      <div class="shelf-actions"><a class="editorial-link" href="${shop}coffee/">View all coffee <span aria-hidden="true">↗</span></a>
+        <div class="shelf-controls" role="group" aria-label="Browse featured coffees" hidden>
+          <button type="button" data-slide="-1" aria-label="Previous coffee" aria-controls="featured-rail">←</button>
+          <button type="button" data-slide="1" aria-label="Next coffee" aria-controls="featured-rail">→</button>
+        </div>
+      </div>
+    </div>
+    <div class="product-grid editorial-rail" id="featured-rail">${products.slice(0, 3).map(card).join('')}</div>
     <details class="directory featured-more glass"><summary>More from the coffee shelf</summary><div class="product-grid">${products.slice(3, 10).map(card).join('')}</div></details>
   </section>
-  <section class="home-section" aria-labelledby="best-sellers-heading"><div class="section-head best-sellers-head">
+  <section class="home-section editorial-roastery" aria-labelledby="approach-heading">
+    <div class="editorial-roastery-photo"><img src="${photo('dove-street')}" width="750" height="646" alt="Coffee pouring from the Probat roaster on Dove Street" loading="lazy" decoding="async"></div>
+    <div class="editorial-roastery-copy">
+      <p class="eyebrow">Dove Street roastery</p>
+      <h2 id="approach-heading">From green beans to final roast.</h2>
+      <p>${approach[0][1]}</p>
+      <a class="editorial-link" href="${shop}about/">About Strangers <span aria-hidden="true">↗</span></a>
+      <dl>${approach.slice(1).map(([title, description]) => `<div><dt>${title}</dt><dd>${description}</dd></div>`).join('')}</dl>
+    </div>
+  </section>
+  <section class="home-section editorial-bestsellers" aria-labelledby="best-sellers-heading"><div class="section-head best-sellers-head">
     <div><h2 id="best-sellers-heading">Best selling coffees</h2><p class="muted">Choose from 250 g, 500 g or 1 kg bags, whole bean or ground to suit your brew.</p></div>
-    <a href="${shop}coffee/">Shop all <span aria-hidden="true">→</span></a></div>
+    <a class="editorial-link" href="${shop}coffee/">Shop all <span aria-hidden="true">↗</span></a></div>
     <div class="quick-grid">${bestSellers.map(slug => products.find(product => product.slug === slug)).filter(Boolean).map(quickCard).join('')}</div>
   </section>
-  <nav class="feature-links" aria-label="Explore Strangers">${links.map(([url, title, copy, image]) => `<a class="feature-link glass" href="${shop + url}"><img src="${photo(image)}" alt="" loading="lazy"><h3>${title}</h3><p class="muted">${copy}</p></a>`).join('')}</nav>
-  <section class="home-section" aria-labelledby="approach-heading"><div class="section-head"><h2 id="approach-heading">How we source and roast</h2><a href="${shop}about/">About Strangers <span aria-hidden="true">→</span></a></div>
-    <div class="feature-links">${approach.map(([title, description]) => `<article class="feature-link glass"><h3>${title}</h3><p class="muted">${description}</p></article>`).join('')}</div>
-  </section>
-  <section class="partner glass"><div><h2>Become a wholesale partner</h2><p class="muted">Speciality coffee for cafés, shops and other businesses.</p></div><a class="shop-button soft" href="${shop}wholesale/">Explore wholesale ${arrow}</a></section>
+  <nav class="feature-links editorial-discovery" aria-label="Explore Strangers">${links.map(([url, title, copy, image]) => `<a class="feature-link" href="${shop + url}">
+    <div class="editorial-discovery-photo"><img src="${photo(image)}" alt="" loading="lazy" decoding="async"></div>
+    <div class="editorial-discovery-copy"><div><h3>${title}</h3><p class="muted">${copy}</p></div><span class="card-arrow">${arrow}</span></div></a>`).join('')}</nav>
+  <section class="partner"><div><h2>Become a wholesale partner</h2><p class="muted">Speciality coffee for cafés, shops and other businesses.</p></div><a class="shop-button soft" href="${shop}wholesale/">Explore wholesale ${arrow}</a></section>
   <section class="home-section" aria-labelledby="social-heading"><div class="section-head"><h2 id="social-heading">From our Instagram</h2><a href="https://www.instagram.com/strangerscoffee/">@strangerscoffee ${arrow}</a></div>
     <div class="social-grid" id="instagram-posts">${socialPosts.map(([code, title]) => `<a href="https://www.instagram.com/p/${code}/" aria-label="${title} on Instagram"><img src="${photo(`social-${code.toLowerCase()}`)}" alt="" loading="lazy"></a>`).join('')}</div>
   </section>`;
+}
+
+function mountHomeShelf() {
+  const rail = main.querySelector('#featured-rail');
+  const controls = main.querySelector('.shelf-controls');
+  const previous = controls.querySelector('[data-slide="-1"]');
+  const next = controls.querySelector('[data-slide="1"]');
+  const noMotion = matchMedia('(prefers-reduced-motion: reduce)');
+
+  function syncControls() {
+    const end = rail.scrollWidth - rail.clientWidth;
+    controls.hidden = end < 2;
+    previous.disabled = rail.scrollLeft < 2;
+    next.disabled = rail.scrollLeft >= end - 2;
+  }
+
+  for (const button of [previous, next]) button.addEventListener('click', () => {
+    const edge = rail.getBoundingClientRect().left + (parseFloat(getComputedStyle(rail).scrollPaddingLeft) || 0);
+    const offsets = [...rail.children].map(card => card.getBoundingClientRect().left - edge);
+    const offset = button === next ? offsets.find(left => left > 2) : offsets.findLast(left => left < -2);
+    if (offset !== undefined) rail.scrollBy({ left: offset, behavior: noMotion.matches ? 'instant' : 'smooth' });
+  });
+  rail.addEventListener('scroll', syncControls, { passive: true });
+  new ResizeObserver(syncControls).observe(rail);
+  syncControls();
 }
 
 async function refreshInstagram() {
@@ -524,6 +582,10 @@ async function render() {
   else if (contentPages[page]) await contentPage(page);
   else {
     main.innerHTML = home();
+    mountHomeShelf();
+    void import('./home-orb.js').then(({ mountOrb }) => mountOrb(main.querySelector('.retail-hero'))).catch(() => {
+      // The static orb remains visible if the motion layer cannot start.
+    });
     for (const card of main.querySelectorAll('[data-quick-product]')) {
       const product = products.find(item => item.slug === card.dataset.quickProduct);
       mountProductForm(card.querySelector('form'), product);
