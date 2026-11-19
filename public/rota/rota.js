@@ -863,7 +863,7 @@
     return el("section", { class: "chglist", "aria-label": "What's changed" },
       el("div", { class: "label", text: d.changes.length ? `What's changed · ${d.changes.length}` : "What's changed" }),
       d.changes.length ? el("div", { class: "list glass" }, ...d.changes.map(row)) : el("p", { class: "note", text: "No shifts have changed since it was published." }),
-      d.changesBasis === "emailed" ? el("p", { class: "note", text: "Compared with the shifts staff were last emailed (people, days, sites and times). From the next time you publish, breaks, notes, open shifts and time off are compared too." }) : null);
+      d.changesBasis === "emailed" ? el("p", { class: "note", text: "Compared with the shifts last queued for email (people, days, sites and times). From the next time you publish, breaks, notes, open shifts and time off are compared too." }) : null);
   }
 
   // What goes out before it goes: the shifts and hours, who'll see it, and anything still to check.
@@ -884,8 +884,8 @@
     get("/api/rota/week/emails?week=" + d.week).then((e) => {
       if (!e.ready) return;
       emailRow.hidden = false;
-      const parts = [e.people ? `${plural(e.people, "person", "people")} to email` : d.published ? "Nobody's shifts changed since the last email" : "Nobody to email yet"];
-      if (e.open) parts.push(`${plural(e.open, "person", "people")} told about open shifts`);
+      const parts = [e.people ? `${plural(e.people, "person", "people")} to email` : "No shift emails to send"];
+      if (e.open) parts.push(`${plural(e.open, "person", "people")} to be told about open shifts`);
       if (e.noAddress.length) parts.push(`no email address: ${e.noAddress.join(", ")}`);
       emailNote.textContent = parts.join(" · ");
       if (!e.people && !e.open) { emailBox.checked = false; emailBox.disabled = true; }
@@ -900,7 +900,7 @@
         const b = e.currentTarget; b.disabled = true;
         try {
           const r = await api("POST", "/api/rota/week/publish", { week: d.week, email: !emailRow.hidden && emailBox.checked });
-          closeSheets(); toast(r.emailed ? `Published. Emailing ${plural(r.emailed, "person", "people")}.` : "Published. Staff can see this week now."); render();
+          closeSheets(); toast(r.emailed ? `Published. ${plural(r.emailed, "email")} queued.` : "Published. Staff can see this week now."); render();
         }
         catch (err) { msg.textContent = err.message; b.disabled = false; }
       }))), { left: cancelLink() });

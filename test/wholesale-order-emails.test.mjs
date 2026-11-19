@@ -8,6 +8,7 @@ import { startServer, SETUP_CODE } from "./harness.mjs";
 
 let srv, mock, ADMIN, A;
 const sent = [];
+let collectionResponse = 200, providerId = 0;
 const cookieOf = (r) => (r.headers.getSetCookie().find((v) => /^sf(?:bb|_wholesale)_session=[\w-]/.test(v)) || "").split(";")[0];
 async function call(method, path, body, cookie = ADMIN) {
   const r = await fetch(srv.base + path, { method, headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -16,6 +17,29 @@ async function call(method, path, body, cookie = ADMIN) {
 }
 async function settle(n, ms = 5000) { const end = Date.now() + ms; while (sent.length < n && Date.now() < end) await new Promise((r) => setTimeout(r, 100)); await new Promise((r) => setTimeout(r, 300)); return sent.length; }
 const take = () => sent.splice(0, sent.length);
+async function until(check) {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const result = await check();
+    if (result) return result;
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  throw new Error("Expected email state did not settle");
+}
+const EMAIL_SETTINGS = "/api/admin/wholesale/order-emails";
+async function customerEmails(enabled) {
+  const { body: { version } } = await call("GET", EMAIL_SETTINGS);
+  assert.equal((await call("PUT", EMAIL_SETTINGS, { ifVersion: version, enabled: false, to: [], confirmCustomers: enabled })).status, 200);
+}
+async function updateEmail(email) {
+  const { customer } = (await call("GET", "/api/wholesale/session", undefined, A)).body;
+  assert.equal((await call("PUT", "/api/wholesale/account", { ifVersion: customer.version, email }, A)).status, 200);
+}
+async function orderStatus(order, status) {
+  const r = await call("PATCH", `/api/admin/wholesale/orders/${order.id}`, { ifVersion: order.version, status, customerId: order.customerId });
+  assert.equal(r.status, 200, r.text);
+  return r.body.order;
+}
+const dispatchRow = id => srv.sql(`SELECT state,last_error FROM wholesale_email_outbox WHERE order_id='${id}'`)[0];
 async function place(extra = {}, cookie = A) {
   const session = cookie === A ? (await call("GET", "/api/wholesale/session", undefined, A)).body : null;
   const body = { requestId: crypto.randomUUID(), lines: [{ productId: "brazil", pack: "kilo", grind: "beans", quantity: 6, price: 1800 }, { productId: "campo", pack: "quarter", grind: "filter", quantity: 4, price: 500 }], delivery: "Delivery", reference: "PO-77", ...(session ? { customerVersion: session.customer.version } : {}), ...extra };
@@ -24,7 +48,16 @@ async function place(extra = {}, cookie = A) {
 }
 
 before(async () => {
-  mock = createServer((rq, rs) => { let b = ""; rq.on("data", (d) => (b += d)); rq.on("end", () => { try { sent.push(JSON.parse(b)); } catch {} rs.writeHead(200, { "content-type": "application/json" }).end('{"id":"x"}'); }); });
+  mock = createServer((rq, rs) => {
+    let body = "";
+    rq.on("data", chunk => body += chunk);
+    rq.on("end", () => {
+      const mail = JSON.parse(body);
+      const status = mail.subject.startsWith("Collected:") ? collectionResponse : 200;
+      sent.push({ ...mail, status, deliveryKey: rq.headers["idempotency-key"] });
+      rs.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify({ id: "test-" + ++providerId }));
+    });
+  });
   await new Promise((r) => mock.listen(0, "127.0.0.1", r));
   srv = await startServer({ writeLimit: 2000, vars: { RESEND_API_KEY: "re_test_key", RESEND_API_URL: `http://127.0.0.1:${mock.address().port}/emails` } });
   ADMIN = (await call("POST", "/api/auth/setup", { name: "Admin", username: "owner", password: "owner-password", code: SETUP_CODE }, null)).cookie;
@@ -169,4 +202,72 @@ test("when an order is marked dispatched the customer is told, once: shipped (wi
   const { order: quiet } = await place();
   await patch(await latest(quiet.id), { status: "Dispatched" });
   assert.equal(await settle(1, 1500), 0);
+});
+
+test("an open order uses the current customer email and exposes the correct activity and delivery records", async () => {
+  await customerEmails(true);
+  const { order } = await place({ delivery: "Roastery collection" });
+  assert.equal(await settle(1), 1);
+  assert.deepEqual(take()[0].to, ["buyer@lune.example"]);
+  await updateEmail("current@lune.example");
+  await orderStatus(order, "Dispatched");
+  assert.equal(await settle(1), 1);
+  const [collection] = take();
+  assert.match(collection.subject, /^Collected:/);
+  assert.deepEqual(collection.to, ["current@lune.example"]);
+  const health = (await call("GET", `${EMAIL_SETTINGS}/delivery`)).body;
+  const related = health.messages.filter(message => message.orderReference === order.id);
+  assert.deepEqual(new Set(related.map(message => message.recipient)), new Set(["buyer@lune.example", "current@lune.example"]));
+  assert.ok(related.every(message => message.stream === "wholesale" && message.status === "accepted"));
+  const activity = (await call("GET", "/api/admin/activity?kind=account")).body.items.filter(item => item.text.includes(order.id));
+  assert.ok(activity.some(item => item.where === "Wholesale" && /Customer email queued/.test(item.text)));
+  assert.ok(activity.some(item => item.where === "Wholesale emails" && /Resend accepted/.test(item.text)));
+  assert.ok(activity.every(item => !/No fulfilment action was sent/.test(item.text)));
+  const overview = await call("GET", "/api/admin/overview");
+  assert.equal(overview.body.emails.sentToday, 0, "wholesale mail is not included in the rota total");
+});
+
+test("a refused dispatch retargets safely and an uncertain attempt waits after an address change", async () => {
+  for (const [response, email] of [[503, "revised@lune.example"], [409, "latest@lune.example"]]) {
+    const { order } = await place({ delivery: "Roastery collection" });
+    await settle(1); take();
+    collectionResponse = response;
+    await orderStatus(order, "Dispatched");
+    assert.equal(await settle(1), 1);
+    const [attempt] = take();
+    assert.equal(attempt.status, response);
+    await until(() => dispatchRow(order.id)?.state === "retry");
+    await updateEmail(email);
+    collectionResponse = 200;
+    assert.equal((await call("POST", `${EMAIL_SETTINGS}/email-retry`, {})).status, 200);
+    if (response === 503) {
+      assert.equal(await settle(1), 1);
+      const [retry] = take();
+      assert.deepEqual(retry.to, [email]);
+      assert.notEqual(retry.deliveryKey, attempt.deliveryKey, "new envelope gets a new provider key");
+      await until(() => dispatchRow(order.id)?.state === "sent");
+    } else {
+      await until(() => dispatchRow(order.id)?.state === "unknown");
+      assert.equal(await settle(1, 500), 0, "an uncertain envelope never silently changes recipient");
+    }
+  }
+});
+
+test("queued dispatches stop when the order is cancelled or customer mail is turned off", async () => {
+  for (const cancelled of [true, false]) {
+    await customerEmails(true);
+    const { order } = await place({ delivery: "Roastery collection" });
+    await settle(1); take();
+    collectionResponse = 503;
+    const dispatched = await orderStatus(order, "Dispatched");
+    await settle(1); take();
+    await until(() => dispatchRow(order.id)?.state === "retry");
+    if (cancelled) await orderStatus(dispatched, "Cancelled");
+    else await customerEmails(false);
+    collectionResponse = 200;
+    assert.equal((await call("POST", `${EMAIL_SETTINGS}/email-retry`, {})).status, 200);
+    const skipped = await until(() => dispatchRow(order.id)?.state === "skipped" && dispatchRow(order.id));
+    assert.match(skipped.last_error, cancelled ? /no longer dispatched/ : /switched off/);
+    assert.equal(await settle(1, 500), 0);
+  }
 });

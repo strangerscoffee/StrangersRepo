@@ -66,14 +66,14 @@ export async function weekRoutes(r: RotaRequest): Promise<Response | null> {
     const week = mondayOf(b.week);
     // What it looks like now, to show what's changed before it's next published (src/rota/changes.ts).
     const ctx = await loadCtx(env, week), at = nowMs();
-    const snap = snapshotOf(ctx.shifts.filter((x) => x.day >= ctx.days[0] && x.day <= ctx.days[6]), ctx.timeOff, at);
+    const snapshot = JSON.stringify(snapshotOf(ctx.shifts.filter((x) => x.day >= ctx.days[0] && x.day <= ctx.days[6]), ctx.timeOff, at));
     await env.DB.prepare(
       `INSERT INTO rota_weeks (week, published_at, published_by, changed_at, changes, published_shifts) VALUES (?, ?, ?, ?, 0, ?)
        ON CONFLICT (week) DO UPDATE SET published_at = excluded.published_at, published_by = excluded.published_by, changes = 0, published_shifts = excluded.published_shifts`,
-    ).bind(week, at, user.id, at, JSON.stringify(snap)).run();
+    ).bind(week, at, user.id, at, snapshot).run();
     // {email: true}: email the people on it (only those whose shifts changed, once it has been emailed before).
     let emailed = 0;
-    if (b.email === true) emailed = await sendWeek(env, exec, await planWeek(env, week), week, mailLinks, await actor(env, user));
+    if (b.email === true && emailReady(env)) emailed = await sendWeek(env, exec, await planWeek(env, week, ctx), week, mailLinks, await actor(env, user), { at, snapshot });
     return json({ ...(await weekView(env, week, user)), emailed });
   }
 

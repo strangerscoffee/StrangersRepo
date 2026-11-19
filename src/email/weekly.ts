@@ -6,6 +6,7 @@
 import { audit } from "../audit";
 import { Env } from "../http";
 import { EmailKind, Outgoing, emailReady, linksFor, prefsOf, send, weeklySitesOf } from "./send";
+import { deliverStaffEmails, enqueueStaffEmails, type StaffEmail } from "./staffOutbox";
 import { Built, Links, addDays, esc } from "./templates";
 
 const SITES = [
@@ -278,31 +279,38 @@ Unsubscribe: ${links.unsubscribe}
 
 interface Manager { id: string; name: string; email: string | null; email_prefs: string; active: number; role: string }
 
-/** Sends the Monday summary to every manager and admin who has it on. Once a week, whatever retries the cron makes. */
+/** Queues each manager's Monday summary and the run marker in the same transaction. */
 export async function sendWeeklySummaries(env: Env, base: { rota: string; diary: string }, opts: { anyTime?: boolean } = {}): Promise<number> {
   if (!emailReady(env)) return 0;
   const today = londonToday();
   if (!opts.anyTime && (new Date(today + "T12:00:00Z").getUTCDay() !== 1 || londonHour() !== 7)) return 0; // 07:xx on a Monday, UK time
-  // Claim this week (meta 'weekly_sent' = the Monday, as a number), so a second run sends nothing.
   const stamp = Number(today.replace(/-/g, ""));
-  await env.DB.prepare("INSERT OR IGNORE INTO meta (k, v) VALUES ('weekly_sent', 0)").run();
-  const claim = await env.DB.prepare("UPDATE meta SET v = ? WHERE k = 'weekly_sent' AND v < ?").bind(stamp, stamp).run();
-  if (!claim.meta.changes) return 0;
+  const marker = await env.DB.prepare("SELECT v FROM meta WHERE k='weekly_sent'").first<{ v: number }>();
+  if ((marker?.v || 0) >= stamp) return 0;
   const { results } = await env.DB.prepare("SELECT id, name, email, email_prefs, active, role FROM users WHERE active = 1 AND role IN ('manager', 'admin') AND email IS NOT NULL").all<Manager>();
-  let sent = 0;
+  const jobs: StaffEmail[] = [];
   for (const m of results) {
-    if (!prefsOf(m.email_prefs).weekly) continue;
-    if ((await sendSummary(env, base, m, today)) === "sent") sent++;
+    if (m.email && prefsOf(m.email_prefs).weekly) jobs.push({ role: m.role, outgoing: await summaryMail(env, base, { ...m, email: m.email }, today) });
   }
-  await audit(env, "email_weekly", null, `Sent the Monday summary to ${plural(sent, "manager")}`);
-  return sent;
+  const batchKey = `weekly:${stamp}`;
+  const batch = await env.DB.batch([
+    env.DB.prepare("INSERT INTO meta (k,v) VALUES ('weekly_sent',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v WHERE meta.v<excluded.v").bind(stamp),
+    enqueueStaffEmails(env, batchKey, jobs),
+  ]);
+  if (!batch[1].meta.changes) return 0;
+  await audit(env, "email_weekly", null, `Queued the Monday summary for ${plural(jobs.length, "recipient")}`);
+  return deliverStaffEmails(env, batchKey);
 }
 
 /** Builds and sends one person's summary (also the admin section's "send me this week's summary"). */
-export async function sendSummary(env: Env, base: { rota: string; diary: string }, m: Manager, today = londonToday()) {
+async function summaryMail(env: Env, base: { rota: string; diary: string }, m: Manager & { email: string }, today: string): Promise<Outgoing> {
   const kind: EmailKind = "weekly";
   const links = await linksFor(env, base, m.id, kind);
   const data = await weeklyData(env, weeklySitesOf(m.email_prefs), today, base, m.name, { admin: m.role === "admin" });
-  const o: Outgoing = { to: { ...m, email: m.email! }, kind, links, mail: weeklyEmail(data, links, base.diary), about: "the Monday summary" };
-  return send(env, o);
+  return { to: m, kind, links, mail: weeklyEmail(data, links, base.diary), about: "the Monday summary" };
+}
+
+export async function sendSummary(env: Env, base: { rota: string; diary: string }, m: Manager, today = londonToday()) {
+  if (!m.email) return "off";
+  return send(env, await summaryMail(env, base, { ...m, email: m.email }, today));
 }

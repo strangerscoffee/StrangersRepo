@@ -47,6 +47,12 @@ export function availabilityIssue(p: Person, s: Shift): string | null {
 }
 export const siteIssue = (p: Person, s: Shift) => (p.sites?.length && !p.sites.includes(s.site) ? `doesn't usually work at ${siteName(s.site)}` : null);
 
+export function canOfferOpenShift(ctx: Ctx, person: Person, shift: Shift): boolean {
+  return !shift.userId && !availabilityIssue(person, shift) && !siteIssue(person, shift)
+    && !ctx.shifts.some(other => other.userId === person.id && overlaps(other, shift))
+    && !onTimeOff(ctx.timeOff, person.id, shift.day, shift.start, shift.end);
+}
+
 /** The week's problems, in order of severity. `shifts` may include the days either side of the week. */
 export function computeProblems(ctx: Ctx): Problem[] {
   const out: Problem[] = [];

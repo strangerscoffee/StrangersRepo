@@ -86,11 +86,12 @@ test("admin adds an address; publishing emails it; the person switches an email 
   await m.p.goto(srv.base + `/rota/#week/${WEEK}`);
   await m.p.locator(".pubbtn").click();
   await m.p.locator(".pubemail", { hasText: "Email everyone on this week's rota" }).waitFor();
-  await m.p.locator(".pubemail", { hasText: "2 people to email" }).waitFor();
+  await m.p.locator(".pubemail", { hasText: "1 person to email" }).waitFor();
+  assert.match(await m.p.locator(".pubemail").innerText(), /no email address: Giles Armstrong/);
   assert.equal(await m.p.locator("#pubEmail").isChecked(), true, "ticked by default");
   if (process.env.SHOTS) await m.p.screenshot({ path: process.env.SHOTS + "/publish-ipad.png" });
   await m.p.locator(".sfoot button", { hasText: /^Publish$/ }).click();
-  await m.p.locator("#toast", { hasText: "Emailing 1 person" }).waitFor();
+  await m.p.locator("#toast", { hasText: "1 email queued" }).waitFor();
   for (let i = 0; i < 40 && !sent.length; i++) await new Promise((r) => setTimeout(r, 100));
   assert.equal(sent.length, 1);
   assert.deepEqual(sent[0].to, ["alex@example.com"]);

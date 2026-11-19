@@ -8,6 +8,7 @@ import { startServer, SETUP_CODE } from "./harness.mjs";
 
 let srv, mock, ADMIN, MGR, ALEX, SAM, PAT, ids = {};
 const sent = [];
+let refuseRecipient = "", providerId = 0;
 const cookieOf = (res) => (res.headers.getSetCookie().find((c) => /^sfbb_session=[\w-]/.test(c)) || "").split(";")[0];
 async function req(method, path, body, cookie = ADMIN) {
   const r = await fetch(srv.base + path, { method, headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -26,6 +27,7 @@ const london = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London
 const addDays = (d, n) => new Date(Date.parse(d + "T12:00:00Z") + n * 864e5).toISOString().slice(0, 10);
 const monday = (d) => addDays(d, -((new Date(d + "T12:00:00Z").getUTCDay() + 6) % 7));
 const WEEK = addDays(monday(london()), 7);
+const retryMail = () => fetch(srv.base + "/__scheduled?cron=" + encodeURIComponent("*/5 * * * *"));
 async function waitFor(n, ms = 8000) {
   const end = Date.now() + ms;
   while (sent.length < n && Date.now() < end) await new Promise((r) => setTimeout(r, 100));
@@ -46,8 +48,9 @@ before(async () => {
     let b = "";
     rq.on("data", (d) => (b += d));
     rq.on("end", () => {
-      try { sent.push({ auth: rq.headers.authorization, ...JSON.parse(b) }); } catch {}
-      rs.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ id: "test-" + sent.length }));
+      const mail = JSON.parse(b), refused = mail.to[0] === refuseRecipient;
+      sent.push({ auth: rq.headers.authorization, deliveryKey: rq.headers["idempotency-key"], refused, ...mail });
+      rs.writeHead(refused ? 503 : 200, { "content-type": "application/json" }).end(JSON.stringify({ id: "test-" + ++providerId }));
     });
   });
   await new Promise((r) => mock.listen(0, "127.0.0.1", r));
@@ -95,7 +98,7 @@ test("publishing a week emails everyone on it: their own shifts, a calendar file
   await shift(addDays(WEEK, 3), "10:00", "14:00", ids.pat);
   await shift(addDays(WEEK, 4), "10:00", "14:00", null);
   const preview = (await req("GET", `/api/rota/week/emails?week=${WEEK}`, undefined, ADMIN)).body;
-  assert.deepEqual([preview.ready, preview.first, preview.people], [true, true, 3]);
+  assert.deepEqual([preview.ready, preview.first, preview.people], [true, true, 2]);
   assert.deepEqual(preview.noAddress, ["Pat Lee"], "who has no address");
   assert.equal((await req("GET", `/api/rota/week/emails?week=${WEEK}`, undefined, ALEX)).status, 403, "admins only");
   assert.equal((await req("GET", `/api/rota/week/emails?week=${WEEK}`, undefined, MGR)).status, 403, "manager accounts cannot inspect other employees' mail plan");
@@ -128,7 +131,7 @@ test("publishing a week emails everyone on it: their own shifts, a calendar file
   assert.ok(mails.some((m) => m.to[0] === "sam@example.com"));
   // Logged in the admin section's activity.
   const items = (await req("GET", "/api/admin/activity?kind=account")).body.items;
-  assert.ok(items.some((i) => /^Emailed Alex Brown: the week of/.test(i.text) && i.where === "Rota emails"), JSON.stringify(items.slice(0, 5)));
+  assert.ok(items.some((i) => /^Resend accepted email for Alex Brown — the week of/.test(i.text) && i.where === "Rota emails"), JSON.stringify(items.slice(0, 5)));
 });
 
 test("publishing changes emails only the people whose shifts changed, with what changed", async () => {
@@ -305,11 +308,21 @@ test("the managers' Monday summary: each manager's own sites, what needs them, l
   // Monday's run: Giles (Roastery) and Will (an admin with an address: all sites).
   take();
   const cron = () => fetch(srv.base + "/__scheduled?cron=" + encodeURIComponent("30 6,7 * * 1"));
+  refuseRecipient = "giles@example.com";
   await cron();
   await waitFor(2, 15000);
   const mails = take();
-  const giles = mails.find((m) => m.to[0] === "giles@example.com"), will = mails.find((m) => m.to[0] === "will@example.com");
-  assert.ok(giles && will, JSON.stringify(mails.map((m) => [m.to, m.subject])));
+  const refused = mails.find((m) => m.to[0] === "giles@example.com"), will = mails.find((m) => m.to[0] === "will@example.com");
+  assert.ok(refused?.refused && will && !will.refused, JSON.stringify(mails.map((m) => [m.to, m.subject])));
+  assert.equal(srv.sql("SELECT state FROM staff_email_outbox WHERE kind='weekly' AND state='retry'").length, 1);
+  refuseRecipient = "";
+  srv.sql("UPDATE staff_email_outbox SET next_attempt_at=0 WHERE kind='weekly' AND state='retry'");
+  await retryMail();
+  assert.equal(await waitFor(1), 1);
+  const [giles] = take();
+  assert.equal(giles.to[0], "giles@example.com");
+  assert.equal(giles.deliveryKey, refused.deliveryKey);
+  assert.equal(giles.refused, false);
   assert.match(giles.subject, /^\d+ things? needs? you · week of/);
   assert.match(giles.html, /URGENT/);
   assert.match(giles.html, /Fridge 2 read 9°C on Monday/);
@@ -341,4 +354,49 @@ test("the managers' Monday summary: each manager's own sites, what needs them, l
   assert.equal(r.status, 200, r.text);
   await waitFor(1);
   assert.match(take()[0].subject, /week of/);
+});
+
+test("a failed rota publication email retries once without repeating the publication", async () => {
+  const week = addDays(WEEK, 42);
+  const shift = await req("POST", "/api/rota/shifts", { site: "roastery", day: week, start: "08:00", end: "13:00", breakMins: 0, userId: ids.will });
+  assert.equal(shift.status, 200, shift.text);
+  refuseRecipient = "will@example.com";
+  assert.equal((await req("POST", "/api/rota/week/publish", { week, email: true })).body.emailed, 1);
+  await waitFor(1);
+  const [first] = take();
+  assert.equal(first.refused, true);
+  const due = `scope=${sqlValue("rota:" + week)} AND state='retry'`;
+  for (let attempt = 0; attempt < 10 && !srv.sql(`SELECT 1 FROM staff_email_outbox WHERE ${due}`).length; attempt++) {
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  assert.equal(srv.sql(`SELECT 1 FROM staff_email_outbox WHERE ${due}`).length, 1);
+  assert.equal((await req("POST", "/api/rota/week/publish", { week, email: true })).body.emailed, 0);
+  refuseRecipient = "";
+  srv.sql(`UPDATE staff_email_outbox SET next_attempt_at=0 WHERE ${due}`);
+  await retryMail();
+  assert.equal(await waitFor(1), 1);
+  const [received] = take();
+  assert.deepEqual(received.to, ["will@example.com"]);
+  assert.equal(received.deliveryKey, first.deliveryKey);
+  assert.equal(received.refused, false);
+});
+
+test("open shift mail uses working hours and actual half-day absence times", async () => {
+  const week = addDays(WEEK, 21);
+  const morning = await person("Morning Staff", "morning", "staff", "morning@example.com");
+  assert.equal((await req("PUT", "/api/rota/me/emails", { prefs: { open: true } }, morning)).status, 200);
+  assert.equal((await req("PUT", `/api/rota/people/${ids.morning}`, { pattern: { mon: { from: "08:00", to: "12:00" } } })).status, 200);
+  const policy = (await req("GET", "/api/rota/leave/admin")).body;
+  assert.equal((await req("PUT", "/api/rota/leave/settings", { ...policy.settings, enabled: true, reminders: false, ifVersion: policy.version })).status, 200);
+  assert.equal((await req("POST", "/api/rota/leave/requests", { kind: "unpaid", from: week, to: week, portion: 0.5, fromTime: "09:00", toTime: "13:00", userId: ids.sam, approved: true, requestKey: crypto.randomUUID() })).status, 200);
+  const shift = await req("POST", "/api/rota/shifts", { site: "roastery", day: week, start: "13:30", end: "16:00", breakMins: 0, userId: null });
+  assert.equal(shift.status, 200, shift.text);
+  const plan = await req("GET", `/api/rota/week/emails?week=${week}`);
+  assert.equal(plan.body.open, 1);
+  assert.equal((await req("POST", "/api/rota/week/publish", { week, email: true })).body.emailed, 1);
+  assert.ok((await req("GET", "/api/rota/open", undefined, SAM)).body.shifts.some(s => s.id === shift.body.shift.id));
+  assert.equal(await waitFor(1), 1);
+  const [open] = take();
+  assert.match(open.subject, /open shift/i);
+  assert.deepEqual(open.to, ["sam@example.com"]);
 });

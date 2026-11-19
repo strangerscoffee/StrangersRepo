@@ -311,7 +311,7 @@ Admin asset recovery serves implementation-only JS/CSS independently of session/
 
 ## Email inbox placement and feedback (migration 31)
 
-Wholesale messages use the familiar `Strangers Wholesale` display name on the existing verified `orders@staffstrangerscoffee.com` address. `ORDER_EMAIL_FROM` overrides remain supported, and already queued dispatch payloads are unchanged. Staff rota sending and optional unsubscribe controls are retained. HTML and plain-text versions continue to be sent.
+Wholesale messages use `Strangers Wholesale <orders@staffstrangerscoffee.com>` with an optional `ORDER_EMAIL_FROM` override. Customer emails resolve the current order address. Before sending or retrying dispatch mail, the Worker checks the order status and the customer email preference. If the address changed after an unconfirmed attempt, Admin must review delivery before retrying. Sign-in links use the current order address and expire when that address changes.
 
 Admin → Wholesale → Orders → Order alerts → Email health shows provider acceptance separately from delivery to the receiving mail server, delays, bounces, complaints and suppression. Delivery never proves inbox placement. Opening health and returning preserves unsaved alert settings. Only admins can read message metadata, including staff recipients. No email body, reset/invitation/unsubscribe link or provider credential is persisted in the new feedback tables.
 
@@ -328,9 +328,11 @@ The host selected `sales@strangerscoffee.com` for DMARC aggregate reports. Add t
 | `staffstrangerscoffee.com` | `_dmarc.staffstrangerscoffee.com` | `v=DMARC1; p=none; rua=mailto:sales@strangerscoffee.com;` |
 | `strangerscoffee.com` | `staffstrangerscoffee.com._report._dmarc.strangerscoffee.com` | `v=DMARC1;` |
 
-The second record authorizes reporting to the separate company domain. `EMAIL_DMARC_REPORT_TO` can override the reporting inbox; changing it requires reviewing the corresponding DNS instructions. Check published DNS in Email health after setup. The checker is read-only, handles missing/invalid/unavailable results, checks the Resend DKIM selector and bounce-domain SPF (including Forge's CNAME chain), and never changes DNS. Tighten DMARC only after monitoring confirms legitimate senders align. No new domain, paid service or dedicated IP is required.
+Publish the second record with the authoritative DNS provider for `strangerscoffee.com`. `EMAIL_DMARC_REPORT_TO` can override the reporting inbox and changes which receiving domain must publish the authorization. **Email health → Check published DNS** checks the sending policy, reporting address, external authorisation, Resend DKIM and bounce-domain SPF.
 
 Callbacks verify the raw bytes using Svix HMAC-SHA256, header freshness and event-ID deduplication before storage. Invalid requests do not initialize or query D1. Events arriving before the send acknowledgement are retained for later correlation; failure/complaint states cannot be downgraded by older delivery events. Suppression updates use event time, not arrival order, and a replay cannot mutate them. Verified hard bounces, complaints and provider suppression block future sends locally; only verified provider removal clears the block. Resend's own suppression list remains authoritative. Active suppression is retained in backups alongside minimal metadata/events; the signing secret stays outside D1/backups.
+
+Migration 37 records staff rota publication, Monday summary and holiday reminder jobs before sending. The existing five-minute cron retries temporary failures. Holiday history distinguishes a queued or failed attempt from Resend acceptance. Email health shows weekly totals for pending staff email and Activity identifies failures. Backups keep staff job metadata for review after a restore.
 
 Rota mobile leave and Requests refinement (17 November 2026): sheet content/date controls stay inset and scroll within the available viewport. Half-day dates stay synchronized, and stale previews cannot re-enable submission after edits. Time-off decisions open the existing protected review before approve/decline; queue cards identify the absence type and dates. No API, migration, secret, dependency or DNS change. Standard tests plus phone/iPad light/dark layout and decision flows are required before deploy.
 

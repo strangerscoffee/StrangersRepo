@@ -72,9 +72,14 @@ test("invites email a one-time link; accepting it makes an approved account and 
   assert.match(mail.subject, /Order your Strangers Coffee online/);
   assert.match(mail.html, /Set up your account/); assert.match(mail.text, /The Old Dairy/);
   const token = tokenOf(mail);
-  // A second invite replaces the first.
+  const saved = await call("PUT", `/api/admin/wholesale/customers/${dairy.id}`, { ...dairy, email: "current@olddairy.example", ifVersion: dairy.version });
+  assert.equal(saved.status, 200, saved.text);
+  assert.equal((await call("GET", "/api/wholesale/auth/invite?token=" + token, undefined, null)).status, 404, "changing the destination revokes the previous invite");
   await call("POST", `/api/admin/wholesale/customers/${dairy.id}/invite`, {});
-  await settle(1); const token2 = tokenOf(take()[0]);
+  await settle(1);
+  const [newInvite] = take();
+  assert.deepEqual(newInvite.to, ["current@olddairy.example"]);
+  const token2 = tokenOf(newInvite);
   assert.equal((await call("GET", "/api/wholesale/auth/invite?token=" + token, undefined, null)).status, 404, "the old link no longer works");
   const info = await call("GET", "/api/wholesale/auth/invite?token=" + token2, undefined, null);
   assert.deepEqual(info.body, { business: "The Old Dairy", contact: "Sam Hall" });

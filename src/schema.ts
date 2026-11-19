@@ -343,6 +343,18 @@ const MIGRATIONS: Migration[] = [
     if (!(await columns(env, "rota_weeks")).has("published_shifts")) await env.DB.prepare("ALTER TABLE rota_weeks ADD COLUMN published_shifts TEXT").run();
   } },
   { id: 36, name: "Operational totals and Insights snapshots", run: migrateReporting },
+  { id: 37, name: "Recoverable staff email delivery", run: async env => {
+    await env.DB.batch([
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS staff_email_outbox (
+        event_key TEXT PRIMARY KEY,batch_key TEXT NOT NULL,scope TEXT NOT NULL,user_id TEXT NOT NULL,kind TEXT NOT NULL,
+        payload TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'queued',attempts INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,next_attempt_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,
+        first_attempt_at INTEGER,lease_until INTEGER,claim_token TEXT,uncertain INTEGER NOT NULL DEFAULT 0,sent_at INTEGER,last_error TEXT
+      )`),
+      env.DB.prepare("CREATE INDEX IF NOT EXISTS staff_email_outbox_due ON staff_email_outbox(state,next_attempt_at,lease_until)"),
+      env.DB.prepare("CREATE INDEX IF NOT EXISTS staff_email_outbox_scope ON staff_email_outbox(scope,user_id,kind,state)"),
+    ]);
+  } },
 ];
 
 async function migrate(env: Env): Promise<void> {

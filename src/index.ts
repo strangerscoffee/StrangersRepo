@@ -9,6 +9,7 @@ import { repairStandingRuns } from "./wholesaleStanding";
 import { deliverSlackPosts } from "./slackOrders";
 import { handleResendWebhook } from "./email/delivery";
 import { deliverDispatchEmails } from "./email/outbox";
+import { deliverStaffEmails } from "./email/staffOutbox";
 import { deliverDiaryReminders } from "./slackDiary";
 import { appForHost, appLinks, authorize, isAdminSharedFile, isPreviewFile, isPublicAsset, isPublicCode, isRotaManager, isRotaSharedFile, limitWrites, recordId, requireUser, unifiedSignin } from "./access";
 import { handleAdmin } from "./admin";
@@ -115,6 +116,7 @@ export default {
           run("Standing-order recovery", () => repairStandingRuns(env)),
           run("Wholesale Slack notifications", () => deliverSlackPosts(env)),
           run("Dispatch emails", () => deliverDispatchEmails(env)),
+          run("Staff email delivery", () => deliverStaffEmails(env)),
           run("Diary reminders", () => deliverDiaryReminders(env)),
           run("Holiday reminders", () => runHolidayReminders(env, { diary: `https://${domain}/`, rota: env.ROTA_HOST ? `https://${env.ROTA_HOST}/` : `https://${domain}/rota/` }, at)),
           run("QuickBooks jobs", async () => {

@@ -13,7 +13,8 @@ import { audit } from "./audit";
 import { ApiError, type Env, invalid, json, readJson } from "./http";
 import { manageWholesaleAccount, publicCustomer, wholesaleAccounts, wholesaleCustomer, paymentTermsFor, PAYMENT_TERMS, type Customer, type OrderingUser } from "./wholesaleAccounts";
 import { customerLocations, editedCustomerLocations, locationDefaults, validLocationId, type CustomerLocation } from "./wholesaleCustomers";
-import { notifyCustomerChange, standingChangeToCustomer, confirmToCustomer, prepareDispatchEmail, handleOrderEmailsAdmin, notifyNewOrder, orderEmailSettings } from "./email/orders";
+import { notifyCustomerChange, standingChangeToCustomer, confirmToCustomer, prepareDispatchEmail, handleOrderEmailsAdmin, notifyNewOrder } from "./email/orders";
+import { DEFAULT_ORDER_EMAIL, orderEmailSettings } from "./email/orderSettings";
 import { dispatchEvent, deliverDispatchEmails } from "./email/outbox";
 import { wakeIntegration } from "./integrationSignals";
 import { notifySlackChange, notifySlackNewOrder } from "./slackOrders";
@@ -405,6 +406,7 @@ export async function updateOrderStatus(env: Env, id: string, body: Record<strin
   if (!data.standing) { delete data.standingIssue; delete data.standingRetryAt; }
   const outgoing = firstDispatch && notify ? await prepareDispatchEmail(env, { ...data, id }, notify.ordersUrl) : null;
   let updated: Order & Versioned;
+  let emailQueued = false;
   if (outgoing) {
     const at = Date.now();
     // Insert only at the reviewed version, then update that same row in one transaction.
@@ -413,13 +415,15 @@ export async function updateOrderStatus(env: Env, id: string, body: Record<strin
       env.DB.prepare("UPDATE wholesale_preview SET data=?,version=version+1,updated_at=? WHERE kind='order' AND id=? AND version=?").bind(JSON.stringify(data), at, id, expected),
     ]);
     if (!results[1].meta.changes) throw new ApiError(409, "conflict", "This order changed on another device. Reload it before saving.");
+    emailQueued = !!results[0].meta.changes;
     updated = { ...data, id, version: expected + 1, updatedAt: at };
   } else updated = await save(env, "order", id, data, expected);
+  await audit(env, order.preview === false ? "wholesale_order_status" : "wholesale_preview_status", actor,
+    `${actor} marked ${order.preview === false ? "wholesale" : "staff preview"} order ${id} as ${body.status}.${emailQueued ? " Customer email queued." : ""}`);
   if (body.status === "Dispatched" && notify) {
     const delivery = wakeIntegration(env.DISPATCH_EMAIL_QUEUE, { key: "dispatch:" + id }, () => deliverDispatchEmails(env, "dispatch:" + id)).catch(() => {});
     if (notify.ctx) notify.ctx.waitUntil(delivery); else await delivery;
   }
-  await audit(env, "wholesale_preview_status", actor, `${actor} marked wholesale order ${id} as ${body.status}. No fulfilment action was sent.`);
   // A standing run that went out (or was skipped) makes the next one, which also records it on this order.
   await rollStanding(env, updated, actor, notify?.ctx);
   if (updated.standing && ["Dispatched", "Cancelled"].includes(updated.status)) return (await get<Order>(env, "order", id))!;
@@ -488,7 +492,7 @@ export async function handleWholesaleAdmin(req: Request, env: Env, route: string
   if ((inviteOne || route === "customers/invites") && req.method === "POST") {
     const ids: unknown = inviteOne ? [inviteOne[1]] : (await readJson<Record<string, unknown>>(req, 64 * 1024))?.customerIds;
     if (!Array.isArray(ids) || !ids.length || ids.length > 25 || ids.some((x) => typeof x !== "string" || !/^[a-f0-9-]{36}$/.test(x))) throw invalid("Choose from 1 to 25 businesses to invite.");
-    const replyTo = (await orderEmailSettings(env)).to[0] || "sales@strangerscoffee.com";
+    const replyTo = (await orderEmailSettings(env)).to[0] || DEFAULT_ORDER_EMAIL;
     const signin = customerOrdersUrl(env, links, req).replace(/#orders$/, "signin");
     const results: Record<string, string> = {};
     for (const id of ids as string[]) { results[id] = await inviteCustomer(env, id, user.name, signin, replyTo); if (results[id] === "limit" || results[id] === "off") break; }

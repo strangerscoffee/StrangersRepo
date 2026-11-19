@@ -1,7 +1,7 @@
 // An email to Strangers (sales@strangerscoffee.com unless Admin changes it) for every new customer wholesale order,
 // sent from orders@staffstrangerscoffee.com (the domain the rota's emails already use with Resend) after the order
 // is saved, so it never slows or blocks checkout. Staff previews, retries of an order already placed and orders
-// with no RESEND_API_KEY send nothing. Failures go in audit_log as email_failed, like the rota's.
+// with no RESEND_API_KEY send nothing.
 import { audit } from "../audit";
 import { ApiError, Env, invalid, json, readJson } from "../http";
 import { object, get } from "../wholesaleStore";
@@ -14,16 +14,14 @@ import { wakeIntegration } from "../integrationSignals";
 import { cleanEmail, emailReady, send, type Outgoing } from "./send";
 import { esc } from "./templates";
 import { sendSlackTest, slackReady, retrySlackPosts, deliverSlackPosts } from "../slackOrders";
+import { DEFAULT_ORDER_EMAIL, orderEmailAddress, orderEmailSettings } from "./orderSettings";
 
-export const DEFAULT_ORDER_EMAIL = "sales@strangerscoffee.com";
 const FROM = orderSender;
 const MAX_RECIPIENTS = 5;
 
-/** `confirmCustomers`: also email each customer a confirmation of their own order (absent = on). */
-export interface OrderEmailSettings { enabled: boolean; to: string[]; confirmCustomers?: boolean }
 interface Line { price?: number; title: string; pack: string; packLabel?: string; grindLabel?: string; grindHint?: string; quantity: number; grams: number; pence?: number; decaf?: boolean }
 interface MailOrder {
-  id: string; business?: string; createdAt: number; delivery: string; reference?: string; customerNote?: string;
+  id: string; customerId?: string | null; business?: string; createdAt: number; delivery: string; reference?: string; customerNote?: string;
   pence: number; deliveryPence?: number; totalPence?: number; grams: number; lines: Line[];
   takenFor?: { source?: string } | null; createdName?: string;
   /** Standing orders: the dispatch day, how often, and (for a run made after the last one went out) the run before. */
@@ -32,16 +30,6 @@ interface MailOrder {
   paymentTerms?: { label?: string; note?: string } | null;
   trackingUrl?: string;
   locationSnapshot?: { name?: string; contact?: string; phone?: string; address?: string; postcode?: string; deliveryNotes?: string } | null;
-}
-
-export async function orderEmailSettings(env: Env): Promise<OrderEmailSettings & { version: number; updatedAt: number | null; sending: boolean; from: string; slack: boolean }> {
-  const row = await env.DB.prepare("SELECT data, version, updated_at FROM wholesale_order_emails WHERE id = 1").first<{ data: string; version: number; updated_at: number }>();
-  let saved: Partial<OrderEmailSettings> = {};
-  try { saved = row ? JSON.parse(row.data) : {}; } catch {}
-  return {
-    enabled: saved.enabled !== false, confirmCustomers: saved.confirmCustomers !== false, to: Array.isArray(saved.to) && saved.to.length ? saved.to : [DEFAULT_ORDER_EMAIL],
-    version: row?.version || 0, updatedAt: row?.updated_at || null, sending: emailReady(env), from: FROM(env).replace(/^.*<|>$/g, ""), slack: slackReady(env),
-  };
 }
 
 const money = (pence: number) => `£${(pence / 100).toFixed(2)}`;
@@ -96,7 +84,7 @@ ${kv(order.delivery === "Delivery" ? "Deliver to" : "Collection", where)}${place
 ${order.customerNote ? `<tr><td style="padding:14px 24px 0;"><div style="border:1px solid #14181f;border-radius:10px;padding:10px 12px;"><div style="font-size:12px;font-weight:700;color:#5d6675;text-transform:uppercase;letter-spacing:.05em;">Customer comments</div><div style="font-size:14px;white-space:pre-line;margin-top:3px;">${esc(order.customerNote)}</div></div></td></tr>` : ""}
 <tr><td style="padding:18px 24px 22px;"><a href="${esc(orderUrl)}" style="display:inline-block;background:#0062cc;color:#fff;text-decoration:none;font-weight:600;padding:11px 18px;border-radius:10px;">Open the order</a></td></tr>
 </table><div style="font-size:12px;color:#5d6675;padding:12px;">Sent by the Strangers staff site for each new wholesale order. Change who gets these in Admin → Wholesale → Orders → Order emails.</div></td></tr></table></body></html>`;
-  return { subject, html, text, replyTo: customer.email || undefined };
+  return { subject, html, text };
 }
 
 /** The customer's own confirmation: what they ordered, where it's going, the totals (unless Strangers hides prices
@@ -144,19 +132,17 @@ ${kv(order.delivery === "Delivery" ? "Delivering to" : "Collection", where)}${or
   return { subject, html, text };
 }
 
-/** Emails the customer a confirmation of the order they just placed (background; never throws). Sent to the business's
- *  email on the order; replies go to the first Strangers order address. */
+/** Confirms the order with the business's current order email in the background. */
 export async function confirmToCustomer(env: Env, ctx: ExecutionContext | undefined, order: MailOrder, opts: { showPrices: boolean; ordersUrl: string }) {
-  const email = cleanEmail(order.customerSnapshot?.email);
-  if (!emailReady(env) || !email) return;
+  if (!emailReady(env)) return;
   const run = (async () => {
     try {
-      const settings = await orderEmailSettings(env);
-      if (!settings.confirmCustomers) return;
+      const [settings, email] = await Promise.all([orderEmailSettings(env), orderEmailAddress(env, order.customerId)]);
+      if (!settings.confirmCustomers || !email) return;
       const mail = buildCustomerConfirmation(order, opts), name = order.business || "a wholesale customer";
       await send(env, { to: { id: "customer", name, email, email_prefs: "{}", active: 1 }, kind: "order", mail, about: `order confirmation ${order.id} to ${name}`, from: FROM(env), replyTo: settings.to[0] || DEFAULT_ORDER_EMAIL });
     } catch (error) {
-      await audit(env, "email_failed", null, `Couldn't email the confirmation of wholesale order ${order.id}: ${String((error as Error)?.message || error).slice(0, 160)}`).catch(() => {});
+      await audit(env, "wholesale_email_failed", null, `Couldn't email the confirmation of wholesale order ${order.id}: ${String((error as Error)?.message || error).slice(0, 160)}`).catch(() => {});
     }
   })();
   if (ctx) ctx.waitUntil(run); else await run;
@@ -205,10 +191,9 @@ ${order.lines.map((l) => `<tr><td style="${cell}font-weight:700;width:40px;">${l
 
 /** Freeze a dispatch notification before committing its durable event with the status change. */
 export async function prepareDispatchEmail(env: Env, order: MailOrder, ordersUrl: string): Promise<Outgoing | null> {
-  const email = cleanEmail(order.customerSnapshot?.email);
-  if (!emailReady(env) || !email) return null;
-  const settings = await orderEmailSettings(env);
-  if (!settings.confirmCustomers) return null;
+  if (!emailReady(env)) return null;
+  const [settings, email] = await Promise.all([orderEmailSettings(env), orderEmailAddress(env, order.customerId)]);
+  if (!settings.confirmCustomers || !email) return null;
   const mail = buildDispatchEmail(order, ordersUrl), name = order.business || "a wholesale customer";
   return { to: { id: "customer", name, email, email_prefs: "{}", active: 1 }, kind: "order", mail, about: `${order.delivery === "Delivery" ? "shipped" : "collected"} email for ${order.id} to ${name}`, from: FROM(env), replyTo: settings.to[0] || DEFAULT_ORDER_EMAIL };
 }
@@ -256,16 +241,15 @@ ${lines.map((l) => `<tr><td style="${cell}font-weight:700;width:40px;">${l.quant
 /** Emails the customer that Strangers changed or skipped their standing delivery (background; never throws). Same
  *  switch as their other order emails ("Email customers about their orders"). */
 export async function standingChangeToCustomer(env: Env, ctx: ExecutionContext | undefined, order: MailOrder & { dispatchDate?: string }, change: "skipped" | "once" | "ongoing", ordersUrl: string, nextDispatchDate?: string) {
-  const email = cleanEmail(order.customerSnapshot?.email);
-  if (!emailReady(env) || !email) return;
+  if (!emailReady(env)) return;
   const run = (async () => {
     try {
-      const settings = await orderEmailSettings(env);
-      if (!settings.confirmCustomers) return;
+      const [settings, email] = await Promise.all([orderEmailSettings(env), orderEmailAddress(env, order.customerId)]);
+      if (!settings.confirmCustomers || !email) return;
       const mail = buildStandingChangeEmail(order, change, ordersUrl, nextDispatchDate), name = order.business || "a wholesale customer";
       await send(env, { to: { id: "customer", name, email, email_prefs: "{}", active: 1 }, kind: "order", mail, about: `standing order ${change === "skipped" ? "skip" : "change"} ${order.id} to ${name}`, from: FROM(env), replyTo: settings.to[0] || DEFAULT_ORDER_EMAIL });
     } catch (error) {
-      await audit(env, "email_failed", null, `Couldn't email the customer about a standing order change ${order.id}: ${String((error as Error)?.message || error).slice(0, 160)}`).catch(() => {});
+      await audit(env, "wholesale_email_failed", null, `Couldn't email the customer about a standing order change ${order.id}: ${String((error as Error)?.message || error).slice(0, 160)}`).catch(() => {});
     }
   })();
   if (ctx) ctx.waitUntil(run); else await run;
@@ -282,16 +266,17 @@ export async function notifyNewOrder(env: Env, ctx: ExecutionContext | undefined
       const settings = await orderEmailSettings(env);
       if (!settings.enabled) return;
       const mail = buildOrderEmail(order, ordersPageUrl(diaryBase, order.id));
-      for (const to of settings.to) await send(env, { to: { id: "orders", name: to, email: to, email_prefs: "{}", active: 1 }, kind: "order", mail, about: `new wholesale order ${order.id} (${order.business || "customer"})`, from: FROM(env), replyTo: mail.replyTo });
+      const replyTo = await orderEmailAddress(env, order.customerId) || undefined;
+      for (const to of settings.to) await send(env, { to: { id: "orders", name: to, email: to, email_prefs: "{}", active: 1 }, kind: "order", mail, about: `new wholesale order ${order.id} (${order.business || "customer"})`, from: FROM(env), replyTo });
     } catch (error) {
-      await audit(env, "email_failed", null, `Couldn't email new wholesale order ${order.id}: ${String((error as Error)?.message || error).slice(0, 160)}`).catch(() => {});
+      await audit(env, "wholesale_email_failed", null, `Couldn't email new wholesale order ${order.id}: ${String((error as Error)?.message || error).slice(0, 160)}`).catch(() => {});
     }
   })();
   if (ctx) ctx.waitUntil(run); else await run;
 }
 
 /** When a customer changes or skips a standing delivery themselves, the Order alerts addresses hear about it (the
- *  roastery may already be planning it). Background, never throws; failures are email_failed like new orders. */
+ *  roastery may already be planning it). Runs in the background. */
 export async function notifyCustomerChange(env: Env, ctx: ExecutionContext | undefined, order: MailOrder & { dispatchDate?: string }, change: "skipped" | "once" | "ongoing", diaryBase: string, already?: string, by?: string) {
   if (!emailReady(env)) return;
   // `by`: a member of Strangers made the change for the customer (the staff orders page or Admin).
@@ -311,9 +296,10 @@ export async function notifyCustomerChange(env: Env, ctx: ExecutionContext | und
     try {
       const settings = await orderEmailSettings(env);
       if (!settings.enabled) return;
-      for (const to of settings.to) await send(env, { to: { id: "orders", name: to, email: to, email_prefs: "{}", active: 1 }, kind: "order", mail: { subject, text, html }, about: `standing order change ${order.id} (${business})`, from: FROM(env), replyTo: by ? undefined : order.customerSnapshot?.email || undefined });
+      const replyTo = by ? undefined : await orderEmailAddress(env, order.customerId) || undefined;
+      for (const to of settings.to) await send(env, { to: { id: "orders", name: to, email: to, email_prefs: "{}", active: 1 }, kind: "order", mail: { subject, text, html }, about: `standing order change ${order.id} (${business})`, from: FROM(env), replyTo });
     } catch (error) {
-      await audit(env, "email_failed", null, `Couldn't email a standing order change ${order.id}: ${String((error as Error)?.message || error).slice(0, 160)}`).catch(() => {});
+      await audit(env, "wholesale_email_failed", null, `Couldn't email a standing order change ${order.id}: ${String((error as Error)?.message || error).slice(0, 160)}`).catch(() => {});
     }
   })();
   if (ctx) ctx.waitUntil(run); else await run;

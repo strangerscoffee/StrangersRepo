@@ -1,11 +1,8 @@
 import { orderSender } from "./email/sender";
 // "Forgotten your password?" for wholesale customers (the customer sign-in page).
 //
-// A customer types their username or their business's email address. If it matches an approved, active sign-in, a
-// one-time link is emailed to the business's own email address on file (the order email, or the accounts email when
-// that's the one typed): never to an address typed in. The answer is always the same ("if it matches, we've emailed
-// a link"), so the form can't be used to find out who has an account. The email also says the username, for anyone
-// who's forgotten that instead.
+// A customer types their username or their business's order email. Recovery uses the saved order address for an
+// approved, active sign-in. The response is the same for all identifiers. The email also reminds them of their username.
 //
 // Only the link's SHA-256 hash is kept (migration 28's `wholesale_resets`); it works once and for an hour, and asking
 // again replaces it. Choosing the new password ends every other session for that sign-in, clears any lockout and
@@ -15,12 +12,12 @@ import { checkPassword, checkUsername, hashPassword, newId } from "./auth";
 import { audit } from "./audit";
 import { ApiError, type Env, json, readJson } from "./http";
 import { cleanEmail, emailReady, send } from "./email/send";
-import { orderEmailSettings } from "./email/orders";
+import { DEFAULT_ORDER_EMAIL, orderEmailSettings } from "./email/orderSettings";
 
 const RESET_MS = 60 * 60000;
 const digest = async (token: string) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token)))].map((n) => n.toString(16).padStart(2, "0")).join("");
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
-export const FORGOT_ANSWER = "If that matches a wholesale account, we've emailed a link to reset the password to the business's email address. It works once, for an hour. Check your junk folder too.";
+export const FORGOT_ANSWER = "If that matches a wholesale account, we'll send a reset link to the saved order email. It works once and expires after an hour. Check your junk folder too.";
 
 export async function migrateResets(env: Env) {
   await env.DB.batch([
@@ -43,7 +40,7 @@ async function limit(env: Env, key: string, windowMs: number, max: number) {
 
 /** Where to reach Strangers, for the sign-in page's "Need help?" (the first Order alerts address). */
 export async function contactEmail(env: Env) {
-  return (await orderEmailSettings(env)).to[0] || "sales@strangerscoffee.com";
+  return (await orderEmailSettings(env)).to[0] || DEFAULT_ORDER_EMAIL;
 }
 
 function resetEmail(business: string, contact: string, username: string, link: string) {
@@ -63,34 +60,37 @@ function resetEmail(business: string, contact: string, username: string, link: s
   return { subject, html, text };
 }
 
-type Match = { id: string; username: string; business: string; contact: string; email: string };
+type Match = { id: string; username: string; business: string; contact: string; email: string; savedAddress: string };
 
-/** The sign-ins an identifier points to: a username, or a business's order or accounts email. */
+/** Finds approved sign-ins by username or their business's saved order email. */
 async function matches(env: Env, identifier: string): Promise<Match[]> {
   const rows = identifier.includes("@")
     ? await env.DB.prepare(`SELECT a.id, a.username, c.data FROM wholesale_accounts a JOIN wholesale_preview c ON c.kind = 'customer' AND c.id = a.customer_id
-        WHERE a.active = 1 AND a.approval_status = 'approved' AND (lower(trim(json_extract(c.data, '$.email'))) = ? OR lower(trim(json_extract(c.data, '$.accountsEmail'))) = ?) LIMIT 3`).bind(identifier, identifier).all<{ id: string; username: string; data: string }>()
+        WHERE a.active = 1 AND a.approval_status = 'approved' AND lower(trim(json_extract(c.data, '$.email'))) = ? LIMIT 3`).bind(identifier).all<{ id: string; username: string; data: string }>()
     : await env.DB.prepare(`SELECT a.id, a.username, c.data FROM wholesale_accounts a JOIN wholesale_preview c ON c.kind = 'customer' AND c.id = a.customer_id
         WHERE a.active = 1 AND a.approval_status = 'approved' AND a.username = ?`).bind(identifier).all<{ id: string; username: string; data: string }>();
   const out: Match[] = [];
   for (const r of rows.results) {
     const c = JSON.parse(r.data || "{}");
-    // The address the link goes to is always one on file: the one typed if it's the accounts email, else the order email.
-    const order = cleanEmail(c.email), accounts = cleanEmail(c.accountsEmail);
-    const email = identifier.includes("@") && accounts === identifier ? accounts : order;
-    if (email) out.push({ id: r.id, username: r.username, business: c.business || "your business", contact: c.contact || "", email });
+    const email = cleanEmail(c.email);
+    if (email) out.push({ id: r.id, username: r.username, business: c.business || "your business", contact: c.contact || "", email, savedAddress: c.email });
   }
   return out;
 }
 
 async function sendReset(env: Env, m: Match, signinUrl: string, replyTo: string) {
-  const recent = await env.DB.prepare("SELECT COUNT(*) AS n FROM wholesale_resets WHERE account_id = ? AND created_at > ?").bind(m.id, Date.now() - 3600000).first<{ n: number }>();
-  if ((recent?.n || 0) >= 3) return;
   const token = newId(32), now = Date.now(), hash = await digest(token);
-  await env.DB.batch([
-    env.DB.prepare("UPDATE wholesale_resets SET used_at = ? WHERE account_id = ? AND used_at IS NULL").bind(now, m.id),
-    env.DB.prepare("INSERT INTO wholesale_resets (hash, account_id, email, created_at, expires_at, used_at) VALUES (?, ?, ?, ?, ?, NULL)").bind(hash, m.id, m.email, now, now + RESET_MS),
+  const results = await env.DB.batch([
+    env.DB.prepare(`INSERT INTO wholesale_resets (hash, account_id, email, created_at, expires_at, used_at)
+      SELECT ?, ?, ?, ?, ?, NULL WHERE EXISTS (
+        SELECT 1 FROM wholesale_accounts a JOIN wholesale_preview c ON c.kind = 'customer' AND c.id = a.customer_id
+        WHERE a.id = ? AND a.active = 1 AND a.approval_status = 'approved' AND json_extract(c.data, '$.email') = ?
+      )
+      AND (SELECT COUNT(*) FROM wholesale_resets WHERE account_id = ? AND created_at > ?) < 3`)
+      .bind(hash, m.id, m.email, now, now + RESET_MS, m.id, m.savedAddress, m.id, now - 3600000),
+    env.DB.prepare("UPDATE wholesale_resets SET used_at = ? WHERE account_id = ? AND hash <> ? AND used_at IS NULL AND changes() = 1").bind(now, m.id, hash),
   ]);
+  if (!results[0].meta.changes) return;
   const link = `${signinUrl}${signinUrl.includes("?") ? "&" : "?"}reset=${token}`;
   const result = await send(env, { to: { id: "customer", name: m.business, email: m.email, email_prefs: "{}", active: 1 }, kind: "order", mail: resetEmail(m.business, m.contact, m.username, link), about: `wholesale password reset for ${m.business}`, from: orderSender(env), replyTo });
   if (result !== "sent") await env.DB.prepare("DELETE FROM wholesale_resets WHERE hash = ?").bind(hash).run();
@@ -100,13 +100,15 @@ async function sendReset(env: Env, m: Match, signinUrl: string, replyTo: string)
 async function liveReset(env: Env, token: unknown) {
   const invalidLink = () => new ApiError(404, "reset_invalid", "This reset link isn't valid. Ask for a new one from the sign-in page.");
   if (typeof token !== "string" || !/^[a-f0-9]{16,128}$/.test(token)) throw invalidLink();
-  const row = await env.DB.prepare(`SELECT r.hash, r.account_id, r.expires_at, r.used_at, a.username, a.session_ver, a.active, a.approval_status, c.data FROM wholesale_resets r
+  const row = await env.DB.prepare(`SELECT r.hash, r.account_id, r.email, r.expires_at, r.used_at, a.username, a.session_ver, a.active, a.approval_status, c.data FROM wholesale_resets r
       JOIN wholesale_accounts a ON a.id = r.account_id JOIN wholesale_preview c ON c.kind = 'customer' AND c.id = a.customer_id WHERE r.hash = ?`)
-    .bind(await digest(token)).first<{ hash: string; account_id: string; expires_at: number; used_at: number | null; username: string; session_ver: number; active: number; approval_status: string; data: string }>();
+    .bind(await digest(token)).first<{ hash: string; account_id: string; email: string; expires_at: number; used_at: number | null; username: string; session_ver: number; active: number; approval_status: string; data: string }>();
   if (!row || !row.active || row.approval_status !== "approved") throw invalidLink();
+  const customer = JSON.parse(row.data || "{}");
+  if (cleanEmail(customer.email) !== row.email) throw invalidLink();
   if (row.used_at) throw new ApiError(410, "reset_used", "This reset link has already been used, or a newer one was sent. Sign in, or ask for a new link.");
   if (row.expires_at <= Date.now()) throw new ApiError(410, "reset_expired", "This reset link has run out. Ask for a new one from the sign-in page.");
-  return { row, business: String(JSON.parse(row.data || "{}").business || "") };
+  return { row, business: String(customer.business || ""), savedAddress: String(customer.email) };
 }
 
 /** The sign-in page's routes: forgot (ask for a link), reset (GET: who it's for; POST: the new password) and contact. */
@@ -117,7 +119,7 @@ export async function handleReset(req: Request, env: Env, route: string, opts: {
     if (!await limit(env, "wholesale-forgot:" + ip, 3600000, 5)) throw new ApiError(429, "rate_limited", "Too many requests. Try again in an hour, or contact Strangers.");
     const body = await readJson<Record<string, unknown>>(req, 1024);
     const raw = typeof body?.identifier === "string" ? body.identifier.trim().toLowerCase() : "";
-    if (!raw || raw.length > 150) throw new ApiError(400, "invalid_argument", "Type your username or your business's email address.");
+    if (!raw || raw.length > 150) throw new ApiError(400, "invalid_argument", "Type your username or your business's order email.");
     let identifier = raw;
     if (!raw.includes("@")) { try { identifier = checkUsername(raw); } catch { identifier = ""; } }
     if (identifier && emailReady(env)) {
@@ -128,7 +130,7 @@ export async function handleReset(req: Request, env: Env, route: string, opts: {
           const replyTo = await contactEmail(env);
           for (const m of found) await sendReset(env, m, opts.signinUrl, replyTo);
         } catch (error) {
-          await audit(env, "email_failed", null, `Couldn't send a wholesale password reset: ${String((error as Error)?.message || error).slice(0, 160)}`).catch(() => {});
+          await audit(env, "wholesale_email_failed", null, `Couldn't send a wholesale password reset: ${String((error as Error)?.message || error).slice(0, 160)}`).catch(() => {});
         }
       })();
       // In the background where possible, so the answer takes the same time whether or not anything matched.
@@ -144,17 +146,20 @@ export async function handleReset(req: Request, env: Env, route: string, opts: {
     }
     if (req.method !== "POST") throw new ApiError(405, "method_not_allowed", "Use GET or POST.");
     const body = await readJson<Record<string, unknown>>(req, 4096);
-    const { row, business } = await liveReset(env, body?.token);
+    const { row, business, savedAddress } = await liveReset(env, body?.token);
     const password = checkPassword(body?.password);
     const { hash, salt } = await hashPassword(password);
     const at = Date.now();
     const results = await env.DB.batch([
-      env.DB.prepare("UPDATE wholesale_resets SET used_at = ? WHERE hash = ? AND used_at IS NULL").bind(at, row.hash),
+      env.DB.prepare(`UPDATE wholesale_resets SET used_at = ? WHERE hash = ? AND used_at IS NULL AND expires_at > ? AND EXISTS (
+        SELECT 1 FROM wholesale_accounts a JOIN wholesale_preview c ON c.kind = 'customer' AND c.id = a.customer_id
+        WHERE a.id = wholesale_resets.account_id AND a.active = 1 AND a.approval_status = 'approved' AND a.session_ver = ?
+        AND json_extract(c.data, '$.email') = ?
+      )`).bind(at, row.hash, at, row.session_ver, savedAddress),
       env.DB.prepare("UPDATE wholesale_accounts SET password_hash = ?, password_salt = ?, must_change = 0, failed = 0, locked_until = 0, session_ver = session_ver + 1, version = version + 1, updated_at = ? WHERE id = ? AND session_ver = ? AND active = 1 AND changes() = 1")
         .bind(hash, salt, at, row.account_id, row.session_ver),
     ]);
     if (!results[1].meta.changes) {
-      await env.DB.prepare("UPDATE wholesale_resets SET used_at = NULL WHERE hash = ? AND used_at = ?").bind(row.hash, at).run();
       throw new ApiError(409, "conflict", "This sign-in changed while you were choosing a password. Ask for a new link.");
     }
     await env.DB.batch([

@@ -1,7 +1,7 @@
 // Provider acknowledgements and verified delivery feedback. No bodies, reset links or signing secrets are stored.
 import { audit } from "../audit";
 import { ApiError, type Env, json, readBytes } from "../http";
-import { orderSender } from "./sender";
+import { isWholesaleEmail, orderSender, rotaSender } from "./sender";
 import { cleanEmail, senderAddress } from "./address";
 import type { Outgoing } from "./send";
 
@@ -16,7 +16,7 @@ export async function recipientSuppressed(env: Env, email: string) {
 export async function recordAccepted(env: Env, outgoing: Outgoing, providerId: unknown, eventKey?: string) {
   const id = eventKey || crypto.randomUUID(), pid = opaqueId(providerId) ? providerId as string : null;
   await env.DB.prepare("INSERT OR IGNORE INTO email_delivery_messages(id,provider_id,recipient,recipient_name,subject,stream,about,accepted_at) VALUES(?,?,?,?,?,?,?,?)")
-    .bind(id, pid, outgoing.to.email.toLowerCase(), clip(outgoing.to.name, 120), clip(outgoing.mail.subject, 240), outgoing.kind === "order" || outgoing.from ? "wholesale" : "rota", clip(outgoing.about, 240), Date.now()).run();
+    .bind(id, pid, outgoing.to.email.toLowerCase(), clip(outgoing.to.name, 120), clip(outgoing.mail.subject, 240), isWholesaleEmail(outgoing) ? "wholesale" : "rota", clip(outgoing.about, 240), Date.now()).run();
 }
 
 function bytes64(value: string) {
@@ -59,7 +59,7 @@ export async function handleResendWebhook(req: Request, env: Env, ready: () => P
     recipients = [email]; providerId = opaqueId(data.source_id) ? data.source_id : null;
   } else {
     const from = typeof data.from === "string" ? senderAddress(data.from) : null;
-    const domains = [senderAddress(orderSender(env)),senderAddress(env.EMAIL_FROM || "rota@staffstrangerscoffee.com")].filter(Boolean).map(address=>address!.split("@")[1]);
+    const domains = [senderAddress(orderSender(env)),senderAddress(rotaSender(env))].filter(Boolean).map(address=>address!.split("@")[1]);
     if (!from || !domains.includes(from.split("@")[1])) return new Response(null,{status:204});
     if (!opaqueId(data.email_id) || !Array.isArray(data.to) || !data.to.length || data.to.length > 5) throw new ApiError(400,"webhook_invalid","Invalid webhook message.");
     recipients = data.to.map(cleanEmail);
@@ -85,11 +85,20 @@ export async function handleResendWebhook(req: Request, env: Env, ready: () => P
 }
 
 const STATUS = `CASE WHEN EXISTS(SELECT 1 FROM email_delivery_events e,json_each(e.recipients) r WHERE e.provider_id=m.provider_id AND r.value=m.recipient AND e.type='email.complained') THEN 'complained' WHEN EXISTS(SELECT 1 FROM email_delivery_events e,json_each(e.recipients) r WHERE e.provider_id=m.provider_id AND r.value=m.recipient AND e.type='email.bounced') THEN 'bounced' WHEN EXISTS(SELECT 1 FROM email_delivery_events e,json_each(e.recipients) r WHERE e.provider_id=m.provider_id AND r.value=m.recipient AND e.type='email.suppressed') THEN 'suppressed' WHEN EXISTS(SELECT 1 FROM email_delivery_events e,json_each(e.recipients) r WHERE e.provider_id=m.provider_id AND r.value=m.recipient AND e.type='email.failed') THEN 'failed' WHEN EXISTS(SELECT 1 FROM email_delivery_events e,json_each(e.recipients) r WHERE e.provider_id=m.provider_id AND r.value=m.recipient AND e.type='email.delivered') THEN 'delivered' WHEN EXISTS(SELECT 1 FROM email_delivery_events e,json_each(e.recipients) r WHERE e.provider_id=m.provider_id AND r.value=m.recipient AND e.type='email.delivery_delayed') THEN 'delayed' ELSE 'accepted' END`;
+interface DeliveryRecord {
+  id: string; recipient: string; name: string; subject: string; stream: string;
+  about: string; acceptedAt: number; detail: string | null; status: string;
+}
 export async function emailDeliveryStatus(env: Env) {
-  const [recent,suppressed,last] = await Promise.all([
-    env.DB.prepare(`SELECT m.id,m.recipient,m.recipient_name AS name,m.subject,m.stream,m.accepted_at AS acceptedAt,(SELECT e.reason FROM email_delivery_events e,json_each(e.recipients) r WHERE e.provider_id=m.provider_id AND r.value=m.recipient AND e.reason<>'' ORDER BY e.event_at DESC LIMIT 1) AS detail,${STATUS} AS status FROM email_delivery_messages m ORDER BY m.accepted_at DESC,m.id LIMIT 50`).all(),
+  const [recent,suppressed,last,staff] = await Promise.all([
+    env.DB.prepare(`SELECT m.id,m.recipient,m.recipient_name AS name,m.subject,m.stream,m.about,m.accepted_at AS acceptedAt,(SELECT e.reason FROM email_delivery_events e,json_each(e.recipients) r WHERE e.provider_id=m.provider_id AND r.value=m.recipient AND e.reason<>'' ORDER BY e.event_at DESC LIMIT 1) AS detail,${STATUS} AS status FROM email_delivery_messages m ORDER BY m.accepted_at DESC,m.id LIMIT 50`).all<DeliveryRecord>(),
     env.DB.prepare("SELECT email,source,event_at AS at FROM email_suppressions WHERE active=1 ORDER BY event_at DESC,email LIMIT 50").all(),
     env.DB.prepare("SELECT MAX(received_at) AS at FROM email_delivery_events").first<{at:number|null}>(),
+    env.DB.prepare(`SELECT COUNT(CASE WHEN state IN ('queued','sending') THEN 1 END) AS queued,
+      COUNT(CASE WHEN state='retry' THEN 1 END) AS retrying, COUNT(CASE WHEN state IN ('failed','unknown') THEN 1 END) AS needsReview
+      FROM staff_email_outbox WHERE state NOT IN ('sent','skipped') AND created_at>?`)
+      .bind(Date.now() - 7 * 86400000).first<{ queued: number; retrying: number; needsReview: number }>(),
   ]);
-  return {webhookConfigured:signingReady(env.RESEND_WEBHOOK_SECRET),lastWebhookAt:last?.at||null,messages:recent.results,suppressed:suppressed.results};
+  const messages = recent.results.map(({ about, ...message }) => ({ ...message, orderReference: /\bWS-[A-F0-9]{32}\b/.exec(about)?.[0] || null }));
+  return {webhookConfigured:signingReady(env.RESEND_WEBHOOK_SECRET),lastWebhookAt:last?.at||null,messages,suppressed:suppressed.results,staff};
 }

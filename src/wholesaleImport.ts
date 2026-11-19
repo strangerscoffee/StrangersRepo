@@ -110,10 +110,15 @@ export async function inviteCustomer(env: Env, customerId: string, actor: string
   if (!email) return "no_email" as const;
   if (!emailReady(env)) return "off" as const;
   const token = newId(32), now = Date.now(), hash = await digest(token);
-  await env.DB.batch([
-    env.DB.prepare("DELETE FROM wholesale_invites WHERE customer_id = ? AND used_at IS NULL").bind(customerId),
-    env.DB.prepare("INSERT INTO wholesale_invites (hash, customer_id, email, created_at, expires_at, used_at, created_by) VALUES (?, ?, ?, ?, ?, NULL, ?)").bind(hash, customerId, email, now, now + INVITE_MS, actor),
+  const saved = await env.DB.batch([
+    env.DB.prepare(`INSERT INTO wholesale_invites (hash, customer_id, email, created_at, expires_at, used_at, created_by)
+      SELECT ?, ?, ?, ?, ?, NULL, ? WHERE EXISTS (
+        SELECT 1 FROM wholesale_preview WHERE kind = 'customer' AND id = ? AND json_extract(data, '$.email') = ?
+      ) AND NOT EXISTS (SELECT 1 FROM wholesale_accounts WHERE customer_id = ?)`)
+      .bind(hash, customerId, email, now, now + INVITE_MS, actor, customerId, customer.email, customerId),
+    env.DB.prepare("DELETE FROM wholesale_invites WHERE customer_id = ? AND hash <> ? AND used_at IS NULL AND changes() = 1").bind(customerId, hash),
   ]);
+  if (!saved[0].meta.changes) return "failed" as const;
   const link = `${signinUrl}${signinUrl.includes("?") ? "&" : "?"}invite=${token}`;
   const result = await send(env, { to: { id: "customer", name: customer.business, email, email_prefs: "{}", active: 1 }, kind: "order", mail: inviteEmail(customer.business, customer.contact || "", link), about: `wholesale invite to ${customer.business}`, from: orderSender(env), replyTo });
   if (result !== "sent") await env.DB.prepare("DELETE FROM wholesale_invites WHERE hash = ?").bind(hash).run();
@@ -128,7 +133,7 @@ async function liveInvite(env: Env, token: unknown) {
   if (row.used_at) throw new ApiError(410, "invite_used", "This invite has already been used. Sign in with the username and password you chose.");
   if (row.expires_at <= Date.now()) throw new ApiError(410, "invite_expired", "This invite has run out. Ask Strangers for a new one.");
   const customer = await get<Customer>(env, "customer", row.customer_id);
-  if (!customer) throw new ApiError(404, "invite_invalid", "This invite link isn't valid. Ask Strangers for a new one.");
+  if (!customer || cleanEmail(customer.email) !== row.email) throw new ApiError(404, "invite_invalid", "This invite link isn't valid. Ask Strangers for a new one.");
   if (await env.DB.prepare("SELECT 1 FROM wholesale_accounts WHERE customer_id = ?").bind(row.customer_id).first()) throw new ApiError(410, "invite_used", "This business already has a sign-in. Sign in with it, or ask Strangers to reset it.");
   return { row, customer };
 }
@@ -151,13 +156,15 @@ export async function handleInvite(req: Request, env: Env, startSession: (accoun
   const accountId = crypto.randomUUID(), at = Date.now();
   try {
     const results = await env.DB.batch([
-      env.DB.prepare("UPDATE wholesale_invites SET used_at = ? WHERE hash = ? AND used_at IS NULL").bind(at, row.hash),
+      env.DB.prepare(`UPDATE wholesale_invites SET used_at = ? WHERE hash = ? AND used_at IS NULL AND expires_at > ? AND EXISTS (
+        SELECT 1 FROM wholesale_preview WHERE kind = 'customer' AND id = wholesale_invites.customer_id
+        AND json_extract(data, '$.email') = ?
+      ) AND NOT EXISTS (SELECT 1 FROM wholesale_accounts WHERE customer_id = wholesale_invites.customer_id)`).bind(at, row.hash, at, customer.email),
       env.DB.prepare("INSERT INTO wholesale_accounts(id, customer_id, username, password_hash, password_salt, must_change, active, approval_status, created_at, updated_at) SELECT ?, ?, ?, ?, ?, 0, 1, 'approved', ?, ? WHERE changes() = 1").bind(accountId, row.customer_id, username, hash, salt, at, at),
     ]);
     if (!results[1].meta.changes) throw new ApiError(410, "invite_used", "This invite has already been used. Sign in with the username and password you chose.");
   } catch (error) {
     if (String(error).includes("UNIQUE")) {
-      await env.DB.prepare("UPDATE wholesale_invites SET used_at = NULL WHERE hash = ? AND used_at = ?").bind(row.hash, at).run();
       throw new ApiError(409, "conflict", "That username is already in use. Choose another.");
     }
     throw error;

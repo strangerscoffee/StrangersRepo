@@ -28,9 +28,25 @@ export async function list<T>(env: Env, kind: Kind, limit = 200): Promise<(T & V
 }
 export async function save<T extends object>(env: Env, kind: Kind, id: string, data: T, expected: number): Promise<T & Versioned> {
   const at = Date.now();
-  const result = expected === 0
-    ? await env.DB.prepare("INSERT INTO wholesale_preview (kind, id, data, version, updated_at) VALUES (?, ?, ?, 1, ?) ON CONFLICT(kind, id) DO NOTHING").bind(kind, id, JSON.stringify(data), at).run()
-    : await env.DB.prepare("UPDATE wholesale_preview SET data = ?, version = version + 1, updated_at = ? WHERE kind = ? AND id = ? AND version = ?").bind(JSON.stringify(data), at, kind, id, expected).run();
+  const payload = JSON.stringify(data);
+  const write = expected === 0
+    ? env.DB.prepare("INSERT INTO wholesale_preview (kind, id, data, version, updated_at) VALUES (?, ?, ?, 1, ?) ON CONFLICT(kind, id) DO NOTHING").bind(kind, id, payload, at)
+    : env.DB.prepare("UPDATE wholesale_preview SET data = ?, version = version + 1, updated_at = ? WHERE kind = ? AND id = ? AND version = ?").bind(payload, at, kind, id, expected);
+  const result = kind === "customer" && expected > 0
+    ? (await env.DB.batch([
+      // Bind outstanding links to the lifetime of the saved address, including a change away and back again.
+      env.DB.prepare(`DELETE FROM wholesale_invites WHERE customer_id = ? AND used_at IS NULL AND EXISTS (
+        SELECT 1 FROM wholesale_preview WHERE kind = 'customer' AND id = ? AND version = ?
+        AND lower(trim(COALESCE(json_extract(data, '$.email'), ''))) <> lower(trim(COALESCE(json_extract(?, '$.email'), '')))
+      )`).bind(id, id, expected, payload),
+      env.DB.prepare(`UPDATE wholesale_resets SET used_at = ? WHERE used_at IS NULL AND account_id IN (
+        SELECT a.id FROM wholesale_accounts a JOIN wholesale_preview c ON c.kind = 'customer' AND c.id = a.customer_id
+        WHERE c.id = ? AND c.version = ?
+        AND lower(trim(COALESCE(json_extract(c.data, '$.email'), ''))) <> lower(trim(COALESCE(json_extract(?, '$.email'), '')))
+      )`).bind(at, id, expected, payload),
+      write,
+    ]))[2]
+    : await write.run();
   if (!result.meta.changes) throw conflict();
   return { ...data, id, version: expected + 1, updatedAt: at };
 }

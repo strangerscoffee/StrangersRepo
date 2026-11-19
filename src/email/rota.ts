@@ -1,14 +1,16 @@
 // Which rota emails go to whom (docs/data-model.md, "Rota emails"):
 // - publishing a week: everyone with shifts gets their week; publishing it again after changes, only the people
-//   whose shifts changed since they were last emailed (rota_weeks.emailed keeps what each was told), with what
+//   whose shifts changed since the last email batch (rota_weeks.emailed keeps its snapshot), with what
 //   changed; and people who turned on open-shift emails hear about new open shifts they're free for;
 // - a cover or pick-up request approved or declined: the person who asked and the person taking it;
 // - time off approved or declined: the person who asked.
 import { Env } from "../http";
 import { loadCtx } from "../rota/load";
-import { Ctx, DAY_KEYS, ROTA_SITES, ReqRow, Shift } from "../rota/types";
+import { canOfferOpenShift } from "../rota/problems";
+import { Ctx, ROTA_SITES, ReqRow, Shift } from "../rota/types";
 import { londonToday } from "../rota/util";
-import { EmailKind, Outgoing, Recipient, emailReady, linksFor, recipients, sendAll, wants } from "./send";
+import { EmailKind, Outgoing, Recipient, emailReady, linksFor, prefsOf, recipients, sendAll, wants } from "./send";
+import { deliverStaffEmails, enqueueStaffEmails, type StaffEmail } from "./staffOutbox";
 import { Change, MailShift, changedEmail, openShiftsEmail, publishedEmail, requestEmail, shiftsCalendar, shortDay, timeOffEmail, leaveDatesEmail } from "./templates";
 
 type Base = { rota: string; diary: string };
@@ -25,7 +27,8 @@ const snap = (s: Shift): Snap => ({ id: s.id, day: s.day, start: s.start, end: s
 const same = (a: Snap, b: Snap) => a.day === b.day && a.start === b.start && a.end === b.end && a.site === b.site && a.job === b.job;
 
 export interface WeekPlan {
-  first: boolean; // the week hasn't been emailed before
+  first: boolean;
+  previous: string | null;
   people: { userId: string; kind: "published" | "changed"; shifts: Shift[]; changes: Change[] }[];
   open: { userId: string; shifts: Shift[] }[];
   noAddress: string[]; // people who'd get one but have no email address
@@ -33,9 +36,9 @@ export interface WeekPlan {
   ctx: Ctx;
 }
 
-/** Who the week's emails would go to, and what each would say, compared with what was last emailed. */
-export async function planWeek(env: Env, week: string): Promise<WeekPlan> {
-  const ctx = await loadCtx(env, week);
+/** Recipients and changes since the rota was last queued for email. */
+export async function planWeek(env: Env, week: string, context?: Ctx): Promise<WeekPlan> {
+  const ctx = context || await loadCtx(env, week);
   const row = await env.DB.prepare("SELECT emailed FROM rota_weeks WHERE week = ?").bind(week).first<{ emailed: string | null }>();
   let before: Emailed | null = null;
   try { before = row?.emailed ? JSON.parse(row.emailed) : null; } catch {}
@@ -62,25 +65,25 @@ export async function planWeek(env: Env, week: string): Promise<WeekPlan> {
   const openNew = inWeek.filter((s) => !s.userId && s.day >= today && !told.has(s.id));
   const open: WeekPlan["open"] = [];
   if (openNew.length) for (const p of ctx.people.values()) {
-    const fits = openNew.filter((s) => {
-      const dayKey = DAY_KEYS[(new Date(s.day + "T12:00:00Z").getUTCDay() + 6) % 7];
-      if (p.pattern?.[dayKey] === "off") return false;
-      if (p.sites?.length && !p.sites.includes(s.site)) return false;
-      if (inWeek.some((o) => o.userId === p.id && o.day === s.day)) return false;
-      return !ctx.timeOff.some((t) => t.userId === p.id && t.status === "approved" && t.from <= s.day && t.to >= s.day);
-    });
+    const fits = openNew.filter(s => canOfferOpenShift(ctx, p, s));
     if (fits.length) open.push({ userId: p.id, shifts: fits });
   }
   const snapshot: Emailed = { people: Object.fromEntries(Object.entries(now).map(([u, xs]) => [u, xs.map(snap)])), open: [...told, ...openNew.map((s) => s.id)] };
-  const who = await recipients(env, people.map((p) => p.userId));
-  const noAddress = people.map((p) => who.get(p.userId)).filter((r) => r && r.active && !r.email).map((r) => r!.name);
-  return { first: !before, people, open, noAddress, snapshot, ctx };
+  const who = await recipients(env, [...people.map(p => p.userId), ...open.map(p => p.userId)]);
+  const noAddress = new Set<string>();
+  for (const p of [...people, ...open.map(p => ({ ...p, kind: "open" as const }))]) {
+    const r = who.get(p.userId);
+    if (r?.active && !r.email && prefsOf(r.email_prefs)[p.kind]) noAddress.add(r.name);
+  }
+  return { first: !before, previous: row?.emailed ?? null, people: people.filter(p => wants(who.get(p.userId), p.kind)),
+    open: open.filter(p => wants(who.get(p.userId), "open")), noAddress: [...noAddress], snapshot, ctx };
 }
 
-/** Sends the week's emails (in the background) and records what was sent. Returns how many go out. */
-export async function sendWeek(env: Env, exec: ExecutionContext | undefined, plan: WeekPlan, week: string, base: Base, by: { name: string }): Promise<number> {
+/** Records the snapshot and each recipient's mail together, then delivers the queued messages. */
+export async function sendWeek(env: Env, exec: ExecutionContext | undefined, plan: WeekPlan, week: string, base: Base, by: { name: string }, publication: { at: number; snapshot: string }): Promise<number> {
+  if (!emailReady(env)) return 0;
   const who = await recipients(env, [...plan.people.map((p) => p.userId), ...plan.open.map((o) => o.userId)]);
-  const out: Outgoing[] = [];
+  const jobs: StaffEmail[] = [];
   for (const p of plan.people) {
     const r = who.get(p.userId), kind: EmailKind = p.kind;
     if (!wants(r, kind)) continue;
@@ -89,18 +92,33 @@ export async function sendWeek(env: Env, exec: ExecutionContext | undefined, pla
     const links = await linksFor(env, base, p.userId, kind);
     const common = { name: r.name, week, shifts, contractMin: person?.contractMin ?? null, contractMax: person?.contractMax ?? null, links };
     const mail = p.kind === "published" ? publishedEmail(common) : changedEmail({ ...common, changes: p.changes, by: by.name });
-    out.push({ to: r, kind, mail, links, about: p.kind === "published" ? `the week of ${week} published` : `changes to the week of ${week}`,
-      calendar: shifts.length ? shiftsCalendar(shifts, base.rota) : undefined });
+    jobs.push({ outgoing: { to: r, kind, mail, links, about: p.kind === "published" ? `the week of ${week} published` : `changes to the week of ${week}`,
+      calendar: shifts.length ? shiftsCalendar(shifts, base.rota) : undefined } });
   }
   for (const o of plan.open) {
     const r = who.get(o.userId);
     if (!wants(r, "open")) continue;
     const links = await linksFor(env, base, o.userId, "open");
-    out.push({ to: r, kind: "open", mail: openShiftsEmail({ name: r.name, shifts: o.shifts.filter((s) => !s.userId).map(mailShift), links }), links, about: `open shifts in the week of ${week}` });
+    jobs.push({ outgoing: { to: r, kind: "open", mail: openShiftsEmail({ name: r.name, shifts: o.shifts.map(mailShift), links }), links, about: `open shifts in the week of ${week}` },
+      open: { week, shiftIds: o.shifts.map(s => s.id) } });
   }
-  await env.DB.prepare("UPDATE rota_weeks SET emailed = ? WHERE week = ?").bind(JSON.stringify(plan.snapshot), week).run();
-  sendAll(env, exec, out);
-  return emailReady(env) ? out.length : 0;
+  const scope = `rota:${week}`, batchKey = `${scope}:${crypto.randomUUID()}`;
+  const results = await env.DB.batch([
+    env.DB.prepare("UPDATE rota_weeks SET emailed=? WHERE week=? AND emailed IS ? AND published_at=? AND published_shifts=?")
+      .bind(JSON.stringify(plan.snapshot), week, plan.previous, publication.at, publication.snapshot),
+    enqueueStaffEmails(env, batchKey, jobs, scope),
+    env.DB.prepare(`UPDATE staff_email_outbox SET state=CASE WHEN uncertain=1 THEN 'unknown' ELSE 'skipped' END,
+      payload='{}',last_error='A newer rota email superseded this one.'
+      WHERE scope=? AND batch_key<>? AND state IN ('queued','retry') AND kind IN ('published','changed')
+      AND user_id IN (SELECT user_id FROM staff_email_outbox WHERE batch_key=? AND kind IN ('published','changed'))`)
+      .bind(scope, batchKey, batchKey),
+  ]);
+  const queued = results[1].meta.changes || 0;
+  if (queued) {
+    const delivery = deliverStaffEmails(env, batchKey).catch(error => console.error("Rota email delivery will retry", error));
+    if (exec) exec.waitUntil(delivery); else await delivery;
+  }
+  return queued;
 }
 
 /** A cover or pick-up request approved or declined: emails the person who asked and the person taking it. */

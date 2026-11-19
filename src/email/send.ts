@@ -8,6 +8,7 @@ import { audit } from "../audit";
 import { readToken, signToken } from "../auth";
 import { Env, invalid } from "../http";
 import { Built, Links } from "./templates";
+import { isWholesaleEmail, rotaSender } from "./sender";
 
 /** The emails people can turn on or off, and how each starts (docs/data-model.md, users.email_prefs). */
 export const EMAIL_KINDS = { published: true, changed: true, requests: true, open: false, weekly: true, holiday: true } as const;
@@ -57,15 +58,14 @@ export async function savePrefs(env: Env, userId: string, change: { prefs?: unkn
 }
 
 export const emailReady = (env: Env) => !!env.RESEND_API_KEY;
-const FROM = (env: Env) => env.EMAIL_FROM || "Strangers Rota <rota@staffstrangerscoffee.com>";
 const DAILY = (env: Env) => Math.max(1, Number(env.EMAIL_DAILY_LIMIT) || 100);
 
 
-export interface Recipient { id: string; name: string; email: string | null; email_prefs: string; active: number }
+export interface Recipient { id: string; name: string; email: string | null; email_prefs: string; active: number; role?: string }
 
 export async function recipients(env: Env, ids: string[]): Promise<Map<string, Recipient>> {
   if (!ids.length) return new Map();
-  const { results } = await env.DB.prepare("SELECT id, name, email, email_prefs, active FROM users WHERE id IN (SELECT value FROM json_each(?))")
+  const { results } = await env.DB.prepare("SELECT id, name, email, email_prefs, active, role FROM users WHERE id IN (SELECT value FROM json_each(?))")
     .bind(JSON.stringify([...new Set(ids)])).all<Recipient>();
   return new Map(results.map((r) => [r.id, r]));
 }
@@ -92,16 +92,17 @@ export interface Outgoing {
 /** Sends one email (never throws): "sent", "off" (no API key), "limit" (the day's allowance is used) or "failed". */
 export async function sendOutcome(env: Env, o: Outgoing, idempotencyKey?: string): Promise<{ status: "sent" | "off" | "limit" | "failed"; uncertain?: boolean; permanent?: boolean }> {
   if (!emailReady(env)) return { status: "off" };
+  const prefix = isWholesaleEmail(o) ? "wholesale_email_" : "email_";
   let started = false;
   try {
     if (await recipientSuppressed(env,o.to.email)) {
-      await audit(env,"email_failed",null,`Email to ${o.to.name} is suppressed after a delivery problem. Review Email health in Admin.`);
+      await audit(env, prefix + "failed", null, `Email to ${o.to.name} (${o.about}) is suppressed after a delivery problem. Review Email health in Admin.`);
       return {status:"failed",permanent:true};
     }
     const since = Date.now() - 864e5;
-    const n = await env.DB.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE kind = 'email_sent' AND at > ?").bind(since).first<{ n: number }>();
+    const n = await env.DB.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE kind IN ('email_sent','wholesale_email_sent') AND at > ?").bind(since).first<{ n: number }>();
     if ((n?.n ?? 0) >= DAILY(env)) {
-      await audit(env, "email_failed", null, `Didn't email ${o.to.name} (${o.about}): the day's limit of ${DAILY(env)} emails was reached`);
+      await audit(env, prefix + "failed", null, `The daily email limit delayed mail to ${o.to.name} (${o.about}).`);
       return { status: "limit" };
     }
     started = true;
@@ -110,7 +111,7 @@ export async function sendOutcome(env: Env, o: Outgoing, idempotencyKey?: string
       headers: { authorization: `Bearer ${env.RESEND_API_KEY}`, "content-type": "application/json", ...(idempotencyKey ? { "idempotency-key": idempotencyKey } : {}) },
       signal: AbortSignal.timeout(10000),
       body: JSON.stringify({
-        from: o.from || FROM(env), to: [o.to.email], subject: o.mail.subject, html: o.mail.html, text: o.mail.text,
+        from: o.from || rotaSender(env), to: [o.to.email], subject: o.mail.subject, html: o.mail.html, text: o.mail.text,
         ...(o.replyTo ? { reply_to: o.replyTo } : {}),
         // Replies use the configured business From address. Account email addresses stay private to their owner.
         // One-tap unsubscribe in Gmail and Apple Mail (RFC 8058).
@@ -120,15 +121,15 @@ export async function sendOutcome(env: Env, o: Outgoing, idempotencyKey?: string
     });
     if (!res.ok) {
       const why = (await res.text().catch(() => "")).slice(0, 200);
-      await audit(env, "email_failed", null, `Couldn't email ${o.to.name} (${o.about}): Resend said ${res.status}${why ? ` ${why}` : ""}`);
-      return { status: "failed" };
+      await audit(env, prefix + "failed", null, `Couldn't email ${o.to.name} (${o.about}). Resend returned ${res.status}${why ? ` ${why}` : ""}`);
+      return { status: "failed", uncertain: !!idempotencyKey && res.status === 409 };
     }
     const acknowledged = await res.json().catch(()=>null) as {id?:unknown}|null;
-    await recordAccepted(env,o,acknowledged?.id,idempotencyKey).catch(()=>audit(env,"email_tracking_failed",null,"An accepted email could not be recorded for delivery feedback."));
-    await audit(env, "email_sent", null, `Emailed ${o.to.name}: ${o.about}`);
+    await recordAccepted(env, o, acknowledged?.id, idempotencyKey).catch(() => audit(env, prefix + "tracking_failed", null, "An accepted email could not be recorded for delivery feedback."));
+    await audit(env, prefix + "sent", null, `Resend accepted email for ${o.to.name} — ${o.about}`);
     return { status: "sent" };
   } catch (e) {
-    await audit(env, "email_failed", null, `Couldn't email ${o.to.name} (${o.about}): ${String((e as Error)?.message || e).slice(0, 160)}`).catch(() => {});
+    await audit(env, prefix + "failed", null, `Couldn't email ${o.to.name} (${o.about}). ${String((e as Error)?.message || e).slice(0, 160)}`).catch(() => {});
     return { status: "failed", uncertain: started };
   }
 }

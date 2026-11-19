@@ -1,5 +1,5 @@
 // Wholesale "Forgotten your password or username?" (src/wholesaleReset.ts): a one-time link, by username or the
-// business's order or accounts email, emailed (to a stand-in for Resend) only to the address on file; the same answer
+// business's order email, emailed (to a stand-in for Resend) only to the order address on file; the same answer
 // whether or not anything matched; the link shows the username, works once, for an hour, and ending it signs the
 // customer in and every other session out; rate limits; and the contact address for the sign-in page.
 import { test, before, after } from "node:test";
@@ -43,7 +43,7 @@ test("the same answer whether or not anything matches; links go only to the busi
     answers.push(r.body.message);
   }
   assert.equal(new Set(answers).size, 1, "no way to tell which matched");
-  assert.match(answers[0], /If that matches a wholesale account, we've emailed a link/);
+  assert.match(answers[0], /If that matches a wholesale account, we'll send a reset link/);
   assert.equal(await settle(2), 2, "username and order email; not unknown or unapproved sign-ins");
   const mails = take();
   for (const m of mails) {
@@ -53,17 +53,16 @@ test("the same answer whether or not anything matches; links go only to the busi
     assert.match(m.text, /\/wholesale\/signin\?reset=[a-f0-9]{64}/);
     assert.match(m.text, /lasts an hour/);
   }
-  // The accounts email gets its own link, at that address.
-  await forgot("accounts@lune.example", "10.0.1.1");
-  assert.equal(await settle(1), 1);
-  assert.deepEqual(take()[0].to, ["accounts@lune.example"]);
+  const accounts = await forgot("accounts@lune.example", "10.0.1.1");
+  assert.equal(accounts.body.message, answers[0]);
+  assert.equal(await settle(1, 600), 0, "the billing address cannot recover the ordering sign-in");
   // Only the hash is kept.
   const rows = srv.sql("SELECT hash FROM wholesale_resets");
-  assert.ok(rows.length >= 3 && rows.every((r) => /^[a-f0-9]{64}$/.test(r.hash)));
+  assert.ok(rows.length === 2 && rows.every((r) => /^[a-f0-9]{64}$/.test(r.hash)));
 });
 
 test("the link shows who it's for, sets the password once, signs in and ends other sessions; older links stop working", async () => {
-  srv.sql("DELETE FROM wholesale_resets"); // the first test used up this hour's three emails
+  srv.sql("DELETE FROM wholesale_resets");
   const before = await login("lune.cafe", "first-password");
   assert.equal(before.status, 200);
   await forgot("lune.cafe", "10.0.2.1"); await settle(1);
@@ -107,4 +106,25 @@ test("rate limits: 5 requests an hour from one address, 3 emails an hour for one
   assert.equal((await forgot("nobody-x", "10.0.4.1")).status, 429);
   assert.deepEqual((await call("GET", "/api/wholesale/auth/contact", undefined, null)).body, { email: "sales@strangerscoffee.com" });
   assert.equal((await call("POST", "/api/wholesale/auth/forgot", { identifier: "" }, null, { "cf-connecting-ip": "10.0.5.1" })).status, 400);
+});
+
+test("changing the order address revokes a pending link even if the address is later restored", async () => {
+  srv.sql("DELETE FROM wholesale_resets");
+  take();
+  const customerSession = await login("lune.cafe", "after-the-lock-1");
+  assert.equal(customerSession.status, 200);
+  const changeEmail = async email => {
+    const { customer } = (await call("GET", "/api/wholesale/session", undefined, customerSession.cookie)).body;
+    assert.equal((await call("PUT", "/api/wholesale/account", { ifVersion: customer.version, email }, customerSession.cookie)).status, 200);
+  };
+  await forgot("lune.cafe", "10.0.5.2");
+  await settle(1);
+  const oldLink = tokenOf(take()[0]);
+  await changeEmail("current@lune.example");
+  assert.equal((await call("POST", "/api/wholesale/auth/reset", { token: oldLink, password: "unused-password-2" }, null)).status, 404);
+  await forgot("lune.cafe", "10.0.5.3");
+  await settle(1);
+  assert.deepEqual(take()[0].to, ["current@lune.example"]);
+  await changeEmail("orders@lune.example");
+  assert.equal((await call("GET", `/api/wholesale/auth/reset?token=${oldLink}`, undefined, null)).body.code, "reset_used");
 });

@@ -1,9 +1,9 @@
 // Read-only setup and public DNS checks. Provider credentials never leave the Worker.
 import { cleanEmail, senderAddress } from "./address";
-import { orderSender } from "./sender";
+import { orderSender, rotaSender } from "./sender";
 import type { Env } from "../http";
 export function emailSetup(env: Env, requestUrl: string) {
-  const senders = [orderSender(env), env.EMAIL_FROM || "Strangers Rota <rota@staffstrangerscoffee.com>"];
+  const senders = [orderSender(env), rotaSender(env)];
   const domains = [...new Set(senders.map(senderAddress).filter(Boolean).map(email=>email!.split("@")[1]))];
   const reportTo = cleanEmail(env.EMAIL_DMARC_REPORT_TO || "sales@strangerscoffee.com");
   return {
@@ -26,10 +26,23 @@ async function txt(name: string, fetcher: typeof fetch) {
   } catch { return null; }
 }
 export async function emailDns(env: Env, requestUrl: string, fetcher: typeof fetch = fetch) {
-  const setup=emailSetup(env,requestUrl);
-  return {checkedAt:Date.now(),domains:await Promise.all(setup.domains.map(async domain=>{
-    const [dmarc,dkim,spf]=await Promise.all([txt("_dmarc."+domain,fetcher),txt("resend._domainkey."+domain,fetcher),txt("send."+domain,fetcher)]);
-    const policies=dmarc?.filter(value=>/^v=DMARC1(?:;|$)/i.test(value));
-    return {domain,dmarc:dmarc===null?"unavailable":!policies?.length?"missing":policies.length!==1||!/(?:^|;)\s*p=(?:none|quarantine|reject)\s*(?:;|$)/i.test(policies[0])?"invalid":"published",dkim:dkim===null?"unavailable":dkim.some(value=>/(?:^|;)\s*p=\S+/.test(value))?"published":"not_found",bounceSpf:spf===null?"unavailable":spf.some(value=>/^v=spf1\s/.test(value))?"published":"not_found"};
-  }))};
+  const setup = emailSetup(env, requestUrl);
+  return { checkedAt: Date.now(), domains: await Promise.all(setup.domains.map(async domain => {
+    const authorization = setup.records.find(record => record.name.startsWith(`${domain}._report._dmarc.`));
+    const [dmarc, dkim, spf, report] = await Promise.all([
+      txt(`_dmarc.${domain}`, fetcher), txt(`resend._domainkey.${domain}`, fetcher), txt(`send.${domain}`, fetcher),
+      authorization ? txt(authorization.name, fetcher) : Promise.resolve(null),
+    ]);
+    const policies = dmarc?.filter(value => /^v=DMARC1(?:;|$)/i.test(value));
+    const policy = policies?.length === 1 && /(?:^|;)\s*p=(?:none|quarantine|reject)\s*(?:;|$)/i.test(policies[0]) ? policies[0] : null;
+    const reporting = policy?.match(/(?:^|;)\s*rua\s*=\s*([^;]+)/i)?.[1]?.split(",") || [];
+    const reportAddress = dmarc === null ? "unavailable" : reporting.some(value => value.trim().split("!")[0].toLowerCase() === `mailto:${setup.reportTo}`) ? "published" : "missing";
+    return {
+      domain, dmarc: dmarc === null ? "unavailable" : !policies?.length ? "missing" : policy ? "published" : "invalid",
+      dkim: dkim === null ? "unavailable" : dkim.some(value => /(?:^|;)\s*p=\S+/.test(value)) ? "published" : "not_found",
+      bounceSpf: spf === null ? "unavailable" : spf.some(value => /^v=spf1\s/.test(value)) ? "published" : "not_found",
+      reportAddress: setup.reportTo ? reportAddress : null,
+      reportAuthorization: authorization ? { name: authorization.name, status: report === null ? "unavailable" : report.some(value => /^v=DMARC1\s*(?:;|$)/i.test(value)) ? "published" : "missing" } : null,
+    };
+  })) };
 }

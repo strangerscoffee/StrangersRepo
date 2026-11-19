@@ -379,7 +379,7 @@ export async function leaveRoutes(r: RotaRequest): Promise<Response | null> {
         return json({ today: londonToday(), people });
     }
     if (route === "leave/year-end" && m === "GET") {
-        // Leave years that ended in the last four months: holiday not taken, whether every reminder went out, and
+        // Leave years that ended in the last four months: holiday not taken, which reminders were accepted, and
         // sickness (both bear on whether the law carries holiday over). Nothing carries over unless an admin says so.
         const today = londonToday(), since = addMonths(today, -4);
         const rows = (await env.DB.prepare("SELECT a.*, u.name FROM rota_leave_allowances a JOIN users u ON u.id = a.user_id WHERE u.active = 1 AND a.to_day < ? AND a.to_day >= ? ORDER BY u.name_key").bind(today, since).all<AllowanceRow & { name: string }>()).results;
@@ -393,7 +393,7 @@ export async function leaveRoutes(r: RotaRequest): Promise<Response | null> {
                 env.DB.prepare("SELECT from_day, to_day FROM rota_time_off WHERE user_id = ? AND kind = 'sick' AND status = 'approved' AND from_day <= ? AND to_day >= ?").bind(row.user_id, row.to_day, row.from_day).all<{ from_day: string; to_day: string }>(),
                 env.DB.prepare("SELECT * FROM rota_leave_allowances WHERE user_id = ? AND from_day = ?").bind(row.user_id, addDays(row.to_day, 1)).first<AllowanceRow>(),
             ]);
-            const told = notices.results.filter(n => { try { return !JSON.parse(n.data).passed; } catch { return true; } }).map(n => n.stage);
+            const told = notices.results.filter(n => { try { return JSON.parse(n.data).emailed === "accepted"; } catch { return false; } }).map(n => n.stage);
             const missing = ["three", "two", "final"].filter(s => !told.includes(s));
             const sickDays = sick.results.reduce((n, t) => n + dates(t.from_day < row.from_day ? row.from_day : t.from_day, t.to_day > row.to_day ? row.to_day : t.to_day).length, 0);
             people.push({ userId: row.user_id, name: row.name, year: { from: row.from_day, to: row.to_day }, left: b.available, reminded: told, missing, sickDays, next: next ? { from: next.from_day, carry: amount(allowanceData(next).carry), version: next.version } : null });

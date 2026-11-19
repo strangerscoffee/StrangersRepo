@@ -81,6 +81,11 @@ window.SCLeave = function createLeaveUI(c) {
     const RISK = { done: ['All planned', 'ok'], 'on-track': ['On track', 'ok'], behind: ['Behind', 'warn'], 'at-risk': ['Book soon', 'warn'], 'act-now': ['Book now', 'bad'], ended: ['Year ended', 'muted'] };
     const riskChip = r => el('span', { class: 'leave-risk ' + (RISK[r]?.[1] || 'muted'), text: RISK[r]?.[0] || r });
     const longDate = d => fmt(d, { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' });
+    const reminderEmailStatus = {
+        queued: 'Email queued', retrying: 'Email retry scheduled', accepted: 'Accepted by Resend',
+        failed: 'Email failed', unknown: 'Email acceptance unconfirmed', skipped: 'Email skipped',
+        'no address': 'No email address', 'opted out': 'Email preference off', 'email off': 'Email unavailable', yes: 'Email acceptance unconfirmed',
+    };
     // Holiday not yet booked against the leave year's deadline, and the reminders this person has had (their own only).
     function takeByPanel(t, enabled) {
         if (t.left <= 0)
@@ -88,7 +93,8 @@ window.SCLeave = function createLeaveUI(c) {
         return el('section', { class: 'panel leave-takeby ' + (RISK[t.risk]?.[1] || '') }, el('div', { class: 'row between' }, el('h2', { text: `${amount(t.left)} ${t.left === 1 ? 'day' : 'days'} still to book` }), riskChip(t.risk)),
             note(`Your leave year ends on ${longDate(t.deadline)}. Holiday not taken by then is lost, unless the law says it carries over or an admin agrees. ${enabled ? 'Request it here' : 'Ask an admin to book it'}, giving notice of twice as long as the holiday plus a day.`),
             t.nextReminder ? note(`Next reminder: ${t.nextReminder.label.toLowerCase()}, ${fmt(t.nextReminder.on, { day: 'numeric', month: 'long' })}.`) : null,
-            t.reminders.length ? el('div', { class: 'leave-reminders' }, ...t.reminders.map(r => el('span', { class: 'leave-tag', text: `${r.label} · ${new Date(r.at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'Europe/London' })}` }))) : null);
+            t.reminders.length ? el('div', { class: 'leave-reminders' }, ...t.reminders.map(r => el('span', { class: 'leave-tag',
+                text: [r.label, new Date(r.at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'Europe/London' }), reminderEmailStatus[r.emailed]].filter(Boolean).join(' · ') }))) : null);
     }
     function changeMonth(delta) { const d = new Date(month + 'T12:00:00Z'); d.setUTCMonth(d.getUTCMonth() + delta); month = d.toISOString().slice(0, 7) + '-01'; render({ animate: true }); }
     const KIND_WORD = { annual: 'holiday', unpaid: 'unpaid leave' };
@@ -335,7 +341,12 @@ window.SCLeave = function createLeaveUI(c) {
         const people = (t?.people || []).slice().sort((a, b) => order.indexOf(a.risk) - order.indexOf(b.risk) || b.left - a.left);
         if (!people.length)
             return [];
-        return [label('Holiday left to take this year'), el('div', { class: 'list glass leave-takeby-list' }, ...people.map(p => el('div', { class: 'lrow wraprow' }, el('span', { class: 't' }, el('b', { text: p.name }), el('span', { class: 's', text: p.left > 0 ? `${amount(p.left)} days to book by ${fmt(p.deadline, { day: 'numeric', month: 'short', year: 'numeric' })} · require by ${fmt(p.cutoff, { day: 'numeric', month: 'short' })}${p.reminders.length ? ` · ${p.reminders.length} reminder${p.reminders.length === 1 ? '' : 's'} sent` : ''}` : `${amount(p.takenOrPlanned)} of ${amount(p.total)} days used or booked` })), riskChip(p.risk)))),
+        return [label('Holiday left to take this year'), el('div', { class: 'list glass leave-takeby-list' }, ...people.map(p => {
+            const status = [...new Set(p.reminders.map(r => reminderEmailStatus[r.emailed]).filter(Boolean))].join(' · ');
+            const balance = p.left > 0 ? `${amount(p.left)} days to book by ${fmt(p.deadline, { day: 'numeric', month: 'short', year: 'numeric' })} · require by ${fmt(p.cutoff, { day: 'numeric', month: 'short' })}` : `${amount(p.takenOrPlanned)} of ${amount(p.total)} days used or booked`;
+            return el('div', { class: 'lrow wraprow' }, el('span', { class: 't' }, el('b', { text: p.name }), el('span', { class: 's', text: balance }),
+                status ? el('span', { class: 's', text: status }) : null), riskChip(p.risk));
+        })),
             note('“Require by” is the last comfortable day to tell someone to take their holiday: you need to give notice of twice the length of the holiday. Reminders go to staff 6 months (if behind), 3, 2 and 1 month before the year ends; the 1-month one is the formal notice that untaken holiday is lost.')];
     }
     // Leave years that have ended with holiday not taken: carry it over only where the law requires it or you agree.
@@ -343,7 +354,7 @@ window.SCLeave = function createLeaveUI(c) {
         const people = y?.people || [];
         if (!people.length)
             return [];
-        return [label('Holiday not taken last year'), el('div', { class: 'list glass' }, ...people.map(p => el('div', { class: 'lrow wraprow' }, el('span', { class: 't' }, el('b', { text: p.name }), el('span', { class: 's', text: `${amount(p.left)} days not taken by ${fmt(p.year.to, { day: 'numeric', month: 'short', year: 'numeric' })}${p.next?.carry ? ` · ${amount(p.next.carry)} carried over` : ''}` }), p.missing.length ? el('span', { class: 'leave-tag full', text: 'Not every reminder was sent: the law may carry this over' }) : null, p.sickDays >= 5 ? el('span', { class: 'leave-tag full', text: `Off sick ${p.sickDays} days: if that stopped them, it carries over` }) : null), ghost('Carry over', () => carrySheet(p))))),
+        return [label('Holiday not taken last year'), el('div', { class: 'list glass' }, ...people.map(p => el('div', { class: 'lrow wraprow' }, el('span', { class: 't' }, el('b', { text: p.name }), el('span', { class: 's', text: `${amount(p.left)} days not taken by ${fmt(p.year.to, { day: 'numeric', month: 'short', year: 'numeric' })}${p.next?.carry ? ` · ${amount(p.next.carry)} carried over` : ''}` }), p.missing.length ? el('span', { class: 'leave-tag full', text: 'Email acceptance unconfirmed for one or more reminders' }) : null, p.sickDays >= 5 ? el('span', { class: 'leave-tag full', text: `Off sick ${p.sickDays} days: if that stopped them, it carries over` }) : null), ghost('Carry over', () => carrySheet(p))))),
             note('Untaken holiday is lost at the end of the year unless the law says it carries over (for example long sickness, or the person wasn’t reminded) or you agree to it.')];
     }
     function carrySheet(p) {

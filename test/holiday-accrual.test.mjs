@@ -9,6 +9,7 @@ import { startServer, SETUP_CODE } from "./harness.mjs";
 
 let srv, mock, ADMIN, ALICE, BETH;
 const ids = {}, sent = [];
+let refuseReminder = false;
 const cookieOf = (r) => (r.headers.getSetCookie().find((c) => /^sfbb_session=[\w-]/.test(c)) || "").split(";")[0];
 async function req(method, path, body, cookie = ADMIN) {
   const r = await fetch(srv.base + path, { method, headers: { ...(body ? { "content-type": "application/json" } : {}), ...(cookie ? { cookie } : {}) }, body: body ? JSON.stringify(body) : undefined, redirect: "manual" });
@@ -39,7 +40,11 @@ before(async () => {
   mock = createServer((rq, rs) => {
     let b = "";
     rq.on("data", (d) => (b += d));
-    rq.on("end", () => { try { sent.push(JSON.parse(b)); } catch {} rs.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ id: "test-" + sent.length })); });
+    rq.on("end", () => {
+      const mail = JSON.parse(b), refused = refuseReminder && mail.to[0] === "alice@example.test";
+      sent.push({ ...mail, refused, deliveryKey: rq.headers["idempotency-key"] });
+      rs.writeHead(refused ? 503 : 200, { "content-type": "application/json" }).end(JSON.stringify({ id: "test-" + sent.length }));
+    });
   });
   await new Promise((r) => mock.listen(0, "127.0.0.1", r));
   srv = await startServer({ writeLimit: 4000, scheduled: true, vars: { RESEND_API_KEY: "re_test_key", RESEND_API_URL: `http://127.0.0.1:${mock.address().port}/emails`, SLACK_TEST_HOOKS: "1", HOLIDAY_NOW: "2031-01-02T10:00:00Z" } });
@@ -159,20 +164,28 @@ test("the daily run reminds staff once per stage, lists them for admins and reco
   await ok("POST", "requests", { kind: "annual", from: "2030-06-03", to: "2030-06-04", userId: ids.beth, approved: true, requestKey: crypto.randomUUID(), expectedCharges: pv.days });
   assert.ok(p.settings.reminders !== false, "on by default");
   const before = sent.length;
+  refuseReminder = true;
   await cron();
   for (let i = 0; i < 50 && sent.length < before + 2; i++) await new Promise((r) => setTimeout(r, 100));
   const mine = sent.slice(before);
   const toAlice = mine.filter((m) => m.to[0] === "alice@example.test"), toOwner = mine.filter((m) => m.to[0] === "owner@example.test");
   assert.equal(toAlice.length, 1);
+  assert.equal(toAlice[0].refused, true);
+  const noticeEmail = () => srv.sql(`SELECT json_extract(data,'$.emailed') AS status FROM rota_leave_notices WHERE user_id='${ids.alice}' AND year_from='2030-04-01' AND stage='three'`)[0]?.status;
+  assert.equal(noticeEmail(), "retrying", "a provider refusal does not count as an email sent");
   assert.match(toAlice[0].subject, /20 days of holiday left to book before Monday 31 March/);
   assert.match(toAlice[0].text, /twice as long as the holiday/);
   assert.equal(mine.filter((m) => m.to[0] === "beth@example.test").length, 0);
   assert.equal(toOwner.length, 1);
   assert.match(toOwner[0].text, /Alice Part: 20 days \(Three months left/);
   assert.doesNotMatch(toAlice[0].text, /Beth/);
+  refuseReminder = false;
+  srv.sql("UPDATE staff_email_outbox SET next_attempt_at=0 WHERE state='retry' AND kind='holiday'");
   await cron(); await cron();
   await new Promise((r) => setTimeout(r, 1000));
-  assert.equal(sent.length, before + 2, "once a day, once per stage");
+  assert.equal(sent.length, before + 3, "only the failed envelope is retried");
+  assert.equal(sent.at(-1).deliveryKey, toAlice[0].deliveryKey);
+  assert.equal(noticeEmail(), "accepted");
   const events = await ok("GET", "events?userId=" + ids.alice);
   assert.ok(events.events.some((e) => e.action === "holiday_reminder" && JSON.parse(e.data).stage === "three"));
   // Switching reminders off stops them (a new day would otherwise run again).

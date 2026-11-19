@@ -140,9 +140,11 @@ export async function overview(env: Env, links: { rota: string; diary: string })
   for (const c of (profiles?.results || []).filter((c) => !dismissed.has(`profile:${c.id}`))) attention.push({ dismiss: `profile:${c.id}`, tone: "info", icon: "user", title: c.text.replace(/\.$/, ""), detail: "Their new details are on their profile in People.", action: { label: "See people", go: "people" } });
   const clocks = await env.DB.prepare("SELECT id, text FROM audit_log WHERE kind = 'clock_off' AND at > ? ORDER BY at DESC LIMIT 5").bind(now - 864e5).all<{ id: number; text: string }>().catch(() => null);
   for (const c of (clocks?.results || []).filter((c) => !dismissed.has(`clock:${c.id}`))) attention.push({ dismiss: `clock:${c.id}`, tone: "warn", icon: "clock", title: c.text.split(". ")[0], detail: "The site uses the right UK time anyway. On the device: Settings → General → Date & Time → Set Automatically.", action: { label: "See activity", go: "activity" } });
-  const mailFails = await env.DB.prepare("SELECT COUNT(*) AS n, MAX(text) AS t FROM audit_log WHERE kind = 'email_failed' AND at > ?").bind(since("email_failed")).first<{ n: number; t: string }>().catch(() => null);
+  const mailFails = await env.DB.prepare(`SELECT COUNT(*) OVER() AS n, text AS t FROM audit_log
+    WHERE kind IN ('email_failed','wholesale_email_failed','email_delivery_problem') AND at > ? ORDER BY at DESC,id DESC LIMIT 1`)
+    .bind(since("email_failed")).first<{ n: number; t: string }>().catch(() => null);
   if (mailFails && mailFails.n) {
-    attention.push({ tone: "warn", icon: "warn", title: `${mailFails.n} rota email${mailFails.n === 1 ? "" : "s"} didn't send in the last day`,
+    attention.push({ tone: "warn", icon: "warn", title: `${mailFails.n} email ${mailFails.n === 1 ? "problem" : "problems"} in the last day`,
       detail: String(mailFails.t || "").slice(0, 160), action: { label: "See activity", go: "activity" }, dismiss: "email_failed" });
   }
   const slackFails = await env.DB.prepare("SELECT COUNT(*) AS n, MAX(text) AS t FROM audit_log WHERE kind = 'slack_failed' AND at > ?").bind(since("slack_failed")).first<{ n: number; t: string }>().catch(() => null);
@@ -157,7 +159,7 @@ export async function overview(env: Env, links: { rota: string; diary: string })
 
   const worked = thisW.shifts.filter((s) => s.userId);
   const round = (n: number) => Math.round(n * 10) / 10;
-  const sentToday = await env.DB.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE kind = 'email_sent' AND at > ?").bind(now - 864e5).first<{ n: number }>().catch(() => null);
+  const sentToday = await env.DB.prepare("SELECT COUNT(*) AS n FROM email_delivery_messages WHERE stream='rota' AND accepted_at>?").bind(now - 864e5).first<{ n: number }>().catch(() => null);
   const open = diaryToday.filter((s) => s.setUp && !s.closed);
   const operational = dailyOperations(today, now, thisW, diaryToday, links.rota);
   if (backups[0] && now - backups[0].at > 36 * 3600000) operational.alerts.unshift({ tone: "bad", icon: "db", title: "Nightly backup is overdue", detail: "No completed backup in the last 36 hours.", action: { label: "View backups", act: "go", id: "data" } });
@@ -179,7 +181,7 @@ export async function overview(env: Env, links: { rota: string; diary: string })
       return { id: s.id, name: s.name, hours: round(here.filter((x) => x.userId).reduce((h, x) => h + x.hours, 0)), people: new Set(here.map((x) => x.userId).filter(Boolean)).size, open: here.filter((x) => !x.userId).length, inUse: thisW.sites.find((x) => x.id === s.id)?.inUse ?? false };
     }),
     rotaPublished: thisW.published,
-    // Rota emails (src/email/): set up (the RESEND_API_KEY secret), sent in the last day, and who has an address.
+    // Rota email setup, provider acceptances in the last day, and staff with an address.
     emails: { ready: emailReady(env), sentToday: sentToday?.n ?? 0, withAddress: active.filter((u) => u.email).length, active: active.length },
   };
 }
@@ -340,7 +342,19 @@ export async function activity(env: Env, kind: string, query = new URLSearchPara
   for (const t of offs?.results || []) items.push({ kind: "rota", at: t.decided_at, text: `${t.by || "Someone"} ${t.status} ${t.who}'s time off, ${shortDate(t.from_day)}${t.to_day !== t.from_day ? `–${shortDate(t.to_day)}` : ""}`, where: "Rota" });
   for (const r of reqs?.results || []) items.push({ kind: "rota", at: r.decided_at, text: `${r.by || "Someone"} ${r.status} ${r.taker ? `${r.taker} taking` : "a request for"} a shift on ${shortDate(r.day)}`, where: `Rota · ${siteOf(r.site)?.name || r.site}` });
   for (const s of adjusted?.results || []) items.push({ kind: "rota", at: s.adjusted_at, text: `${s.by || "Someone"} amended ${s.who ? `${s.who}'s` : "a"} shift on ${shortDate(s.day)}: ${s.actual_start}–${s.actual_end}${s.adjust_note ? `, ${s.adjust_note}` : ""}`, where: `Rota · ${siteOf(s.site)?.name || s.site}` });
-  for (const l of log?.results || []) items.push({ kind: "account", at: l.at, text: l.text, where: l.kind === "backup" ? "Backups" : l.kind === "setup_copied" ? "Kitchen Diary" : l.kind.startsWith("email_") && l.kind !== "email_changed" ? "Rota emails" : l.kind === "clock_off" ? "Devices" : l.kind.startsWith("profile_") ? "Staff profiles" : "Accounts" });
+  for (const l of log?.results || []) {
+    const legacyWholesale = /^email_(sent|failed)$/.test(l.kind) && /\b(?:wholesale (?:order|invite|password reset)|(?:order confirmation|shipped email for|collected email for|standing order (?:change|skip)) WS-[A-F0-9]{32}|test new-order email)\b/i.test(l.text);
+    const where = l.kind.startsWith("wholesale_email_") || legacyWholesale ? "Wholesale emails"
+      : l.kind.startsWith("wholesale_") ? "Wholesale"
+      : l.kind === "email_delivery_problem" || l.kind === "email_tracking_failed" ? "Email delivery"
+      : l.kind.startsWith("email_") && l.kind !== "email_changed" ? "Rota emails"
+      : l.kind === "backup" ? "Backups" : l.kind === "setup_copied" ? "Kitchen Diary"
+      : l.kind === "clock_off" ? "Devices" : l.kind.startsWith("profile_") ? "Staff profiles" : "Accounts";
+    let text = l.text;
+    if (l.kind === "wholesale_preview_status") text = text.replace(/ No fulfilment action was sent\.$/, "");
+    if (l.kind === "email_sent") text = text.replace(/^Emailed (.+?): /, "Resend accepted email for $1 — ");
+    items.push({ kind: "account", at: l.at, text, where });
+  }
   // Errors: only on their own tab (they're for whoever looks after the site, not the day's activity).
   if (kind === "errors") {
     const APP: Record<string, string> = { diary: "Kitchen Diary", rota: "Rota", admin: "Admin", signin: "Staff Login", wholesale: "Strangers Wholesale", worker: "Server" };

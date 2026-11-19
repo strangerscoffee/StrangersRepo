@@ -52,7 +52,9 @@ export async function makeBackup(env: Env, by: string): Promise<BackupInfo> {
     { key: "email.messages", sql: "SELECT * FROM email_delivery_messages ORDER BY accepted_at,id" },
     { key: "email.events", sql: "SELECT id,provider_id,type,event_at,received_at,recipients,reason,ingest_id FROM email_delivery_events ORDER BY event_at,id" },
     { key: "email.suppressions", sql: "SELECT * FROM email_suppressions ORDER BY email" },
-    { key: "dispatchOutbox", sql: "SELECT event_key,order_id,payload,CASE WHEN state='sent' THEN 'sent' ELSE 'unknown' END AS state,attempts,created_at,next_attempt_at,attempted_at,first_attempt_at,NULL AS lease_until,NULL AS claim_token,CASE WHEN state='sent' THEN 0 ELSE 1 END AS uncertain,sent_at,last_error FROM wholesale_email_outbox ORDER BY created_at,event_key" },
+    { key: "dispatchOutbox", sql: "SELECT event_key,order_id,payload,CASE WHEN state IN ('sent','skipped') THEN state ELSE 'unknown' END AS state,attempts,created_at,next_attempt_at,attempted_at,first_attempt_at,NULL AS lease_until,NULL AS claim_token,CASE WHEN state IN ('sent','skipped') THEN uncertain ELSE 1 END AS uncertain,sent_at,last_error FROM wholesale_email_outbox ORDER BY created_at,event_key" },
+    { key: "staffOutbox", sql: "SELECT event_key,batch_key,scope,user_id,kind,CASE WHEN state IN ('sent','skipped','failed') THEN state ELSE 'unknown' END AS state,attempts,created_at,sent_at,last_error FROM staff_email_outbox ORDER BY created_at,event_key" },
+    { key: "weeklyEmailRun", sql: "SELECT v FROM meta WHERE k='weekly_sent'" },
     ...["rota_shifts", "rota_weeks", "rota_sites", "rota_people", "rota_time_off", "rota_requests", "rota_leave_state", "rota_leave_settings", "rota_leave_allowances", "rota_leave_days", "rota_leave_blocks", "rota_leave_events", "rota_sickness", "rota_leave_notices", "rota_contract_history", "rota_bradford_review"].map(t => ({ key: "rota:" + t, sql: `SELECT * FROM ${t}` })),
   ];
   const captured = await env.DB.batch(reads.map(read => env.DB.prepare(read.sql)));
@@ -101,8 +103,9 @@ export async function makeBackup(env: Env, by: string): Promise<BackupInfo> {
     wholesaleAnnouncement: rows("announcement"),
     wholesaleTabs: rows("tabs"),
     wholesaleEmailOutbox: rows("dispatchOutbox"),
-    emailDelivery: { messages: rows("email.messages"), events: rows("email.events"), suppressions: rows("email.suppressions") },
-    notificationRestorePolicy: "Unsent dispatch events require delivery review after restore; active leases are not restored.",
+    emailDelivery: { messages: rows("email.messages"), events: rows("email.events"), suppressions: rows("email.suppressions"),
+      staffJobs: rows("staffOutbox"), weeklyRun: rows("weeklyEmailRun")[0]?.v ?? null },
+    notificationRestorePolicy: "Review unsent dispatch and staff email records after restore. Staff job history excludes email content and active leases.",
     salesHistory: {
       settings: rows("history.settings"),
       imports: rows("history.imports"),
