@@ -43,7 +43,6 @@ const [requestedPage = '', ...segments] = location.pathname.slice(shop.length).s
 const aliases = { home: '', location: 'locations', brewguides: 'brew-guides', cart: 'basket' };
 const page = aliases[requestedPage] ?? requestedPage;
 const slug = segments[0] === 'p' ? segments[1] : segments[0];
-document.body.classList.toggle('retail-home', page === '');
 
 const menuIsOpen = () => menuToggle.getAttribute('aria-expanded') === 'true';
 
@@ -165,9 +164,10 @@ function heading(title, copy = '') {
 function card(product, index) {
   const saleable = product.variants.filter(variant => variant.available);
   const lowest = saleable.reduce((min, variant) => Math.min(min, variant.pence), Infinity);
-  return `<a class="product-card glass" href="${detailPath(product)}">
+  const titleTag = page === 'coffee' ? 'h2' : 'h3';
+  return `<a class="product-card" href="${detailPath(product)}">
     <img class="card-photo" src="${productImage(product)}" alt="" loading="${index < 3 ? 'eager' : 'lazy'}" decoding="async">
-    <div class="card-content"><p class="product-meta">${categoryNames[product.category]}</p><h3>${escape(product.title)}</h3>
+    <div class="card-content"><p class="product-meta">${categoryNames[product.category]}</p><${titleTag} class="card-title">${escape(product.title)}</${titleTag}>
       ${product.notes ? `<p class="notes">${escape(product.notes)}</p>` : ''}</div>
     <div class="card-price"><strong>${saleable.length ? `From ${price(lowest)}` : 'Sold out'}</strong><span class="card-arrow">${arrow}</span></div>
   </a>`;
@@ -216,7 +216,7 @@ function home() {
       </div>
     </div>
     <div class="product-grid editorial-rail" id="featured-rail">${products.slice(0, 3).map(card).join('')}</div>
-    <details class="directory featured-more glass"><summary>More from the coffee shelf</summary><div class="product-grid">${products.slice(3, 10).map(card).join('')}</div></details>
+    <details class="directory featured-more"><summary>More from the coffee shelf</summary><div class="product-grid">${products.slice(3, 10).map(card).join('')}</div></details>
   </section>
   <section class="home-section editorial-roastery" aria-labelledby="approach-heading">
     <div class="editorial-roastery-photo"><img src="${photo('dove-street')}" width="750" height="646" alt="Coffee pouring from the Probat roaster on Dove Street" loading="lazy" decoding="async"></div>
@@ -291,13 +291,15 @@ function catalogue(collection) {
   const search = new URLSearchParams(location.search);
   let category = !collection && categories.has(search.get('category')) ? search.get('category') : 'all';
   const collectionProducts = collection ? collection.products.map(id => products.find(product => product.slug === id)).filter(Boolean) : products;
-  main.innerHTML = `${heading(collection?.title || 'Shop coffee', collection ? '' : 'Single origins, blends and gift cards from Strangers Coffee Company.')}
-    <div class="catalogue-tools glass">
-      ${collection ? `<a class="link-text all-coffee" href="${shop}coffee/">← All coffee</a>` : `<div class="filters" role="group" aria-label="Categories">${[...categories].map(([id, name]) => `<button type="button" data-filter="${id}" aria-pressed="${id === category}">${name}</button>`).join('')}</div>`}
+  main.innerHTML = `${collection ? `<a class="editorial-link breadcrumb" href="${shop}coffee/">← All coffee</a>` : ''}
+    ${heading(collection?.title || 'Shop coffee', collection ? '' : 'Single origins, blends and gift cards from Strangers Coffee Company.')}
+    <div class="catalogue-tools">
+      ${collection ? '' : `<div class="filters" role="group" aria-label="Categories">${[...categories].map(([id, name]) => `<button type="button" data-filter="${id}" aria-pressed="${id === category}">${name}</button>`).join('')}</div>`}
       <label class="shop-search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 5 5"/></svg><input type="search" aria-label="Search coffee" placeholder="Search coffee" maxlength="100"></label>
     </div>
-    <details class="directory glass"><summary>Browse shop categories</summary><nav aria-label="All shop categories">${Object.entries(siteContent.categories).map(([id, entry]) => `<a href="${shop}coffee/${id}/"${slug === id ? ' aria-current="page"' : ''}>${escape(entry.title)}</a>`).join('')}</nav></details>
-    <p class="result-count" role="status"></p><div class="product-grid" id="products"></div>`;
+    <details class="directory"><summary>Browse shop categories</summary><nav aria-label="All shop categories">${Object.entries(siteContent.categories).map(([id, entry]) => `<a href="${shop}coffee/${id}/"${slug === id ? ' aria-current="page"' : ''}>${escape(entry.title)}</a>`).join('')}</nav></details>
+    <p class="result-count" role="status"></p>
+    <div class="product-grid" id="products"></div>`;
   const input = main.querySelector('input');
   const filters = [...main.querySelectorAll('[data-filter]')];
   input.value = (search.get('q') || '').slice(0, 100);
@@ -307,8 +309,8 @@ function catalogue(collection) {
       && `${product.title} ${product.notes} ${categoryNames[product.category]}`.toLowerCase().includes(q));
     main.querySelector('.result-count').textContent = `${shown.length} ${shown.length === 1 ? 'product' : 'products'}`;
     main.querySelector('#products').innerHTML = shown.length ? shown.map(card).join('') : collectionProducts.length
-      ? '<p class="muted">No products match. Try another search or category.</p>'
-      : `<p class="muted">There are no products in this category right now. <a class="link-text" href="${shop}coffee/">Browse all coffee</a>.</p>`;
+      ? '<p class="listing-empty shop-panel">No products match. Try another search or category.</p>'
+      : `<p class="listing-empty shop-panel">There are no products in this category right now. <a class="link-text" href="${shop}coffee/">Browse all coffee</a>.</p>`;
   }
   function saveFilters() {
     const url = new URL(location.href);
@@ -348,23 +350,34 @@ function productForm(product) {
 }
 
 function quickCard(product) {
-  return `<article class="quick-card glass" data-quick-product="${escape(product.slug)}">
+  return `<article class="quick-card" data-quick-product="${escape(product.slug)}">
     <a class="quick-link" href="${detailPath(product)}"><img class="card-photo" src="${productImage(product)}" alt="" loading="lazy"><h3>${escape(product.title)}</h3></a>
     ${productForm(product)}</article>`;
 }
 
 function productPage(product, details) {
-  document.title = `${product.title} · Strangers Coffee Company`;
-  main.innerHTML = `<p class="breadcrumb"><a class="link-text" href="${shop}coffee/">← Shop coffee</a></p>
-    <div class="detail-grid"><section class="gallery glass" aria-label="Product photos">
-      <img class="detail-photo" src="${productImage(product)}" alt="${escape(product.title)}" fetchpriority="high">
-      ${product.photos.length > 1 ? `<div class="thumbnails">${product.photos.map((name, index) => `<button type="button" data-photo="${index}" aria-label="Photo ${index + 1}" aria-pressed="${!index}"><img src="${photo(name)}" alt=""></button>`).join('')}</div>` : ''}
-    </section><div class="detail-panel glass"><p class="product-meta">${categoryNames[product.category]}</p><h1>${escape(product.title)}</h1>
-      ${product.notes ? `<p class="detail-notes">${escape(product.notes)}</p>` : ''}
-      ${product.description ? `<p class="muted">${escape(product.description)}</p>` : ''}
-      ${productForm(product)}
-      <p class="mini-detail">${product.digital ? 'Digital gift card' : 'UK delivery'} · <a class="link-text" href="${shop}shipping/">Delivery &amp; returns</a> · <a class="link-text" href="${escape(product.url)}">Buy on the live shop ${arrow}</a></p>
-    </div></div>${details ? `<section class="article-content product-story glass" aria-label="More about this product">${details}</section>` : ''}`;
+  main.innerHTML = `<a class="editorial-link breadcrumb" href="${shop}coffee/">← Shop coffee</a>
+    <div class="detail-grid">
+      <div class="detail-title">
+        <p class="product-meta">${categoryNames[product.category]}</p>
+        <h1>${escape(product.title)}</h1>
+        ${product.notes ? `<p class="detail-notes">${escape(product.notes)}</p>` : ''}
+      </div>
+      <section class="gallery" aria-label="Product photos">
+        <img class="detail-photo" src="${productImage(product)}" alt="${escape(product.title)}" fetchpriority="high">
+        ${product.photos.length > 1 ? `<div class="thumbnails">${product.photos.map((name, index) => `<button type="button" data-photo="${index}" aria-label="Photo ${index + 1}" aria-pressed="${!index}"><img src="${photo(name)}" alt=""></button>`).join('')}</div>` : ''}
+      </section>
+      <div class="detail-purchase">
+        ${product.description ? `<p class="muted">${escape(product.description)}</p>` : ''}
+        ${productForm(product)}
+        <ul class="detail-links" aria-label="Buying this product">
+          <li>${product.digital ? 'Digital gift card' : 'UK delivery'}</li>
+          <li><a class="link-text" href="${shop}shipping/">Delivery &amp; returns</a></li>
+          <li><a class="link-text" href="${escape(product.url)}">Buy on the live shop ${arrow}</a></li>
+        </ul>
+      </div>
+    </div>
+    ${details ? `<section class="article-content product-story" aria-label="More about this product">${details}</section>` : ''}`;
   const thumbnails = [...main.querySelectorAll('[data-photo]')];
   const image = main.querySelector('.detail-photo');
   for (const button of thumbnails) button.addEventListener('click', () => {
@@ -428,17 +441,25 @@ function totalsPanel() {
 }
 
 function emptyBasket(title) {
-  return `${heading(title)}<section class="prose-panel glass"><h2>Your basket is empty</h2><a class="shop-button" href="${shop}coffee/">Shop coffee</a></section>`;
+  return `${heading(title)}<section class="state-panel shop-panel"><h2>Your basket is empty</h2><a class="shop-button" href="${shop}coffee/">Shop coffee</a></section>`;
 }
 
 function basketPage() {
   if (!basket.length) { main.innerHTML = emptyBasket('Basket'); return; }
   main.innerHTML = `${heading('Basket')}
-    <div class="basket-grid"><section class="basket-list glass" aria-label="Basket items">${basket.map(line => `<article class="basket-line" data-line="${escape(line.variant)}">
-      <img src="${productImage(line.product)}" alt="" loading="lazy"><div><h2><a href="${detailPath(line.product)}">${escape(line.product.title)}</a></h2><p class="mini-detail">${escape(line.option.choices.join(' · '))}</p></div>
-      <div class="line-actions"><strong data-line-price>${price(line.option.pence * line.quantity)}</strong>${quantityControl(line.quantity, `Quantity for ${line.product.title}`)}<button class="link-button" type="button" data-remove aria-label="Remove ${escape(line.product.title)}">Remove</button></div></article>`).join('')}
-    </section><section class="summary glass" aria-label="Basket summary"><h2>Order summary</h2><div id="totals">${totalsPanel()}</div>
-      <a class="shop-button" href="${shop}checkout/">Preview checkout</a><a class="link-text" href="${shop}coffee/">Continue shopping</a></section></div>`;
+    <div class="basket-grid">
+      <section class="basket-list" aria-label="Basket items">${basket.map(line => `<article class="basket-line" data-line="${escape(line.variant)}">
+        <img src="${productImage(line.product)}" alt="" loading="lazy">
+        <div class="line-copy"><h2><a href="${detailPath(line.product)}">${escape(line.product.title)}</a></h2><p class="mini-detail">${escape(line.option.choices.join(' · '))}</p></div>
+        <strong class="line-price" data-line-price>${price(line.option.pence * line.quantity)}</strong>
+        <div class="line-actions">${quantityControl(line.quantity, `Quantity for ${line.product.title}`)}<button class="link-button" type="button" data-remove aria-label="Remove ${escape(line.product.title)}">Remove</button></div>
+      </article>`).join('')}</section>
+      <section class="summary shop-panel" aria-label="Basket summary">
+        <h2>Order summary</h2><div id="totals">${totalsPanel()}</div>
+        <a class="shop-button" href="${shop}checkout/">Preview checkout</a>
+        <a class="editorial-link" href="${shop}coffee/">Continue shopping</a>
+      </section>
+    </div>`;
   main.querySelector('.basket-list').addEventListener('click', event => {
     const button = event.target.closest('[data-step], [data-remove]');
     if (!button) return;
@@ -471,36 +492,46 @@ function basketPage() {
 
 function checkoutPage() {
   if (!basket.length) { main.innerHTML = emptyBasket('Checkout'); return; }
-  main.innerHTML = `${heading('Preview checkout', 'Try the checkout flow without placing a real order or entering payment details.')}
-    <div class="basket-grid"><section class="prose-panel glass"><h2>${totals().posted ? 'UK delivery' : 'Email delivery'}</h2>
-      <p class="muted">${totals().posted ? 'Royal Mail Tracked 48 is the standard delivery option. Your final postage is confirmed at checkout on the live shop.' : 'Online gift cards are delivered by email on the live shop.'}</p>
-      <a href="${shop}basket/" class="link-text">← Back to basket</a></section>
-      <section class="summary glass" aria-label="Order review"><h2>Review your basket</h2><ul class="checkout-lines">${basket.map(line => `<li><span>${line.quantity} × ${escape(line.product.title)}<br><small class="muted">${escape(line.option.choices.join(' · '))}</small></span><strong>${price(line.option.pence * line.quantity)}</strong></li>`).join('')}</ul>
-      ${totalsPanel()}<button class="shop-button" type="button" id="finish-preview">Complete preview checkout</button></section></div>`;
+  const { posted } = totals();
+  main.innerHTML = `<a class="editorial-link breadcrumb" href="${shop}basket/">← Back to basket</a>
+    ${heading('Preview checkout', 'Try the checkout flow without placing a real order or entering payment details.')}
+    <div class="basket-grid checkout-grid">
+      <section class="delivery-panel"><h2>${posted ? 'UK delivery' : 'Email delivery'}</h2>
+        <p>${posted ? 'Royal Mail Tracked 48 is the standard delivery option. Your final postage is confirmed at checkout on the live shop.' : 'Online gift cards are delivered by email on the live shop.'}</p>
+      </section>
+      <section class="summary shop-panel" aria-label="Order review"><h2>Review your basket</h2>
+        <ul class="checkout-lines">${basket.map(line => `<li><span>${line.quantity} × ${escape(line.product.title)}<br><small class="muted">${escape(line.option.choices.join(' · '))}</small></span><strong>${price(line.option.pence * line.quantity)}</strong></li>`).join('')}</ul>
+        ${totalsPanel()}
+        <button class="shop-button" type="button" id="finish-preview">Complete preview checkout</button>
+      </section>
+    </div>`;
   main.querySelector('#finish-preview').addEventListener('click', () => {
     if (!saveBasket([])) return;
     main.innerHTML = `${heading('Preview checkout complete')}
-      <section class="prose-panel glass"><p>No order was sent and no payment was taken. To buy coffee, visit the live Strangers shop.</p>
-      <a class="shop-button" href="${liveSite}/coffee">Visit the live shop ${arrow}</a><a class="link-text" href="${shop}coffee/">Continue exploring the preview</a></section>`;
+      <section class="state-panel shop-panel"><p>No order was sent and no payment was taken. To buy coffee, visit the live Strangers shop.</p>
+      <div class="article-actions"><a class="shop-button" href="${liveSite}/coffee">Visit the live shop ${arrow}</a><a class="editorial-link" href="${shop}coffee/">Continue exploring the preview</a></div></section>`;
+    document.title = 'Preview checkout complete · Strangers Coffee Company';
     main.focus();
   });
 }
 
 function visit() {
   return `${heading('Visit us in Norwich', 'Three places to stop for a coffee or pick up a freshly roasted bag.')}
-    <div class="info-grid">${locations.map(place => `<article class="info-card glass"><img src="${photo(place.image)}" alt="" loading="lazy">
+    <div class="info-grid">${locations.map(place => `<article class="info-card"><img src="${photo(place.image)}" alt="" loading="lazy" decoding="async">
       <div class="info-copy"><h2>${place.name}</h2><p class="muted">${place.service}</p><address>${place.address}<br>Norwich ${place.postcode}</address>
       <dl>${place.hours.map(([days, times]) => `<div><dt>${days}</dt><dd>${times}</dd></div>`).join('')}</dl>
-      <a class="link-text" href="https://www.google.com/maps/search/?api=1&amp;query=${encodeURIComponent(`${place.address}, Norwich ${place.postcode}`)}">Get directions ${arrow}</a></div></article>`).join('')}</div>`;
+      <a class="editorial-link" href="https://www.google.com/maps/search/?api=1&amp;query=${encodeURIComponent(`${place.address}, Norwich ${place.postcode}`)}">Get directions ${arrow}</a></div></article>`).join('')}</div>`;
 }
 
 const contentPages = {
-  'brew-guides': ['brewguides', 'Brew guides', 'Watch the espresso guide'],
-  about: ['about', 'About Strangers'], contact: ['contact', 'Contact us', 'Open the contact form'],
-  shipping: ['shipping', 'Delivery & returns'], 'privacy-policy': ['privacy-policy', 'Privacy policy'],
-  'terms-conditions': ['terms-conditions', 'Terms & conditions'],
-  wholesale: ['wholesale', 'Wholesale coffee', 'Get in touch about wholesale'],
-  'norwich-racing-team': ['norwich-racing-team', 'Norwich Racing Team'],
+  'brew-guides': { source: 'brewguides', title: 'Brew guides', action: 'Watch the espresso guide' },
+  about: { title: 'About Strangers', featurePhoto: true },
+  contact: { title: 'Contact us', action: 'Open the contact form' },
+  shipping: { title: 'Delivery & returns' },
+  'privacy-policy': { title: 'Privacy policy' },
+  'terms-conditions': { title: 'Terms & conditions' },
+  wholesale: { title: 'Wholesale coffee', action: 'Get in touch about wholesale', featurePhoto: true },
+  'norwich-racing-team': { title: 'Norwich Racing Team', featurePhoto: true },
 };
 
 async function loadJson(url) {
@@ -515,12 +546,31 @@ async function articleContent(key) {
 }
 
 async function contentPage(name) {
-  const [sourcePage, title, action] = contentPages[name];
-  const body = await articleContent(siteContent.pages[sourcePage]?.key);
-  const link = action ? `<a class="shop-button" href="${liveSite}/${sourcePage}">${action} ${arrow}</a>` : '';
-  const extra = name === 'wholesale' ? '<a class="link-text" href="https://strangerscoffee.trade/">Trade customer sign-in</a>'
-    : name === 'contact' ? '<a class="link-text" href="mailto:sales@strangerscoffee.com">sales@strangerscoffee.com</a>' : '';
-  main.innerHTML = `${heading(title)}<article class="article-content glass">${body}${link || extra ? `<div class="article-actions">${link}${extra}</div>` : ''}</article>`;
+  const { source = name, title, action, featurePhoto } = contentPages[name];
+  let body = await articleContent(siteContent.pages[source]?.key);
+  let leadPhoto = '';
+  if (featurePhoto) {
+    const template = document.createElement('template');
+    template.innerHTML = body;
+    const image = [...template.content.children].find(child => child.tagName === 'IMG');
+    if (image) {
+      if (name === 'about') {
+        image.src = photo('roastery');
+        image.alt = 'Coffee roasting on the Probat at the Dove Street roastery';
+      }
+      image.loading = 'eager';
+      image.remove();
+      leadPhoto = image.outerHTML;
+      body = template.innerHTML;
+    }
+  }
+  const link = action ? `<a class="shop-button" href="${liveSite}/${source}">${action} ${arrow}</a>` : '';
+  const extra = name === 'wholesale' ? '<a class="editorial-link" href="https://strangerscoffee.trade/">Trade customer sign-in</a>'
+    : name === 'contact' ? '<a class="editorial-link" href="mailto:sales@strangerscoffee.com">sales@strangerscoffee.com</a>' : '';
+  const style = { 'brew-guides': ' brewing-guide', contact: ' shop-panel' }[name] || '';
+  const article = `<article class="article-content${style}">
+    ${body}${link || extra ? `<div class="article-actions">${link}${extra}</div>` : ''}</article>`;
+  main.innerHTML = `${heading(title)}${leadPhoto ? `<div class="story-grid"><div class="story-media">${leadPhoto}</div>${article}</div>` : article}`;
 }
 
 const dateLabel = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long', timeZone: 'UTC' });
@@ -528,9 +578,11 @@ const blogDate = date => dateLabel.format(new Date(`${date}T12:00:00Z`));
 
 function blogCard(article) {
   const excerpt = article.excerpt.length > 170 ? `${article.excerpt.slice(0, 166).replace(/\s+\S*$/, '')}…` : article.excerpt;
-  return `<a class="product-card glass archive-card" href="${previewPath(article.path)}">${article.photo ? `<img class="card-photo" src="${photo(article.photo)}" alt="" loading="lazy">` : ''}
-    <div class="card-content"><time datetime="${article.date}" class="muted">${blogDate(article.date)}</time><h2>${escape(article.title)}</h2>
-    ${excerpt ? `<p class="notes">${escape(excerpt)}</p>` : ''}</div></a>`;
+  return `<a class="product-card archive-card" href="${previewPath(article.path)}">
+    ${article.photo ? `<img class="card-photo" src="${photo(article.photo)}" alt="" loading="lazy" decoding="async">` : ''}
+    <div class="card-content"><time datetime="${article.date}" class="eyebrow">${blogDate(article.date)}</time><h2>${escape(article.title)}</h2>
+    ${excerpt ? `<p class="notes">${escape(excerpt)}</p>` : ''}</div>
+    <div class="card-price"><span>Read article</span><span class="card-arrow">${arrow}</span></div></a>`;
 }
 
 async function blog() {
@@ -538,10 +590,12 @@ async function blog() {
     const original = `/blog/${segments.join('/')}`;
     const article = siteContent.posts.find(post => post.path === original);
     if (!article) { missing('Article not found', 'blog/'); return; }
-    document.title = `${article.title} · Strangers Coffee Company`;
     const body = await articleContent(article.key);
-    main.innerHTML = `<p class="breadcrumb"><a class="link-text" href="${shop}blog/">← Blog</a></p>${heading(article.title, blogDate(article.date))}
-      <article class="article-content glass">${body}<div class="article-actions"><a class="link-text" href="${liveSite + article.path}">View original post ${arrow}</a></div></article>`;
+    const articleBody = `<article class="article-content">${body}<div class="article-actions"><a class="editorial-link" href="${liveSite + article.path}">View original post ${arrow}</a></div></article>`;
+    const cover = article.photo && !body.includes(article.photo)
+      ? `<div class="story-media article-cover"><img src="${photo(article.photo)}" alt="" fetchpriority="high"></div>` : '';
+    main.innerHTML = `<a class="editorial-link breadcrumb" href="${shop}blog/">← Blog</a>${heading(article.title, blogDate(article.date))}
+      ${cover ? `<div class="story-grid">${cover}${articleBody}</div>` : articleBody}`;
     return;
   }
   const key = segments[1];
@@ -549,22 +603,28 @@ async function blog() {
   if (key && !topic) { missing('Topic not found', 'blog/'); return; }
   const entries = topic ? siteContent.posts.filter(post => topic.articles.includes(post.path)) : siteContent.posts;
   main.innerHTML = `${heading(topic ? `Blog · ${topic.title}` : 'Blog', 'Coffee releases, roastery stories and updates from Strangers.')}
-    <details class="directory glass"><summary>Browse topics</summary><nav aria-label="Blog topics"><a href="${shop}blog/">All posts</a>
+    <details class="directory"><summary>Browse topics</summary><nav aria-label="Blog topics"><a href="${shop}blog/">All posts</a>
       ${Object.entries(siteContent.tags).map(([id, tag]) => `<a href="${shop}blog/tag/${id}/"${topic === tag ? ' aria-current="page"' : ''}>${escape(tag.title)}</a>`).join('')}</nav></details>
-    <div class="product-grid">${entries.length ? entries.map(blogCard).join('') : '<p class="muted">There are no posts under this topic.</p>'}</div>`;
+    <div class="product-grid archive-grid">${entries.length ? entries.map(blogCard).join('') : '<p class="listing-empty shop-panel">There are no posts under this topic.</p>'}</div>`;
 }
 
 function missing(title, to) {
-  main.innerHTML = `${heading(title)}<a class="shop-button" href="${shop + to}">${to === 'coffee/' ? 'Browse the shop' : 'Browse the blog'}</a>`;
+  main.innerHTML = `${heading(title)}<div class="state-panel shop-panel"><a class="shop-button" href="${shop + to}">${to === 'coffee/' ? 'Browse the shop' : 'Browse the blog'}</a></div>`;
 }
 
 function information() {
-  const pages = [['locations', 'Locations'], ...Object.entries(contentPages).map(([id, [, title]]) => [id, title]), ['blog', 'Blog']];
-  return `${heading('Information')}<nav class="directory glass" aria-label="Shop and company information"><div class="directory-links">${pages.map(([id, title]) => `<a href="${shop}${id}/">${title}</a>`).join('')}</div></nav>`;
+  const titles = { locations: 'Locations', blog: 'Blog' };
+  const groups = [
+    ['Shop help', ['contact', 'shipping', 'privacy-policy', 'terms-conditions']],
+    ['Explore Strangers', ['locations', 'about', 'brew-guides', 'blog', 'wholesale', 'norwich-racing-team']],
+  ];
+  return `${heading('Information')}<nav class="information-grid" aria-label="Shop and company information">
+    ${groups.map(([label, entries]) => `<section class="information-group"><h2>${label}</h2>
+      <ul>${entries.map(id => `<li><a href="${shop}${id}/">${escape(contentPages[id]?.title ?? titles[id])}<span class="card-arrow">${arrow}</span></a></li>`).join('')}</ul></section>`).join('')}
+    </nav>`;
 }
 
 async function render() {
-  document.title = 'Strangers Coffee Company';
   if (page === 'basket') basketPage();
   else if (page === 'checkout') checkoutPage();
   else if (page === 'coffee' && slug) {
@@ -592,8 +652,8 @@ async function render() {
     }
     void refreshInstagram();
   }
-  const title = contentPages[page]?.[1] ?? ({ coffee: 'Shop coffee', basket: 'Basket', checkout: 'Checkout', locations: 'Locations', blog: 'Blog', information: 'Information' })[page];
-  if (title && !slug) document.title = `${title} · Strangers Coffee Company`;
+  const title = main.querySelector('h1')?.textContent;
+  if (page && title) document.title = `${title} · Strangers Coffee Company`;
   main.setAttribute('aria-busy', 'false');
 }
 
@@ -602,6 +662,7 @@ try {
   basket = readBasket();
   updateBadge();
   document.querySelector(`[data-nav="${escape(page)}"]`)?.setAttribute('aria-current', 'page');
+  if (page === 'basket') basketLink.setAttribute('aria-current', 'page');
   await render();
   const syncBasket = () => {
     basket = readBasket();
@@ -612,6 +673,6 @@ try {
   window.addEventListener('pageshow', event => { if (event.persisted) syncBasket(); });
   window.addEventListener('storage', event => { if (event.key === basketKey) syncBasket(); });
 } catch {
-  main.innerHTML = `${heading('The preview couldn’t load')}<a class="shop-button" href="${liveSite}/coffee">Visit the live shop ${arrow}</a>`;
+  main.innerHTML = `${heading('The preview couldn’t load')}<div class="state-panel shop-panel"><a class="shop-button" href="${liveSite}/coffee">Visit the live shop ${arrow}</a></div>`;
   main.setAttribute('aria-busy', 'false');
 }

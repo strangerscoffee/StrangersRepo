@@ -34,6 +34,10 @@ for (const [name, viewport, colorScheme] of layouts) {
       page.on('request', request => { if (new URL(request.url()).pathname.startsWith('/api/')) api.push(request.url()); });
       page.on('response', response => { if (response.status() >= 400) errors.push(`${response.status()} ${new URL(response.url()).pathname}`); });
       const layoutFits = () => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1);
+      const retailTheme = () => page.evaluate(() => ({
+        paper: getComputedStyle(document.body).backgroundColor,
+        heading: getComputedStyle(document.querySelector('main h1')).fontFamily,
+      }));
       const shot = async part => {
         if (process.env.SHOT_DIR) {
           await page.evaluate(() => Promise.all([...document.images].filter(image => image.loading !== 'lazy').map(image => image.decode().catch(() => {}))));
@@ -47,6 +51,8 @@ for (const [name, viewport, colorScheme] of layouts) {
       await page.locator('.orb-disc').waitFor();
       await page.evaluate(() => document.fonts.ready);
       assert.ok(await page.evaluate(() => document.fonts.check('400 48px "Instrument Serif"')));
+      const homeTheme = await retailTheme();
+      assert.match(homeTheme.heading, /Instrument Serif/);
       assert.ok(await layoutFits());
       await shot('home');
       const shelf = page.getByRole('region', { name: 'On the coffee shelf' });
@@ -85,17 +91,31 @@ for (const [name, viewport, colorScheme] of layouts) {
 
       if (name === 'mobile') await page.getByRole('button', { name: 'Menu', exact: true }).click();
       await page.getByRole('navigation', { name: 'Main navigation' }).getByText('Shop coffee').click();
+      await page.getByRole('heading', { level: 1, name: 'Shop coffee' }).waitFor();
+      assert.deepEqual(await retailTheme(), homeTheme);
       await page.getByRole('searchbox', { name: 'Search coffee' }).fill('cherry bomb');
       assert.equal(await page.locator('#products .product-card').count(), 1);
       await page.getByRole('link', { name: /Ethiopia Cherry Bomb/ }).click();
       await page.getByRole('heading', { name: 'Ethiopia Cherry Bomb' }).waitFor();
+      assert.deepEqual(await retailTheme(), homeTheme);
       await page.getByText('Provenance', { exact: true }).click();
       await page.getByText(/Altitude: 1900 - 2200 MASL/).waitFor();
       await page.getByRole('button', { name: 'Photo 2' }).click();
       assert.match(await page.locator('.detail-photo').getAttribute('src'), /ethiopia-cherry-bomb-detail\.webp$/);
       await page.getByRole('button', { name: 'Photo 1' }).click();
       await page.getByLabel('Bag weight').selectOption('500 g');
-      await page.getByLabel('Grind').selectOption('Espresso / Fine');
+      const grind = page.getByLabel('Grind');
+      if (name === 'mobile') {
+        await grind.selectOption('Cafetiere / Coarse');
+        assert.ok(await grind.evaluate(select => {
+          const style = getComputedStyle(select);
+          const measure = document.createElement('canvas').getContext('2d');
+          measure.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+          const width = select.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+          return measure.measureText(select.value).width <= width;
+        }), 'the full grind option fits in the picker');
+      }
+      await grind.selectOption('Espresso / Fine');
       await page.getByRole('button', { name: 'Increase quantity' }).click();
       assert.ok(await layoutFits());
       await shot('product');
@@ -111,6 +131,8 @@ for (const [name, viewport, colorScheme] of layouts) {
       await shot('basket');
       await page.getByRole('link', { name: 'Preview checkout' }).click();
       await page.getByRole('heading', { name: 'Preview checkout' }).waitFor();
+      assert.deepEqual(await retailTheme(), homeTheme);
+      assert.ok(await layoutFits());
       await page.getByRole('button', { name: 'Complete preview checkout' }).click();
       await page.getByRole('heading', { name: 'Preview checkout complete' }).waitFor();
       assert.equal(await page.getByRole('link', { name: 'Visit the live shop' }).getAttribute('href'), 'https://strangerscoffee.com/coffee');
@@ -126,19 +148,22 @@ for (const [name, viewport, colorScheme] of layouts) {
       await page.getByRole('button', { name: 'Remove Online Gift Card' }).click();
       await page.getByRole('heading', { name: 'Your basket is empty' }).waitFor();
 
-      for (const [path, title] of [['locations', 'Visit us in Norwich'], ['brew-guides', 'Brew guides'], ['about', 'About Strangers'], ['contact', 'Contact us'], ['shipping', 'Delivery & returns']]) {
+      for (const [path, title] of [
+        ['information', 'Information'], ['locations', 'Visit us in Norwich'], ['brew-guides', 'Brew guides'],
+        ['about', 'About Strangers'], ['contact', 'Contact us'], ['shipping', 'Delivery & returns'],
+        ['privacy-policy', 'Privacy policy'], ['terms-conditions', 'Terms & conditions'],
+        ['wholesale', 'Wholesale coffee'], ['norwich-racing-team', 'Norwich Racing Team'],
+        ['coffee/clothing', 'Clothing'], ['coffee/washed', 'Washed'], ['blog', 'Blog'], ['blog/tag/EK43', 'Blog · EK43'],
+      ]) {
         await page.goto(`${server.base}/shop/${path}/`);
         await page.getByRole('heading', { level: 1, name: title }).waitFor();
         assert.ok(await layoutFits(), `${path} fits the viewport`);
-      }
-      for (const [path, title] of [['privacy-policy', 'Privacy policy'], ['terms-conditions', 'Terms & conditions'], ['wholesale', 'Wholesale coffee'], ['norwich-racing-team', 'Norwich Racing Team'], ['coffee/washed', 'Washed'], ['blog/tag/EK43', 'Blog · EK43']]) {
-        await page.goto(`${server.base}/shop/${path}/`);
-        await page.getByRole('heading', { level: 1, name: title }).waitFor();
-        assert.ok(await layoutFits(), `${path} fits the viewport`);
+        assert.deepEqual(await retailTheme(), homeTheme, `${path} uses the shared retail theme`);
       }
       assert.equal(await page.locator('.archive-card').count(), 1);
       await page.locator('.archive-card').click();
       await page.locator('.article-content').waitFor();
+      assert.deepEqual(await retailTheme(), homeTheme);
       assert.deepEqual(api, []);
       assert.deepEqual(errors, []);
     } finally { await context.close(); }
