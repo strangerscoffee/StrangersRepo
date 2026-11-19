@@ -70,8 +70,15 @@ test('an unconfirmed submission keeps its dates, approval choice and original re
  try{
   const p=x.page;await p.goto(srv.base+'/rota/#leave');await p.getByRole('button',{name:'Request leave',exact:true}).click();await p.locator('#leave_kind').selectOption('unpaid');await p.locator('#leave_from').fill(day);await p.locator('#leave_to').fill(day);await p.locator('input[name=leave_approved]').check();
   await p.getByRole('button',{name:'Review request',exact:true}).click();await p.getByRole('button',{name:'Submit request',exact:true}).waitFor();
-  await p.route('**/api/rota/leave/requests',async route=>{attempts.push(route.request().postDataJSON());await route.fulfill({status:200,json:{saved:true}});});
+  const requests='**/api/rota/leave/requests';
+  await p.route(requests,async route=>{
+   if(route.request().method()!=='POST')return route.continue();
+   attempts.push(route.request().postDataJSON());
+   await route.fulfill({status:200,json:{saved:true}});
+  });
   await p.getByRole('button',{name:'Submit request',exact:true}).click();await p.getByRole('button',{name:'Check request',exact:true}).waitFor();assert.equal(await p.locator('#leave_from').isDisabled(),true);assert.equal(await p.locator('input[name=leave_approved]').isDisabled(),true);
-  await p.getByRole('button',{name:'Check request',exact:true}).click();assert.equal(attempts.length,2);assert.deepEqual(attempts[1],attempts[0]);assert.deepEqual(x.errors,[]);
+  const retried=p.waitForResponse(response=>response.url().endsWith('/api/rota/leave/requests')&&response.request().method()==='POST');
+  await p.getByRole('button',{name:'Check request',exact:true}).click();await retried;
+  assert.equal(attempts.length,2);assert.deepEqual(attempts[1],attempts[0]);assert.deepEqual(x.errors,[]);
  }finally{await x.c.close();}
 });
