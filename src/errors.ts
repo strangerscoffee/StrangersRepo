@@ -3,6 +3,9 @@
 // count, kept 30 days. Shown in Admin → Activity → Errors and, when recent, on the Overview.
 import { Env } from "./http";
 
+/** Stored as the detail of a "Couldn't load" report when the site serves that file normally: not a fault in the site. */
+export const FILE_SERVED = "File check: the site serves this file normally, so this browser didn't load it. That's usually an email system's link checker, a content blocker or a dropped signal, not a fault in the site.";
+
 export interface ErrorReport { source: "page" | "server"; app: string; page: string; message: string; detail?: string; ua?: string; who?: string | null }
 
 const clip = (v: unknown, n: number) => String(v ?? "").replace(/[\u0000-\u001f\u007f]+/g, " ").trim().slice(0, n);

@@ -4,7 +4,7 @@
 import { quarterAwaiting } from "./rota/leave/accrual";
 import { holidayStatus } from "./rota/leave/notify";
 import { audit } from "./audit";
-import { deviceOf, errorCode, whereOf } from "./errors";
+import { deviceOf, errorCode, FILE_SERVED, whereOf } from "./errors";
 import { emailReady, prefsOf, weeklySitesOf } from "./email/send";
 import { User, nameKey } from "./auth";
 import { listBackups } from "./backup";
@@ -129,7 +129,7 @@ export async function overview(env: Env, links: { rota: string; diary: string })
   for (const s of diaryToday.filter((s) => !s.setUp)) {
     attention.push({ tone: "warn", icon: "house", title: `The ${s.name} isn't set up`, detail: "It needs a diary Setup before it's counted in the diary or can have shifts.", action: { label: "Set up", go: "sites" } });
   }
-  const errs = await env.DB.prepare("SELECT COUNT(*) AS n, COALESCE(SUM(count), 0) AS times FROM errors WHERE last_at > ?").bind(since("errors")).first<{ n: number; times: number }>().catch(() => null);
+  const errs = await env.DB.prepare("SELECT COUNT(*) AS n, COALESCE(SUM(count), 0) AS times FROM errors WHERE last_at > ? AND detail <> ?").bind(since("errors"), FILE_SERVED).first<{ n: number; times: number }>().catch(() => null);
   if (errs && errs.n) {
     attention.push({ tone: "warn", icon: "warn", title: `${errs.n} error${errs.n === 1 ? "" : "s"} on the site in the last day`,
       detail: `Seen ${errs.times} time${errs.times === 1 ? "" : "s"} on staff devices or the server. See what and where.`, action: { label: "See errors", act: "errors" }, dismiss: "errors" });
@@ -356,7 +356,7 @@ export async function activity(env: Env, kind: string, query = new URLSearchPara
     const result = await env.DB.prepare(`SELECT key,source,app,page,message,detail,ua,who,first_at,last_at,count FROM errors WHERE last_at>=? AND last_at<?${match} ORDER BY last_at DESC LIMIT 120`)
       .bind(floor, until, ...(reference ? [JSON.stringify(codes)] : q ? [q] : [])).all<{key:string;source:string;app:string;page:string;message:string;detail:string;ua:string;who:string|null;first_at:number;last_at:number;count:number}>();
     for (const e of result.results) {
-      const code = errorCode(e.key), at = whereOf(e.detail), device = e.ua ? deviceOf(e.ua) : "";
+      const code = errorCode(e.key), at = e.detail === FILE_SERVED ? "" : whereOf(e.detail), device = e.ua ? deviceOf(e.ua) : "";
       // Everything needed to find and fix it, laid out to be read from a screenshot or pasted as text.
       const report = [
         `Strangers Coffee error ${code}`,
@@ -366,10 +366,10 @@ export async function activity(env: Env, kind: string, query = new URLSearchPara
         `When:   last ${uk(e.last_at)} (UK time)${e.count > 1 ? `; first ${uk(e.first_at)}; ${e.count} times` : ""}`,
         `Who:    ${[e.who || (e.source === "page" ? "signed out" : "the server"), device].filter(Boolean).join(" · ")}`,
         e.ua ? `Device: ${e.ua}` : "",
-        e.detail ? `Stack:\n${e.detail.split("\n").map((l) => "  " + l.trim()).join("\n")}` : "",
+        e.detail === FILE_SERVED ? `Note:   ${FILE_SERVED.replace(/^File check: /, "")}` : e.detail ? `${e.source === "server" ? "Detail" : "Stack"}:\n${e.detail.split("\n").map((l) => "  " + l.trim()).join("\n")}` : "",
       ].filter(Boolean).join("\n");
       items.push({ kind: "error", at: e.last_at, text: e.message, code, at_line: at,
-        where: [code, APP[e.app] || e.app, e.page, e.count > 1 ? `${e.count} times since ${shortDate(new Date(e.first_at).toISOString().slice(0, 10))}` : "", e.who || (e.source === "page" ? "signed out" : ""), device].filter(Boolean).join(" · "),
+        where: [code, APP[e.app] || e.app, e.page, e.count > 1 ? `${e.count} times since ${shortDate(new Date(e.first_at).toISOString().slice(0, 10))}` : "", e.who || (e.source === "page" ? "signed out" : ""), device, e.detail === FILE_SERVED ? "not a site fault" : ""].filter(Boolean).join(" · "),
         detail: e.detail, report } as any);
     }
   }

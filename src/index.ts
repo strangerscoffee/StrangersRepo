@@ -22,7 +22,7 @@ import { WRITE_OPS, handleDb } from "./docs";
 import { ApiError, Env, errorResponse, json, readJson } from "./http";
 import { handleRota } from "./rota";
 import { ensureSchema } from "./schema";
-import { codeFor, deviceOf, recordError } from "./errors";
+import { codeFor, deviceOf, FILE_SERVED, recordError } from "./errors";
 import { audit } from "./audit";
 import { handleUnsubscribe } from "./email/unsubscribe";
 import { notifyLive, openLive } from "./live";
@@ -98,10 +98,15 @@ export default {
     }
     if(event.cron === "*/5 * * * *"){
       ctx.waitUntil(ensureSchema(env).then(async()=>{
+        // Each job is tried again once if the database dropped out for a moment (it runs again in five minutes anyway);
+        // a failure that's left is recorded with what went wrong, so it can be fixed.
         const run = async (name: string, task: () => Promise<unknown>) => {
-          try { await task(); } catch {
-            console.error(`Scheduled task failed: ${name}`);
-            await recordError(env, { source: "server", app: "worker", page: "scheduled / five-minute jobs", message: `${name} did not complete.` });
+          try { await task(); } catch (first) {
+            let error = first;
+            if (isTransient(first)) { await new Promise((r) => setTimeout(r, 1500)); try { await task(); return; } catch (again) { error = again; } }
+            console.error(`Scheduled task failed: ${name}`, error);
+            const e = error as Error;
+            await recordError(env, { source: "server", app: "worker", page: "scheduled / five-minute jobs", message: `${name} did not complete.`, detail: [String(e?.message || e), ...(String(e?.stack || "").split("\n").slice(1, 8))].join("\n") });
           }
         };
         const domain = env.COOKIE_DOMAIN || "staffstrangerscoffee.com";
@@ -263,7 +268,16 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
     await limitWrites(req, env, ctx, who?.id);
     const b = await readJson<any>(req, 8 * 1024).catch(() => null);
     if (!b || typeof b !== "object") return new Response(null, { status: 204 });
-    const code = await recordError(env, { source: "page", app: b.app, page: b.page, message: b.message, detail: b.detail, ua: req.headers.get("user-agent") || "", who: who?.name ?? null });
+    // A file the browser couldn't load: check whether the site itself serves it (the owner's report, 19 Nov 2026).
+    // If it does, the file is fine and it was that browser (often an email system's link checker, a content blocker
+    // or a dropped signal); it's kept, marked, but doesn't flag the Admin Overview (FILE_SERVED in src/errors.ts).
+    let detail = b.detail;
+    const missing = /^Couldn't load (\/[-\w./]+)$/.exec(String(b.message || ""))?.[1];
+    if (missing && !missing.includes("..") && /\.(?:js|css|svg|png|ico|webmanifest)$/.test(missing)) {
+      const served = await env.ASSETS.fetch(new Request(new URL(missing, url))).then(async (r) => { await r.body?.cancel(); return r.ok; }).catch(() => false);
+      if (served) detail = FILE_SERVED;
+    }
+    const code = await recordError(env, { source: "page", app: b.app, page: b.page, message: b.message, detail, ua: req.headers.get("user-agent") || "", who: who?.name ?? null });
     return json({ code });
   }
 
