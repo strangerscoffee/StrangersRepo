@@ -230,14 +230,17 @@ document.addEventListener("visibilitychange",()=>{if(!document.hidden)rollDay()}
 addEventListener("pageshow",rollDay);addEventListener("focus",rollDay);
 
 /* ---------- connection: changes made offline wait on this device (claude-shim.js) ---------- */
+let recoveringDiaryConnection=false;
 window.addEventListener("diary:connection",e=>{
   const{offline,pending}=e.detail,c=$("#conn");
-  const was=!c.hidden;
-  c.hidden=!offline&&!pending;
+  if(offline)recoveringDiaryConnection=true;
+  c.hidden=!offline&&!(recoveringDiaryConnection&&pending);
   c.textContent=offline?`Offline${pending?` · ${pending} change${pending===1?"":"s"} waiting`:""}`:`Saving ${pending} change${pending===1?"":"s"}…`;
   c.title=offline?"No connection. Changes are kept on this device and save when it's back.":"";
-  if(was&&c.hidden&&!S.droppedSince)toast("Back online. All changes saved.");
-  if(c.hidden)S.droppedSince=0;
+  if(!offline&&!pending){
+    if(recoveringDiaryConnection&&!S.droppedSince)toast("Back online. All changes saved.");
+    recoveringDiaryConnection=false;S.droppedSince=0;
+  }
 });
 window.addEventListener("diary:dropped",e=>{S.droppedSince=(S.droppedSince||0)+1;toast("A change couldn't be saved: "+(e.detail.message||"refused by the diary"))});
 function renderMe(){ $("#avatarBtn").textContent=initials(S.myName); }

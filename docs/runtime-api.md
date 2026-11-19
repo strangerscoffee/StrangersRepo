@@ -66,9 +66,10 @@ them from overwriting each other:
 - **Versioned writes.** A write may carry `ifVersion`: the version it was based on. If the document has changed
   since, the Worker refuses it with **409 `conflict`** and `{path, current: {exists, data, ver}}`, instead of
   replacing a change this device hasn't seen. `ifVersion: 0` means "only if it doesn't exist yet". The shim adds
-  `ifVersion` by itself (the latest version this device has seen) to every `set` and `delete`, and to an
-  `update` that replaces a list; never to day and week pages, which only ever merge. `opts.ifVersion` overrides
-  it (`null`: no check).
+  `ifVersion` by itself (the latest version this device has seen) to ordinary replacements, deletes and updates
+  that replace a list. Day and week pages merge. Checklist edits also guard each attempt with a version, so
+  a request delayed by a connection failure cannot reapply after a newer tap. On a conflict the shim retries
+  the same checklist patch against the newer row. `opts.ifVersion` overrides the default (`null` omits the guard).
 - **Editors** (suppliers, contacts, allergens, staff training, maintenance, and anything saved with
   `multiSave`) record the version and a copy of the item when they open (`beginEdit` in `diary/core.js`) and save from
   that version (`saveEdited`). On a conflict, what this person changed is put on top of the newer version by

@@ -210,8 +210,7 @@ function patchDoc(col,id,patch,exists,base,site=S.site){
   chain=p;
   return p;
 }
-// Whether the day exists on the server: S.days may hold ticks still on their way (instantPatch in today.js).
-const patchDay=(date,p)=>patchDoc("days",date,p,!!(S.daysRaw||S.days)[date],{date});
+const patchDay=(date,p)=>patchDoc("days",date,p,!!S.days[date],{date});
 const patchWeek=(wk,p)=>patchDoc("weeks",wk,p,!!S.weeks[wk],{week:wk});
 async function save(fn){if(ro())return false;try{return (await fn())!==false}catch(e){fail(e);return false}}
 
@@ -332,17 +331,26 @@ const nameOf=id=>id===S.me?"you":(S.names[id]||(String(id||"").startsWith("web:"
 
 /* ---------- checklist helper ---------- */
 function checklist(box,checks,items,prefix,onToggle){
-  box.replaceChildren();const ctx=S.site+S.date+S.week;
-  for(const c of checks){
-    const id=`${prefix}_${c.id}`;
-    const cb=el("input",{type:"checkbox",id,disabled:ro()});cb.checked=!!items[c.id];
-    if(cb.checked&&box._ctx===ctx&&box._prev[c.id]===false)cb.classList.add("pop"); // just ticked, here or on another device
-    // Your own tick doesn't "pop" when the day redraws: that's for ticks from another device.
-    cb.addEventListener("change",()=>{if(box._prev)box._prev[c.id]=cb.checked;onToggle(c.id,cb.checked)});
-    box.append(el("li",{},el("label",{for:id},cb,el("span",{text:c.t}))));
+  const ctx=JSON.stringify([S.site,prefix==="wk"?S.week:S.date,checks.map(c=>[c.id,c.t])]);
+  const same=box._ctx===ctx;
+  box._onToggle=onToggle;
+  if(!same){
+    box.replaceChildren();box._ctx=ctx;
+    box._inputs=checks.map(c=>{
+      const id=`${prefix}_${c.id}`,cb=el("input",{type:"checkbox",id});
+      cb.addEventListener("change",()=>{cb.classList.remove("pop");box._onToggle(c.id,cb.checked)});
+      cb.addEventListener("animationend",()=>cb.classList.remove("pop"));
+      box.append(el("li",{},el("label",{for:id},cb,el("span",{text:c.t}))));
+      return cb;
+    });
+    if(!checks.length)box.append(el("li",{class:"empty",text:"No checks set up. Add them in Setup."}));
   }
-  if(!checks.length)box.append(el("li",{class:"empty",text:"No checks set up. Add them in Setup."}));
-  box._prev=Object.fromEntries(checks.map(c=>[c.id,!!items[c.id]]));box._ctx=ctx;
+  // A refresh only updates the existing input, so it can't replace the target of a tap or steal focus.
+  const disabled=ro();
+  checks.forEach((c,i)=>{
+    const cb=box._inputs[i],checked=!!items[c.id];cb.disabled=disabled;
+    if(cb.checked!==checked){cb.checked=checked;cb.classList.toggle("pop",same&&checked)}
+  });
 }
 
 /* ---------- list rows and add / edit forms ---------- */

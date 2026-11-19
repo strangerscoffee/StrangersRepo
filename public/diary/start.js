@@ -112,7 +112,7 @@ function subscribeHistory(){
   // change made offline meanwhile still shows.
   const old=S.histSubs||[];
   const subs=S.histSubs=[],{site,sub,list}=siteSubs(),n=k=>HIST[k][S.hist?1:0];
-  sub(subs,C("days",site).orderBy("date","desc").limit(n("days")),q=>{const m={};for(const d of q.docs)m[d.id]=d.data();S.daysRaw=m;S.days=withPending(m);renderDay();renderHistory();renderReview();renderTempLog();renderClosures();renderSites();inspStale()},"days");
+  sub(subs,C("days",site).orderBy("date","desc").limit(n("days")),q=>{const m={};for(const d of q.docs)m[d.id]=d.data();S.days=m;renderDay();renderHistory();renderReview();renderTempLog();renderClosures();renderSites();inspStale()},"days");
   sub(subs,C("weeks",site).orderBy("week","desc").limit(n("weeks")),q=>{const m={};for(const d of q.docs)m[d.id]=d.data();S.weeks=m;renderWeek();inspStale()},"weeks");
   list(subs,"deliveries","deliveries",()=>{renderDeliveries();inspStale()},C("deliveries",site).orderBy("at","desc").limit(n("deliveries")));
   list(subs,"proveit","prove",()=>{renderProve();renderReview();inspStale()},C("proveit",site).orderBy("at","desc").limit(n("proveit")));

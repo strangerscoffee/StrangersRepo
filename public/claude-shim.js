@@ -66,13 +66,27 @@
     call("/api/db/" + op, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   /** A write; afterwards this device knows the document's new version. */
   async function send(op, body) {
-    try {
-      const r = await api(op, body);
-      if (r && typeof r.ver === "number") seen(body.path, r.ver);
-      return r;
-    } catch (e) {
-      if (e && e.code === "conflict" && e.current) seen(body.path, e.current.ver);
-      throw e;
+    // A timed-out checkbox request might still reach the Worker. Its version guard prevents it from
+    // reapplying after its retry and newer taps. Merge the same items onto a newer row on a real conflict.
+    const guard = body.ifVersion === undefined && isChecklistEdit(op, body);
+    if (guard) body = { ...body, ifVersion: vers.get(body.path) ?? 0 };
+    for (let retries = 0; ; retries++) {
+      try {
+        const r = await api(op, body);
+        if (isPage(body.path) && (r?.ok !== true || !Number.isInteger(r.ver))) {
+          throw { code: OFFLINE, message: "The diary didn't confirm the save." };
+        }
+        if (r && typeof r.ver === "number") {
+          seen(body.path, r.ver);
+          retainPageWrite(op, body, r.ver);
+        }
+        return r;
+      } catch (e) {
+        if (e?.code !== "conflict" || !e.current) throw e;
+        seen(body.path, e.current.ver);
+        if (!guard || retries >= 4 || !e.current.exists || !(e.current.ver > body.ifVersion)) throw e;
+        body = { ...body, ifVersion: e.current.ver };
+      }
     }
   }
 
@@ -82,14 +96,19 @@
    `conflict` if another device changed it meanwhile, instead of silently overwriting that change. */
   const vers = new Map(); // path -> highest version seen
   const seen = (path, v) => { if (typeof v === "number" && v > (vers.get(path) || 0)) vers.set(path, v); };
-  // Day and week pages are only ever merged into, never replaced: no version needed.
+  // Day and week pages normally merge without a version. Checklist requests use the guard in send().
   const isPage = (path) => /(^|\/)(days|weeks)\/[^/]+$/.test(path);
+  function isChecklistEdit(op, body) {
+    if (!isPage(body.path)) return false;
+    const edit = op === "set" ? body.data : body.patch;
+    return [edit?.items, edit?.opening?.items, edit?.closing?.items].some(isObjV);
+  }
   const hasArray = (v) => Array.isArray(v) || (isObjV(v) && !("$op" in v) && Object.values(v).some(hasArray));
   function isObjV(v) { return v !== null && typeof v === "object" && !Array.isArray(v); }
   /** The version a write is based on: the page's own (opts.ifVersion), else what this device last saw, for a
    * replace, a delete, or an update that replaces a list. undefined: no check (a new document, or a merge). */
   function baseFor(op, body, opts) {
-    if (opts && opts.ifVersion !== undefined) return opts.ifVersion === null ? undefined : opts.ifVersion;
+    if (opts && opts.ifVersion !== undefined) return opts.ifVersion;
     if (isPage(body.path)) return undefined;
     if (op === "update" && !hasArray(body.patch)) return undefined;
     return vers.get(body.path);
@@ -132,29 +151,31 @@
   function retryLater() {
     retryWait = Math.min(retryWait ? retryWait * 2 : 5000, 120000);
     clearTimeout(retryTimer);
-    retryTimer = setTimeout(() => flush(), retryWait);
+    retryTimer = setTimeout(() => { retryTimer = null; flush(); }, retryWait);
   }
 
   /** Sends queued changes in order. Stops at the first that can't get through (still offline). */
   function flush() {
     if (flushing) return flushing;
+    if (!queue.length || identityInvalid || retryTimer) return;
     flushing = (async () => {
       while (queue.length && !identityInvalid) {
         const w = queue[0];
-        const ifVersion = w.after ? vers.get(w.path) : w.ifVersion;
+        const ifVersion = w.after && !isPage(w.path) ? vers.get(w.path) : w.ifVersion;
         try {
           if (w.op === "update") {
             try { await send("update", { path: w.path, patch: w.patch, ifVersion }); }
             catch (e) {
               // A day or week page that doesn't exist yet is created by merging; anything else that's gone was
               // deleted meanwhile, and stays deleted (no nameless stub brought back).
-              if (e && e.code === "not_found" && /\/(days|weeks)\/[^/]+$/.test(w.path)) await send("set", { path: w.path, data: w.patch });
-              else throw e;
+              if (e?.code !== "not_found" || !isPage(w.path)) throw e;
+              const key = parentOf(w.path).endsWith("days") ? "date" : "week";
+              await send("set", { path: w.path, data: { ...w.patch, [key]: idOf(w.path) } });
             }
           } else if (w.op === "set") await send("set", { path: w.path, data: w.data, ifVersion });
           else await send("delete", { path: w.path, ifVersion });
         } catch (e) {
-          if (e && e.code === OFFLINE) { setOffline(true); break; }
+          if (e && e.code === OFFLINE) { setOffline(true); retryLater(); break; }
           // Signed out, busy or a fault on the server: keep everything and try again later (after signing in,
           // for a session that ended). Only a change that's refused for good is dropped.
           if (e && (e.code === "unauthenticated" || e.code === "session_changed" || e.code === "session_unverified" || e.code === "rate_limited" || e.code === "internal" || e.code === "quota_exceeded" || e.retry)) {
@@ -169,6 +190,7 @@
         queue.shift();
         saveQueue();
         announce();
+        if (isPage(w.path)) redeliver();
       }
       if (!queue.length) { setOffline(false); retryWait = 0; }
       flushing = null;
@@ -177,9 +199,14 @@
     return flushing;
   }
 
-  window.addEventListener("online", () => flush());
+  window.addEventListener("online", () => {
+    clearTimeout(retryTimer);
+    retryTimer = null;
+    retryWait = 0;
+    flush();
+  });
 
-  /** A write: straight to the server, or into the queue when there's no connection (or a queue already). */
+  /** Checklist edits enter the queue immediately. Other writes can go straight to the server. */
   async function write(op, body, opts) {
     await mePromise;
     if (identityInvalid) throw { code: "session_changed", message: "The signed-in account changed. Reload to continue." };
@@ -198,7 +225,8 @@
       if (!queue.length) setOffline(false);
       refresh(); return;
     }
-    if (!queue.length) {
+    // Record checklist taps before sending anything, so a second tap can take effect while the first saves.
+    if (!queue.length && !isChecklistEdit(op, body)) {
       try {
         await send(op, body);
         setOffline(false);
@@ -206,20 +234,20 @@
         return;
       } catch (e) {
         if (!(e && e.code === OFFLINE)) { refresh(); throw e; }
+        setOffline(true);
       }
     }
     // A later change to a document already waiting is based on that earlier one, whatever its version turns out to be.
-    const after = queue.some((w) => w.path === body.path);
+    const after = !isPage(body.path) && queue.some((w) => w.path === body.path);
     const v = after ? { after: true } : ifVersion !== undefined ? { ifVersion } : {};
     queue.push(Object.assign(op === "update" ? { op, path: body.path, patch: body.patch } : op === "set" ? { op, path: body.path, data: body.data } : { op, path: body.path }, v));
     saveQueue();
-    setOffline(true);
     announce();
     redeliver();
     flush();
   }
 
-  /* ---------- applying queued changes to what the page sees ---------- */
+  /* ---------- applying local changes to what the page sees ---------- */
 
   const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
   // The server's update semantics: nested plain objects merge; everything else (null included) replaces.
@@ -240,26 +268,27 @@
   }
   const parentOf = (path) => path.slice(0, path.lastIndexOf("/"));
   const idOf = (path) => path.slice(path.lastIndexOf("/") + 1);
+  const applyWrite = (data, w) => w.op === "set" ? merge(isPage(w.path) ? data : {}, w.data) : merge(data, w.patch);
 
-  function overlay(spec, res) {
-    if (identityInvalid || !queue.length || !res || spec.kind === "summary") return res;
+  function overlay(spec, res, confirmed = []) {
+    if (identityInvalid || (!queue.length && !confirmed.length) || !res || spec.kind === "summary") return res;
+    const writes = confirmed.length ? [...confirmed, ...queue] : queue;
     if (spec.kind === "doc") {
       let exists = res.exists, data = res.data;
-      for (const w of queue) {
+      for (const w of writes) {
         if (w.path !== spec.path) continue;
-        if (w.op === "set") { exists = true; data = merge({}, w.data); }
-        else if (w.op === "update") { exists = true; data = merge(data, w.patch); }
-        else { exists = false; data = undefined; }
+        exists = w.op !== "delete";
+        data = exists ? applyWrite(data, w) : undefined;
       }
       return Object.assign({}, res, { exists, data });
     }
     let docs = (res.docs || []).slice();
-    for (const w of queue) {
+    for (const w of writes) {
       if (parentOf(w.path) !== spec.path) continue;
       const id = idOf(w.path), i = docs.findIndex((d) => d.id === id);
       if (w.op === "delete") { if (i >= 0) docs.splice(i, 1); continue; }
-      const data = w.op === "set" ? merge({}, w.data) : merge(i >= 0 ? docs[i].data : {}, w.patch);
-      if (i >= 0) docs[i] = { id, data }; else docs.push({ id, data });
+      const data = applyWrite(docs[i]?.data, w);
+      if (i >= 0) docs[i] = { ...docs[i], data }; else docs.push({ id, data });
     }
     return Object.assign({}, res, { docs: ordered(spec, docs) });
   }
@@ -305,15 +334,35 @@
   const subs = new Map();
   let nextKey = 1, seq = null, timer = null, inflight = false, again = false;
 
+  // A poll may have started before a save or queue replay finished. Keep the acknowledged edit on top of
+  // each active snapshot until that snapshot actually contains the saved version or a later one.
+  function retainPageWrite(op, body, ver) {
+    if (!isPage(body.path)) return;
+    const parent = parentOf(body.path);
+    const write = { ...body, op, ver };
+    for (const s of subs.values()) {
+      if ((s.spec.kind === "doc" && s.spec.path === body.path) || (s.spec.kind === "col" && s.spec.path === parent)) s.confirmed.push(write);
+    }
+  }
+
+  function snapshotVersion(s, path) {
+    if (s.spec.kind === "doc") return s.raw.docVer ?? s.raw.ver ?? 0;
+    return s.raw.docs.find((d) => d.id === idOf(path))?.ver ?? s.raw.ver ?? 0;
+  }
+
   function subscribe(spec, deliver, onError) {
     const key = String(nextKey++);
     // A list that replaces another of the same documents in the same order (say the latest 90 days becoming the
     // latest 400) starts from that one's copy until its own arrives, so nothing on the page goes blank meanwhile.
-    let raw;
+    let raw, confirmed = [];
     if (spec.kind !== "doc") for (const o of subs.values()) {
-      if (o.raw && o.raw.docs && o.spec.kind !== "doc" && o.spec.path === spec.path && o.spec.orderBy === spec.orderBy && o.spec.dir === spec.dir) { raw = { docs: ordered(spec, o.raw.docs) }; break; }
+      if (o.raw && o.raw.docs && o.spec.kind !== "doc" && o.spec.path === spec.path && o.spec.orderBy === spec.orderBy && o.spec.dir === spec.dir) {
+        raw = { ...o.raw, docs: ordered(spec, o.raw.docs) };
+        confirmed = o.confirmed.slice();
+        break;
+      }
     }
-    subs.set(key, { spec, deliver, onError, ver: undefined, last: undefined, raw });
+    subs.set(key, { spec, deliver, onError, ver: undefined, last: undefined, raw, confirmed });
     schedule(0);
     return () => { subs.delete(key); };
   }
@@ -330,7 +379,8 @@
 
   function deliver(s) {
     if (s.raw === undefined) return;
-    const res = overlay(s.spec, s.raw);
+    s.confirmed = s.confirmed.filter((write) => write.ver > snapshotVersion(s, write.path)).sort((a, b) => a.ver - b.ver);
+    const res = overlay(s.spec, s.raw, s.confirmed);
     const text = JSON.stringify(res);
     if (text === s.last) return; // same as last time: don't re-render
     s.last = text;
