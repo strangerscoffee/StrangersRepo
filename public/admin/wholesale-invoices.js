@@ -111,7 +111,7 @@ window.WholesaleInvoices = function ({ api, html, raw, svg, put, openSheet, clos
   // Automatic invoicing (src/autoInvoice.ts): three switches, each needing the one before, and what's waiting or recent.
   const AUTO_STATES = { pending: "Waiting", issued: "Invoiced, not sent yet", exporting: "Sending to QuickBooks", held: "Needs attention", done: "Done", skipped: "Left to do by hand" };
   function autoSwitch(id, heading, hint, on, enabled) {
-    return html`<div class="wi-auto-row"><div><h4 id="wiAuto-${id}">${heading}</h4><p class="hint">${hint}</p></div><button class="wi-switch" type="button" role="switch" aria-checked="${on ? "true" : "false"}" aria-labelledby="wiAuto-${id}" data-act="wh-invoice-auto" data-id="${id}" ${enabled ? "" : "disabled"}><span class="wi-switch-track" aria-hidden="true"><span class="wi-switch-thumb"></span></span><span class="wi-switch-label">${on ? "On" : "Off"}</span></button></div>`;
+    return html`<div class="wi-auto-row"><h4 id="wiAuto-${id}">${heading}</h4><p class="hint">${hint}</p><button class="wi-switch" type="button" role="switch" aria-checked="${on ? "true" : "false"}" aria-labelledby="wiAuto-${id}" data-act="wh-invoice-auto" data-id="${id}" ${enabled ? "" : "disabled"}><span class="wi-switch-track" aria-hidden="true"><span class="wi-switch-thumb"></span></span><span class="wi-switch-label">${on ? "On" : "Off"}</span></button></div>`;
   }
   function autoItem(item) {
     const qb = item.quickbooks, where = qb ? (qb.environment === "production" ? "QuickBooks" : "QuickBooks Sandbox") : "";
@@ -122,11 +122,11 @@ window.WholesaleInvoices = function ({ api, html, raw, svg, put, openSheet, clos
   function autoPanel(auto, config) {
     const s = auto.settings, waiting = auto.items.filter((item) => ["pending", "issued", "exporting", "held"].includes(item.state)), recent = auto.items.filter((item) => !waiting.includes(item)).slice(0, 20);
     const since = s.since ? new Date(s.since).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "Europe/London" }) : "";
-    return html`<section class="wi-auto group glass" aria-labelledby="wiAutoTitle"><h3 id="wiAutoTitle">Automatic invoicing</h3>
+    return html`<section class="wi-auto group glass" aria-labelledby="wiAutoTitle"><div class="wi-auto-head"><h3 id="wiAutoTitle">Automatic invoicing</h3><p class="hint">Invoices made, sent to QuickBooks and emailed without anyone clicking.</p></div>
       ${!config.ready ? html`<p class="wi-reasons">Finish the invoice settings first: automatic invoices use them.</p>` : ""}
-      ${autoSwitch("issue", "Invoice orders when they're dispatched", `Each customer order is invoiced when it's marked Dispatched, with its delivery charge and the default VAT rates. A tab gets one invoice for its orders when it's cleared. Your own shops ("Hide prices") aren't invoiced.${since ? ` Orders dispatched since ${since}.` : " Only orders dispatched after you switch this on."}`, s.issue, config.ready || s.issue)}
-      ${autoSwitch("quickbooks", "Send them to QuickBooks", `Missing customers and coffee items (one for each coffee and bag size, with a product number) are made in QuickBooks; ones with the same name are used.${s.quickbooks && s.enabledByName ? ` Sent as ${s.enabledByName}.` : ""}`, s.quickbooks, s.issue)}
-      ${autoSwitch("email", "QuickBooks emails each invoice", "To the business's accounts email, or its order email. While QuickBooks is on Sandbox, test emails go to your invoice email instead.", s.email, s.quickbooks)}
+      ${autoSwitch("issue", "Invoice dispatched orders", `When an order is marked Dispatched. Tabs get one invoice when cleared; your own shops aren't invoiced.${since ? ` On since ${since}.` : ""}`, s.issue, config.ready || s.issue)}
+      ${autoSwitch("quickbooks", "Send to QuickBooks", `Adds any missing customers and coffees to QuickBooks.${s.quickbooks && s.enabledByName ? ` Sent as ${s.enabledByName}.` : ""}`, s.quickbooks, s.issue)}
+      ${autoSwitch("email", "Email from QuickBooks", "To the customer's accounts email, or order email. On Sandbox, to your own invoice email.", s.email, s.quickbooks)}
       ${waiting.length ? html`<div class="label">Waiting or needs attention <span class="count">${waiting.length}</span></div><div class="wi-auto-list">${waiting.map(autoItem)}</div>` : ""}
       ${recent.length ? html`<details class="wi-auto-recent"><summary>Recent automatic invoices</summary><div class="wi-auto-list">${recent.map(autoItem)}</div></details>` : ""}
     </section>`;

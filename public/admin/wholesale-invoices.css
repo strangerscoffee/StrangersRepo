@@ -26,7 +26,7 @@
 .wi-invoice-row .end{flex-wrap:wrap;justify-content:flex-end;max-width:40%}
 @media(min-width:1024px){
  .wi-workspace:has(>.wi-setup){grid-template-columns:260px minmax(0,1fr);column-gap:20px;align-items:start}
- .wi-workspace:has(>.wi-setup)>.toolbar,.wi-workspace:has(>.wi-setup)>.wi-stats,.wi-workspace:has(>.wi-setup)>.wi-customer-switch{grid-column:1/-1}
+ .wi-workspace:has(>.wi-setup)>.toolbar,.wi-workspace:has(>.wi-setup)>.wi-stats,.wi-workspace:has(>.wi-setup)>.wi-customer-switch,.wi-workspace:has(>.wi-setup)>.wi-auto{grid-column:1/-1}
  .wi-stats .v{font-size:28px}
  .wi-records .w-empty{min-height:200px}
 }
@@ -109,19 +109,34 @@
  .wi-table-wrap{margin-inline:0}
 }
 
-/* Automatic invoicing (Invoicing page): three switches and what's waiting. */
-.wi-auto{display:grid;gap:12px;padding:16px 20px;border:1px solid var(--line);margin-top:14px}
-.wi-auto h3{margin:0;font-size:17px}
-.wi-auto-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-top:10px;border-top:1px solid var(--line)}
-.wi-auto-row>div{display:grid;gap:3px;min-width:0}
-.wi-auto-row h4{margin:0;font-size:15px}
-.wi-auto-row .hint{margin:0}
+/* Automatic invoicing (Invoicing page): a settings card like "Invoices for customers": each switch on its own row with
+   its title and switch on one line and a short explanation under the title, then what's waiting. Always full width. */
+.wi-auto{display:grid;gap:0;padding:6px 20px 16px;border:1px solid var(--line)}
+.wi-auto-head{display:grid;gap:4px;padding:12px 0 10px}
+.wi-auto-head h3{margin:0;font-size:17px}
+.wi-auto-head .hint{margin:0;padding:0}
+.wi-auto .wi-reasons{margin:4px 0 8px}
+.wi-auto-row{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"title switch" "hint switch";column-gap:20px;row-gap:3px;align-items:center;padding:14px 0;border-top:1px solid var(--line)}
+.wi-auto-row h4{grid-area:title;margin:0;font-size:15px;line-height:1.3}
+.wi-auto-row .hint{grid-area:hint;margin:0;padding:0;max-width:62ch;line-height:1.45}
+.wi-auto-row .wi-switch{grid-area:switch}
 .wi-switch[disabled]{opacity:.45;cursor:not-allowed}
-.wi-auto-list{display:grid;gap:8px}
-.wi-auto-item{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:10px 12px;border-radius:12px;background:var(--sunk)}
-.wi-auto-item .tx{display:grid;gap:2px;min-width:0;flex:1 1 220px}
-.wi-auto-item .hint{margin:0;overflow-wrap:anywhere}
+.wi-auto-row:has(.wi-switch[disabled]) h4{color:var(--muted)}
+.wi-auto .label{margin-top:14px}
+.wi-auto-list{display:grid;gap:8px;margin-top:8px}
+.wi-auto-item{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px 16px;align-items:center;padding:12px 14px;border-radius:14px;background:var(--sunk)}
+.wi-auto-item .tx{display:grid;gap:3px;min-width:0}
+.wi-auto-item .hint{margin:0;padding:0;overflow-wrap:anywhere}
+.wi-auto-item .row{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
 .wi-auto-item[data-state=held]{box-shadow:inset 3px 0 0 var(--warn)}
 .wi-auto-state{font-size:13px;color:var(--muted)}
+.wi-auto-recent{margin-top:10px}
 .wi-auto-recent summary{cursor:pointer;font-weight:600;min-height:44px;display:flex;align-items:center}
-@media (max-width:520px){.wi-auto{padding:14px}.wi-auto-row{align-items:flex-start}}
+@media (max-width:560px){
+ .wi-auto{padding:4px 16px 14px}
+ .wi-auto-row{grid-template-areas:"title switch" "hint hint";align-items:start;row-gap:6px}
+ .wi-auto-row h4{align-self:center}
+ .wi-auto-row .wi-switch-label{display:none}
+ .wi-auto-item{grid-template-columns:minmax(0,1fr)}
+ .wi-auto-item .row{justify-content:flex-start}
+}

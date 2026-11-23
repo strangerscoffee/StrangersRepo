@@ -48,7 +48,7 @@ for (const [screen, viewport, isMobile] of [["phone", { width: 390, height: 844 
     assert.ok(await sw("email").isDisabled());
     await sw("issue").click();
     await p.locator('[data-act="wh-invoice-auto"][data-id="issue"][aria-checked="true"]').waitFor();
-    assert.match(await panel.textContent(), /Orders dispatched since/);
+    assert.match(await panel.textContent(), /On since/);
     assert.ok(!(await sw("quickbooks").isDisabled()));
     await sw("quickbooks").click();
     await p.locator('[data-act="wh-invoice-auto"][data-id="quickbooks"][aria-checked="true"]').waitFor();
@@ -67,3 +67,25 @@ for (const [screen, viewport, isMobile] of [["phone", { width: 390, height: 844 
     await ctx.close();
   });
 }
+
+// With the invoice settings unfinished, Invoicing shows a set-up card beside the list on wide screens; Automatic
+// invoicing still spans the full width (it was squeezed into the narrow column).
+test("Automatic invoicing is full width while the invoice settings are unfinished", async () => {
+  srv.sql("UPDATE wholesale_invoice_settings SET data=json_set(data,'$.confirmed',json('false')) WHERE id=1");
+  try {
+    for (const scheme of ["light", "dark"]) {
+      const ctx = await b.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: scheme });
+      const [n, v] = ADMIN.split("="); await ctx.addCookies([{ name: n, value: v, url: srv.base }]);
+      const p = await ctx.newPage();
+      await p.goto(srv.base + "/admin#wholesale");
+      await selectWholesaleSection(p, "invoices");
+      await p.locator(".wi-setup").waitFor(); const panel = p.locator(".wi-auto"); await panel.waitFor();
+      const [box, page] = [await panel.boundingBox(), await p.locator(".wi-workspace").boundingBox()];
+      assert.ok(box.width > page.width * 0.9, `full width (${box.width} of ${page.width})`);
+      const title = await p.locator("#wiAuto-issue").boundingBox(), sw = await p.locator('[data-act="wh-invoice-auto"][data-id="issue"]').boundingBox();
+      assert.ok(Math.abs((title.y + title.height / 2) - (sw.y + sw.height / 2)) < 40, "the switch sits beside its title");
+      if (process.env.SHOT_DIR) { await panel.scrollIntoViewIfNeeded(); await p.screenshot({ path: `${process.env.SHOT_DIR}/auto-invoicing-unfinished-${scheme}.png` }); }
+      await ctx.close();
+    }
+  } finally { srv.sql("UPDATE wholesale_invoice_settings SET data=json_set(data,'$.confirmed',json('true')) WHERE id=1"); }
+});
