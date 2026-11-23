@@ -13,7 +13,7 @@ import { audit } from "./audit";
 import { ApiError, type Env, invalid, json, readJson } from "./http";
 import { manageWholesaleAccount, publicCustomer, wholesaleAccounts, wholesaleCustomer, paymentTermsFor, PAYMENT_TERMS, type Customer, type OrderingUser } from "./wholesaleAccounts";
 import { customerLocations, editedCustomerLocations, locationDefaults, validLocationId, type CustomerLocation } from "./wholesaleCustomers";
-import { notifyCustomerChange, standingChangeToCustomer, confirmToCustomer, prepareDispatchEmail, handleOrderEmailsAdmin, notifyNewOrder } from "./email/orders";
+import { notifyCustomerChange, standingChangeToCustomer, confirmToCustomer, prepareDispatchEmail, prepareReadyEmail, handleOrderEmailsAdmin, notifyNewOrder } from "./email/orders";
 import { DEFAULT_ORDER_EMAIL, orderEmailSettings } from "./email/orderSettings";
 import { dispatchEvent, deliverDispatchEmails } from "./email/outbox";
 import { wakeIntegration } from "./integrationSignals";
@@ -398,20 +398,24 @@ export async function updateOrderStatus(env: Env, id: string, body: Record<strin
   // The first time a customer order is marked Dispatched, the customer is emailed (shipped or collected); recorded on
   // a unique durable event so going back and forth never sends it twice.
   const firstDispatch = body.status === "Dispatched" && order.status !== "Dispatched" && order.preview === false && !order.dispatchEmailedAt;
+  // A collection order marked Ready: the customer is told it's ready to collect from the Roastery (the owner's request,
+  // 23 Nov 2026). Never for delivery orders; once per order ("ready:<id>"), however often it goes back and forth.
+  const firstReady = body.status === "Ready" && order.status !== "Ready" && order.preview === false && order.delivery !== "Delivery";
   const data: Order = { ...current, ...(schedule || {}), status: body.status, customerId, note, trackingUrl: body.trackingUrl === undefined ? order.trackingUrl || "" : trackingUrl(body.trackingUrl) };
   if (data.status === "New" || data.status === "Cancelled") delete data.packedLines;
   if (data.status === "Dispatched") { if (order.status !== "Dispatched" || !data.dispatchedAt) data.dispatchedAt = Date.now(); }
   else delete data.dispatchedAt;
   for (const key of ["dispatchDate", "standing"] as const) if (data[key] === undefined) delete data[key];
   if (!data.standing) { delete data.standingIssue; delete data.standingRetryAt; }
-  const outgoing = firstDispatch && notify ? await prepareDispatchEmail(env, { ...data, id }, notify.ordersUrl) : null;
+  const emailKind = firstDispatch ? "dispatch" : firstReady ? "ready" : null;
+  const outgoing = emailKind && notify ? await (emailKind === "ready" ? prepareReadyEmail : prepareDispatchEmail)(env, { ...data, id }, notify.ordersUrl) : null;
   let updated: Order & Versioned;
   let emailQueued = false;
   if (outgoing) {
     const at = Date.now();
     // Insert only at the reviewed version, then update that same row in one transaction.
     const results = await env.DB.batch([
-      dispatchEvent(env, id, expected, outgoing),
+      dispatchEvent(env, id, expected, outgoing, emailKind!),
       env.DB.prepare("UPDATE wholesale_preview SET data=?,version=version+1,updated_at=? WHERE kind='order' AND id=? AND version=?").bind(JSON.stringify(data), at, id, expected),
     ]);
     if (!results[1].meta.changes) throw new ApiError(409, "conflict", "This order changed on another device. Reload it before saving.");
@@ -420,8 +424,9 @@ export async function updateOrderStatus(env: Env, id: string, body: Record<strin
   } else updated = await save(env, "order", id, data, expected);
   await audit(env, order.preview === false ? "wholesale_order_status" : "wholesale_preview_status", actor,
     `${actor} marked ${order.preview === false ? "wholesale" : "staff preview"} order ${id} as ${body.status}.${emailQueued ? " Customer email queued." : ""}`);
-  if (body.status === "Dispatched" && notify) {
-    const delivery = wakeIntegration(env.DISPATCH_EMAIL_QUEUE, { key: "dispatch:" + id }, () => deliverDispatchEmails(env, "dispatch:" + id)).catch(() => {});
+  if ((body.status === "Dispatched" || emailQueued && emailKind === "ready") && notify) {
+    const key = (body.status === "Dispatched" ? "dispatch:" : "ready:") + id;
+    const delivery = wakeIntegration(env.DISPATCH_EMAIL_QUEUE, { key }, () => deliverDispatchEmails(env, key)).catch(() => {});
     if (notify.ctx) notify.ctx.waitUntil(delivery); else await delivery;
   }
   // A standing run that went out (or was skipped) makes the next one, which also records it on this order.

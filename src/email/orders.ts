@@ -189,6 +189,48 @@ ${order.lines.map((l) => `<tr><td style="${cell}font-weight:700;width:40px;">${l
   return { subject, html, text };
 }
 
+/** A collection order marked Ready: ready to collect from the Roastery. Bags only, no prices. */
+export function buildReadyEmail(order: MailOrder, ordersUrl: string) {
+  const place = order.locationSnapshot || order.customerSnapshot || {};
+  const customer = order.customerSnapshot || {};
+  const bags = order.lines.reduce((t, l) => t + l.quantity, 0);
+  const hello = (place.contact || customer.contact || "").split(/\s+/)[0];
+  const ref = order.id.slice(0, 11);
+  const subject = `Ready to collect: your Strangers Coffee order (${ref})`;
+  const headline = "Your order is ready to collect";
+  const lead = `Your order of ${bags} ${bags === 1 ? "bag" : "bags"} is packed and ready to collect from the Strangers Roastery, 10 Dove Street, Norwich NR2 1DE.`;
+  const lineText = (l: Line) => `${l.quantity} × ${l.title}, ${packName[l.pack] || l.packLabel || l.pack}, ${l.grindLabel || ""}${l.decaf ? ", decaf" : ""}`;
+  const text = [
+    hello ? `Hi ${hello},` : "Hello,", "", "READY TO COLLECT", lead, "Pop in during our opening hours.", "",
+    `Order ${order.id}${order.reference ? ` · your reference ${order.reference}` : ""}`, ...order.lines.map(lineText), "",
+    "If you have any questions, just reply to this email.", "", `See your orders: ${ordersUrl}`, "", "Strangers Coffee",
+  ].join("\n");
+  const cell = "padding:7px 10px;border-bottom:1px solid #e3e6eb;text-align:left;vertical-align:top;font-size:14px;";
+  const html = `<!doctype html><html><body style="margin:0;background:#f4f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#14181f;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f5f7;padding:20px 0;"><tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:620px;background:#fff;border-radius:14px;border:1px solid #e3e6eb;">
+<tr><td style="padding:22px 24px 6px;"><div style="font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#5d6675;">Strangers Coffee · Wholesale</div>
+<div style="display:inline-block;margin:12px 0 4px;padding:6px 12px;border-radius:999px;background:#fff4dc;color:#8a5300;font-size:13px;font-weight:700;letter-spacing:.02em;">&#128230; Ready to collect</div>
+<h1 style="margin:6px 0 6px;font-size:22px;line-height:1.25;">${esc(headline)}</h1>
+<p style="margin:0;font-size:15px;line-height:1.5;">${hello ? `Hi ${esc(hello)}, ` : ""}${esc(lead)} Pop in during our opening hours.</p></td></tr>
+<tr><td style="padding:16px 24px 0;font-size:13px;color:#5d6675;">Order ${esc(order.id)}${order.reference ? ` · your reference ${esc(order.reference)}` : ""}</td></tr>
+<tr><td style="padding:6px 24px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
+${order.lines.map((l) => `<tr><td style="${cell}font-weight:700;width:40px;">${l.quantity}</td><td style="${cell}">${esc(l.title)}${l.decaf ? " (decaf)" : ""}</td><td style="${cell}white-space:nowrap;">${esc(packName[l.pack] || l.packLabel || l.pack)}</td><td style="${cell}">${esc(l.grindLabel || "")}</td></tr>`).join("")}
+</table></td></tr>
+<tr><td style="padding:14px 24px 0;font-size:14px;line-height:1.5;">If you have any questions, just reply to this email.</td></tr>
+<tr><td style="padding:16px 24px 22px;"><a href="${esc(ordersUrl)}" style="color:#0062cc;font-weight:600;text-decoration:none;">See your orders</a></td></tr>
+</table><div style="font-size:12px;color:#5d6675;padding:12px;">Strangers Coffee · 10 Dove Street, Norwich NR2 1DE.</div></td></tr></table></body></html>`;
+  return { subject, html, text };
+}
+
+export async function prepareReadyEmail(env: Env, order: MailOrder, ordersUrl: string): Promise<Outgoing | null> {
+  if (!emailReady(env) || order.delivery === "Delivery") return null;
+  const [settings, email] = await Promise.all([orderEmailSettings(env), orderEmailAddress(env, order.customerId)]);
+  if (!settings.confirmCustomers || !email) return null;
+  const mail = buildReadyEmail(order, ordersUrl), name = order.business || "a wholesale customer";
+  return { to: { id: "customer", name, email, email_prefs: "{}", active: 1 }, kind: "order", mail, about: `ready to collect email for ${order.id} to ${name}`, from: FROM(env), replyTo: settings.to[0] || DEFAULT_ORDER_EMAIL };
+}
+
 /** Freeze a dispatch notification before committing its durable event with the status change. */
 export async function prepareDispatchEmail(env: Env, order: MailOrder, ordersUrl: string): Promise<Outgoing | null> {
   if (!emailReady(env)) return null;

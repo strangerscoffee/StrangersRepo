@@ -935,3 +935,14 @@ html[data-sc-staff] .sheet:has(.w-section-list){width:min(480px,100%);padding:7p
 }
 .card .hint{overflow-wrap:anywhere}
 .kv .addr{white-space:pre-line;overflow-wrap:anywhere}
+
+/* Hide figures (Insights and Invoicing): one tap blurs money, sales, names and charts on screen for when someone's
+   looking. Headings, buttons and form controls stay readable so the page can still be used. */
+.w-privacy-toggle{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.w-privacy-toggle[aria-pressed=true]{background:var(--tint);color:var(--accent)}
+html[data-hide-figures] .w-sensitive :is(td,dd,output,canvas,svg:not(.i),.num,.pill):not(:has(button,a,input,select,textarea)):not(thead *,thead),
+html[data-hide-figures] .w-sensitive :is(p,li,strong,b,small,span,em,div,a:not(.btn)):not(:has(*:not(br,svg.i,svg.i *))):not(:empty):not(:is(button,label,summary,h1,h2,h3,h4,legend,.hint,.w-privacy-toggle,.btn,.seg,.toolbar) *):not(.hint,.btn,h1,h2,h3,h4){filter:blur(7px);user-select:none;-webkit-user-select:none}
+html[data-hide-figures] .w-sensitive :is(tbody th,tfoot td,.link,.ins-customer h3,.ins-plot,.ins-spark,button.item .tx>*,button.item .end>*){filter:blur(7px);user-select:none;-webkit-user-select:none}
+html[data-hide-figures] .w-sensitive :is(h2,h3) :is(.num,small){filter:blur(7px)}
+@media (prefers-reduced-motion:no-preference){.w-sensitive :is(td,dd,p,li,strong,b,small,span,div,svg,canvas,.num,.pill){transition:filter .18s ease}}
+@media print{html[data-hide-figures] .w-sensitive *{filter:none!important}}

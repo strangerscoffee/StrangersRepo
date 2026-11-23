@@ -206,9 +206,11 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     if (current !== sequence) return html``;
     data = snapshot;
     onNavigationChange();
-    return html`<div class="w-workspace w-operations">${head(section === "orders" ? wideOrders.matches ? "Wholesale orders" : "Wholesale" : sections.find(([id]) => id === section)[1])}
+    const sensitive = section === "insights" || section === "invoices";
+    document.documentElement.toggleAttribute("data-w-sensitive", sensitive);
+    return html`<div class="w-workspace w-operations">${head(section === "orders" ? wideOrders.matches ? "Wholesale orders" : "Wholesale" : sections.find(([id]) => id === section)[1], "", sensitive ? privacyToggle() : undefined)}
       <div id="wSectionsHost" class="w-sections-host" hidden></div>
-      <div class="w-content">${section === "orders" ? orders() : section === "customers" ? customers() : section === "invoices" ? await invoiceUI.view() : section === "insights" ? await insightsUI.view() : section === "tabs" ? await tabsUI.view() : catalogue()}</div></div>`;
+      <div class="w-content${sensitive ? " w-sensitive" : ""}">${section === "orders" ? orders() : section === "customers" ? customers() : section === "invoices" ? await invoiceUI.view() : section === "insights" ? await insightsUI.view() : section === "tabs" ? await tabsUI.view() : catalogue()}</div></div>`;
   }
 
   function more(kind) {
@@ -240,6 +242,31 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
       html`${more("orders")}<p class="hint">Coffee subtotals are saved with each order. Delivery and invoicing are managed separately.</p>`, html`<button class="btn sm soft w-expand-queue" type="button" data-act="wh-full-queue" aria-pressed="${hideOrderPreview}">${hideOrderPreview ? "Show preview" : "Full width"}</button><a class="btn sm w-new-order" href="${(data.links?.diary || "").replace(/\/$/, "")}/orders#new"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>New order</a> <details class="w-order-settings"><summary class="btn sm soft">Order settings${svg("chev")}</summary><div class="w-order-settings-actions"><button class="btn sm soft w-alerts-button" type="button" data-act="wh-announcement"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1zM15.5 8.5a5 5 0 0 1 0 7"/></svg>Announcement</button> <button class="btn sm soft w-alerts-button" type="button" data-act="wh-order-emails"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>Order alerts</button></div></details>`);
     return html`${wideOrders.matches ? html`<div class="w-order-controls glass">${tools}</div>` : ""}<div class="w-order-layout ${picking ? "is-picking" : ""} ${hideOrderPreview ? "w-queue-expanded" : ""}">${list}<div class="w-order-preview" id="wOrderPreview" ${hideOrderPreview ? raw("hidden") : ""}>${orderPreview()}</div></div>`;
   }
+  // Hide figures (the owner's request, 23 Nov 2026): on Insights and Invoicing, one tap blurs sales, money, customer
+  // names and charts on screen, for when someone's looking at the display. On this device only (localStorage
+  // sc.admin.hideFigures), a screen shield rather than security: the data is still in the page.
+  const figuresHidden = () => { try { return localStorage.getItem("sc.admin.hideFigures") === "1"; } catch { return false; } };
+  document.documentElement.toggleAttribute("data-hide-figures", figuresHidden());
+  function privacyToggle() {
+    const on = figuresHidden();
+    return html`<button class="btn soft w-privacy-toggle" type="button" data-act="wh-privacy" aria-pressed="${on ? "true" : "false"}" title="Blur figures on screen (H)">${raw(on
+      ? '<svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c6 0 10 7 10 7a17 17 0 0 1-3.2 3.9M6.6 6.6C3.8 8.4 2 12 2 12s4 7 10 7a9.7 9.7 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>'
+      : '<svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>')}<span>${on ? "Figures hidden" : "Hide figures"}</span></button>`;
+  }
+  function setFiguresHidden(on) {
+    try { if (on) localStorage.setItem("sc.admin.hideFigures", "1"); else localStorage.removeItem("sc.admin.hideFigures"); } catch {}
+    document.documentElement.toggleAttribute("data-hide-figures", on);
+    for (const button of document.querySelectorAll('[data-act="wh-privacy"]')) { const next = document.createElement("div"); put(next, privacyToggle()); button.replaceWith(next.firstElementChild); }
+    $('[data-act="wh-privacy"]')?.focus({ preventScroll: true });
+    toast(on ? "Figures hidden on this screen" : "Figures shown");
+  }
+  // "H" switches it too (not while typing).
+  document.addEventListener("keydown", (event) => {
+    if (event.key.toLowerCase() !== "h" || event.metaKey || event.ctrlKey || event.altKey || !document.documentElement.hasAttribute("data-w-sensitive")) return;
+    if (event.target.closest?.("input,textarea,select,[contenteditable]")) return;
+    if (!document.querySelector('[data-act="wh-privacy"]')) return;
+    event.preventDefault(); setFiguresHidden(!figuresHidden());
+  });
   function orderColumns() {
     const arrow = (up, down) => orderSort === up ? " ↑" : orderSort === down ? " ↓" : "";
     return html`<div class="w-order-columns"><span>Customer</span><button type="button" data-act="wh-sort" data-id="ordered" aria-label="Sort by order date${orderSort.startsWith("ordered") ? orderSort === "ordered" ? ", currently newest first" : ", currently oldest first" : ""}">Ordered${arrow("ordered-asc","ordered")}</button><button type="button" data-act="wh-sort" data-id="dispatch" aria-label="Sort by dispatch date${orderSort.startsWith("dispatch") ? orderSort === "dispatch" ? ", currently earliest first" : ", currently latest first" : ""}">Dispatch${arrow("dispatch","dispatch-desc")}</button><span class="w-order-method">Fulfilment</span><button type="button" data-act="wh-sort" data-id="bags" aria-label="Sort by bag count${orderSort.startsWith("bags") ? orderSort === "bags-asc" ? ", currently fewest first" : ", currently most first" : ""}">Bags${arrow("bags-asc","bags")}</button><span class="w-order-weight">Weight</span><span>Total</span><span>Status</span></div>`;
@@ -360,7 +387,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
       ${settings.sending ? "" : html`<p class="err">Email isn’t set up on this site yet, so nothing will be sent.</p>`}
       <form id="wOrderEmailsForm" class="w-order-emails" novalidate><div class="checks"><label><input id="wOrderEmailsOn" type="checkbox" ${(retained?.enabled ?? settings.enabled) ? raw("checked") : ""}>Email new orders</label></div>
       <label class="field"><span class="fl">Send to</span><textarea id="wOrderEmailsTo" rows="3" autocapitalize="none" spellcheck="false" aria-describedby="wOrderEmailsHint">${retained?.toText ?? settings.to.join("\n")}</textarea></label><p class="hint" id="wOrderEmailsHint">One address per line, up to 5.</p>
-      <h3>Customers</h3><div class="checks"><label><input id="wConfirmCustomers" type="checkbox" ${(retained?.confirmCustomers ?? settings.confirmCustomers !== false) ? raw("checked") : ""}>Email customers about their orders</label></div>
+      <h3>Customers</h3><div class="checks"><label><input id="wConfirmCustomers" type="checkbox" ${(retained?.confirmCustomers ?? settings.confirmCustomers !== false) ? raw("checked") : ""}>Email customers about their orders</label></div><p class="hint">When an order is placed, when a collection is ready to collect, and when it's shipped or collected.</p>
       <p class="hint">The business’s current order email receives the confirmation and the shipping or collection notice. It also receives changes Strangers makes to standing orders. Replies come to the first address above.</p>
       <p class="err" id="wOrderEmailsErr" role="alert" hidden></p></form>
       <div class="row w-actions"><button class="btn soft" type="button" data-sheet="test" ${settings.sending ? "" : raw("disabled")}>Send a test email</button><button class="btn" type="button" data-sheet="save">Save</button></div>
@@ -1371,6 +1398,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
       if (name === "wh-standing-review") { selectSection("orders"); query = id; status = "all"; orderQueue = ""; await reload(); editOrder(id); return; }
       if (name === "wh-queue") { clearTimeout(timer); orderQueue = ["prepare", "ready"].includes(id) ? id : ""; status = id === "open" ? "open" : "all"; orderPages = 1; previewOrder = packingOrder = ""; await reload(); return; }
       if (name === "wh-review-queue") { $("#wStandingIssues")?.scrollIntoView({ block: "center" }); $("#wStandingIssues button")?.focus({ preventScroll: true }); return; }
+      if (name === "wh-privacy") { setFiguresHidden(!figuresHidden()); return; }
       if (name === "wh-full-queue") { hideOrderPreview = !hideOrderPreview; drawOrderPreview(); return; }
       if (name === "wh-dispatch-scope" && ["all","today","upcoming"].includes(id)) {
         dispatchScope = id; packingOrder = ""; orderPages = 1; await reload(); $("#wDispatchScope")?.focus({ preventScroll:true }); return;

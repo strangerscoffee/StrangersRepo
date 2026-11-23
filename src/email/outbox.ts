@@ -11,10 +11,12 @@ interface Row { event_key: string; order_id: string; payload: string; state: str
 type DispatchMail = Outgoing & { deliveryKey?: string };
 
 /** Insert BEFORE the guarded order update in the same D1 batch. A failed update cannot strand an event. */
-export function dispatchEvent(env: Env, id: string, reviewedVersion: number, outgoing: Outgoing) {
+/** An order email queued with its status change: "dispatch:<id>" (shipped or collected) or "ready:<id>" (a collection
+ *  order is ready to collect). Each is sent at most once per order. */
+export function dispatchEvent(env: Env, id: string, reviewedVersion: number, outgoing: Outgoing, kind: "dispatch" | "ready" = "dispatch") {
   const now = Date.now();
   return env.DB.prepare("INSERT OR IGNORE INTO wholesale_email_outbox(event_key,order_id,payload,state,attempts,created_at,next_attempt_at) SELECT ?,?,?,'queued',0,?,? WHERE EXISTS(SELECT 1 FROM wholesale_preview WHERE kind='order' AND id=? AND version=? AND json_extract(data,'$.deletedAt') IS NULL)")
-    .bind("dispatch:" + id, id, JSON.stringify(outgoing), now, now, id, reviewedVersion);
+    .bind(kind + ":" + id, id, JSON.stringify(outgoing), now, now, id, reviewedVersion);
 }
 
 async function reviewExpiredDispatchClaims(env: Env) {
@@ -46,12 +48,16 @@ export async function deliverDispatchEmails(env: Env, eventKey?: string) {
       } else {
         const order = await get<{ status: string; customerId?: string | null; preview?: boolean; deletedAt?: number }>(env, "order", row.order_id);
         const [settings, email] = await Promise.all([orderEmailSettings(env), orderEmailAddress(env, order?.customerId)]);
-        const reason = !order || order.status !== "Dispatched" || order.preview !== false || order.deletedAt != null
+        // A ready-to-collect email only goes while the order is still Ready (and still a collection).
+        const ready = row.event_key.startsWith("ready:");
+        const reason = ready && (!order || order.status !== "Ready" || order.preview !== false || order.deletedAt != null || (order as { delivery?: string }).delivery === "Delivery")
+          ? "the order is no longer ready to collect"
+          : !ready && (!order || order.status !== "Dispatched" || order.preview !== false || order.deletedAt != null)
           ? "the order is no longer dispatched" : !settings.confirmCustomers ? "customer emails are switched off" : !email ? "the business has no order email" : "";
         if (reason) {
           await env.DB.prepare("UPDATE wholesale_email_outbox SET state='skipped',lease_until=NULL,claim_token=NULL,uncertain=?,last_error=? WHERE event_key=? AND claim_token=?")
             .bind(row.uncertain, reason, row.event_key, token).run();
-          await audit(env, "wholesale_email_skipped", null, `Dispatch email for ${row.order_id} skipped because ${reason}.${row.uncertain ? " The previous attempt may have reached the recipient." : ""}`);
+          await audit(env, "wholesale_email_skipped", null, `${ready ? "Ready to collect" : "Dispatch"} email for ${row.order_id} skipped because ${reason}.${row.uncertain ? " The previous attempt may have reached the recipient." : ""}`);
           continue;
         }
         if (email && payload.to.email !== email) {

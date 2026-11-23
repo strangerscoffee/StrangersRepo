@@ -271,3 +271,42 @@ test("queued dispatches stop when the order is cancelled or customer mail is tur
     assert.equal(await settle(1, 500), 0);
   }
 });
+
+// A collection order marked Ready: the customer hears it's ready to collect from the Roastery, once; never for delivery
+// orders (the owner's request, 23 Nov 2026).
+test("a collection order marked ready emails the customer that it's ready to collect; delivery orders don't", async () => {
+  await customerEmails(true);
+  const latest = async (id) => (await call("GET", `/api/wholesale/orders/${id}`)).body.order;
+  const { order: pickup } = await place({ delivery: "Roastery collection" }); await settle(1); take();
+  let o = await orderStatus(await latest(pickup.id), "Preparing");
+  assert.equal(await settle(1, 1000), 0, "nothing while preparing");
+  // From the staff orders page, as the packers do.
+  let r = await call("PATCH", `/api/staff-orders/orders/${o.id}`, { ifVersion: o.version, status: "Ready", note: "", trackingUrl: "" });
+  assert.equal(r.status, 200, r.text);
+  assert.equal(await settle(1), 1);
+  const [ready] = take();
+  assert.deepEqual(ready.to, [(await call("GET", "/api/wholesale/session", undefined, A)).body.customer.email]);
+  assert.equal(ready.reply_to, "sales@strangerscoffee.com");
+  assert.match(ready.subject, /^Ready to collect: your Strangers Coffee order/);
+  assert.match(ready.text, /READY TO COLLECT/); assert.match(ready.text, /10 Dove Street/);
+  assert.match(ready.html, /Your order is ready to collect/);
+  assert.doesNotMatch(ready.text + ready.html, /£/, "no prices");
+  await until(() => srv.sql(`SELECT state FROM wholesale_email_outbox WHERE event_key='ready:${o.id}'`)[0]?.state === "sent");
+  // Back to Preparing and Ready again: not sent twice. Collected later: the usual collected email.
+  o = await orderStatus(await latest(o.id), "Preparing"); o = await orderStatus(o, "Ready");
+  assert.equal(await settle(1, 1200), 0, "only once");
+  await orderStatus(o, "Dispatched");
+  assert.equal(await settle(1), 1); assert.match(take()[0].subject, /^Collected:/);
+
+  // Delivery orders: nothing when ready.
+  const { order: shipped } = await place({ delivery: "Delivery" }); await settle(1); take();
+  await orderStatus(await latest(shipped.id), "Ready");
+  assert.equal(await settle(1, 1200), 0, "no ready email for delivery");
+  assert.equal(srv.sql(`SELECT COUNT(*) AS n FROM wholesale_email_outbox WHERE event_key='ready:${shipped.id}'`)[0].n, 0);
+
+  // Switched off: nothing.
+  await customerEmails(false);
+  const { order: quiet } = await place({ delivery: "Roastery collection" });
+  await orderStatus(await latest(quiet.id), "Ready");
+  assert.equal(await settle(1, 1200), 0);
+});
