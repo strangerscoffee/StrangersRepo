@@ -176,8 +176,12 @@ test('team calendar shows approved holiday names and blackout labels, never priv
         // Phones open on Days; the month grid is one tap away.
         await s.locator('.leave-views button', { hasText: 'Month' }).click();
         await s.locator('.leave-calendar').waitFor();
-        for (let i = 0; i < 2 && !await s.locator('[data-leave-day="' + blocked + '"]').count(); i++)
+        // Each month loads before it's drawn: wait for it, so a quick second tap can't skip past the month wanted.
+        for (let i = 0; i < 2 && !await s.locator('[data-leave-day="' + blocked + '"]').count(); i++) {
+            const first = await s.locator('[data-leave-day]').first().getAttribute('data-leave-day');
             await s.getByRole('button', { name: 'Next month', exact: true }).click();
+            await s.waitForFunction((was) => document.querySelector('[data-leave-day]')?.dataset.leaveDay !== was, first);
+        }
         const holidayCell=s.locator('[data-leave-day="'+holiday+'"]');
         assert.ok((await holidayCell.getAttribute('aria-label')).includes(a.name));
         await holidayCell.click();
