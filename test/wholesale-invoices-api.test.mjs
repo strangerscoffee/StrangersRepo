@@ -121,6 +121,11 @@ test("wholesale invoices: stale reviews, cancelled/deleted/test orders, missing 
   assert.equal((await call("POST", `/api/admin/wholesale/orders/${staffOrder.id}/invoice`, invoiceRequest(staffOrder))).status, 400);
   const noBilling = { ...updated.customerSnapshot, address: "", postcode: "" };
   srv.sql(`UPDATE wholesale_preview SET data=json_set(data,'$.customerSnapshot',json('${JSON.stringify(noBilling).replaceAll("'", "''")}')) WHERE kind='order' AND id='${updated.id}'`);
+  // An order saved without an address is billed to the business's current address…
+  const fallback = await call("POST", `/api/admin/wholesale/orders/${updated.id}/invoice/preview`, invoiceRequest(updated));
+  assert.equal(fallback.status, 200); assert.equal(fallback.body.invoice.billTo.address, "10 Buyer Street");
+  // …and with no address anywhere it can't be invoiced.
+  srv.sql(`UPDATE wholesale_preview SET data=json_remove(json_set(data,'$.address',''),'$.locations') WHERE kind='customer' AND id='${updated.customerId}'`);
   assert.equal((await call("POST", `/api/admin/wholesale/orders/${updated.id}/invoice/preview`, invoiceRequest(updated))).status, 400);
   assert.equal((await call("POST", `/api/admin/wholesale/orders/${updated.id}/invoice/preview`, invoiceRequest(updated, { billTo: { name: "Legal Buyer", address: "An explicit billing address", postcode: "NR3 3AA" } }))).status, 200);
   assert.equal(srv.sql("SELECT COUNT(*) AS n FROM wholesale_invoices")[0].n, 2);

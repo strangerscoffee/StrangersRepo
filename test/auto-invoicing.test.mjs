@@ -142,3 +142,19 @@ test('Anything QuickBooks can\'t take yet is held with the reason, can be tried 
  await until(()=>autoRow('order:'+later.id)?.state==='done','issued only');
  assert.equal(srv.sql(`SELECT COUNT(*) AS n FROM quickbooks_exports WHERE invoice_id=${autoRow('order:'+later.id).invoice_id}`)[0].n,0);
 });
+
+test('An order placed before the business had an address is invoiced with the address it has now',async()=>{
+ await switches(true,false,false);
+ const {customer,cookie}=await business('Address Later Cafe',{address:'',postcode:''});
+ const o=await order(cookie);await status(o,'Dispatched');
+ await until(()=>autoRow('order:'+o.id)?.state==='held','held for an address');
+ assert.match(autoRow('order:'+o.id).reason,/Add an address for this business/);
+ assert.equal(invoiceOf(o.id),undefined,'no invoice number used');
+ const saved=(await ok('GET',`${root}/customers?q=Address%20Later`)).body.customers.find(c=>c.id===customer.id);
+ await ok('PUT',`${root}/customers/${customer.id}`,{ifVersion:saved.version,business:saved.business,contact:saved.contact,email:saved.email,status:'Active',paymentTerms:'net-30',address:'9 Late Lane\nNorwich',postcode:'NR3 3AA'});
+ await ok('POST',`${root}/auto-invoicing/order:${o.id}/retry`,{});
+ const invoice=await until(()=>invoiceOf(o.id),'invoice with the new address');
+ const data=JSON.parse(invoice.data);assert.equal(data.billTo.address,'9 Late Lane\nNorwich');assert.equal(data.billTo.postcode,'NR3 3AA');
+ // The order itself keeps what it was placed with.
+ assert.equal((await latest(o.id)).customerSnapshot?.address||'','');
+});

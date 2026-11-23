@@ -43,6 +43,7 @@ for(const [device,viewport]of [['phone',{width:393,height:852}],['ipad',{width:8
   async function map(){
    await page.locator('#qbMappingForm').waitFor();
    async function choose(key,id){await page.locator(`[data-sheet="qb-choice"][data-key="${key}"]`).click();await page.locator(`#qbReferenceList [data-id="${id}"]`).click();await page.locator('#qbMappingForm').waitFor();}
+   const unlinked=await page.locator('[data-key="customerId"]').textContent();if(!/Example customer|Reference #/.test(unlinked))assert.match(unlinked,/Add or match automatically/,'the customer can be left for automatic invoicing to find or add');
    await choose('customerId','3');await choose('coffeeItemId','50');await choose('deliveryItemId','51');await choose('termId','30');await page.locator('[data-sheet="qb-tax"]').click();await page.locator('#qbReferenceList [data-id="3"]').click();
    assert.match(await page.locator('[data-key="customerId"]').textContent(),/Example customer 3/,'same numeric customer and VAT IDs retain separate names');
    await page.locator('#qbMappingReview').check();await shot('mappings');await page.locator('#qbMappingForm button[type="submit"]').click();await page.locator('#qbInvoicePreview').waitFor();

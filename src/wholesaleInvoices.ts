@@ -3,7 +3,7 @@ import { MAX_QUANTITY } from "../public/wholesale/limits.js";
 import { audit } from "./audit";
 import { ApiError, type Env, invalid, json, readJson } from "./http";
 import { get, object, text, version } from "./wholesaleStore";
-import type { OrderingUser } from "./wholesaleAccounts";
+import type { Customer, OrderingUser } from "./wholesaleAccounts";
 import { invoicePdf } from "./wholesaleInvoicePdf";
 import {withAccounting,accountingSummary} from "./quickbooks/observations";
 
@@ -44,7 +44,7 @@ export interface InvoiceDocument extends InvoiceData {
 interface InvoiceRow { seq: number; invoice_number: string; order_id: string; customer_id: string; request_key: string; data: string; issued_at: number; issued_by: string; paid: number; paid_date: string | null; paid_at: number | null; payment_reference: string; payment_version: number }
 interface SourceOrder {
   preview?: boolean; deletedAt?: number; business: string; reference?: string; customerId: string | null; status: string; createdAt: number;
-  customerSnapshot?: { address?: string; postcode?: string; paymentTerms?: Terms }; locationSnapshot?: Record<string, any>;
+  customerSnapshot?: { address?: string; postcode?: string; paymentTerms?: Terms }; locationSnapshot?: Record<string, any>; locationId?: string;
   paymentTerms?: Terms; lines: { title: string; packLabel: string; grindLabel: string; quantity: number; price: number; productId?: string; pack?: string }[];
   deliveryPence?: number; dispatchedAt?: number; delivery?: string; version: number; tab?: unknown; tabClearedId?: string;
 }
@@ -162,6 +162,16 @@ function dueFor(terms: Terms, invoiceDate: string): string | null {
   if (netDays) return new Date(Date.parse(invoiceDate + "T00:00:00Z") + Number(netDays) * 86400000).toISOString().slice(0, 10);
   return terms.id === "before-dispatch" ? invoiceDate : null;
 }
+/** Who an invoice is billed to: the address saved with the order, else (an order placed before the business had an
+ * address, such as a collection) the business's current address for that location, then its main one. */
+export async function billingFor(env: Env, order: Pick<SourceOrder, "business" | "customerId" | "customerSnapshot" | "locationId">): Promise<InvoiceData["billTo"]> {
+  const name = order.business, saved = order.customerSnapshot;
+  if (saved?.address?.trim()) return { name, address: saved.address, postcode: saved.postcode || "", vatNumber: "" };
+  const customer = order.customerId ? await get<Customer & { locations?: { id: string; address?: string; postcode?: string }[] }>(env, "customer", order.customerId) : null;
+  const location = customer?.locations?.find((item) => item.id === order.locationId && item.address?.trim());
+  const address = location?.address?.trim() ? location : customer?.address?.trim() ? { address: customer.address, postcode: customer.postcode } : null;
+  return { name, address: address?.address || "", postcode: address?.postcode || "", vatNumber: "" };
+}
 async function build(env: Env, orderId: string, request: InvoiceRequest): Promise<{ data: InvoiceData; config: InvoiceSettings }> {
   const config = await settings(env);
   if (!config.ready) throw new ApiError(409, "invoice_settings_incomplete", config.reasons.join(" "));
@@ -173,8 +183,8 @@ async function build(env: Env, orderId: string, request: InvoiceRequest): Promis
   if (order.version !== request.orderVersion) throw conflict("The order changed. Review its details before issuing an invoice.");
   if (await tabInvoiceFor(env, orderId, order.tabClearedId)) throw invalid("This order was invoiced with its customer's tab. Open the tab's invoice.");
   const value = config.settings;
-  const billTo = request.billTo || { name: order.business, address: order.customerSnapshot?.address || "", postcode: order.customerSnapshot?.postcode || "", vatNumber: "" };
-  if (!billTo.name || !billTo.address) throw invalid("Add the customer's billing name and full address before issuing an invoice.");
+  const billTo = request.billTo || await billingFor(env, order);
+  if (!billTo.name || !billTo.address) throw invalid(request.billTo ? "Add the customer's billing name and full address before issuing an invoice." : "Add an address for this business (Customers → the business → Main location), then press Try again.");
   if (request.lineVatRateIds && request.lineVatRateIds.length !== order.lines.length) throw invalid("Choose one VAT rate for each saved order line.");
   const rate = (id: string) => { const found = value.vatRates.find((item) => item.id === id); if (!found) throw invalid("Choose a configured VAT rate."); return found; };
   const lines = order.lines.map((line, i) => ({ ...invoiceLine("coffee", line.title, line.quantity, line.price, rate(request.lineVatRateIds?.[i] || value.defaultCoffeeRateId), value.priceBasis!), packLabel: line.packLabel, grindLabel: line.grindLabel, ...productOf(line) }));
@@ -264,7 +274,7 @@ export async function issueForTab(env: Env, tabId: string, actor: string): Promi
   for (const [pence, count] of charges) lines.push(invoiceLine("delivery", "Delivery", count, pence, rate(value.deliveryRateId || value.defaultCoffeeRateId), value.priceBasis!));
   if (lines.length > 150) throw new InvoiceHold("This tab has too many different lines for one invoice. Invoice it by hand.");
   const latest = orders.map((o) => o.order).sort((a, b) => b.createdAt - a.createdAt)[0];
-  const billTo = { name: latest.business, address: latest.customerSnapshot?.address || "", postcode: latest.customerSnapshot?.postcode || "", vatNumber: "" };
+  const billTo = await billingFor(env, latest);
   if (!billTo.name || !billTo.address) throw new InvoiceHold("Add the customer's billing address before this tab can be invoiced.");
   const invoiceDate = today(), sentDays = orders.map((o) => o.order.dispatchedAt).filter((at): at is number => !!at).map(ukDay).sort();
   const supplyDate = sentDays.length && sentDays.at(-1)! <= invoiceDate ? sentDays.at(-1)! : invoiceDate;
