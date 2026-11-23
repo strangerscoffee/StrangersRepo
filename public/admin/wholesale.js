@@ -155,7 +155,8 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     if (filter.query.trim()) params.set("q", filter.query.trim());
     if (kind === "orders" && filter.status !== "all") params.set("status", filter.status);
     if (kind === "orders" && filter.dispatch !== "all") params.set("dispatch", filter.dispatch);
-    if (kind === "orders" && filter.sort !== "updated" && !(filter.status === "Dispatched" && !filter.sortChosen)) params.set("sort", filter.sort);
+    // Unchosen, the server's own order applies: newest order first (newest dispatched first for Dispatched).
+    if (kind === "orders" && filter.sortChosen) params.set("sort", filter.sort);
     if (kind === "customers" && filter.approval !== "all") params.set("approval", filter.approval);
     let rows = snapshot[kind], accounts = snapshot.accounts, cursor = snapshot[kind === "orders" ? "orderCursor" : "customerCursor"], count = snapshot.counts[kind === "orders" ? "order" : "customer"] || 0;
     if (params.size) {

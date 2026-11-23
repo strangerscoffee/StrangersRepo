@@ -50,9 +50,11 @@ function filters(kind: ListKind, query: URLSearchParams) {
   return { where: where.join(" AND "), values };
 }
 
+// Admin order lists are newest order first unless another sort is asked for (the owner's request, 23 Nov 2026);
+// the Dispatched list newest dispatched first.
 export async function adminWholesalePage<T>(env: Env, kind: ListKind, query = new URLSearchParams()): Promise<{ records: (T & Versioned)[]; nextCursor: string | null; count: number }> {
   const filter = filters(kind, query);
-  const { key, direction, values, after } = orderSort(kind === "order" ? query : new URLSearchParams(query.has("cursor") ? { cursor: query.get("cursor")! } : {}), kind === "order" && query.get("status") === "Dispatched" ? "dispatched" : "updated");
+  const { key, direction, values, after } = orderSort(kind === "order" ? query : new URLSearchParams(query.has("cursor") ? { cursor: query.get("cursor")! } : {}), kind === "order" ? (query.get("status") === "Dispatched" ? "dispatched" : "ordered") : "updated");
   const [result, total] = await Promise.all([
     env.DB.prepare(`SELECT id, data, version, updated_at, ${key} AS sort_key FROM wholesale_preview WHERE ${filter.where}${after} ORDER BY sort_key ${direction}, id LIMIT ?`).bind(...filter.values, ...values, PAGE_SIZE + 1).all<Row & { sort_key: string | number }>(),
     env.DB.prepare(`SELECT COUNT(*) AS n FROM wholesale_preview WHERE ${filter.where}`).bind(...filter.values).first<{ n: number }>(),
