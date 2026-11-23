@@ -242,10 +242,16 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
   }
   function orderColumns() {
     const arrow = (up, down) => orderSort === up ? " ↑" : orderSort === down ? " ↓" : "";
-    return html`<div class="w-order-columns"><span>Customer</span><button type="button" data-act="wh-sort" data-id="dispatch" aria-label="Sort by dispatch date${orderSort.startsWith("dispatch") ? orderSort === "dispatch" ? ", currently earliest first" : ", currently latest first" : ""}">Dispatch${arrow("dispatch","dispatch-desc")}</button><span class="w-order-method">Fulfilment</span><button type="button" data-act="wh-sort" data-id="bags" aria-label="Sort by bag count${orderSort.startsWith("bags") ? orderSort === "bags-asc" ? ", currently fewest first" : ", currently most first" : ""}">Bags${arrow("bags-asc","bags")}</button><span class="w-order-weight">Weight</span><span>Total</span><span>Status</span></div>`;
+    return html`<div class="w-order-columns"><span>Customer</span><button type="button" data-act="wh-sort" data-id="ordered" aria-label="Sort by order date${orderSort.startsWith("ordered") ? orderSort === "ordered" ? ", currently newest first" : ", currently oldest first" : ""}">Ordered${arrow("ordered-asc","ordered")}</button><button type="button" data-act="wh-sort" data-id="dispatch" aria-label="Sort by dispatch date${orderSort.startsWith("dispatch") ? orderSort === "dispatch" ? ", currently earliest first" : ", currently latest first" : ""}">Dispatch${arrow("dispatch","dispatch-desc")}</button><span class="w-order-method">Fulfilment</span><button type="button" data-act="wh-sort" data-id="bags" aria-label="Sort by bag count${orderSort.startsWith("bags") ? orderSort === "bags-asc" ? ", currently fewest first" : ", currently most first" : ""}">Bags${arrow("bags-asc","bags")}</button><span class="w-order-weight">Weight</span><span>Total</span><span>Status</span></div>`;
+  }
+  // When the order was placed, in UK time ("Mon, 23 Nov"; the year too if it isn't this year).
+  function orderedOn(at) {
+    if (!at) return "";
+    const d = new Date(at), year = (t) => new Intl.DateTimeFormat("en-GB", { year: "numeric", timeZone: "Europe/London" }).format(t);
+    return new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short", ...(year(d) === year(new Date()) ? {} : { year: "numeric" }), timeZone: "Europe/London" }).format(d);
   }
   function compactOrder(row) {
-    return html`<span class="w-order-compact"><span class="w-order-customer"><b>${row.business || row.createdName}</b><small>${row.locationSnapshot?.name || "Main location"}${row.reference ? " · " + row.reference : ""}${row.customerNote ? " · Customer note" : ""}${row.preview !== false ? " · Staff preview" : ""}</small></span><span>${row.dispatchDate ? day(row.dispatchDate).replace(/,? \d{4}$/, "") : "Unscheduled"}</span><span class="w-order-method">${row.delivery === "Delivery" ? "Delivery" : "Collection"}</span><span class="num">${row.packs}</span><span class="w-order-weight num">${weight(row.grams)}</span><strong class="num">${money(row.totalPence ?? row.pence)}</strong>${pill(row.status)}</span>`;
+    return html`<span class="w-order-compact"><span class="w-order-customer"><b>${row.business || row.createdName}</b><small>${row.locationSnapshot?.name || "Main location"}${row.reference ? " · " + row.reference : ""}${row.customerNote ? " · Customer note" : ""}${row.preview !== false ? " · Staff preview" : ""}</small></span><span class="w-order-placed">${orderedOn(row.createdAt)}</span><span>${row.dispatchDate ? day(row.dispatchDate).replace(/,? \d{4}$/, "") : "Unscheduled"}</span><span class="w-order-method">${row.delivery === "Delivery" ? "Delivery" : "Collection"}</span><span class="num">${row.packs}</span><span class="w-order-weight num">${weight(row.grams)}</span><strong class="num">${money(row.totalPence ?? row.pence)}</strong>${pill(row.status)}</span>`;
   }
   function orderPreview() {
     const row = packingRow(previewOrder) || data.orders[0];
@@ -1370,7 +1376,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
         dispatchScope = id; packingOrder = ""; orderPages = 1; await reload(); $("#wDispatchScope")?.focus({ preventScroll:true }); return;
       }
       if (name === "wh-sort") {
-        orderSort = id === "dispatch" ? (orderSort === "dispatch" ? "dispatch-desc" : "dispatch") : (orderSort === "bags" ? "bags-asc" : "bags");
+        orderSort = id === "dispatch" ? (orderSort === "dispatch" ? "dispatch-desc" : "dispatch") : id === "ordered" ? (orderSort === "ordered" ? "ordered-asc" : "ordered") : (orderSort === "bags" ? "bags-asc" : "bags");
         orderPages = 1; await reload(); $(`[data-act="wh-sort"][data-id="${id}"]`)?.focus({ preventScroll:true }); return;
       }
       if (name === "wh-pack" || name === "wh-exit-pack") {

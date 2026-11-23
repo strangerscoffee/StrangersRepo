@@ -35,6 +35,9 @@
           <select id="orderDispatchScope" class="dispatch-scope" aria-label="Dispatch date">
             <option value="all">All dates</option><option value="today">Due today</option><option value="upcoming">Upcoming</option>
           </select>
+          <select id="orderSort" class="dispatch-scope order-sort" aria-label="Sort orders">
+            <option value="">Usual order</option><option value="ordered">Newest orders first</option><option value="ordered-asc">Oldest orders first</option>
+          </select>
           <button class="refresh" id="refresh" aria-label="Refresh orders" type="button"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 3M18 17a7 7 0 0 1-12 1l-2-3"/></svg></button>
         </div>
         <button type="button" class="btn" id="newOrder" data-new-order><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>New order</button>

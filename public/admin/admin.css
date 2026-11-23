@@ -887,7 +887,7 @@ html[data-sc-staff] .sheet:has(.w-section-list){width:min(480px,100%);padding:7p
   .w-order-controls .btn.sm,.w-order-controls .seg button{min-height:36px}
   .w-order-controls .w-print-bar{grid-column:2;grid-row:2;margin:0}
   .w-order-controls .w-picking{grid-column:1/-1;grid-row:auto}
-  .w-order-layout{--order-columns:minmax(130px,1.8fr) minmax(82px,1fr) minmax(45px,.45fr) minmax(65px,.7fr) minmax(88px,.85fr);--order-inset:16px}
+  .w-order-layout{--order-columns:minmax(120px,1.6fr) minmax(78px,.9fr) minmax(78px,.9fr) minmax(40px,.4fr) minmax(65px,.7fr) minmax(88px,.85fr);--order-inset:16px}
   .w-order-layout:not(.is-picking){grid-template-columns:minmax(0,1.92fr) minmax(315px,1fr)}
   .w-order-layout.w-queue-expanded:not(.is-picking){grid-template-columns:minmax(0,1fr)}
   .w-order-preview[hidden]{display:none!important}
@@ -915,7 +915,7 @@ html[data-sc-staff] .sheet:has(.w-section-list){width:min(480px,100%);padding:7p
   .w-expand-queue{display:inline-flex}
 }
 @media(min-width:1560px){
-  .w-order-layout{--order-columns:minmax(132px,1.7fr) minmax(84px,1fr) minmax(70px,.85fr) minmax(45px,.5fr) minmax(49px,.55fr) minmax(67px,.75fr) minmax(86px,.9fr)}
+  .w-order-layout{--order-columns:minmax(132px,1.6fr) minmax(84px,.95fr) minmax(84px,.95fr) minmax(70px,.8fr) minmax(45px,.5fr) minmax(49px,.55fr) minmax(67px,.75fr) minmax(86px,.9fr)}
   .w-order-layout .w-order-method,.w-order-layout .w-order-weight{display:initial}
 }
 .w-status-select{display:none}

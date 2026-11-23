@@ -110,10 +110,11 @@
  function orderRow(row){
   const chosen=picked.has(row.id),next=NEXT[row.status],working=busy.has(row.id);
   const bags=`${row.packs} ${row.packs===1?'bag':'bags'} · ${weight(row.grams)}`;
-  const deskMeta=[row.locationName===row.business?'':row.locationName,row.delivery==='Roastery collection'?'Collection':row.delivery,row.dispatchDate?dispatchDay(row.dispatchDate):'Unscheduled',row.customerNote||row.note?'Note':''].filter(Boolean).join(' · ');
+  const byOrdered=$('orderSort').value.startsWith('ordered'),ordered='Ordered '+new Date(row.createdAt).toLocaleDateString('en-GB',{timeZone:'Europe/London',day:'numeric',month:'short'});
+  const deskMeta=[byOrdered?ordered:'',row.locationName===row.business?'':row.locationName,row.delivery==='Roastery collection'?'Collection':row.delivery,row.dispatchDate?dispatchDay(row.dispatchDate):'Unscheduled',row.customerNote||row.note?'Note':''].filter(Boolean).join(' · ');
   const main=el('button',{type:'button',class:'order-row'+(picking?' is-picking':''),'data-order-id':row.id,...(picking?{'aria-pressed':String(chosen)}:wideDesk.matches?{'aria-current':row.id===activeOrder?'true':'false'}:{}),onclick:()=>picking?togglePick(row.id):wideDesk.matches?chooseDeskOrder(row.id):openOrder(row.id)},
    picking?el('span',{class:'pick '+(chosen?'on':'off'),'aria-hidden':'true'},chosen?svg('ok'):null):null,
-   el('span',{class:'queue-label'},el('b',{},row.business),el('span',{class:'row-desktop-meta'},deskMeta),el('span',{class:'row-meta'},`${row.locationName===row.business?'':row.locationName+' · '}${row.delivery} · ${bags}`),dispatchText(row)?el('span',{class:'row-meta row-dispatch'},dispatchText(row)):el('span',{class:'row-meta'},date(row.createdAt)),row.onTab?el('span',{class:'row-meta row-tab'},'On tab'):null,row.note?el('span',{class:'row-meta row-note'},'Note: '+row.note):null,warning(row.account)),
+   el('span',{class:'queue-label'},el('b',{},row.business),el('span',{class:'row-desktop-meta'},deskMeta),el('span',{class:'row-meta'},`${row.locationName===row.business?'':row.locationName+' · '}${row.delivery} · ${bags}`),dispatchText(row)?el('span',{class:'row-meta row-dispatch'},dispatchText(row)):null,!dispatchText(row)||byOrdered?el('span',{class:'row-meta'},date(row.createdAt)):null,row.onTab?el('span',{class:'row-meta row-tab'},'On tab'):null,row.note?el('span',{class:'row-meta row-note'},'Note: '+row.note):null,warning(row.account)),
    el('span',{class:'row-end'},pill(row.status),el('span',{class:'row-desktop-meta'},bags),picking?null:svg('chev')));
   return el('div',{class:'order-entry'+(picking?' is-picking':''),'aria-busy':String(working)},main,!picking&&next?el('button',{type:'button',class:'btn soft quick','data-quick':row.id,disabled:working,onclick:()=>quick(row.id)},working?'Saving…':next[1]):null);
  }
@@ -839,7 +840,7 @@
   finally{if(request===customerRequest){$('customerList').setAttribute('aria-busy','false');$('refreshCustomers').removeAttribute('aria-busy');$('refreshCustomers').disabled=false;}}
  }
  function saveNavigation(){
-  SCStaffNavigation.save('orders',orderingIdentity,{view,status,dispatch:$('orderDispatchScope').value});
+  SCStaffNavigation.save('orders',orderingIdentity,{view,status,dispatch:$('orderDispatchScope').value,sort:$('orderSort').value});
  }
  function showView(next,{url=false,fetchData=true,animate=true}={}){
   const changed=view!==next;
@@ -863,6 +864,7 @@
   if(VIEWS.has(saved?.view))baseView=saved.view;
   if(filters.some(([value])=>value===saved?.status)||wideDesk.matches&&saved?.status==='prepare')status=saved.status;
   if(Array.from($('orderDispatchScope').options).some(option=>option.value===saved?.dispatch))$('orderDispatchScope').value=saved.dispatch;
+  if(Array.from($('orderSort').options).some(option=>option.value===saved?.sort))$('orderSort').value=saved.sort;
   showView(routeView(),{fetchData:false,animate:false});
   if(VIEWS.has(location.hash.slice(1)))saveNavigation();
  }
@@ -897,7 +899,9 @@
   const orderDialog=$('orderDialog');
   const current=++sequence,wasOpen=orderDialog.open,wasSelected=selected;
   if(reverify){lock();$('accessStatus').hidden=false;$('accessStatus').replaceChildren(SC.skeleton({label:'Checking access…'}));}
-  const dispatch=$('orderDispatchScope').value,sort=wideDesk.matches?'dispatch':'updated';
+  // Sort: the usual order (by dispatch date on a wide screen, last changed on a phone; Dispatched newest dispatched first),
+  // or by when each order was placed, newest or oldest first, whatever its status (the owner's request, 23 Nov 2026).
+  const dispatch=$('orderDispatchScope').value,sort=$('orderSort').value||(wideDesk.matches?'dispatch':'updated');
   const key=[status,$('search').value.trim(),dispatch,sort].join('|'),changed=key!==ordersKey;ordersKey=key;
   if(changed)heldOrder=null;
   if(!more&&changed)$('orderList').replaceChildren(SC.skeleton({label:'Loading orders…'}));
@@ -938,6 +942,7 @@
  $('orderStatus').replaceChildren(...filters.map(([value,label])=>el('option',{value},label)));
  $('orderStatus').onchange=event=>{status=event.target.value;saveNavigation();load();};
  $('orderDispatchScope').onchange=()=>{saveNavigation();totalsSequence++;deskTotals=null;drawDeskTotals();load();};
+ $('orderSort').onchange=()=>{saveNavigation();load();};
  wideDesk.addEventListener('change',()=>{if(!wideDesk.matches&&status==='prepare')status='open';if(started)load();});
  $('search').oninput=()=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>load(),250)};
  $('customerSearch').oninput=()=>{clearTimeout(customerTimer);customerTimer=setTimeout(loadCustomers,250)};

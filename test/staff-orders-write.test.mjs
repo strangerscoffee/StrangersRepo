@@ -128,3 +128,17 @@ test('dispatched orders are newest dispatched first',async()=>{
  // Other lists keep their own order.
  assert.equal((await call('GET','/api/staff-orders/orders?status=open&sort=dispatch',undefined,STAFF)).status,200);
 });
+
+// Admin → Wholesale → Orders: the Ordered column sorts by when each order was placed (the owner's request, 23 Nov 2026).
+test('admin orders sort by order date, newest or oldest first',async()=>{
+ const made=[];for(const n of ['a','b','c']){made.push((await customer('ordered.'+n)).order);await new Promise(r=>setTimeout(r,15));}
+ const ids=async(sort)=>(await ok('GET','/api/admin/wholesale/orders?status=all&sort='+sort)).body.orders.map(o=>o.id).filter(id=>made.some(m=>m.id===id));
+ assert.deepEqual(await ids('ordered'),[made[2].id,made[1].id,made[0].id]);
+ assert.deepEqual(await ids('ordered-asc'),[made[0].id,made[1].id,made[2].id]);
+ assert.equal((await call('GET','/api/admin/wholesale/orders?sort=ordered&cursor=1795000000000:WS-ABC')).status,200,'numeric cursor');
+ assert.equal((await call('GET','/api/admin/wholesale/orders?sort=ordered&cursor=2026-11-23:WS-ABC')).status,400);
+ // The staff page's own list takes the same sort, whatever the status (Dispatched included).
+ const staffIds=async(q)=>(await ok('GET','/api/staff-orders/orders?'+q)).body.orders.map(o=>o.id).filter(id=>made.some(m=>m.id===id));
+ assert.deepEqual(await staffIds('status=all&sort=ordered'),[made[2].id,made[1].id,made[0].id]);
+ assert.deepEqual(await staffIds('status=all&sort=ordered-asc'),[made[0].id,made[1].id,made[2].id]);
+});

@@ -12,14 +12,16 @@ export function dispatchFilter(query: URLSearchParams) {
 // "dispatched" (the owner's request, 18 Nov 2026): newest dispatched first, by when each was marked Dispatched
 // (`dispatchedAt`), else when its shipped email went, else its last update (orders dispatched before it was recorded).
 export const DISPATCHED_KEY = "COALESCE(CAST(json_extract(data,'$.dispatchedAt') AS INTEGER),CAST(json_extract(data,'$.dispatchEmailedAt') AS INTEGER),updated_at)";
+// "ordered" / "ordered-asc" (the owner's request, 23 Nov 2026): when the order was placed, newest or oldest first.
+export const ORDERED_KEY = "COALESCE(CAST(json_extract(data,'$.createdAt') AS INTEGER),0)";
 export function orderSort(query: URLSearchParams, fallback = "updated") {
   const mode = query.get("sort") || fallback;
-  if (!["updated", "dispatch", "dispatch-desc", "bags", "bags-asc", "dispatched"].includes(mode)) throw invalid("Choose a listed order sort.");
+  if (!["updated", "dispatch", "dispatch-desc", "bags", "bags-asc", "dispatched", "ordered", "ordered-asc"].includes(mode)) throw invalid("Choose a listed order sort.");
   const date = mode.startsWith("dispatch") && mode !== "dispatched";
-  const ascending = mode === "dispatch" || mode === "bags-asc";
+  const ascending = mode === "dispatch" || mode === "bags-asc" || mode === "ordered-asc";
   const key = date
     ? `COALESCE(NULLIF(json_extract(data,'$.dispatchDate'),''),'${ascending ? "9999-12-31" : "0000-01-01"}')`
-    : mode === "updated" ? "updated_at" : mode === "dispatched" ? DISPATCHED_KEY : "COALESCE(CAST(json_extract(data,'$.packs') AS INTEGER),0)";
+    : mode === "updated" ? "updated_at" : mode === "dispatched" ? DISPATCHED_KEY : mode.startsWith("ordered") ? ORDERED_KEY : "COALESCE(CAST(json_extract(data,'$.packs') AS INTEGER),0)";
   const direction = ascending ? "ASC" : "DESC";
   const cursor = query.get("cursor");
   const values: (string | number)[] = [];

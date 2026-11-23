@@ -409,6 +409,7 @@ button.cleared-row:hover{background:var(--sunk)}
   #ordersView .search input::placeholder { font-size: 14px; }
   .scope-controls { grid-column: 1/-1; grid-row: 2; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)) auto; }
   .scope-controls .compact-status { display: block; }
+  .scope-controls .order-sort { grid-column: 1/-1; grid-row: 2; }
   .scope-controls select:not([multiple]):is(:not([size]),[size="1"]) { padding-inline: 8px 25px; background-position: right 6px center; font-size: 13px; }
   #newOrder { grid-column: 2; grid-row: 1; padding-inline: 12px; }
   #statusFilters { display: none; }
