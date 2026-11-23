@@ -47,19 +47,37 @@ for (const [screen, viewport] of [["desktop", { width: 1440, height: 900 }], ["w
     await p.goto(srv.base + "/admin#wholesale");
     await selectWholesaleSection(p, "orders"); await p.locator(`[data-act="wh-order"][data-id="${ids[0]}"]`).waitFor();
     const head = p.locator('.w-order-columns [data-act="wh-sort"][data-id="ordered"]');
-    assert.equal((await head.textContent()).trim(), "Ordered");
+    // Newest first to start with (the owner's request, 23 Nov 2026).
+    await p.waitForFunction(() => /↓/.test(document.querySelector('[data-act="wh-sort"][data-id="ordered"]')?.textContent || ""));
+    assert.equal((await head.textContent()).trim(), "Ordered ↓");
+    assert.deepEqual(await shown(p), [ids[2], ids[1], ids[0]], "newest first by default");
+    assert.match(await head.getAttribute("aria-label"), /newest first/);
     assert.match(await p.locator(`[data-act="wh-order"][data-id="${ids[0]}"] .w-order-placed`).textContent(), /Mon,? 2 Nov/);
     await head.click();
-    await p.waitForFunction(() => /↓/.test(document.querySelector('[data-act="wh-sort"][data-id="ordered"]').textContent));
-    assert.deepEqual(await shown(p), [ids[2], ids[1], ids[0]], "newest first");
-    assert.match(await head.getAttribute("aria-label"), /newest first/);
-    await p.locator('.w-order-columns [data-act="wh-sort"][data-id="ordered"]').click();
     await p.waitForFunction(() => /↑/.test(document.querySelector('[data-act="wh-sort"][data-id="ordered"]').textContent));
     assert.deepEqual(await shown(p), [ids[0], ids[1], ids[2]], "oldest first");
+    await p.locator('.w-order-columns [data-act="wh-sort"][data-id="ordered"]').click();
+    await p.waitForFunction(() => /↓/.test(document.querySelector('[data-act="wh-sort"][data-id="ordered"]').textContent));
+    assert.deepEqual(await shown(p), [ids[2], ids[1], ids[0]], "newest first again");
     // The heading and the date sit in the same column.
     const [h, d] = [await head.boundingBox(), await p.locator(`[data-act="wh-order"][data-id="${ids[0]}"] .w-order-placed`).boundingBox()];
     assert.ok(Math.abs(h.x - d.x) < 4, `column lines up (${h.x} vs ${d.x})`);
     if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/ordered-${screen.replace(" ", "-")}-${scheme}.png` });
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  });
+}
+
+// Phones and iPads (no columns): the orders list is newest first too.
+for (const [screen, viewport, isMobile] of [["phone", { width: 390, height: 844 }, true], ["iPad", { width: 1180, height: 820 }, false]]) for (const scheme of ["light", "dark"]) {
+  test(`Admin orders are newest first on a ${screen} (${scheme})`, async () => {
+    const ctx = await b.newContext({ viewport, isMobile, hasTouch: isMobile, colorScheme: scheme });
+    const [n, v] = ADMIN.split("="); await ctx.addCookies([{ name: n, value: v, url: srv.base }]);
+    const p = await ctx.newPage(), errors = []; p.on("pageerror", (e) => errors.push(String(e)));
+    await p.goto(srv.base + "/admin#wholesale");
+    await selectWholesaleSection(p, "orders"); await p.locator(`[data-act="wh-order"][data-id="${ids[0]}"]`).first().waitFor();
+    await p.waitForFunction((want) => { const got = [...document.querySelectorAll('[data-act="wh-order"]')].map((e) => e.dataset.id).filter((id) => want.includes(id)); return got.join() === [want[2], want[1], want[0]].join(); }, ids);
+    if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/admin-newest-${screen}-${scheme}.png` });
     assert.deepEqual(errors, []);
     await ctx.close();
   });

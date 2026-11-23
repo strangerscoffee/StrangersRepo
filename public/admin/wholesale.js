@@ -39,10 +39,11 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
   const date = (ms) => new Date(ms).toLocaleString("en-GB", { timeZone: "Europe/London", year: "numeric", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
   let tab = "orders", status = wideOrders.matches ? "open" : "all", approval = "all", query = "", data = null, timer, sequence = 0, emailDraft = null, emailHealthToken = 0;
   let orderQueue = "", previewOrder = "", packingOrder = "", hideOrderPreview = false;
-  let dispatchScope = "all", orderSort = wideOrders.matches ? "dispatch" : "updated", packingSession = 0;
+  // Orders list newest first by default (the owner's request, 23 Nov 2026), on every screen; the column headings change
+  // it. The Dispatched list keeps newest dispatched first unless a heading is tapped (sortChosen).
+  let dispatchScope = "all", orderSort = "ordered", sortChosen = false, packingSession = 0;
   wideOrders.addEventListener("change", () => {
     if (!$("#wOrdersTitle")) return;
-    orderSort = wideOrders.matches ? "dispatch" : "updated";
     if (!wideOrders.matches && status === "open") status = "all";
     orderPages = 1;
     reload();
@@ -94,12 +95,12 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
       </div>`);
   }
   function workspaceState() {
-    return { tab, status, approval, query, orderQueue, orderPages, customerPages, previewOrder, packingOrder, hideOrderPreview, dispatchScope, orderSort, invoices: invoiceUI.state(), insights: insightsUI.state() };
+    return { tab, status, approval, query, orderQueue, orderPages, customerPages, previewOrder, packingOrder, hideOrderPreview, dispatchScope, orderSort, sortChosen, invoices: invoiceUI.state(), insights: insightsUI.state() };
   }
   function restoreWorkspace(saved) {
     if (!saved || !sections.some(([id]) => id === saved.tab)) return;
     clearTimeout(timer);
-    ({ tab, status, approval, query, orderQueue, orderPages, customerPages, previewOrder, packingOrder, hideOrderPreview, dispatchScope, orderSort } = saved);
+    ({ tab, status, approval, query, orderQueue, orderPages, customerPages, previewOrder, packingOrder, hideOrderPreview, dispatchScope, orderSort, sortChosen = false } = saved);
     invoiceUI.restore(saved.invoices); insightsUI.restore(saved.insights);
   }
 
@@ -154,7 +155,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     if (filter.query.trim()) params.set("q", filter.query.trim());
     if (kind === "orders" && filter.status !== "all") params.set("status", filter.status);
     if (kind === "orders" && filter.dispatch !== "all") params.set("dispatch", filter.dispatch);
-    if (kind === "orders" && filter.sort !== "updated") params.set("sort", filter.sort);
+    if (kind === "orders" && filter.sort !== "updated" && !(filter.status === "Dispatched" && !filter.sortChosen)) params.set("sort", filter.sort);
     if (kind === "customers" && filter.approval !== "all") params.set("approval", filter.approval);
     let rows = snapshot[kind], accounts = snapshot.accounts, cursor = snapshot[kind === "orders" ? "orderCursor" : "customerCursor"], count = snapshot.counts[kind === "orders" ? "order" : "customer"] || 0;
     if (params.size) {
@@ -189,7 +190,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
   }
 
   async function view() {
-    const current = ++sequence, section = tab, filter = { query, status, approval, queue: orderQueue, dispatch: dispatchScope, sort: orderSort };
+    const current = ++sequence, section = tab, filter = { query, status, approval, queue: orderQueue, dispatch: dispatchScope, sort: orderSort, sortChosen };
     const snapshot = await api("GET", "/api/admin/wholesale");
     if (section === "orders" || section === "customers") {
       const result = await pages(snapshot, section, section === "orders" ? orderPages : customerPages, filter);
@@ -268,7 +269,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     event.preventDefault(); setFiguresHidden(!figuresHidden());
   });
   function orderColumns() {
-    const arrow = (up, down) => orderSort === up ? " ↑" : orderSort === down ? " ↓" : "";
+    const arrow = (up, down) => status === "Dispatched" && !sortChosen ? "" : orderSort === up ? " ↑" : orderSort === down ? " ↓" : "";
     return html`<div class="w-order-columns"><span>Customer</span><button type="button" data-act="wh-sort" data-id="ordered" aria-label="Sort by order date${orderSort.startsWith("ordered") ? orderSort === "ordered" ? ", currently newest first" : ", currently oldest first" : ""}">Ordered${arrow("ordered-asc","ordered")}</button><button type="button" data-act="wh-sort" data-id="dispatch" aria-label="Sort by dispatch date${orderSort.startsWith("dispatch") ? orderSort === "dispatch" ? ", currently earliest first" : ", currently latest first" : ""}">Dispatch${arrow("dispatch","dispatch-desc")}</button><span class="w-order-method">Fulfilment</span><button type="button" data-act="wh-sort" data-id="bags" aria-label="Sort by bag count${orderSort.startsWith("bags") ? orderSort === "bags-asc" ? ", currently fewest first" : ", currently most first" : ""}">Bags${arrow("bags-asc","bags")}</button><span class="w-order-weight">Weight</span><span>Total</span><span>Status</span></div>`;
   }
   // When the order was placed, in UK time ("Mon, 23 Nov"; the year too if it isn't this year).
@@ -1404,6 +1405,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
         dispatchScope = id; packingOrder = ""; orderPages = 1; await reload(); $("#wDispatchScope")?.focus({ preventScroll:true }); return;
       }
       if (name === "wh-sort") {
+        sortChosen = true;
         orderSort = id === "dispatch" ? (orderSort === "dispatch" ? "dispatch-desc" : "dispatch") : id === "ordered" ? (orderSort === "ordered" ? "ordered-asc" : "ordered") : (orderSort === "bags" ? "bags-asc" : "bags");
         orderPages = 1; await reload(); $(`[data-act="wh-sort"][data-id="${id}"]`)?.focus({ preventScroll:true }); return;
       }
