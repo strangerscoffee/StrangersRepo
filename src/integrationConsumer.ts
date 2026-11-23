@@ -3,6 +3,7 @@ import type { Env } from "./http";
 import type { IntegrationSignal } from "./integrationSignals";
 import { machineRequest, processEvents } from "./quickbooks/jobs";
 import { processExport } from "./quickbooks/ledger";
+import { processAutoInvoice } from "./autoInvoice";
 import { ensureSchema } from "./schema";
 import { deliverSlackPosts } from "./slackOrders";
 
@@ -20,7 +21,8 @@ export async function deliverIntegrationBatch(batch: MessageBatch<IntegrationSig
           break;
         case "strangers-quickbooks": {
           const req = machineRequest(env);
-          if (signal.exportId !== undefined) await processExport(req, env, signal.exportId);
+          if (signal.key?.startsWith("auto:")) await processAutoInvoice(env, signal.key.slice(5), req);
+          else if (signal.exportId !== undefined) await processExport(req, env, signal.exportId);
           else await processEvents(req, env, 3, signal.eventKeys);
           break;
         }

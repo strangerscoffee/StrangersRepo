@@ -21,6 +21,8 @@ export interface InvoiceLine {
   kind: "coffee" | "delivery"; description: string; quantity: number; unitPricePence: number;
   rateId: string; rateLabel: string; vatBasisPoints: number; netPence: number; vatPence: number; grossPence: number;
   packLabel?: string; grindLabel?: string;
+  /** The coffee and bag size (invoices issued from 23 Nov 2026), so QuickBooks can use an item per coffee and size. */
+  productId?: string; pack?: string;
 }
 interface Terms { id: string; label: string; note: string }
 export interface InvoiceData {
@@ -31,6 +33,8 @@ export interface InvoiceData {
   vatBreakdown: { rateId: string; label: string; basisPoints: number; netPence: number; vatPence: number; grossPence: number }[];
   paymentTerms: Terms; paymentInstructions: string; dueDate: string | null;
   orderVersion: number; settingsVersion: number;
+  /** A tab invoice (order "TAB-<tab id>") covers these orders. */
+  orderIds?: string[];
 }
 export interface InvoiceDocument extends InvoiceData {
   id: number | null; number: string | null; issuedAt: number | null; issuedBy: string | null;
@@ -41,7 +45,8 @@ interface InvoiceRow { seq: number; invoice_number: string; order_id: string; cu
 interface SourceOrder {
   preview?: boolean; deletedAt?: number; business: string; reference?: string; customerId: string | null; status: string; createdAt: number;
   customerSnapshot?: { address?: string; postcode?: string; paymentTerms?: Terms }; locationSnapshot?: Record<string, any>;
-  paymentTerms?: Terms; lines: { title: string; packLabel: string; grindLabel: string; quantity: number; price: number }[];
+  paymentTerms?: Terms; lines: { title: string; packLabel: string; grindLabel: string; quantity: number; price: number; productId?: string; pack?: string }[];
+  deliveryPence?: number; dispatchedAt?: number; delivery?: string; version: number; tab?: unknown; tabClearedId?: string;
 }
 interface InvoiceRequest {
   orderVersion: number; settingsVersion: number; invoiceDate: string; supplyDate: string;
@@ -95,7 +100,7 @@ function readiness(settings: InvoiceSettings) {
   if (!settings.confirmed) reasons.push("Confirm the supplier, VAT and numbering details before issuing invoices.");
   return { ready: reasons.length === 0, reasons };
 }
-async function settings(env: Env) {
+export async function settings(env: Env) {
   const row = await env.DB.prepare("SELECT data, version, updated_at FROM wholesale_invoice_settings WHERE id = 1").first<SettingsRow>();
   const value: InvoiceSettings = row ? JSON.parse(row.data) : defaults();
   return { settings: value, version: row?.version || 0, updatedAt: row?.updated_at || null, ...readiness(value) };
@@ -130,7 +135,33 @@ export async function issuedInvoice(env: Env, id: number): Promise<InvoiceDocume
   const row = await env.DB.prepare("SELECT * FROM wholesale_invoices WHERE seq=?").bind(integer(id, "invoice ID", 1, Number.MAX_SAFE_INTEGER)).first<InvoiceRow>();
   if (!row) throw missing(); return document(row);
 }
+/** The tab invoice that covers an order, if its tab was cleared and invoiced. */
+async function tabInvoiceFor(env: Env, orderId: string, tabClearedId: string | undefined) {
+  if (!tabClearedId) return null;
+  return env.DB.prepare("SELECT * FROM wholesale_invoices WHERE order_id=? AND EXISTS(SELECT 1 FROM json_each(data,'$.orderIds') WHERE value=?)").bind("TAB-" + tabClearedId, orderId).first<InvoiceRow>();
+}
+/** SQL: whether an order has an invoice, its own or (on a cleared tab) the tab's. Bind invoicedArgs(order). */
+export const INVOICED_SQL = "EXISTS(SELECT 1 FROM wholesale_invoices WHERE order_id=? OR (order_id='TAB-'||? AND EXISTS(SELECT 1 FROM json_each(wholesale_invoices.data,'$.orderIds') WHERE value=?)))";
+export const invoicedArgs = (order: { id: string; tabClearedId?: string }) => [order.id, order.tabClearedId || "", order.id];
 async function invoiceByOrder(env: Env, orderId: string) { return env.DB.prepare("SELECT * FROM wholesale_invoices WHERE order_id = ?").bind(orderId).first<InvoiceRow>(); }
+const productOf = (line: { productId?: string; pack?: string }) => typeof line.productId === "string" && typeof line.pack === "string" ? { productId: line.productId, pack: line.pack } : {};
+function summed(lines: InvoiceLine[]) {
+  const vatBreakdown: InvoiceData["vatBreakdown"] = [];
+  const totals = { netPence: 0, vatPence: 0, grossPence: 0 };
+  for (const line of lines) {
+    let group = vatBreakdown.find((item) => item.rateId === line.rateId);
+    if (!group) { group = { rateId: line.rateId, label: line.rateLabel, basisPoints: line.vatBasisPoints, netPence: 0, vatPence: 0, grossPence: 0 }; vatBreakdown.push(group); }
+    for (const key of ["netPence", "vatPence", "grossPence"] as const) { totals[key] += line[key]; group[key] += line[key]; }
+  }
+  return { vatBreakdown, totals };
+}
+/** The due date agreed terms give an invoice: days from the invoice date, the same day for payment before dispatch,
+ *  else none (to be agreed or custom terms need a date chosen by hand). */
+function dueFor(terms: Terms, invoiceDate: string): string | null {
+  const netDays = /^net-(7|14|30|60)$/.exec(terms.id)?.[1];
+  if (netDays) return new Date(Date.parse(invoiceDate + "T00:00:00Z") + Number(netDays) * 86400000).toISOString().slice(0, 10);
+  return terms.id === "before-dispatch" ? invoiceDate : null;
+}
 async function build(env: Env, orderId: string, request: InvoiceRequest): Promise<{ data: InvoiceData; config: InvoiceSettings }> {
   const config = await settings(env);
   if (!config.ready) throw new ApiError(409, "invoice_settings_incomplete", config.reasons.join(" "));
@@ -140,26 +171,111 @@ async function build(env: Env, orderId: string, request: InvoiceRequest): Promis
   if (!orderId.startsWith("WS-") || order.preview !== false || !order.customerId) throw invalid("Invoices can only be issued for real customer orders.");
   if (order.status === "Cancelled") throw invalid("An invoice cannot be issued for a cancelled order.");
   if (order.version !== request.orderVersion) throw conflict("The order changed. Review its details before issuing an invoice.");
+  if (await tabInvoiceFor(env, orderId, order.tabClearedId)) throw invalid("This order was invoiced with its customer's tab. Open the tab's invoice.");
   const value = config.settings;
   const billTo = request.billTo || { name: order.business, address: order.customerSnapshot?.address || "", postcode: order.customerSnapshot?.postcode || "", vatNumber: "" };
   if (!billTo.name || !billTo.address) throw invalid("Add the customer's billing name and full address before issuing an invoice.");
   if (request.lineVatRateIds && request.lineVatRateIds.length !== order.lines.length) throw invalid("Choose one VAT rate for each saved order line.");
   const rate = (id: string) => { const found = value.vatRates.find((item) => item.id === id); if (!found) throw invalid("Choose a configured VAT rate."); return found; };
-  const lines = order.lines.map((line, i) => ({ ...invoiceLine("coffee", line.title, line.quantity, line.price, rate(request.lineVatRateIds?.[i] || value.defaultCoffeeRateId), value.priceBasis!), packLabel: line.packLabel, grindLabel: line.grindLabel }));
+  const lines = order.lines.map((line, i) => ({ ...invoiceLine("coffee", line.title, line.quantity, line.price, rate(request.lineVatRateIds?.[i] || value.defaultCoffeeRateId), value.priceBasis!), packLabel: line.packLabel, grindLabel: line.grindLabel, ...productOf(line) }));
   if (request.deliveryCharge.pence) lines.push(invoiceLine("delivery", request.deliveryCharge.description, 1, request.deliveryCharge.pence, rate(request.deliveryCharge.vatRateId || value.deliveryRateId), value.priceBasis!) as typeof lines[number]);
-  const vatBreakdown: InvoiceData["vatBreakdown"] = [];
-  const totals = { netPence: 0, vatPence: 0, grossPence: 0 };
-  for (const line of lines) {
-    let group = vatBreakdown.find((item) => item.rateId === line.rateId);
-    if (!group) { group = { rateId: line.rateId, label: line.rateLabel, basisPoints: line.vatBasisPoints, netPence: 0, vatPence: 0, grossPence: 0 }; vatBreakdown.push(group); }
-    for (const key of ["netPence", "vatPence", "grossPence"] as const) { totals[key] += line[key]; group[key] += line[key]; }
-  }
+  const { vatBreakdown, totals } = summed(lines);
   const paymentTerms = order.paymentTerms || order.customerSnapshot?.paymentTerms || { id: "not-recorded", label: "Payment terms not recorded", note: "" };
-  const netDays = /^net-(7|14|30|60)$/.exec(paymentTerms.id)?.[1];
-  const dueDate = netDays ? new Date(Date.parse(request.invoiceDate + "T00:00:00Z") + Number(netDays) * 86400000).toISOString().slice(0, 10) : request.dueDate;
-  if (netDays && request.dueDate && request.dueDate !== dueDate) throw invalid("The due date must follow this order's agreed invoice payment terms.");
+  const dueDate = dueFor(paymentTerms, request.invoiceDate) ?? request.dueDate;
+  if (/^net-/.test(paymentTerms.id) && request.dueDate && request.dueDate !== dueDate) throw invalid("The due date must follow this order's agreed invoice payment terms.");
   if (dueDate && dueDate < request.invoiceDate) throw invalid("The payment due date cannot be before the invoice date.");
   return { config: value, data: { orderId, orderReference: order.reference || "", customerId: order.customerId, invoiceDate: request.invoiceDate, supplyDate: request.supplyDate, seller: { ...value.seller }, billTo: { ...billTo }, deliveryLocation: order.locationSnapshot ? { ...order.locationSnapshot } : null, priceBasis: value.priceBasis!, lines, totals, vatBreakdown, paymentTerms: { ...paymentTerms }, paymentInstructions: request.paymentInstructions ?? value.paymentInstructions, dueDate, orderVersion: order.version, settingsVersion: config.version } };
+}
+
+/** Issues an invoice once: the next number, only while the order (or, for a tab, every order on it) is as reviewed and
+ *  the settings haven't changed. Returns null if anything changed or it was already issued. */
+async function insertInvoice(env: Env, orderId: string, data: InvoiceData, config: InvoiceSettings, requestKey: string, actor: string, orderVersion: number, settingsVersion: number) {
+  const tab = orderId.startsWith("TAB-");
+  // An order: only while it's as reviewed and not cancelled. A tab: while its record exists and none of its orders has
+  // been invoiced since. (Kept as plain strings: test/production-guards.test.mjs runs the order statement.)
+  const statement = !tab
+    ? env.DB.prepare("INSERT INTO wholesale_invoices(seq,invoice_number,order_id,customer_id,request_key,data,issued_at,issued_by) SELECT next_seq, ? || printf('%06d', ? + next_seq - 1), ?,?,?,?,?,? FROM (SELECT COALESCE((SELECT seq FROM sqlite_sequence WHERE name='wholesale_invoices'),0)+1 AS next_seq) WHERE NOT EXISTS(SELECT 1 FROM wholesale_invoices WHERE order_id=?) AND EXISTS(SELECT 1 FROM wholesale_preview WHERE kind='order' AND id=? AND version=? AND json_extract(data,'$.preview')=0 AND json_extract(data,'$.deletedAt') IS NULL AND json_extract(data,'$.status') <> 'Cancelled') AND EXISTS(SELECT 1 FROM wholesale_invoice_settings WHERE id=1 AND version=?) RETURNING *")
+    : env.DB.prepare("INSERT INTO wholesale_invoices(seq,invoice_number,order_id,customer_id,request_key,data,issued_at,issued_by) SELECT next_seq, ? || printf('%06d', ? + next_seq - 1), ?,?,?,?,?,? FROM (SELECT COALESCE((SELECT seq FROM sqlite_sequence WHERE name='wholesale_invoices'),0)+1 AS next_seq) WHERE NOT EXISTS(SELECT 1 FROM wholesale_invoices WHERE order_id=?) AND EXISTS(SELECT 1 FROM wholesale_tabs WHERE id=?) AND NOT EXISTS(SELECT 1 FROM wholesale_invoices WHERE order_id IN (SELECT value FROM json_each(?))) AND EXISTS(SELECT 1 FROM wholesale_invoice_settings WHERE id=1 AND version=?) RETURNING *");
+  const inserted = await statement
+    .bind(config.invoicePrefix, config.firstInvoiceNumber, orderId, data.customerId, requestKey, JSON.stringify(data), Date.now(), actor, orderId, ...(tab ? [orderId.slice(4), JSON.stringify(data.orderIds || [])] : [orderId, orderVersion]), settingsVersion).first<InvoiceRow>();
+  if (inserted) await audit(env, "wholesale_invoice_issued", actor, `${actor} issued invoice ${inserted.invoice_number} for ${tab ? `a tab of ${data.orderIds?.length || 0} orders (${data.orderIds?.join(", ")})` : orderId}.`);
+  return inserted;
+}
+
+/** The delivery charge an order was placed with (including VAT), as the invoice's price basis needs it: when saved
+ *  prices exclude VAT it's the amount before VAT at the delivery rate (as the Admin invoice form fills it in). */
+function deliveryPenceFor(order: SourceOrder, config: InvoiceSettings) {
+  const gross = Number.isSafeInteger(order.deliveryPence) ? order.deliveryPence! : 0;
+  const rate = config.vatRates.find((item) => item.id === config.deliveryRateId);
+  return gross && config.priceBasis === "exclusive" && rate ? Math.round(gross * 10000 / (10000 + rate.basisPoints)) : gross;
+}
+const ukDay = (at: number) => dayFormat.format(new Date(at));
+export class InvoiceHold extends ApiError { constructor(message: string) { super(409, "invoice_held", message); } }
+
+/** Automatic invoicing: an invoice for a dispatched customer order, dated today with the supply date the day it went out,
+ *  the order's own delivery charge and the default VAT rates, as an admin issuing it with nothing changed would. */
+export async function issueForOrder(env: Env, orderId: string, actor: string): Promise<InvoiceDocument> {
+  const existing = await invoiceByOrder(env, orderId);
+  if (existing) return document(existing);
+  const config = await settings(env);
+  if (!config.ready) throw new InvoiceHold("Invoice settings aren't finished: " + config.reasons.join(" "));
+  const order = await get<SourceOrder>(env, "order", orderId);
+  if (!order || order.deletedAt != null || order.status === "Cancelled") throw new InvoiceHold("The order was deleted or cancelled.");
+  const invoiceDate = today(), sent = order.dispatchedAt ? ukDay(order.dispatchedAt) : invoiceDate;
+  const pence = deliveryPenceFor(order, config.settings);
+  const request: InvoiceRequest = { orderVersion: order.version, settingsVersion: config.version, invoiceDate, supplyDate: sent > invoiceDate ? invoiceDate : sent, billTo: null, deliveryCharge: { pence, description: order.delivery === "Delivery" ? "Delivery" : "Roastery collection", vatRateId: "" }, lineVatRateIds: null, paymentInstructions: null, dueDate: null };
+  let built;
+  try { built = await build(env, orderId, request); }
+  catch (error) { if (error instanceof ApiError && error.status < 500) throw new InvoiceHold(error.message); throw error; }
+  const inserted = await insertInvoice(env, orderId, built.data, built.config, await digest(request), actor, request.orderVersion, request.settingsVersion);
+  if (inserted) return document(inserted);
+  const raced = await invoiceByOrder(env, orderId);
+  if (raced) return document(raced);
+  throw new ApiError(409, "conflict", "The order changed while it was being invoiced. It will be tried again.");
+}
+
+/** Automatic invoicing for a cleared tab: one invoice covering its orders (not cancelled or deleted, and not already
+ *  invoiced on their own), their bags merged by coffee, size, grind and price, and their delivery charges. */
+export async function issueForTab(env: Env, tabId: string, actor: string): Promise<InvoiceDocument | null> {
+  const id = "TAB-" + tabId, existing = await invoiceByOrder(env, id);
+  if (existing) return document(existing);
+  const config = await settings(env);
+  if (!config.ready) throw new InvoiceHold("Invoice settings aren't finished: " + config.reasons.join(" "));
+  const tab = await env.DB.prepare("SELECT customer_id, data FROM wholesale_tabs WHERE id=?").bind(tabId).first<{ customer_id: string; data: string }>();
+  if (!tab) throw new InvoiceHold("The tab record wasn't found.");
+  const record = JSON.parse(tab.data) as { orderIds: string[] };
+  const loaded = await Promise.all(record.orderIds.map(async (orderId) => ({ orderId, order: await get<SourceOrder>(env, "order", orderId) })));
+  const invoiced = new Set((await env.DB.prepare("SELECT order_id FROM wholesale_invoices WHERE order_id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(record.orderIds)).all<{ order_id: string }>()).results.map((r) => r.order_id));
+  const orders = loaded.filter(({ orderId, order }) => order && order.deletedAt == null && order.status !== "Cancelled" && order.preview === false && order.customerId === tab.customer_id && !invoiced.has(orderId)) as { orderId: string; order: SourceOrder }[];
+  if (!orders.length) return null;
+  const value = config.settings, rate = (rateId: string) => value.vatRates.find((r) => r.id === rateId)!;
+  const merged = new Map<string, { line: SourceOrder["lines"][number]; quantity: number }>();
+  for (const { order } of orders) for (const line of order.lines) {
+    const key = JSON.stringify([line.productId, line.pack, line.title, line.packLabel, line.grindLabel, line.price]);
+    const found = merged.get(key); if (found) found.quantity += line.quantity; else merged.set(key, { line, quantity: line.quantity });
+  }
+  const lines: InvoiceLine[] = [];
+  for (const { line, quantity } of merged.values()) {
+    for (let left = quantity; left > 0; left -= MAX_QUANTITY)
+      lines.push({ ...invoiceLine("coffee", line.title, Math.min(left, MAX_QUANTITY), line.price, rate(value.defaultCoffeeRateId), value.priceBasis!), packLabel: line.packLabel, grindLabel: line.grindLabel, ...productOf(line) });
+  }
+  const charges = new Map<number, number>();
+  for (const { order } of orders) { const pence = deliveryPenceFor(order, value); if (pence) charges.set(pence, (charges.get(pence) || 0) + 1); }
+  for (const [pence, count] of charges) lines.push(invoiceLine("delivery", "Delivery", count, pence, rate(value.deliveryRateId || value.defaultCoffeeRateId), value.priceBasis!));
+  if (lines.length > 150) throw new InvoiceHold("This tab has too many different lines for one invoice. Invoice it by hand.");
+  const latest = orders.map((o) => o.order).sort((a, b) => b.createdAt - a.createdAt)[0];
+  const billTo = { name: latest.business, address: latest.customerSnapshot?.address || "", postcode: latest.customerSnapshot?.postcode || "", vatNumber: "" };
+  if (!billTo.name || !billTo.address) throw new InvoiceHold("Add the customer's billing address before this tab can be invoiced.");
+  const invoiceDate = today(), sentDays = orders.map((o) => o.order.dispatchedAt).filter((at): at is number => !!at).map(ukDay).sort();
+  const supplyDate = sentDays.length && sentDays.at(-1)! <= invoiceDate ? sentDays.at(-1)! : invoiceDate;
+  const paymentTerms = latest.paymentTerms || latest.customerSnapshot?.paymentTerms || { id: "not-recorded", label: "Payment terms not recorded", note: "" };
+  const { vatBreakdown, totals } = summed(lines);
+  const data: InvoiceData = { orderId: id, orderReference: `Tab: ${orders.length} ${orders.length === 1 ? "order" : "orders"}`, customerId: tab.customer_id, invoiceDate, supplyDate, seller: { ...value.seller }, billTo, deliveryLocation: latest.locationSnapshot ? { ...latest.locationSnapshot } : null, priceBasis: value.priceBasis!, lines, totals, vatBreakdown, paymentTerms: { ...paymentTerms }, paymentInstructions: value.paymentInstructions, dueDate: dueFor(paymentTerms, invoiceDate), orderVersion: 0, settingsVersion: config.version, orderIds: orders.map((o) => o.orderId) };
+  const inserted = await insertInvoice(env, id, data, value, await digest({ tab: tabId, orderIds: data.orderIds, settingsVersion: config.version }), actor, 0, config.version);
+  if (inserted) return document(inserted);
+  const raced = await invoiceByOrder(env, id);
+  if (raced) return document(raced);
+  throw new ApiError(409, "conflict", "The tab's orders changed while it was being invoiced. It will be tried again.");
 }
 
 export async function handleInvoiceAdmin(req: Request, env: Env, route: string, actor: string): Promise<Response | null> {
@@ -216,15 +332,12 @@ export async function handleInvoiceAdmin(req: Request, env: Env, route: string, 
       const preview: InvoiceDocument = { ...data, id: null, number: null, issuedAt: null, issuedBy: null, payment: { status: data.dueDate && data.dueDate < today() ? "overdue" : "unpaid", paid: false, paidDate: null, reference: "", version: 0, outstandingPence: data.totals.grossPence } };
       return order[3] ? invoicePdf(preview, { draft: true }) : json({ invoice: preview, issued: false });
     }
-    const at = Date.now();
-    const inserted = await env.DB.prepare("INSERT INTO wholesale_invoices(seq,invoice_number,order_id,customer_id,request_key,data,issued_at,issued_by) SELECT next_seq, ? || printf('%06d', ? + next_seq - 1), ?,?,?,?,?,? FROM (SELECT COALESCE((SELECT seq FROM sqlite_sequence WHERE name='wholesale_invoices'),0)+1 AS next_seq) WHERE NOT EXISTS(SELECT 1 FROM wholesale_invoices WHERE order_id=?) AND EXISTS(SELECT 1 FROM wholesale_preview WHERE kind='order' AND id=? AND version=? AND json_extract(data,'$.preview')=0 AND json_extract(data,'$.deletedAt') IS NULL AND json_extract(data,'$.status') <> 'Cancelled') AND EXISTS(SELECT 1 FROM wholesale_invoice_settings WHERE id=1 AND version=?) RETURNING *")
-      .bind(config.invoicePrefix, config.firstInvoiceNumber, order[1], data.customerId, requestKey, JSON.stringify(data), at, actor, order[1], order[1], request.orderVersion, request.settingsVersion).first<InvoiceRow>();
+    const inserted = await insertInvoice(env, order[1], data, config, requestKey, actor, request.orderVersion, request.settingsVersion);
     if (!inserted) {
       const raced = await invoiceByOrder(env, order[1]);
       if (raced?.request_key === requestKey) return json({ invoice: await presented(env,raced) });
       throw conflict("The order, invoice or settings changed. Reload and review before issuing.");
     }
-    await audit(env, "wholesale_invoice_issued", actor, `${actor} issued invoice ${inserted.invoice_number} for ${order[1]}.`);
     return json({ invoice: await presented(env,inserted) }, 201);
   }
   const payment = /^invoices\/(\d+)\/payment$/.exec(route);
@@ -300,17 +413,24 @@ export async function handleInvoiceCustomer(req: Request, env: Env, route: strin
   if (!(await customersSeeInvoices(env))) throw invoicesOff();
   if (route === "invoices") return invoiceList(req, env, user.customerId);
   const id = /^invoices\/(\d+)(\/pdf)?$/.exec(route);
-  const row = id ? await env.DB.prepare("SELECT * FROM wholesale_invoices WHERE seq=? AND customer_id=?").bind(integer(Number(id[1]), "invoice ID", 1, Number.MAX_SAFE_INTEGER), user.customerId).first<InvoiceRow>() : await env.DB.prepare("SELECT * FROM wholesale_invoices WHERE order_id=? AND customer_id=?").bind(route.split("/")[1], user.customerId).first<InvoiceRow>();
+  const orderId = route.split("/")[1];
+  const row = id ? await env.DB.prepare("SELECT * FROM wholesale_invoices WHERE seq=? AND customer_id=?").bind(integer(Number(id[1]), "invoice ID", 1, Number.MAX_SAFE_INTEGER), user.customerId).first<InvoiceRow>()
+    : await env.DB.prepare("SELECT * FROM wholesale_invoices WHERE customer_id=? AND (order_id=? OR (order_id LIKE 'TAB-%' AND EXISTS(SELECT 1 FROM json_each(data,'$.orderIds') WHERE value=?))) ORDER BY seq LIMIT 1").bind(user.customerId, orderId, orderId).first<InvoiceRow>();
   if (!row) throw missing(); return route.endsWith("/pdf") ? invoicePdf(document(row)) : json({ invoice: await presented(env,row,false) });
 }
 
-export async function invoiceLinks<T extends { id: string }>(env: Env, orders: T[]) {
+export async function invoiceLinks<T extends { id: string; tabClearedId?: string }>(env: Env, orders: T[]) {
   if (!orders.length) return orders;
-  const invoices: { seq: number; invoice_number: string; order_id: string }[] = [];
-  for (let start = 0; start < orders.length; start += 80) {
-    const chunk = orders.slice(start, start + 80);
-    const result = await env.DB.prepare(`SELECT seq,invoice_number,order_id FROM wholesale_invoices WHERE order_id IN (${chunk.map(() => "?").join(",")})`).bind(...chunk.map((order) => order.id)).all<{ seq: number; invoice_number: string; order_id: string }>();
+  const invoices: { seq: number; invoice_number: string; order_id: string; ids: string | null }[] = [];
+  const keys = [...new Set(orders.flatMap((order) => [order.id, ...(order.tabClearedId ? ["TAB-" + order.tabClearedId] : [])]))];
+  for (let start = 0; start < keys.length; start += 80) {
+    const chunk = keys.slice(start, start + 80);
+    const result = await env.DB.prepare(`SELECT seq,invoice_number,order_id,json_extract(data,'$.orderIds') AS ids FROM wholesale_invoices WHERE order_id IN (${chunk.map(() => "?").join(",")})`).bind(...chunk).all<{ seq: number; invoice_number: string; order_id: string; ids: string | null }>();
     invoices.push(...result.results);
   }
-  return orders.map((order) => { const invoice = invoices.find((invoice) => invoice.order_id === order.id); return invoice ? { ...order, invoice: { id: invoice.seq, number: invoice.invoice_number } } : order; });
+  return orders.map((order) => {
+    const invoice = invoices.find((invoice) => invoice.order_id === order.id)
+      || (order.tabClearedId ? invoices.find((invoice) => invoice.order_id === "TAB-" + order.tabClearedId && (JSON.parse(invoice.ids || "[]") as string[]).includes(order.id)) : undefined);
+    return invoice ? { ...order, invoice: { id: invoice.seq, number: invoice.invoice_number } } : order;
+  });
 }

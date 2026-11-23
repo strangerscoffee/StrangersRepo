@@ -30,7 +30,9 @@ export async function startQuickBooksProvider(){
     const payment=/\/payment\/(\d+)$/.exec(url.pathname);if(payment){const row=state.payments[environment].get(payment[1]);reply(row?200:404,row?{Payment:row}:{});return;}
     if(url.pathname.endsWith('/query')){
       const query=url.searchParams.get('query'),name=/FROM (Customer|Item|TaxCode|Term|Invoice)/.exec(query)?.[1],position=Number(/STARTPOSITION (\d+)/.exec(query)?.[1]||1),document=/DocNumber\s*=\s*'([^']*)'/.exec(query)?.[1];
-      const rows=name==='Customer'?customers:name==='Item'?items:name==='TaxCode'?taxes:name==='Term'?terms:[...state.invoices[environment].values()].filter(invoice=>!document||invoice.DocNumber===document);
+      const named=/WHERE (DisplayName|Name) = '((?:[^'\\]|\\.)*)'/.exec(query),wanted=named?named[2].replace(/\\(.)/g,'$1').toLowerCase():null;
+      let rows=name==='Customer'?customers:name==='Item'?items:name==='TaxCode'?taxes:name==='Term'?terms:[...state.invoices[environment].values()].filter(invoice=>!document||invoice.DocNumber===document);
+      if(named)rows=rows.filter(row=>String(row[named[1]]||'').toLowerCase()===wanted);
       reply(200,{QueryResponse:{[name]:rows.slice(position-1,position+99)}});return;
     }
     if(url.pathname.endsWith('/invoice')&&req.method==='POST'){
@@ -42,6 +44,20 @@ export async function startQuickBooksProvider(){
       const invoice={...value,Id:String(1000+state.invoices[environment].size),SyncToken:'0',MetaData:{LastUpdatedTime:new Date().toISOString()},TotalAmt:Math.round((value.Line.reduce((sum,line)=>sum+line.Amount,0)+value.TxnTaxDetail.TotalTax)*100)/100};invoice.Balance=invoice.TotalAmt;
       if(state.createTransform)state.createTransform(invoice,environment);state.invoices[environment].set(invoice.Id,invoice);state.requests[environment].set(request,invoice.Id);
       if(state.dropCreateResponse){req.socket.destroy();return;}reply(200,{Invoice:invoice});return;
+    }
+    const create=/\/(customer|item)$/.exec(url.pathname);
+    if(create&&req.method==='POST'){
+      const value=JSON.parse(body),request=url.searchParams.get('requestid'),list=create[1]==='customer'?customers:items,field=create[1]==='customer'?'DisplayName':'Name',key=create[1]==='customer'?'Customer':'Item';
+      state.created=state.created||[];const known=state.requests[environment].get(create[1]+':'+request);
+      if(known){reply(200,{[key]:list.find(row=>row.Id===known)});return;}
+      if(list.some(row=>String(row[field]).toLowerCase()===String(value[field]).toLowerCase())||(create[1]==='customer'&&state.takenNames?.includes(value.DisplayName))){reply(400,{Fault:{Error:[{code:'6240'}]}});return;}
+      const row={...value,Id:String((create[1]==='customer'?7000:8000)+list.length),Active:true,SyncToken:'0'};list.push(row);state.created.push({kind:create[1],environment,row});state.requests[environment].set(create[1]+':'+request,row.Id);reply(200,{[key]:row});return;
+    }
+    const sending=/\/invoice\/(\d+)\/send$/.exec(url.pathname);
+    if(sending&&req.method==='POST'){
+      const row=state.invoices[environment].get(sending[1]);if(!row){reply(404,{});return;}
+      if(state.failSend){reply(500,{});return;}
+      row.EmailStatus='EmailSent';row.BillEmail={Address:url.searchParams.get('sendTo')};state.sent=state.sent||[];state.sent.push({environment,id:row.Id,to:url.searchParams.get('sendTo'),contentType:req.headers['content-type']});reply(200,{Invoice:row});return;
     }
     const invoice=/\/invoice\/(\d+)$/.exec(url.pathname);if(invoice){const row=state.invoices[environment].get(invoice[1]);reply(row?200:404,row?{Invoice:row}:{});return;}
     const found=/\/(customer|item|taxcode|taxrate|account|term)\/(\d+)$/.exec(url.pathname);

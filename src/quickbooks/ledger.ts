@@ -5,7 +5,7 @@ import {ApiError,type Env,invalid} from '../http';
 import {version} from '../wholesaleStore';
 import {issuedInvoice} from '../wholesaleInvoices';
 import {connection,ProviderError,resourceReader} from './connection';
-import {mapping,mappingStillMatches,verifiedMapping,verifyFrozenReferences,changed} from './mappings';
+import {mapping,mappingStillMatches,productLinks,verifiedMapping,verifyFrozenReferences,changed} from './mappings';
 import {buildPayload,matchesInvoice} from './payload';
 import {previewInvoice,type Environment,type ExportPreview} from './preview';
 import {requireExportMode,settings} from './settings';
@@ -63,7 +63,7 @@ export async function processExport(req:Request,env:Env,id:number){
     const invoice=await issuedInvoice(env,row.invoice_id),preview=JSON.parse(row.preview) as ExportPreview;
     if(!preview.candidate||await sourceHash(invoice)!==row.source_hash||await digest(row.payload)!==row.payload_hash||preview.fingerprint!==row.fingerprint||await digest(JSON.stringify(preview.candidate))!==row.fingerprint||JSON.stringify(buildPayload(preview).payload)!==row.payload)throw new ApiError(409,'quickbooks_integrity','The invoice or saved export changed. Review it before sending.');
     const company=await connection(env,row.environment);if(company.status!=='connected'||company.realm_id!==row.realm_id||company.generation!==row.connection_generation)throw new ApiError(409,'quickbooks_connection_changed','The company connection changed. Review the original export before retrying.');
-    const currentMap=await mapping(env,row.environment,row.realm_id);if(currentMap.version!==row.mapping_version&&!mappingStillMatches(currentMap.data,preview.candidate))throw new ApiError(409,'quickbooks_mapping_changed','Mappings changed after this export was queued. Review the original export.');
+    const currentMap=await mapping(env,row.environment,row.realm_id),products=await productLinks(env,row.environment,row.realm_id,preview.candidate.lines.flatMap(line=>line.productKey?[line.productKey]:[]));if(!mappingStillMatches(currentMap.data,preview.candidate,products)&&(currentMap.version!==row.mapping_version||preview.candidate.lines.some(line=>line.productKey)))throw new ApiError(409,'quickbooks_mapping_changed','Mappings changed after this export was queued. Review the original export.');
     await requireExportMode(req,env,company,JSON.parse(row.profiles),modeState.version);
     const resources=await resourceReader(req,env,company),startedAt=Date.now();let remote:any=null;
     if(row.remote_id){

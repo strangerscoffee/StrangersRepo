@@ -1,3 +1,4 @@
+import { startAutoInvoice } from "./autoInvoice";
 // The staff orders page (diary host) for accounts an admin has given wholesale orders access. Separate from Admin's
 // order payload: no money, invoice documents or employee attribution. Granted staff may read and edit an order's
 // status, internal note and tracking link (the same version-checked update as Admin), print orders and bag totals,
@@ -125,7 +126,7 @@ export async function handleStaffOrders(req:Request,env:Env,route:string,user:Us
   // Customer tabs: kg and bags only here (no money); the same checks as Admin.
   const tabOrder=/^orders\/(WS-[A-F0-9]{32})\/tab$/.exec(route),tabClear=/^tabs\/([a-f0-9-]{36})\/clear$/.exec(route);
   if(tabOrder&&req.method==="PUT"){const saved=await setOnTab(env,tabOrder[1],await readJson(req,4096),user.name);await requireStaffOrders(env,user);return json({order:staffView(saved)});}
-  if(tabClear&&req.method==="POST"){const cleared=await clearTab(env,tabClear[1],await readJson(req,64*1024),user.name);await requireStaffOrders(env,user);return json({cleared});}
+  if(tabClear&&req.method==="POST"){const cleared=await clearTab(env,tabClear[1],await readJson(req,64*1024),user.name);await startAutoInvoice(env,"tab:"+cleared.id,ctx);await requireStaffOrders(env,user);return json({cleared});}
   if(route==="tabs"&&req.method==="GET"){const tabs=await listTabs(env);await requireStaffOrders(env,user);return json(tabs);}
   // Taking an order for a customer (by email, phone or at the door): the same checks as the ordering site, at
   // today's catalogue prices, which this page never shows.

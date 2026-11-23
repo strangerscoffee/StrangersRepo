@@ -56,7 +56,7 @@ The switch controls **new exports**. Existing exports retain their environment/c
 - Live-linked invoices display separately stored QuickBooks balance observations: unpaid, part paid, paid, overdue or review. Customer APIs expose only that business’s invoices, remaining amounts and checked time. They omit export IDs, provider diagnostics and internal payment references. Sandbox observations are excluded.
 - Payments are recorded/corrected in QuickBooks after a Live link; local full-paid editing is blocked. A local paid flag conflicting with QuickBooks enters review. Missing, voided, edited or financially mismatched invoices never become false payment confirmations. Customer UI asks Strangers to confirm a disputed balance; totals identify saved balances pending review.
 - Signed notifications are deduplicated and durably queued before acknowledgement. Workers read authoritative Invoice/Payment records; notifications themselves do not prove payment. A five-minute scheduled job processes bounded export/event work, polls Invoice CDC with overlap, and sweeps owned links after gaps and daily. Overdue CDC recovery receives priority at least every 15 minutes of scheduled opportunities so an event backlog cannot starve it. Refresh controls can request catch-up without changing environment. Out-of-order reads cannot overwrite newer revisions.
-- No automatic export on order placement, invoice email/send, Payment creation, bank/card collection, refunds, credit notes or remote deletion is implemented. Deleting a source order leaves issued invoices and accounting links intact. The customer PDF financial snapshot remains unchanged by payment synchronisation.
+- Exports are explicit admin actions unless **Automatic invoicing** is switched on (below). No automatic export on order placement, Payment creation, bank/card collection, refunds, credit notes or remote deletion is implemented. Deleting a source order leaves issued invoices and accounting links intact. The customer PDF financial snapshot remains unchanged by payment synchronisation.
 
 ## Privacy and connection safeguards
 
@@ -121,3 +121,13 @@ The loopback fixture deliberately collides Sandbox/Live IDs and exercises lost r
 - [Partner programme](https://static.developer.intuit.com/output_html/qbo/docs/get-started/partner-faq.html) and [API limits](https://static.developer.intuit.com/output_html/qbo/docs/learn/limits-and-throttles.html): review the actual app’s access, fees and limits before the Live pilot.
 
 Hosting limits: validation and processing have separate D1 budgets; batched work stays bounded. See [Cloudflare D1 invocation limits](https://developers.cloudflare.com/d1/platform/limits/) and [Worker subrequest limits](https://developers.cloudflare.com/workers/platform/limits/).
+
+## Automatic invoicing (23 November 2026)
+
+**Admin → Wholesale → Invoicing → Automatic invoicing** has three switches, each needing the one before:
+
+1. **Invoice orders when they're dispatched.** Each customer order marked Dispatched after this is switched on is issued an invoice (today's date, supply date the dispatch day, the order's delivery charge, default VAT rates). Orders on a tab are invoiced together when the tab is cleared. Customers set to "Hide prices" (Strangers' own shops) are not invoiced.
+2. **Send them to QuickBooks.** Before export, the business is linked to a QuickBooks customer (its QuickBooks name from the import, else the business name; created if none exists) and each coffee and bag size to its own sales item (an item with the name used in the imported QuickBooks sales history, or "<coffee> 1kg"/"<coffee> 250g"; created if none exists, with the general coffee item's type and income account and a SKU such as `SC1004-1KG`). VAT codes, the general coffee and delivery items and payment terms are still chosen once in Mappings. The invoice is then exported exactly like a reviewed manual export, in the name of the admin who switched sending on. Live still needs the readiness review and Sandbox-tested VAT profiles; anything blocked is held with the reason.
+3. **QuickBooks emails each invoice** to the business's accounts email (else order email) once it is linked. In Sandbox, the email goes only to the supplier email in Invoice settings.
+
+Held items show their reason under "Waiting or needs attention" with **Try again** and **Do by hand**. Terms "To be agreed" and "Custom" have no due date, so their invoices are issued but held before QuickBooks; send those by hand.

@@ -108,3 +108,20 @@
  .wi-invoice-row .end{max-width:44%;font-size:13px}
  .wi-table-wrap{margin-inline:0}
 }
+
+/* Automatic invoicing (Invoicing page): three switches and what's waiting. */
+.wi-auto{display:grid;gap:12px;padding:16px 20px;border:1px solid var(--line);margin-top:14px}
+.wi-auto h3{margin:0;font-size:17px}
+.wi-auto-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-top:10px;border-top:1px solid var(--line)}
+.wi-auto-row>div{display:grid;gap:3px;min-width:0}
+.wi-auto-row h4{margin:0;font-size:15px}
+.wi-auto-row .hint{margin:0}
+.wi-switch[disabled]{opacity:.45;cursor:not-allowed}
+.wi-auto-list{display:grid;gap:8px}
+.wi-auto-item{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:10px 12px;border-radius:12px;background:var(--sunk)}
+.wi-auto-item .tx{display:grid;gap:2px;min-width:0;flex:1 1 220px}
+.wi-auto-item .hint{margin:0;overflow-wrap:anywhere}
+.wi-auto-item[data-state=held]{box-shadow:inset 3px 0 0 var(--warn)}
+.wi-auto-state{font-size:13px;color:var(--muted)}
+.wi-auto-recent summary{cursor:pointer;font-weight:600;min-height:44px;display:flex;align-items:center}
+@media (max-width:520px){.wi-auto{padding:14px}.wi-auto-row{align-items:flex-start}}

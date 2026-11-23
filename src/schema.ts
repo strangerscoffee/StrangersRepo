@@ -355,6 +355,26 @@ const MIGRATIONS: Migration[] = [
       env.DB.prepare("CREATE INDEX IF NOT EXISTS staff_email_outbox_scope ON staff_email_outbox(scope,user_id,kind,state)"),
     ]);
   } },
+  // Automatic invoicing (src/autoInvoice.ts, the owner's request of 23 Nov 2026): its switches, one row per dispatched
+  // order or cleared tab it handles, the QuickBooks items made for each coffee and size, each coffee's product number,
+  // and whether QuickBooks has emailed an automatically exported invoice.
+  { id: 38, name: "Automatic invoicing", run: async env => {
+    await env.DB.batch([
+      env.DB.prepare("CREATE TABLE IF NOT EXISTS wholesale_auto_invoicing (id INTEGER PRIMARY KEY CHECK(id=1), data TEXT NOT NULL, version INTEGER NOT NULL, updated_at INTEGER NOT NULL)"),
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS wholesale_auto_invoices (
+        source TEXT PRIMARY KEY, customer_id TEXT NOT NULL, business TEXT NOT NULL DEFAULT '', invoice_id INTEGER, state TEXT NOT NULL DEFAULT 'pending',
+        reason TEXT NOT NULL DEFAULT '', attempts INTEGER NOT NULL DEFAULT 0, retry_at INTEGER NOT NULL DEFAULT 0,
+        lease_owner TEXT, lease_until INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`),
+      env.DB.prepare("CREATE INDEX IF NOT EXISTS wholesale_auto_invoices_due ON wholesale_auto_invoices(state,retry_at)"),
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS quickbooks_product_items (environment TEXT NOT NULL, realm_id TEXT NOT NULL, product_key TEXT NOT NULL,
+        item_id TEXT NOT NULL, name TEXT NOT NULL, sku TEXT NOT NULL DEFAULT '', created_remote INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL,
+        PRIMARY KEY(environment, realm_id, product_key))`),
+      env.DB.prepare("CREATE TABLE IF NOT EXISTS wholesale_product_numbers (product_id TEXT PRIMARY KEY, number INTEGER NOT NULL UNIQUE, created_at INTEGER NOT NULL)"),
+    ]);
+    const has = await columns(env, "quickbooks_exports");
+    for (const [name, type] of [["auto", "INTEGER NOT NULL DEFAULT 0"], ["email_to", "TEXT NOT NULL DEFAULT ''"], ["email_state", "TEXT NOT NULL DEFAULT ''"], ["email_at", "INTEGER NOT NULL DEFAULT 0"], ["email_error", "TEXT NOT NULL DEFAULT ''"]])
+      if (!has.has(name)) await env.DB.prepare(`ALTER TABLE quickbooks_exports ADD COLUMN ${name} ${type}`).run();
+  } },
 ];
 
 async function migrate(env: Env): Promise<void> {

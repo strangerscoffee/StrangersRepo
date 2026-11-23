@@ -15,6 +15,7 @@ import { audit } from "./audit";
 import { autoTabFor } from "./wholesaleTabs";
 import { canOrder, recipeText } from "./wholesaleWhiteLabel";
 import { ApiError, type Env, invalid } from "./http";
+import { INVOICED_SQL, invoicedArgs } from "./wholesaleInvoices";
 import { notifyNewOrder } from "./email/orders";
 import { notifySlackNewOrder } from "./slackOrders";
 import { isDay } from "./rota/util";
@@ -139,8 +140,9 @@ export interface Changer { customerId?: string; minimumGrams?: number }
 async function saveChange(env: Env, order: AnyOrder, data: Record<string, any>, expected: number, by: Changer) {
   if (expected !== order.version) throw new ApiError(409, "conflict", "This order changed. Reload it before saving.");
   const at = Date.now();
-  const result = await env.DB.prepare("UPDATE wholesale_preview SET data=?,version=version+1,updated_at=? WHERE kind='order' AND id=? AND version=? AND json_extract(data,'$.deletedAt') IS NULL AND json_extract(data,'$.preview')=0 AND json_extract(data,'$.status') IN ('New','Preparing','Ready') AND (? IS NULL OR json_extract(data,'$.customerId')=?) AND NOT EXISTS(SELECT 1 FROM wholesale_invoices WHERE order_id=?)")
-    .bind(JSON.stringify(data), at, order.id, expected, by.customerId || null, by.customerId || null, order.id).run();
+  // The same check as INVOICED_SQL (its own invoice, or its cleared tab's), written out for test/production-guards.test.mjs.
+  const result = await env.DB.prepare("UPDATE wholesale_preview SET data=?,version=version+1,updated_at=? WHERE kind='order' AND id=? AND version=? AND json_extract(data,'$.deletedAt') IS NULL AND json_extract(data,'$.preview')=0 AND json_extract(data,'$.status') IN ('New','Preparing','Ready') AND (? IS NULL OR json_extract(data,'$.customerId')=?) AND NOT EXISTS(SELECT 1 FROM wholesale_invoices WHERE order_id=? OR (order_id='TAB-'||? AND EXISTS(SELECT 1 FROM json_each(wholesale_invoices.data,'$.orderIds') WHERE value=?)))")
+    .bind(JSON.stringify(data), at, order.id, expected, by.customerId || null, by.customerId || null, ...invoicedArgs(order)).run();
   if (!result.meta.changes) throw new ApiError(409, "conflict", "The order changed or was invoiced. Reload it before saving.");
   return { ...data, id: order.id, version: expected + 1, updatedAt: at } as AnyOrder;
 }
@@ -150,7 +152,7 @@ async function changeable(env: Env, id: string, by: Changer) {
   if (order.preview !== false) throw invalid("Only customer orders can be amended.");
   if (by.customerId && !order.standing) throw new ApiError(409, "not_standing", "Only standing orders can be changed here. Contact Strangers about this order.");
   if (!OPEN.includes(order.status)) throw new ApiError(409, "order_closed", order.status === "Dispatched" ? "This delivery has been dispatched, so it can't be changed now." : "This delivery has been cancelled, so it can't be changed now.");
-  if (await env.DB.prepare("SELECT 1 FROM wholesale_invoices WHERE order_id = ?").bind(id).first()) throw new ApiError(409, "invoiced", by.customerId ? "This delivery has been invoiced, so it can't be changed here. Contact Strangers." : "This order has an invoice, so its bags can't be changed.");
+  if (await env.DB.prepare(`SELECT ${INVOICED_SQL} AS yes`).bind(...invoicedArgs({ id, tabClearedId: order.tabClearedId })).first<{ yes: number }>().then((r) => r?.yes)) throw new ApiError(409, "invoiced", by.customerId ? "This delivery has been invoiced, so it can't be changed here. Contact Strangers." : "This order has an invoice, so its bags can't be changed.");
   return order;
 }
 

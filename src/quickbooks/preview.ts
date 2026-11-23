@@ -10,6 +10,8 @@ export interface QuickBooksMappings extends CompanyScope {
   company: { country: string; currency: string; vatNumber: string; reviewed: boolean; customNumbers?:boolean; serviceDates?:boolean };
   customer?: ScopedReference & { localCustomerId: string };
   items: Partial<Record<InvoiceLine["kind"], ScopedReference>>;
+  /** Items for particular coffees and bag sizes ("<productId>:<pack>"), used before the general coffee item. */
+  productItems?: Record<string, ScopedReference>;
   termRef?: ScopedReference;
   taxCodes: Record<string, ScopedReference & { basisPoints: number; sales: boolean; reviewed: boolean; taxRateRef?:string|null; taxable?:boolean }>;
 }
@@ -21,7 +23,7 @@ export interface InvoiceCandidate {
   currency: "GBP"; priceBasis: "inclusive" | "exclusive";
   billTo: InvoiceDocument["billTo"]; paymentTerms: InvoiceDocument["paymentTerms"]; paymentInstructions: string;
   shipping: {name:string;address:string;postcode:string}; termRef:string|null;
-  lines: { kind:InvoiceLine["kind"]; taxRateRef:string|null; taxable:boolean; description: string; quantity: number; unitPricePence: number; itemRef: string | null; taxCodeRef: string | null; localRateId: string; vatBasisPoints: number; netPence: number; vatPence: number; grossPence: number }[];
+  lines: { kind:InvoiceLine["kind"]; productKey?:string; taxRateRef:string|null; taxable:boolean; description: string; quantity: number; unitPricePence: number; itemRef: string | null; taxCodeRef: string | null; localRateId: string; vatBasisPoints: number; netPence: number; vatPence: number; grossPence: number }[];
   totals: InvoiceDocument["totals"];
 }
 export interface ExportPreview {
@@ -58,7 +60,9 @@ export async function previewInvoice(invoice: InvoiceDocument, mappings: QuickBo
   if (!Array.isArray(invoice.lines) || !invoice.lines.length || invoice.lines.length > 201) add("invoice_lines", "Review the saved invoice lines.");
   const sums = { netPence: 0, vatPence: 0, grossPence: 0 }, groups = new Map<string, { basisPoints: number; netPence: number; vatPence: number; grossPence: number }>();
   const lines = (Array.isArray(invoice.lines) ? invoice.lines : []).map((line, index) => {
-    const itemRef = reference(mappings.items[line.kind], scope), tax = Object.hasOwn(mappings.taxCodes, line.rateId) ? mappings.taxCodes[line.rateId] : undefined;
+    const productKey = line.kind === "coffee" && line.productId && line.pack ? line.productId + ":" + line.pack : undefined;
+    const productItem = productKey && mappings.productItems && Object.hasOwn(mappings.productItems, productKey) ? mappings.productItems[productKey] : undefined;
+    const itemRef = reference(productItem || mappings.items[line.kind], scope), tax = Object.hasOwn(mappings.taxCodes, line.rateId) ? mappings.taxCodes[line.rateId] : undefined;
     const taxCodeRef = tax?.reviewed === true && tax.sales === true && tax.basisPoints === line.vatBasisPoints ? reference(tax, scope) : null;
     if (!itemRef) add("item_mapping", `Line ${index + 1} needs an active ${line.kind} item mapping for this company.`);
     if (!taxCodeRef) add("vat_mapping", `Line ${index + 1} needs a reviewed sales VAT code for ${line.rateId} at ${line.vatBasisPoints / 100}%. Zero-rated and exempt codes must be reviewed separately.`);
@@ -72,7 +76,7 @@ export async function previewInvoice(invoice: InvoiceDocument, mappings: QuickBo
     if (group.basisPoints !== line.vatBasisPoints) add("vat_breakdown", "A saved VAT rate has inconsistent percentages.");
     for (const key of amountFields) group[key] += line[key];
     groups.set(line.rateId, group);
-    return { kind:line.kind,taxRateRef:tax?.taxRateRef||null,taxable:tax?.taxable!==false,description: [line.description, line.packLabel, line.grindLabel].filter(Boolean).join(" · "), quantity: line.quantity, unitPricePence: line.unitPricePence, itemRef, taxCodeRef, localRateId: line.rateId, vatBasisPoints: line.vatBasisPoints, netPence: line.netPence, vatPence: line.vatPence, grossPence: line.grossPence };
+    return { kind:line.kind,...(productItem ? { productKey } : {}),taxRateRef:tax?.taxRateRef||null,taxable:tax?.taxable!==false,description: [line.description, line.packLabel, line.grindLabel].filter(Boolean).join(" · "), quantity: line.quantity, unitPricePence: line.unitPricePence, itemRef, taxCodeRef, localRateId: line.rateId, vatBasisPoints: line.vatBasisPoints, netPence: line.netPence, vatPence: line.vatPence, grossPence: line.grossPence };
   });
   if (amountFields.some(key => !money(invoice.totals[key]) || !money(sums[key]) || sums[key] !== invoice.totals[key])) add("invoice_totals", "Saved line totals must exactly match the issued invoice totals.");
   const breakdown = Array.isArray(invoice.vatBreakdown) ? invoice.vatBreakdown : [];

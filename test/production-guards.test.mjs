@@ -22,7 +22,7 @@ test('production issuance and amendment SQL cannot both win either invoice/order
   for(const [index,invoiceFirst] of [true,false].entries()){
    const id='WS-'+String(index).repeat(32);db.prepare('INSERT INTO wholesale_preview VALUES(?,?,?,?,?)').run('order',id,JSON.stringify(old),1,1);
    const insert=()=>db.prepare(issue).get('INV-',1,id,'synthetic','request-'+index,JSON.stringify(old),2,'Audit',id,id,1,1);
-   const update=()=>db.prepare(amend).run(JSON.stringify(changed),3,id,1,null,null,id).changes;
+   const update=()=>db.prepare(amend).run(JSON.stringify(changed),3,id,1,null,null,id,'',id).changes;
    if(invoiceFirst){assert.ok(insert());assert.equal(update(),0);}else{assert.equal(update(),1);assert.equal(insert(),undefined);}
   }
  }finally{db.close();}

@@ -15,7 +15,7 @@ window.WholesaleInvoices = function ({ api, html, raw, svg, put, openSheet, clos
   const checked = (value) => value ? new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "Europe/London" }).format(new Date(value)) : "Not checked yet";
   const title = (heading, subtitle = "") => html`<header class="wi-head"><div><h2 id="sheetTitle" tabindex="-1">${heading}</h2>${subtitle ? html`<p>${subtitle}</p>` : ""}</div><button class="btn soft wi-close" type="button" data-sheet="wi-back" aria-label="Close invoice window">×</button></header>`;
   const footer = (submit, back = "Cancel") => html`<footer class="wi-foot"><p class="err" id="wiError" role="alert"></p><div class="row"><button class="btn soft" type="button" data-sheet="wi-back">${back}</button>${submit ? html`<button class="btn" type="submit">${submit}</button>` : ""}</div></footer>`;
-  let invoices = [], count = 0, cursor = null, listPages = 1, loadingMore = false, configCache = null;
+  let invoices = [], count = 0, cursor = null, listPages = 1, loadingMore = false, configCache = null, autoCache = null;
   let queue = "all", query = "", searchTimer, generation = 0;
   const pendingReviews = new Map();
   function setFilter(value) {
@@ -90,8 +90,9 @@ window.WholesaleInvoices = function ({ api, html, raw, svg, put, openSheet, clos
   }
   async function view() {
     const started = ++generation;
-    const [config, first] = await Promise.all([api("GET", root + "/invoice-settings"), api("GET", listUrl())]);
+    const [config, first, automatic] = await Promise.all([api("GET", root + "/invoice-settings"), api("GET", listUrl()), api("GET", root + "/auto-invoicing").catch(() => null)]);
     if (started !== generation) return html``;
+    autoCache = automatic;
     configCache = config; invoices = first.invoices; cursor = first.nextCursor; count = first.count;
     for (let page = 1; page < listPages && cursor; page++) {
       const next = await api("GET", listUrl(cursor));
@@ -100,12 +101,46 @@ window.WholesaleInvoices = function ({ api, html, raw, svg, put, openSheet, clos
     }
     return html`<section class="wi-workspace" aria-labelledby="wiTitle"><div class="toolbar"><div><h2 id="wiTitle">Invoices</h2><p class="hint">VAT invoices and payment records.</p></div><div class="row"><button class="btn soft" type="button" data-act="wh-invoice-quickbooks">QuickBooks</button><button class="btn soft" type="button" data-act="wh-invoice-settings">Invoice settings</button></div></div>${summary(first.summary)}
       <div class="w-queue-controls" role="group" aria-label="Invoice queues">${[["overdue","Overdue"],["soon","Due in 7 days"],["review","Payment review"],["all","All invoices"]].map(([id,label]) => html`<button class="btn sm soft" type="button" data-act="wh-invoice-queue" data-id="${id}" aria-pressed="${queue === id}">${label}</button>`)}</div>
-      <label class="search">${svg("search")}<input id="wiSearch" type="search" aria-label="Search invoices" placeholder="Search invoice number or business" maxlength="120" value="${query}"></label>${!config.ready ? html`<div class="wi-setup group"><h3>Complete your invoice settings</h3><p>Add your legal business details, VAT rates and invoice numbering before issuing an invoice.</p><button class="btn soft" type="button" data-act="wh-invoice-settings">Set up invoicing</button></div>` : ""}<section class="wi-records" aria-labelledby="wiListTitle"><div class="label" id="wiListTitle">Issued invoices <span class="count">${invoices.length} of ${count}</span></div><div class="group glass">${invoices.length ? invoices.map(invoiceRow) : html`<div class="w-empty"><span class="ic mut">${svg("dl")}</span><h3>${queue !== "all" || query.trim() ? "No matching invoices" : "No invoices yet"}</h3><p>${queue !== "all" || query.trim() ? "Try another queue or search." : "Open a customer order to review and issue its invoice."}</p></div>`}</div>${cursor ? html`<div class="w-more"><button class="btn soft" type="button" data-act="wh-invoice-more">Load earlier invoices</button></div>` : ""}<p class="hint">Recording payment updates the invoice status. It does not transfer money.</p></section>${customerSwitch(config)}</section>`;
+      <label class="search">${svg("search")}<input id="wiSearch" type="search" aria-label="Search invoices" placeholder="Search invoice number or business" maxlength="120" value="${query}"></label>${!config.ready ? html`<div class="wi-setup group"><h3>Complete your invoice settings</h3><p>Add your legal business details, VAT rates and invoice numbering before issuing an invoice.</p><button class="btn soft" type="button" data-act="wh-invoice-settings">Set up invoicing</button></div>` : ""}<section class="wi-records" aria-labelledby="wiListTitle"><div class="label" id="wiListTitle">Issued invoices <span class="count">${invoices.length} of ${count}</span></div><div class="group glass">${invoices.length ? invoices.map(invoiceRow) : html`<div class="w-empty"><span class="ic mut">${svg("dl")}</span><h3>${queue !== "all" || query.trim() ? "No matching invoices" : "No invoices yet"}</h3><p>${queue !== "all" || query.trim() ? "Try another queue or search." : "Open a customer order to review and issue its invoice."}</p></div>`}</div>${cursor ? html`<div class="w-more"><button class="btn soft" type="button" data-act="wh-invoice-more">Load earlier invoices</button></div>` : ""}<p class="hint">Recording payment updates the invoice status. It does not transfer money.</p></section>${customerSwitch(config)}${automatic ? autoPanel(automatic, config) : ""}</section>`;
   }
   // Admin's switch for what customers see: My orders → Invoices, invoice PDFs and balances. Issuing here is unaffected.
   function customerSwitch(config) {
     const on = config.settings.customersSeeInvoices !== false;
     return html`<div class="wi-customer-switch group glass"><div><h3 id="wiCustomersTitle">Invoices for customers</h3><p class="hint">${on ? "Customers can see their invoices, balances and invoice PDFs in Orders & invoices." : "Hidden from customers: no Invoices tab, balances or invoice PDFs in Orders & invoices. You can still issue and record invoices here."}</p></div><button class="wi-switch" type="button" role="switch" aria-checked="${on ? "true" : "false"}" aria-labelledby="wiCustomersTitle" data-act="wh-invoice-customers"><span class="wi-switch-track" aria-hidden="true"><span class="wi-switch-thumb"></span></span><span class="wi-switch-label">${on ? "On" : "Off"}</span></button></div>`;
+  }
+  // Automatic invoicing (src/autoInvoice.ts): three switches, each needing the one before, and what's waiting or recent.
+  const AUTO_STATES = { pending: "Waiting", issued: "Invoiced, not sent yet", exporting: "Sending to QuickBooks", held: "Needs attention", done: "Done", skipped: "Left to do by hand" };
+  function autoSwitch(id, heading, hint, on, enabled) {
+    return html`<div class="wi-auto-row"><div><h4 id="wiAuto-${id}">${heading}</h4><p class="hint">${hint}</p></div><button class="wi-switch" type="button" role="switch" aria-checked="${on ? "true" : "false"}" aria-labelledby="wiAuto-${id}" data-act="wh-invoice-auto" data-id="${id}" ${enabled ? "" : "disabled"}><span class="wi-switch-track" aria-hidden="true"><span class="wi-switch-thumb"></span></span><span class="wi-switch-label">${on ? "On" : "Off"}</span></button></div>`;
+  }
+  function autoItem(item) {
+    const qb = item.quickbooks, where = qb ? (qb.environment === "production" ? "QuickBooks" : "QuickBooks Sandbox") : "";
+    const detail = [item.invoiceNumber ? "Invoice " + item.invoiceNumber : "", qb ? `${where}: ${qb.state === "linked" ? "sent" : qb.state}` : "", qb?.email === "sent" ? "emailed" : ""].filter(Boolean).join(" · ");
+    const open = ["pending", "issued", "exporting", "held"].includes(item.state);
+    return html`<div class="wi-auto-item" data-state="${item.state}"><div class="tx"><b>${item.business || "Customer"}${item.kind === "tab" ? " · tab" : ""}</b><span class="wi-auto-state">${AUTO_STATES[item.state] || item.state}${detail ? " · " + detail : ""}</span>${item.reason ? html`<span class="hint">${item.reason}</span>` : ""}</div>${open ? html`<div class="row"><button class="btn sm soft" type="button" data-act="wh-invoice-auto-retry" data-id="${item.source}">Try again</button><button class="btn sm soft" type="button" data-act="wh-invoice-auto-skip" data-id="${item.source}">Do by hand</button></div>` : ""}</div>`;
+  }
+  function autoPanel(auto, config) {
+    const s = auto.settings, waiting = auto.items.filter((item) => ["pending", "issued", "exporting", "held"].includes(item.state)), recent = auto.items.filter((item) => !waiting.includes(item)).slice(0, 20);
+    const since = s.since ? new Date(s.since).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "Europe/London" }) : "";
+    return html`<section class="wi-auto group glass" aria-labelledby="wiAutoTitle"><h3 id="wiAutoTitle">Automatic invoicing</h3>
+      ${!config.ready ? html`<p class="wi-reasons">Finish the invoice settings first: automatic invoices use them.</p>` : ""}
+      ${autoSwitch("issue", "Invoice orders when they're dispatched", `Each customer order is invoiced when it's marked Dispatched, with its delivery charge and the default VAT rates. A tab gets one invoice for its orders when it's cleared. Your own shops ("Hide prices") aren't invoiced.${since ? ` Orders dispatched since ${since}.` : " Only orders dispatched after you switch this on."}`, s.issue, config.ready || s.issue)}
+      ${autoSwitch("quickbooks", "Send them to QuickBooks", `Missing customers and coffee items (one for each coffee and bag size, with a product number) are made in QuickBooks; ones with the same name are used.${s.quickbooks && s.enabledByName ? ` Sent as ${s.enabledByName}.` : ""}`, s.quickbooks, s.issue)}
+      ${autoSwitch("email", "QuickBooks emails each invoice", "To the business's accounts email, or its order email. While QuickBooks is on Sandbox, test emails go to your invoice email instead.", s.email, s.quickbooks)}
+      ${waiting.length ? html`<div class="label">Waiting or needs attention <span class="count">${waiting.length}</span></div><div class="wi-auto-list">${waiting.map(autoItem)}</div>` : ""}
+      ${recent.length ? html`<details class="wi-auto-recent"><summary>Recent automatic invoices</summary><div class="wi-auto-list">${recent.map(autoItem)}</div></details>` : ""}
+    </section>`;
+  }
+  async function autoToggle(id) {
+    if (!autoCache) return;
+    const s = autoCache.settings, next = { issue: s.issue, quickbooks: s.quickbooks, email: s.email };
+    next[id] = !s[id];
+    if (!next.issue) { next.quickbooks = false; next.email = false; }
+    if (!next.quickbooks) next.email = false;
+    if (id === "quickbooks" && next.quickbooks && !confirm("Send each automatic invoice to QuickBooks? Missing customers and coffee items will be made there.")) return;
+    if (id === "email" && next.email && !confirm("Have QuickBooks email each automatic invoice to the customer? (While QuickBooks is on Sandbox, only to your invoice email.)")) return;
+    try { autoCache = await api("PUT", root + "/auto-invoicing", { ifVersion: autoCache.version, ...next }); toast(next[id] ? "Switched on" : "Switched off"); }
+    finally { await reload(); }
   }
   function settingsDraft(form, state) {
     const value = (id) => form.querySelector("#" + id).value.trim();
@@ -278,6 +313,14 @@ window.WholesaleInvoices = function ({ api, html, raw, svg, put, openSheet, clos
       if (name === "wh-invoice-customers" && configCache) {
         const on = configCache.settings.customersSeeInvoices !== false;
         try { configCache = await api("PUT", root + "/invoice-settings/customers", { ifVersion: configCache.version, enabled: !on }); toast(on ? "Invoices hidden from customers" : "Invoices shown to customers"); }
+        finally { await reload(); }
+        return true;
+      }
+      if (name === "wh-invoice-auto") { await autoToggle(id); return true; }
+      if (name === "wh-invoice-auto-retry" || name === "wh-invoice-auto-skip") {
+        const skip = name.endsWith("skip");
+        if (skip && !confirm("Leave this to invoice by hand? Automatic invoicing won't try it again.")) return true;
+        try { autoCache = await api("POST", root + "/auto-invoicing/" + id + (skip ? "/skip" : "/retry"), {}); toast(skip ? "Left to do by hand" : "Tried again"); }
         finally { await reload(); }
         return true;
       }

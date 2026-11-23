@@ -11,6 +11,7 @@ import { adminWholesalePage, adminWholesaleStats } from "./wholesaleAdminLists";
 import { packingTotals } from "./wholesalePacking";
 import { audit } from "./audit";
 import { ApiError, type Env, invalid, json, readJson } from "./http";
+import { handleAutoInvoiceAdmin, startAutoInvoice } from "./autoInvoice";
 import { manageWholesaleAccount, publicCustomer, wholesaleAccounts, wholesaleCustomer, paymentTermsFor, PAYMENT_TERMS, type Customer, type OrderingUser } from "./wholesaleAccounts";
 import { customerLocations, editedCustomerLocations, locationDefaults, validLocationId, type CustomerLocation } from "./wholesaleCustomers";
 import { notifyCustomerChange, standingChangeToCustomer, confirmToCustomer, prepareDispatchEmail, prepareReadyEmail, handleOrderEmailsAdmin, notifyNewOrder } from "./email/orders";
@@ -309,8 +310,12 @@ export async function handleWholesale(req: Request, env: Env, route: string, use
     ]);
     const page = rows.results.slice(0, 200);
     const last = page.at(-1);
-    const visible = page.map((row) => visibleOrder(decode<Order>(row)));
-    return json({ orders: await customersSeeInvoices(env) ? await invoiceLinks(env, visible) : visible, count: total?.n || 0, nextCursor: rows.results.length > 200 && last ? `${last.updated_at}:${last.id}` : null });
+    // Invoice links are found from the full orders (an order invoiced with its tab links to the tab's invoice), then
+    // only the link is kept with what the customer sees.
+    const decoded = page.map((row) => decode<Order>(row) as Order & { id: string; tabClearedId?: string });
+    const linked = await customersSeeInvoices(env) ? await invoiceLinks(env, decoded) : decoded;
+    const visible = linked.map((order) => { const shown = visibleOrder(order as Order & Versioned); const invoice = (order as { invoice?: unknown }).invoice; return invoice ? { ...shown, invoice } : shown; });
+    return json({ orders: visible, count: total?.n || 0, nextCursor: rows.results.length > 200 && last ? `${last.updated_at}:${last.id}` : null });
   }
   if (/^images\/[a-f0-9]{32}$/.test(route) && req.method === "GET") return serveCatalogueImage(env, route.slice("images/".length), user.role === "wholesale" ? user.customerId : null);
   if (route === "orders" && req.method === "POST") return createOrder(req, env, user, links, ctx);
@@ -429,6 +434,9 @@ export async function updateOrderStatus(env: Env, id: string, body: Record<strin
     const delivery = wakeIntegration(env.DISPATCH_EMAIL_QUEUE, { key }, () => deliverDispatchEmails(env, key)).catch(() => {});
     if (notify.ctx) notify.ctx.waitUntil(delivery); else await delivery;
   }
+  // Automatic invoicing (src/autoInvoice.ts) invoices a customer order when it goes out; the five-minute job catches any
+  // dispatched without a page to wait on.
+  if (body.status === "Dispatched" && order.status !== "Dispatched" && order.preview === false && notify) await startAutoInvoice(env, "order:" + id, notify.ctx);
   // A standing run that went out (or was skipped) makes the next one, which also records it on this order.
   await rollStanding(env, updated, actor, notify?.ctx);
   if (updated.standing && ["Dispatched", "Cancelled"].includes(updated.status)) return (await get<Order>(env, "order", id))!;
@@ -440,6 +448,8 @@ export async function handleWholesaleAdmin(req: Request, env: Env, route: string
   if (user.role !== "admin") throw denied();
   const invoiceResponse = await handleInvoiceAdmin(req, env, route, user.name);
   if (invoiceResponse) return invoiceResponse;
+  const autoInvoicing = await handleAutoInvoiceAdmin(req, env, route, user, ctx);
+  if (autoInvoicing) return autoInvoicing;
   const announcement = await handleAnnouncementAdmin(req, env, route, user.name);
   if (announcement) return announcement;
   const orderEmails = await handleOrderEmailsAdmin(req, env, route, user.name, links.diary, ctx);
@@ -483,7 +493,7 @@ export async function handleWholesaleAdmin(req: Request, env: Env, route: string
   if (route === "tabs" && req.method === "GET") return json(await listTabs(env, { admin: true }));
   const tabOrder = /^orders\/(WS-[A-F0-9]{32})\/tab$/.exec(route), tabClear = /^tabs\/([a-f0-9-]{36})\/clear$/.exec(route);
   if (tabOrder && req.method === "PUT") return json({ order: visibleOrder(await setOnTab(env, tabOrder[1], await readJson(req, 4096), user.name) as Order & Versioned, true) });
-  if (tabClear && req.method === "POST") return json({ cleared: await clearTab(env, tabClear[1], await readJson(req, 64 * 1024), user.name, { admin: true }) });
+  if (tabClear && req.method === "POST") { const cleared = await clearTab(env, tabClear[1], await readJson(req, 64 * 1024), user.name, { admin: true }); await startAutoInvoice(env, "tab:" + cleared.id, ctx); return json({ cleared }); }
   // Every business's name, for choosing who a white-label coffee belongs to.
   if (route === "customers/names" && req.method === "GET") {
     const rows = await env.DB.prepare("SELECT id, json_extract(data, '$.business') AS business FROM wholesale_preview WHERE kind = 'customer' ORDER BY business COLLATE NOCASE").all<{ id: string; business: string }>();

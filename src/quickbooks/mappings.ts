@@ -47,6 +47,8 @@ export async function verifiedMapping(req:Request,env:Env,mode:Environment,invoi
   const result:QuickBooksMappings={...scope,installationId:(await env.DB.prepare('SELECT namespace FROM quickbooks_installation WHERE id=1').first<{namespace:string}>())!.namespace,company:{country:row.country,currency:row.currency,vatNumber:row.vat_number,reviewed:true},items:{},taxCodes:{}};
   const customerRef=data.customerLinks[invoice.customerId];if(customerRef){const customer=await entity(resources.read,'customer',customerRef);if(customer.CurrencyRef?.value&&customer.CurrencyRef.value!=='GBP')throw invalid('Choose a customer using GBP.');result.customer={...ref(customerRef),localCustomerId:invoice.customerId};}
   if(data.coffeeItemId){await salesItem(resources.read,data.coffeeItemId);result.items.coffee=ref(data.coffeeItemId);}
+  const keys=[...new Set(invoice.lines.filter(line=>line.kind==='coffee'&&line.productId&&line.pack).map(line=>line.productId+':'+line.pack))];
+  if(keys.length){const links=await productLinks(env,mode,row.realm_id,keys);for(const [key,itemId] of links){await salesItem(resources.read,itemId);(result.productItems||={})[key]=ref(itemId);}}
   if(data.deliveryItemId){await salesItem(resources.read,data.deliveryItemId);result.items.delivery=ref(data.deliveryItemId);}
   for(const rate of new Map(invoice.lines.map(rate=>[rate.rateId+':'+rate.vatBasisPoints,rate])).values()){
     const found=data.taxMappings.find(item=>item.rateId===rate.rateId&&item.basisPoints===rate.vatBasisPoints);
@@ -71,8 +73,14 @@ export async function saveMapping(req:Request,env:Env,mode:Environment,body:Reco
   if(!saved)throw changed();return{...await mapping(env,mode,row.realm_id),connectionVersion:row.version,realmId:row.realm_id,environment:mode};
 }
 
-export function mappingStillMatches(data:MappingData,value:InvoiceCandidate){
-  return data.customerLinks[value.localCustomerId]===value.customerRef&&(data.termLinks[value.paymentTerms.id]||null)===value.termRef&&value.lines.every(line=>(line.kind==='coffee'?data.coffeeItemId:data.deliveryItemId)===line.itemRef&&data.taxMappings.some(rate=>rate.rateId===line.localRateId&&rate.basisPoints===line.vatBasisPoints&&rate.taxCodeId===line.taxCodeRef));
+/** The QuickBooks items saved for coffees and bag sizes in this company ("<productId>:<pack>" → item ID). */
+export async function productLinks(env:Env,mode:Environment,realm:string,keys:string[]){
+  if(!keys.length)return new Map<string,string>();
+  const rows=(await env.DB.prepare('SELECT product_key,item_id FROM quickbooks_product_items WHERE environment=? AND realm_id=? AND product_key IN (SELECT value FROM json_each(?))').bind(mode,realm,JSON.stringify(keys)).all<{product_key:string;item_id:string}>()).results;
+  return new Map(rows.map(row=>[row.product_key,row.item_id]));
+}
+export function mappingStillMatches(data:MappingData,value:InvoiceCandidate,products:Map<string,string>=new Map()){
+  return data.customerLinks[value.localCustomerId]===value.customerRef&&(data.termLinks[value.paymentTerms.id]||null)===value.termRef&&value.lines.every(line=>(line.productKey?products.get(line.productKey):line.kind==='coffee'?data.coffeeItemId:data.deliveryItemId)===line.itemRef&&data.taxMappings.some(rate=>rate.rateId===line.localRateId&&rate.basisPoints===line.vatBasisPoints&&rate.taxCodeId===line.taxCodeRef));
 }
 export async function verifyFrozenReferences(read:Read,value:InvoiceCandidate){
   const customer=await entity(read,'customer',value.customerRef!);if(customer.CurrencyRef?.value&&customer.CurrencyRef.value!=='GBP')throw invalid('The saved QuickBooks customer no longer uses GBP.');
