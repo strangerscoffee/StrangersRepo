@@ -12,7 +12,7 @@ export async function startQuickBooksProvider(){
     const url=new URL(req.url,'http://127.0.0.1');let body='';for await(const chunk of req)body+=chunk;
     state.calls.push({method:req.method,path:url.pathname,query:url.search,body,authorization:req.headers.authorization||''});
     const reply=(code,data)=>{res.writeHead(code,{'content-type':'application/json'});res.end(JSON.stringify(data));};
-    if(state.fail&&url.pathname.includes(state.fail.path)){if(state.fail.location)res.setHeader('location',state.fail.location);if(state.fail.retryAfter)res.setHeader('retry-after',state.fail.retryAfter);reply(state.fail.status,state.fail.faultCode?{Fault:{Error:[{code:state.fail.faultCode,Message:'FAKE-PROVIDER-SECRET-DO-NOT-EXPOSE'}]}}:{secret:'FAKE-PROVIDER-SECRET-DO-NOT-EXPOSE'});return;}
+    if(state.fail&&url.pathname.includes(state.fail.path)){if(state.fail.location)res.setHeader('location',state.fail.location);if(state.fail.retryAfter)res.setHeader('retry-after',state.fail.retryAfter);if(state.fail.tid)res.setHeader('intuit_tid',state.fail.tid);reply(state.fail.status,state.fail.faultCode?{Fault:{Error:[{code:state.fail.faultCode,Message:'FAKE-PROVIDER-SECRET-DO-NOT-EXPOSE'}]}}:{secret:'FAKE-PROVIDER-SECRET-DO-NOT-EXPOSE'});return;}
     if(url.pathname==='/authorize'){const target=new URL(url.searchParams.get('redirect_uri'));target.searchParams.set('state',url.searchParams.get('state'));target.searchParams.set('code',state.code);target.searchParams.set('realmId','1234567890');res.writeHead(302,{location:target.href});res.end();return;}
     if(url.pathname==='/token'){
       const client=Buffer.from((req.headers.authorization||'').slice(6),'base64').toString(),environment=client.startsWith('test-production-client:')?'production':'sandbox';

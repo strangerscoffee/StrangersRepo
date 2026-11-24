@@ -111,6 +111,9 @@ test('Expired QuickBooks refresh credentials require reconnection without ending
 test('QuickBooks rejects the wrong country/currency and redacts provider failures without accounting writes',async()=>{
  provider.state.country='US';assert.equal((await callback(await start())).status,400);provider.state.country='GB';provider.state.currency='USD';assert.equal((await callback(await start())).status,400);provider.state.currency='GBP';provider.state.expires=3600;await connect();await confirm();
  provider.state.fail={path:'/query',status:502};const error=await call('GET',root+'/references?kind=item');assert.equal(error.status,503);assert.ok(!error.text.includes('FAKE-PROVIDER-SECRET'));provider.state.fail=null;
+ // Intuit's reference for a failed request (intuit_tid) is shown with the error, so their support can trace it; odd values are ignored.
+ provider.state.fail={path:'/query',status:502,tid:'1-6745f0a2-0b1c2d3e4f5a6b7c8d9e0f1a'};{const error=await call('GET',root+'/references?kind=item');assert.equal(error.status,503);assert.match(error.body.message,/\(Intuit ref: 1-6745f0a2-0b1c2d3e4f5a6b7c8d9e0f1a\)$/);}
+ provider.state.fail={path:'/query',status:502,tid:'<script>'};{const error=await call('GET',root+'/references?kind=item');assert.doesNotMatch(error.body.message,/Intuit ref/);}
  provider.state.fail={path:'/query',status:302,location:provider.origin+'/collector'};assert.equal((await call('GET',root+'/references?kind=item')).status,503);assert.ok(!provider.state.calls.some(call=>call.path==='/collector'));provider.state.fail=null;
  provider.state.fail={path:'/query',status:401};assert.equal((await call('GET',root+'/references?kind=item')).status,409);assert.equal((await status()).connection.status,'needs-reconnect');provider.state.fail=null;
  assert.ok(provider.state.calls.filter(call=>call.method!=='GET').every(call=>['/token','/revoke'].includes(call.path)),'no accounting writes, emails or payment calls are possible');

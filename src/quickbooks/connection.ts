@@ -8,11 +8,12 @@ interface Tokens {access:string;refresh:string;expiresAt:number;refreshExpiresAt
 export interface Config {appVersion:number;environment:Environment;clientId:string;clientSecret:string;key:string;redirect:string;authorize:string;token:string;revoke:string;api:string}
 export function environment(value:unknown):Environment {if(value!=='sandbox'&&value!=='production')throw invalid('Choose Sandbox or Live.');return value;}
 export class ProviderError extends ApiError {
-  constructor(public providerStatus:number,public faultCode='',public retryAt=0,oauth=false){
+  // tid: Intuit's reference for the request (the intuit_tid reply header), shown with the message so their support can trace it.
+  constructor(public providerStatus:number,public faultCode='',public retryAt=0,oauth=false,public tid=''){
     const duplicate=['600','6140'].includes(faultCode),auth=providerStatus===401||(oauth&&providerStatus===400);
     super(auth?409:duplicate?409:providerStatus===429?429:providerStatus===404?404:providerStatus>=400&&providerStatus<500?422:503,
       auth?'quickbooks_authorisation':duplicate?'quickbooks_duplicate':providerStatus===429?'quickbooks_busy':providerStatus===404?'quickbooks_missing':providerStatus>=400&&providerStatus<500?'quickbooks_validation':'quickbooks_unavailable',
-      auth?'QuickBooks could not authorise this request. Reconnect the company if needed.':duplicate?'QuickBooks already has this invoice number or request. Reconcile it before sending again.':providerStatus===429?'QuickBooks is busy. This request can be retried later.':providerStatus===404?'The QuickBooks record is no longer available.':providerStatus>=400&&providerStatus<500?'QuickBooks could not accept this invoice. Review its mappings and accounting settings.':'Could not reach QuickBooks. Try again.');
+      (auth?'QuickBooks could not authorise this request. Reconnect the company if needed.':duplicate?'QuickBooks already has this invoice number or request. Reconcile it before sending again.':providerStatus===429?'QuickBooks is busy. This request can be retried later.':providerStatus===404?'The QuickBooks record is no longer available.':providerStatus>=400&&providerStatus<500?'QuickBooks could not accept this invoice. Review its mappings and accounting settings.':'Could not reach QuickBooks. Try again.')+(tid?` (Intuit ref: ${tid})`:''));
   }
 }
 export const qbError=()=>new ProviderError(503);
@@ -40,7 +41,7 @@ export async function provider(url:string,init:RequestInit,oauth=false):Promise<
   let text='',size=0;const reader=res.body?.getReader(),decoder=new TextDecoder();
   if(reader)for(;;){const next=await reader.read().catch(()=>{throw qbError();});if(next.done)break;size+=next.value.byteLength;if(size>1024*1024){await reader.cancel();throw qbError();}text+=decoder.decode(next.value,{stream:true});}text+=decoder.decode();
   let data:any;try{data=text?JSON.parse(text):{};}catch{if(res.ok)throw qbError();}
-  if(!res.ok){const raw=data?.Fault?.Error?.[0]?.code,fault=typeof raw==='string'&&/^\d{1,6}$/.test(raw)?raw:'';let retryAt=Date.now()+60000;const retry=res.headers.get('retry-after');if(retry){const delay=/^\d+$/.test(retry)?Number(retry)*1000:Date.parse(retry)-Date.now();if(Number.isFinite(delay))retryAt=Date.now()+Math.min(86400000,Math.max(1000,delay));}throw new ProviderError(res.status,fault,retryAt,oauth);}
+  if(!res.ok){const raw=data?.Fault?.Error?.[0]?.code,fault=typeof raw==='string'&&/^\d{1,6}$/.test(raw)?raw:'';let retryAt=Date.now()+60000;const retry=res.headers.get('retry-after');if(retry){const delay=/^\d+$/.test(retry)?Number(retry)*1000:Date.parse(retry)-Date.now();if(Number.isFinite(delay))retryAt=Date.now()+Math.min(86400000,Math.max(1000,delay));}const rawTid=res.headers.get('intuit_tid')||'',tid=/^[\w.-]{1,100}$/.test(rawTid)?rawTid:'';if(tid)console.log(JSON.stringify({quickbooks:'error',status:res.status,fault,intuit_tid:tid,path:new URL(url).pathname.replace(/\/company\/\d+/,'/company/…')}));throw new ProviderError(res.status,fault,retryAt,oauth,tid);}
   if(!data||typeof data!=='object')throw qbError();return data;
 }
 export async function exchange(config:Config,values:Record<string,string>):Promise<Tokens>{
