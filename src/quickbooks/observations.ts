@@ -54,13 +54,29 @@ export async function withAccounting(env:Env,invoices:InvoiceDocument[],admin=fa
   const lookup=new Map(rows.map(row=>[row.invoice_id,row]));
   return invoices.map(invoice=>{
     const row=lookup.get(invoice.id);if(!row)return invoice;
-    const review=!row.status||row.status==='review',manualPaid=invoice.payment.paid;
-    const status=review?manualPaid?'paid':'review':row.status==='unpaid'&&invoice.dueDate&&invoice.dueDate<today()?'overdue':row.status;
-    return{...invoice,payment:{...invoice.payment,status,paid:status==='paid',outstandingPence:review?invoice.payment.outstandingPence:row.outstanding_pence,paidPence:review?manualPaid?invoice.totals.grossPence:0:row.paid_pence,source:'quickbooks',checkedAt:row.observed_at||null},accounting:{status:review?'review':row.status,checkedAt:row.observed_at||null,...(admin?{exportId:row.export_id,reason:row.reason||''}:{})}} as InvoiceDocument;
+    const review=!row.status||row.status==='review';
+    const status=review?'review':row.status==='unpaid'&&invoice.dueDate&&invoice.dueDate<today()?'overdue':row.status;
+    return{...invoice,payment:{...invoice.payment,status,paid:status==='paid',paidDate:null,
+      outstandingPence:review?invoice.payment.outstandingPence:row.outstanding_pence,
+      paidPence:review?undefined:row.paid_pence,source:'quickbooks',checkedAt:row.observed_at||null},
+      accounting:{status:review?'review':row.status,checkedAt:row.observed_at||null,...(admin?{exportId:row.export_id,reason:row.reason||''}:{})}} as InvoiceDocument;
   });
 }
 export async function accountingSummary(env:Env,customerId?:string){
-  const result=await env.DB.prepare(`SELECT COUNT(*) AS count,COALESCE(SUM(CASE WHEN o.status IN ('unpaid','part-paid','paid') THEN o.outstanding_pence WHEN i.paid=0 THEN json_extract(i.data,'$.totals.grossPence') ELSE 0 END),0) AS outstandingPence,COALESCE(SUM(CASE WHEN json_extract(i.data,'$.dueDate')<? THEN CASE WHEN o.status IN ('unpaid','part-paid','paid') THEN o.outstanding_pence WHEN i.paid=0 THEN json_extract(i.data,'$.totals.grossPence') ELSE 0 END ELSE 0 END),0) AS overduePence,COALESCE(SUM(CASE WHEN json_extract(i.data,'$.dueDate')<? AND COALESCE(o.outstanding_pence,CASE WHEN i.paid=0 THEN json_extract(i.data,'$.totals.grossPence') ELSE 0 END)>0 THEN 1 ELSE 0 END),0) AS overdueCount,COALESCE(SUM(CASE WHEN e.id IS NOT NULL AND (o.status IS NULL OR o.status='review') THEN 1 ELSE 0 END),0) AS reviewCount FROM wholesale_invoices i LEFT JOIN quickbooks_exports e ON e.invoice_id=i.seq AND e.environment='production' AND e.state='linked' LEFT JOIN quickbooks_observations o ON o.export_id=e.id WHERE ${customerId?'i.customer_id=?':'1=1'}`)
-    .bind(...[today(),today(),...(customerId?[customerId]:[])]).first<any>();
+  const result=await env.DB.prepare(`WITH balances AS (
+    SELECT json_extract(i.data,'$.dueDate') AS due_date,
+      CASE WHEN o.status IN ('unpaid','part-paid','paid') THEN o.outstanding_pence
+        WHEN i.paid=0 THEN json_extract(i.data,'$.totals.grossPence') ELSE 0 END AS outstanding,
+      (e.id IS NOT NULL AND (o.status IS NULL OR o.status='review')) AS review
+    FROM wholesale_invoices i
+    LEFT JOIN quickbooks_exports e ON e.invoice_id=i.seq AND e.environment='production' AND e.state='linked'
+    LEFT JOIN quickbooks_observations o ON o.export_id=e.id
+    WHERE ${customerId?'i.customer_id=?2':'1=1'}
+  )
+  SELECT COUNT(*) AS count,COALESCE(SUM(outstanding),0) AS outstandingPence,
+    COALESCE(SUM(outstanding) FILTER (WHERE NOT review AND due_date<?1),0) AS overduePence,
+    COUNT(*) FILTER (WHERE NOT review AND due_date<?1 AND outstanding>0) AS overdueCount,
+    COUNT(*) FILTER (WHERE review) AS reviewCount FROM balances`)
+    .bind(today(),...(customerId?[customerId]:[])).first<{count:number;outstandingPence:number;overduePence:number;overdueCount:number;reviewCount?:number}>();
   if(result&&!result.reviewCount)delete result.reviewCount;return result;
 }

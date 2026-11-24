@@ -375,6 +375,14 @@ const MIGRATIONS: Migration[] = [
     for (const [name, type] of [["auto", "INTEGER NOT NULL DEFAULT 0"], ["email_to", "TEXT NOT NULL DEFAULT ''"], ["email_state", "TEXT NOT NULL DEFAULT ''"], ["email_at", "INTEGER NOT NULL DEFAULT 0"], ["email_error", "TEXT NOT NULL DEFAULT ''"]])
       if (!has.has(name)) await env.DB.prepare(`ALTER TABLE quickbooks_exports ADD COLUMN ${name} ${type}`).run();
   } },
+  { id: 39, name: "QuickBooks processing safeguards", run: async env => {
+    const has = await columns(env, "quickbooks_exports");
+    if (!has.has("manual_retry")) await env.DB.prepare("ALTER TABLE quickbooks_exports ADD COLUMN manual_retry INTEGER NOT NULL DEFAULT 0").run();
+    await env.DB.batch([
+      env.DB.prepare("CREATE INDEX IF NOT EXISTS wholesale_auto_invoices_invoice ON wholesale_auto_invoices(invoice_id)"),
+      env.DB.prepare("CREATE INDEX IF NOT EXISTS quickbooks_queued_invoice_events ON quickbooks_events(environment,realm_id,entity_id) WHERE entity='Invoice' AND state='queued'"),
+    ]);
+  } },
 ];
 
 async function migrate(env: Env): Promise<void> {

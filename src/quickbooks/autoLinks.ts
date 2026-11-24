@@ -4,6 +4,7 @@
 // matched to that coffee and size, or the name we'd give it); otherwise one is made. Each create carries a request ID
 // derived from what it's for, so a lost reply can't make two.
 import { ApiError, type Env } from '../http';
+import { cleanEmail } from '../email/address';
 import { get } from '../wholesaleStore';
 import type { InvoiceDocument } from '../wholesaleInvoices';
 import { ProviderError, id, type Connection } from './connection';
@@ -19,6 +20,7 @@ interface Customer { business: string; email?: string; accountsEmail?: string; p
 const quote = (value: string) => "'" + value.replace(/\\/g, '\\\\').replace(/'/g, "\\'") + "'";
 /** QuickBooks names: no colons (they mark sub-items), no tabs or new lines, at most 100 characters. */
 export const qbName = (value: string) => value.replace(/[:\t\r\n]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 100);
+const nameWithSuffix = (title: string, suffix: string) => qbName(title).slice(0, 100 - suffix.length).trimEnd() + suffix;
 const SIZE: Record<string, { name: string; sku: string }> = { quarter: { name: '250g', sku: '250G' }, kilo: { name: '1kg', sku: '1KG' }, half: { name: '500g', sku: '500G' } };
 
 async function query(read: Read, entity: 'Customer' | 'Item', field: 'DisplayName' | 'Name', value: string) {
@@ -35,6 +37,7 @@ export async function ensureCustomer(env: Env, mode: Environment, company: Conne
   const customer = await get<Customer>(env, 'customer', customerId);
   if (!customer) throw new ApiError(409, 'quickbooks_customer', 'The wholesale business was not found.');
   const names = [...new Set([customer.quickbooksName, customer.business].map((name) => qbName(name || '')).filter(Boolean))];
+  if (!names.length) throw new ApiError(409, 'quickbooks_customer', 'Link a QuickBooks customer for this business in Mappings.');
   let found: any = null;
   for (const name of names) {
     const rows = await query(resources.read, 'Customer', 'DisplayName', name);
@@ -45,11 +48,11 @@ export async function ensureCustomer(env: Env, mode: Environment, company: Conne
   }
   let created = false;
   if (!found) {
-    const name = names.at(-1)!, email = (customer.accountsEmail || customer.email || '').trim();
+    const name = names.at(-1)!, email = cleanEmail(customer.accountsEmail || customer.email || '');
     const lines = String(customer.address || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean).slice(0, 4);
     const body = {
       DisplayName: name, CompanyName: name,
-      ...(email ? { PrimaryEmailAddr: { Address: email.slice(0, 100) } } : {}),
+      ...(email && email.length <= 100 ? { PrimaryEmailAddr: { Address: email } } : {}),
       ...(customer.phone ? { PrimaryPhone: { FreeFormNumber: customer.phone.slice(0, 30) } } : {}),
       ...(lines.length ? { BillAddr: { ...Object.fromEntries(lines.map((line, i) => ['Line' + (i + 1), line.slice(0, 500)])), PostalCode: String(customer.postcode || '').slice(0, 30) } } : {}),
     };
@@ -64,10 +67,18 @@ export async function ensureCustomer(env: Env, mode: Environment, company: Conne
   }
   await resources.check();
   const key = '$.customerLinks.' + JSON.stringify(customerId);
-  const stored = await env.DB.prepare("UPDATE quickbooks_environment_mappings SET data=json_set(data,?,?),version=version+1,updated_at=? WHERE environment=? AND realm_id=? AND json_extract(data,?) IS NULL RETURNING version")
-    .bind(key, found.Id, Date.now(), mode, company.realm_id, key).first();
+  const stored = await env.DB.prepare(`UPDATE quickbooks_environment_mappings SET data=json_set(data,?,?),version=version+1,updated_at=?
+    WHERE environment=? AND realm_id=? AND json_extract(data,?) IS NULL
+      AND NOT EXISTS(SELECT 1 FROM json_each(quickbooks_environment_mappings.data,'$.customerLinks') WHERE value=? AND key<>?)
+      AND EXISTS(SELECT 1 FROM wholesale_preview WHERE kind='customer' AND id=? AND version=?)
+      AND EXISTS(SELECT 1 FROM quickbooks_connections WHERE environment=? AND generation=? AND version=? AND status='connected')
+    RETURNING version`)
+    .bind(key, found.Id, Date.now(), mode, company.realm_id, key, found.Id, customerId, customerId, customer.version, mode, company.generation, company.version).first();
   if (!stored) {
     const now = await mapping(env, mode, company.realm_id);
+    if (Object.entries(now.data.customerLinks).some(([local, remote]) => local !== customerId && remote === found.Id)) {
+      throw new ApiError(409, 'quickbooks_customer', 'This QuickBooks customer is already linked to another business. Check the customer in Mappings.');
+    }
     if (now.data.customerLinks[customerId] !== found.Id) throw new ApiError(409, 'quickbooks_changed', 'The QuickBooks mappings changed while linking the customer. It will be tried again.');
   }
   return { id: found.Id, created };
@@ -109,24 +120,34 @@ export async function ensureItems(env: Env, mode: Environment, company: Connecti
   const history = (await env.DB.prepare("SELECT product, data FROM sales_history_products WHERE reviewed=1").all<{ product: string; data: string }>()).results.map((row) => ({ product: row.product, ...(JSON.parse(row.data) as { coffee: string | null; pack: string }) }));
   let made = 0;
   for (const [key, { productId, pack, title }] of missing) {
-    const number = await productNumber(env, productId), sku = `SC${number}-${SIZE[pack].sku}`, ours = qbName(`${title} ${SIZE[pack].name}`);
-    const names = [...new Set([...history.filter((h) => h.coffee === productId && h.pack === pack).flatMap((h) => [h.product, h.product.split(':').at(-1)!]), ours].map(qbName).filter(Boolean))];
+    const number = await productNumber(env, productId), sku = `SC${number}-${SIZE[pack].sku}`;
+    const size = ` ${SIZE[pack].name}`, ours = nameWithSuffix(title, size), alternate = nameWithSuffix(title, `${size} (${sku})`);
+    const names = [...new Set([...history.filter((h) => h.coffee === productId && h.pack === pack).flatMap((h) => [h.product, h.product.split(':').at(-1)!]), ours, alternate].map(qbName).filter(Boolean))];
     let found: any = null;
+    let useAlternate = false;
     for (const name of names) {
-      const rows = (await query(resources.read, 'Item', 'Name', name)).filter((row: any) => row.Active !== false && ['Service', 'NonInventory'].includes(row.Type) && row.IncomeAccountRef?.value);
+      const matches = await query(resources.read, 'Item', 'Name', name);
+      const rows = matches.filter((row: any) => row.Active !== false && ['Service', 'NonInventory'].includes(row.Type) && row.IncomeAccountRef?.value
+        && (row.Sku === sku || (name !== alternate && !/^SC\d+-(?:250G|500G|1KG)$/i.test(row.Sku || ''))));
       if (rows.length === 1) { found = rows[0]; break; }
+      if (name === ours && matches.length) useAlternate = true;
     }
     let created = false, name = found?.Name || ours;
     if (!found) {
-      const requestId = 'sc-item-' + (await digest(JSON.stringify([mode, company.realm_id, key]))).slice(0, 40);
-      const attempt = async (itemName: string) => (await resources.write('/item?minorversion=75&requestid=' + requestId, { Name: itemName, Sku: sku, Type: template.Type, IncomeAccountRef: { value: template.IncomeAccountRef.value }, Description: `${title}, ${SIZE[pack].name} bag`.slice(0, 4000) })).Item;
+      const attempt = async (itemName: string) => {
+        const identity = itemName === qbName(`${title}${size}`) ? [mode, company.realm_id, key] : [mode, company.realm_id, key, itemName];
+        const requestId = 'sc-item-' + (await digest(JSON.stringify(identity))).slice(0, 40);
+        return (await resources.write('/item?minorversion=75&requestid=' + requestId, { Name: itemName, Sku: sku, Type: template.Type, IncomeAccountRef: { value: template.IncomeAccountRef.value }, Description: `${title}, ${SIZE[pack].name} bag`.slice(0, 4000) })).Item;
+      };
+      if (useAlternate) name = alternate;
       try { found = await attempt(name); }
       catch (error) {
         // The name is taken by something that can't be sold (an inventory item, a category): use the product number too.
-        if (!(error instanceof ProviderError && error.faultCode === '6240')) throw error;
-        name = qbName(`${title} ${SIZE[pack].name} (${sku})`); found = await attempt(name);
+        if (!(error instanceof ProviderError && error.faultCode === '6240') || name === alternate) throw error;
+        name = alternate;
+        found = await attempt(name);
       }
-      if (!/^\d{1,32}$/.test(found?.Id || '')) throw new ApiError(503, 'quickbooks_unavailable', 'QuickBooks did not confirm the new item. It will be tried again.');
+      if (!/^\d{1,32}$/.test(found?.Id || '') || found.Sku !== sku || found.Name !== name) throw new ApiError(503, 'quickbooks_unavailable', 'QuickBooks did not confirm the new item. It will be tried again.');
       created = true;
     }
     await resources.check();

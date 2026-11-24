@@ -50,14 +50,18 @@ export async function startQuickBooksProvider(){
       const value=JSON.parse(body),request=url.searchParams.get('requestid'),list=create[1]==='customer'?customers:items,field=create[1]==='customer'?'DisplayName':'Name',key=create[1]==='customer'?'Customer':'Item';
       state.created=state.created||[];const known=state.requests[environment].get(create[1]+':'+request);
       if(known){reply(200,{[key]:list.find(row=>row.Id===known)});return;}
-      if(list.some(row=>String(row[field]).toLowerCase()===String(value[field]).toLowerCase())||(create[1]==='customer'&&state.takenNames?.includes(value.DisplayName))){reply(400,{Fault:{Error:[{code:'6240'}]}});return;}
+      if(list.some(row=>String(row[field]).toLowerCase()===String(value[field]).toLowerCase())||
+        (create[1]==='customer'&&state.takenNames?.includes(value.DisplayName))||
+        (create[1]==='item'&&state.takenItemNames?.includes(value.Name))){reply(400,{Fault:{Error:[{code:'6240'}]}});return;}
       const row={...value,Id:String((create[1]==='customer'?7000:8000)+list.length),Active:true,SyncToken:'0'};list.push(row);state.created.push({kind:create[1],environment,row});state.requests[environment].set(create[1]+':'+request,row.Id);reply(200,{[key]:row});return;
     }
     const sending=/\/invoice\/(\d+)\/send$/.exec(url.pathname);
     if(sending&&req.method==='POST'){
       const row=state.invoices[environment].get(sending[1]);if(!row){reply(404,{});return;}
       if(state.failSend){reply(500,{});return;}
-      row.EmailStatus='EmailSent';row.BillEmail={Address:url.searchParams.get('sendTo')};state.sent=state.sent||[];state.sent.push({environment,id:row.Id,to:url.searchParams.get('sendTo'),contentType:req.headers['content-type']});reply(200,{Invoice:row});return;
+      row.EmailStatus='EmailSent';row.BillEmail={Address:url.searchParams.get('sendTo')};state.sent=state.sent||[];state.sent.push({environment,id:row.Id,to:url.searchParams.get('sendTo'),contentType:req.headers['content-type']});
+      if(state.dropSendResponse){req.socket.destroy();return;}
+      reply(200,{Invoice:row});return;
     }
     const invoice=/\/invoice\/(\d+)$/.exec(url.pathname);if(invoice){const row=state.invoices[environment].get(invoice[1]);reply(row?200:404,row?{Invoice:row}:{});return;}
     const found=/\/(customer|item|taxcode|taxrate|account|term)\/(\d+)$/.exec(url.pathname);

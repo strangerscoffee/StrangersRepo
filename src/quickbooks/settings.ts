@@ -40,7 +40,10 @@ export async function approveLive(req:Request,env:Env,body:Record<string,any>,ac
 export async function switchEnvironment(req:Request,env:Env,mode:Environment,body:Record<string,any>){
   const expected=version(body.ifVersion);if(body.reviewed!==true)throw invalid('Review the environment before switching.');
   if(mode==='production'&&!(await readiness(req,env)).ready)throw new ApiError(409,'quickbooks_not_ready','Complete the Live connection and readiness review before switching.');
-  const updated=await env.DB.prepare("UPDATE quickbooks_settings SET active_environment=?,version=version+1,updated_at=? WHERE id=1 AND version=? AND NOT EXISTS(SELECT 1 FROM quickbooks_exports WHERE state='sending' AND lease_until>?) RETURNING version").bind(mode,Date.now(),expected,Date.now()).first();
+  const now=Date.now();
+  const updated=await env.DB.prepare(`UPDATE quickbooks_settings SET active_environment=?,version=version+1,updated_at=? WHERE id=1 AND version=?
+    AND NOT EXISTS(SELECT 1 FROM quickbooks_exports WHERE (state='sending' AND lease_until>?) OR (email_state='sending' AND email_at>?)) RETURNING version`)
+    .bind(mode,now,expected,now,now-120000).first();
   if(!updated){const state=await settings(env);if(state.version!==expected)throw changed();throw new ApiError(409,'quickbooks_busy','An invoice is being sent. Wait for it to finish before switching environments.');}
   return settings(env);
 }

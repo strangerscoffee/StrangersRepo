@@ -13,18 +13,22 @@ function address(value:{name:string;address:string;postcode:string}){
   if(parts.length>5)throw invalid('The invoice address needs more than five QuickBooks address lines. Review it before exporting.');
   return{...Object.fromEntries(parts.map((line,index)=>['Line'+(index+1),line])),PostalCode:value.postcode};
 }
+export function invoiceDetails(value:InvoiceCandidate,requestId:string,customerPaymentInstructions:boolean){
+  const memo=['Supply date: '+value.supplyDate,'Payment terms: '+value.paymentTerms.label,value.paymentTerms.note,
+    customerPaymentInstructions ? value.paymentInstructions : ''].filter(Boolean).join('\n');
+  const note=[ADAPTER_VERSION,'Strangers request: '+requestId,'Strangers invoice: '+value.number,'Payment instructions:',value.paymentInstructions].join('\n');
+  if(memo.length>1000||note.length>4000)throw invalid('Payment information exceeds the QuickBooks memo limits. Review it before exporting.');
+  return{BillAddr:address(value.billTo),ShipAddr:address(value.shipping),CustomerMemo:{value:memo},PrivateNote:note};
+}
 export function buildPayload(preview:ExportPreview){
-  const value=preview.candidate;if(preview.state==='blocked'||!value||!preview.requestId)throw invalid('Resolve the invoice review before sending it to QuickBooks.');
+  const value=preview.candidate;if(preview.state==='blocked'||!value?.customerRef||!preview.requestId)throw invalid('Resolve the invoice review before sending it to QuickBooks.');
   const groups=new Map<string,{net:number;vat:number;percent:number}>();
   const lines=value.lines.map((line,index)=>{
     if(line.taxable&&!line.taxRateRef)throw invalid('Verify each sales VAT rate reference before exporting.');
     if(line.taxRateRef){const group=groups.get(line.taxRateRef)||{net:0,vat:0,percent:line.vatBasisPoints/100};if(group.percent!==line.vatBasisPoints/100)throw invalid('One QuickBooks tax rate has conflicting percentages.');group.net+=line.netPence;group.vat+=line.vatPence;groups.set(line.taxRateRef,group);}
     return{LineNum:index+1,Description:line.description,Amount:pounds(line.netPence),DetailType:'SalesItemLineDetail',SalesItemLineDetail:{ItemRef:{value:line.itemRef},Qty:line.quantity,UnitPrice:Math.round(line.netPence*1000/line.quantity)/100000,TaxCodeRef:{value:line.taxCodeRef},ServiceDate:value.supplyDate,...(value.priceBasis==='inclusive'?{TaxInclusiveAmt:pounds(line.grossPence)}:{})}};
   });
-  const memo=['Supply date: '+value.supplyDate,'Payment terms: '+value.paymentTerms.label,value.paymentTerms.note].filter(Boolean).join('\n');
-  const note=[ADAPTER_VERSION,'Strangers request: '+preview.requestId,'Strangers invoice: '+value.number,'Payment instructions:',value.paymentInstructions].join('\n');
-  if(memo.length>1000||note.length>4000)throw invalid('Payment information exceeds the QuickBooks memo limits. Review it before exporting.');
-  const payload={DocNumber:value.number,TxnDate:value.invoiceDate,DueDate:value.dueDate,CurrencyRef:{value:'GBP'},CustomerRef:{value:value.customerRef},GlobalTaxCalculation:value.priceBasis==='inclusive'?'TaxInclusive':'TaxExcluded',Line:lines,TxnTaxDetail:{TotalTax:pounds(value.totals.vatPence),TaxLine:[...groups].map(([ref,group])=>({Amount:pounds(group.vat),DetailType:'TaxLineDetail',TaxLineDetail:{TaxRateRef:{value:ref},PercentBased:true,TaxPercent:group.percent,NetAmountTaxable:pounds(group.net)}}))},BillAddr:address(value.billTo),ShipAddr:address(value.shipping),CustomerMemo:{value:memo},PrivateNote:note,EmailStatus:'NotSet',...(value.termRef?{SalesTermRef:{value:value.termRef}}:{})};
+  const payload={DocNumber:value.number,TxnDate:value.invoiceDate,DueDate:value.dueDate,CurrencyRef:{value:'GBP'},CustomerRef:{value:value.customerRef},GlobalTaxCalculation:value.priceBasis==='inclusive'?'TaxInclusive':'TaxExcluded',Line:lines,TxnTaxDetail:{TotalTax:pounds(value.totals.vatPence),TaxLine:[...groups].map(([ref,group])=>({Amount:pounds(group.vat),DetailType:'TaxLineDetail',TaxLineDetail:{TaxRateRef:{value:ref},PercentBased:true,TaxPercent:group.percent,NetAmountTaxable:pounds(group.net)}}))},...invoiceDetails(value,preview.requestId,preview.customerPaymentInstructions===true),EmailStatus:'NotSet',...(value.termRef?{SalesTermRef:{value:value.termRef}}:{})};
   return{payload,profiles:profileKeys(value)};
 }
 export interface InvoiceMatch {matches:boolean;reason:string}
@@ -32,9 +36,10 @@ export interface InvoiceMatch {matches:boolean;reason:string}
 export function matchesInvoice(preview:ExportPreview,payload:any,remote:any,requireMarker=true):InvoiceMatch{
   const fail=(reason:string)=>({matches:false,reason});const value=preview.candidate;
   if(!value||!remote||!/^\d{1,32}$/.test(remote.Id||'')||!/^\d{1,32}$/.test(remote.SyncToken||''))return fail('The QuickBooks invoice identity or revision needs review.');
+  if (['void', 'voided', 'deleted'].includes(String(remote.TxnStatus || remote.status || '').toLowerCase()) || norm(remote.PrivateNote).toLowerCase() === 'voided') return fail('The QuickBooks invoice was voided or removed. Review it before using its balance.');
   if(remote.DocNumber!==value.number||remote.CustomerRef?.value!==value.customerRef||remote.CurrencyRef?.value!=='GBP')return fail('The QuickBooks invoice number, customer or currency differs.');
   if(remote.TxnDate!==value.invoiceDate||remote.DueDate!==value.dueDate)return fail('The QuickBooks invoice or due date differs from the issued invoice.');
-  if(requireMarker&&!norm(remote.PrivateNote).includes('Strangers request: '+preview.requestId))return fail('An invoice with this number already exists. Review it before linking.');
+  if(requireMarker&&!norm(remote.PrivateNote).split('\n').includes('Strangers request: '+preview.requestId))return fail('An invoice with this number already exists. Review it before linking.');
   const tax=remote.TxnTaxDetail?.TotalTax===undefined&&value.totals.vatPence===0?0:decimalPence(remote.TxnTaxDetail?.TotalTax);
   if(decimalPence(remote.TotalAmt)!==value.totals.grossPence||tax!==value.totals.vatPence)return fail('QuickBooks net, VAT or total amounts differ from the issued invoice.');
   if(value.totals.vatPence&&remote.GlobalTaxCalculation!==payload.GlobalTaxCalculation)return fail('The QuickBooks inclusive/exclusive VAT treatment differs.');

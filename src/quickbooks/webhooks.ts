@@ -13,7 +13,9 @@ export function notifications(input:unknown,mode:Environment,batchHash:string):N
   const rows:Notification[]=[];
   function add(realm:unknown,entity:unknown,entityId:unknown,operation:unknown,time:unknown,eventId?:unknown){
     if(entity!=='Invoice'&&entity!=='Payment')return;
-    const realmId=numeric(realm),id=numeric(entityId),op=operations[String(operation).toLowerCase()];if(!realmId||!id||!op)throw invalid('A webhook invoice/payment identifier is invalid.');
+    const action=String(operation).toLowerCase();
+    if(!Object.hasOwn(operations,action))return;
+    const realmId=numeric(realm),id=numeric(entityId),op=operations[action];if(!realmId||!id)throw invalid('A webhook invoice/payment identifier is invalid.');
     const parsed=typeof time==='string'?Date.parse(time):NaN,at=Number.isFinite(parsed)?parsed:Date.now();
     const identity=typeof eventId==='string'&&/^[A-Za-z0-9._:-]{1,128}$/.test(eventId)?eventId:Number.isFinite(parsed)?`${entity}:${id}:${op}:${parsed}`:batchHash+':'+rows.length;
     rows.push({key:mode+':'+realmId+':'+identity,environment:mode,realmId,entity,entityId:id,operation:op,at});

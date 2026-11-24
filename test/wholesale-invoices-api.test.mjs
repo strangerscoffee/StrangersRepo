@@ -180,6 +180,14 @@ test("wholesale invoices: admins can switch invoices off for customers; the cust
   assert.equal(on.status, 200); assert.equal(on.body.settings.customersSeeInvoices, true); config = on.body;
   assert.equal((await call("GET", "/api/wholesale/invoices", undefined, A.cookie)).status, 200);
   assert.equal((await call("GET", "/api/wholesale/session", undefined, A.cookie)).body.invoices, true);
+  srv.sql(`UPDATE wholesale_preview SET data=json_set(data,'$.hidePrices',json('true')) WHERE kind='customer' AND id='${issued.customerId}'`);
+  try {
+    assert.equal((await call("GET", "/api/wholesale/session", undefined, A.cookie)).body.invoices, false);
+    assert.equal((await call("GET", `/api/wholesale/invoices/${issued.id}/pdf`, undefined, A.cookie)).status, 403);
+    assert.equal((await call("GET", `/api/admin/wholesale/invoices/${issued.id}/pdf`)).status, 200);
+  } finally {
+    srv.sql(`UPDATE wholesale_preview SET data=json_remove(data,'$.hidePrices') WHERE kind='customer' AND id='${issued.customerId}'`);
+  }
 });
 test("wholesale invoices: manual paid/unpaid records use CAS, update outstanding/overdue totals and preserve all financial data/PDF bytes", async () => {
   const before = (await call("GET", "/api/wholesale/invoices", undefined, A.cookie)).body.summary;

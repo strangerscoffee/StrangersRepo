@@ -274,7 +274,7 @@ export async function handleWholesale(req: Request, env: Env, route: string, use
   const invoiceResponse = await handleInvoiceCustomer(req, env, route, user);
   if (invoiceResponse) return invoiceResponse;
   const customer = user.role === "wholesale" ? await wholesaleCustomer(env, user.customerId) : null;
-  if ((route === "catalogue" || route === "session") && req.method === "GET") return json({ ...(route === "catalogue" ? { products: catalogueFor(await catalogue(env), user.role === "wholesale" ? user.customerId : null), sourceDate: catalogueRetrievedAt } : {}), stage: "beta", invoices: await customersSeeInvoices(env), minimumOrderGrams: minimumOrderGrams(env, customer), showPrices: !customer?.hidePrices, announcement: await activeAnnouncement(env), me: user, customer: customer ? publicCustomer(customer) : null, links: { ...(user.role === "wholesale" ? {} : links), preview: links.preview || "/wholesale/" }, preview: user.role !== "wholesale" });
+  if ((route === "catalogue" || route === "session") && req.method === "GET") return json({ ...(route === "catalogue" ? { products: catalogueFor(await catalogue(env), user.role === "wholesale" ? user.customerId : null), sourceDate: catalogueRetrievedAt } : {}), stage: "beta", invoices: !customer?.hidePrices && await customersSeeInvoices(env), minimumOrderGrams: minimumOrderGrams(env, customer), showPrices: !customer?.hidePrices, announcement: await activeAnnouncement(env), me: user, customer: customer ? publicCustomer(customer) : null, links: { ...(user.role === "wholesale" ? {} : links), preview: links.preview || "/wholesale/" }, preview: user.role !== "wholesale" });
   if (route === "account" && req.method === "PUT" && customer) {
     const body = object(await readJson(req, 64 * 1024));
     if (body.orderingIdentity !== undefined && body.orderingIdentity !== user.id) throw new ApiError(409, "account_changed", "The signed-in account changed. Reload ordering before saving business details.");
@@ -313,7 +313,7 @@ export async function handleWholesale(req: Request, env: Env, route: string, use
     // Invoice links are found from the full orders (an order invoiced with its tab links to the tab's invoice), then
     // only the link is kept with what the customer sees.
     const decoded = page.map((row) => decode<Order>(row) as Order & { id: string; tabClearedId?: string });
-    const linked = await customersSeeInvoices(env) ? await invoiceLinks(env, decoded) : decoded;
+    const linked = !customer?.hidePrices && await customersSeeInvoices(env) ? await invoiceLinks(env, decoded) : decoded;
     const visible = linked.map((order) => { const shown = visibleOrder(order as Order & Versioned); const invoice = (order as { invoice?: unknown }).invoice; return invoice ? { ...shown, invoice } : shown; });
     return json({ orders: visible, count: total?.n || 0, nextCursor: rows.results.length > 200 && last ? `${last.updated_at}:${last.id}` : null });
   }

@@ -12,6 +12,9 @@ import {requireExportMode,settings} from './settings';
 import {digest} from './crypto';
 import {observe,refreshObservation,observation} from './observations';
 import {operationDTO,sourceHash,type ExportOperation,type Observation} from './operationTypes';
+import {automaticAllowed} from './autoPolicy';
+import {wakeIntegration} from '../integrationSignals';
+const autoPermission=automaticAllowed('quickbooks_exports.invoice_id','quickbooks_exports.created_by');
 export async function operation(env:Env,id:number){const row=await env.DB.prepare('SELECT * FROM quickbooks_exports WHERE id=?').bind(id).first<ExportOperation>();if(!row)throw new ApiError(404,'not_found','QuickBooks export not found.');return row;}
 export async function operationResult(env:Env,row:ExportOperation){return{...operationDTO(row),observation:await observation(env,row.id)};}
 export async function queueInvoice(req:Request,env:Env,mode:Environment,invoiceId:number,body:Record<string,any>,user:User){
@@ -26,8 +29,10 @@ export async function queueInvoice(req:Request,env:Env,mode:Environment,invoiceI
   if(body.fingerprint!==preview.fingerprint||version(body.connectionVersion)!==row.version||version(body.mappingVersion)!==verified.mappingVersion)throw changed();
   await requireExportMode(req,env,row,built.profiles,state.version);await verified.resources.check();
   const payload=JSON.stringify(built.payload),at=Date.now();
-  const saved=await env.DB.prepare(`INSERT INTO quickbooks_exports(environment,realm_id,company_name,company_vat,invoice_id,request_id,fingerprint,payload,payload_hash,source_hash,created_by,preview,profiles,connection_generation,mapping_version,created_at,updated_at) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM quickbooks_connections WHERE environment=? AND generation=? AND version=? AND status='connected') AND EXISTS(SELECT 1 FROM quickbooks_settings WHERE id=1 AND active_environment=? AND version=?) AND EXISTS(SELECT 1 FROM quickbooks_environment_mappings WHERE environment=? AND realm_id=? AND version=?) AND EXISTS(SELECT 1 FROM users WHERE id=? AND role='admin' AND active=1) ON CONFLICT DO NOTHING RETURNING *`)
-    .bind(mode,row.realm_id,row.company_name,row.vat_number,invoiceId,preview.requestId,preview.fingerprint,payload,await digest(payload),await sourceHash(invoice),user.id,JSON.stringify(preview),JSON.stringify(built.profiles),row.generation,verified.mappingVersion,at,at,mode,row.generation,row.version,mode,state.version,mode,row.realm_id,verified.mappingVersion,user.id).first<ExportOperation>();
+  const saved=await env.DB.prepare(`INSERT INTO quickbooks_exports(environment,realm_id,company_name,company_vat,invoice_id,request_id,fingerprint,payload,payload_hash,source_hash,created_by,preview,profiles,connection_generation,mapping_version,created_at,updated_at) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM quickbooks_connections WHERE environment=? AND generation=? AND version=? AND status='connected') AND EXISTS(SELECT 1 FROM quickbooks_settings WHERE id=1 AND active_environment=? AND version=?) AND EXISTS(SELECT 1 FROM quickbooks_environment_mappings WHERE environment=? AND realm_id=? AND version=?) AND EXISTS(SELECT 1 FROM users WHERE id=? AND role='admin' AND active=1)
+    AND EXISTS(SELECT 1 FROM wholesale_invoices WHERE seq=? AND (paid=0 OR ?=1))
+    ON CONFLICT DO NOTHING RETURNING *`)
+    .bind(mode,row.realm_id,row.company_name,row.vat_number,invoiceId,preview.requestId,preview.fingerprint,payload,await digest(payload),await sourceHash(invoice),user.id,JSON.stringify(preview),JSON.stringify(built.profiles),row.generation,verified.mappingVersion,at,at,mode,row.generation,row.version,mode,state.version,mode,row.realm_id,verified.mappingVersion,user.id,invoiceId,body.paidInvoiceConfirmed===true?1:0).first<ExportOperation>();
   if(!saved){const raced=await env.DB.prepare('SELECT * FROM quickbooks_exports WHERE environment=? AND realm_id=? AND invoice_id=?').bind(mode,row.realm_id,invoiceId).first<ExportOperation>();if(raced?.fingerprint===preview.fingerprint)return raced;throw changed();}
   await audit(env,'quickbooks_export_queued',user.name,`${user.name} queued invoice ${invoice.number} for QuickBooks ${mode==='production'?'Live':'Sandbox'}.`);return saved;
 }
@@ -41,22 +46,44 @@ async function saveRemote(env:Env,id:number,owner:string,remoteId:string){
 }
 async function link(env:Env,row:ExportOperation,owner:string,remote:any,created:boolean,startedAt:number){
   const saved=await env.DB.prepare("UPDATE quickbooks_exports SET state='linked',remote_id=?,sync_token=?,created_remote=?,last_error='',lease_owner=NULL,lease_until=0,updated_at=?,version=version+1 WHERE id=? AND lease_owner=? AND lease_until>? RETURNING *").bind(remote.Id,remote.SyncToken,created?1:0,Date.now(),row.id,owner,Date.now()).first<ExportOperation>();
-  if(saved){await observe(env,saved,remote,startedAt);await audit(env,'quickbooks_invoice_linked','QuickBooks',`Invoice ${JSON.parse(saved.preview).candidate.number} linked to QuickBooks ${saved.environment==='production'?'Live':'Sandbox'}.`);return saved;}return operation(env,row.id);
+  if(!saved)return operation(env,row.id);
+  await observe(env,saved,remote,startedAt);
+  await audit(env,'quickbooks_invoice_linked','QuickBooks',`Invoice ${JSON.parse(saved.preview).candidate.number} linked to QuickBooks ${saved.environment==='production'?'Live':'Sandbox'}.`);
+  if(saved.auto&&!saved.manual_retry&&env.QUICKBOOKS_QUEUE){
+    const job=await env.DB.prepare("SELECT source FROM wholesale_auto_invoices WHERE invoice_id=? AND state='exporting'").bind(saved.invoice_id).first<{source:string}>();
+    if(job)await wakeIntegration(env.QUICKBOOKS_QUEUE,{key:'auto:'+job.source},async()=>{});
+  }
+  return saved;
 }
 export async function retryExport(req:Request,env:Env,id:number,body:Record<string,any>,user:User){
   const old=await operation(env,id);if(old.version!==version(body.ifVersion))throw changed();if(body.reviewed!==true)throw invalid('Review the original saved export before retrying.');
   if(old.state==='linked')return old;if(old.lease_until>Date.now())throw new ApiError(409,'quickbooks_busy','This export is already being processed.');
   const row=await connection(env,old.environment);if(row.status!=='connected'||row.realm_id!==old.realm_id)throw new ApiError(409,'quickbooks_company_changed','Connect the original company before retrying this export.');
   await requireExportMode(req,env,row,JSON.parse(old.profiles),version(body.modeVersion));
-  const saved=await env.DB.prepare("UPDATE quickbooks_exports SET state='queued',retry_at=0,attempts=0,created_by=?,connection_generation=?,mapping_version=?,last_error='',lease_owner=NULL,lease_until=0,updated_at=?,version=version+1 WHERE id=? AND version=? AND lease_until<=? RETURNING *").bind(user.id,row.generation,(await mapping(env,row.environment,row.realm_id)).version,Date.now(),old.id,old.version,Date.now()).first<ExportOperation>();if(!saved)throw changed();return saved;
+  if (old.auto && (await issuedInvoice(env, old.invoice_id)).payment.paid && body.paidInvoiceConfirmed !== true) {
+    throw new ApiError(409,'quickbooks_paid_invoice','This invoice is recorded paid locally. Review the payment before retrying the export.');
+  }
+  const saved=await env.DB.prepare(`UPDATE quickbooks_exports SET state='queued',retry_at=0,attempts=0,created_by=?,connection_generation=?,mapping_version=?,manual_retry=auto,last_error='',lease_owner=NULL,lease_until=0,updated_at=?,version=version+1
+    WHERE id=? AND version=? AND lease_until<=?
+      AND (auto=0 OR ?=1 OR EXISTS(SELECT 1 FROM wholesale_invoices WHERE seq=quickbooks_exports.invoice_id AND paid=0))
+    RETURNING *`)
+    .bind(user.id,row.generation,(await mapping(env,row.environment,row.realm_id)).version,Date.now(),old.id,old.version,Date.now(),body.paidInvoiceConfirmed===true?1:0)
+    .first<ExportOperation>();if(!saved)throw changed();return saved;
 }
 
 export async function processExport(req:Request,env:Env,id:number){
   let row=await operation(env,id);if(!['queued','uncertain','sending'].includes(row.state)||row.lease_until>Date.now()||row.retry_at>Date.now())return row;
   const modeState=await settings(env);if(modeState.active_environment!==row.environment)return row;
+  if(row.auto&&!row.manual_retry){
+    const paused=await env.DB.prepare(`UPDATE quickbooks_exports SET state='paused',last_error='Automatic export was stopped. Review the saved export before sending it by hand.',
+      lease_owner=NULL,lease_until=0,updated_at=?,version=version+1 WHERE id=? AND version=? AND lease_until<=? AND NOT ${autoPermission} RETURNING *`)
+      .bind(Date.now(),id,row.version,Date.now()).first<ExportOperation>();
+    if(paused)return paused;
+  }
   const ownerRecord=await env.DB.prepare('SELECT role,active FROM users WHERE id=?').bind(row.created_by).first<{role:string;active:number}>();
   if(ownerRecord?.role!=='admin'||!ownerRecord.active){await env.DB.prepare("UPDATE quickbooks_exports SET state='review',last_error='A current admin must review this export.',version=version+1 WHERE id=? AND version=? AND lease_until<=?").bind(id,row.version,Date.now()).run();return operation(env,id);}
-  const owner=crypto.randomUUID(),locked=await env.DB.prepare("UPDATE quickbooks_exports SET state='sending',attempts=attempts+1,lease_owner=?,lease_until=?,updated_at=?,version=version+1 WHERE id=? AND version=? AND state IN ('queued','uncertain','sending') AND lease_until<=? AND EXISTS(SELECT 1 FROM quickbooks_settings WHERE id=1 AND active_environment=? AND version=?) RETURNING *").bind(owner,Date.now()+90000,Date.now(),id,row.version,Date.now(),row.environment,modeState.version).first<ExportOperation>();
+  const owner=crypto.randomUUID(),locked=await env.DB.prepare(`UPDATE quickbooks_exports SET state='sending',attempts=attempts+1,lease_owner=?,lease_until=?,updated_at=?,version=version+1 WHERE id=? AND version=? AND state IN ('queued','uncertain','sending') AND lease_until<=? AND EXISTS(SELECT 1 FROM quickbooks_settings WHERE id=1 AND active_environment=? AND version=?)
+    AND (auto=0 OR manual_retry=1 OR ${autoPermission}) RETURNING *`).bind(owner,Date.now()+90000,Date.now(),id,row.version,Date.now(),row.environment,modeState.version).first<ExportOperation>();
   if(!locked)return operation(env,id);row=locked;let writeStarted=false;
   try{
     if(row.attempts>8)return finish(env,id,owner,'review','Repeated attempts need an admin review before retrying.');
@@ -83,9 +110,21 @@ export async function processExport(req:Request,env:Env,id:number){
     const prefs=(await resources.read('/preferences?minorversion=75')).Preferences;
     if(prefs?.SalesFormsPrefs?.CustomTxnNumbers!==true||prefs?.SalesFormsPrefs?.AllowServiceDate!==true)throw new ApiError(409,'quickbooks_preferences','Enable custom invoice numbers and service dates in QuickBooks before exporting.');
     await verifyFrozenReferences(resources.read,preview.candidate);await resources.check();await requireExportMode(req,env,company,JSON.parse(row.profiles),modeState.version);
-    const noted=await env.DB.prepare("UPDATE quickbooks_exports SET write_started_at=CASE WHEN write_started_at=0 THEN ? ELSE write_started_at END WHERE id=? AND lease_owner=? AND lease_until>? AND state='sending' AND EXISTS(SELECT 1 FROM users WHERE id=quickbooks_exports.created_by AND role='admin' AND active=1) RETURNING write_started_at").bind(Date.now(),id,owner,Date.now()).first<{write_started_at:number}>();
-    if(!noted)return finish(env,id,owner,'review','Administrator access changed before this invoice was sent.');writeStarted=true;row.write_started_at=noted.write_started_at;
-    remote=(await resources.write('/invoice?minorversion=75&requestid='+encodeURIComponent(row.request_id),row.payload)).Invoice;
+    remote=(await resources.write('/invoice?minorversion=75&requestid='+encodeURIComponent(row.request_id),row.payload,'application/json',async()=>{
+      const at=Date.now();
+      const noted=await env.DB.prepare(`UPDATE quickbooks_exports SET write_started_at=CASE WHEN write_started_at=0 THEN ? ELSE write_started_at END
+        WHERE id=? AND lease_owner=? AND lease_until>? AND state='sending'
+          AND EXISTS(SELECT 1 FROM users WHERE id=quickbooks_exports.created_by AND role='admin' AND active=1)
+          AND EXISTS(SELECT 1 FROM quickbooks_connections WHERE environment=? AND generation=? AND version=? AND status='connected')
+          AND EXISTS(SELECT 1 FROM quickbooks_settings WHERE id=1 AND active_environment=? AND version=?)
+          AND EXISTS(SELECT 1 FROM quickbooks_environment_mappings WHERE environment=? AND realm_id=? AND version=?)
+          AND (auto=0 OR manual_retry=1 OR (${autoPermission} AND EXISTS(SELECT 1 FROM wholesale_invoices WHERE seq=quickbooks_exports.invoice_id AND paid=0)))
+        RETURNING write_started_at`)
+        .bind(at,id,owner,at,row.environment,company.generation,company.version,row.environment,modeState.version,row.environment,row.realm_id,currentMap.version)
+        .first<{write_started_at:number}>();
+      if(!noted)throw new ApiError(409,'quickbooks_permission_changed','Administrator access changed or the invoice is no longer approved for sending. Review the export and its payment and accounting settings.');
+      writeStarted=true;row.write_started_at=noted.write_started_at;
+    })).Invoice;
     if(/^\d{1,32}$/.test(remote?.Id||''))await saveRemote(env,id,owner,remote.Id);
     const match=matchesInvoice(preview,JSON.parse(row.payload),remote,true);if(!match.matches){await env.DB.prepare('UPDATE quickbooks_exports SET sandbox_eligible=0 WHERE id=? AND lease_owner=?').bind(id,owner).run();return finish(env,id,owner,'review',match.reason);}
     return link(env,row,owner,remote,true,startedAt);
@@ -104,12 +143,18 @@ export async function adoptExisting(req:Request,env:Env,id:number,body:Record<st
   if(old.state==='linked')return old;if(old.lease_until>Date.now())throw new ApiError(409,'quickbooks_busy','This export is already being processed.');
   const preview=JSON.parse(old.preview) as ExportPreview,remoteId=String(body.remoteId||'');if(!/^\d{1,32}$/.test(remoteId))throw invalid('Choose the existing QuickBooks invoice ID.');
   const company=await connection(env,old.environment);if(company.realm_id!==old.realm_id)throw new ApiError(409,'quickbooks_company_changed','Connect the original company before linking.');
-  await requireExportMode(req,env,company,JSON.parse(old.profiles),version(body.modeVersion));
+  const modeState=await requireExportMode(req,env,company,JSON.parse(old.profiles),version(body.modeVersion));
   const resources=await resourceReader(req,env,company),startedAt=Date.now(),remote=(await resources.read('/invoice/'+remoteId+'?minorversion=75')).Invoice;
   const match=matchesInvoice(preview,JSON.parse(old.payload),remote,false);if(!match.matches)throw new ApiError(409,'quickbooks_invoice_mismatch',match.reason);
   if(await sourceHash(await issuedInvoice(env,old.invoice_id))!==old.source_hash)throw new ApiError(409,'quickbooks_integrity','The website invoice differs from the saved review.');await resources.check();
   const other=await env.DB.prepare('SELECT id FROM quickbooks_exports WHERE environment=? AND realm_id=? AND remote_id=? AND id<>?').bind(old.environment,old.realm_id,remoteId,id).first();if(other)throw new ApiError(409,'quickbooks_remote_conflict','This QuickBooks invoice is already linked to another website invoice.');
-  const saved=await env.DB.prepare("UPDATE quickbooks_exports SET state='linked',remote_id=?,sync_token=?,created_remote=0,lease_owner=NULL,lease_until=0,last_error='',updated_at=?,version=version+1 WHERE id=? AND version=? AND lease_until<=? RETURNING *").bind(remoteId,remote.SyncToken,Date.now(),id,old.version,Date.now()).first<ExportOperation>();if(!saved)throw changed();
+  const saved=await env.DB.prepare(`UPDATE quickbooks_exports SET state='linked',remote_id=?,sync_token=?,created_remote=0,lease_owner=NULL,lease_until=0,last_error='',updated_at=?,version=version+1
+    WHERE id=? AND version=? AND lease_until<=?
+      AND EXISTS(SELECT 1 FROM quickbooks_settings WHERE id=1 AND active_environment=? AND version=?)
+      AND EXISTS(SELECT 1 FROM quickbooks_connections WHERE environment=? AND generation=? AND version=? AND status='connected')
+      AND EXISTS(SELECT 1 FROM users WHERE id=? AND role='admin' AND active=1) RETURNING *`)
+    .bind(remoteId,remote.SyncToken,Date.now(),id,old.version,Date.now(),old.environment,modeState.version,old.environment,company.generation,company.version,user.id)
+    .first<ExportOperation>();if(!saved)throw changed();
   await observe(env,saved,remote,startedAt);await audit(env,'quickbooks_invoice_adopted',user.name,`${user.name} linked an existing QuickBooks invoice to ${preview.candidate!.number}.`);return saved;
 }
 export async function exportList(env:Env,mode:Environment,invoiceId?:number,cursor?:number){

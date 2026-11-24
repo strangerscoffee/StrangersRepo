@@ -248,7 +248,7 @@ Management routes below are under `/api/admin/wholesale/quickbooks` and require 
 | `GET /exports/<id>` | Scoped safe operation metadata and balance observation. |
 | `GET /exports/<id>/review` | Operation plus immutable original preview for review. |
 | `POST /exports/<id>/process` | `{}` starts a previously reviewed queued operation in a separate bounded invocation. Scheduled recovery handles a missed browser follow-up; no new request/body is created. |
-| `POST /exports/<id>/retry` | `{ifVersion,modeVersion,reviewed:true}` reauthorizes original company/request/body; requires active mode/current admin. |
+| `POST /exports/<id>/retry` | `{ifVersion,modeVersion,reviewed:true,paidInvoiceConfirmed?:true}` reauthorizes the original company, request and body. A retry of an automatic export needs payment confirmation if the website records it as paid. |
 | `POST /exports/<id>/link-existing` | `{ifVersion,modeVersion,remoteId,reviewed:true}` explicitly adopts an exactly matching existing invoice. Does not establish successful Sandbox create evidence. |
 | `POST /exports/<id>/refresh` | `{}` reads linked original-company Invoice and persists a revision-guarded payment observation; works for existing Live links while Sandbox is active. |
 | `GET /readiness` | Live checklist/fingerprint/connection+mode versions, webhook configuration and approved/ready state. |

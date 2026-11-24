@@ -27,7 +27,7 @@ if (queueEnabled) {
     { binding: 'QUICKBOOKS_QUEUE', queue: 'strangers-quickbooks' },
   ];
   const consumers = producers.map(({ queue }) => ({
-    queue, max_batch_size: 5, max_batch_timeout: 1, max_concurrency: 1, max_retries: 3,
+    queue, max_batch_size: queue === 'strangers-quickbooks' ? 1 : 5, max_batch_timeout: 1, max_concurrency: 1, max_retries: 3,
     dead_letter_queue: 'strangers-integration-recovery',
   }));
   config.queues = { producers, consumers };

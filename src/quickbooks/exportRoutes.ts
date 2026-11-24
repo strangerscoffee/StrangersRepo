@@ -29,7 +29,10 @@ export async function handleExportRoutes(req:Request,env:Env,action:string,mode:
   const id=Number(found[1]);if(!Number.isSafeInteger(id)||id<1)throw invalid('Choose a valid export.');
   const saved=await operation(env,id);if(saved.environment!==mode)throw new ApiError(404,'not_found','QuickBooks export not found in this environment.');
   if(!found[2]&&req.method==='GET')return json({export:await operationResult(env,saved)});
-  if(found[2]==='review'&&req.method==='GET')return json({export:await operationResult(env,saved),preview:JSON.parse(saved.preview)});
+  if(found[2]==='review'&&req.method==='GET'){
+    const source=saved.auto?await env.DB.prepare('SELECT paid FROM wholesale_invoices WHERE seq=?').bind(saved.invoice_id).first<{paid:number}>():null;
+    return json({export:await operationResult(env,saved),preview:JSON.parse(saved.preview),paidLocally:!!source?.paid,automatic:!!saved.auto});
+  }
   if(found[2]==='process'&&req.method==='POST'){
     await readJson(req,4096);const delivery=wakeIntegration(env.QUICKBOOKS_QUEUE, { exportId:id }, () => processExport(req,env,id));if(ctx)ctx.waitUntil(delivery);else await delivery;
     return json({export:await operationResult(env,await operation(env,id))},202);

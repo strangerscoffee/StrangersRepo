@@ -9,11 +9,10 @@ import { audit } from "./audit";
 import type { User } from "./auth";
 import { ApiError, type Env, invalid, json, readJson } from "./http";
 import { object, version } from "./wholesaleStore";
-import { issueForOrder, issueForTab, issuedInvoice, InvoiceHold } from "./wholesaleInvoices";
+import { issueForOrder, issueForTab, InvoiceHold } from "./wholesaleInvoices";
 import { wakeIntegration } from "./integrationSignals";
 import { machineRequest } from "./quickbooks/jobs";
-import { emailFor, emailLinkedInvoice, ExportHold, queueAutomaticExport, sendQueuedExport } from "./quickbooks/autoExport";
-import { settings as quickbooksSettings } from "./quickbooks/settings";
+import { emailLinkedInvoice, ExportHold, queueAutomaticExport } from "./quickbooks/autoExport";
 import type { ExportOperation } from "./quickbooks/operationTypes";
 
 export interface AutoSettings { issue: boolean; quickbooks: boolean; email: boolean; since: number; enabledBy: string; enabledByName: string }
@@ -61,50 +60,56 @@ async function start(env: Env, source: string, ctx?: ExecutionContext) {
 }
 
 async function finish(env: Env, source: string, owner: string, state: string, reason = "", retryIn = 0, invoiceId?: number) {
-  await env.DB.prepare(`UPDATE wholesale_auto_invoices SET state=?,reason=?,retry_at=?,attempts=CASE WHEN ?>0 THEN attempts+1 ELSE attempts END,${invoiceId ? "invoice_id=?," : ""}lease_owner=NULL,lease_until=0,updated_at=? WHERE source=? AND lease_owner=?`)
+  const result = await env.DB.prepare(`UPDATE wholesale_auto_invoices SET state=?,reason=?,retry_at=?,attempts=CASE WHEN ?>0 THEN attempts+1 ELSE attempts END,${invoiceId ? "invoice_id=?," : ""}lease_owner=NULL,lease_until=0,updated_at=? WHERE source=? AND lease_owner=?`)
     .bind(state, reason.slice(0, 500), retryIn ? Date.now() + retryIn : 0, retryIn, ...(invoiceId ? [invoiceId] : []), Date.now(), source, owner).run();
+  return !!result.meta.changes;
 }
 /** Held work is tried again every half hour for a day, then every six hours, until it goes or an admin skips it. */
 const holdDelay = (attempts: number) => attempts < 48 ? 30 * MINUTE : 360 * MINUTE;
 
-/** Works one order or tab as far as it can go now. */
+/** Give issuing, export preparation, accounting writes and email separate turns and request budgets. */
 export async function processAutoInvoice(env: Env, source: string, req: Request = machineRequest(env)) {
   const owner = crypto.randomUUID(), now = Date.now();
   const row = await env.DB.prepare("UPDATE wholesale_auto_invoices SET lease_owner=?,lease_until=? WHERE source=? AND state IN ('pending','issued','exporting','held') AND retry_at<=? AND lease_until<=? RETURNING *").bind(owner, now + 3 * MINUTE, source, now, now).first<AutoRow>();
   if (!row) return;
   const { settings } = await autoSettings(env);
   try {
-    let invoiceId = row.invoice_id;
+    const invoiceId = row.invoice_id;
     if (!invoiceId) {
       if (!settings.issue) return await finish(env, source, owner, "skipped", "Automatic invoicing was switched off before this was invoiced.");
       const [kind, id] = source.split(/:(.*)/s);
       let invoice;
-      try { invoice = kind === "order" ? await issueForOrder(env, id, ACTOR) : await issueForTab(env, id, ACTOR); }
+      const issuance = { since: settings.since, leaseOwner: owner };
+      try { invoice = kind === "order" ? await issueForOrder(env, id, ACTOR, issuance) : await issueForTab(env, id, ACTOR, issuance); }
       catch (error) {
         if (error instanceof InvoiceHold) return await finish(env, source, owner, "held", error.message, holdDelay(row.attempts));
         throw error;
       }
-      if (!invoice) return await finish(env, source, owner, "skipped", "Nothing on this tab needed invoicing (cancelled or already invoiced).");
-      invoiceId = invoice.id!;
-      await env.DB.prepare("UPDATE wholesale_auto_invoices SET invoice_id=?,state='issued',reason='',updated_at=? WHERE source=? AND lease_owner=?").bind(invoiceId, Date.now(), source, owner).run();
+      if (!invoice) return await finish(env, source, owner, "skipped", kind === "tab" ? "No eligible orders on this tab needed an invoice." : "This order is no longer eligible for automatic invoicing.");
+      const saved = await finish(env, source, owner, settings.quickbooks ? "issued" : "done", "", 0, invoice.id!);
+      if (saved && settings.quickbooks) await wakeIntegration(env.QUICKBOOKS_QUEUE, { key: "auto:" + source }, async () => {});
+      return;
     }
     if (!settings.quickbooks) return await finish(env, source, owner, "done", "", 0, invoiceId);
-    const invoice = await issuedInvoice(env, invoiceId), mode = (await quickbooksSettings(env)).active_environment;
     let exported: ExportOperation | null;
-    try { exported = await queueAutomaticExport(req, env, invoiceId, settings.enabledBy, await emailFor(env, invoice, mode)); }
+    try { exported = await queueAutomaticExport(req, env, invoiceId, settings.enabledBy, source, owner); }
     catch (error) {
       if (error instanceof ExportHold || (error instanceof ApiError && error.status < 500 && error.code !== "quickbooks_busy")) return await finish(env, source, owner, "held", "QuickBooks: " + error.message, holdDelay(row.attempts), invoiceId);
       throw error;
     }
     if (!exported) return await finish(env, source, owner, "held", "QuickBooks isn't connected, so this invoice hasn't been sent there yet.", holdDelay(row.attempts), invoiceId);
-    exported = await sendQueuedExport(req, env, exported);
-    if (["queued", "uncertain", "sending"].includes(exported.state)) return await finish(env, source, owner, "exporting", exported.last_error ? "QuickBooks: " + exported.last_error : "", 2 * MINUTE, invoiceId);
+    if (["queued", "uncertain", "sending"].includes(exported.state)) {
+      const saved = await finish(env, source, owner, "exporting", exported.last_error ? "QuickBooks: " + exported.last_error : "", 0, invoiceId);
+      if (saved && exported.retry_at <= Date.now() && exported.lease_until <= Date.now()) {
+        await wakeIntegration(env.QUICKBOOKS_QUEUE, { exportId: exported.id }, async () => {});
+      }
+      return;
+    }
     if (exported.state !== "linked") return await finish(env, source, owner, "held", "QuickBooks: " + (exported.last_error || "the export needs review in QuickBooks → Export history."), holdDelay(row.attempts), invoiceId);
-    if (!settings.email || !exported.auto) return await finish(env, source, owner, "done", "", 0, invoiceId);
-    const emailed = await emailLinkedInvoice(req, env, exported);
+    if (!settings.email || !exported.auto || exported.manual_retry || !exported.created_remote) return await finish(env, source, owner, "done", "", 0, invoiceId);
+    const emailed = await emailLinkedInvoice(req, env, exported, source, owner);
     if (emailed === "sent") return await finish(env, source, owner, "done", "", 0, invoiceId);
     const latest = await env.DB.prepare("SELECT email_error FROM quickbooks_exports WHERE id=?").bind(exported.id).first<{ email_error: string }>();
-    if (emailed === "skipped") return await finish(env, source, owner, "done", "Not emailed: " + (latest?.email_error || "no email address."), 0, invoiceId);
     return await finish(env, source, owner, "held", "QuickBooks email: " + (latest?.email_error || "not sent yet."), emailed === "sending" ? 2 * MINUTE : holdDelay(row.attempts), invoiceId);
   } catch (error) {
     const message = error instanceof ApiError ? error.message : "Something went wrong. It will be tried again.";
@@ -113,13 +118,17 @@ export async function processAutoInvoice(env: Env, source: string, req: Request 
   }
 }
 
-/** The five-minute job: queue anything newly dispatched or cleared, then work a few that are due. */
+/** The five-minute job recovers missed starts and advances ready work independently of the export queue. */
 export async function runAutoInvoicing(env: Env) {
   const { settings } = await autoSettings(env);
   if (settings.issue) { await enqueue(env, "order", settings.since); await enqueue(env, "tab", settings.since); }
-  const due = (await env.DB.prepare("SELECT source FROM wholesale_auto_invoices WHERE state IN ('pending','issued','exporting','held') AND retry_at<=? AND lease_until<=? ORDER BY retry_at, created_at LIMIT 3").bind(Date.now(), Date.now()).all<{ source: string }>()).results;
+  const due = (await env.DB.prepare(`SELECT a.source FROM wholesale_auto_invoices a
+    WHERE a.state IN ('pending','issued','exporting','held') AND a.retry_at<=? AND a.lease_until<=?
+      AND NOT (a.state='exporting' AND EXISTS(SELECT 1 FROM quickbooks_exports e JOIN quickbooks_settings s ON s.id=1
+        WHERE e.invoice_id=a.invoice_id AND e.auto=1 AND e.environment=s.active_environment AND e.state IN ('queued','sending','uncertain')))
+    ORDER BY a.retry_at,a.created_at LIMIT ?`).bind(Date.now(), Date.now(), env.QUICKBOOKS_QUEUE ? 3 : 1).all<{ source: string }>()).results;
   const req = machineRequest(env);
-  for (const row of due) await processAutoInvoice(env, row.source, req);
+  for (const row of due) await wakeIntegration(env.QUICKBOOKS_QUEUE, { key: "auto:" + row.source }, () => processAutoInvoice(env, row.source, req));
 }
 
 async function overview(env: Env) {
@@ -127,7 +136,7 @@ async function overview(env: Env) {
     autoSettings(env),
     env.DB.prepare(`SELECT a.*, i.invoice_number, e.state AS export_state, e.environment, e.email_state, e.email_to FROM wholesale_auto_invoices a
       LEFT JOIN wholesale_invoices i ON i.seq=a.invoice_id
-      LEFT JOIN quickbooks_exports e ON e.id=(SELECT MAX(id) FROM quickbooks_exports WHERE invoice_id=a.invoice_id)
+      LEFT JOIN quickbooks_exports e ON e.id=(SELECT id FROM quickbooks_exports WHERE invoice_id=a.invoice_id ORDER BY auto DESC,id DESC LIMIT 1)
       ORDER BY CASE WHEN a.state='held' THEN 0 ELSE 1 END, a.updated_at DESC LIMIT 60`).all<AutoRow & { invoice_number: string | null; export_state: string | null; environment: string | null; email_state: string | null; email_to: string | null }>(),
     env.DB.prepare("SELECT state, COUNT(*) AS n FROM wholesale_auto_invoices WHERE state IN ('pending','issued','exporting','held') GROUP BY state").all<{ state: string; n: number }>(),
   ]);
@@ -170,7 +179,11 @@ export async function handleAutoInvoiceAdmin(req: Request, env: Env, route: stri
     const [, source, action] = item;
     const result = action === "retry"
       ? await env.DB.prepare("UPDATE wholesale_auto_invoices SET retry_at=0,attempts=0,updated_at=? WHERE source=? AND state IN ('pending','issued','exporting','held') AND lease_until<=?").bind(Date.now(), source, Date.now()).run()
-      : await env.DB.prepare("UPDATE wholesale_auto_invoices SET state='skipped',reason=?,retry_at=0,updated_at=? WHERE source=? AND state IN ('pending','issued','exporting','held') AND lease_until<=?").bind(`Left to do by hand (${user.name}).`, Date.now(), source, Date.now()).run();
+      : await env.DB.prepare(`UPDATE wholesale_auto_invoices SET state='skipped',reason=?,retry_at=0,updated_at=?
+        WHERE source=? AND state IN ('pending','issued','exporting','held') AND lease_until<=?
+          AND NOT EXISTS(SELECT 1 FROM quickbooks_exports WHERE invoice_id=wholesale_auto_invoices.invoice_id
+            AND auto=1 AND manual_retry=0 AND state='sending' AND lease_until>?)`)
+        .bind(`Left to do by hand (${user.name}).`, Date.now(), source, Date.now(), Date.now()).run();
     if (!result.meta.changes) throw new ApiError(409, "conflict", "This changed or is being worked on. Reload and try again.");
     if (action === "skip") await audit(env, "wholesale_auto_invoicing", user.name, `${user.name} left ${source} to invoice by hand.`);
     else {

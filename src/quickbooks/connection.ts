@@ -84,7 +84,11 @@ export async function resourceReader(req:Request,env:Env,expected?:Connection,mo
     catch(error){if(error instanceof ProviderError&&error.providerStatus===401)await env.DB.prepare("UPDATE quickbooks_connections SET status='needs-reconnect',token_data=NULL,version=version+1 WHERE environment=? AND generation=? AND version=? AND token_version=?").bind(row.environment,row.generation,row.version,used.version).run();throw error;}
   };
   const read=(path:string)=>{const old=reads.get(path);if(old)return old;const result=request(path);reads.set(path,result);return result;};
-  return{row,read,write:async(path:string,payload:unknown,contentType='application/json')=>{await current(env,row);return request(path,{method:'POST',headers:{'content-type':contentType},body:typeof payload==='string'?payload:JSON.stringify(payload)});},check:()=>current(env,row)};
+  return{row,read,write:async(path:string,payload:unknown,contentType='application/json',beforeSend?:()=>Promise<void>)=>{
+    await current(env,row);
+    if(beforeSend)await beforeSend();
+    return request(path,{method:'POST',headers:{'content-type':contentType},body:typeof payload==='string'?payload:JSON.stringify(payload)});
+  },check:()=>current(env,row)};
 }
 export async function readResource(req:Request,env:Env,path:string,mode:Environment='sandbox'){const resources=await resourceReader(req,env,undefined,mode),data=await resources.read(path);await resources.check();return data;}
 export async function revoke(config:Config,encrypted:string|null,realm:string,generation:string):Promise<boolean>{

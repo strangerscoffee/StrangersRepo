@@ -2,7 +2,7 @@
 import {ApiError,type Env} from '../http';
 import type {Environment} from './preview';
 import {connection,configuration,ProviderError,resourceReader} from './connection';
-import {operation,processExport} from './ledger';
+import {processExport} from './ledger';
 import {refreshObservation} from './observations';
 import {settings} from './settings';
 import type {ExportOperation} from './operationTypes';
@@ -11,7 +11,14 @@ interface ReconcileState {environment:Environment;realm_id:string;checkpoint:str
 export const machineRequest=(env:Env)=>new Request(env.QUICKBOOKS_REDIRECT_URI||'https://'+(env.ADMIN_HOST||env.COOKIE_DOMAIN||'staffstrangerscoffee.com')+'/api/admin/wholesale/quickbooks/status');
 async function enqueueInvoices(env:Env,mode:Environment,realm:string,prefix:string,ids?:string[]){
   const filtered=ids?.filter(id=>/^\d{1,32}$/.test(id));
-  const result=await env.DB.prepare(`INSERT INTO quickbooks_events(event_key,environment,realm_id,entity,entity_id,operation,event_at,created_at) SELECT ?||':'||remote_id,environment,realm_id,'Invoice',remote_id,'refresh',?,? FROM quickbooks_exports WHERE environment=? AND realm_id=? AND state='linked'${filtered?' AND remote_id IN (SELECT value FROM json_each(?))':''} ON CONFLICT(event_key) DO NOTHING`).bind(prefix,Date.now(),Date.now(),mode,realm,...(filtered?[JSON.stringify(filtered)]:[])).run();return result.meta.changes||0;
+  const result=await env.DB.prepare(`INSERT INTO quickbooks_events(event_key,environment,realm_id,entity,entity_id,operation,event_at,created_at)
+    SELECT ?||':'||e.remote_id,e.environment,e.realm_id,'Invoice',e.remote_id,'refresh',?,? FROM quickbooks_exports e
+    WHERE e.environment=? AND e.realm_id=? AND e.state='linked'
+      ${filtered?'AND e.remote_id IN (SELECT value FROM json_each(?))':''}
+      AND NOT EXISTS(SELECT 1 FROM quickbooks_events q WHERE q.environment=e.environment AND q.realm_id=e.realm_id
+        AND q.entity='Invoice' AND q.entity_id=e.remote_id AND q.state='queued' AND q.retry_at<=?)
+    ON CONFLICT(event_key) DO NOTHING`)
+    .bind(prefix,Date.now(),Date.now(),mode,realm,...(filtered?[JSON.stringify(filtered)]:[]),Date.now()).run();return result.meta.changes||0;
 }
 export async function requestReconciliation(env:Env,mode:Environment){
   const company=await connection(env,mode);if(company.status!=='connected')throw new ApiError(409,'quickbooks_reconnect','Connect this company before refreshing its payments.');
@@ -32,17 +39,23 @@ export async function processEvents(req:Request,env:Env,limit=2,preferredKeys?:s
         const linked=await env.DB.prepare("SELECT * FROM quickbooks_exports WHERE environment=? AND realm_id=? AND remote_id=? AND state='linked'").bind(row.environment,row.realm_id,row.entity_id).first<ExportOperation>();if(linked)await refreshObservation(req,env,linked);
       }else if(row.entity==='Payment'){
         let ids:string[]|undefined;
-        if(!['delete','void'].includes(row.operation)){
+        if(row.operation==='create'){
           const resources=await resourceReader(req,env,company);let payment:any=null;
           try{payment=(await resources.read('/payment/'+row.entity_id+'?minorversion=75')).Payment;}catch(error){if(!(error instanceof ProviderError&&error.providerStatus===404))throw error;}
-          await resources.check();if(payment){ids=(Array.isArray(payment.Line)?payment.Line:[]).flatMap((line:any)=>(Array.isArray(line.LinkedTxn)?line.LinkedTxn:[]).filter((link:any)=>link.TxnType==='Invoice').map((link:any)=>link.TxnId));}
+          await resources.check();
+          if(Array.isArray(payment?.Line))ids=payment.Line.flatMap((line:any)=>(Array.isArray(line?.LinkedTxn)?line.LinkedTxn:[])
+            .filter((link:any)=>link?.TxnType==='Invoice').map((link:any)=>String(link.TxnId)));
         }
-        // Deleted payments no longer reveal their invoice links: sweep only our own saved links.
+        // Changed or removed payments no longer tell us every invoice they previously paid.
         const prefix='payment:'+row.event_key;
-        const added=await enqueueInvoices(env,row.environment,row.realm_id,prefix,ids);
-        if(preferredKeys&&added){
+        await enqueueInvoices(env,row.environment,row.realm_id,prefix,ids);
+        if(preferredKeys){
           // Spend the remaining notification budget on its authoritative invoice reads.
-          const children=(await env.DB.prepare("SELECT event_key FROM quickbooks_events WHERE environment=? AND realm_id=? AND state='queued' AND substr(event_key,1,?)=? ORDER BY event_key LIMIT ?").bind(row.environment,row.realm_id,prefix.length+1,prefix+':',Math.max(1,limit-count-1)).all<{event_key:string}>()).results;
+          const children=(await env.DB.prepare(`SELECT q.event_key FROM quickbooks_events q
+            JOIN quickbooks_exports e ON e.environment=q.environment AND e.realm_id=q.realm_id AND e.remote_id=q.entity_id AND e.state='linked'
+            WHERE q.environment=? AND q.realm_id=? AND q.entity='Invoice' AND q.state='queued' AND q.retry_at<=?
+            ${ids?'AND q.entity_id IN (SELECT value FROM json_each(?))':''}
+            ORDER BY e.id,q.created_at,q.event_key LIMIT ?`).bind(row.environment,row.realm_id,Date.now(),...(ids?[JSON.stringify(ids)]:[]),Math.max(1,limit-count-1)).all<{event_key:string}>()).results;
           preferredKeys=[...preferredKeys,...children.map(child=>child.event_key)];
         }
       }
@@ -74,7 +87,9 @@ async function pollChanges(req:Request,env:Env){
   const owner=crypto.randomUUID(),locked=await env.DB.prepare('UPDATE quickbooks_reconciliation SET lease_owner=?,lease_until=? WHERE environment=? AND realm_id=? AND lease_until<=? RETURNING *').bind(owner,Date.now()+90000,row.environment,row.realm_id,Date.now()).first<ReconcileState>();if(!locked)return false;
   let checkpoint=row.checkpoint,lastError='',retryAt=0,fullAt=(locked as any).last_full_at||0;
   try{
-    const company=await connection(env,row.environment),resources=await resourceReader(req,env,company),since=Date.parse(row.checkpoint);
+    const company=await connection(env,row.environment);
+    if(company.realm_id!==row.realm_id)throw new ApiError(409,'quickbooks_company_changed','Reconciliation is waiting for the original QuickBooks company.');
+    const resources=await resourceReader(req,env,company),since=Date.parse(row.checkpoint);
     const start=new Date(Number.isFinite(since)?Math.max(Date.now()-29*86400000,since-120000):Date.now()-3600000).toISOString();
     const changed=await resources.read('/cdc?entities=Invoice&changedSince='+encodeURIComponent(start)+'&minorversion=75');await resources.check();
     if(!Array.isArray(changed.CDCResponse))throw new ApiError(503,'quickbooks_unavailable','QuickBooks change reconciliation returned an unexpected response.');
@@ -98,9 +113,10 @@ export async function runQuickBooksJobs(env:Env){
   const overdue=await env.DB.prepare("SELECT c.environment FROM quickbooks_connections c LEFT JOIN quickbooks_reconciliation r ON r.environment=c.environment AND r.realm_id=c.realm_id WHERE c.status='connected' AND COALESCE(r.updated_at,0)<? AND COALESCE(r.retry_at,0)<=? AND COALESCE(r.lease_until,0)<=? LIMIT 1").bind(Date.now()-900000,Date.now(),Date.now()).first();
   if(overdue&&await pollChanges(req,env))return;
   const queued=await env.DB.prepare("SELECT id FROM quickbooks_exports WHERE environment=? AND (state IN ('queued','uncertain') OR (state='sending' AND lease_until<=?)) AND retry_at<=? ORDER BY created_at,id LIMIT 1").bind(state.active_environment,Date.now(),Date.now()).first<{id:number}>();
-  if(queued){await processExport(req,env,queued.id);return;}
+  if(queued)await processExport(req,env,queued.id);
   const event=await env.DB.prepare("SELECT e.event_key FROM quickbooks_events e JOIN quickbooks_connections c ON c.environment=e.environment AND c.realm_id=e.realm_id AND c.status='connected' WHERE (e.state='queued' OR (e.state='processing' AND e.lease_until<=?)) AND e.retry_at<=? LIMIT 1").bind(Date.now(),Date.now()).first();
-  if(event){await processEvents(req,env,3);return;}
+  if(event){await processEvents(req,env,queued?1:3);return;}
+  if(queued)return;
   await pollChanges(req,env);
   await env.DB.prepare("DELETE FROM quickbooks_events WHERE state='done' AND created_at<?").bind(Date.now()-30*86400000).run();
 }

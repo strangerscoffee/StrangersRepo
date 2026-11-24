@@ -157,6 +157,8 @@ test('Payment creates and deletions reconcile linked invoices without creating m
  const live=(await ok('GET',root+'/exports?invoiceId='+first.id,undefined,ADMIN,'production')).body.exports[0],before=posts('production').length;
  provider.state.pay('production',live.remoteId,20);provider.state.payments.production.set('900',{Id:'900',Line:[{LinkedTxn:[{TxnType:'Invoice',TxnId:live.remoteId}]}]});
  assert.equal((await webhook('production',event('payment-created','900','payment','created'))).status,200);await waitBalance(first.id,2000);
+ provider.state.pay('production',live.remoteId,30);provider.state.payments.production.set('900',{Id:'900',Line:[]});
+ assert.equal((await webhook('production',event('payment-reallocated','900','payment','updated'))).status,200);await waitBalance(first.id,3000);
  provider.state.pay('production',live.remoteId,36);provider.state.payments.production.delete('900');assert.equal((await webhook('production',event('payment-deleted','900','payment','deleted'))).status,200);await waitBalance(first.id,3600);
  assert.equal(posts('production').length,before);assert.ok(!provider.state.calls.some(c=>c.method==='POST'&&c.path.endsWith('/payment')));
 });
@@ -167,9 +169,10 @@ test('Scheduled change capture recovers missed notifications using only saved in
 });
 test('Voided or edited invoices are reviewed instead of falsely marked paid',async()=>{
  const live=(await ok('GET',root+'/exports?invoiceId='+first.id,undefined,ADMIN,'production')).body.exports[0],remote=provider.state.invoices.production.get(live.remoteId);remote.TotalAmt=0;remote.Balance=0;remote.SyncToken=String(Number(remote.SyncToken)+1);
+ srv.sql(`UPDATE wholesale_invoices SET paid=1,paid_date='2026-11-10' WHERE seq=${first.id}`);
  assert.equal((await webhook('production',event('invoice-voided',live.remoteId,'invoice','voided'))).status,200);
  for(let i=0;i<200;i++){const own=(await ok('GET','/api/wholesale/invoices/'+first.id,undefined,BUYER)).body.invoice;if(own.payment.status==='review')break;await new Promise(r=>setTimeout(r,25));}
- const own=(await ok('GET','/api/wholesale/invoices/'+first.id,undefined,BUYER)).body.invoice;assert.equal(own.payment.status,'review');assert.equal(own.payment.paid,false);assert.equal(own.accounting.reason,undefined);const listed=(await ok('GET','/api/wholesale/invoices',undefined,BUYER)).body;assert.ok(listed.summary.reviewCount>=1);
+ const own=(await ok('GET','/api/wholesale/invoices/'+first.id,undefined,BUYER)).body.invoice;assert.equal(own.payment.status,'review');assert.equal(own.payment.paid,false);assert.equal(own.payment.paidDate,null);assert.equal(own.accounting.reason,undefined);const listed=(await ok('GET','/api/wholesale/invoices',undefined,BUYER)).body;assert.ok(listed.summary.reviewCount>=1);
 });
 test('Missed-event reconciliation receives a scheduled turn even with an older notification backlog',async()=>{
  srv.sql("UPDATE quickbooks_reconciliation SET updated_at=0,retry_at=0,lease_owner=NULL,lease_until=0;WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<10) INSERT INTO quickbooks_events(event_key,environment,realm_id,entity,entity_id,operation,event_at,created_at) SELECT 'fairness-fixture:'||x,'production','1234567890','Invoice','999999','refresh',1,1 FROM n");

@@ -30,6 +30,8 @@ export interface ExportPreview {
   mode: "preview-only"; canTransmit: false; state: "blocked" | "ready-for-sandbox-review" | "ready-for-live-review";
   scope: CompanyScope; requestId: string | null; fingerprint: string; blockers: Issue[]; notes: string[];
   candidate: InvoiceCandidate | null;
+  /** Older saved exports must keep the original private-only payment instructions on retry. */
+  customerPaymentInstructions?: boolean;
 }
 const amountFields = ["netPence", "vatPence", "grossPence"] as const;
 const validId = (value: unknown): value is string => typeof value === "string" && /^[0-9]{1,32}$/.test(value);
@@ -41,7 +43,7 @@ const hash = async (value: unknown) => [...new Uint8Array(await crypto.subtle.di
 const reference = (value: ScopedReference | undefined, scope: CompanyScope) => value && value.active === true && validId(value.id) && value.realmId === scope.realmId && value.environment === scope.environment ? value.id : null;
 
 /** Inputs are authoritative local invoice snapshots and separately reviewed company mappings, never customer POST data. */
-export async function previewInvoice(invoice: InvoiceDocument, mappings: QuickBooksMappings): Promise<ExportPreview> {
+export async function previewInvoice(invoice: InvoiceDocument, mappings: QuickBooksMappings, preparingCustomer = false): Promise<ExportPreview> {
   const blockers: Issue[] = [], add = (code: string, message: string) => blockers.push({ code, message });
   const scope = { environment: mappings.environment, realmId: mappings.realmId };
   if (!["sandbox", "production"].includes(scope.environment) || !validId(scope.realmId)) add("company_scope", "Choose a valid QuickBooks company and environment.");
@@ -56,7 +58,7 @@ export async function previewInvoice(invoice: InvoiceDocument, mappings: QuickBo
   if (invoice.dueDate && day(invoice.invoiceDate) && invoice.dueDate < invoice.invoiceDate) add("due_date", "Review a due date earlier than the invoice date.");
   if (!["inclusive", "exclusive"].includes(invoice.priceBasis)) add("price_basis", "Use the price basis saved on the issued invoice.");
   const customerRef = mappings.customer?.localCustomerId === invoice.customerId ? reference(mappings.customer, scope) : null;
-  if (!customerRef) add("customer_mapping", "Link this exact wholesale business to an active customer in the selected QuickBooks company.");
+  if (!customerRef && !preparingCustomer) add("customer_mapping", "Link this exact wholesale business to an active customer in the selected QuickBooks company.");
   if (!Array.isArray(invoice.lines) || !invoice.lines.length || invoice.lines.length > 201) add("invoice_lines", "Review the saved invoice lines.");
   const sums = { netPence: 0, vatPence: 0, grossPence: 0 }, groups = new Map<string, { basisPoints: number; netPence: number; vatPence: number; grossPence: number }>();
   const lines = (Array.isArray(invoice.lines) ? invoice.lines : []).map((line, index) => {
@@ -85,7 +87,7 @@ export async function previewInvoice(invoice: InvoiceDocument, mappings: QuickBo
   // Fingerprint only the export content. Payment/employee metadata is not part of a create operation.
   const fingerprint = await hash(candidate);
   const requestId = Number.isSafeInteger(invoice.id) && invoice.id! > 0 && validId(scope.realmId) && installationId(mappings.installationId) ? "sc-inv-" + (await hash([mappings.installationId, scope.environment, scope.realmId, invoice.id])).slice(0, 40) : null;
-  return { mode: "preview-only", canTransmit: false, state: blockers.length ? "blocked" : scope.environment==="sandbox"?"ready-for-sandbox-review":"ready-for-live-review", scope, requestId, fingerprint, blockers, candidate: blockers.length ? null : candidate, notes: ["This review is built from the issued invoice snapshot.", "Live export requires reviewed production settings and successful sandbox evidence.", "Manual paid status is not proof of a QuickBooks payment; no payment transaction is generated.", "Supply date, agreed terms and payment instructions must be preserved in the reviewed API mapping."] };
+  return { mode: "preview-only", canTransmit: false, state: blockers.length ? "blocked" : scope.environment==="sandbox"?"ready-for-sandbox-review":"ready-for-live-review", scope, requestId, fingerprint, blockers, candidate: blockers.length ? null : candidate, customerPaymentInstructions: true, notes: ["This review is built from the issued invoice snapshot.", "Live export requires reviewed production settings and successful sandbox evidence.", "Manual paid status is not proof of a QuickBooks payment; no payment transaction is generated.", "Supply date, agreed terms and payment instructions must be preserved in the reviewed API mapping."] };
 }
 
 export interface InvoiceLink extends CompanyScope { localInvoiceId: number; remoteInvoiceId: string; customerRef: string; number: string; requestId: string; fingerprint: string }
