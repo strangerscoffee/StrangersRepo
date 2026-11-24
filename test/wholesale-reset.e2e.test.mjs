@@ -54,7 +54,7 @@ test("forgotten password: ask for a link, open it, choose a new password, signed
       return Math.abs((outer.left + outer.right - button.left - button.right) / 2) < 1;
     });
     assert.equal(centred, true, 'recovery sits centrally under the password field');
-    assert.match(await p.locator('.login-footer').innerText(), /Help\s+Terms\s+Strangers Coffee Company/);
+    assert.match(await p.locator('.login-footer').innerText(), /Help\s+Terms\s+Privacy\s+Strangers Coffee Company/);
     await p.getByRole("button", { name: "Forgotten your details?" }).click();
     assert.equal(await p.locator('#password').getAttribute('type'), 'password');
     assert.equal(await p.locator('#password').inputValue(), '', 'leaving sign-in clears its password');
