@@ -84,6 +84,13 @@ test("wholesale domain: customer-only sign-in and approval work without exposing
     assert.match(privacy.response.headers.get("cache-control"), /no-store/);
     assert.match(privacy.text, /href="signin">Back to wholesale sign-in/);
   }
+  // So are the terms (Intuit asks for an end-user licence page): the same wording as the pop-up, from terms.js.
+  for (const path of ["/terms", "/terms.html"]) {
+    const terms = await call("GET", path);
+    assert.equal(terms.response.status, 200, path); assert.match(terms.text, /Wholesale Coffee Order Terms and Conditions<\/h1>/);
+    assert.match(terms.text, /id="terms-page"/); assert.match(terms.text, /\/wholesale\/terms\.js\?v=/);
+    assert.match(terms.response.headers.get("cache-control"), /no-store/);
+  }
   const focus = await call("GET", "/shared/focus.js");
   assert.equal(focus.response.status, 200); assert.match(focus.response.headers.get("content-type"), /javascript/);
   assert.match(focus.text, /data-sc-pointer/);

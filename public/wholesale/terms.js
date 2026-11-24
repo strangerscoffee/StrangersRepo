@@ -43,5 +43,8 @@
     if (!trigger) return;
     e.preventDefault(); open(trigger);
   });
+  // The public terms page (terms.html) shows the same wording in place of a pop-up.
+  const page = document.getElementById("terms-page");
+  if (page) page.append(make("ol", { className: "terms-list" }, ...TERMS.map(([head, text]) => make("li", {}, make("h2", { textContent: head }), make("p", { textContent: text })))));
   window.SCWholesaleTerms = Object.freeze({ title: TITLE, terms: TERMS.map(([heading, text]) => ({ heading, text })), open });
 })();

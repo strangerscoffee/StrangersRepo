@@ -63,6 +63,12 @@ test("terms on the sign-in page, footer and checkout; logo on sign-in", async ()
     await shot("privacy");
     await p.locator(".privacy-back").click(); await p.locator("#login-title").waitFor();
     assert.equal(new URL(p.url()).pathname, "/wholesale/signin");
+    // The terms as their own page: the same six sections as the pop-up.
+    await p.goto(srv.base + "/wholesale/terms"); await p.locator("#terms-page .terms-list li").first().waitFor();
+    assert.equal(await p.locator("#terms-page .terms-list li").count(), 6);
+    assert.ok(await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${name} terms page fits the screen`);
+    await shot("terms-page");
+    await p.goto(srv.base + "/wholesale/signin");
 
     // Ordering page: footer, My account, and the note above Place order.
     const [n, v] = BUYER.split("="); await ctx.addCookies([{ name: n, value: v, url: srv.base }]);

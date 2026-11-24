@@ -670,3 +670,5 @@ body[data-auth-view=login] #login-submit { margin-top:3px; }
 .privacy-panel a:not(.text-button) { color: var(--accent); }
 .privacy-updated { color: var(--muted) !important; font-size: 14px; margin: 0; }
 .privacy-back { justify-content: center; margin-top: 28px; }
+.privacy-panel .terms-list h2 { font-size: 17px; margin: 0 0 4px; }
+.privacy-panel .terms-list p { margin: 0; }

@@ -213,8 +213,8 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
     return withFingerprints(noStore(response), env, url);
   }
   // The privacy policy is public (QuickBooks and anyone signing up need to read it before having an account).
-  if (wholesaleHost && isGet && (p === "/wholesale/privacy" || p === "/wholesale/privacy.html" || (app === "preview" && (p === "/privacy" || p === "/privacy.html")))) {
-    const response = await env.ASSETS.fetch(pageRequest(req,new URL("/wholesale/privacy", url)));
+  for (const page of ["privacy", "terms"]) if (wholesaleHost && isGet && (p === `/wholesale/${page}` || p === `/wholesale/${page}.html` || (app === "preview" && (p === `/${page}` || p === `/${page}.html`)))) {
+    const response = await env.ASSETS.fetch(pageRequest(req,new URL(`/wholesale/${page}`, url)));
     return withFingerprints(noStore(response), env, url);
   }
   if (wholesaleHost && isGet && p === "/wholesale/staff-signin") {
