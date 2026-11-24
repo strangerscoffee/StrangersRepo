@@ -55,6 +55,14 @@ test("terms on the sign-in page, footer and checkout; logo on sign-in", async ()
     let d = await readTerms(p, p.locator(".login-footer [data-terms]"), `${name} sign-in`);
     await shot("dialog");
     await d.locator(".close-button").click(); await p.locator("#terms-dialog[open]").waitFor({ state: "detached" });
+    // Privacy policy: a public page from the same footer, with a way back.
+    await p.locator(".login-footer a", { hasText: "Privacy" }).click();
+    await p.locator("#privacy-title").waitFor();
+    assert.equal(new URL(p.url()).pathname, "/wholesale/privacy");
+    assert.ok(await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${name} privacy fits the screen`);
+    await shot("privacy");
+    await p.locator(".privacy-back").click(); await p.locator("#login-title").waitFor();
+    assert.equal(new URL(p.url()).pathname, "/wholesale/signin");
 
     // Ordering page: footer, My account, and the note above Place order.
     const [n, v] = BUYER.split("="); await ctx.addCookies([{ name: n, value: v, url: srv.base }]);

@@ -660,3 +660,13 @@ body[data-auth-view=login] #login-submit { margin-top:3px; }
 .complete-orders { list-style: none; padding: 0; margin: 4px 0 14px; display: grid; gap: 8px; }
 .complete-orders li { display: flex; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; font-size: 14px; }
 .complete-orders li span { color: var(--muted); text-align: right; overflow-wrap: anywhere; }
+
+/* Privacy policy (public/wholesale/privacy.html): the sign-in panel, wider and for reading. */
+.privacy-panel { max-width: 720px; }
+.privacy-panel h1 { margin-bottom: 4px; }
+.privacy-panel h2 { font-size: 19px; margin: 26px 0 8px; }
+.privacy-panel p, .privacy-panel li { line-height: 1.55; color: var(--fg); }
+.privacy-panel ul { padding-left: 20px; margin: 0; display: grid; gap: 8px; }
+.privacy-panel a:not(.text-button) { color: var(--accent); }
+.privacy-updated { color: var(--muted) !important; font-size: 14px; margin: 0; }
+.privacy-back { justify-content: center; margin-top: 28px; }

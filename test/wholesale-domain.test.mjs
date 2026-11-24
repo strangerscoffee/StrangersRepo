@@ -76,6 +76,14 @@ test("wholesale domain: customer-only sign-in and approval work without exposing
   const icon = await call("GET", "/favicon.ico"); assert.equal(icon.response.status,200); assert.match(icon.response.headers.get("content-type"),/^image\//);
   const signin = await call("GET", "/signin");
   assert.equal(signin.response.status, 200); assert.match(signin.text, /Wholesale sign-in/);
+  // The privacy policy is public: QuickBooks and anyone requesting an account read it signed out.
+  assert.match(signin.text, /href="privacy">Privacy</);
+  for (const path of ["/privacy", "/privacy.html"]) {
+    const privacy = await call("GET", path);
+    assert.equal(privacy.response.status, 200, path); assert.match(privacy.text, /<h1 id="privacy-title">Privacy policy<\/h1>/);
+    assert.match(privacy.response.headers.get("cache-control"), /no-store/);
+    assert.match(privacy.text, /href="signin">Back to wholesale sign-in/);
+  }
   const focus = await call("GET", "/shared/focus.js");
   assert.equal(focus.response.status, 200); assert.match(focus.response.headers.get("content-type"), /javascript/);
   assert.match(focus.text, /data-sc-pointer/);

@@ -212,6 +212,11 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
     const response = await env.ASSETS.fetch(pageRequest(req,new URL("/wholesale/signin", url)));
     return withFingerprints(noStore(response), env, url);
   }
+  // The privacy policy is public (QuickBooks and anyone signing up need to read it before having an account).
+  if (wholesaleHost && isGet && (p === "/wholesale/privacy" || p === "/wholesale/privacy.html" || (app === "preview" && (p === "/privacy" || p === "/privacy.html")))) {
+    const response = await env.ASSETS.fetch(pageRequest(req,new URL("/wholesale/privacy", url)));
+    return withFingerprints(noStore(response), env, url);
+  }
   if (wholesaleHost && isGet && p === "/wholesale/staff-signin") {
     if (app === "diary") return redirect("/signin?next=" + encodeURIComponent("/wholesale/"));
     const target = new URL("signin", new URL(links.diary, url));
