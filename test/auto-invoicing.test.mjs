@@ -123,7 +123,16 @@ test('With QuickBooks: missing customers and coffee items are made (or existing 
  assert.equal(provider.state.created.length,createdBefore);
  assert.equal(JSON.parse(srv.sql(`SELECT payload FROM quickbooks_exports WHERE invoice_id=${autoRow('order:'+k.id).invoice_id}`)[0].payload).CustomerRef.value,'5');
  // Product numbers are kept per coffee.
- assert.ok(srv.sql("SELECT number FROM wholesale_product_numbers WHERE product_id='brazil'")[0].number>1000);
+ const number=srv.sql("SELECT number FROM wholesale_product_numbers WHERE product_id='brazil'")[0].number;assert.ok(number>1000);
+ // A coffee numbered before (in Sandbox) going to a company with no item linked for it yet (Live, 24 Nov 2026): it keeps
+ // its number and the invoice goes through, instead of failing on the number already in use.
+ srv.sql("DELETE FROM quickbooks_product_items WHERE product_key='brazil:kilo'");
+ srv.sql("INSERT INTO wholesale_product_numbers(product_id,number,created_at) VALUES('other-coffee',"+(number+1)+",0)");
+ const later=await order(fresh.cookie,{quantity:8});await status(later,'Dispatched');
+ await until(()=>['done','held'].includes(autoRow('order:'+later.id)?.state),'numbered coffee processed');
+ row=autoRow('order:'+later.id);assert.equal(row.state,'done',row.reason);
+ assert.equal(srv.sql("SELECT number FROM wholesale_product_numbers WHERE product_id='brazil'")[0].number,number);
+ assert.equal(srv.sql("SELECT COUNT(*) AS n FROM quickbooks_product_items WHERE product_key='brazil:kilo'")[0].n,1,'linked again');
 });
 
 test('Anything QuickBooks can\'t take yet is held with the reason, can be tried again or left to do by hand',async()=>{

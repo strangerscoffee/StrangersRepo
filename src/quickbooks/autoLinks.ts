@@ -75,9 +75,23 @@ export async function ensureCustomer(env: Env, mode: Environment, company: Conne
 
 /** Each coffee's product number (SC1001, SC1002…), given once the first time it's needed. */
 export async function productNumber(env: Env, productId: string): Promise<number> {
-  const row = await env.DB.prepare("INSERT INTO wholesale_product_numbers(product_id,number,created_at) SELECT ?,COALESCE(MAX(number),1000)+1,? FROM wholesale_product_numbers WHERE NOT EXISTS(SELECT 1 FROM wholesale_product_numbers WHERE product_id=?) RETURNING number").bind(productId, Date.now(), productId).first<{ number: number }>();
-  if (row) return row.number;
-  return (await env.DB.prepare('SELECT number FROM wholesale_product_numbers WHERE product_id=?').bind(productId).first<{ number: number }>())!.number;
+  const existing = () => env.DB.prepare('SELECT number FROM wholesale_product_numbers WHERE product_id=?').bind(productId).first<{ number: number }>();
+  // Look first: an aggregate always gives one row, so "insert MAX+1 unless it exists" would still try a used number.
+  // (SQLite needs the WHERE before ON CONFLICT in an INSERT … SELECT.)
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const known = await existing();
+    if (known) return known.number;
+    try {
+      const row = await env.DB.prepare("INSERT INTO wholesale_product_numbers(product_id,number,created_at) SELECT ?,COALESCE(MAX(number),1000)+1,? FROM wholesale_product_numbers WHERE true ON CONFLICT(product_id) DO NOTHING RETURNING number").bind(productId, Date.now()).first<{ number: number }>();
+      if (row) return row.number;
+    } catch (error) {
+      // Another coffee took the same next number at the same moment: look again and take the one after.
+      if (!/UNIQUE constraint failed: wholesale_product_numbers\.number/.test(String((error as Error)?.message))) throw error;
+    }
+  }
+  const known = await existing();
+  if (known) return known.number;
+  throw new ApiError(503, 'quickbooks_busy', 'Could not give this coffee a product number. It will be tried again.');
 }
 
 /** A QuickBooks item for each coffee and bag size on the invoice, found or made, saved for this company. */
