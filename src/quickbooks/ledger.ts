@@ -104,7 +104,9 @@ export async function processExport(req:Request,env:Env,id:number){
     const currentMap=await mapping(env,row.environment,row.realm_id),products=await productLinks(env,row.environment,row.realm_id,preview.candidate.lines.flatMap(line=>line.productKey?[line.productKey]:[]));if(!mappingStillMatches(currentMap.data,preview.candidate,products)&&(currentMap.version!==row.mapping_version||preview.candidate.lines.some(line=>line.productKey)))throw new ApiError(409,'quickbooks_mapping_changed','Mappings changed after this export was queued. Review the original export.');
     await requireExportMode(req,env,company,JSON.parse(row.profiles),modeState.version);
     const resources=await resourceReader(req,env,company),startedAt=Date.now();let remote:any=null;
-    if(row.remote_id){
+    // A clashing invoice found by its number before we wrote anything isn't ours: look the number up again on retry, so renumbering it
+    // in QuickBooks lets ours be created (25 Nov 2026). Our own (created or attempted) invoice is always read by its saved ID.
+    if(row.remote_id&&(row.created_remote||row.write_started_at)){
       try{remote=(await resources.read('/invoice/'+row.remote_id+'?minorversion=75')).Invoice;}catch(error){if(error instanceof ProviderError&&error.providerStatus===404)return finish(env,id,owner,'review','The linked QuickBooks invoice was removed. It will not be recreated automatically.');throw error;}
     }else{
       const number=preview.candidate.number.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
