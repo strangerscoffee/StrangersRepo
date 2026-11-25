@@ -89,6 +89,20 @@ test('A hand-made invoice that took our number holds the export until it is renu
  const done=await retry(saved);assert.equal(done.state,'linked',JSON.stringify(done));assert.notEqual(done.remoteId,'5100');assert.equal(posts().length,before+1);
  assert.equal(provider.state.invoices.sandbox.get('5100').DocNumber,'10239','the hand-made invoice is left alone');
 });
+test('A customer or coffee linked by another order while this one is sending does not stop it',async()=>{
+ const invoice=await issued(),before=posts().length,reviewed=await review(invoice);let release;
+ // The first preferences read is the queueing check; pause on the second, just before the invoice is written.
+ provider.state.readGate={path:'/preferences',skip:1,wait:new Promise(resolve=>{release=resolve;}),once:true};
+ try{
+  const sent=await call('POST',root+`/invoices/${invoice.id}/export`,{fingerprint:reviewed.preview.fingerprint,connectionVersion:reviewed.connectionVersion,mappingVersion:reviewed.mappingVersion,modeVersion:reviewed.modeVersion,reviewed:true});assert.ok([200,202].includes(sent.status),sent.text);
+  const processing=call('POST',root+'/exports/'+sent.body.export.id+'/process',{});
+  for(let i=0;i<400&&provider.state.readGate;i++)await new Promise(resolve=>setTimeout(resolve,25));assert.equal(provider.state.readGate,null,'paused before sending');
+  // Automatic invoicing linking another order's customer saves the same references with a new version.
+  srv.sql("UPDATE quickbooks_environment_mappings SET version=version+1 WHERE environment='sandbox'");
+  release();await processing;
+  const saved=await settled(sent.body.export.id);assert.equal(saved.state,'linked',JSON.stringify(saved));assert.equal(posts().length,before+1);
+ }finally{release?.();provider.state.readGate=null;}
+});
 test('Sandbox payment evidence and explicit company review are required before Live can be activated',async()=>{
  const sandboxBefore=await state();await connect('production');assert.equal((await state()).connection.version,sandboxBefore.connection.version,'Live OAuth must not replace Sandbox credentials');
  const firstExport=(await ok('GET',root+'/exports?invoiceId='+first.id)).body.exports[0];

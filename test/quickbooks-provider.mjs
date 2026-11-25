@@ -23,7 +23,8 @@ export async function startQuickBooksProvider(){
     if(url.pathname==='/revoke'){const value=JSON.parse(body).token;revoked.add(value);reply(200,{});return;}
     const environment=url.pathname.startsWith('/production/')?'production':'sandbox',access=(req.headers.authorization||'').replace(/^Bearer /,'');
     if(!/^fake-access-\d+$/.test(access)||tokenEnvironment.get(access)!==environment||revoked.has(access)){reply(401,{});return;}
-    if(state.readGate&&url.pathname.includes(state.readGate.path)){const gate=state.readGate;if(gate.once)state.readGate=null;await gate.wait;if(gate.response){reply(200,gate.response);return;}}
+    if(state.readGate&&url.pathname.includes(state.readGate.path)&&state.readGate.skip>0)state.readGate.skip--;
+    else if(state.readGate&&url.pathname.includes(state.readGate.path)){const gate=state.readGate;if(gate.once)state.readGate=null;await gate.wait;if(gate.response){reply(200,gate.response);return;}}
     if(url.pathname.endsWith('/companyinfo/1234567890')){reply(200,{CompanyInfo:{Id:'1234567890',CompanyName:'Example UK '+environment,LegalName:environment==='sandbox'?'Example UK Sandbox Ltd':'Example UK Live Ltd',Country:state.country}});return;}
     if(url.pathname.endsWith('/preferences')){reply(200,{Preferences:{CurrencyPrefs:{HomeCurrency:{value:state.currency}},SalesFormsPrefs:{CustomTxnNumbers:state.customNumbers,AllowServiceDate:state.serviceDates}}});return;}
     if(url.pathname.endsWith('/cdc')){reply(200,{CDCResponse:[{QueryResponse:[{Invoice:[...state.invoices[environment].values()]}]}],time:new Date().toISOString()});return;}

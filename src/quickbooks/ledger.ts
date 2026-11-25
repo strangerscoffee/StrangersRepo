@@ -124,6 +124,10 @@ export async function processExport(req:Request,env:Env,id:number){
     if(prefs?.SalesFormsPrefs?.CustomTxnNumbers!==true||prefs?.SalesFormsPrefs?.AllowServiceDate!==true)throw new ApiError(409,'quickbooks_preferences','Enable custom invoice numbers and service dates in QuickBooks before exporting.');
     await verifyFrozenReferences(resources.read,preview.candidate);await resources.check();await requireExportMode(req,env,company,JSON.parse(row.profiles),modeState.version);
     remote=(await resources.write('/invoice?minorversion=75&requestid='+encodeURIComponent(row.request_id),row.payload,'application/json',async()=>{
+      // Automatic invoicing links new customers and coffees as it goes, which bumps the mappings version. Another order's link added
+      // while this one was being checked mustn't stop it (25 Nov 2026): look again, and send only if this invoice's references still match.
+      const latestMap=await mapping(env,row.environment,row.realm_id),latestProducts=await productLinks(env,row.environment,row.realm_id,preview.candidate!.lines.flatMap(line=>line.productKey?[line.productKey]:[]));
+      if(latestMap.version!==currentMap.version&&!mappingStillMatches(latestMap.data,preview.candidate!,latestProducts))throw new ApiError(409,'quickbooks_mapping_changed','Mappings changed after this export was queued. Review the original export.');
       const at=Date.now();
       const noted=await env.DB.prepare(`UPDATE quickbooks_exports SET write_started_at=CASE WHEN write_started_at=0 THEN ? ELSE write_started_at END
         WHERE id=? AND lease_owner=? AND lease_until>? AND state='sending'
@@ -135,7 +139,7 @@ export async function processExport(req:Request,env:Env,id:number){
           AND (environment<>'production' OR EXISTS(SELECT 1 FROM wholesale_invoices WHERE seq=quickbooks_exports.invoice_id
             AND (paid=0 OR payment_version=quickbooks_exports.paid_review_version)))
         RETURNING write_started_at`)
-        .bind(at,id,owner,at,row.environment,company.generation,company.version,row.environment,modeState.version,row.environment,row.realm_id,currentMap.version)
+        .bind(at,id,owner,at,row.environment,company.generation,company.version,row.environment,modeState.version,row.environment,row.realm_id,latestMap.version)
         .first<{write_started_at:number}>();
       if(!noted){
         if(row.environment==='production'){
