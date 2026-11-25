@@ -89,7 +89,7 @@
  function warning(account,banner=false){
   const container=el('div',{class:banner?'account-banners':'account-warnings'});
   if(account?.overdue)container.append(el('div',{class:banner?'account-banner':'account-warning'},svg('warn'),el('span',{},banner?'This business has overdue invoices. Ask an admin to check payment before fulfilment.':'Account overdue')));
-  if(account?.review)container.append(el('div',{class:(banner?'account-banner':'account-warning')+' review'},svg('info'),el('span',{},banner?'Payment status needs checking. Ask an admin to confirm the account.':'Payment status needs checking')));
+  if(account?.review)container.append(el('div',{class:(banner?'account-banner':'account-warning')+' review'},svg('info'),el('span',{},banner?'An invoice balance is unconfirmed. Ask an admin to confirm the account.':'Balance unconfirmed')));
   return container;
  }
 

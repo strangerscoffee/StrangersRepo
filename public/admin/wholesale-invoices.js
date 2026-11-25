@@ -12,8 +12,8 @@ window.WholesaleInvoices = function ({ api, html, raw, svg, put, openSheet, clos
   const textarea = (id, value, max) => html`<textarea id="${id}" maxlength="${max}">${value || ""}</textarea>`;
   function status(invoice) {
     const state = invoice.payment?.status;
-    const labels = { voided: "Voided", review: "Check payment status", paid: "Paid", "part-paid": "Part paid", overdue: "Overdue" };
-    const tone = state === "voided" ? "" : state === "paid" ? "ok" : state === "overdue" ? "bad" : "warn";
+    const labels = { voided: "Voided", review: "Balance unconfirmed", settled: "No payment due", paid: "Paid", "part-paid": "Part paid", overdue: "Overdue" };
+    const tone = state === "voided" || state === "settled" ? "" : state === "paid" ? "ok" : state === "overdue" ? "bad" : "warn";
     return html`<span class="pill ${tone}">${labels[state] || "Unpaid"}</span>${state !== "voided" && invoice.payment?.hasVoidedPayment ? html`<span class="pill warn">Payment voided</span>` : ""}`;
   }
   const checked = (value) => value ? new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "Europe/London" }).format(new Date(value)) : "Not checked yet";
@@ -87,12 +87,15 @@ window.WholesaleInvoices = function ({ api, html, raw, svg, put, openSheet, clos
     show(html`<div class="wi-sheet wi-choice">${title(heading)}<div class="wi-body"><div class="group" id="wiChoiceList">${choices.map((choice) => html`<button class="item" type="button" data-sheet="wi-choice" data-value="${choice.id}" aria-pressed="${choice.id === selected}"><span class="tx"><b>${choice.label}</b>${choice.note ? html`<span>${choice.note}</span>` : ""}</span><span class="end">${choice.id === selected ? svg("ok") : ""}</span></button>`)}</div></div>${footer(null, "Keep current choice")}</div>`, (action, element) => { if (action === "wi-choice") apply(element.dataset.value); }, back);
   }
   function summary(data) {
-    return html`<div class="stats wi-stats">${[["Invoices", data.count], ["Outstanding", money(data.outstandingPence)], ["Overdue", money(data.overduePence)]].map(([label, value]) => html`<div class="stat glass"><span class="k">${label}</span><span class="v">${value}</span></div>`)}</div>${data.reviewCount ? html`<p class="wi-reasons">${data.reviewCount} ${data.reviewCount === 1 ? "invoice needs" : "invoices need"} a payment check. Totals include the saved balance until accounting is reconciled.</p>` : ""}`;
+    return html`<div class="stats wi-stats">${[["Invoices", data.count], ["Outstanding", money(data.outstandingPence)], ["Overdue", money(data.overduePence)]].map(([label, value]) => html`<div class="stat glass"><span class="k">${label}</span><span class="v">${value}</span></div>`)}</div>${data.reviewCount ? html`<p class="wi-reasons">${data.reviewCount} ${data.reviewCount === 1 ? "invoice needs" : "invoices need"} review. Totals exclude unconfirmed balances.</p>` : ""}`;
   }
   function invoiceRow(invoice) {
-    const voided = invoice.payment?.status === "voided";
-    const due = voided ? "Voided in QuickBooks" : invoice.dueDate ? "Due " + date(invoice.dueDate) : invoice.paymentTerms.label;
-    return html`<button class="item wi-invoice-row" type="button" data-act="wh-invoice-open" data-id="${invoice.id}"><span class="ic acc">${svg("dl")}</span><span class="tx"><b>${invoice.number} · ${invoice.billTo.name}</b><span>${date(invoice.invoiceDate)}${invoice.deliveryLocation?.name ? " · " + invoice.deliveryLocation.name : ""}</span><span>${due}</span>${invoice.payment?.source === "quickbooks" ? html`<span>QuickBooks · ${checked(invoice.payment.checkedAt)}</span>` : ""}</span><span class="end"><b class="num">${voided ? money(0) + " due" : money(invoice.totals.grossPence)}</b>${status(invoice)}<span class="chev">${svg("chev")}</span></span></button>`;
+    const { payment } = invoice;
+    const closed = payment.status === "voided" || payment.status === "settled";
+    const dueDate = payment.dueDate ?? invoice.dueDate;
+    const due = closed || payment.paid || payment.status === "review" ? "" : dueDate ? "Due " + date(dueDate) : invoice.paymentTerms.label;
+    const amount = closed ? money(0) + " due" : money(payment.totalPence ?? invoice.totals.grossPence);
+    return html`<button class="item wi-invoice-row" type="button" data-act="wh-invoice-open" data-id="${invoice.id}"><span class="ic acc">${svg("dl")}</span><span class="tx"><b>${invoice.number} · ${invoice.billTo.name}</b><span>${date(invoice.invoiceDate)}${invoice.deliveryLocation?.name ? " · " + invoice.deliveryLocation.name : ""}</span>${due ? html`<span>${due}</span>` : ""}${payment.source === "quickbooks" ? html`<span>QuickBooks · ${checked(payment.checkedAt)}</span>` : ""}</span><span class="end"><b class="num">${amount}</b>${status(invoice)}<span class="chev">${svg("chev")}</span></span></button>`;
   }
   async function view() {
     const started = ++generation;
@@ -106,7 +109,7 @@ window.WholesaleInvoices = function ({ api, html, raw, svg, put, openSheet, clos
       invoices = [...new Map([...invoices, ...next.invoices].map((invoice) => [invoice.id, invoice])).values()]; cursor = next.nextCursor; count = next.count;
     }
     return html`<section class="wi-workspace" aria-labelledby="wiTitle"><div class="toolbar"><div><h2 id="wiTitle">Invoices</h2><p class="hint">VAT invoices and payment records.</p></div><div class="row"><button class="btn soft" type="button" data-act="wh-invoice-quickbooks">QuickBooks</button><button class="btn soft" type="button" data-act="wh-invoice-settings">Invoice settings</button></div></div>${summary(first.summary)}
-      <div class="w-queue-controls" role="group" aria-label="Invoice queues">${[["overdue","Overdue"],["soon","Due in 7 days"],["review","Payment review"],["all","All invoices"]].map(([id,label]) => html`<button class="btn sm soft" type="button" data-act="wh-invoice-queue" data-id="${id}" aria-pressed="${queue === id}">${label}</button>`)}</div>
+      <div class="w-queue-controls" role="group" aria-label="Invoice queues">${[["overdue","Overdue"],["soon","Due in 7 days"],["review","Needs review"],["all","All invoices"]].map(([id,label]) => html`<button class="btn sm soft" type="button" data-act="wh-invoice-queue" data-id="${id}" aria-pressed="${queue === id}">${label}</button>`)}</div>
       <label class="search">${svg("search")}<input id="wiSearch" type="search" aria-label="Search invoices" placeholder="Search invoice number or business" maxlength="120" value="${query}"></label>${!config.ready ? html`<div class="wi-setup group"><h3>Complete your invoice settings</h3><p>Add your legal business details, VAT rates and invoice numbering before issuing an invoice.</p><button class="btn soft" type="button" data-act="wh-invoice-settings">Set up invoicing</button></div>` : ""}<section class="wi-records" aria-labelledby="wiListTitle"><div class="label" id="wiListTitle">Issued invoices <span class="count">${invoices.length} of ${count}</span></div><div class="group glass">${invoices.length ? invoices.map(invoiceRow) : html`<div class="w-empty"><span class="ic mut">${svg("dl")}</span><h3>${queue !== "all" || query.trim() ? "No matching invoices" : "No invoices yet"}</h3><p>${queue !== "all" || query.trim() ? "Try another queue or search." : "Open a customer order to review and issue its invoice."}</p></div>`}</div>${cursor ? html`<div class="w-more"><button class="btn soft" type="button" data-act="wh-invoice-more">Load earlier invoices</button></div>` : ""}<p class="hint">Recording payment updates the invoice status. It does not transfer money.</p></section>${customerSwitch(config)}${automatic ? autoPanel(automatic, config) : ""}</section>`;
   }
   // Admin's switch for what customers see: My orders → Invoices, invoice PDFs and balances. Issuing here is unaffected.
@@ -196,7 +199,7 @@ window.WholesaleInvoices = function ({ api, html, raw, svg, put, openSheet, clos
     return html`<div class="wi-table-wrap" tabindex="0" role="region" aria-label="Invoice line items"><table class="wi-table"><thead><tr><th scope="col">Description</th><th scope="col">Qty</th><th scope="col">Net</th><th scope="col">VAT</th><th scope="col">Total</th></tr></thead><tbody>${invoice.lines.map((line) => html`<tr><td><b>${line.description}</b>${line.packLabel || line.grindLabel ? html`<span>${[line.packLabel, line.grindLabel].filter(Boolean).join(" · ")}</span>` : ""}</td><td>${line.quantity}</td><td>${money(line.netPence)}</td><td>${percent(line.vatBasisPoints)}<span>${money(line.vatPence)}</span></td><td>${money(line.grossPence)}</td></tr>`)}</tbody></table></div>`;
   }
   function totals(invoice) {
-    return html`<dl class="wi-totals"><div><dt>Net subtotal</dt><dd>${money(invoice.totals.netPence)}</dd></div><div><dt>VAT</dt><dd>${money(invoice.totals.vatPence)}</dd></div><div class="wi-total"><dt>${invoice.payment?.status === "voided" ? "Original invoice total" : "Invoice total"}</dt><dd>${money(invoice.totals.grossPence)}</dd></div></dl>`;
+    return html`<dl class="wi-totals"><div><dt>Net subtotal</dt><dd>${money(invoice.totals.netPence)}</dd></div><div><dt>VAT</dt><dd>${money(invoice.totals.vatPence)}</dd></div><div class="wi-total"><dt>${invoice.payment?.status === "voided" || invoice.accounting?.invoiceChanged ? "Original invoice total" : "Invoice total"}</dt><dd>${money(invoice.totals.grossPence)}</dd></div></dl>`;
   }
   function details(invoice) {
     const voided = invoice.payment?.status === "voided";
@@ -278,17 +281,58 @@ window.WholesaleInvoices = function ({ api, html, raw, svg, put, openSheet, clos
       });
     }, () => { if (uncertain) { back(); return; } edit(); });
   }
-  function showIssued(invoice, back = () => { closeSheet(); reload(); }, expectedOrderId = null) {
+  function linkedBalance(invoice) {
+    const { payment, accounting } = invoice;
+    const amount = payment.status === "review" ? "" : payment.status === "voided" ? "Voided in QuickBooks · £0.00 due"
+      : payment.outstandingPence === 0 ? "£0.00 due" : money(payment.outstandingPence) + " outstanding";
+    const updatedTotal = Number.isSafeInteger(payment.totalPence) && payment.totalPence !== invoice.totals.grossPence;
+    return html`<section class="wi-linked-balance wi-section" aria-label="QuickBooks balance"><div class="wi-section-heading"><span>${amount || "QuickBooks balance"}</span><button class="btn soft sm" type="button" data-sheet="wi-refresh-balance">Refresh balance</button></div>
+      ${updatedTotal ? html`<p class="hint">QuickBooks total ${money(payment.totalPence)}</p>` : ""}
+      ${payment.outstandingPence > 0 && payment.dueDate ? html`<p class="hint">Due in QuickBooks ${date(payment.dueDate)}</p>` : ""}
+      ${accounting?.invoiceIssue ? html`<p class="hint">${accounting.invoiceIssue}</p>` : ""}
+      ${accounting?.reason ? html`<p class="hint">${accounting.reason}</p>` : payment.status === "review" ? html`<p class="hint">Waiting for a verified QuickBooks balance.</p>` : ""}
+      <p class="hint" data-balance-feedback role="status">${payment.checkedAt ? "Last checked " + checked(payment.checkedAt) : ""}</p>
+    </section>`;
+  }
+  async function refreshLinkedBalance(form, invoice, reopen) {
+    const control = '[data-sheet="wi-refresh-balance"]';
+    const button = form.querySelector(control);
+    const feedback = form.querySelector('[data-balance-feedback]');
+    if (button.getAttribute("aria-disabled") === "true") return;
+    button.setAttribute("aria-disabled", "true");
+    feedback.textContent = "Checking QuickBooks…";
+    const stillOpen = () => form.isConnected && !$("#scrim").hidden;
+    try {
+      await api("POST", root + "/quickbooks/exports/" + invoice.accounting.exportId + "/refresh?environment=production", {});
+      if (!stillOpen()) return;
+      const updated = await api("GET", root + "/invoices/" + invoice.id);
+      if (!stillOpen()) return;
+      if (form.dataset.wiBusy) { feedback.textContent = "Balance refreshed. Reopen the invoice to see the latest status."; return; }
+      const scroll = form.querySelector(".wi-body").scrollTop;
+      const focused = document.activeElement === button;
+      const refreshed = reopen(updated.invoice);
+      refreshed.querySelector(".wi-body").scrollTop = scroll;
+      if (focused) refreshed.querySelector(control)?.focus({ preventScroll: true });
+    } catch (error) {
+      if (stillOpen()) feedback.textContent = error.message;
+    } finally { button.removeAttribute("aria-disabled"); }
+  }
+  function showIssued(invoice, back = () => { closeSheet(); reload(); }, expectedOrderId = null, checkOnOpen = true) {
     const coversOrder = !expectedOrderId || invoice?.orderId === expectedOrderId || invoice?.orderIds?.includes(expectedOrderId);
     if (!invoice || !coversOrder || !Number.isSafeInteger(invoice.id) || invoice.id < 1 || typeof invoice.number !== "string" || !invoice.number || !Array.isArray(invoice.lines) || !invoice.lines.length || !invoice.billTo || !invoice.payment || !invoice.totals || ["netPence", "vatPence", "grossPence"].some(key => !Number.isSafeInteger(invoice.totals[key]) || invoice.totals[key] < 0)) throw new Error("The invoice response was incomplete. Check the saved invoice before changing this review.");
-    const managed = invoice.payment.source === "quickbooks", review = invoice.accounting?.status === "review", voided = invoice.payment.status === "voided";
-    show(html`<div id="wiIssuedInvoice" class="wi-sheet wi-wide">${title(invoice.number, invoice.billTo.name)}<div class="wi-body"><div class="wi-issued-heading"><div class="wi-issued-status">${status(invoice)}</div><a class="btn soft" id="wiDownloadPdf" href="${root}/invoices/${invoice.id}/pdf" target="_blank" rel="noopener">Download PDF</a></div>${details(invoice)}<section class="wi-section"><h3>QuickBooks Online</h3><button class="btn soft" type="button" data-sheet="wi-quickbooks">Open QuickBooks</button></section><section class="wi-section"><h3>Payment record</h3>
-      ${voided ? html`<p>Voided in QuickBooks · ${money(0)} due</p>` : review ? html`<p class="wi-reasons">Payment status needs review. ${invoice.accounting.reason || "Check the linked invoice in QuickBooks."}</p>` : html`<p>${invoice.payment.paid ? (invoice.payment.paidDate ? "Paid on " + date(invoice.payment.paidDate) : "Paid in QuickBooks") : "Outstanding: " + money(invoice.payment.outstandingPence)}</p>`}
-      ${managed ? html`<p class="hint">Checked ${checked(invoice.payment.checkedAt)}.${voided ? "" : " Record or correct payments in QuickBooks, then check the linked invoice here."}</p>` : html`${invoice.payment.reference ? html`<p>Reference: ${invoice.payment.reference}</p>` : ""}<button class="btn soft" type="button" data-sheet="wi-payment">${invoice.payment.paid ? "Correct payment record" : "Record payment received"}</button><p class="hint">This records payment only. It does not collect or refund money.</p>`}
-      </section></div>${footer(null, "Done")}</div>`, async (action) => {
+    const managed = invoice.payment.source === "quickbooks" && Number.isSafeInteger(invoice.accounting?.exportId);
+    const reopen = (fresh) => showIssued(fresh, back, expectedOrderId, false);
+    const panel = show(html`<div id="wiIssuedInvoice" class="wi-sheet wi-wide">${title(invoice.number, invoice.billTo.name)}<div class="wi-body"><div class="wi-issued-heading"><div class="wi-issued-status">${status(invoice)}</div><a class="btn soft" id="wiDownloadPdf" href="${root}/invoices/${invoice.id}/pdf" target="_blank" rel="noopener">Download PDF</a></div>
+      ${managed ? linkedBalance(invoice) : ""}${details(invoice)}<section class="wi-section"><h3>QuickBooks Online</h3><button class="btn soft" type="button" data-sheet="wi-quickbooks">Open QuickBooks</button></section>
+      ${managed ? "" : html`<section class="wi-section"><h3>Payment record</h3><p>${invoice.payment.paid && invoice.payment.paidDate ? "Paid on " + date(invoice.payment.paidDate) : "Outstanding " + money(invoice.payment.outstandingPence)}</p>
+        ${invoice.payment.reference ? html`<p>Reference: ${invoice.payment.reference}</p>` : ""}<button class="btn soft" type="button" data-sheet="wi-payment">${invoice.payment.paid ? "Correct payment record" : "Record payment received"}</button><p class="hint">This records payment only. It does not collect or refund money.</p></section>`}
+      </div>${footer(null, "Done")}</div>`, async (action, element, current) => {
       if (action === "wi-payment" && !managed) paymentForm(invoice, () => showIssued(invoice, back), back);
-      if (action === "wi-quickbooks") await busy($("#wiIssuedInvoice"), () => quickbooks.openInvoice(invoice, async () => { const fresh = await api("GET", root + "/invoices/" + invoice.id); showIssued(fresh.invoice, back); }));
+      if (action === "wi-quickbooks") await busy(current, () => quickbooks.openInvoice(invoice, async () => { const fresh = await api("GET", root + "/invoices/" + invoice.id); reopen(fresh.invoice); }));
+      if (action === "wi-refresh-balance") await refreshLinkedBalance(current, invoice, reopen);
     }, back);
+    if (managed && checkOnOpen && invoice.payment.status === "review") void refreshLinkedBalance(panel, invoice, reopen);
+    return panel;
   }
   function paymentForm(invoice, cancel, back) {
     show(html`<form id="wiPaymentForm" class="wi-sheet wi-choice">${title("Payment record", invoice.number)}<div class="wi-body wi-section"><label class="wi-check"><input id="wiPaymentPaid" type="checkbox" ${invoice.payment.paid ? raw("checked") : ""}><span>Payment has been received in full</span></label>${field("Payment date", html`<input id="wiPaymentDate" type="date" value="${invoice.payment.paidDate || today()}">`)}${field("Payment reference (optional)", textInput("wiPaymentReference", invoice.payment.reference, 180))}<p class="hint">Uncheck payment received to correct a mistaken record. The invoice amounts and original document remain unchanged.</p></div>${footer("Save payment record", "Keep invoice")}</form>`, async (action, element, form) => {

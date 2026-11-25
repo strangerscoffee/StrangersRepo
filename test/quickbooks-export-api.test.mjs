@@ -178,6 +178,55 @@ test('Live activation never authorises an untested price basis or VAT treatment'
  await ok('PUT','/api/admin/wholesale/invoice-settings',{...config.settings,priceBasis:'inclusive',ifVersion:config.version});
  const before=posts('production').length,sent=await send(invoice,'production');assert.equal(sent.status,409,sent.text);assert.equal(sent.body.code,'quickbooks_untested_vat');assert.equal(posts('production').length,before);
 });
+test('Live payment status survives invoice edits and reports the QuickBooks balance beside the saved document',async()=>{
+ const invoice=await issued();
+ const sent=await send(invoice,'production');
+ const linked=await settled(sent.body.export.id,'production');
+ assert.equal(linked.state,'linked');
+ const route=root+`/exports/${linked.id}/refresh`;
+ const customerPath='/api/wholesale/invoices/'+invoice.id;
+ const adminPath='/api/admin/wholesale/invoices/'+invoice.id;
+ const remote=provider.state.pay('production',linked.remoteId,0);
+ remote.BillAddr.Line2='Updated invoicing address';
+ await ok('POST',route,{},ADMIN,'production');
+ const paid=(await ok('GET',customerPath,undefined,BUYER)).body.invoice;
+ assert.equal(paid.payment.status,'paid');
+ assert.equal(paid.payment.outstandingPence,0);
+ assert.equal(paid.accounting.invoiceChanged,true);
+ assert.equal(paid.accounting.invoiceIssue,undefined);
+ assert.deepEqual(paid.billTo,invoice.billTo);
+ assert.match((await ok('GET',adminPath)).body.invoice.accounting.invoiceIssue,/address differs/);
+
+ provider.state.pay('production',linked.remoteId,23);
+ remote.DueDate='2020-03-01';
+ remote.TotalAmt=108;
+ srv.sql(`UPDATE wholesale_invoices SET paid=1 WHERE seq=${invoice.id}`);
+ await ok('POST',route,{},ADMIN,'production');
+ const current=(await ok('GET',customerPath,undefined,BUYER)).body.invoice;
+ assert.equal(current.payment.status,'part-paid');
+ assert.equal(current.payment.paid,false);
+ assert.equal(current.payment.outstandingPence,2300);
+ assert.equal(current.payment.totalPence,10800);
+ assert.equal(current.payment.dueDate,'2020-03-01');
+ assert.equal(current.dueDate,invoice.dueDate);
+ assert.deepEqual(current.totals,invoice.totals);
+ assert.equal(current.accounting.reason,undefined);
+ assert.match((await ok('GET',adminPath)).body.invoice.accounting.reason,/payment record differs/);
+ for(const queue of ['overdue','review'])assert.ok((await ok('GET','/api/admin/wholesale/invoices?queue='+queue)).body.invoices.some(row=>row.id===invoice.id));
+
+ const customerRef=remote.CustomerRef;
+ provider.state.pay('production',linked.remoteId,0);
+ remote.CustomerRef={value:'999'};
+ await ok('POST',route,{},ADMIN,'production');
+ const unresolved=(await ok('GET',customerPath,undefined,BUYER)).body.invoice;
+ assert.equal(unresolved.payment.status,'review');
+ assert.equal(unresolved.payment.outstandingPence,null);
+ assert.equal(unresolved.payment.totalPence,undefined);
+ assert.match((await ok('GET',adminPath)).body.invoice.accounting.reason,/customer or currency/);
+ provider.state.pay('production',linked.remoteId,0);
+ remote.CustomerRef=customerRef;
+ await ok('POST',route,{},ADMIN,'production');
+});
 test('Environment switching waits for an active send, while existing Live balances remain readable in Sandbox',async()=>{
  const invoice=await issued();let release;const before=provider.state.calls.length;provider.state.readGate={path:'/production/v3/company/1234567890/query',once:true,wait:new Promise(resolve=>release=resolve)};
  const sent=await send(invoice,'production');for(let i=0;i<500&&!provider.state.calls.slice(before).some(c=>c.path.endsWith('/query'));i++)await new Promise(r=>setTimeout(r,10));

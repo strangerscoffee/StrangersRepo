@@ -52,7 +52,7 @@ test('overdue warnings distinguish manual payments, live partial balances and un
  rows=(await ok('GET','/api/staff-orders/orders',undefined,STAFF)).body.orders;assert.deepEqual(rows.find(o=>o.id===B.order.id).account,{overdue:true,review:false});
  srv.sql("UPDATE quickbooks_observations SET status='review',outstanding_pence=NULL,paid_pence=NULL WHERE export_id=7001");
  rows=(await ok('GET','/api/staff-orders/orders',undefined,STAFF)).body.orders;assert.deepEqual(rows.find(o=>o.id===B.order.id).account,{overdue:false,review:true});
- srv.sql("UPDATE quickbooks_observations SET status='paid',outstanding_pence=0,paid_pence=12000 WHERE export_id=7001");
+ srv.sql("UPDATE quickbooks_observations SET status='paid',outstanding_pence=0,paid_pence=12000,invoice_issue='QuickBooks address differs.' WHERE export_id=7001");
  const paid=await ok('GET','/api/staff-orders/orders',undefined,STAFF);assert.deepEqual(paid.body.orders.find(o=>o.id===B.order.id).account,{overdue:false,review:false});assert.ok(!paid.text.includes('PRIVATE_INVOICE_ACTOR'));
 });
 test('read filters and cursor validation cannot reveal staff previews or modify orders',async()=>{

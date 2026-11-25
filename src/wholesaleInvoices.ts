@@ -5,7 +5,7 @@ import { ApiError, type Env, invalid, json, readJson } from "./http";
 import { decode, get, object, text, version, type Row } from "./wholesaleStore";
 import type { Customer, OrderingUser } from "./wholesaleAccounts";
 import { invoicePdf } from "./wholesaleInvoicePdf";
-import {withAccounting,accountingSummary} from "./quickbooks/observations";
+import {withAccounting,accountingSummary,LIVE_ACCOUNTING_JOIN,INVOICE_REVIEW_SQL,PAYMENT_DUE_SQL,OUTSTANDING_BALANCE_SQL} from "./quickbooks/observations";
 
 export interface VatRate { id: string; label: string; basisPoints: number }
 export interface InvoiceSettings {
@@ -38,8 +38,9 @@ export interface InvoiceData {
 }
 export interface InvoiceDocument extends InvoiceData {
   id: number | null; number: string | null; issuedAt: number | null; issuedBy: string | null;
-  payment: { status: "paid" | "unpaid" | "overdue" | "part-paid" | "review" | "voided"; paid: boolean; paidDate: string | null; reference: string; version: number; outstandingPence: number;paidPence?:number;source?:"quickbooks";checkedAt?:number|null;hasVoidedPayment?:boolean };
-  accounting?:{status:string;checkedAt:number|null;exportId?:number;reason?:string};
+  payment: { status: "paid" | "unpaid" | "overdue" | "part-paid" | "review" | "settled" | "voided"; paid: boolean; paidDate: string | null; reference: string; version: number; outstandingPence: number | null;
+    paidPence?: number; totalPence?: number; dueDate?: string | null; source?: "quickbooks"; checkedAt?: number | null; hasVoidedPayment?: boolean };
+  accounting?: { status: string; checkedAt: number | null; exportId?: number; reason?: string; invoiceChanged?: boolean; invoiceIssue?: string };
 }
 interface InvoiceRow { seq: number; invoice_number: string; order_id: string; customer_id: string; request_key: string; data: string; issued_at: number; issued_by: string; paid: number; paid_date: string | null; paid_at: number | null; payment_reference: string; payment_version: number }
 interface SourceOrder {
@@ -464,16 +465,14 @@ async function invoiceList(req: Request, env: Env, customerId?: string): Promise
       bindings.push(search, search);
     }
     if (queue !== "all") {
-      joins = " LEFT JOIN quickbooks_exports e ON e.invoice_id=i.seq AND e.environment='production' AND e.state='linked' LEFT JOIN quickbooks_observations o ON o.export_id=e.id";
-      const needsReview = "(e.id IS NOT NULL AND (o.status IS NULL OR o.status='review'))";
-      if (queue === "review") conditions.push(needsReview);
+      joins = " " + LIVE_ACCOUNTING_JOIN;
+      if (queue === "review") conditions.push(INVOICE_REVIEW_SQL);
       else {
-        const due = "json_extract(i.data,'$.dueDate')";
-        conditions.push("NOT " + needsReview, "(CASE WHEN e.id IS NULL THEN i.paid=0 AND json_extract(i.data,'$.totals.grossPence')>0 ELSE o.outstanding_pence>0 END)");
-        if (queue === "overdue") { conditions.push(due + "<?"); bindings.push(today()); }
+        conditions.push(OUTSTANDING_BALANCE_SQL + ">0");
+        if (queue === "overdue") { conditions.push(PAYMENT_DUE_SQL + "<?"); bindings.push(today()); }
         else {
           const start = today(), end = new Date(Date.parse(start + "T00:00:00Z") + 7 * 86400000).toISOString().slice(0, 10);
-          conditions.push(due + " BETWEEN ? AND ?");
+          conditions.push(PAYMENT_DUE_SQL + " BETWEEN ? AND ?");
           bindings.push(start, end);
         }
       }

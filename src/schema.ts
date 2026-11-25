@@ -411,6 +411,17 @@ const MIGRATIONS: Migration[] = [
         ON CONFLICT(event_key) DO NOTHING`).bind(at, at),
     ]);
   } },
+  { id: 42, name: "QuickBooks balance verification", run: async env => {
+    const has = await columns(env, "quickbooks_observations");
+    if (!has.has("due_date")) await env.DB.prepare("ALTER TABLE quickbooks_observations ADD COLUMN due_date TEXT").run();
+    if (!has.has("invoice_issue")) await env.DB.prepare("ALTER TABLE quickbooks_observations ADD COLUMN invoice_issue TEXT NOT NULL DEFAULT ''").run();
+    const at = Date.now();
+    await env.DB.prepare(`INSERT INTO quickbooks_events(event_key,environment,realm_id,entity,entity_id,operation,event_at,created_at)
+      SELECT 'balance-recheck:'||e.id,e.environment,e.realm_id,'Invoice',e.remote_id,'refresh',?,?
+      FROM quickbooks_exports e LEFT JOIN quickbooks_observations o ON o.export_id=e.id
+      WHERE e.environment='production' AND e.state='linked' AND (o.status IS NULL OR o.status='review' OR o.outstanding_pence IS NULL)
+      ON CONFLICT(event_key) DO NOTHING`).bind(at,at).run();
+  } },
 ];
 
 async function migrate(env: Env): Promise<void> {

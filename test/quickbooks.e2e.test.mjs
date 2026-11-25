@@ -81,6 +81,17 @@ for(const [device,viewport]of [['phone',{width:393,height:852}],['ipad',{width:8
    await page.goto(srv.base+'/admin?test='+crypto.randomUUID()+'#wholesale');await selectWholesaleSection(page, "invoices");await page.locator(`[data-act="wh-invoice-open"][data-id="${invoice.id}"]`).click();await page.locator('[data-sheet="wi-quickbooks"]').click();await page.locator('#sheetTitle',{hasText:'QuickBooks Live'}).waitFor();provider.state.pay('production',live.remoteId,0);await page.locator('[data-sheet="qb-balance"]').click();await page.locator('#qbExportDetail strong',{hasText:/^Paid$/}).waitFor();await buyer.locator('#refresh-invoices').click();await card.locator('.invoice-state.paid').waitFor();assert.equal(await card.locator('.invoice-balance').count(),0);assert.ok(!(await card.textContent()).includes('Not set'));
    const paymentId='950'+invoice.id;
    const remote=provider.state.invoices.production.get(live.remoteId);
+   if(device==='phone'&&colorScheme==='light'){
+    remote.BillAddr.Line2='Updated billing address';
+    srv.sql(`UPDATE quickbooks_observations SET status='review',outstanding_pence=NULL,paid_pence=NULL,reason='Previous verification failed' WHERE export_id=${live.id}`);
+    await page.goto(srv.base+'/admin?test='+crypto.randomUUID()+'#wholesale');
+    await selectWholesaleSection(page,'invoices');
+    await page.locator(`[data-act="wh-invoice-open"][data-id="${invoice.id}"]`).click();
+    await page.locator('#wiIssuedInvoice .wi-issued-status').getByText('Paid',{exact:true}).waitFor();
+    await page.getByRole('region',{name:'QuickBooks balance'}).getByText('The QuickBooks billing or delivery address differs.').waitFor();
+    await page.locator('[data-sheet="wi-quickbooks"]').click();
+    await page.locator('#qbExportDetail strong',{hasText:/^Paid$/}).waitFor();
+   }
    remote.LinkedTxn=[{TxnType:'Payment',TxnId:paymentId}];
    await api('POST',root+'/exports/'+live.id+'/refresh?environment=production',{});
    provider.state.pay('production',live.remoteId,36);

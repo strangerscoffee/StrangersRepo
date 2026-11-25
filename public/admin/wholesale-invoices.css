@@ -79,6 +79,11 @@
 .wi-draft-banner span{font-size:13px;color:var(--muted)}
 .wi-issued-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
 .wi-issued-status{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.wi-linked-balance{padding:12px 14px;border:1px solid var(--line);border-radius:14px}
+.wi-linked-balance .wi-section-heading{flex-wrap:wrap}
+.wi-linked-balance .btn{min-height:44px}
+.wi-linked-balance .btn[aria-disabled=true]{opacity:.65;cursor:wait}
+.wi-linked-balance [data-balance-feedback]:empty{display:none}
 .wi-line-rate{flex-wrap:wrap;gap:12px}
 .wi-line-rate>.tx{flex:1 1 180px}
 .wi-line-rate>.btn{margin-inline-start:auto;min-width:0;max-width:100%;min-height:44px;white-space:normal;overflow-wrap:anywhere}

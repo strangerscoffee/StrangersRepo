@@ -17,6 +17,7 @@ import {audit} from "./audit";
 import {clearTab,listTabs,setOnTab} from "./wholesaleTabs";
 import {amendLines,skipRun} from "./wholesaleStanding";
 import {requireStaffOrders} from "./staffOrdersAccess";
+import {LIVE_ACCOUNTING_JOIN,UNCONFIRMED_BALANCE_SQL,PAYMENT_DUE_SQL,OUTSTANDING_BALANCE_SQL} from "./quickbooks/observations";
 
 const today=()=>new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/London",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date());
 async function paymentFlags(env:Env,customerIds:string[]){
@@ -24,14 +25,9 @@ async function paymentFlags(env:Env,customerIds:string[]){
   for(let start=0;start<ids.length;start+=50){
     const group=ids.slice(start,start+50);
     const rows=await env.DB.prepare(`SELECT i.customer_id,
-      MAX(CASE WHEN json_extract(i.data,'$.dueDate')<? AND (
-        (e.id IS NULL AND i.paid=0 AND json_extract(i.data,'$.totals.grossPence')>0) OR
-        (e.id IS NOT NULL AND o.status IN ('unpaid','part-paid') AND o.outstanding_pence>0)
-      ) THEN 1 ELSE 0 END) AS overdue,
-      MAX(CASE WHEN e.id IS NOT NULL AND (o.status IS NULL OR o.status='review') THEN 1 ELSE 0 END) AS review
-      FROM wholesale_invoices i
-      LEFT JOIN quickbooks_exports e ON e.invoice_id=i.seq AND e.environment='production' AND e.state='linked'
-      LEFT JOIN quickbooks_observations o ON o.export_id=e.id
+      MAX(CASE WHEN ${PAYMENT_DUE_SQL}<? AND ${OUTSTANDING_BALANCE_SQL}>0 THEN 1 ELSE 0 END) AS overdue,
+      MAX(CASE WHEN ${UNCONFIRMED_BALANCE_SQL} THEN 1 ELSE 0 END) AS review
+      FROM wholesale_invoices i ${LIVE_ACCOUNTING_JOIN}
       WHERE i.customer_id IN (${group.map(()=>'?').join(',')}) GROUP BY i.customer_id`).bind(today(),...group).all<{customer_id:string;overdue:number;review:number}>();
     for(const row of rows.results)result.set(row.customer_id,{overdue:!!row.overdue,review:!!row.review});
   }

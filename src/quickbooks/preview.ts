@@ -117,19 +117,29 @@ export function isVoided(transaction: TransactionStatus): boolean {
 
 export interface RemoteInvoice extends TransactionStatus {
   Id?: string; DocNumber?: string; SyncToken?: string; CustomerRef?: { value?: string }; CurrencyRef?: { value?: string };
-  Balance?: unknown; TxnTaxDetail?: { TotalTax?: unknown };
+  Balance?: unknown; DueDate?: unknown; TxnTaxDetail?: { TotalTax?: unknown };
 }
-export type Reconciliation = { status: "review"; reason: string } | { status: "unpaid" | "part-paid" | "paid" | "voided"; outstandingPence: number; paidPence: number; syncToken: string };
+export type Reconciliation = { status: "review"; reason: string } | {
+  status: "unpaid" | "part-paid" | "paid" | "settled" | "voided";
+  outstandingPence: number; paidPence: number; dueDate: string | null; syncToken: string;
+};
 /** A read-only comparison. Caller must authenticate the response's company scope and persist observations with CAS. */
 export function reconcileInvoice(preview: ExportPreview, link: InvoiceLink, observedScope: CompanyScope, remote: RemoteInvoice | null): Reconciliation {
-  if (creationDecision(preview, link) !== "already-linked" || !preview.candidate) return { status: "review", reason: "The local invoice or accounting link needs review." };
-  if (!remote || observedScope.realmId !== link.realmId || observedScope.environment !== link.environment || remote.Id !== link.remoteInvoiceId || remote.DocNumber !== link.number || remote.CustomerRef?.value !== link.customerRef || remote.CurrencyRef?.value !== "GBP" || !/^\d{1,32}$/.test(remote.SyncToken || "")) return { status: "review", reason: "Verify the company, invoice identity, customer, currency and current revision." };
-  const total = decimalPence(remote.TotalAmt), vat = decimalPence(remote.TxnTaxDetail?.TotalTax), balance = decimalPence(remote.Balance);
-  if (String(remote.status || remote.TxnStatus || "").toLowerCase() === "deleted") return { status: "review", reason: "The QuickBooks invoice was removed. Review it before using its balance." };
+  const review = (reason: string): Reconciliation => ({ status: "review", reason });
+  if (creationDecision(preview, link) !== "already-linked" || !preview.candidate) return review("The saved QuickBooks link needs review.");
+  if (!remote || [remote.status, remote.TxnStatus].some(status => String(status || "").trim().toLowerCase() === "deleted")) return review("QuickBooks could not find the original invoice.");
+  if (observedScope.realmId !== link.realmId || observedScope.environment !== link.environment || remote.Id !== link.remoteInvoiceId || remote.DocNumber !== link.number || !validId(remote.SyncToken)) return review("The QuickBooks company, invoice number or revision could not be verified.");
+  if (remote.CustomerRef?.value !== link.customerRef || remote.CurrencyRef?.value !== "GBP") return review("The customer or currency in QuickBooks differs from the saved link.");
+  const total = decimalPence(remote.TotalAmt), balance = decimalPence(remote.Balance);
   if (isVoided(remote)) {
-    if (total === 0 && balance === 0) return { status: "voided", outstandingPence: 0, paidPence: 0, syncToken: remote.SyncToken! };
-    return { status: "review", reason: "The voided QuickBooks invoice still has a total or balance to check." };
+    if (total === 0 && balance === 0) return { status: "voided", outstandingPence: 0, paidPence: 0, dueDate: null, syncToken: remote.SyncToken };
+    return review("The voided QuickBooks invoice still has a total or balance to check.");
   }
-  if (total !== preview.candidate.totals.grossPence || vat !== preview.candidate.totals.vatPence || balance === null || balance > total) return { status: "review", reason: "The accounting amounts differ from the saved invoice; do not overwrite its payment state." };
-  return { status: balance === 0 ? "paid" : balance === total ? "unpaid" : "part-paid", outstandingPence: balance, paidPence: total - balance, syncToken: remote.SyncToken! };
+  if (total === null || balance === null || balance > total) return review("QuickBooks returned an invalid total or balance for this invoice.");
+  if (total === 0 && preview.candidate.totals.grossPence > 0) return review("QuickBooks shows a zero invoice total without confirming a void.");
+  if (link.environment === "sandbox" && (total !== preview.candidate.totals.grossPence || decimalPence(remote.TxnTaxDetail?.TotalTax) !== preview.candidate.totals.vatPence)) {
+    return review("The Sandbox amounts differ from the saved invoice.");
+  }
+  return { status: total === 0 ? "settled" : balance === 0 ? "paid" : balance === total ? "unpaid" : "part-paid",
+    outstandingPence: balance, paidPence: total - balance, dueDate: day(remote.DueDate) ? remote.DueDate : null, syncToken: remote.SyncToken };
 }

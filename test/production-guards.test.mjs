@@ -26,7 +26,7 @@ function invoiceFixture() {
    CREATE TABLE wholesale_auto_invoicing(id INTEGER PRIMARY KEY,data TEXT);
    CREATE TABLE wholesale_auto_invoices(source TEXT PRIMARY KEY,lease_owner TEXT,lease_until INTEGER);
    CREATE TABLE quickbooks_exports(id INTEGER PRIMARY KEY,invoice_id INTEGER,environment TEXT,state TEXT,write_started_at INTEGER NOT NULL DEFAULT 0);
-   CREATE TABLE quickbooks_observations(export_id INTEGER,status TEXT,outstanding_pence INTEGER,paid_pence INTEGER,reason TEXT,observed_at INTEGER,payment_voided INTEGER NOT NULL DEFAULT 0);
+   CREATE TABLE quickbooks_observations(export_id INTEGER,status TEXT,outstanding_pence INTEGER,paid_pence INTEGER,reason TEXT,observed_at INTEGER,payment_voided INTEGER NOT NULL DEFAULT 0,due_date TEXT,invoice_issue TEXT NOT NULL DEFAULT '');
    CREATE TABLE audit_log(at INTEGER,kind TEXT,actor TEXT,text TEXT);
  `);
  const config={seller:{legalName:'Test Supplier',address:'Supplier Street',vatNumber:'123'},priceBasis:'inclusive',
@@ -130,7 +130,7 @@ test('a Live link created during manual payment review prevents the stale paymen
  }finally{db.close();}
 });
 
-test('invoices waiting for a balance review are excluded from the overdue queue and totals',async()=>{
+test('Payment totals exclude unconfirmed balances and keep confirmed balances with invoice differences',async()=>{
  const {handleInvoiceAdmin}=await invoiceModule();
  const {db,env,order,addOrder,request,review}=invoiceFixture();
  try{
@@ -139,10 +139,19 @@ test('invoices waiting for a balance review are excluded from the overdue queue 
   const {invoice}=await (await handleInvoiceAdmin(request({...review,invoiceDate:'2020-01-01',supplyDate:'2020-01-01'}),env,'orders/'+id+'/invoice','Audit')).json();
   db.prepare("INSERT INTO quickbooks_exports (id,invoice_id,environment,state) VALUES(1,?,'production','linked')").run(invoice.id);
   const list=async queue=>(await handleInvoiceAdmin(new Request('http://localhost/invoices?queue='+queue),env,'invoices','Audit')).json();
-  const {summary}=await list('all');
-  assert.equal(summary.outstandingPence,invoice.totals.grossPence);
+  const {summary,invoices}=await list('all');
+  assert.equal(summary.outstandingPence,0);
+  assert.equal(invoices[0].payment.outstandingPence,null);
   assert.equal(summary.reviewCount,1);assert.equal(summary.overdueCount,0);assert.equal(summary.overduePence,0);
   assert.equal((await list('overdue')).count,0);assert.equal((await list('review')).count,1);
+  db.prepare("INSERT INTO quickbooks_observations(export_id,status,outstanding_pence,paid_pence,due_date,invoice_issue) VALUES(1,'part-paid',1700,10300,'2020-03-01','QuickBooks billing address differs.')").run();
+  const confirmed=await list('overdue');
+  assert.equal(confirmed.count,1);
+  assert.equal(confirmed.invoices[0].payment.dueDate,'2020-03-01');
+  assert.equal(confirmed.invoices[0].accounting.invoiceChanged,true);
+  assert.equal(confirmed.summary.outstandingPence,1700);
+  assert.equal(confirmed.summary.overduePence,1700);
+  assert.equal((await list('review')).count,1);
  }finally{db.close();}
 });
 
