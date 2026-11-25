@@ -56,9 +56,10 @@ for (const [screen, viewport] of [["small phone", { width: 320, height: 844 }], 
       const header = panel.locator(".w-list-header");
       await trigger.scrollIntoViewIfNeeded();
       const layout = () => panel.evaluate(node => {
-        const header = node.querySelector('.w-list-header').getBoundingClientRect();
+        const header = node.querySelector('.w-list-header');
         const order = node.querySelector('.w-order').getBoundingClientRect();
-        return { height: header.height, width: header.width, toFirstOrder: Math.round(order.top - header.top) };
+        // Layout dimensions avoid fractional roundoff from the scrolled viewport.
+        return { height: header.offsetHeight, width: header.offsetWidth, toFirstOrder: Math.round(order.top - header.getBoundingClientRect().top) };
       });
       const before = await layout();
       if (viewport.width >= 1340) {
