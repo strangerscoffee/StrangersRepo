@@ -99,6 +99,34 @@ test('Dispatched orders are invoiced automatically from when it is switched on; 
  assert.equal((await call('POST',`${root}/orders/${ids[0]}/invoice`,{orderVersion:one.version,settingsVersion:config.version,invoiceDate:'2026-11-23',supplyDate:'2026-11-23'})).status,400);
 });
 
+test('Cleared tabs with different agreed terms wait for individual invoices',async()=>{
+ await switches(true,false,false);
+ const {customer,cookie}=await business('Mixed Terms Cafe');
+ const first=await order(cookie);
+ await ok('PUT',`${root}/orders/${first.id}/tab`,{ifVersion:first.version,onTab:true});
+ await ok('PUT',`${root}/customers/${customer.id}`,{...customer,ifVersion:customer.version,paymentTerms:'net-7'});
+ const second=await order(cookie);
+ await ok('PUT',`${root}/orders/${second.id}/tab`,{ifVersion:second.version,onTab:true});
+ const ids=[first.id,second.id];
+ const tabs=(await ok('GET',root+'/tabs')).body;
+ const open=tabs.open.find(tab=>tab.customerId===customer.id);
+ const cleared=(await ok('POST',`${root}/tabs/${customer.id}/clear`,{orderIds:ids,seen:open.orders.map(row=>row.id)})).body.cleared;
+ const source='tab:'+cleared.id;
+ const held=await waitForAuto(source,item=>item.state==='held','mixed payment terms hold');
+ assert.match(held.reason,/different payment terms/);
+ assert.equal(invoiceOf('TAB-'+cleared.id),undefined);
+ await ok('POST',`${root}/auto-invoicing/${source}/skip`,{});
+ const config=(await ok('GET',root+'/invoice-settings')).body;
+ const invoiceDate='2026-01-07';
+ for(const [id,term,dueDate] of [[first.id,'net-30','2026-02-06'],[second.id,'net-7','2026-01-14']]){
+  const saved=await latest(id);
+  const result=await ok('POST',`${root}/orders/${id}/invoice`,{orderVersion:saved.version,settingsVersion:config.version,invoiceDate,supplyDate:invoiceDate});
+  assert.equal(result.body.invoice.paymentTerms.id,term);
+  assert.equal(result.body.invoice.dueDate,dueDate);
+ }
+ assert.equal(invoiceOf('TAB-'+cleared.id),undefined);
+});
+
 test('With QuickBooks: missing customers and coffee items are made (or existing ones used), the invoice is exported and QuickBooks emails it',async()=>{
  // Connect the Sandbox company and choose the general coffee item, VAT codes and terms (as an admin does once).
  const started=(await ok('POST',qb+'/connect',{})).body,nonce=new URL(started.authorizeUrl).searchParams.get('state');

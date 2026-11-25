@@ -148,6 +148,7 @@ export const INVOICED_SQL = "EXISTS(SELECT 1 FROM wholesale_invoices WHERE order
 export const invoicedArgs = (order: { id: string; tabClearedId?: string }) => [order.id, order.tabClearedId || "", order.id];
 async function invoiceByOrder(env: Env, orderId: string) { return env.DB.prepare("SELECT * FROM wholesale_invoices WHERE order_id = ?").bind(orderId).first<InvoiceRow>(); }
 const productOf = (line: { productId?: string; pack?: string }) => typeof line.productId === "string" && typeof line.pack === "string" ? { productId: line.productId, pack: line.pack } : {};
+const paymentTermsOf = (order: SourceOrder): Terms => order.paymentTerms ?? order.customerSnapshot?.paymentTerms ?? { id: "not-recorded", label: "Payment terms not recorded", note: "" };
 function summed(lines: InvoiceLine[]) {
   const vatBreakdown: InvoiceData["vatBreakdown"] = [];
   const totals = { netPence: 0, vatPence: 0, grossPence: 0 };
@@ -193,9 +194,9 @@ async function build(env: Env, orderId: string, request: InvoiceRequest): Promis
   const lines = order.lines.map((line, i) => ({ ...invoiceLine("coffee", line.title, line.quantity, line.price, rate(request.lineVatRateIds?.[i] || value.defaultCoffeeRateId), value.priceBasis!), packLabel: line.packLabel, grindLabel: line.grindLabel, ...productOf(line) }));
   if (request.deliveryCharge.pence) lines.push(invoiceLine("delivery", request.deliveryCharge.description, 1, request.deliveryCharge.pence, rate(request.deliveryCharge.vatRateId || value.deliveryRateId), value.priceBasis!) as typeof lines[number]);
   const { vatBreakdown, totals } = summed(lines);
-  const paymentTerms = order.paymentTerms || order.customerSnapshot?.paymentTerms || { id: "not-recorded", label: "Payment terms not recorded", note: "" };
-  const dueDate = dueFor(paymentTerms, request.invoiceDate) ?? request.dueDate;
-  if (/^net-/.test(paymentTerms.id) && request.dueDate && request.dueDate !== dueDate) throw invalid("The due date must follow this order's agreed invoice payment terms.");
+  const paymentTerms = paymentTermsOf(order), agreedDueDate = dueFor(paymentTerms, request.invoiceDate);
+  if (agreedDueDate && request.dueDate && request.dueDate !== agreedDueDate) throw invalid("The due date must follow this order's agreed invoice payment terms.");
+  const dueDate = agreedDueDate ?? request.dueDate;
   if (dueDate && dueDate < request.invoiceDate) throw invalid("The payment due date cannot be before the invoice date.");
   return { config: value, data: { orderId, orderReference: order.reference || "", customerId: order.customerId, invoiceDate: request.invoiceDate, supplyDate: request.supplyDate, seller: { ...value.seller }, billTo: { ...billTo }, deliveryLocation: order.locationSnapshot ? { ...order.locationSnapshot } : null, priceBasis: value.priceBasis!, lines, totals, vatBreakdown, paymentTerms: { ...paymentTerms }, paymentInstructions: request.paymentInstructions ?? value.paymentInstructions, dueDate, orderVersion: order.version, settingsVersion: config.version } };
 }
@@ -300,6 +301,12 @@ export async function issueForTab(env: Env, tabId: string, actor: string, automa
     ORDER BY member.key`).bind(JSON.stringify(record.orderIds), tabId, tab.customer_id).all<Row>();
   const orders = loaded.results.map(decode<SourceOrder>);
   if (!orders.length) return null;
+  const latest = orders.reduce((newest, order) => order.createdAt > newest.createdAt ? order : newest);
+  const paymentTerms = paymentTermsOf(latest);
+  if (orders.some(order => {
+    const terms = paymentTermsOf(order);
+    return terms.id !== paymentTerms.id || (terms.note || "") !== (paymentTerms.note || "");
+  })) throw new InvoiceHold("The orders on this tab have different payment terms. Open the individual orders to invoice them on their agreed terms.");
   const value = config.settings, rate = (rateId: string) => value.vatRates.find((r) => r.id === rateId)!;
   const merged = new Map<string, { line: SourceOrder["lines"][number]; quantity: number }>();
   for (const order of orders) for (const line of order.lines) {
@@ -326,12 +333,10 @@ export async function issueForTab(env: Env, tabId: string, actor: string, automa
     else lines.push(...group);
   }
   if (lines.length > 150) throw new InvoiceHold("This tab has too many different lines for one invoice. Invoice it by hand.");
-  const latest = orders.reduce((newest, order) => order.createdAt > newest.createdAt ? order : newest);
   const billTo = await billingFor(env, latest);
   if (!billTo.name || !billTo.address) throw new InvoiceHold("Add the customer's billing address before this tab can be invoiced.");
   const invoiceDate = today(), sentDays = orders.map((o) => o.dispatchedAt).filter((at): at is number => !!at).map(ukDay).sort();
   const supplyDate = sentDays.length && sentDays.at(-1)! <= invoiceDate ? sentDays.at(-1)! : invoiceDate;
-  const paymentTerms = latest.paymentTerms || latest.customerSnapshot?.paymentTerms || { id: "not-recorded", label: "Payment terms not recorded", note: "" };
   const { vatBreakdown, totals } = summed(lines);
   const data: InvoiceData = { orderId: id, orderReference: `Tab: ${orders.length} ${orders.length === 1 ? "order" : "orders"}`, customerId: tab.customer_id, invoiceDate, supplyDate, seller: { ...value.seller }, billTo, deliveryLocation: latest.locationSnapshot ? { ...latest.locationSnapshot } : null, priceBasis: value.priceBasis!, lines, totals, vatBreakdown, paymentTerms: { ...paymentTerms }, paymentInstructions: value.paymentInstructions, dueDate: dueFor(paymentTerms, invoiceDate), orderVersion: 0, settingsVersion: config.version, orderIds: orders.map((o) => o.id) };
   const versions = Object.fromEntries(orders.map(o => [o.id, o.version]));
@@ -408,9 +413,13 @@ export async function handleInvoiceAdmin(req: Request, env: Env, route: string, 
   const payment = /^invoices\/(\d+)\/payment$/.exec(route);
   if (payment && req.method === "PATCH") {
     const invoiceId=integer(Number(payment[1]),"invoice ID",1,Number.MAX_SAFE_INTEGER);
-    const managed = () => env.DB.prepare("SELECT id FROM quickbooks_exports WHERE environment='production' AND invoice_id=? AND state='linked'").bind(invoiceId).first();
-    const managedPayment = () => new ApiError(409, "quickbooks_managed_payment", "Record this invoice payment in QuickBooks, then refresh its payment status.");
-    if (await managed()) throw managedPayment();
+    const livePaymentLock = "environment='production' AND (state='linked' OR write_started_at>0)";
+    const managed = () => env.DB.prepare(`SELECT state FROM quickbooks_exports WHERE invoice_id=? AND ${livePaymentLock}`).bind(invoiceId).first<{ state: string }>();
+    const managedPayment = (state: string) => new ApiError(409, "quickbooks_managed_payment", state === "linked"
+      ? "Record this invoice payment in QuickBooks, then refresh its payment status."
+      : "QuickBooks may already have received this invoice. Check its status in Export history before recording a payment.");
+    const exportBefore = await managed();
+    if (exportBefore) throw managedPayment(exportBefore.state);
     const body = object(await readJson(req, 4096)), expected = version(body.ifVersion);
     if (typeof body.paid !== "boolean") throw invalid("Choose paid or unpaid.");
     const paidDate = body.paid ? (body.paidDate ? date(body.paidDate, "payment date") : today()) : null;
@@ -418,10 +427,11 @@ export async function handleInvoiceAdmin(req: Request, env: Env, route: string, 
     const reference = text(body.reference, "payment reference", 180);
     const row = await env.DB.prepare(`UPDATE wholesale_invoices SET paid=?,paid_date=?,paid_at=?,payment_reference=?,payment_version=payment_version+1
       WHERE seq=? AND payment_version=? AND NOT EXISTS(SELECT 1 FROM quickbooks_exports
-        WHERE environment='production' AND invoice_id=wholesale_invoices.seq AND state='linked') RETURNING *`)
+        WHERE invoice_id=wholesale_invoices.seq AND ${livePaymentLock}) RETURNING *`)
       .bind(body.paid ? 1 : 0, paidDate, body.paid ? Date.now() : null, reference, invoiceId, expected).first<InvoiceRow>();
     if (!row) {
-      if (await managed()) throw managedPayment();
+      const exportAfter = await managed();
+      if (exportAfter) throw managedPayment(exportAfter.state);
       if (!await env.DB.prepare("SELECT seq FROM wholesale_invoices WHERE seq=?").bind(invoiceId).first()) throw missing();
       throw conflict("This payment record changed. Reload before saving.");
     }

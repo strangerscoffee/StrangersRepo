@@ -3,7 +3,7 @@ import type {User} from '../auth';
 import {audit} from '../audit';
 import {ApiError,type Env,invalid} from '../http';
 import {version} from '../wholesaleStore';
-import {issuedInvoice} from '../wholesaleInvoices';
+import {issuedInvoice,type InvoiceDocument} from '../wholesaleInvoices';
 import {connection,ProviderError,resourceReader} from './connection';
 import {mapping,mappingStillMatches,productLinks,verifiedMapping,verifyFrozenReferences,changed} from './mappings';
 import {buildPayload,matchesInvoice} from './payload';
@@ -17,22 +17,32 @@ import {wakeIntegration} from '../integrationSignals';
 const autoPermission=automaticAllowed('quickbooks_exports.invoice_id','quickbooks_exports.created_by');
 export async function operation(env:Env,id:number){const row=await env.DB.prepare('SELECT * FROM quickbooks_exports WHERE id=?').bind(id).first<ExportOperation>();if(!row)throw new ApiError(404,'not_found','QuickBooks export not found.');return row;}
 export async function operationResult(env:Env,row:ExportOperation){return{...operationDTO(row),observation:await observation(env,row.id)};}
+function paidReviewVersion(invoice: InvoiceDocument, review: { paidInvoiceConfirmed?: unknown; paidInvoiceVersion?: unknown }): number {
+  const { payment } = invoice;
+  if (!payment.paid) return 0;
+  if (review.paidInvoiceConfirmed !== true) throw new ApiError(409, 'quickbooks_paid_invoice', 'This invoice is recorded paid on the website. Review how the payment will be reconciled in QuickBooks.');
+  if (review.paidInvoiceVersion !== undefined && version(review.paidInvoiceVersion) !== payment.version) {
+    throw new ApiError(409, 'quickbooks_payment_changed', 'The website payment changed. Review the current payment before sending.');
+  }
+  return payment.version;
+}
 export async function queueInvoice(req:Request,env:Env,mode:Environment,invoiceId:number,body:Record<string,any>,user:User){
   const invoice=await issuedInvoice(env,invoiceId),row=await connection(env,mode);
   const existing=await env.DB.prepare('SELECT * FROM quickbooks_exports WHERE environment=? AND realm_id=? AND invoice_id=?').bind(mode,row.realm_id,invoiceId).first<ExportOperation>();
   if(existing){if(existing.fingerprint!==body.fingerprint)throw new ApiError(409,'quickbooks_saved_export','This invoice already has a saved export. Open its original export before continuing.');return existing;}
   const state=await settings(env);if(state.active_environment!==mode||state.version!==version(body.modeVersion))throw new ApiError(409,'quickbooks_mode_changed','The active accounting environment changed. Review the invoice again.');
   if(body.reviewed!==true)throw invalid('Review the company, invoice and export amounts before sending.');
-  if(invoice.payment.paid&&body.paidInvoiceConfirmed!==true)throw new ApiError(409,'quickbooks_paid_invoice','This invoice is already recorded paid locally. Confirm how its payment will be reconciled in QuickBooks before exporting.');
+  const paidReview=paidReviewVersion(invoice,body);
   if(mode==='production'&&await env.DB.prepare("SELECT id FROM quickbooks_exports WHERE environment='production' AND invoice_id=?").bind(invoiceId).first())throw new ApiError(409,'quickbooks_company_conflict','This invoice already has a Live export in another company. Review the original link.');
   const verified=await verifiedMapping(req,env,mode,invoice,row),preview=await previewInvoice(invoice,verified.mappings),built=buildPayload(preview);
   if(body.fingerprint!==preview.fingerprint||version(body.connectionVersion)!==row.version||version(body.mappingVersion)!==verified.mappingVersion)throw changed();
   await requireExportMode(req,env,row,built.profiles,state.version);await verified.resources.check();
   const payload=JSON.stringify(built.payload),at=Date.now();
-  const saved=await env.DB.prepare(`INSERT INTO quickbooks_exports(environment,realm_id,company_name,company_vat,invoice_id,request_id,fingerprint,payload,payload_hash,source_hash,created_by,preview,profiles,connection_generation,mapping_version,created_at,updated_at) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM quickbooks_connections WHERE environment=? AND generation=? AND version=? AND status='connected') AND EXISTS(SELECT 1 FROM quickbooks_settings WHERE id=1 AND active_environment=? AND version=?) AND EXISTS(SELECT 1 FROM quickbooks_environment_mappings WHERE environment=? AND realm_id=? AND version=?) AND EXISTS(SELECT 1 FROM users WHERE id=? AND role='admin' AND active=1)
-    AND EXISTS(SELECT 1 FROM wholesale_invoices WHERE seq=? AND (paid=0 OR ?=1))
+  const saved=await env.DB.prepare(`INSERT INTO quickbooks_exports(environment,realm_id,company_name,company_vat,invoice_id,request_id,fingerprint,payload,payload_hash,source_hash,created_by,preview,profiles,connection_generation,mapping_version,created_at,updated_at,paid_review_version)
+    SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM quickbooks_connections WHERE environment=? AND generation=? AND version=? AND status='connected') AND EXISTS(SELECT 1 FROM quickbooks_settings WHERE id=1 AND active_environment=? AND version=?) AND EXISTS(SELECT 1 FROM quickbooks_environment_mappings WHERE environment=? AND realm_id=? AND version=?) AND EXISTS(SELECT 1 FROM users WHERE id=? AND role='admin' AND active=1)
+    AND EXISTS(SELECT 1 FROM wholesale_invoices WHERE seq=? AND (paid=0 OR payment_version=?))
     ON CONFLICT DO NOTHING RETURNING *`)
-    .bind(mode,row.realm_id,row.company_name,row.vat_number,invoiceId,preview.requestId,preview.fingerprint,payload,await digest(payload),await sourceHash(invoice),user.id,JSON.stringify(preview),JSON.stringify(built.profiles),row.generation,verified.mappingVersion,at,at,mode,row.generation,row.version,mode,state.version,mode,row.realm_id,verified.mappingVersion,user.id,invoiceId,body.paidInvoiceConfirmed===true?1:0).first<ExportOperation>();
+    .bind(mode,row.realm_id,row.company_name,row.vat_number,invoiceId,preview.requestId,preview.fingerprint,payload,await digest(payload),await sourceHash(invoice),user.id,JSON.stringify(preview),JSON.stringify(built.profiles),row.generation,verified.mappingVersion,at,at,paidReview,mode,row.generation,row.version,mode,state.version,mode,row.realm_id,verified.mappingVersion,user.id,invoiceId,paidReview).first<ExportOperation>();
   if(!saved){const raced=await env.DB.prepare('SELECT * FROM quickbooks_exports WHERE environment=? AND realm_id=? AND invoice_id=?').bind(mode,row.realm_id,invoiceId).first<ExportOperation>();if(raced?.fingerprint===preview.fingerprint)return raced;throw changed();}
   await audit(env,'quickbooks_export_queued',user.name,`${user.name} queued invoice ${invoice.number} for QuickBooks ${mode==='production'?'Live':'Sandbox'}.`);return saved;
 }
@@ -60,14 +70,12 @@ export async function retryExport(req:Request,env:Env,id:number,body:Record<stri
   if(old.state==='linked')return old;if(old.lease_until>Date.now())throw new ApiError(409,'quickbooks_busy','This export is already being processed.');
   const row=await connection(env,old.environment);if(row.status!=='connected'||row.realm_id!==old.realm_id)throw new ApiError(409,'quickbooks_company_changed','Connect the original company before retrying this export.');
   await requireExportMode(req,env,row,JSON.parse(old.profiles),version(body.modeVersion));
-  if (old.auto && (await issuedInvoice(env, old.invoice_id)).payment.paid && body.paidInvoiceConfirmed !== true) {
-    throw new ApiError(409,'quickbooks_paid_invoice','This invoice is recorded paid locally. Review the payment before retrying the export.');
-  }
-  const saved=await env.DB.prepare(`UPDATE quickbooks_exports SET state='queued',retry_at=0,attempts=0,created_by=?,connection_generation=?,mapping_version=?,manual_retry=auto,last_error='',lease_owner=NULL,lease_until=0,updated_at=?,version=version+1
+  const paidReview=old.environment==='production'||old.auto ? paidReviewVersion(await issuedInvoice(env,old.invoice_id),body) : 0;
+  const saved=await env.DB.prepare(`UPDATE quickbooks_exports SET state='queued',retry_at=0,attempts=0,created_by=?,connection_generation=?,mapping_version=?,manual_retry=auto,paid_review_version=?,last_error='',lease_owner=NULL,lease_until=0,updated_at=?,version=version+1
     WHERE id=? AND version=? AND lease_until<=?
-      AND (auto=0 OR ?=1 OR EXISTS(SELECT 1 FROM wholesale_invoices WHERE seq=quickbooks_exports.invoice_id AND paid=0))
+      AND ((environment='sandbox' AND auto=0) OR EXISTS(SELECT 1 FROM wholesale_invoices WHERE seq=quickbooks_exports.invoice_id AND (paid=0 OR payment_version=?)))
     RETURNING *`)
-    .bind(user.id,row.generation,(await mapping(env,row.environment,row.realm_id)).version,Date.now(),old.id,old.version,Date.now(),body.paidInvoiceConfirmed===true?1:0)
+    .bind(user.id,row.generation,(await mapping(env,row.environment,row.realm_id)).version,paidReview,Date.now(),old.id,old.version,Date.now(),paidReview)
     .first<ExportOperation>();if(!saved)throw changed();return saved;
 }
 
@@ -84,7 +92,10 @@ export async function processExport(req:Request,env:Env,id:number){
   if(ownerRecord?.role!=='admin'||!ownerRecord.active){await env.DB.prepare("UPDATE quickbooks_exports SET state='review',last_error='A current admin must review this export.',version=version+1 WHERE id=? AND version=? AND lease_until<=?").bind(id,row.version,Date.now()).run();return operation(env,id);}
   const owner=crypto.randomUUID(),locked=await env.DB.prepare(`UPDATE quickbooks_exports SET state='sending',attempts=attempts+1,lease_owner=?,lease_until=?,updated_at=?,version=version+1 WHERE id=? AND version=? AND state IN ('queued','uncertain','sending') AND lease_until<=? AND EXISTS(SELECT 1 FROM quickbooks_settings WHERE id=1 AND active_environment=? AND version=?)
     AND (auto=0 OR manual_retry=1 OR ${autoPermission}) RETURNING *`).bind(owner,Date.now()+90000,Date.now(),id,row.version,Date.now(),row.environment,modeState.version).first<ExportOperation>();
-  if(!locked)return operation(env,id);row=locked;let writeStarted=false;
+  if(!locked)return operation(env,id);
+  row=locked;
+  const hadWriteStarted=!!row.write_started_at;
+  let writeStarted=false;
   try{
     if(row.attempts>8)return finish(env,id,owner,'review','Repeated attempts need an admin review before retrying.');
     const invoice=await issuedInvoice(env,row.invoice_id),preview=JSON.parse(row.preview) as ExportPreview;
@@ -119,10 +130,18 @@ export async function processExport(req:Request,env:Env,id:number){
           AND EXISTS(SELECT 1 FROM quickbooks_settings WHERE id=1 AND active_environment=? AND version=?)
           AND EXISTS(SELECT 1 FROM quickbooks_environment_mappings WHERE environment=? AND realm_id=? AND version=?)
           AND (auto=0 OR manual_retry=1 OR (${autoPermission} AND EXISTS(SELECT 1 FROM wholesale_invoices WHERE seq=quickbooks_exports.invoice_id AND paid=0)))
+          AND (environment<>'production' OR EXISTS(SELECT 1 FROM wholesale_invoices WHERE seq=quickbooks_exports.invoice_id
+            AND (paid=0 OR payment_version=quickbooks_exports.paid_review_version)))
         RETURNING write_started_at`)
         .bind(at,id,owner,at,row.environment,company.generation,company.version,row.environment,modeState.version,row.environment,row.realm_id,currentMap.version)
         .first<{write_started_at:number}>();
-      if(!noted)throw new ApiError(409,'quickbooks_permission_changed','Administrator access changed or the invoice is no longer approved for sending. Review the export and its payment and accounting settings.');
+      if(!noted){
+        if(row.environment==='production'){
+          const {payment}=await issuedInvoice(env,row.invoice_id);
+          if(payment.paid&&payment.version!==row.paid_review_version)throw new ApiError(409,'quickbooks_paid_invoice','This invoice was marked paid or its payment was updated. Review the payment before retrying the export.');
+        }
+        throw new ApiError(409,'quickbooks_permission_changed','Administrator access changed or the invoice is no longer approved for sending. Review the export and its payment and accounting settings.');
+      }
       writeStarted=true;row.write_started_at=noted.write_started_at;
     })).Invoice;
     if(/^\d{1,32}$/.test(remote?.Id||''))await saveRemote(env,id,owner,remote.Id);
@@ -130,6 +149,12 @@ export async function processExport(req:Request,env:Env,id:number){
     return link(env,row,owner,remote,true,startedAt);
   }catch(error){
     const known=error instanceof ApiError,message=known?error.message:'The saved export needs review. Try refreshing its status.';
+    // Unlock local payment only if Live definitively rejected its first create. Older attempts could still have succeeded.
+    if(row.environment==='production'&&writeStarted&&!hadWriteStarted&&error instanceof ProviderError
+      &&[400,401,403,404,422,429].includes(error.providerStatus)&&error.code!=='quickbooks_duplicate'){
+      await env.DB.prepare('UPDATE quickbooks_exports SET write_started_at=0 WHERE id=? AND lease_owner=? AND lease_until>?').bind(id,owner,Date.now()).run();
+      writeStarted=false;row.write_started_at=0;
+    }
     if(error instanceof ProviderError&&(error.providerStatus===429||error.providerStatus>=500||error.code==='quickbooks_duplicate')){
       const delay=Math.min(21600000,60000*2**Math.min(row.attempts-1,8));return finish(env,id,owner,writeStarted||row.write_started_at?'uncertain':'queued',message,Math.max(Date.now()+delay,error.retryAt||0));
     }

@@ -211,6 +211,7 @@
   window.addEventListener('pagehide', () => hidePasswords());
   window.addEventListener('pageshow', () => hidePasswords());
   render('login');
+  $('#signin-startup')?.setAttribute('hidden', '');
   if (invite || reset) {
     history.replaceState(null, '', location.pathname);
     if (invite) { reset = null; checkLink('invite', invite); }

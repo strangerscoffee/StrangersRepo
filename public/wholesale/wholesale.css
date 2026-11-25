@@ -598,6 +598,8 @@ body[data-auth-view=login] #login-submit { margin-top:3px; }
 .wholesale-login .login-panel .login-back.button { margin-top:24px; }
 .wholesale-login .login-confirmation { margin:12px 0 0; color:var(--muted); font-size:14px; line-height:1.6; }
 .login-detail { margin-top:16px; color:var(--muted); font-size:13px; line-height:1.6; }
+.login-load-help { text-align:center; }
+.login-load-help a { color:var(--accent); font-weight:600; }
 .wholesale-login #reset-intro { margin-top:14px; color:var(--muted); font-size:13px; line-height:1.6; overflow-wrap:anywhere; }
 .wholesale-login .quantity-error { margin-top:12px; line-height:1.5; }
 .wholesale-login .field-error { margin:8px 0 0; font-size:13px; font-weight:500; }

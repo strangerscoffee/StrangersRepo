@@ -198,3 +198,29 @@ test("wholesale sign-in reloads an expired release once and reports persistent f
     }
   }
 });
+
+test("wholesale sign-in offers a working reload when both startup scripts fail", async () => {
+  const context = await browser.newContext(devices["iPhone 15 Pro"]);
+  const page = await context.newPage();
+  const url = srv.base + "/wholesale/signin?next=%2Fwholesale%2F";
+  const scripts = asset => /\/(?:errors|wholesale\/signin)\.js$/.test(asset.pathname);
+  const requested = new Set();
+  try {
+    await page.route(scripts, async route => {
+      requested.add(new URL(route.request().url()).pathname.split("/").at(-1));
+      await route.fulfill({ status: 503 });
+    });
+    await page.goto(url);
+    assert.deepEqual(requested, new Set(["errors.js", "signin.js"]));
+    const recovery = page.locator("#signin-startup");
+    assert.equal(await page.locator("#login-submit").isDisabled(), true);
+    assert.equal(await page.locator("#sc-error").count(), 0);
+    await page.unroute(scripts);
+    await Promise.all([page.waitForURL(url), recovery.getByRole("link", { name: "Reload this page" }).click()]);
+    await page.waitForFunction(() => document.querySelector("#login-submit")?.disabled === false);
+    assert.equal(page.url(), url);
+    assert.equal(await recovery.isVisible(), false);
+  } finally {
+    await context.close();
+  }
+});

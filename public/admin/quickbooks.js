@@ -207,7 +207,7 @@ window.WholesaleQuickBooks = function ({api,html,raw,svg,show,title,footer,field
         const paidInvoiceConfirmed=!!form.querySelector("#qbPaidInvoiceReview")?.checked;
         if(invoice.payment.paid&&!paidInvoiceConfirmed)throw new Error("Review the payment reconciliation before sending.");
         let saved;
-        try{saved=(await api("POST",path("/invoices/"+invoice.id+"/export",scope),{fingerprint:result.fingerprint,connectionVersion:response.connectionVersion,mappingVersion:response.mappingVersion,modeVersion:response.modeVersion,reviewed:true,paidInvoiceConfirmed})).export;}
+        try{saved=(await api("POST",path("/invoices/"+invoice.id+"/export",scope),{fingerprint:result.fingerprint,connectionVersion:response.connectionVersion,mappingVersion:response.mappingVersion,modeVersion:response.modeVersion,reviewed:true,paidInvoiceConfirmed,paidInvoiceVersion:paidInvoiceConfirmed?invoice.payment.version:undefined})).export;}
         catch(error){const found=await api("GET",path("/exports",scope,"invoiceId="+invoice.id)).catch(()=>null);saved=found?.exports.find(item=>item.realmId===state.connection.realmId);if(!saved)throw error;}
         await processQueued(scope,saved);await openOperation(scope,saved.id,back);
       });
@@ -246,7 +246,15 @@ window.WholesaleQuickBooks = function ({api,html,raw,svg,show,title,footer,field
     ${!adopt&&result.automatic?html`<p class="hint">This reviewed retry leaves invoice emailing to you.</p>`:""}
     <label class="wi-check"><input id="qbOperationReview" type="checkbox" required><span>I’ve reviewed the original company and invoice details.</span></label>
     ${!adopt&&result.paidLocally?html`<label class="wi-check"><input id="qbRetryPaidReview" type="checkbox" required><span>I’ve reviewed the recorded payment and will reconcile it in QuickBooks.</span></label>`:""}</div>${footer(adopt?"Check and link invoice":"Retry original export","Keep export")}</form>`,async(pressed,element,form)=>{
-      if(pressed==="submit")await busy(form,async()=>{if(!form.querySelector("#qbOperationReview").checked)throw new Error("Review the saved invoice first.");const saved=await api("POST",path("/exports/"+row.id+(adopt?"/link-existing":"/retry"),row.environment),{ifVersion:row.version,modeVersion:state.modeVersion,reviewed:true,...(adopt?{remoteId:row.remoteId}:{paidInvoiceConfirmed:!!form.querySelector("#qbRetryPaidReview")?.checked})});await processQueued(row.environment,saved.export);await openOperation(row.environment,row.id,back);});
+      if(pressed!=="submit")return;
+      await busy(form,async()=>{
+        if(!form.querySelector("#qbOperationReview").checked)throw new Error("Review the saved invoice first.");
+        const paidInvoiceConfirmed=!!form.querySelector("#qbRetryPaidReview")?.checked;
+        const approval=adopt?{remoteId:row.remoteId}:{paidInvoiceConfirmed,paidInvoiceVersion:paidInvoiceConfirmed?(result.paidInvoiceVersion??undefined):undefined};
+        const saved=await api("POST",path("/exports/"+row.id+(adopt?"/link-existing":"/retry"),row.environment),{ifVersion:row.version,modeVersion:state.modeVersion,reviewed:true,...approval});
+        await processQueued(row.environment,saved.export);
+        await openOperation(row.environment,row.id,back);
+      });
     },()=>openOperation(row.environment,row.id,back));
   }
   return{open,openInvoice};

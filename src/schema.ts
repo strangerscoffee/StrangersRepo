@@ -383,6 +383,10 @@ const MIGRATIONS: Migration[] = [
       env.DB.prepare("CREATE INDEX IF NOT EXISTS quickbooks_queued_invoice_events ON quickbooks_events(environment,realm_id,entity_id) WHERE entity='Invoice' AND state='queued'"),
     ]);
   } },
+  { id: 40, name: "QuickBooks paid invoice review", run: async env => {
+    const has = await columns(env, "quickbooks_exports");
+    if (!has.has("paid_review_version")) await env.DB.prepare("ALTER TABLE quickbooks_exports ADD COLUMN paid_review_version INTEGER NOT NULL DEFAULT 0").run();
+  } },
 ];
 
 async function migrate(env: Env): Promise<void> {

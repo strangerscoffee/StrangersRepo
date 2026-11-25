@@ -107,6 +107,64 @@ test('Live exports and payment balances are environment scoped, customer owned a
  assert.equal((await call('PATCH',`/api/admin/wholesale/invoices/${first.id}/payment`,{ifVersion:own.payment.version,paid:false})).status,409,'managed payment metadata cannot be changed through the local paid toggle');
  assert.deepEqual(srv.sql('SELECT data,paid FROM wholesale_invoices WHERE seq='+first.id)[0],before);const pdfAfter=Buffer.from(await(await fetch(srv.base+`/api/wholesale/invoices/${first.id}/pdf`,{headers:{cookie:BUYER}})).arrayBuffer());assert.deepEqual(pdfAfter,pdfBefore);
 });
+test('A payment recorded after Live review holds the export until the new payment is reviewed',async()=>{
+ const invoice=await issued();
+ const before=posts('production').length;
+ let release;
+ provider.state.readGate={path:'/production/v3/company/1234567890/query',once:true,wait:new Promise(resolve=>release=resolve)};
+ let pending, paid;
+ try{
+  const sent=await send(invoice,'production');
+  assert.equal(sent.status,202);
+  pending=sent.body.export;
+  for(let attempt=0;attempt<200&&provider.state.readGate;attempt++)await new Promise(resolve=>setTimeout(resolve,10));
+  assert.equal(provider.state.readGate,null,'the saved export reached the read before creation');
+  paid=(await ok('PATCH',`/api/admin/wholesale/invoices/${invoice.id}/payment`,{ifVersion:invoice.payment.version,paid:true},OTHER)).body.invoice;
+  assert.equal(paid.payment.paid,true);
+ }finally{release();provider.state.readGate=null;}
+ const held=await settled(pending.id,'production');
+ assert.equal(held.state,'review');
+ assert.match(held.lastError,/Review the payment/);
+ assert.equal(posts('production').length,before);
+
+ const path=root+`/exports/${held.id}`;
+ const reviewed=(await ok('GET',path+'/review',undefined,ADMIN,'production')).body;
+ assert.equal(reviewed.paidLocally,true);
+ assert.equal(reviewed.paidInvoiceVersion,paid.payment.version);
+ const approval={ifVersion:held.version,modeVersion:(await state('production')).modeVersion,reviewed:true};
+ const retryWith=body=>call('POST',path+'/retry',{...approval,...body},ADMIN,'production');
+ assert.equal((await retryWith({})).body.code,'quickbooks_paid_invoice');
+ assert.equal((await retryWith({paidInvoiceConfirmed:true,paidInvoiceVersion:invoice.payment.version})).body.code,'quickbooks_payment_changed');
+ const confirmed=await retryWith({paidInvoiceConfirmed:true,paidInvoiceVersion:reviewed.paidInvoiceVersion});
+ assert.equal(confirmed.status,202,confirmed.text);
+ await ok('POST',path+'/process',{},ADMIN,'production');
+ assert.equal((await settled(held.id,'production')).state,'linked');
+ assert.equal(posts('production').length,before+1);
+});
+
+test('Local payment cannot race a Live create and unlocks after a definite first rejection',async()=>{
+ const invoice=await issued();
+ let release;
+ provider.state.rateLimitNext=true;
+ provider.state.readGate={path:'/production/v3/company/1234567890/invoice',once:true,wait:new Promise(resolve=>release=resolve)};
+ const recordPayment=()=>call('PATCH',`/api/admin/wholesale/invoices/${invoice.id}/payment`,{ifVersion:invoice.payment.version,paid:true},OTHER);
+ try{
+  const sent=await send(invoice,'production');
+  assert.equal(sent.status,202);
+  for(let attempt=0;attempt<200&&provider.state.readGate;attempt++)await new Promise(resolve=>setTimeout(resolve,10));
+  assert.equal(provider.state.readGate,null,'the create request is in flight');
+  const blocked=await recordPayment();
+  assert.equal(blocked.status,409,blocked.text);
+  assert.equal(blocked.body.code,'quickbooks_managed_payment');
+  release();
+  const pending=await settled(sent.body.export.id,'production',['queued']);
+  assert.ok(pending.retryAt>Date.now());
+  const payment=await recordPayment();
+  assert.equal(payment.status,200,payment.text);
+  assert.equal(payment.body.invoice.payment.paid,true);
+ }finally{release();provider.state.readGate=null;provider.state.rateLimitNext=false;}
+});
+
 test('An older in-flight QuickBooks response cannot roll back a newer payment revision',async()=>{
  const invoice=await issued(),sent=await send(invoice,'production'),saved=await settled(sent.body.export.id,'production');assert.equal(saved.state,'linked',JSON.stringify(saved));
  const partial=structuredClone(provider.state.pay('production',saved.remoteId,18));let release;const before=provider.state.calls.length;

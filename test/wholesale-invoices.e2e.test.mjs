@@ -21,9 +21,9 @@ before(async () => {
   browser = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
 });
 after(async () => { await browser?.close(); await srv?.stop(); });
-async function buyer(label) {
+async function buyer(label, paymentTerms = "net-14") {
   const username = `invoice.${label}`, password = username + "-password";
-  const customer = (await api("POST", "/api/admin/wholesale/customers", { business: `${label} Invoice Coffee`, contact: "Accounts Buyer", email: `${username}@example.test`, phone: "01603 123456", address: "10 Coffee Street\nNorwich", postcode: "NR1 1AA", deliveryNotes: "Use the side door", status: "Active", note: "Private customer note", paymentTerms: "net-14", paymentNote: "Use the invoice number as the bank reference." })).body.customer;
+  const customer = (await api("POST", "/api/admin/wholesale/customers", { business: `${label} Invoice Coffee`, contact: "Accounts Buyer", email: `${username}@example.test`, phone: "01603 123456", address: "10 Coffee Street\nNorwich", postcode: "NR1 1AA", deliveryNotes: "Use the side door", status: "Active", note: "Private customer note", paymentTerms, paymentNote: "Use the invoice number as the bank reference." })).body.customer;
   const account = (await api("POST", `/api/admin/wholesale/customers/${customer.id}/account`, { username })).body;
   const cookie = (await api("POST", "/api/wholesale/auth/change-password", { username, password: account.temporaryPassword, newPassword: password }, null)).cookie;
   return { username, password, cookie, customer: (await api("GET", "/api/wholesale/session", undefined, cookie)).body.customer };
@@ -47,6 +47,33 @@ function pdfCheck(pdf) {
 function noOverflow(page) { return page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1); }
 const londonDay = (ms) => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(ms));
 const addDays = (day, count) => new Date(Date.parse(day + "T12:00:00Z") + count * 86400000).toISOString().slice(0, 10);
+
+test("the invoice form explains the fixed due date for payment before dispatch", async () => {
+  const root = "/api/admin/wholesale";
+  const config = (await api("GET", root + "/invoice-settings")).body;
+  await api("PUT", root + "/invoice-settings", { ifVersion: config.version, seller: { legalName: "Test Roastery", address: "Test Street, Norwich", vatNumber: "GB123456789" }, priceBasis: "inclusive", vatRates: [{ id: "zero", label: "Zero", basisPoints: 0 }], defaultCoffeeRateId: "zero", invoicePrefix: "TEST-", firstInvoiceNumber: 500, confirmed: true });
+  const owner = await buyer("before.dispatch", "before-dispatch");
+  const order = (await api("POST", "/api/wholesale/orders", { requestId: crypto.randomUUID(), customerVersion: owner.customer.version, delivery: "Roastery collection", lines: [{ productId: "brazil", pack: "kilo", grind: "beans", quantity: 1, price: 1800 }] }, owner.cookie)).body.order;
+  const context = await browser.newContext({ viewport: { width: 393, height: 852 }, hasTouch: true, isMobile: true });
+  try {
+    const [name, value] = ADMIN.split("=");
+    await context.addCookies([{ name, value, url: srv.base }]);
+    const page = await context.newPage();
+    await page.goto(srv.base + "/admin#wholesale");
+    await page.locator(`[data-act="wh-order"][data-id="${order.id}"]`).click();
+    await page.locator('[data-sheet="invoice-open"]').click();
+    const form = page.locator("#wiInvoiceForm");
+    await form.getByText("Payment is due on the invoice date, before dispatch.").waitFor();
+    assert.equal(await form.locator("#wiDueDate").count(), 0);
+    const response = page.waitForResponse(res => res.url().endsWith("/invoice/preview") && res.request().method() === "POST");
+    await form.getByRole("button", { name: "Preview invoice" }).click();
+    const { invoice } = await (await response).json();
+    assert.equal(invoice.dueDate, invoice.invoiceDate);
+    await page.locator("#wiPreviewForm").getByText(/Payment due/).waitFor();
+  } finally {
+    await context.close();
+  }
+});
 
 for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["desktop", { width: 1440, height: 1000 }]]) for (const color of ["light", "dark"]) {
   test(`wholesale invoices ${device} ${color}: reviewed VAT issue, protected customer documents and manual payment`, { timeout: 180000 }, async () => {

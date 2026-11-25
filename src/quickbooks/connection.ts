@@ -79,15 +79,16 @@ export async function readCompany(config:Config,realm:string,access:string){
 export async function resourceReader(req:Request,env:Env,expected?:Connection,mode:Environment='sandbox'){
   const row=expected||await connection(env,mode),config=await configured(req,env,row.environment);if(row.status!=='connected')throw new ApiError(409,'quickbooks_reconnect','Connect and confirm this QuickBooks company first.');
   const used=await token(env,config,row);await current(env,row);const reads=new Map<string,Promise<any>>();let calls=0;
-  const request=async(path:string,init:RequestInit={})=>{if(++calls>45)throw invalid('This review needs too many distinct QuickBooks records. Review a smaller set of VAT mappings.');
+  const request=async(path:string,init:RequestInit={},beforeSend?:()=>Promise<void>)=>{
+    if(++calls>45)throw invalid('This review needs too many distinct QuickBooks records. Review a smaller set of VAT mappings.');
+    if(beforeSend)await beforeSend();
     try{return await provider(config.api+'/v3/company/'+id(row.realm_id)+path,{...init,headers:{authorization:'Bearer '+used.access,accept:'application/json',...(init.headers||{})}});}
     catch(error){if(error instanceof ProviderError&&error.providerStatus===401)await env.DB.prepare("UPDATE quickbooks_connections SET status='needs-reconnect',token_data=NULL,version=version+1 WHERE environment=? AND generation=? AND version=? AND token_version=?").bind(row.environment,row.generation,row.version,used.version).run();throw error;}
   };
   const read=(path:string)=>{const old=reads.get(path);if(old)return old;const result=request(path);reads.set(path,result);return result;};
   return{row,read,write:async(path:string,payload:unknown,contentType='application/json',beforeSend?:()=>Promise<void>)=>{
     await current(env,row);
-    if(beforeSend)await beforeSend();
-    return request(path,{method:'POST',headers:{'content-type':contentType},body:typeof payload==='string'?payload:JSON.stringify(payload)});
+    return request(path,{method:'POST',headers:{'content-type':contentType},body:typeof payload==='string'?payload:JSON.stringify(payload)},beforeSend);
   },check:()=>current(env,row)};
 }
 export async function readResource(req:Request,env:Env,path:string,mode:Environment='sandbox'){const resources=await resourceReader(req,env,undefined,mode),data=await resources.read(path);await resources.check();return data;}

@@ -25,7 +25,7 @@ function invoiceFixture() {
    CREATE TABLE wholesale_tabs(id TEXT PRIMARY KEY,customer_id TEXT,cleared_at INTEGER,data TEXT);
    CREATE TABLE wholesale_auto_invoicing(id INTEGER PRIMARY KEY,data TEXT);
    CREATE TABLE wholesale_auto_invoices(source TEXT PRIMARY KEY,lease_owner TEXT,lease_until INTEGER);
-   CREATE TABLE quickbooks_exports(id INTEGER PRIMARY KEY,invoice_id INTEGER,environment TEXT,state TEXT);
+   CREATE TABLE quickbooks_exports(id INTEGER PRIMARY KEY,invoice_id INTEGER,environment TEXT,state TEXT,write_started_at INTEGER NOT NULL DEFAULT 0);
    CREATE TABLE quickbooks_observations(export_id INTEGER,status TEXT,outstanding_pence INTEGER,paid_pence INTEGER,reason TEXT,observed_at INTEGER);
    CREATE TABLE audit_log(at INTEGER,kind TEXT,actor TEXT,text TEXT);
  `);
@@ -61,6 +61,20 @@ test('production issuance and amendment cannot both win either invoice/order rac
    if(invoiceFirst){assert.equal((await insert()).status,201);assert.equal(update(),0);}
    else{assert.equal(update(),1);await assert.rejects(insert(),error=>error.status===409);}
   }
+ }finally{db.close();}
+});
+
+test('Payment before dispatch has a fixed due date in the invoice preview',async()=>{
+ const {handleInvoiceAdmin}=await invoiceModule();
+ const {db,env,order,addOrder,request,review}=invoiceFixture();
+ try{
+  const id='WS-'+'E'.repeat(32);
+  addOrder(id,{...order,customerSnapshot:{...order.customerSnapshot,paymentTerms:{id:'before-dispatch',label:'Payment before dispatch',note:''}}});
+  const preview=body=>handleInvoiceAdmin(request(body),env,'orders/'+id+'/invoice/preview','Audit');
+  const response=await preview(review);
+  assert.equal(response.status,200);
+  assert.equal((await response.json()).invoice.dueDate,review.invoiceDate);
+  await assert.rejects(preview({...review,dueDate:'2026-11-30'}),error=>error.status===400&&/agreed invoice payment terms/.test(error.message));
  }finally{db.close();}
 });
 
@@ -109,7 +123,7 @@ test('a Live link created during manual payment review prevents the stale paymen
   const id='WS-'+'C'.repeat(32);
   addOrder(id);
   const {invoice}=await (await handleInvoiceAdmin(request(review),env,'orders/'+id+'/invoice','Audit')).json();
-  race(()=>db.prepare("INSERT INTO quickbooks_exports VALUES(1,?,'production','linked')").run(invoice.id));
+  race(()=>db.prepare("INSERT INTO quickbooks_exports (id,invoice_id,environment,state) VALUES(1,?,'production','linked')").run(invoice.id));
   const payment=new Request('http://localhost/payment',{method:'PATCH',body:JSON.stringify({ifVersion:invoice.payment.version,paid:true})});
   await assert.rejects(handleInvoiceAdmin(payment,env,'invoices/'+invoice.id+'/payment','Audit'),error=>error.code==='quickbooks_managed_payment');
   assert.equal(db.prepare('SELECT paid FROM wholesale_invoices WHERE seq=?').get(invoice.id).paid,0);
@@ -123,7 +137,7 @@ test('invoices waiting for a balance review are excluded from the overdue queue 
   const id='WS-'+'D'.repeat(32);
   addOrder(id,{...order,paymentTerms:{id:'net-30',label:'30 days',note:''}});
   const {invoice}=await (await handleInvoiceAdmin(request({...review,invoiceDate:'2020-01-01',supplyDate:'2020-01-01'}),env,'orders/'+id+'/invoice','Audit')).json();
-  db.prepare("INSERT INTO quickbooks_exports VALUES(1,?,'production','linked')").run(invoice.id);
+  db.prepare("INSERT INTO quickbooks_exports (id,invoice_id,environment,state) VALUES(1,?,'production','linked')").run(invoice.id);
   const list=async queue=>(await handleInvoiceAdmin(new Request('http://localhost/invoices?queue='+queue),env,'invoices','Audit')).json();
   const {summary}=await list('all');
   assert.equal(summary.outstandingPence,invoice.totals.grossPence);
