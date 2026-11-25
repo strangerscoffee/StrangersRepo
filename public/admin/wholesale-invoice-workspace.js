@@ -1,6 +1,6 @@
 // The Admin invoicing workspace shares the site's grouped lists, controls and invoice sheets.
 window.WholesaleInvoiceWorkspace = function ({ api, html, raw, svg, title, footer, field, show, busy, reload, closeSheet, toast,
-  money, date, today, checked, openInvoice, openReminder }) {
+  money, date, today, checked, openInvoice, openReminder, openBillingReview }) {
   const root = "/api/admin/wholesale/invoicing";
   const tabs = [["today", "Today"], ["accounts", "Billing accounts"], ["invoices", "Invoices"], ["collections", "Collections"], ["reconciliation", "Reconciliation"]];
   const defaultMonth = () => today().slice(0, 7);
@@ -22,7 +22,7 @@ window.WholesaleInvoiceWorkspace = function ({ api, html, raw, svg, title, foote
   const tag = (label, tone = "") => html`<span class="pill ${tone}">${label}</span>`;
   const stat = (label, value, note) => html`<div class="stat glass"><span class="k">${label}</span><span class="v num">${value}</span>${note ? html`<span class="s">${note}</span>` : ""}</div>`;
   const stats = (entries) => html`<div class="stats wi-stats iw-stats">${entries.map(entry => stat(...entry))}</div>`;
-  const heading = (name, detail, controls = "") => html`<div class="iw-heading"><div><h2>${name}</h2>${detail ? html`<p class="hint">${detail}</p>` : ""}</div>${controls}</div>`;
+  const heading = (name, detail, controls = "") => html`<header class="iw-heading"><div><h2>${name}</h2>${detail ? html`<p class="hint">${detail}</p>` : ""}</div>${controls}</header>`;
   const panel = (name, body, extra = "") => html`<section class="glass group iw-panel"><header><h3>${name}</h3>${extra}</header>${body}</section>`;
   const note = (text) => html`<p class="hint iw-note">${text}</p>`;
   const split = (left, right, css = "") => html`<div class="iw-split ${css}"><div class="iw-stack">${left}</div><div class="iw-stack">${right}</div></div>`;
@@ -30,10 +30,11 @@ window.WholesaleInvoiceWorkspace = function ({ api, html, raw, svg, title, foote
   const item = (name, detail, icon, tone, control) => html`<div class="item has-action iw-item"><span class="ic ${tone}">${svg(icon)}</span><div class="tx"><b>${name}</b><span>${detail}</span></div><div class="iw-item-action">${control}</div></div>`;
 
   function nav() {
+    const tool = (label, name, icon, short = label) => html`<button class="btn soft iw-tool" type="button" data-act="wh-invoice-${name}" aria-label="${label}" title="${label}">${svg(icon)}<span class="iw-tool-label">${label}</span><span class="iw-tool-compact">${short}</span></button>`;
     return html`<div class="iw-navigation">
-      <nav class="glass iw-tabs" aria-label="Invoicing workspace">${tabs.map(([id, label]) => html`<button class="btn sm" type="button" aria-pressed="${active === id}" data-act="wh-invoice-view" data-id="${id}">${label}</button>`)}</nav>
-      <label class="iw-view-picker field"><span class="fl">Invoicing view</span><select id="iwView" class="wi-picker">${tabs.map(([id, label]) => html`<option value="${id}" ${active === id ? raw("selected") : ""}>${label}</option>`)}</select></label>
-      <div class="iw-global-actions">${action("QuickBooks", "quickbooks")}${action("Invoice settings", "settings")}</div>
+      <nav class="seg iw-tabs" aria-label="Invoicing workspace">${tabs.map(([id, label]) => html`<button class="btn sm" type="button" aria-pressed="${String(active === id)}" data-act="wh-invoice-view" data-id="${id}">${label}</button>`)}</nav>
+      <label class="iw-view-picker field"><span class="sc-sr-only">Invoicing view</span><select id="iwView" class="wi-picker">${tabs.map(([id, label]) => html`<option value="${id}" ${active === id ? raw("selected") : ""}>${label}</option>`)}</select></label>
+      <div class="iw-global-actions" role="group" aria-label="Invoicing tools">${tool("QuickBooks", "quickbooks", "db")}${tool("Invoice settings", "settings", "tune", "Settings")}</div>
     </div>`;
   }
 
@@ -41,16 +42,18 @@ window.WholesaleInvoiceWorkspace = function ({ api, html, raw, svg, title, foote
     const { summary, issues, overdue, dispatched } = await api("GET", root + "/today");
     const { reviewCount = 0, overdueCount = 0, overduePence = 0, outstandingPence = 0 } = summary || {};
     return html`${heading("Today", date(today()), action("Create batch", "batch", "", true))}
-      ${stats([["Needs review", reviewCount, "Billing and balance exceptions"], ["Outstanding", money(outstandingPence)], ["Overdue", money(overduePence), countLabel(overdueCount, "invoice")]])}
+      ${stats([["Needs review", reviewCount], ["Outstanding", money(outstandingPence)], ["Overdue", money(overduePence), countLabel(overdueCount, "invoice")]])}
       ${split(
-        panel("Needs attention", issues.length ? html`<div class="iw-list">${issues.map(invoice => item(invoice.business, invoice.number + " · " + invoice.reason,
-          "warn", "warn", action(/billing (?:address|postcode)/.test(invoice.reason) ? "Review billing" : "Review invoice", "open", invoice.id)))}</div>`
-          : note("No billing or balance exceptions."), reviewCount > issues.length ? action("View all", "queue", "review") : ""),
-        html`${panel("Dispatched orders", html`<div class="iw-panel-body">${keyValues([["Ready this month", dispatched]])}
-          ${dispatched ? html`<div>${action("Review batch", "batch")}</div>` : note("No eligible dispatches this month.")}</div>`)}
-          ${panel("Overdue follow-up", overdue.length ? html`<div class="iw-list">${overdue.map(invoice => item(invoice.business, money(invoice.balancePence) + " · Due " + date(invoice.due),
+        html`${panel("Needs attention", issues.length ? html`<div class="iw-list">${issues.map(invoice => {
+          const billing = /billing (?:address|postcode)/.test(invoice.reason);
+          return item(invoice.business, invoice.number + " · " + invoice.reason,
+            "warn", "warn", action(billing ? "Review billing" : "Review invoice", billing ? "review-billing" : "open", invoice.id));
+        })}</div>`
+          : note("No billing or balance exceptions."), reviewCount > issues.length ? action("View all", "queue", "review") : "")}
+        ${panel("Overdue follow-up", overdue.length ? html`<div class="iw-list">${overdue.map(invoice => item(invoice.business, money(invoice.balancePence) + " · Due " + date(invoice.due),
             "clock", "warn", invoice.linked ? action("Preview reminder", "reminder", invoice.id) : action("Open invoice", "open", invoice.id)))}</div>`
-            : note("No overdue invoices."), overdueCount > overdue.length ? action("Collections", "view", "collections") : "")}`
+            : note("No overdue invoices."), overdueCount > overdue.length ? action("Collections", "view", "collections") : "")}`,
+        panel("Dispatches to invoice", item(countLabel(dispatched, "order"), dispatched ? "Ready this month" : "No eligible dispatches this month", "doc", dispatched ? "acc" : "mut", ""))
       )}`;
   }
 
@@ -69,11 +72,11 @@ window.WholesaleInvoiceWorkspace = function ({ api, html, raw, svg, title, foote
     const schedule = sheet ? inSheet("Billing schedule", "account-schedule", account.id) : action("Billing schedule", "schedule", account.id);
     const open = (id) => sheet ? inSheet("Review billing", "account-invoice", id) : action("Review billing", "open", id);
     return html`
-      ${panel("Billing details", html`<div class="iw-panel-body">
-        ${keyValues([["Bill to", [account.address, account.postcode].filter(Boolean).join(" · ") || "Add a billing address"],
+      ${panel("Billing details", html`<div class="iw-panel-body iw-account-details">
+        ${keyValues([["Bill to", [account.address, account.postcode].filter(Boolean).join("\n") || "Add a billing address"],
           ["Recipient", account.recipient || "Add an accounts email"], ["Payment terms", account.terms.label], ["Invoice when", scheduleLabel(account.schedule.cadence)]])}
         ${account.terms.note ? note(account.terms.note) : ""}
-        <div class="wi-workflow-actions">${statement}${schedule}</div>
+        <div class="wi-workflow-actions">${sheet ? statement : ""}${schedule}</div>
       </div>`, account.confirmed ? tag("Address confirmed", "ok") : "")}
       ${account.exception ? panel("Billing exception", item(account.exception.number, account.exception.reason, "warn", "warn", open(account.exception.id))) : ""}
       ${stats([["Outstanding", money(account.balance?.balancePence || 0)], ["Overdue", money(account.balance?.overduePence || 0)], ["Unbilled orders", account.unbilled]])}
@@ -84,20 +87,23 @@ window.WholesaleInvoiceWorkspace = function ({ api, html, raw, svg, title, foote
   }
 
   async function accountsView() {
-    if (!directory) directory = await api("GET", root + "/accounts?q=" + query(accountSearch));
-    const entries = directory.accounts;
+    const search = accountSearch;
+    const results = directory || await api("GET", root + "/accounts?q=" + query(search));
+    if (search !== accountSearch) return accountsView();
+    directory = results;
+    const entries = results.accounts;
     const selected = entries.find(value => value.id === accountId) || entries[0];
     accountId = selected?.id || "";
     const account = selected ? await api("GET", accountEndpoint(selected.id)) : null;
     const directoryView = html`<div class="iw-panel-body">
       <label class="search">${svg("search")}<input id="iwAccountSearch" type="search" aria-label="Search billing accounts" placeholder="Search billing accounts" value="${accountSearch}" maxlength="120"></label>
       ${entries.length ? html`<label class="field iw-account-picker"><span class="fl">Billing account</span><select class="wi-picker" id="iwAccount">${entries.map(entry => html`<option value="${entry.id}" ${entry.id === accountId ? raw("selected") : ""}>${entry.business}</option>`)}</select></label>
-        <div class="iw-account-list iw-list group">${entries.map(entry => html`<button class="item" type="button" data-act="wh-invoice-account" data-id="${entry.id}" aria-pressed="${entry.id === accountId}"><span class="tx"><b>${entry.business}</b><span>${scheduleLabel(entry.cadence)}</span></span><span class="chev">${svg("chev")}</span></button>`)}</div>`
+        <div class="iw-account-list iw-list group">${entries.map(entry => html`<button class="item" type="button" data-act="wh-invoice-account" data-id="${entry.id}" aria-pressed="${String(entry.id === accountId)}"><span class="tx"><b>${entry.business}</b><span>${scheduleLabel(entry.cadence)}</span></span><span class="chev">${svg("chev")}</span></button>`)}</div>`
         : note("No matching billing accounts.")}
-      ${directory.next ? action("More accounts", "accounts-more") : ""}
+      ${results.next ? action("More accounts", "accounts-more") : ""}
     </div>`;
     return html`${heading("Billing accounts", "")}
-      ${split(panel("Accounts", directoryView), account ? html`${heading(html`<span class="num">${account.business}</span>`, account.recipientKind)}
+      ${split(panel("Accounts", directoryView, tag(countLabel(entries.length, "account") + (results.next ? " shown" : ""))), account ? html`${heading(html`<span class="num">${account.business}</span>`, "", action("Preview statement", "statement", account.id, true))}
         ${accountContent(account)}` : "", "iw-accounts")}`;
   }
 
@@ -176,13 +182,14 @@ window.WholesaleInvoiceWorkspace = function ({ api, html, raw, svg, title, foote
     reviewData = data;
     const last = data.snapshots[0], counts = monthCounts(data);
     const diff = last ? data.orders.unbilled - last.orders.unbilled : 0;
-    return html`${heading("Reconciliation", "Balances on " + date(data.asOf) + " for invoices dated through month end.", action("Save snapshot", "close-review", "", true))}
-      <div class="iw-period">${field("Billing month", html`<input type="month" id="iwClosePeriod" value="${data.period}" max="${defaultMonth()}">`)}
-        ${last ? html`<span class="hint">Last saved ${checked(last.at)}${diff ? " · " + countLabel(Math.abs(diff), (diff < 0 ? "fewer" : "more") + " unbilled order") : ""}</span>` : ""}</div>
+    return html`${heading("Reconciliation", "", action("Save snapshot", "close-review", "", true))}
+      <div class="iw-period glass">${field("Billing month", html`<input type="month" id="iwClosePeriod" value="${data.period}" max="${defaultMonth()}">`)}
+        <div><p class="hint">Balances on ${date(data.asOf)} for invoices dated through month end.</p>
+        ${last ? html`<p class="hint">Last saved ${checked(last.at)}${diff ? " · " + countLabel(Math.abs(diff), (diff < 0 ? "fewer" : "more") + " unbilled order") : ""}</p>` : ""}</div></div>
       ${stats([["Issued in period", money(data.totals.issuedPence), countLabel(data.totals.issued, "invoice")], ["Posted to QuickBooks", money(data.totals.postedPence),
         countLabel(data.totals.posted, "linked invoice")], ["Overdue", money(data.balances.overduePence), countLabel(data.balances.overdue, "invoice")]])}
       ${split(html`${panel("Month-end checklist", html`<div class="iw-list">${closeChecks.map(([key, label]) => item(label, counts[key], key === "overdue" ? "clock" : "doc",
-        "acc", key === "dispatches" || key === "monthly" ? action("Review batch", "batch", data.period) : key === "overdue" ? action("Collections", "view", "collections")
+        "acc", key === "dispatches" ? action("Review batch", "batch", data.period) : key === "overdue" ? action("Collections", "view", "collections")
           : key === "verification" ? action("Review invoices", "queue", "review") : ""))}</div>`, tag(data.closed ? "Month closed" : "In progress"))}
         ${panel("Saved snapshots", last ? html`<div class="iw-list">${data.snapshots.map(entry => item(checked(entry.at), entry.by + " · " + entry.checked.length + " reviewed",
           "doc", "mut", action("View snapshot", "close-snapshot", entry.id)))}</div>` : note("Save a snapshot to compare later reviews."))}`,
@@ -195,11 +202,14 @@ window.WholesaleInvoiceWorkspace = function ({ api, html, raw, svg, title, foote
   }
 
   function closeReview(data) {
-    show(html`<form id="iwCloseReview" class="wi-sheet wi-workflow w-sensitive">${title("Save reconciliation snapshot", monthName(data.period))}
+    const form = show(html`<form id="iwCloseReview" class="wi-sheet wi-workflow w-sensitive">${title("Save reconciliation snapshot", monthName(data.period))}
       <div class="wi-body wi-section"><p class="hint">Mark the items you’ve checked. The snapshot records the figures and your notes.</p>
         ${closeChecks.map(([key, label]) => html`<label class="wi-check"><input name="reviewed" type="checkbox" value="${key}"><span><strong>${label}</strong><span class="iw-check-note">${monthCounts(data)[key]}</span></span></label>`)}
         ${field("Notes (optional)", html`<textarea name="note" maxlength="500"></textarea>`)}
-      </div>${footer("Save snapshot", "Back")}</form>`, async (name, _element, form) => {
+      </div><footer class="wi-foot"><p class="err" id="wiError" role="alert"></p><div class="row iw-review-footer">
+        <span class="iw-batch-progress" data-review-count role="status">0 of ${closeChecks.length} checked</span>
+        ${inSheet("Back", "wi-back")}<button class="btn" type="submit">Save snapshot</button>
+      </div></footer></form>`, async (name, _element, form) => {
       if (name !== "submit") return;
       await busy(form, async () => {
         const checked = [...form.querySelectorAll("[name=reviewed]:checked")].map(input => input.value);
@@ -208,14 +218,20 @@ window.WholesaleInvoiceWorkspace = function ({ api, html, raw, svg, title, foote
         await done();
       });
     }, done);
+    form.addEventListener("change", () => {
+      const selected = form.querySelectorAll("[name=reviewed]:checked").length;
+      form.querySelector("[data-review-count]").textContent = selected + " of " + closeChecks.length + " checked";
+    });
   }
   function closeSnapshot(data, entry) {
     show(html`<div class="wi-sheet wi-workflow w-sensitive">${title("Reconciliation snapshot", checked(entry.at))}
       <div class="wi-body">${panel(monthName(data.period), html`<div class="iw-panel-body">
         ${keyValues([["Issued", money(entry.totals.issuedPence)], ["Unbilled dispatches", entry.orders.unbilled], ["Overdue", money(entry.balances.overduePence)],
-          ["Reviewed by", entry.by], ["Reviewed items", closeChecks.filter(([key]) => entry.checked.includes(key)).map(([, label]) => label).join(" · ") || "Figures only"]])}
-        ${entry.note ? html`<p class="wi-address">${entry.note}</p>` : ""}
-      </div>`)}</div>${footer(null, "Back")}</div>`, () => {}, done);
+          ["Reviewed by", entry.by]])}
+        ${entry.note ? html`<p class="wi-workflow-note wi-address">${entry.note}</p>` : ""}
+      </div>`)}
+      ${panel("Checklist at time of review", html`<div class="iw-panel-body">${keyValues(closeChecks.map(([key, label]) => [label, entry.checked.includes(key) ? tag("Reviewed", "ok") : tag("Open")]))}</div>`)}
+      </div>${footer(null, "Back")}</div>`, () => {}, done);
   }
 
   async function openBatch(period = defaultMonth(), back = done) {
@@ -230,7 +246,7 @@ window.WholesaleInvoiceWorkspace = function ({ api, html, raw, svg, title, foote
   }
 
   function batchPicker(state) {
-    show(html`<form id="iwBatchPicker" class="wi-sheet wi-wide iw-batch w-sensitive">
+    const form = show(html`<form id="iwBatchPicker" class="wi-sheet wi-wide iw-batch w-sensitive">
       ${title("Create invoice batch", monthName(state.period))}
       <div class="wi-body">
         <div class="wi-settings-grid">${field("Dispatch month", html`<input id="iwBatchPeriod" type="month" value="${state.period}" max="${defaultMonth()}">`)}
@@ -244,14 +260,13 @@ window.WholesaleInvoiceWorkspace = function ({ api, html, raw, svg, title, foote
         ${state.next ? inSheet("More dispatches", "batch-more") : ""}
         ${state.recent.length ? panel("Recent runs", html`<div class="iw-list">${state.recent.map(entry => item(monthName(entry.period),
           checked(entry.at) + " · " + entry.issued + " of " + entry.entries + " issued", "doc", "mut", inSheet("View run", "batch-open", entry.id)))}</div>`) : ""}
-      </div>${footer(state.items.some(entry => !entry.monthly || state.closed) ? "Review selected" : null, "Back")}
+      </div><footer class="wi-foot"><p class="err" id="wiError" role="alert"></p><div class="row">
+        <span class="iw-batch-progress" data-selection role="status"></span>
+        ${inSheet("Back", "wi-back")}
+        ${state.items.some(entry => !entry.monthly || state.closed) ? html`<button type="submit" class="btn" disabled>Review selected</button>` : ""}
+      </div></footer>
     </form>`, async (name, element, form) => {
       await busy(form, async () => {
-        const visible = [...form.querySelectorAll("[name=entry]")];
-        for (const input of visible) {
-          if (input.checked) state.selected.add(input.value);
-          else state.selected.delete(input.value);
-        }
         state.delivery = form.elements.delivery.value;
         if (name === "batch-more") await loadBatchCandidates(state, true);
         if (name === "batch-open") batchReview(await api("GET", batchEndpoint(element.dataset.id)), () => loadBatchCandidates(state));
@@ -261,6 +276,21 @@ window.WholesaleInvoiceWorkspace = function ({ api, html, raw, svg, title, foote
         batchReview(review, () => loadBatchCandidates(state));
       });
     }, state.back);
+    const updateSelection = () => {
+      const size = state.selected.size;
+      const tooMany = size > state.maxSelection;
+      form.querySelector("[data-selection]").textContent = tooMany ? size + " selected · Choose up to " + state.maxSelection : size + " selected";
+      const review = form.querySelector("[type=submit]");
+      if (review) review.disabled = !size || tooMany;
+    };
+    form.addEventListener("change", event => {
+      const control = event.target;
+      if (control.name !== "entry") return;
+      if (control.checked) state.selected.add(control.value);
+      else state.selected.delete(control.value);
+      updateSelection();
+    });
+    updateSelection();
   }
 
   function batchReview(review, back) {
@@ -268,7 +298,7 @@ window.WholesaleInvoiceWorkspace = function ({ api, html, raw, svg, title, foote
     const pending = review.items.filter(value => ["waiting", "working"].includes(value.state));
     const complete = review.items.filter(value => value.state === "issued");
     const caption = stages[review.delivery] + (review.environment ? " · QuickBooks " + (review.environment === "production" ? "Live" : "Sandbox") : "");
-    const next = () => batchReview(review, back);
+    const next = async () => batchReview(await api("GET", batchEndpoint(review.id)), back);
     show(html`<form id="iwBatchReview" class="wi-sheet wi-wide iw-batch w-sensitive">
       ${title(approved ? "Batch progress" : "Review invoice batch", monthName(review.period) + " · " + caption)}
       <div class="wi-body">
@@ -287,6 +317,7 @@ window.WholesaleInvoiceWorkspace = function ({ api, html, raw, svg, title, foote
               ${entry.jobState === "held" && entry.exportState !== "review" && entry.exportState !== "paused" ? inSheet("Retry delivery", "batch-retry", entry.id) : ""}
             </div></div>`;
         })}</div>`)}
+        <p class="wi-approval-feedback wi-workflow-note" data-batch-feedback role="status"></p>
         ${approved ? html`<div class="wi-workflow-actions">${inSheet("Refresh progress", "batch-refresh")}${pending.length ? inSheet("Continue issuing", "batch-run") : ""}</div>` : ""}
       </div>${footer(!approved && pending.length ? "Approve and issue" : null, "Back")}
     </form>`, async (name, element, form) => {
@@ -298,8 +329,12 @@ window.WholesaleInvoiceWorkspace = function ({ api, html, raw, svg, title, foote
           batchReview(await api("GET", batchEndpoint(review.id)), back);
         }
         if (name === "batch-run" || (name === "submit" && !approved)) {
+          const feedback = form.querySelector("[data-batch-feedback]");
+          feedback.textContent = approved ? "Continuing this batch…" : "Approving batch…";
           let progress = approved ? review : await api("POST", batchEndpoint(review.id) + "/approve", { reviewed: true });
-          for (const entry of progress.items.filter(value => ["waiting", "working"].includes(value.state))) {
+          const waiting = progress.items.filter(value => ["waiting", "working"].includes(value.state));
+          for (const [index, entry] of waiting.entries()) {
+            feedback.textContent = "Processing invoice " + (index + 1) + " of " + waiting.length + "…";
             progress = await api("POST", batchEndpoint(progress.id) + "/items/" + entry.id + "/run", {});
           }
           batchReview(progress, back);
@@ -321,12 +356,12 @@ window.WholesaleInvoiceWorkspace = function ({ api, html, raw, svg, title, foote
     if (target.id === "iwAccount") { accountId = target.value; await reload(); return; }
     if (target.id === "iwClosePeriod" && target.value) { reviewMonth = target.value; await reload(); return; }
     if (target.id === "iwBatchPeriod" && picker && target.value) {
-      const state = picker, old = state.period;
+      const state = picker, old = state.period, previousSelection = state.selected;
       await busy(target.form, async () => {
         state.delivery = target.form.elements.delivery.value;
-        state.period = target.value; state.selected.clear();
+        state.period = target.value; state.selected = new Set();
         try { await loadBatchCandidates(state); }
-        catch (error) { state.period = old; target.value = old; throw error; }
+        catch (error) { state.period = old; state.selected = previousSelection; target.value = old; throw error; }
       });
     }
   }
@@ -335,13 +370,16 @@ window.WholesaleInvoiceWorkspace = function ({ api, html, raw, svg, title, foote
     if (name === "account") { accountId = id; await reload(); return true; }
     if (name === "account-sheet") { await openAccount(id, done); return true; }
     if (name === "accounts-more" && directory?.next) {
-      const page = await api("GET", root + "/accounts?q=" + query(accountSearch) + "&after=" + query(directory.next));
-      directory = { accounts: [...directory.accounts, ...page.accounts], next: page.next };
+      const previous = directory, search = accountSearch;
+      const page = await api("GET", root + "/accounts?q=" + query(search) + "&after=" + query(previous.next));
+      if (directory !== previous || accountSearch !== search) return true;
+      directory = { accounts: [...previous.accounts, ...page.accounts], next: page.next };
       await reload(); return true;
     }
     if (name === "statement") { await openStatement(id); return true; }
     if (name === "schedule") { await editSchedule(id); return true; }
     if (name === "reminder") { await openReminder(id); return true; }
+    if (name === "review-billing") { await openBillingReview(id); return true; }
     if (name === "batch") { await openBatch(id || undefined); return true; }
     if (name === "close-review" && reviewData) { closeReview(reviewData); return true; }
     if (name === "close-snapshot" && reviewData) {

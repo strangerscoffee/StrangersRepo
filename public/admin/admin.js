@@ -40,6 +40,7 @@
     pen: '<path d="M4 20h4L19 9l-4-4L4 16z"/>',
     x: '<path d="M6 6l12 12M18 6L6 18"/>',
     doc: '<path d="M6 3h8l4 4v14H6zM14 3v5h4M9 12h6M9 16h6"/>',
+    tune: '<path d="M4 6h9m4 0h3M4 12h3m4 0h9M4 18h9m4 0h3"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="15" cy="18" r="2"/>',
     copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>',
   };
   Object.assign(P, window.SCWholesalePreparation.iconPaths);

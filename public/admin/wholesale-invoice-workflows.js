@@ -5,7 +5,7 @@ window.WholesaleInvoiceWorkflows = function ({ api, html, title, footer, field, 
   const reminderPath = (id) => root + "/invoices/" + id + "/reminders";
   const billingIssue = (message) => message === "The QuickBooks customer billing address differs. Review the billing address before exporting."
     || /^The QuickBooks billing (?:address|postcode) differs from the issued invoice\.$/.test(message || "");
-  const address = (value) => html`<span class="wi-address">${value.address}</span><strong>${value.postcode}</strong>`;
+  const address = (value, postcodeDiffers = false) => html`<span class="wi-address">${value.address}</span><strong class="${postcodeDiffers ? "wi-address-postcode" : ""}">${value.postcode}</strong>`;
   const stamp = (name, at) => name ? name + " · " + checked(at) : checked(at);
 
   async function openBilling(exportId, environment, back) {
@@ -14,15 +14,14 @@ window.WholesaleInvoiceWorkflows = function ({ api, html, title, footer, field, 
     const label = { strangers: "Strangers", quickbooks: "QuickBooks" };
     const cards = (side, description) => html`<label class="wi-check wi-address-choice">
       <input type="radio" name="billingSource" value="${side}" required>
-      <span><b>${label[side]}</b><span class="hint">${description}</span>${address(review[side])}</span>
+      <span><b>${label[side]}</b><span class="hint">${description}</span>${address(review[side], review.difference === "postcode")}</span>
     </label>`;
     const difference = review.difference === "postcode" ? "Postcode differs" : review.difference ? "Billing address differs" : "Addresses checked";
-    show(html`<form id="wiBillingReview" class="wi-sheet wi-workflow w-sensitive">
+    const form = show(html`<form id="wiBillingReview" class="wi-sheet wi-workflow w-sensitive">
       ${title("Review billing address", review.number + " · " + review.business)}
       <div class="wi-body">
         <div class="wi-section wi-review-intro">
-          <div class="wi-section-heading"><h3>Billing details</h3><span class="pill ${review.difference ? "warn" : "ok"}">${difference}</span></div>
-          <p>Choose the correct billing address for this account.</p>
+          <div class="wi-section-heading"><h3>Choose the billing address</h3><span class="pill ${review.difference ? "warn" : "ok"}">${difference}</span></div>
         </div>
         <fieldset class="wi-billing-choices">
           <legend class="sc-sr-only">Billing address to use</legend>
@@ -55,6 +54,9 @@ window.WholesaleInvoiceWorkflows = function ({ api, html, title, footer, field, 
         }
       });
     }, back);
+    const confirm = form.querySelector("[type=submit]");
+    confirm.disabled = true;
+    form.addEventListener("change", () => { confirm.disabled = !form.querySelector("[name=billingSource]:checked"); });
   }
 
   function billingActivity(history) {
@@ -97,10 +99,10 @@ window.WholesaleInvoiceWorkflows = function ({ api, html, title, footer, field, 
           <p>Due ${date(preview.dueDate)}${preview.paymentVoided ? " · Payment voided" : ""}</p>
           <p class="hint">Checked ${checked(preview.checkedAt)}. The balance is checked again when you send.</p>
         </section>
-        <section class="wi-section">
+        <section class="wi-section wi-form-section">
           <div class="wi-section-heading"><h3>Email to customer</h3><button class="btn soft sm" type="button" data-sheet="hold-reminders">Hold reminders</button></div>
           <dl class="wi-reminder-meta">
-            <div><dt>To</dt><dd>${preview.to} <span class="hint">${preview.recipientLabel}</span></dd></div>
+            <div><dt>To</dt><dd>${preview.to}<span class="hint">${preview.recipientLabel}</span></dd></div>
             <div><dt>Subject</dt><dd>${preview.subject}</dd></div>
           </dl>
           <p class="wi-reminder-message wi-address">${preview.text}</p>

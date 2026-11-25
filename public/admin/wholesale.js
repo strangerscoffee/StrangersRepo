@@ -210,7 +210,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     onNavigationChange();
     const sensitive = section === "insights" || section === "invoices";
     document.documentElement.toggleAttribute("data-w-sensitive", sensitive);
-    return html`<div class="w-workspace w-operations">${head(section === "orders" ? wideOrders.matches ? "Wholesale orders" : "Wholesale" : sections.find(([id]) => id === section)[1], "", sensitive ? privacyToggle() : undefined)}
+    return html`<div class="w-workspace w-operations${section === "invoices" ? " w-invoicing" : ""}">${head(section === "orders" ? wideOrders.matches ? "Wholesale orders" : "Wholesale" : sections.find(([id]) => id === section)[1], "", sensitive ? privacyToggle() : undefined)}
       <div id="wSectionsHost" class="w-sections-host" hidden></div>
       <div class="w-content${sensitive ? " w-sensitive" : ""}">${section === "orders" ? orders() : section === "customers" ? customers() : section === "invoices" ? await invoiceUI.view() : section === "insights" ? await insightsUI.view() : section === "tabs" ? await tabsUI.view() : catalogue()}</div></div>`;
   }

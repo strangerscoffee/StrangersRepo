@@ -21,7 +21,13 @@ window.WholesaleQuickBooks = function ({api,html,raw,svg,show,title,footer,field
   const states={queued:"Queued",sending:"Sending",uncertain:"Checking confirmation",linked:"Linked",paused:"Paused",review:"Review required"};
   const refreshIcon=()=>raw('<svg class="i qb-refresh" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6.1 7a7 7 0 0 1 11.6-1L20 9M4 15l2.3 3A7 7 0 0 0 17.9 17"/></svg>');
   const refreshButton=(action,label)=>html`<button class="btn soft qb-icon" type="button" data-sheet="${action}" aria-label="${label}" title="${label}">${refreshIcon()}</button>`;
-  const companyDetails=state=>state.connection.name?html`<dl class="qb-meta"><div class="kv"><span>Company</span><strong>${state.connection.name}</strong></div><div class="kv"><span>Company ID</span><span>${state.connection.realmId}</span></div><div class="kv"><span>Country / currency</span><span>${state.connection.country} · ${state.connection.currency}</span></div>${state.connection.vatNumber?html`<div class="kv"><span>VAT registration</span><span>${state.connection.vatNumber}</span></div>`:""}</dl>`:"";
+  const companyDetails=state=>{
+    const company=state.connection;
+    if(!company.name)return "";
+    const rows=[["Company",company.name],["Company ID",company.realmId],["Country / currency",company.country+" · "+company.currency]];
+    if(company.vatNumber)rows.push(["VAT registration",company.vatNumber]);
+    return html`<dl class="iw-pairs qb-meta">${rows.map(([name,value])=>html`<div><dt>${name}</dt><dd>${value}</dd></div>`)}</dl>`;
+  };
   async function open(back=done,scope=null){
     scope=scope||callbackScope;callbackScope=null;
     let state=await api("GET",path("/status",scope||"sandbox"));
@@ -29,23 +35,23 @@ window.WholesaleQuickBooks = function ({api,html,raw,svg,show,title,footer,field
     if(scope!==state.environment)state=await api("GET",path("/status",scope));
     const connection=state.connection;
     const form=show(html`<form id="qbConnectionForm" class="wi-sheet wi-wide">${title("QuickBooks Online",modeName(state.activeEnvironment)+" active for new exports")}
-      <div class="wi-body"><section class="wi-section"><div class="qb-modes" role="group" aria-label="Accounting environment">${["sandbox","production"].map(mode=>html`<button class="btn ${mode===state.activeEnvironment?"":"soft"}" type="button" data-sheet="qb-mode" data-mode="${mode}" aria-pressed="${String(mode===state.activeEnvironment)}">${modeName(mode)}${mode===state.activeEnvironment?svg("ok"):""}</button>`)}</div><p class="hint">Switching changes where new invoices are sent. Existing Live invoices continue receiving payment updates.</p></section>
-      <div class="wi-settings-grid"><section class="wi-section"><div class="wi-section-heading"><h3>${modeName(scope)} connection</h3><span class="pill ${connection.status==="connected"?"ok":"warn"}">${label[connection.status]||"Not connected"}</span></div>
+      <div class="wi-body"><section class="wi-section qb-environment"><div class="qb-modes seg" role="group" aria-label="Accounting environment">${["sandbox","production"].map(mode=>html`<button class="btn" type="button" data-sheet="qb-mode" data-mode="${mode}" aria-pressed="${String(mode===state.activeEnvironment)}">${modeName(mode)}${mode===state.activeEnvironment?svg("ok"):""}</button>`)}</div><p class="hint">The active company receives new exports. Existing Live invoices keep receiving payment updates.</p></section>
+      <div class="wi-settings-grid wi-editor-grid"><section class="wi-section wi-form-section"><div class="wi-section-heading"><h3>${modeName(scope)} connection</h3><span class="pill ${connection.status==="connected"?"ok":"warn"}">${label[connection.status]||"Not connected"}</span></div>
       ${scope!==state.activeEnvironment?html`<div class="wi-draft-banner"><strong>${modeName(scope)} setup</strong><span>${modeName(state.activeEnvironment)} remains active. Reviewing this connection does not switch environments.</span></div>`:""}${companyDetails(state)}
       ${!state.configured?html`<p>Add your ${modeName(scope)} app credentials to connect QuickBooks.</p><a class="btn soft" href="https://github.com/strangerscoffee/StrangersRepo/blob/main/docs/quickbooks-integration.md" target="_blank" rel="noopener">Setup guide ${svg("out")}</a>`:
         connection.status==="pending"?html`${field("Company VAT registration",html`<input id="qbVatNumber" maxlength="40" required autocomplete="off">`)}<label class="wi-check"><input id="qbConfirmCompany" type="checkbox" required><span>I’ve checked this is the intended UK ${modeName(scope)} company and its VAT registration.</span></label>`:
-        connection.status==="connected"?html`<div class="group">${[["customer","Customers"],["item","Sales items"],["taxcode","Sales VAT codes"],["term","Payment terms"]].map(([kind,name])=>html`<button class="item" type="button" data-sheet="qb-browse" data-kind="${kind}"><span class="tx"><b>${name}</b></span>${svg("chev")}</button>`)}</div><button class="btn soft" type="button" data-sheet="qb-map-invoice">Review invoice mappings</button>`:
+        connection.status==="connected"?html`<div class="group qb-link-group">${[["customer","Customers"],["item","Sales items"],["taxcode","Sales VAT codes"],["term","Payment terms"]].map(([kind,name])=>html`<button class="item" type="button" data-sheet="qb-browse" data-kind="${kind}"><span class="tx"><b>${name}</b></span><span class="chev">${svg("chev")}</span></button>`)}</div><button class="btn soft" type="button" data-sheet="qb-map-invoice">Review invoice mappings</button>`:
         html`<button class="btn" type="button" data-sheet="qb-connect">Connect QuickBooks ${modeName(scope)}</button>`}
-      <button class="btn soft" type="button" data-sheet="qb-app-settings">App credentials and setup</button>
-      ${connection.status!=="disconnected"?html`<button class="btn soft" type="button" data-sheet="qb-disconnect">Disconnect ${modeName(scope)}</button>`:""}</section>
-      <section class="wi-section"><div class="wi-section-heading"><h3>Accounting activity</h3>${refreshButton("qb-refresh-status","Refresh accounting status")}</div>
-      <div class="group"><div class="item"><span class="tx"><b>Pending exports</b></span><strong>${state.health.exports.pending}</strong></div><div class="item"><span class="tx"><b>Exports to review</b></span><strong>${state.health.exports.review}</strong></div><div class="item"><span class="tx"><b>Payment updates queued</b></span><strong>${state.health.events.pending}</strong></div></div>
+      <div class="wi-quick-actions"><button class="btn soft" type="button" data-sheet="qb-app-settings">App credentials and setup</button>
+      ${connection.status!=="disconnected"?html`<button class="btn bad" type="button" data-sheet="qb-disconnect">Disconnect ${modeName(scope)}</button>`:""}</div></section>
+      <section class="wi-section wi-form-section"><div class="wi-section-heading"><h3>Accounting activity</h3>${refreshButton("qb-refresh-status","Refresh accounting status")}</div>
+      <dl class="iw-pairs qb-meta"><div><dt>Pending exports</dt><dd>${state.health.exports.pending}</dd></div><div><dt>Exports to review</dt><dd>${state.health.exports.review}</dd></div><div><dt>Payment updates queued</dt><dd>${state.health.events.pending}</dd></div></dl>
       <p class="hint">Last payment reconciliation: ${stamp(state.health.sync?.updated_at)}${state.health.sync?.last_error?" · "+state.health.sync.last_error:""}</p>
-      <button class="btn soft" type="button" data-sheet="qb-history">Export history</button>
-      ${connection.status==="connected"?html`<button class="btn soft" type="button" data-sheet="qb-payments">${refreshIcon()}Check payment updates</button>`:""}
-      <button class="btn soft" type="button" data-sheet="qb-readiness">${state.live.ready?"Review Live readiness":"Set up Live"}</button>
-      <button class="btn soft" type="button" data-sheet="qb-scope">View ${modeName(scope==="sandbox"?"production":"sandbox")} connection</button>
-      <p class="hint">Invoices are sent only after an admin reviews each export. Payments are recorded in QuickBooks; this site does not collect money or send invoice emails.</p></section></div></div>
+      <div class="wi-quick-actions"><button class="btn soft" type="button" data-sheet="qb-history">Export history</button>
+      ${connection.status==="connected"?html`<button class="btn soft" type="button" data-sheet="qb-payments">${refreshIcon()}Check payment updates</button>`:""}</div>
+      <div class="wi-quick-actions"><button class="btn soft" type="button" data-sheet="qb-readiness">${state.live.ready?"Review Live readiness":"Set up Live"}</button>
+      <button class="btn soft" type="button" data-sheet="qb-scope">View ${modeName(scope==="sandbox"?"production":"sandbox")} connection</button></div>
+      <p class="hint">Automatic sends follow your invoicing settings. Payment records are managed in QuickBooks.</p></section></div></div>
       ${footer(state.configured&&connection.status==="pending"?"Confirm company":null,"Done")}</form>`,async(action,element,current)=>{
       if(action==="qb-disconnect"){disconnect(state,back,scope);return;}
       if(action==="qb-mode"){if(element.dataset.mode!==state.activeEnvironment)await busy(current,()=>selectMode(element.dataset.mode,back,scope));return;}
@@ -75,7 +81,7 @@ window.WholesaleQuickBooks = function ({api,html,raw,svg,show,title,footer,field
   async function appSettings(scope,back){
     const state=await api("GET",path("/app-settings",scope)),locked=state.connectionStatus!=="disconnected";
     const form=show(html`<form id="qbAppSettingsForm" class="wi-sheet wi-wide" autocomplete="off">${title(modeName(scope)+" app settings","Client credentials and payment notifications")}
-      <div class="wi-body"><div class="wi-settings-grid"><section class="wi-section"><h3>Intuit app credentials</h3>
+      <div class="wi-body"><div class="wi-settings-grid wi-editor-grid"><section class="wi-section wi-form-section"><h3>Intuit app credentials</h3>
       ${!state.keyReady?html`<div class="wi-draft-banner"><strong>One-time hosting setup needed</strong><span>Add QUICKBOOKS_TOKEN_KEY as a Cloudflare Worker secret to protect your stored credentials. Keep this independent encryption key outside the database.</span></div>`:""}
       ${!state.readable?html`<p class="err">Saved settings cannot be opened. Check the hosting encryption key or disconnect this environment and enter replacement credentials.</p>`:""}
       <p class="hint">Use the ${scope==="production"?"Production":"Development"} keys from your Intuit app. Saving these settings does not connect a company or switch environments.</p>
@@ -86,9 +92,9 @@ window.WholesaleQuickBooks = function ({api,html,raw,svg,show,title,footer,field
       ${field("Webhook verifier token (optional)",html`<input id="qbAppWebhookToken" type="password" maxlength="2048" autocomplete="off" spellcheck="false" placeholder="${state.webhookConfigured?"Saved · leave blank to keep":"Enter verifier token from Intuit"}">`)}
       <p class="hint">${state.webhookConfigured?"Signed notifications are configured.":"Without a verifier token, scheduled payment checks remain available."}</p>
       <label class="wi-check"><input id="qbAppClearWebhook" type="checkbox"><span>Disable signed notifications for ${modeName(scope)}.</span></label>
-      </section><section class="wi-section"><h3>Copy into Intuit</h3><p class="hint">Register these addresses in the ${scope==="production"?"Production":"Development"} settings of your Intuit app. The return address stays on the Admin domain.</p>
-      ${field("OAuth redirect URI",html`<input id="qbAppCallback" value="${state.callbackUrl}" readonly aria-label="OAuth redirect URI">`)}<button class="btn soft" type="button" data-sheet="qb-copy-setup" data-key="qbAppCallback">Copy redirect URI</button>
-      ${field("Webhook endpoint",html`<input id="qbAppWebhookUrl" value="${state.webhookUrl}" readonly aria-label="Webhook endpoint">`)}<button class="btn soft" type="button" data-sheet="qb-copy-setup" data-key="qbAppWebhookUrl">Copy webhook endpoint</button>
+      </section><section class="wi-section wi-form-section"><h3>Copy into Intuit</h3><p class="hint">Register these addresses in the ${scope==="production"?"Production":"Development"} settings of your Intuit app.</p>
+      ${field("OAuth redirect URI",html`<textarea class="qb-copy-address" id="qbAppCallback" rows="2" readonly>${state.callbackUrl}</textarea>`)}<button class="btn soft sm" type="button" data-sheet="qb-copy-setup" data-key="qbAppCallback">${svg("copy")}Copy redirect URI</button>
+      ${field("Webhook endpoint",html`<textarea class="qb-copy-address" id="qbAppWebhookUrl" rows="2" readonly>${state.webhookUrl}</textarea>`)}<button class="btn soft sm" type="button" data-sheet="qb-copy-setup" data-key="qbAppWebhookUrl">${svg("copy")}Copy webhook endpoint</button>
       <p class="hint">Subscribe to Invoice and Payment notifications. Paste Intuit’s verifier token in the field alongside. Company ID is supplied when you sign in to QuickBooks; VAT, sales items and terms are reviewed after connecting.</p>
       <a class="btn soft" href="https://developer.intuit.com/app/developer/dashboard" target="_blank" rel="noopener">Open Intuit developer dashboard ${svg("out")}</a>
       ${state.hasOverrides?html`<button class="btn soft" type="button" data-sheet="qb-reset-app">Remove saved app settings</button>`:""}</section></div>

@@ -1400,28 +1400,34 @@ function customerInvoiceCard(invoice, expanded) {
   const checked = invoice.payment.checkedAt ? new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "Europe/London" }).format(new Date(invoice.payment.checkedAt)) : "";
   const dueDate = invoice.payment.dueDate ?? invoice.dueDate;
   const due = voided ? "Voided in QuickBooks" : review ? "Contact Strangers to confirm the current balance" : settled ? "Settled in QuickBooks" : paid ? (invoice.payment.paidDate ? "Paid " + date(invoice.payment.paidDate) : "£0.00 due") : dueDate ? "Due " + date(dueDate) : "Payment due under the agreed terms";
-  return `<article class="customer-invoice-card" data-customer-invoice="${escape(invoice.id)}">
-    <div class="history-card-head"><h3>${escape(invoice.number)}</h3><strong>${voided || settled ? money(0) + " due" : money(invoice.payment.totalPence ?? invoice.totals.grossPence)}</strong></div>
+  return `<article class="customer-invoice-card" data-customer-invoice="${escape(invoice.id)}" aria-labelledby="customer-invoice-${escape(invoice.id)}">
+    <div class="invoice-card-head"><div><h3 id="customer-invoice-${escape(invoice.id)}">${escape(invoice.number)}</h3>
+      <p class="invoice-card-date">${escape(date(invoice.invoiceDate))}${invoice.deliveryLocation?.name ? " · " + escape(invoice.deliveryLocation.name) : ""}</p></div>
+      <div class="invoice-card-total"><strong>${voided || settled ? money(0) + " due" : money(invoice.payment.totalPence ?? invoice.totals.grossPence)}</strong>${voided || settled ? "" : "<span>Invoice total</span>"}</div>
+    </div>
     <div class="invoice-status-line"><span class="invoice-state ${voided || settled ? "voided" : review ? "review" : paid ? "paid" : overdue ? "overdue" : "unpaid"}">${label}</span>${!voided && invoice.payment.hasVoidedPayment ? '<span class="invoice-state review">Payment voided</span>' : ""}<span>${escape(due)}</span></div>
-    <p class="history-summary">Invoice date: ${escape(date(invoice.invoiceDate))}${invoice.deliveryLocation?.name ? " · " + escape(invoice.deliveryLocation.name) : ""}</p>
-    ${voided || changed || review || settled ? "" : `<p class="payment-terms">${escape(invoice.paymentTerms.label)}${invoice.paymentTerms.note ? " · " + escape(invoice.paymentTerms.note) : ""}</p>`}
     ${!review && invoice.payment.outstandingPence > 0 ? `<p class="invoice-balance">${partial ? "Remaining balance" : "Outstanding"} <strong>${money(invoice.payment.outstandingPence)}</strong></p>` : ""}
-    ${checked ? `<p class="history-summary invoice-checked">Payment status checked ${escape(checked)}</p>` : ""}
+    ${checked ? `<p class="invoice-checked">Payment status checked ${escape(checked)}</p>` : ""}
     ${changed ? '<p class="history-summary">Current balance from QuickBooks. The PDF contains the original issued details.</p>' : ""}
+    <a class="button button-outline invoice-pdf" data-invoice-pdf href="${href}" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h8l4 4v14H6zM14 3v5h4M9 12h6M9 16h6"/></svg>View invoice PDF <span class="sr-only">(opens in a new tab)</span></a>
     <details class="invoice-details" ${expanded.has(String(invoice.id)) ? "open" : ""}><summary>${voided || changed || review || settled ? "Original invoice details" : "Invoice details and payment instructions"}</summary>
-      <p class="history-address"><b>Billed to</b><br>${escape([invoice.billTo.name, invoice.billTo.address, invoice.billTo.postcode].filter(Boolean).join("\n")).replaceAll("\n", "<br>")}</p>
-      <p>Order: ${escape(invoice.orderId)}${invoice.orderReference ? " · Reference: " + escape(invoice.orderReference) : ""}</p>
-      <dl class="invoice-amounts"><div><dt>Net subtotal</dt><dd>${money(invoice.totals.netPence)}</dd></div><div><dt>VAT</dt><dd>${money(invoice.totals.vatPence)}</dd></div><div><dt>${voided || changed ? "Original invoice total" : "Invoice total"}</dt><dd>${money(invoice.totals.grossPence)}</dd></div></dl>
-      ${!voided && !review && !settled && invoice.paymentInstructions ? `<p class="history-address"><b>How to pay</b><br>${escape(invoice.paymentInstructions).replaceAll("\n", "<br>")}</p>` : ""}
-    </details><a class="button button-outline invoice-pdf" data-invoice-pdf href="${href}" target="_blank" rel="noopener">View invoice PDF <span class="sr-only">(opens in a new tab)</span></a>
+      <div class="invoice-detail-body">
+        <p class="invoice-postal"><b>Billed to</b><br>${escape([invoice.billTo.name, invoice.billTo.address, invoice.billTo.postcode].filter(Boolean).join("\n"))}</p>
+        ${!voided && !changed && !review && !settled ? `<p class="invoice-detail-note">${escape(invoice.paymentTerms.label)}${invoice.paymentTerms.note ? " · " + escape(invoice.paymentTerms.note) : ""}</p>` : ""}
+        <p class="invoice-detail-note">${invoice.orderIds?.length > 1 ? invoice.orderIds.length + " orders" : "Order " + escape(invoice.orderId)}${invoice.orderReference ? " · " + escape(invoice.orderReference) : ""}</p>
+        <dl class="invoice-amounts"><div><dt>Net subtotal</dt><dd>${money(invoice.totals.netPence)}</dd></div><div><dt>VAT</dt><dd>${money(invoice.totals.vatPence)}</dd></div><div><dt>${voided || changed ? "Original invoice total" : "Invoice total"}</dt><dd>${money(invoice.totals.grossPence)}</dd></div></dl>
+        ${!voided && !review && !settled && invoice.paymentInstructions ? `<p class="invoice-postal"><b>How to pay</b><br>${escape(invoice.paymentInstructions)}</p>` : ""}
+      </div>
+    </details>
   </article>`;
 }
 async function loadInvoices(append = false) {
   if (invoiceLoading || !invoicesShown()) return;
   invoiceLoading = true;
   const expanded = new Set([...document.querySelectorAll('[data-customer-invoice]:has(details[open])')].map(node => node.dataset.customerInvoice));
-  if (!append) { customerInvoices = []; invoiceCursor = null; invoiceTotal = 0; $("#customer-invoices-list").replaceChildren(SC.skeleton({ label: "Loading your invoices…" })); $("#invoice-more").hidden = true; $("#history-invoice-note").hidden = true; }
-  $("#invoice-count").textContent = append ? "Loading earlier invoices…" : "Loading invoices…";
+  const hasInvoices = customerInvoices.length > 0;
+  if (!append && !hasInvoices) $("#customer-invoices-list").replaceChildren(SC.skeleton({ label: "Loading your invoices…" }));
+  $("#invoice-count").textContent = append ? "Loading earlier invoices…" : hasInvoices ? "Refreshing invoices…" : "Loading invoices…";
   $("#customer-invoices-list").setAttribute("aria-busy", "true");
   refreshBusy("#refresh-invoices", true); $("#invoice-more").disabled = true;
   try {
@@ -1438,8 +1444,8 @@ async function loadInvoices(append = false) {
     $("#invoice-more").hidden = !invoiceCursor;
   } catch (error) {
     if (error.code === "invoices_unavailable") { session.invoices = false; applyInvoiceSwitch(); return; }
-    if (!append) $("#customer-invoices-list").textContent = error.message;
-    $("#invoice-count").textContent = append ? "Couldn’t load earlier invoices. Try again." : "Couldn’t load invoices. Use the refresh button to try again.";
+    if (!append && !hasInvoices) $("#customer-invoices-list").innerHTML = '<div class="history-empty"><h3>Couldn’t load invoices</h3><p>Use Refresh invoices to try again.</p></div>';
+    $("#invoice-count").textContent = append ? "Couldn’t load earlier invoices. Try again." : hasInvoices ? "Refresh unavailable. Showing the last loaded invoices." : error.message;
   } finally {
     invoiceLoading = false; $("#customer-invoices-list").setAttribute("aria-busy", "false");
     refreshBusy("#refresh-invoices", false); $("#invoice-more").disabled = false;

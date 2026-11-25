@@ -34,7 +34,6 @@ for (const [screen, viewport, isMobile] of [["phone", { width: 390, height: 844 
     const ctx = await b.newContext({ viewport, isMobile, hasTouch: isMobile, colorScheme: scheme });
     const [n, v] = ADMIN.split("="); await ctx.addCookies([{ name: n, value: v, url: srv.base }]);
     const p = await ctx.newPage(), errors = []; p.on("pageerror", (e) => errors.push(String(e)));
-    p.on("dialog", (d) => d.accept());
     await p.goto(srv.base + "/admin#wholesale");
     await selectWholesaleSection(p, "invoices");
     const panel = p.locator(".wi-auto");
@@ -51,6 +50,7 @@ for (const [screen, viewport, isMobile] of [["phone", { width: 390, height: 844 
     assert.match(await panel.textContent(), /On since/);
     assert.ok(!(await sw("quickbooks").isDisabled()));
     await sw("quickbooks").click();
+    await p.getByRole("button", { name: "Enable automatic posting", exact: true }).click();
     await p.locator('[data-act="wh-invoice-auto"][data-id="quickbooks"][aria-checked="true"]').waitFor();
     assert.match(await panel.textContent(), /Sent as Admin/);
     // The held one shows why, with its buttons.
