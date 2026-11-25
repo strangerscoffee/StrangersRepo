@@ -63,6 +63,51 @@ test('release migrations apply in D1 batches and the managed request path only c
   }
 });
 
+test('concurrent requests finish QuickBooks migrations after seeing the same old columns', { timeout: 15000 }, async () => {
+  const sqlite = new DatabaseSync(':memory:');
+  const schema = await loadSchemaModule();
+  const collisions = [];
+  let readsUntilReady = 0;
+  const gate = Promise.withResolvers();
+  const binding = () => remoteDatabase('0'.repeat(32), '00000000-0000-0000-0000-000000000000', 'fixture-token', async (_url, request) => {
+    const { batch } = JSON.parse(request.body);
+    try {
+      const result = batch.map(({ sql, params }) => ({ success: true, results: sqlite.prepare(sql).all(...params) }));
+      if (readsUntilReady && batch[0].sql === "SELECT name FROM pragma_table_info('quickbooks_observations')") {
+        if (--readsUntilReady === 0) gate.resolve();
+        await gate.promise;
+      }
+      return Response.json({ success: true, result });
+    } catch (error) {
+      const duplicate = /duplicate column name: (\w+)/.exec(error.message)?.[1];
+      if (duplicate) collisions.push(duplicate);
+      return Response.json({ success: false, errors: [{ message: error.message }] }, { status: 400 });
+    }
+  });
+  try {
+    await schema.applySchema({ DB: binding() });
+    sqlite.exec(`
+      DELETE FROM schema_migrations WHERE id >= 42;
+      ALTER TABLE quickbooks_observations DROP COLUMN due_date;
+      ALTER TABLE quickbooks_observations DROP COLUMN invoice_issue;
+      INSERT INTO quickbooks_exports(id,environment,realm_id,company_name,company_vat,invoice_id,request_id,fingerprint,
+        payload,payload_hash,source_hash,created_by,preview,profiles,connection_generation,mapping_version,state,remote_id,created_at,updated_at)
+        VALUES(1,'production','123','Test','GB123',1,'test','test','{}','test','test','tester','{}','[]','test',1,'linked','100',1,1);
+      INSERT INTO quickbooks_observations(export_id,status,reason,read_started_at,observed_at)
+        VALUES(1,'review','The QuickBooks billing or delivery address differs.',1,1);
+    `);
+    readsUntilReady = 2;
+    const requests = await Promise.allSettled([schema.ensureSchema({ DB: binding() }), schema.ensureSchema({ DB: binding() })]);
+    assert.deepEqual(requests, [{ status: 'fulfilled', value: undefined }, { status: 'fulfilled', value: undefined }]);
+    assert.deepEqual(collisions, ['due_date', 'invoice_issue']);
+    assert.ok(await schema.schemaCurrent({ DB: binding() }));
+    assert.deepEqual(sqlite.prepare('SELECT event_key FROM quickbooks_events ORDER BY event_key').all().map(row => row.event_key),
+      ['address-recheck:1', 'balance-recheck:1']);
+  } finally {
+    sqlite.close();
+  }
+});
+
 test('an integration wake-up uses the queue and can fall back to the durable delivery ledger', async () => {
   const sent = [];
   let fallback = 0;
