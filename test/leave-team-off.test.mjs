@@ -74,3 +74,18 @@ test('nobody else off gives an empty list', async () => {
     const asked = await book(S.Carol, '2031-03-03', '2031-03-03');
     assert.deepEqual((await ok('GET', 'requests/' + asked.id)).teamOff, []);
 });
+
+test('recording an absence: admins see who else is off around the chosen dates before saving anything', async () => {
+    // The owner's request of 25 Nov 2026: GET /api/rota/leave/team-off for the dates an admin is choosing for someone.
+    const q = (who, from, to) => `team-off?userId=${encodeURIComponent(ids[who])}&from=${from}&to=${to}`;
+    const r = await ok('GET', q('Alice', '2031-01-16', '2031-01-17'));
+    assert.deepEqual(r.teamOff.map(o => [o.name, o.overlaps]), [['Carol', false], ['Beth', true], ['Dan', false]]);
+    assert.deepEqual(r.teamOff.find(o => o.name === 'Beth').shared, { from: '2031-01-16', to: '2031-01-17' });
+    assert.doesNotMatch(JSON.stringify(r), /PRIVATE REASON|user_?[iI]d/, 'names, dates and kind only');
+    // The person's own bookings are left out; others see theirs.
+    assert.ok(!(await ok('GET', q('Beth', '2031-01-16', '2031-01-17'))).teamOff.some(o => o.name === 'Beth'));
+    // Admins only, and sensible dates.
+    for (const session of [MGR, S.Alice]) assert.equal((await call('GET', 'rota/leave/' + q('Alice', '2031-01-16', '2031-01-17'), undefined, session)).status, 403);
+    for (const [from, to] of [['2031-01-17', '2031-01-16'], ['2031-01-01', '2031-04-01'], ['soon', '2031-01-16']])
+        assert.equal((await call('GET', 'rota/leave/' + q('Alice', from, to))).status, 400);
+});

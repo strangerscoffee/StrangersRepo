@@ -95,3 +95,54 @@ for (const [label, viewport] of [['phone', { width: 393, height: 852 }], ['iPad'
         assert.deepEqual(errors, []);
     } finally { await ctx.close(); }
 });
+
+// Recording an absence for someone (the owner's request, 25 Nov 2026): the same who-else-is-off calendar, starting on
+// the calendar and following the dates as they're chosen, before anything is saved.
+for (const [label, viewport] of [['phone', { width: 393, height: 852 }], ['iPad', { width: 1180, height: 820 }]]) for (const scheme of ['light', 'dark']) test(`who else is off while recording an absence on a ${label} (${scheme})`, { timeout: 90000 }, async () => {
+    if (!asked) {
+        asked = await book(S.Alice, '2031-01-15', '2031-01-17');
+        await book(ADMIN, '2031-01-16', '2031-01-20', { userId: ids.Beth, approved: true });
+        await book(ADMIN, '2031-01-08', '2031-01-10', { kind: 'unpaid', userId: ids.Carol, approved: true });
+        await book(ADMIN, '2031-01-20', '2031-01-21', { userId: ids.Dan, approved: true });
+    }
+    const ctx = await browser.newContext({ viewport, colorScheme: scheme, hasTouch: true, isMobile: viewport.width < 1024 });
+    const [name, value] = ADMIN.split('=');
+    await ctx.addCookies([{ name, value, url: srv.base }]);
+    const page = await ctx.newPage(), errors = [];
+    page.on('pageerror', e => errors.push(e.message));
+    try {
+        await page.goto(srv.base + '/rota/#leave-admin');
+        const pick = page.locator('select[name="leave_employee"], #leave_employee').first();
+        await pick.waitFor();
+        await pick.selectOption({ label: 'Alice' });
+        await page.getByRole('button', { name: 'Record absence', exact: true }).first().click();
+        const sheet = page.locator('#sheet');
+        await sheet.getByText('Record employee absence').first().waitFor();
+        await sheet.locator('input[type="date"]').nth(0).fill('2031-01-16');
+        await sheet.locator('input[type="date"]').nth(0).dispatchEvent('change');
+        await sheet.locator('input[type="date"]').nth(1).fill('2031-01-17');
+        await sheet.locator('input[type="date"]').nth(1).dispatchEvent('change');
+        const cal = sheet.locator('.team-off-box .tcal');
+        await cal.waitFor();
+        await page.waitForFunction(() => document.querySelectorAll('#sheet .team-off-box .tcal-day.req').length === 2);
+        assert.equal(await sheet.locator('.team-off-box .team-off-list').isHidden(), true, 'starts on the calendar');
+        assert.equal(await cal.locator('.tcal-day.clash').count(), 2, 'Beth is off on both chosen days');
+        assert.match(await cal.locator('.tcal-detail').innerText(), /Thursday 16 January · chosen[\s\S]*Beth[\s\S]*Holiday/);
+        assert.match(await cal.locator('.tcal-day[data-day="2031-01-09"]').innerText(), /Carol/);
+        assert.match(await cal.locator('.tcal-legend').innerText(), /Chosen[\s\S]*Chosen, others off[\s\S]*Holiday[\s\S]*Unpaid leave/);
+        // The list says the same in words.
+        await sheet.locator('.team-off-box').getByRole('button', { name: 'List', exact: true }).click();
+        assert.match(await sheet.locator('.team-off-box .team-off-group.overlap').innerText(), /1 person is already off on the chosen dates[\s\S]*Beth/);
+        await sheet.locator('.team-off-box').getByRole('button', { name: 'Calendar', exact: true }).click();
+        // Nothing was saved, and the request can still be reviewed as before.
+        await sheet.getByRole('button', { name: 'Review request', exact: true }).waitFor();
+        await page.locator('#sheet').evaluate(s => Promise.all(s.getAnimations().map(a => a.finished.catch(() => {}))));
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+        const box = await cal.boundingBox(), sheetBox = await sheet.locator('.sbody').first().boundingBox();
+        assert.ok(box.x >= sheetBox.x - 1 && box.x + box.width <= sheetBox.x + sheetBox.width + 1, 'the calendar fits the sheet');
+        await cal.scrollIntoViewIfNeeded();
+        await page.waitForTimeout(250);
+        if (process.env.SHOT_DIR) await page.screenshot({ path: join(process.env.SHOT_DIR, `record-team-off-${label}-${scheme}.png`) });
+        assert.deepEqual(errors, []);
+    } finally { await ctx.close(); }
+});

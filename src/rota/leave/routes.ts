@@ -154,6 +154,15 @@ export async function leaveRoutes(r: RotaRequest): Promise<Response | null> {
         ]);
         return json({ today: londonToday(), userId: uid, takeBy: await ownHolidayStatus(env, uid), enabled: p.settings.enabled, yearStart: p.settings.yearStart, bankHolidayPolicy: p.settings.bankHolidayPolicy, balances: rows.map(row => balance(row, days)), absences: await leaveViews(env, absences.results), legacyCount: legacy?.n ?? 0, types: Object.entries(LEAVE_TYPES).filter(([k]) => k !== "legacy" && (r.admin || canRequest(k))).map(([id, label]) => ({ id, label })) });
     }
+    // Recording an absence for someone (the owner's request, 25 Nov 2026): who else is off on or around the dates being
+    // chosen, the same as Review absence shows. Admins only; the person's own bookings are left out.
+    if (route === "leave/team-off" && m === "GET") {
+        r.needAdmin();
+        const uid = await activeUser(env, q("userId")), from = q("from"), to = q("to");
+        if (!isDay(from) || !isDay(to) || to < from || dates(from, to).length > 62)
+            throw invalid("Choose a first and last day up to two months apart.");
+        return json({ teamOff: await teamOff(env, { user_id: uid, from_day: from, to_day: to }) });
+    }
     if (route === "leave/calendar" && m === "GET") {
         const { from, to } = range(q("from"), q("to"), 93), { settings } = await policy(env);
         const sites = await employeeSites(env, user.id);
