@@ -303,3 +303,26 @@ test('An order placed before the business had an address is invoiced with the ad
  // The order itself keeps what it was placed with.
  assert.equal((await latest(o.id)).customerSnapshot?.address||'','');
 });
+
+test('A number already taken by an invoice typed into QuickBooks says whose it is, shows on the Overview, and Try again sends ours once renumbered',async()=>{
+ await switches(true,true,true);
+ // QuickBooks suggests the number after ours for invoices typed in by hand, so one may already hold the next number (25 Nov 2026).
+ const lastNumber=srv.sql("SELECT invoice_number FROM wholesale_invoices ORDER BY seq DESC LIMIT 1")[0].invoice_number,digits=/(\d+)$/.exec(lastNumber)[1];
+ const next=lastNumber.slice(0,-digits.length)+String(Number(digits)+1).padStart(digits.length,'0');
+ const template=[...provider.state.invoices.sandbox.values()].at(-1),typed={...structuredClone(template),Id:'7100',DocNumber:next,CustomerRef:{value:'99',name:'Strangers Roastery'},TotalAmt:3914.06,TxnDate:'2026-11-24',SyncToken:'0'};
+ provider.state.invoices.sandbox.set(typed.Id,typed);
+ const {cookie}=await business('Clash Cafe');const o=await order(cookie);await status(o,'Dispatched');
+ await waitForAuto('order:'+o.id,row=>row.state==='held','held on the taken number');
+ const held=autoRow('order:'+o.id);assert.match(held.reason,new RegExp(`Number taken: QuickBooks already has an invoice ${next} \\(Strangers Roastery, £3914\\.06, 24 Nov\\)`));
+ assert.equal(exportFor('order:'+o.id).state,'review');const sentBefore=attemptedEmails().length;
+ const overview=(await ok('GET','/api/admin/overview')).body;
+ const notice=overview.attention.find(a=>/Clash Cafe's invoice needs attention/.test(a.title));assert.ok(notice,JSON.stringify(overview.attention.map(a=>a.title)));assert.match(notice.detail,/Strangers Roastery/);assert.equal(notice.action.href,'#wholesale/invoices');
+ // Renumbered in QuickBooks: Try again under Automatic invoicing sends ours and emails it as usual.
+ typed.DocNumber='10239';typed.SyncToken='1';
+ await ok('POST',`${root}/auto-invoicing/order:${o.id}/retry`,{});
+ await waitForAuto('order:'+o.id,row=>row.state==='done','sent after renumbering');
+ const exported=exportFor('order:'+o.id);assert.equal(exported.state,'linked');assert.notEqual(exported.remote_id,'7100');assert.equal(exported.created_remote,1);
+ assert.equal(attemptedEmails().length,sentBefore+1,'emailed automatically, nothing having gone before');
+ assert.equal(provider.state.invoices.sandbox.get('7100').DocNumber,'10239','the typed-in invoice is left alone');
+ assert.ok(!(await ok('GET','/api/admin/overview')).body.attention.some(a=>/Clash Cafe/.test(a.title)),'notice gone once sent');
+});

@@ -177,6 +177,15 @@ export async function handleAutoInvoiceAdmin(req: Request, env: Env, route: stri
   if (item && req.method === "POST") {
     await readJson(req, 1024);
     const [, source, action] = item;
+    // Try again also restarts this invoice's QuickBooks send when it stopped for review before anything was written there (25 Nov 2026):
+    // usually a number already taken by an invoice typed into QuickBooks. Every check runs again before anything is sent, and the
+    // invoice is still emailed automatically, as nothing went out before.
+    if (action === "retry") {
+      const restarted = await env.DB.prepare(`UPDATE quickbooks_exports SET state='queued',retry_at=0,attempts=0,last_error='',lease_owner=NULL,lease_until=0,updated_at=?,version=version+1
+        WHERE auto=1 AND manual_retry=0 AND state='review' AND created_remote=0 AND write_started_at=0 AND lease_until<=?
+          AND invoice_id=(SELECT invoice_id FROM wholesale_auto_invoices WHERE source=? AND state='held')`).bind(Date.now(), Date.now(), source).run();
+      if (restarted.meta.changes) await audit(env, "wholesale_auto_invoicing", user.name, `${user.name} tried ${source} again in QuickBooks.`);
+    }
     const result = action === "retry"
       ? await env.DB.prepare("UPDATE wholesale_auto_invoices SET retry_at=0,attempts=0,updated_at=? WHERE source=? AND state IN ('pending','issued','exporting','held') AND lease_until<=?").bind(Date.now(), source, Date.now()).run()
       : await env.DB.prepare(`UPDATE wholesale_auto_invoices SET state='skipped',reason=?,retry_at=0,updated_at=?

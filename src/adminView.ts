@@ -147,6 +147,13 @@ export async function overview(env: Env, links: { rota: string; diary: string })
     attention.push({ tone: "warn", icon: "warn", title: `${mailFails.n} email ${mailFails.n === 1 ? "problem" : "problems"} in the last day`,
       detail: String(mailFails.t || "").slice(0, 160), action: { label: "See activity", go: "activity" }, dismiss: "email_failed" });
   }
+  // Automatic invoices that stopped (src/autoInvoice.ts), e.g. a number already taken by an invoice typed into QuickBooks: say which and why.
+  const heldInvoices = await env.DB.prepare(`SELECT COUNT(*) OVER() AS n, business, reason FROM wholesale_auto_invoices WHERE state = 'held' ORDER BY updated_at DESC LIMIT 1`)
+    .first<{ n: number; business: string; reason: string }>().catch(() => null);
+  if (heldInvoices && heldInvoices.n) {
+    attention.push({ tone: "warn", icon: "warn", title: heldInvoices.n === 1 ? `${heldInvoices.business}'s invoice needs attention` : `${heldInvoices.n} automatic invoices need attention`,
+      detail: String(heldInvoices.reason || "").replace(/^QuickBooks: /, "").slice(0, 220), action: { label: "Open Invoicing", href: "#wholesale/invoices" } });
+  }
   const slackFails = await env.DB.prepare("SELECT COUNT(*) AS n, MAX(text) AS t FROM audit_log WHERE kind = 'slack_failed' AND at > ?").bind(since("slack_failed")).first<{ n: number; t: string }>().catch(() => null);
   if (slackFails && slackFails.n) {
     attention.push({ tone: "warn", icon: "warn", title: `${slackFails.n} new-order Slack post${slackFails.n === 1 ? "" : "s"} didn't send`,

@@ -79,6 +79,13 @@ export async function retryExport(req:Request,env:Env,id:number,body:Record<stri
     .first<ExportOperation>();if(!saved)throw changed();return saved;
 }
 
+/** A QuickBooks invoice we didn't make already has this number (usually typed in by hand: QuickBooks suggests the number after ours). Say whose it is and what to do. */
+export function clashReason(remote:any,number:string){
+  const name=String(remote?.CustomerRef?.name||'another customer').slice(0,80),total=Number(remote?.TotalAmt),date=/^\d{4}-\d{2}-\d{2}$/.test(remote?.TxnDate||'')?new Date(remote.TxnDate+'T12:00:00Z').toLocaleDateString('en-GB',{day:'numeric',month:'short',timeZone:'UTC'}):'';
+  const what=[name,Number.isFinite(total)?'£'+total.toFixed(2):'',date].filter(Boolean).join(', ');
+  return `Number taken: QuickBooks already has an invoice ${number} (${what}) that wasn't made here. Change that invoice's number in QuickBooks to your next usual number, then press Try again.`;
+}
+
 export async function processExport(req:Request,env:Env,id:number){
   let row=await operation(env,id);if(!['queued','uncertain','sending'].includes(row.state)||row.lease_until>Date.now()||row.retry_at>Date.now())return row;
   const modeState=await settings(env);if(modeState.active_environment!==row.environment)return row;
@@ -115,7 +122,7 @@ export async function processExport(req:Request,env:Env,id:number){
     }
     if(remote){
       const match=matchesInvoice(preview,JSON.parse(row.payload),remote,!!row.created_remote||!!row.write_started_at);
-      if(!match.matches){if(row.write_started_at)await env.DB.prepare('UPDATE quickbooks_exports SET sandbox_eligible=0 WHERE id=? AND lease_owner=?').bind(id,owner).run();if(/^\d{1,32}$/.test(remote.Id||''))await saveRemote(env,id,owner,remote.Id);return finish(env,id,owner,'review',match.reason);}
+      if(!match.matches){if(row.write_started_at)await env.DB.prepare('UPDATE quickbooks_exports SET sandbox_eligible=0 WHERE id=? AND lease_owner=?').bind(id,owner).run();if(/^\d{1,32}$/.test(remote.Id||''))await saveRemote(env,id,owner,remote.Id);return finish(env,id,owner,'review',!row.created_remote&&!row.write_started_at?clashReason(remote,preview.candidate.number):match.reason);}
       // A matching record found before any create is adopted only after explicit review.
       if(!row.write_started_at&&!row.created_remote){await saveRemote(env,id,owner,remote.Id);return finish(env,id,owner,'review','A matching QuickBooks invoice exists. Review it and choose Link existing invoice.');}
       await resources.check();return link(env,row,owner,remote,true,startedAt);

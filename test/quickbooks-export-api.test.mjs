@@ -84,7 +84,7 @@ test('An existing manual invoice requires explicit matching adoption and is neve
 
 test('A hand-made invoice that took our number holds the export until it is renumbered, then Try again creates ours',async()=>{
  const invoice=await issued(),clash=structuredClone(template);clash.Id='5100';clash.DocNumber=invoice.number;clash.CustomerRef={value:'99'};clash.PrivateNote='Typed in QuickBooks';provider.state.invoices.sandbox.set(clash.Id,clash);
- const before=posts().length,sent=await send(invoice),saved=await settled(sent.body.export.id);assert.equal(saved.state,'review',JSON.stringify(saved));assert.match(saved.lastError||saved.reason||JSON.stringify(saved),/number, customer or currency differs/);assert.equal(posts().length,before);
+ const before=posts().length,sent=await send(invoice),saved=await settled(sent.body.export.id);assert.equal(saved.state,'review',JSON.stringify(saved));assert.match(saved.lastError||saved.reason||JSON.stringify(saved),/Number taken: QuickBooks already has an invoice .* that wasn.t made here/);assert.equal(posts().length,before);
  clash.DocNumber='10239';clash.SyncToken='1';
  const done=await retry(saved);assert.equal(done.state,'linked',JSON.stringify(done));assert.notEqual(done.remoteId,'5100');assert.equal(posts().length,before+1);
  assert.equal(provider.state.invoices.sandbox.get('5100').DocNumber,'10239','the hand-made invoice is left alone');
