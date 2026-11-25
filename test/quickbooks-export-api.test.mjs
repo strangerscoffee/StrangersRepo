@@ -36,10 +36,10 @@ async function settled(id,environment='sandbox',states=['linked','review','pause
 async function retry(saved,environment='sandbox'){await ok('POST',root+`/exports/${saved.id}/retry`,{ifVersion:saved.version,modeVersion:(await state(environment)).modeVersion,reviewed:true},ADMIN,environment);await ok('POST',root+'/exports/'+saved.id+'/process',{},ADMIN,environment);return settled(saved.id,environment);}
 const posts=(environment='sandbox')=>provider.state.calls.filter(c=>c.method==='POST'&&c.path.endsWith('/invoice')&&c.path.startsWith('/'+environment+'/'));
 before(async()=>{
- provider=await startQuickBooksProvider();srv=await startServer({scheduled:true,writeLimit:5000,vars:({base})=>({...quickBooksVars(provider.origin),QUICKBOOKS_SANDBOX_WEBHOOK_TOKEN:'sandbox-verifier-secret-for-tests',QUICKBOOKS_PRODUCTION_WEBHOOK_TOKEN:'production-verifier-secret-for-tests',QUICKBOOKS_REDIRECT_URI:base+root+'/callback'})});
+ provider=await startQuickBooksProvider();srv=await startServer({scheduled:true,writeLimit:5000,vars:({base})=>({...quickBooksVars(provider.origin),QUICKBOOKS_SANDBOX_WEBHOOK_TOKEN:'sandbox-verifier-secret-for-tests',QUICKBOOKS_PRODUCTION_WEBHOOK_TOKEN:'production-verifier-secret-for-tests',QUICKBOOKS_REDIRECT_URI:base+root+'/callback',RESEND_API_KEY:'fixture-resend-key',RESEND_API_URL:provider.origin+'/resend'})});
  ADMIN=(await ok('POST','/api/auth/setup',{name:'Integration Owner',username:'owner',password:'owner-password',code:SETUP_CODE},null)).cookie;
  for(const [role,username]of [['admin','other'],['staff','staff']]){await ok('POST','/api/admin/users',{name:username,username,role,password:'temporary-password'});const r=await ok('POST','/api/auth/change',{username,password:'temporary-password',newPassword:username+'-password'},null);if(role==='admin')OTHER=r.cookie;else STAFF=r.cookie;}
- customer=(await ok('POST','/api/admin/wholesale/customers',{business:'Export Cafe',address:'1 Test Road',postcode:'NR1 1AA',status:'Active',paymentTerms:'net-30'})).body.customer;
+ customer=(await ok('POST','/api/admin/wholesale/customers',{business:'Export Cafe',email:'orders@cafe.example',accountsEmail:'billing@cafe.example',address:'1 Test Road',postcode:'NR1 1AA',status:'Active',paymentTerms:'net-30'})).body.customer;
  const account=(await ok('POST',`/api/admin/wholesale/customers/${customer.id}/account`,{username:'export.buyer'})).body;
  BUYER=(await ok('POST','/api/wholesale/auth/change-password',{username:'export.buyer',password:account.temporaryPassword,newPassword:'buyer-password'},null)).cookie;await connect();
 });
@@ -127,6 +127,109 @@ test('Live exports and payment balances are environment scoped, customer owned a
  provider.state.pay('production',saved.remoteId,0);await ok('POST',root+`/exports/${saved.id}/refresh`,{},ADMIN,'production');own=(await ok('GET','/api/wholesale/invoices/'+first.id,undefined,BUYER)).body.invoice;assert.equal(own.payment.paid,true);assert.equal(own.payment.outstandingPence,0);
  assert.equal((await call('PATCH',`/api/admin/wholesale/invoices/${first.id}/payment`,{ifVersion:own.payment.version,paid:false})).status,409,'managed payment metadata cannot be changed through the local paid toggle');
  assert.deepEqual(srv.sql('SELECT data,paid FROM wholesale_invoices WHERE seq='+first.id)[0],before);const pdfAfter=Buffer.from(await(await fetch(srv.base+`/api/wholesale/invoices/${first.id}/pdf`,{headers:{cookie:BUYER}})).arrayBuffer());assert.deepEqual(pdfAfter,pdfBefore);
+});
+test('Reminder previews use the current QuickBooks balance and accounts email, and sending rechecks both',async()=>{
+ const invoice=await issued(),sent=await send(invoice,'production');
+ const linked=await settled(sent.body.export.id,'production');
+ assert.equal(linked.state,'linked',JSON.stringify(linked));
+ const remote=provider.state.pay('production',linked.remoteId,18);
+ remote.DueDate='2020-03-01';
+ const path='/api/admin/wholesale/invoices/'+invoice.id+'/reminders';
+ const messages=provider.state.reminderEmails;
+ assert.equal((await call('POST',path+'/preview',{},STAFF)).status,403);
+ assert.ok([401,403].includes((await call('POST',path+'/send',{token:'made-up'},BUYER)).status));
+ assert.equal((await call('POST',path+'/preview',{},null)).status,401);
+ const initial=(await ok('POST',path+'/preview',{})).body;
+ assert.equal(initial.to,'billing@cafe.example');
+ assert.equal(initial.amountPence,1800);
+ assert.match(initial.text,/£18.00 outstanding/);
+ assert.equal(messages.length,0);
+
+ const onHold=(await ok('PUT',path+'/hold',{ifVersion:0,held:true,reason:'Customer disputes the invoice'})).body;
+ assert.equal((await call('POST',path+'/preview',{})).body.code,'reminder_held');
+ assert.equal((await call('POST',path+'/send',{token:initial.token})).body.code,'reminder_held');
+ await ok('PUT',path+'/hold',{ifVersion:onHold.hold.version,held:false});
+ const stale=(await ok('POST',path+'/preview',{})).body;
+ provider.state.pay('production',linked.remoteId,12);
+ assert.equal((await call('POST',path+'/send',{token:stale.token})).body.code,'reminder_changed');
+ assert.equal(messages.length,0);
+ const preview=(await ok('POST',path+'/preview',{})).body;
+ assert.equal(preview.amountPence,1200);
+ assert.equal((await call('POST',path+'/send',{token:preview.token},OTHER)).body.code,'reminder_changed');
+ const record=(await ok('GET','/api/admin/wholesale/customers?q=Export%20Cafe')).body.customers.find(row=>row.id===customer.id);
+ const customerPath='/api/admin/wholesale/customers/'+customer.id;
+ const changed=(await ok('PUT',customerPath,{...record,ifVersion:record.version,accountsEmail:'new-billing@cafe.example'})).body.customer;
+ assert.equal((await call('POST',path+'/send',{token:preview.token})).body.code,'reminder_changed');
+ assert.equal(messages.length,0);
+ await ok('PUT',customerPath,{...record,ifVersion:changed.version});
+ const competing=(await ok('POST',path+'/preview',{})).body;
+ const deliveries=await Promise.all([call('POST',path+'/send',{token:preview.token}),call('POST',path+'/send',{token:competing.token})]);
+ assert.equal(deliveries.filter(result=>result.status===200&&result.body.reminder.status==='accepted').length,1,JSON.stringify(deliveries));
+ assert.equal(messages.length,1);
+ assert.deepEqual(messages[0].message.to,['billing@cafe.example']);
+ assert.match(messages[0].message.text,/£12.00 outstanding/);
+ const accepted=deliveries.find(result=>result.status===200).body.reminder;
+ assert.equal((await ok('GET',path)).body.history[0].id,accepted.id);
+ const winner=deliveries[0].status===200?preview:competing;
+ assert.equal((await ok('POST',path+'/send',{token:winner.token})).body.reminder.id,accepted.id);
+ assert.equal(messages.length,1);
+
+ const pending=(await ok('POST',path+'/preview',{})).body;
+ provider.state.pay('production',linked.remoteId,0);
+ assert.equal((await call('POST',path+'/send',{token:pending.token})).body.code,'reminder_settled');
+ assert.equal(messages.length,1);
+ provider.state.fail={path:'/invoice/'+linked.remoteId,status:503};
+ try{assert.equal((await call('POST',path+'/preview',{})).body.code,'reminder_balance_unconfirmed');}
+ finally{provider.state.fail=null;}
+ provider.state.pay('production',linked.remoteId,18);
+ const another=(await ok('POST',path+'/preview',{})).body;
+ provider.state.resendStatus=503;
+ let uncertain;
+ try{uncertain=(await ok('POST',path+'/send',{token:another.token})).body.reminder;}
+ finally{provider.state.resendStatus=0;}
+ assert.equal(uncertain.status,'unknown');
+ assert.equal((await call('POST',path+'/preview',{})).body.code,'reminder_unconfirmed');
+ await ok('POST',path+'/confirm',{id:uncertain.id,reviewed:true,accepted:false});
+ assert.equal((await ok('POST',path+'/preview',{})).body.amountPence,1800);
+});
+test('Live billing review changes future draft defaults and reopens when the QuickBooks address changes again',async()=>{
+ const invoice=await issued(),sent=await send(invoice,'production');
+ const linked=await settled(sent.body.export.id,'production');
+ assert.equal(linked.state,'linked',JSON.stringify(linked));
+ const remote=provider.state.invoices.production.get(linked.remoteId);
+ const original=remote.BillAddr;
+ remote.BillAddr={Line1:'Export Cafe',Line2:'7 Account Road',City:'Norwich',PostalCode:'NR3 1AA'};
+ const exportPath=root+'/exports/'+linked.id;
+ await ok('POST',exportPath+'/refresh',{},ADMIN,'production');
+ const invoicePath='/api/admin/wholesale/invoices/'+invoice.id;
+ assert.match((await ok('GET',invoicePath)).body.invoice.accounting.invoiceIssue,/billing/);
+ const path=exportPath+'/billing-review',review=(await ok('GET',path,undefined,ADMIN,'production')).body;
+ assert.equal(review.strangers.postcode,'NR1 1AA');
+ assert.equal(review.quickbooks.postcode,'NR3 1AA');
+ assert.equal(review.posted,true);
+ const before=posts('production').length;
+ await ok('POST',path,{token:review.token,choice:'quickbooks'},ADMIN,'production');
+ const saved=(await ok('GET',invoicePath)).body.invoice;
+ assert.deepEqual(saved.billTo,invoice.billTo);
+ assert.equal(saved.accounting.invoiceIssue,'');
+ assert.equal(saved.billingHistory[0].postcode,'NR3 1AA');
+ assert.equal(posts('production').length,before);
+ assert.equal((await ok('GET','/api/wholesale/invoices/'+invoice.id,undefined,BUYER)).body.invoice.billingHistory,undefined);
+ const profile=(await ok('GET','/api/wholesale/session',undefined,BUYER)).body.customer;
+ const order=(await ok('POST','/api/wholesale/orders',{requestId:crypto.randomUUID(),customerVersion:profile.version,delivery:'Roastery collection',lines:[{productId:'brazil',pack:'kilo',grind:'beans',quantity:2,price:1800}]},BUYER)).body.order;
+ const draft='/api/admin/wholesale/orders/'+order.id+'/invoice';
+ const billing=(await ok('GET',draft)).body.billing;
+ assert.equal(billing.billTo.postcode,'NR3 1AA');
+ const config=(await ok('GET','/api/admin/wholesale/invoice-settings')).body;
+ const data={orderVersion:order.version,settingsVersion:config.version,billingRevision:billing.revision,invoiceDate:'2026-11-10',supplyDate:'2026-11-09'};
+ assert.equal((await ok('POST',draft+'/preview',data)).body.invoice.billTo.postcode,'NR3 1AA');
+ assert.equal((await call('POST',draft,{...data,billingRevision:0})).status,409);
+ remote.BillAddr.PostalCode='NR3 2AA';
+ await ok('POST',exportPath+'/refresh',{},ADMIN,'production');
+ assert.match((await ok('GET',invoicePath)).body.invoice.accounting.invoiceIssue,/billing/);
+ const again=(await ok('GET',path,undefined,ADMIN,'production')).body;
+ await ok('POST',path,{token:again.token,choice:'strangers'},ADMIN,'production');
+ remote.BillAddr=original;
 });
 test('A payment recorded after Live review holds the export until the new payment is reviewed',async()=>{
  const invoice=await issued();

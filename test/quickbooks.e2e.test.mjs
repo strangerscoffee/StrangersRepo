@@ -1,4 +1,4 @@
-import { selectWholesaleSection } from "./admin-workspace-helpers.mjs";
+import { selectInvoiceView, selectWholesaleSection } from "./admin-workspace-helpers.mjs";
 import { openWholesaleOrders } from './wholesale-ui-helpers.mjs';
 // End-to-end accounting controls. Only the loopback simulator receives financial requests.
 import {test,before,after} from 'node:test';
@@ -35,6 +35,7 @@ for(const [device,viewport]of [['phone',{width:393,height:852}],['ipad',{width:8
   const page=await adminContext.newPage(),buyer=await customerContext.newPage(),errors=[];for(const p of [page,buyer])p.on('pageerror',e=>errors.push(e.message));
   const shot=async(suffix,p=page)=>{assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true,'no horizontal overflow');if(process.env.WHOLESALE_SCREENSHOT_DIR){await mkdir(process.env.WHOLESALE_SCREENSHOT_DIR,{recursive:true});await p.screenshot({path:`${process.env.WHOLESALE_SCREENSHOT_DIR}/quickbooks-${device}-${colorScheme}-${suffix}.png`});}};
   const openMain=async()=>{await page.goto(srv.base+'/admin?test='+crypto.randomUUID()+'#wholesale');await selectWholesaleSection(page, "invoices");await page.locator('[data-act="wh-invoice-quickbooks"]').click();await page.locator('#qbConnectionForm').waitFor();};
+  const openIssued=async()=>{await selectInvoiceView(page, 'invoices');await page.locator(`[data-act="wh-invoice-open"][data-id="${invoice.id}"]`).click();};
   async function connect(scope='Sandbox'){
    await page.locator('#qbConnectionForm h3',{hasText:scope+' connection'}).waitFor();
    if(await page.locator('[data-sheet="qb-disconnect"]').count()){await page.locator('[data-sheet="qb-disconnect"]').click();await page.locator('#qbDisconnectForm button[type="submit"]').click();await page.locator('[data-sheet="qb-connect"]').waitFor();}
@@ -60,7 +61,7 @@ for(const [device,viewport]of [['phone',{width:393,height:852}],['ipad',{width:8
    await openMain();await connect();await shot('connection');
    await page.locator('[data-sheet="qb-readiness"]').click();await page.locator('#qbLiveReview').waitFor();assert.equal((await api('GET',root+'/status')).data.activeEnvironment,'sandbox','opening Live readiness does not activate Live');await shot('readiness');await page.locator('#qbLiveReview [data-sheet="wi-back"]').first().click();
    await page.locator('[data-sheet="qb-browse"][data-kind="customer"]').click();await page.locator('#qbReferenceList .qb-reference-row').first().waitFor();assert.equal(await page.locator('#qbReferenceList .qb-reference-row').count(),100);await page.locator('[data-sheet="qb-next"]').click();await page.waitForFunction(()=>document.querySelectorAll('#qbReferenceList .qb-reference-row').length===1);await page.locator('#qbReferenceList [data-sheet="wi-back"]').first().click();
-   await page.locator('#qbConnectionForm [data-sheet="wi-back"]').first().click();await page.locator(`[data-act="wh-invoice-open"][data-id="${invoice.id}"]`).click();await page.locator('[data-sheet="wi-quickbooks"]').click();await map();await send();
+   await page.locator('#qbConnectionForm [data-sheet="wi-back"]').first().click();await openIssued();await page.locator('[data-sheet="wi-quickbooks"]').click();await map();await send();
    const sandbox=(await api('GET',root+'/exports?environment=sandbox&invoiceId='+invoice.id)).data.exports[0];
    provider.state.pay('sandbox',sandbox.remoteId,18);await page.locator('[data-sheet="qb-balance"]').click();await page.locator('#qbExportDetail strong',{hasText:'Part paid'}).waitFor();
    provider.state.pay('sandbox',sandbox.remoteId,0);await page.locator('[data-sheet="qb-balance"]').click();await page.locator('#qbExportDetail strong',{hasText:/^Paid$/}).waitFor();
@@ -71,14 +72,14 @@ for(const [device,viewport]of [['phone',{width:393,height:852}],['ipad',{width:8
    for(const checkbox of await page.locator('[data-attestation]').all())await checkbox.check();await shot('live-review');await page.locator('#qbLiveReview button[type="submit"]').click();await page.locator('[data-sheet="qb-activate-live"]').click();await page.locator('#qbSwitchReview').check();await page.locator('#qbModeForm button[type="submit"]').click();await page.locator('[data-sheet="qb-mode"][data-mode="production"][aria-pressed="true"]').waitFor();
    await shot('live');await page.locator('#qbConnectionForm [data-sheet="wi-back"]').first().click();
    // Returning from setup can reopen the invoice picker; a fresh page makes this a new invoice action.
-   await page.goto(srv.base+'/admin?test='+crypto.randomUUID()+'#wholesale');await selectWholesaleSection(page, "invoices");await page.locator(`[data-act="wh-invoice-open"][data-id="${invoice.id}"]`).click();await page.locator('[data-sheet="wi-quickbooks"]').click();await page.locator('#qbMappingReview').check();await page.locator('#qbMappingForm button[type="submit"]').click();await send();
+   await page.goto(srv.base+'/admin?test='+crypto.randomUUID()+'#wholesale');await selectWholesaleSection(page, "invoices");await openIssued();await page.locator('[data-sheet="wi-quickbooks"]').click();await page.locator('#qbMappingReview').check();await page.locator('#qbMappingForm button[type="submit"]').click();await send();
    const live=(await api('GET',root+'/exports?environment=production&invoiceId='+invoice.id)).data.exports[0];provider.state.pay('production',live.remoteId,20);
    await page.locator('[data-sheet="qb-balance"]').click();await page.locator('#qbExportDetail strong',{hasText:'Part paid'}).waitFor();await page.locator('#qbExportDetail [data-sheet="wi-back"]').first().click();await page.locator('#wiIssuedInvoice').waitFor();assert.equal(await page.locator('[data-sheet="wi-payment"]').count(),0,'QuickBooks owns payment recording after a Live link');assert.match(await page.locator('#wiIssuedInvoice').textContent(),/£20.00/);
    await openMain();await page.locator('[data-sheet="qb-mode"][data-mode="sandbox"]').click();await page.locator('#qbSwitchReview').check();await page.locator('#qbModeForm button[type="submit"]').click();await page.locator('[data-sheet="qb-mode"][data-mode="sandbox"][aria-pressed="true"]').waitFor();
    await page.locator('[data-sheet="qb-history"]').click();await page.locator('#qbExportHistory').waitFor();await shot('history');
    await buyer.goto(srv.base+'/wholesale/');await buyer.locator('#products article').first().waitFor();await openWholesaleOrders(buyer);await buyer.locator('#history-invoices').click();const card=buyer.locator(`[data-customer-invoice="${invoice.id}"]`);await card.waitFor();assert.match(await card.textContent(),/Part paid/);assert.match(await card.textContent(),/Remaining balance\s+£20.00/);assert.match(await card.textContent(),/Payment status checked/);await shot('customer-partial',buyer);
    // Live refresh stays available while Sandbox is active and targets the existing Live link.
-   await page.goto(srv.base+'/admin?test='+crypto.randomUUID()+'#wholesale');await selectWholesaleSection(page, "invoices");await page.locator(`[data-act="wh-invoice-open"][data-id="${invoice.id}"]`).click();await page.locator('[data-sheet="wi-quickbooks"]').click();await page.locator('#sheetTitle',{hasText:'QuickBooks Live'}).waitFor();provider.state.pay('production',live.remoteId,0);await page.locator('[data-sheet="qb-balance"]').click();await page.locator('#qbExportDetail strong',{hasText:/^Paid$/}).waitFor();await buyer.locator('#refresh-invoices').click();await card.locator('.invoice-state.paid').waitFor();assert.equal(await card.locator('.invoice-balance').count(),0);assert.ok(!(await card.textContent()).includes('Not set'));
+   await page.goto(srv.base+'/admin?test='+crypto.randomUUID()+'#wholesale');await selectWholesaleSection(page, "invoices");await openIssued();await page.locator('[data-sheet="wi-quickbooks"]').click();await page.locator('#sheetTitle',{hasText:'QuickBooks Live'}).waitFor();provider.state.pay('production',live.remoteId,0);await page.locator('[data-sheet="qb-balance"]').click();await page.locator('#qbExportDetail strong',{hasText:/^Paid$/}).waitFor();await buyer.locator('#refresh-invoices').click();await card.locator('.invoice-state.paid').waitFor();assert.equal(await card.locator('.invoice-balance').count(),0);assert.ok(!(await card.textContent()).includes('Not set'));
    const paymentId='950'+invoice.id;
    const remote=provider.state.invoices.production.get(live.remoteId);
    if(device==='phone'&&colorScheme==='light'){
@@ -86,7 +87,7 @@ for(const [device,viewport]of [['phone',{width:393,height:852}],['ipad',{width:8
     srv.sql(`UPDATE quickbooks_observations SET status='review',outstanding_pence=NULL,paid_pence=NULL,reason='Previous verification failed' WHERE export_id=${live.id}`);
     await page.goto(srv.base+'/admin?test='+crypto.randomUUID()+'#wholesale');
     await selectWholesaleSection(page,'invoices');
-    await page.locator(`[data-act="wh-invoice-open"][data-id="${invoice.id}"]`).click();
+    await openIssued();
     await page.locator('#wiIssuedInvoice .wi-issued-status').getByText('Paid',{exact:true}).waitFor();
     await page.getByRole('region',{name:'QuickBooks balance'}).getByText('The QuickBooks billing address differs from the issued invoice.').waitFor();
     await page.locator('[data-sheet="wi-quickbooks"]').click();

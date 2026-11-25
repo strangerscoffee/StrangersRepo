@@ -26,6 +26,10 @@ import { canOrder, catalogueFor, customerLines, recipeText } from "./wholesaleWh
 import { activeAnnouncement, handleAnnouncementAdmin } from "./wholesaleAnnouncement";
 import { amendLines, rollStanding, scheduleFields, skipRun, type Standing } from "./wholesaleStanding";
 import { customersSeeInvoices, handleInvoiceAdmin, handleInvoiceCustomer, invoiceLinks } from "./wholesaleInvoices";
+import { handleInvoiceReminders } from "./wholesaleInvoiceReminders";
+import { handleBillingAccounts } from "./invoicing/accounts";
+import { handleBatches } from "./invoicing/batches";
+import { handleReconciliation } from "./invoicing/reconciliation";
 
 type Pack = "quarter" | "half" | "kilo";
 /** The minimum this business must order, in grams of coffee (0 when Admin has exempted it). */
@@ -446,6 +450,15 @@ export async function updateOrderStatus(env: Env, id: string, body: Record<strin
 export async function handleWholesaleAdmin(req: Request, env: Env, route: string, user: User, links: Links, ctx?:ExecutionContext): Promise<Response> {
   const quickbooks = await handleQuickBooks(req, env, route, user, ctx); if (quickbooks) return quickbooks;
   if (user.role !== "admin") throw denied();
+  if (route.startsWith("invoicing/")) {
+    const action = route.slice("invoicing/".length);
+    const workspace = await handleBillingAccounts(req, env, action, user)
+      || await handleBatches(req, env, action, user) || await handleReconciliation(req, env, action, user);
+    if (!workspace) throw new ApiError(404, "not_found", "Invoicing action not found.");
+    return workspace;
+  }
+  const reminders = await handleInvoiceReminders(req, env, route, user);
+  if (reminders) return reminders;
   const invoiceResponse = await handleInvoiceAdmin(req, env, route, user.name);
   if (invoiceResponse) return invoiceResponse;
   const autoInvoicing = await handleAutoInvoiceAdmin(req, env, route, user, ctx);

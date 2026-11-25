@@ -14,6 +14,7 @@ import { wakeIntegration } from "./integrationSignals";
 import { machineRequest } from "./quickbooks/jobs";
 import { emailLinkedInvoice, ExportHold, queueAutomaticExport } from "./quickbooks/autoExport";
 import type { ExportOperation } from "./quickbooks/operationTypes";
+import { isBillingIssue } from "./quickbooks/billingReviews";
 
 export interface AutoSettings { issue: boolean; quickbooks: boolean; email: boolean; since: number; enabledBy: string; enabledByName: string }
 const OFF: AutoSettings = { issue: false, quickbooks: false, email: false, since: 0, enabledBy: "", enabledByName: "" };
@@ -32,7 +33,8 @@ const ORDER_CANDIDATES = `SELECT o.id, json_extract(o.data,'$.customerId') AS cu
   WHERE o.kind='order' AND json_extract(o.data,'$.preview')=0 AND json_extract(o.data,'$.deletedAt') IS NULL AND json_extract(o.data,'$.status')='Dispatched'
   AND COALESCE(CAST(json_extract(o.data,'$.dispatchedAt') AS INTEGER),0) >= ?1 AND json_extract(o.data,'$.tab') IS NULL AND json_extract(o.data,'$.tabClearedId') IS NULL
   AND NOT EXISTS(SELECT 1 FROM wholesale_preview c WHERE c.kind='customer' AND c.id=json_extract(o.data,'$.customerId') AND json_extract(c.data,'$.hidePrices')=1)
-  AND NOT EXISTS(SELECT 1 FROM wholesale_invoices i WHERE i.order_id=o.id) AND NOT EXISTS(SELECT 1 FROM wholesale_auto_invoices a WHERE a.source='order:'||o.id)`;
+  AND NOT EXISTS(SELECT 1 FROM wholesale_invoice_accounts a WHERE a.customer_id=json_extract(o.data,'$.customerId') AND a.cadence='monthly')
+  AND NOT EXISTS(SELECT 1 FROM wholesale_invoice_coverage i WHERE i.order_id=o.id) AND NOT EXISTS(SELECT 1 FROM wholesale_auto_invoices a WHERE a.source='order:'||o.id)`;
 const TAB_CANDIDATES = `SELECT t.id, t.customer_id, COALESCE(json_extract(t.data,'$.business'),'') AS business FROM wholesale_tabs t WHERE t.cleared_at >= ?1
   AND NOT EXISTS(SELECT 1 FROM wholesale_preview c WHERE c.kind='customer' AND c.id=t.customer_id AND json_extract(c.data,'$.hidePrices')=1)
   AND NOT EXISTS(SELECT 1 FROM wholesale_invoices i WHERE i.order_id='TAB-'||t.id) AND NOT EXISTS(SELECT 1 FROM wholesale_auto_invoices a WHERE a.source='tab:'||t.id)`;
@@ -90,9 +92,13 @@ export async function processAutoInvoice(env: Env, source: string, req: Request 
       if (saved && settings.quickbooks) await wakeIntegration(env.QUICKBOOKS_QUEUE, { key: "auto:" + source }, async () => {});
       return;
     }
-    if (!settings.quickbooks) return await finish(env, source, owner, "done", "", 0, invoiceId);
+    const approved = source.startsWith("batch:") ? await env.DB.prepare(`SELECT b.by_id,b.delivery FROM wholesale_invoice_batches b
+      JOIN wholesale_invoice_batch_items j ON j.batch_id=b.id WHERE b.state='approved' AND j.state='issued' AND j.id=? AND j.invoice_id=?`)
+      .bind(Number(source.slice(6)), invoiceId).first<{ by_id: string; delivery: string }>() : null;
+    if (source.startsWith("batch:") && !approved) return await finish(env, source, owner, "held", "Review this approved invoice batch.", holdDelay(row.attempts), invoiceId);
+    if (!approved && !settings.quickbooks) return await finish(env, source, owner, "done", "", 0, invoiceId);
     let exported: ExportOperation | null;
-    try { exported = await queueAutomaticExport(req, env, invoiceId, settings.enabledBy, source, owner); }
+    try { exported = await queueAutomaticExport(req, env, invoiceId, approved?.by_id || settings.enabledBy, source, owner); }
     catch (error) {
       if (error instanceof ExportHold || (error instanceof ApiError && error.status < 500 && error.code !== "quickbooks_busy")) return await finish(env, source, owner, "held", "QuickBooks: " + error.message, holdDelay(row.attempts), invoiceId);
       throw error;
@@ -106,7 +112,7 @@ export async function processAutoInvoice(env: Env, source: string, req: Request 
       return;
     }
     if (exported.state !== "linked") return await finish(env, source, owner, "held", "QuickBooks: " + (exported.last_error || "the export needs review in QuickBooks → Export history."), holdDelay(row.attempts), invoiceId);
-    if (!settings.email || !exported.auto || exported.manual_retry || !exported.created_remote) return await finish(env, source, owner, "done", "", 0, invoiceId);
+    if (!(approved ? approved.delivery === "email" : settings.email) || !exported.auto || exported.manual_retry || !exported.created_remote) return await finish(env, source, owner, "done", "", 0, invoiceId);
     const emailed = await emailLinkedInvoice(req, env, exported, source, owner);
     if (emailed === "sent") return await finish(env, source, owner, "done", "", 0, invoiceId);
     const latest = await env.DB.prepare("SELECT email_error FROM quickbooks_exports WHERE id=?").bind(exported.id).first<{ email_error: string }>();
@@ -134,16 +140,16 @@ export async function runAutoInvoicing(env: Env) {
 async function overview(env: Env) {
   const [{ settings, version: v }, rows, waiting] = await Promise.all([
     autoSettings(env),
-    env.DB.prepare(`SELECT a.*, i.invoice_number, e.state AS export_state, e.environment, e.email_state, e.email_to FROM wholesale_auto_invoices a
+    env.DB.prepare(`SELECT a.*, i.invoice_number, e.id AS export_id, e.state AS export_state, e.last_error AS export_error, e.environment, e.email_state FROM wholesale_auto_invoices a
       LEFT JOIN wholesale_invoices i ON i.seq=a.invoice_id
       LEFT JOIN quickbooks_exports e ON e.id=(SELECT id FROM quickbooks_exports WHERE invoice_id=a.invoice_id ORDER BY auto DESC,id DESC LIMIT 1)
-      ORDER BY CASE WHEN a.state='held' THEN 0 ELSE 1 END, a.updated_at DESC LIMIT 60`).all<AutoRow & { invoice_number: string | null; export_state: string | null; environment: string | null; email_state: string | null; email_to: string | null }>(),
+      ORDER BY CASE WHEN a.state='held' THEN 0 ELSE 1 END, a.updated_at DESC LIMIT 60`).all<AutoRow & { invoice_number: string | null; export_id: number | null; export_state: string | null; export_error: string | null; environment: string | null; email_state: string | null }>(),
     env.DB.prepare("SELECT state, COUNT(*) AS n FROM wholesale_auto_invoices WHERE state IN ('pending','issued','exporting','held') GROUP BY state").all<{ state: string; n: number }>(),
   ]);
   return {
     settings: { issue: settings.issue, quickbooks: settings.quickbooks, email: settings.email, since: settings.since || null, enabledByName: settings.enabledByName },
     version: v, counts: Object.fromEntries(waiting.results.map((r) => [r.state, r.n])),
-    items: rows.results.map((r) => ({ source: r.source, kind: r.source.startsWith("tab:") ? "tab" : "order", orderId: r.source.startsWith("order:") ? r.source.slice(6) : null, business: r.business, invoiceId: r.invoice_id, invoiceNumber: r.invoice_number, state: r.state, reason: r.reason, retryAt: r.retry_at || null, updatedAt: r.updated_at, quickbooks: r.export_state ? { state: r.export_state, environment: r.environment, email: r.email_state || "" } : null })),
+    items: rows.results.map((r) => ({ source: r.source, kind: r.source.startsWith("tab:") ? "tab" : r.source.startsWith("batch:") ? "batch" : "order", orderId: r.source.startsWith("order:") ? r.source.slice(6) : null, business: r.business, invoiceId: r.invoice_id, invoiceNumber: r.invoice_number, state: r.state, reason: r.reason, retryAt: r.retry_at || null, updatedAt: r.updated_at, quickbooks: r.export_state ? { id: r.export_id, state: r.export_state, environment: r.environment, email: r.email_state || "", billingReview: r.export_state === "review" && isBillingIssue(r.export_error || "") } : null })),
   };
 }
 
@@ -173,7 +179,7 @@ export async function handleAutoInvoiceAdmin(req: Request, env: Env, route: stri
     await audit(env, "wholesale_auto_invoicing", user.name, `${user.name} set automatic invoicing: invoices ${said(value.issue)}, send to QuickBooks ${said(value.quickbooks)}, QuickBooks emails ${said(value.email)}.`);
     return json(await overview(env));
   }
-  const item = /^auto-invoicing\/((?:order|tab):[A-Za-z0-9-]{1,80})\/(retry|skip)$/.exec(route);
+  const item = /^auto-invoicing\/((?:order|tab):[A-Za-z0-9-]{1,80}|batch:\d{1,15})\/(retry|skip)$/.exec(route);
   if (item && req.method === "POST") {
     await readJson(req, 1024);
     const [, source, action] = item;

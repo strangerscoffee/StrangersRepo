@@ -34,7 +34,7 @@ export function buildPayload(preview:ExportPreview){
 }
 export interface InvoiceMatch {matches:boolean;reason:string}
 /** Full financial identity protects lost-response recovery and explicit adoption of existing invoices. */
-export function matchesInvoice(preview:ExportPreview,payload:any,remote:any,requireMarker=true):InvoiceMatch{
+export function matchesInvoice(preview:ExportPreview,payload:any,remote:any,requireMarker=true,reviewedBilling=false):InvoiceMatch{
   const fail=(reason:string)=>({matches:false,reason});const value=preview.candidate;
   if(!value||!remote||!/^\d{1,32}$/.test(remote.Id||'')||!/^\d{1,32}$/.test(remote.SyncToken||''))return fail('The QuickBooks invoice identity or revision needs review.');
   if (isVoided(remote) || [remote.TxnStatus, remote.status].some(status => String(status || '').toLowerCase() === 'deleted')) return fail('The QuickBooks invoice was voided or removed. Review it before using its balance.');
@@ -58,6 +58,7 @@ export function matchesInvoice(preview:ExportPreview,payload:any,remote:any,requ
     if(expected.Amount!==0&&(found.length!==1||decimalPence(found[0].Amount)!==decimalPence(expected.Amount)||decimalPence(found[0].TaxLineDetail?.NetAmountTaxable)!==decimalPence(expected.TaxLineDetail.NetAmountTaxable)))return fail('The QuickBooks VAT breakdown differs from the issued invoice.');
   }
   for (const [key, label, name] of [['BillAddr', 'billing', value.billTo.name], ['ShipAddr', 'delivery', value.shipping.name]]) {
+    if (key === 'BillAddr' && reviewedBilling) continue;
     const difference = invoiceAddressDifference(payload[key], remote[key], name, remote.CustomerRef?.name);
     if (difference) return fail(`The QuickBooks ${label} ${difference} differs from the issued invoice.`);
   }

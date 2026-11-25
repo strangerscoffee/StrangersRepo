@@ -129,6 +129,11 @@ export async function emailLinkedInvoice(req: Request, env: Env, row: ExportOper
     const match = matchesInvoice(preview, payload, remote, true);
     if (!match.matches || remote?.Id !== row.remote_id) throw new ExportHold(match.reason || 'The QuickBooks invoice identity differs.');
     const recipient = await emailFor(env, invoice, row.environment);
+    if (source.startsWith('batch:')) {
+      const approved = await env.DB.prepare("SELECT recipient FROM wholesale_invoice_batch_items WHERE id=? AND invoice_id=?")
+        .bind(Number(source.slice(6)), row.invoice_id).first<{ recipient: string }>();
+      if (!approved?.recipient || approved.recipient !== recipient.address) throw new ExportHold('The billing email changed after this batch was reviewed. Check the invoice in QuickBooks before emailing.');
+    }
     address = (ambiguous ? cleanEmail(row.email_to) : recipient.address) || '';
     const confirmed = (value: any) => address && value?.Id === row.remote_id && value.EmailStatus === 'EmailSent' && cleanEmail(value.BillEmail?.Address) === address;
     await resources.check();

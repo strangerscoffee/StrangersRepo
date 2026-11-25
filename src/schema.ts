@@ -439,6 +439,61 @@ const MIGRATIONS: Migration[] = [
         AND (o.invoice_issue=? OR (o.status='review' AND o.reason=?))
       ON CONFLICT(event_key) DO NOTHING`).bind(at, at, legacy, legacy).run();
   } },
+  { id: 44, name: "Invoice billing reviews and payment reminders", run: async env => {
+    await env.DB.batch([
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS wholesale_invoice_billing_reviews (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, review_key TEXT NOT NULL UNIQUE,
+        invoice_id INTEGER NOT NULL REFERENCES wholesale_invoices(seq), export_id INTEGER NOT NULL REFERENCES quickbooks_exports(id),
+        customer_id TEXT NOT NULL, environment TEXT NOT NULL, remote_id TEXT NOT NULL, remote_address_hash TEXT NOT NULL,
+        choice TEXT NOT NULL CHECK(choice IN ('strangers','quickbooks')), address TEXT NOT NULL, postcode TEXT NOT NULL,
+        actor TEXT NOT NULL, created_at INTEGER NOT NULL)`),
+      env.DB.prepare("CREATE INDEX IF NOT EXISTS wholesale_billing_review_export ON wholesale_invoice_billing_reviews(export_id,id DESC)"),
+      env.DB.prepare("CREATE INDEX IF NOT EXISTS wholesale_billing_review_customer ON wholesale_invoice_billing_reviews(customer_id,environment,id DESC)"),
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS wholesale_invoice_reminder_holds (
+        invoice_id INTEGER PRIMARY KEY REFERENCES wholesale_invoices(seq), reason TEXT NOT NULL,
+        version INTEGER NOT NULL, actor TEXT NOT NULL, updated_at INTEGER NOT NULL)`),
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS wholesale_invoice_reminders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, review_key TEXT NOT NULL UNIQUE, invoice_id INTEGER NOT NULL REFERENCES wholesale_invoices(seq),
+        recipient TEXT NOT NULL, amount_pence INTEGER NOT NULL, due_date TEXT NOT NULL, actor TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('sending','accepted','failed','unknown')), created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`),
+      env.DB.prepare("CREATE INDEX IF NOT EXISTS wholesale_invoice_reminder_history ON wholesale_invoice_reminders(invoice_id,id DESC)"),
+    ]);
+  } },
+  { id: 45, name: "Wholesale billing accounts, batches and month-end reviews", run: async env => {
+    await env.DB.batch([
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS wholesale_invoice_accounts (
+        customer_id TEXT PRIMARY KEY, cadence TEXT NOT NULL CHECK(cadence IN ('dispatch','monthly')), version INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL, updated_by TEXT NOT NULL)`),
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS wholesale_invoice_coverage (
+        order_id TEXT PRIMARY KEY, invoice_id INTEGER NOT NULL REFERENCES wholesale_invoices(seq) ON DELETE CASCADE)`),
+      env.DB.prepare(`INSERT OR IGNORE INTO wholesale_invoice_coverage(order_id,invoice_id)
+        SELECT order_id,seq FROM wholesale_invoices WHERE substr(order_id,1,3)='WS-' ORDER BY seq`),
+      env.DB.prepare(`INSERT OR IGNORE INTO wholesale_invoice_coverage(order_id,invoice_id)
+        SELECT member.value,i.seq FROM wholesale_invoices i,json_each(i.data,'$.orderIds') member
+        WHERE member.type='text' ORDER BY i.seq`),
+      env.DB.prepare(`CREATE TRIGGER IF NOT EXISTS wholesale_invoice_add_coverage AFTER INSERT ON wholesale_invoices BEGIN
+        INSERT INTO wholesale_invoice_coverage(order_id,invoice_id)
+          SELECT new.order_id,new.seq WHERE substr(new.order_id,1,3)='WS-'
+          UNION SELECT value,new.seq FROM json_each(new.data,'$.orderIds') WHERE type='text';
+      END`),
+      env.DB.prepare("CREATE INDEX IF NOT EXISTS wholesale_invoice_coverage_invoice ON wholesale_invoice_coverage(invoice_id)"),
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS wholesale_invoice_batches (
+        id TEXT PRIMARY KEY, period TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('draft','approved')), by_id TEXT NOT NULL,
+        by_name TEXT NOT NULL, delivery TEXT NOT NULL CHECK(delivery IN ('issue','export','email')), environment TEXT NOT NULL,
+        realm_id TEXT NOT NULL, generation TEXT NOT NULL, created_at INTEGER NOT NULL, approved_at INTEGER)`),
+      env.DB.prepare("CREATE INDEX IF NOT EXISTS wholesale_invoice_batches_recent ON wholesale_invoice_batches(created_at DESC)"),
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS wholesale_invoice_batch_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, batch_id TEXT NOT NULL REFERENCES wholesale_invoice_batches(id) ON DELETE CASCADE,
+        position INTEGER NOT NULL, customer_id TEXT NOT NULL, business TEXT NOT NULL, recipient TEXT NOT NULL, data TEXT NOT NULL,
+        state TEXT NOT NULL DEFAULT 'waiting' CHECK(state IN ('waiting','working','issued','failed')),
+        reason TEXT NOT NULL DEFAULT '', invoice_id INTEGER REFERENCES wholesale_invoices(seq),
+        lease_owner TEXT, lease_until INTEGER NOT NULL DEFAULT 0, UNIQUE(batch_id,position))`),
+      env.DB.prepare("CREATE INDEX IF NOT EXISTS wholesale_invoice_batch_queue ON wholesale_invoice_batch_items(state,lease_until,id)"),
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS wholesale_invoice_closes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, period TEXT NOT NULL, data TEXT NOT NULL, by_name TEXT NOT NULL, created_at INTEGER NOT NULL)`),
+      env.DB.prepare("CREATE INDEX IF NOT EXISTS wholesale_invoice_closes_period ON wholesale_invoice_closes(period,id DESC)"),
+    ]);
+  } },
 ];
 
 async function migrate(env: Env): Promise<void> {

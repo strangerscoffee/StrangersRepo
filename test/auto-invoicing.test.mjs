@@ -375,5 +375,76 @@ test('Using QuickBooks invoice numbers: the next after the highest there, waitin
  const {settings:s}=config;
  const saved=(await ok('PUT',root+'/invoice-settings',{...s,ifVersion:config.version})).body;
  assert.equal(saved.settings.sharedNumbering,true);
+ await switches(false,false,false);
+ const batched=await order(cookie);
+ await status(batched,'Dispatched');
+ const period=new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/London'}).format(new Date()).slice(0,7);
+ const review=(await ok('POST',root+'/invoicing/batches/preview',{period,selected:[batched.id],delivery:'export'})).body;
+ const batchUrl=root+'/invoicing/batches/'+review.id;
+ await ok('POST',batchUrl+'/approve',{reviewed:true});
+ const run=batchUrl+'/items/'+review.items[0].id+'/run';
+ srv.sql("UPDATE quickbooks_settings SET active_environment='production' WHERE id=1");
+ try {
+   const pending=(await ok('POST',run,{})).body.items[0];
+   assert.equal(pending.state,'waiting');
+   assert.match(pending.reason,/approved QuickBooks company/);
+   assert.equal(invoiceOf(batched.id),undefined);
+ } finally {
+   srv.sql("UPDATE quickbooks_settings SET active_environment='sandbox' WHERE id=1");
+ }
+ provider.state.unreachable=true;
+ try {
+   const pending=(await ok('POST',run,{})).body.items[0];
+   assert.equal(pending.state,'waiting');
+   assert.match(pending.reason,/QuickBooks couldn't be reached/);
+   assert.equal(invoiceOf(batched.id),undefined);
+ } finally {
+   provider.state.unreachable=false;
+ }
+ await cron();
+ await until(async()=>{
+   const item=(await ok('GET',batchUrl)).body.items[0];
+   return item.state==='issued'&&item;
+ },'batch invoice recovered when QuickBooks returned');
+ assert.equal(invoiceOf(batched.id).invoice_number,'10301','approved batch uses the shared sequence');
  await ok('PUT',root+'/invoice-settings/numbering',{ifVersion:saved.version,shared:false});
+});
+
+test('A held automatic export rechecks the chosen billing address and retries the same invoice',async()=>{
+ await switches(true,true,false);
+ const remote=provider.state.customers.find(c=>c.Id==='37');
+ remote.BillAddr={Line1:'12 Westgate Lane',City:'Norwich',PostalCode:'NR2 2AB'};
+ const {cookie}=await business(remote.DisplayName,{address:'12 Westgate Lane\nNorwich',postcode:'NR2 1AB'});
+ const placed=await order(cookie),source='order:'+placed.id;
+ await status(placed,'Dispatched');
+ const held=await waitForAuto(source,item=>item.quickbooks?.billingReview,'QuickBooks billing address review');
+ const original=exportFor(source),path=qb+'/exports/'+original.id+'/billing-review';
+ assert.equal(held.quickbooks.id,original.id);
+ assert.equal(original.write_started_at,0);
+ assert.equal((await call('GET',path,undefined,STAFF)).status,403);
+ assert.ok((await ok('GET',root+'/invoices?queue=review')).body.invoices.some(invoice=>invoice.id===original.invoice_id));
+ const review=(await ok('GET',path)).body;
+ assert.equal(review.strangers.postcode,'NR2 1AB');
+ assert.equal(review.quickbooks.postcode,'NR2 2AB');
+ assert.equal(review.retry,true);
+ remote.BillAddr.PostalCode='NR2 3AB';
+ assert.equal((await call('POST',path,{token:review.token,choice:'quickbooks'})).status,409);
+ const latestReview=(await ok('GET',path)).body;
+ const sent=(await ok('POST',path,{token:latestReview.token,choice:'quickbooks'})).body;
+ assert.equal(sent.retryQueued,true,sent.followUp);
+ const linked=await until(async()=>{
+  const {export:row}=(await ok('GET',qb+'/exports/'+original.id)).body;
+  return row.state==='linked'&&row;
+ },'same export linked');
+ assert.equal(linked.number,held.invoiceNumber);
+ assert.equal(exportFor(source).request_id,original.request_id);
+ const posted=provider.state.invoices.sandbox.get(linked.remoteId);
+ assert.equal(posted.BillAddr.PostalCode,'NR2 3AB');
+ assert.equal(posted.ShipAddr.PostalCode,'NR2 1AB');
+ assert.equal([...provider.state.invoices.sandbox.values()].filter(invoice=>invoice.DocNumber===linked.number).length,1);
+ assert.equal(JSON.parse(invoiceOf(placed.id).data).billTo.postcode,'NR2 1AB');
+ const receipt=(await ok('GET',root+'/invoices/'+original.invoice_id)).body.invoice;
+ assert.equal(receipt.billingHistory[0].postcode,'NR2 3AB');
+ const next=await order(cookie);
+ assert.equal((await ok('GET',root+'/orders/'+next.id+'/invoice')).body.billing.billTo.postcode,'NR2 1AB','Sandbox review is isolated from future live billing');
 });

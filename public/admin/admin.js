@@ -943,6 +943,7 @@
   document.addEventListener("input", (e) => {
     if (e.target.id === "sickSearch") { sickness.search(e.target.value); return; }
     if (e.target.id === "wiSearch") { wholesale.searchInvoices(e.target.value); return; }
+    if (e.target.id === "iwAccountSearch") { wholesale.searchBillingAccounts(e.target.value); return; }
     if (e.target.id === "wq") { wholesale.search(e.target.value); return; }
     if (e.target.id !== "q" && e.target.id !== "fq") return;
     const id = e.target.id, page = S.page;
@@ -960,6 +961,10 @@
   window.addEventListener("popstate", routeChanged);
   window.addEventListener("hashchange", routeChanged);
   document.addEventListener("change", event => {
+    if (["iwView", "iwAccount", "iwClosePeriod", "iwBatchPeriod"].includes(event.target.id)) {
+      wholesale.invoicingChange(event.target).catch(error => toast(error.message));
+      return;
+    }
     if (event.target.id === "wOrderStatus") act("wh-status-select", event.target.value, event.target);
     if (event.target.id === "wDispatchScope") act("wh-dispatch-scope", event.target.value, event.target);
     if (["activityFrom", "activityTo"].includes(event.target.id)) {

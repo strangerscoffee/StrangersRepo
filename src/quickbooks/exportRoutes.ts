@@ -6,6 +6,9 @@ import type {Environment} from './preview';
 import {adoptExisting,exportList,operation,operationResult,processExport,queueInvoice,retryExport} from './ledger';
 import {refreshObservation} from './observations';
 import { wakeIntegration } from '../integrationSignals';
+import { issuedInvoice } from '../wholesaleInvoices';
+import { loadBillingReview,saveBillingReview } from './billingReviews';
+import { settings } from './settings';
 export async function handleExportRoutes(req:Request,env:Env,action:string,mode:Environment,user:User,ctx?:ExecutionContext):Promise<Response|null>{
   const url=new URL(req.url);
   if(action==='/exports'&&req.method==='GET'){
@@ -25,9 +28,32 @@ export async function handleExportRoutes(req:Request,env:Env,action:string,mode:
     }
     return json({export:await operationResult(env,await operation(env,row.id))},row.state==='linked'?200:202);
   }
-  const found=/^\/exports\/(\d+)(?:\/(retry|refresh|link-existing|review|process))?$/.exec(action);if(!found)return null;
+  const found=/^\/exports\/(\d+)(?:\/(retry|refresh|link-existing|review|process|billing-review))?$/.exec(action);if(!found)return null;
   const id=Number(found[1]);if(!Number.isSafeInteger(id)||id<1)throw invalid('Choose a valid export.');
   const saved=await operation(env,id);if(saved.environment!==mode)throw new ApiError(404,'not_found','QuickBooks export not found in this environment.');
+  if(found[2]==='billing-review'&&(req.method==='GET'||req.method==='POST')){
+    const body=req.method==='POST'?object(await readJson(req,2048)):null;
+    const review=await loadBillingReview(req,env,saved,await issuedInvoice(env,saved.invoice_id));
+    if(!body)return json(review.public);
+    if(body.choice!=='strangers'&&body.choice!=='quickbooks')throw invalid('Choose the billing address to confirm.');
+    if(body.token!==review.public.token)throw new ApiError(409,'billing_review_changed','Billing details changed. Open the latest comparison before confirming.');
+    const confirmed=await saveBillingReview(env,review,user,body.choice);
+    let retryQueued=false, followUp='';
+    try{
+      if(review.public.retry){
+        const state=await settings(env);
+        await retryExport(req,env,id,{ifVersion:saved.version,modeVersion:state.version,reviewed:true},user);
+        retryQueued=true;
+        const work=wakeIntegration(env.QUICKBOOKS_QUEUE,{exportId:id},()=>processExport(req,env,id));
+        if(ctx)ctx.waitUntil(work);else await work;
+      }else if(saved.state==='linked'){
+        await refreshObservation(req,env,saved);
+      }
+    }catch(error){
+      followUp=error instanceof ApiError?error.message:'Check the export in QuickBooks to continue.';
+    }
+    return json({confirmed,retryQueued,followUp});
+  }
   if(!found[2]&&req.method==='GET')return json({export:await operationResult(env,saved)});
   if(found[2]==='review'&&req.method==='GET'){
     const source=saved.auto||saved.environment==='production'

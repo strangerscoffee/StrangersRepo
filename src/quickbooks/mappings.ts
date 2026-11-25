@@ -87,4 +87,5 @@ export async function verifyFrozenReferences(read:Read,value:InvoiceCandidate){
   for(const ref of new Set(value.lines.map(line=>line.itemRef!)))await salesItem(read,ref);
   for(const line of new Map(value.lines.map(line=>[line.taxCodeRef+':'+line.vatBasisPoints,line])).values()){const tax=await salesTax(read,line.taxCodeRef!,line.vatBasisPoints);if(tax.taxable!==line.taxable||tax.taxRateRef!==line.taxRateRef)throw invalid('A saved VAT treatment changed in QuickBooks. Review the original export.');}
   if(value.termRef)await term(read,value.termRef,value.paymentTerms.id);
+  return customer;
 }

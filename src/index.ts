@@ -33,6 +33,7 @@ import { handleWholesaleAuth, wholesaleSession } from "./wholesaleAccounts";
 import {handleWebhook} from "./quickbooks/webhooks";
 import {processEvents,runQuickBooksJobs} from "./quickbooks/jobs";
 import { runAutoInvoicing } from "./autoInvoice";
+import { runInvoiceBatches } from "./invoicing/batches";
 import {trustedOrigin} from "./requestOrigins";
 import { isWholesaleCode, wholesalePath } from "./hosts";
 import { catalogueRetrievedAt } from "./wholesale/catalogue.js";
@@ -118,6 +119,7 @@ export default {
           run("Wholesale Slack notifications", () => deliverSlackPosts(env)),
           run("Dispatch emails", () => deliverDispatchEmails(env)),
           run("Automatic invoicing", () => runAutoInvoicing(env)),
+          run("Invoice batches", () => runInvoiceBatches(env)),
           run("Staff email delivery", () => deliverStaffEmails(env)),
           run("Diary reminders", () => deliverDiaryReminders(env)),
           run("Holiday reminders", () => runHolidayReminders(env, { diary: `https://${domain}/`, rota: env.ROTA_HOST ? `https://${env.ROTA_HOST}/` : `https://${domain}/rota/` }, at)),

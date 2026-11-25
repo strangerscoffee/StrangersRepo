@@ -1,4 +1,4 @@
-import { selectWholesaleSection } from "./admin-workspace-helpers.mjs";
+import { selectInvoiceView, selectWholesaleSection } from "./admin-workspace-helpers.mjs";
 import { openWholesaleOrders } from './wholesale-ui-helpers.mjs';
 // VAT invoicing in the native Admin and customer interfaces. Payment records never move money.
 import { test, before, after } from "node:test";
@@ -280,6 +280,7 @@ for (const [device, viewport] of [["phone", { width: 393, height: 852 }], ["desk
       const closeOrder = admin.getByRole("button", { name: "Close order details", exact: true });
       if (await closeOrder.isVisible()) await closeOrder.click();
       await selectWholesaleSection(admin, "invoices");
+      await selectInvoiceView(admin, "invoices");
       await admin.locator(`[data-act="wh-invoice-open"][data-id="${issued.id}"]`).waitFor();
       assert.equal(await noOverflow(admin), true); assert.equal(await noOverflow(customer), true);
       assert.deepEqual(errors, []);

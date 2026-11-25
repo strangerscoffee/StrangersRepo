@@ -225,3 +225,69 @@ test("wholesale invoices: backups retain invoice settings, numbering sequence, i
   assert.equal(JSON.parse(retained.data).payment, undefined); assert.equal(JSON.parse(retained.data).seller.legalName, "TEST Supplier Limited");
   assert.equal(srv.sql("SELECT COUNT(*) AS n FROM audit_log WHERE kind='wholesale_invoice_issued'")[0].n, 2);
 });
+
+test("invoicing workspace groups monthly dispatches, saves a close and downloads the reviewed statement", async () => {
+  const root = "/api/admin/wholesale/invoicing", account = root + "/accounts/" + A.customer.id;
+  assert.ok([401, 403].includes((await call("GET", account, undefined, B.cookie)).status));
+  assert.equal((await call("GET", account, undefined, STAFF)).status, 403);
+  await saveSettings({ ...validSettings(), priceBasis: "inclusive", defaultCoffeeRateId: "zero" });
+  const profile = (await call("GET", "/api/wholesale/session", undefined, A.cookie)).body.customer;
+  assert.equal((await call("PUT", "/api/wholesale/account", { ifVersion: profile.version, address: "10 Buyer Street", postcode: "NR2 2AA", phone: "01603 111111" }, A.cookie)).status, 200);
+  const schedule = await call("PUT", account + "/schedule", { ifVersion: 0, cadence: "monthly" });
+  assert.equal(schedule.status, 200, JSON.stringify(schedule.body));
+  assert.equal((await call("PUT", account + "/schedule", { ifVersion: 0, cadence: "dispatch" })).status, 409);
+
+  const now = new Date();
+  const dispatched = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 7, 12));
+  const key = dispatched.toISOString().slice(0, 7), monthReview = root + "/reconciliation?period=" + key;
+  const orders = [await newOrder("Monthly delivery A"), await newOrder("Monthly delivery B")];
+  for (const order of orders) srv.sql(`UPDATE wholesale_preview SET version=version+1,
+    data=json_set(data,'$.status','Dispatched','$.dispatchedAt',${dispatched.getTime()})
+    WHERE kind='order' AND id='${order.id}'`);
+  const initial = (await call("GET", monthReview)).body;
+  assert.equal(initial.orders.monthly, 1, JSON.stringify(initial));
+  assert.ok(initial.orders.unbilled >= 2);
+  const snapshot = await call("POST", monthReview, { revision: initial.revision, checked: ["monthly"], note: "Monthly orders reviewed." });
+  assert.equal(snapshot.status, 201, JSON.stringify(snapshot.body));
+  const selections = await call("GET", root + "/batches?period=" + key);
+  assert.equal(selections.status, 200, JSON.stringify(selections.body));
+  const entry = selections.body.candidates.find(row => row.account === A.customer.id);
+  assert.equal(entry.orders, 2); assert.equal(entry.monthly, true);
+
+  const review = await call("POST", root + "/batches/preview", { period: key, delivery: "issue", selected: [entry.id] });
+  assert.equal(review.status, 201, JSON.stringify(review.body));
+  assert.equal(review.body.items[0].state, "waiting", JSON.stringify(review.body));
+  assert.equal(review.body.items[0].grossPence, 6600);
+  assert.equal(review.body.items[0].email, "invoice.a@example.com");
+  const url = root + "/batches/" + review.body.id, run = url + "/items/" + review.body.items[0].id + "/run";
+  assert.equal((await call("POST", run, {})).body.items[0].state, "waiting");
+  assert.equal((await call("POST", url + "/approve", { reviewed: true })).status, 200);
+  const attempts = await Promise.all([call("POST", run, {}), call("POST", run, {})]);
+  assert.ok(attempts.every(item => item.status === 200), JSON.stringify(attempts.map(item => item.body)));
+  const issued = (await call("GET", url)).body.items[0];
+  assert.equal(issued.state, "issued", JSON.stringify(issued));
+  for (const order of orders) {
+    const path = "/api/wholesale/orders/" + order.id + "/invoice";
+    assert.equal((await call("GET", path, undefined, A.cookie)).body.invoice.id, issued.invoiceId);
+    assert.equal((await call("GET", path, undefined, B.cookie)).status, 404);
+    assert.equal((await call("POST", "/api/admin/wholesale/orders/" + order.id + "/invoice", invoiceRequest(order))).status, 409);
+  }
+  const balance = await call("GET", account + "/statement");
+  assert.equal(balance.status, 200, JSON.stringify(balance.body));
+  assert.equal(balance.body.recipient, "invoice.a@example.com");
+  const billed = balance.body.lines.find(item => item.id === issued.invoiceId);
+  assert.equal(billed.balancePence, 6600);
+  const pdfPath = account + "/statement/pdf?review=" + encodeURIComponent(balance.body.downloadToken);
+  const pdf = await call("GET", pdfPath);
+  assert.equal(pdf.status, 200, pdf.body?.message);
+  assert.match(pdf.headers.get("content-type"), /application\/pdf/);
+  assert.equal(pdf.bytes.subarray(0, 4).toString(), "%PDF");
+  const invoice = (await call("GET", "/api/admin/wholesale/invoices/" + issued.invoiceId)).body.invoice;
+  assert.equal((await call("PATCH", "/api/admin/wholesale/invoices/" + issued.invoiceId + "/payment", { ifVersion: invoice.payment.version, paid: true })).status, 200);
+  assert.equal((await call("GET", pdfPath)).status, 409);
+  const after = (await call("GET", monthReview)).body;
+  assert.equal(after.orders.monthly, 0);
+  assert.equal(after.orders.unbilled, initial.orders.unbilled - 2);
+  assert.equal(after.snapshots[0].orders.unbilled, initial.orders.unbilled);
+  assert.equal((await call("POST", monthReview, { revision: initial.revision, checked: ["monthly"] })).status, 409);
+});

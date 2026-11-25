@@ -4,6 +4,8 @@ export async function startQuickBooksProvider(){
   const state={calls:[],country:'GB',currency:'GBP',expires:3600,refreshes:0,sequence:0,refreshGate:null,readGate:null,fail:null,code:'test-code',customNumbers:true,serviceDates:true,invoices:{sandbox:new Map(),production:new Map()},payments:{sandbox:new Map(),production:new Map()},requests:{sandbox:new Map(),production:new Map()},dropCreateResponse:false,createTransform:null,rateLimitNext:false};
   const tokenEnvironment=new Map(),revoked=new Set();
   const customers=Array.from({length:101},(_,i)=>({Id:String(i+1),DisplayName:'Example customer '+(i+1),Active:true,CurrencyRef:{value:i===99?'EUR':'GBP'},PrivateNotes:'DO-NOT-RETURN',PrimaryEmailAddr:{Address:'private@example.test'}}));
+  state.customers=customers;
+  state.reminderEmails=[];
   const items=[{Id:'50',Name:'Wholesale coffee',Type:'Service',Active:true,IncomeAccountRef:{value:'1'}},{Id:'51',Name:'Delivery',Type:'NonInventory',Active:true,IncomeAccountRef:{value:'1'}},{Id:'52',Name:'Inventory coffee',Type:'Inventory',Active:true,IncomeAccountRef:{value:'1'}}];
   const taxes=[{Id:'3',Name:'Standard sales VAT',Active:true,Taxable:true,SalesTaxRateList:{TaxRateDetail:[{TaxRateRef:{value:'7'}}]}},{Id:'4',Name:'Zero-rated sales',Active:true,Taxable:true,SalesTaxRateList:{TaxRateDetail:[{TaxRateRef:{value:'8'}}]}},{Id:'5',Name:'Exempt',Active:true,Taxable:false}];
   const terms=[{Id:'30',Name:'Net 30',Active:true,Type:'STANDARD',DueDays:30},{Id:'14',Name:'Net 14',Active:true,Type:'STANDARD',DueDays:14}];
@@ -12,6 +14,11 @@ export async function startQuickBooksProvider(){
     const url=new URL(req.url,'http://127.0.0.1');let body='';for await(const chunk of req)body+=chunk;
     state.calls.push({method:req.method,path:url.pathname,query:url.search,body,authorization:req.headers.authorization||''});
     const reply=(code,data)=>{res.writeHead(code,{'content-type':'application/json'});res.end(JSON.stringify(data));};
+    if(url.pathname==='/resend'&&req.method==='POST'){
+      const message=JSON.parse(body);
+      if(message.subject.startsWith('Payment reminder'))state.reminderEmails.push({message,key:req.headers['idempotency-key']});
+      reply(state.resendStatus||200,{id:'test-mail-'+state.calls.length});return;
+    }
     if(state.fail&&url.pathname.includes(state.fail.path)){if(state.fail.location)res.setHeader('location',state.fail.location);if(state.fail.retryAfter)res.setHeader('retry-after',state.fail.retryAfter);if(state.fail.tid)res.setHeader('intuit_tid',state.fail.tid);reply(state.fail.status,state.fail.faultCode?{Fault:{Error:[{code:state.fail.faultCode,Message:'FAKE-PROVIDER-SECRET-DO-NOT-EXPOSE'}]}}:{secret:'FAKE-PROVIDER-SECRET-DO-NOT-EXPOSE'});return;}
     if(url.pathname==='/authorize'){const target=new URL(url.searchParams.get('redirect_uri'));target.searchParams.set('state',url.searchParams.get('state'));target.searchParams.set('code',state.code);target.searchParams.set('realmId','1234567890');res.writeHead(302,{location:target.href});res.end();return;}
     if(url.pathname==='/token'){

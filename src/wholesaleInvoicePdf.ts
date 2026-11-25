@@ -1,6 +1,7 @@
 // Uses the same small native PDF writer as the diary, without a browser or outside service.
 import "../public/pdf.js";
 import type { InvoiceDocument, InvoiceLine } from "./wholesaleInvoices";
+import type { AccountStatement } from "./invoicing/accounts";
 import { wholesaleInvoiceLogo } from "./wholesaleInvoiceLogo.js";
 
 interface PdfDoc {
@@ -162,5 +163,42 @@ export function invoicePdf(invoice: InvoiceDocument, options: { draft?: boolean 
   const name = draft ? "invoice-preview" : `invoice-${invoice.number!.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 100)}`;
   return new Response(bytes.buffer as ArrayBuffer, { headers: {
     "content-type": "application/pdf", "content-disposition": `inline; filename="${name}.pdf"`, "cache-control": "private, no-store",
+  } });
+}
+
+export function accountStatementPdf(statement: AccountStatement): Response {
+  const asAt = new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "Europe/London" }).format(statement.asAt);
+  const doc = pdf.create({ title: "Account statement - " + statement.business, author: statement.seller, createdAt: statement.asAt });
+  const flow = new pdf.Flow(doc, {
+    margin: 36,
+    footer: "Account statement · " + asAt,
+    header: (page, margin, first) => {
+      page.svg(wholesaleInvoiceLogo.path, margin, margin, (first ? 88 : 40) / wholesaleInvoiceLogo.width, { fill: colours.ink });
+      page.text("ACCOUNT STATEMENT", page.W - margin, margin + (first ? 21 : 12),
+        { size: first ? 20 : 13, bold: true, color: colours.blue, align: "right" });
+      page.text(asAt, page.W - margin, margin + (first ? 40 : 26), { size: 9, color: colours.muted, align: "right" });
+      const bottom = margin + (first ? 61 : 36);
+      page.rect(margin, bottom, page.W - margin * 2, 2, { fill: colours.blue });
+      return bottom + 16;
+    },
+  });
+  flow.heading(statement.business, { color: colours.ink, keep: 40 });
+  flow.para([statement.address, statement.postcode].filter(Boolean).join("\n"));
+  flow.gap(8).facts([["Balance recorded", money(statement.balancePence)], ["Statement from", statement.seller]]);
+  flow.para("Includes open invoices and invoices issued since " + calendarDate(statement.periodStart) + ". Amounts reflect the recorded balances shown.");
+  if (statement.unconfirmed) flow.para(String(statement.unconfirmed) + " unconfirmed invoice balances are excluded from the balance above.");
+  flow.gap(12).table([
+    { label: "Invoice", w: "flex" }, { label: "Due", w: 57 }, { label: "Total", w: 61, align: "right" },
+    { label: "Applied", w: 60, align: "right" }, { label: "Balance", w: 69, align: "right" }, { label: "Source", w: 62 },
+  ], statement.lines.map(line => [
+    line.number + " · " + calendarDate(line.invoiceDate), line.dueDate ? calendarDate(line.dueDate) : "—",
+    money(line.totalPence), line.appliedPence === null ? "—" : money(line.appliedPence),
+    line.balancePence === null ? "Unconfirmed" : line.voided ? "Voided" : money(line.balancePence),
+    line.source + (line.checkedAt ? "\n" + new Intl.DateTimeFormat("en-GB", { dateStyle: "short", timeZone: "Europe/London" }).format(line.checkedAt) : ""),
+  ]), { size: 8, head: 8, pad: 4.5, headFill: colours.blue, headColor: "#ffffff", zebra: "#f3f7fc", lineColor: colours.line });
+  flow.gap(8).para("Applied includes payments, credits and adjustments reflected in each invoice balance.");
+  const bytes = flow.finish();
+  return new Response(bytes.buffer as ArrayBuffer, { headers: {
+    "content-type": "application/pdf", "content-disposition": "attachment; filename=\"account-statement.pdf\"", "cache-control": "private, no-store",
   } });
 }

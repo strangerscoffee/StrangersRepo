@@ -2,12 +2,13 @@
 import { MAX_QUANTITY } from "../public/wholesale/limits.js";
 import { audit } from "./audit";
 import { ApiError, type Env, invalid, json, readJson } from "./http";
-import { decode, get, object, text, version, type Row } from "./wholesaleStore";
+import { decode, get, object, text, version, type Row, type Versioned } from "./wholesaleStore";
 import type { Customer, OrderingUser } from "./wholesaleAccounts";
 import { tidyPostalAddress } from "./wholesaleCustomers";
 import { invoicePdf } from "./wholesaleInvoicePdf";
+import { billingAddressFor, billingException, billingHistory } from "./quickbooks/billingReviews";
 import {withAccounting,accountingSummary,LIVE_ACCOUNTING_JOIN,INVOICE_REVIEW_SQL,PAYMENT_DUE_SQL,OUTSTANDING_BALANCE_SQL} from "./quickbooks/observations";
-import { nextSharedNumber, NumberUnavailable } from "./quickbooks/sharedNumber";
+import { nextSharedNumber, NumberUnavailable, type NumberingCompany } from "./quickbooks/sharedNumber";
 
 export interface VatRate { id: string; label: string; basisPoints: number }
 export interface InvoiceSettings {
@@ -45,9 +46,11 @@ export interface InvoiceDocument extends InvoiceData {
   payment: { status: "paid" | "unpaid" | "overdue" | "part-paid" | "review" | "settled" | "voided"; paid: boolean; paidDate: string | null; reference: string; version: number; outstandingPence: number | null;
     paidPence?: number; totalPence?: number; dueDate?: string | null; source?: "quickbooks"; checkedAt?: number | null; hasVoidedPayment?: boolean };
   accounting?: { status: string; checkedAt: number | null; exportId?: number; reason?: string; invoiceChanged?: boolean; invoiceIssue?: string };
+  billingHistory?: Awaited<ReturnType<typeof billingHistory>>;
+  billingException?: NonNullable<Awaited<ReturnType<typeof billingException>>>;
 }
 interface InvoiceRow { seq: number; invoice_number: string; order_id: string; customer_id: string; request_key: string; data: string; issued_at: number; issued_by: string; paid: number; paid_date: string | null; paid_at: number | null; payment_reference: string; payment_version: number }
-interface SourceOrder {
+export interface SourceOrder {
   preview?: boolean; deletedAt?: number; business: string; reference?: string; customerId: string | null; status: string; createdAt: number;
   customerSnapshot?: { address?: string; postcode?: string; paymentTerms?: Terms }; locationSnapshot?: Record<string, any>; locationId?: string;
   paymentTerms?: Terms; lines: { title: string; packLabel: string; grindLabel: string; quantity: number; price: number; productId?: string; pack?: string }[];
@@ -55,6 +58,7 @@ interface SourceOrder {
 }
 interface InvoiceRequest {
   orderVersion: number; settingsVersion: number; invoiceDate: string; supplyDate: string;
+  billingRevision?: number;
   billTo: { name: string; address: string; postcode: string; vatNumber: string } | null;
   deliveryCharge: { pence: number; description: string; vatRateId: string };
   lineVatRateIds: string[] | null; paymentInstructions: string | null; dueDate: string | null;
@@ -124,7 +128,8 @@ function requestBody(body: Record<string, any>): InvoiceRequest {
   const billTo = body.billTo === undefined ? null : object(body.billTo);
   const lineVatRateIds = body.lineVatRateIds === undefined ? null : body.lineVatRateIds;
   if (lineVatRateIds !== null && (!Array.isArray(lineVatRateIds) || lineVatRateIds.length > 150)) throw invalid("Check the VAT rates for the saved order lines.");
-  return { orderVersion: integer(body.orderVersion, "reviewed order version", 1, Number.MAX_SAFE_INTEGER), settingsVersion: integer(body.settingsVersion, "reviewed invoice settings version", 0, Number.MAX_SAFE_INTEGER), invoiceDate: date(body.invoiceDate, "invoice date"), supplyDate: date(body.supplyDate, "supply date"), billTo: billTo ? { name: text(billTo.name, "customer billing name", 180), address: text(billTo.address, "customer billing address", 1000), postcode: text(billTo.postcode, "customer billing postcode", 20), vatNumber: text(billTo.vatNumber, "customer VAT number", 40) } : null, deliveryCharge: { pence: delivery.pence === undefined ? 0 : integer(delivery.pence, "delivery charge in pence", 0, 100000000), description: text(delivery.description, "delivery description", 180) || "Delivery", vatRateId: slug(delivery.vatRateId, "delivery VAT rate", true) }, lineVatRateIds: lineVatRateIds?.map((id: unknown) => slug(id, "line VAT rate")) || null, paymentInstructions: body.paymentInstructions === undefined ? null : text(body.paymentInstructions, "payment instructions", 2000), dueDate: body.dueDate === undefined || body.dueDate === null || body.dueDate === "" ? null : date(body.dueDate, "payment due date") };
+  const billingRevision = body.billingRevision === undefined ? {} : { billingRevision: integer(body.billingRevision, "reviewed billing address", 0, Number.MAX_SAFE_INTEGER) };
+  return { ...billingRevision, orderVersion: integer(body.orderVersion, "reviewed order version", 1, Number.MAX_SAFE_INTEGER), settingsVersion: integer(body.settingsVersion, "reviewed invoice settings version", 0, Number.MAX_SAFE_INTEGER), invoiceDate: date(body.invoiceDate, "invoice date"), supplyDate: date(body.supplyDate, "supply date"), billTo: billTo ? { name: text(billTo.name, "customer billing name", 180), address: text(billTo.address, "customer billing address", 1000), postcode: text(billTo.postcode, "customer billing postcode", 20), vatNumber: text(billTo.vatNumber, "customer VAT number", 40) } : null, deliveryCharge: { pence: delivery.pence === undefined ? 0 : integer(delivery.pence, "delivery charge in pence", 0, 100000000), description: text(delivery.description, "delivery description", 180) || "Delivery", vatRateId: slug(delivery.vatRateId, "delivery VAT rate", true) }, lineVatRateIds: lineVatRateIds?.map((id: unknown) => slug(id, "line VAT rate")) || null, paymentInstructions: body.paymentInstructions === undefined ? null : text(body.paymentInstructions, "payment instructions", 2000), dueDate: body.dueDate === undefined || body.dueDate === null || body.dueDate === "" ? null : date(body.dueDate, "payment due date") };
 }
 const digest = async (value: unknown) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(value))))].map((n) => n.toString(16).padStart(2, "0")).join("");
 export function invoiceLine(kind: InvoiceLine["kind"], description: string, quantity: number, price: number, rate: VatRate, priceBasis: "inclusive" | "exclusive"): InvoiceLine {
@@ -138,20 +143,25 @@ function document(row: InvoiceRow): InvoiceDocument {
   const data: InvoiceData = JSON.parse(row.data);
   return { ...data, id: row.seq, number: row.invoice_number, issuedAt: row.issued_at, issuedBy: row.issued_by, payment: { status: row.paid ? "paid" : data.dueDate && data.dueDate < today() ? "overdue" : "unpaid", paid: !!row.paid, paidDate: row.paid_date, reference: row.payment_reference, version: row.payment_version, outstandingPence: row.paid ? 0 : data.totals.grossPence } };
 }
-async function presented(env:Env,row:InvoiceRow,admin=true){return (await withAccounting(env,[document(row)],admin))[0];}
+async function presented(env: Env, row: InvoiceRow, admin = true) {
+  const [records, history, exception] = await Promise.all([
+    withAccounting(env, [document(row)], admin),
+    admin ? billingHistory(env, row.seq) : [],
+    admin ? billingException(env, row.seq) : null,
+  ]);
+  return { ...records[0], ...(history.length ? { billingHistory: history } : {}), ...(exception ? { billingException: exception } : {}) };
+}
 async function issuedPdf(env: Env, row: InvoiceRow) { return invoicePdf(await presented(env,row,false)); }
 export async function issuedInvoice(env: Env, id: number): Promise<InvoiceDocument> {
   const row = await env.DB.prepare("SELECT * FROM wholesale_invoices WHERE seq=?").bind(integer(id, "invoice ID", 1, Number.MAX_SAFE_INTEGER)).first<InvoiceRow>();
   if (!row) throw missing(); return document(row);
 }
-/** The tab invoice that covers an order, if its tab was cleared and invoiced. */
-async function tabInvoiceFor(env: Env, orderId: string, tabClearedId: string | undefined) {
-  if (!tabClearedId) return null;
-  return env.DB.prepare("SELECT * FROM wholesale_invoices WHERE order_id=? AND EXISTS(SELECT 1 FROM json_each(data,'$.orderIds') WHERE value=?)").bind("TAB-" + tabClearedId, orderId).first<InvoiceRow>();
+/** SQL: whether an order is covered by its own, a tab or a consolidated invoice. */
+export const INVOICED_SQL = "EXISTS(SELECT 1 FROM wholesale_invoice_coverage WHERE order_id=?)";
+async function coveredInvoice(env: Env, orderId: string) {
+  return env.DB.prepare("SELECT i.* FROM wholesale_invoice_coverage c JOIN wholesale_invoices i ON i.seq=c.invoice_id WHERE c.order_id=?")
+    .bind(orderId).first<InvoiceRow>();
 }
-/** SQL: whether an order has an invoice, its own or (on a cleared tab) the tab's. Bind invoicedArgs(order). */
-export const INVOICED_SQL = "EXISTS(SELECT 1 FROM wholesale_invoices WHERE order_id=? OR (order_id='TAB-'||? AND EXISTS(SELECT 1 FROM json_each(wholesale_invoices.data,'$.orderIds') WHERE value=?)))";
-export const invoicedArgs = (order: { id: string; tabClearedId?: string }) => [order.id, order.tabClearedId || "", order.id];
 async function invoiceByOrder(env: Env, orderId: string) { return env.DB.prepare("SELECT * FROM wholesale_invoices WHERE order_id = ?").bind(orderId).first<InvoiceRow>(); }
 const productOf = (line: { productId?: string; pack?: string }) => typeof line.productId === "string" && typeof line.pack === "string" ? { productId: line.productId, pack: line.pack } : {};
 const paymentTermsOf = (order: SourceOrder): Terms => order.paymentTerms ?? order.customerSnapshot?.paymentTerms ?? { id: "not-recorded", label: "Payment terms not recorded", note: "" };
@@ -172,20 +182,22 @@ function dueFor(terms: Terms, invoiceDate: string): string | null {
   if (netDays) return new Date(Date.parse(invoiceDate + "T00:00:00Z") + Number(netDays) * 86400000).toISOString().slice(0, 10);
   return terms.id === "before-dispatch" ? invoiceDate : null;
 }
-/** Who an invoice is billed to: the address saved with the order, else (an order placed before the business had an
- * address, such as a collection) the business's current address for that location, then its main one. */
-export async function billingFor(env: Env, order: Pick<SourceOrder, "business" | "customerId" | "customerSnapshot" | "locationId">): Promise<InvoiceData["billTo"]> {
+/** A confirmed billing address is independent of a customer's order and delivery addresses. */
+async function billingFor(env: Env, order: Pick<SourceOrder, "business" | "customerId" | "customerSnapshot" | "locationId">) {
   const name = order.business, saved = order.customerSnapshot;
+  const confirmed = order.customerId ? await billingAddressFor(env, order.customerId) : null;
+  const billing = (address: string, postcode: string, revision = 0) => ({ billTo: { name, address, postcode, vatNumber: "" }, revision });
+  if (confirmed) return billing(confirmed.address, confirmed.postcode, confirmed.id);
   const savedAddress = tidyPostalAddress(saved?.address || "");
-  if (savedAddress) return { name, address: savedAddress, postcode: saved?.postcode || "", vatNumber: "" };
+  if (savedAddress) return billing(savedAddress, saved?.postcode || "");
   const customer = order.customerId ? await get<Customer & { locations?: { id: string; address?: string; postcode?: string }[] }>(env, "customer", order.customerId) : null;
   const location = customer?.locations?.find((item) => item.id === order.locationId && tidyPostalAddress(item.address || "")) || customer;
-  return { name, address: tidyPostalAddress(location?.address || ""), postcode: location?.postcode || "", vatNumber: "" };
+  return billing(tidyPostalAddress(location?.address || ""), location?.postcode || "");
 }
 const invoiceLocation = (location: SourceOrder["locationSnapshot"]) => location ? {
   ...location, ...(typeof location.address === "string" ? { address: tidyPostalAddress(location.address) } : {}),
 } : null;
-async function build(env: Env, orderId: string, request: InvoiceRequest): Promise<{ data: InvoiceData; config: InvoiceSettings }> {
+async function build(env: Env, orderId: string, request: InvoiceRequest): Promise<{ data: InvoiceData; config: InvoiceSettings; billingRevision: number }> {
   const config = await settings(env);
   if (!config.ready) throw new ApiError(409, "invoice_settings_incomplete", config.reasons.join(" "));
   if (config.version !== request.settingsVersion) throw conflict("Invoice settings changed. Review the invoice again.");
@@ -194,9 +206,11 @@ async function build(env: Env, orderId: string, request: InvoiceRequest): Promis
   if (!orderId.startsWith("WS-") || order.preview !== false || !order.customerId) throw invalid("Invoices can only be issued for real customer orders.");
   if (order.status === "Cancelled") throw invalid("An invoice cannot be issued for a cancelled order.");
   if (order.version !== request.orderVersion) throw conflict("The order changed. Review its details before issuing an invoice.");
-  if (await tabInvoiceFor(env, orderId, order.tabClearedId)) throw invalid("This order was invoiced with its customer's tab. Open the tab's invoice.");
+  if (await coveredInvoice(env, orderId)) throw invalid("This order is covered by an issued invoice. Open that invoice.");
   const value = config.settings;
-  const billTo = request.billTo ? { ...request.billTo, address: tidyPostalAddress(request.billTo.address) } : await billingFor(env, order);
+  const billing = await billingFor(env, order);
+  if (request.billingRevision !== undefined && request.billingRevision !== billing.revision) throw conflict("The billing address changed. Reopen the invoice draft to review it.");
+  const billTo = request.billTo ? { ...request.billTo, address: tidyPostalAddress(request.billTo.address) } : billing.billTo;
   if (!billTo.name || !billTo.address) throw invalid(request.billTo ? "Add the customer's billing name and full address before issuing an invoice." : "Add an address for this business (Customers → the business → Main location), then press Try again.");
   if (request.lineVatRateIds && request.lineVatRateIds.length !== order.lines.length) throw invalid("Choose one VAT rate for each saved order line.");
   const rate = (id: string) => { const found = value.vatRates.find((item) => item.id === id); if (!found) throw invalid("Choose a configured VAT rate."); return found; };
@@ -207,39 +221,66 @@ async function build(env: Env, orderId: string, request: InvoiceRequest): Promis
   if (agreedDueDate && request.dueDate && request.dueDate !== agreedDueDate) throw invalid("The due date must follow this order's agreed invoice payment terms.");
   const dueDate = agreedDueDate ?? request.dueDate;
   if (dueDate && dueDate < request.invoiceDate) throw invalid("The payment due date cannot be before the invoice date.");
-  return { config: value, data: { orderId, orderReference: order.reference || "", customerId: order.customerId, invoiceDate: request.invoiceDate, supplyDate: request.supplyDate, seller: { ...value.seller }, billTo: { ...billTo }, deliveryLocation: invoiceLocation(order.locationSnapshot), priceBasis: value.priceBasis!, lines, totals, vatBreakdown, paymentTerms: { ...paymentTerms }, paymentInstructions: request.paymentInstructions ?? value.paymentInstructions, dueDate, orderVersion: order.version, settingsVersion: config.version } };
+  return { config: value, billingRevision: billing.revision, data: { orderId, orderReference: order.reference || "", customerId: order.customerId, invoiceDate: request.invoiceDate, supplyDate: request.supplyDate, seller: { ...value.seller }, billTo: { ...billTo }, deliveryLocation: invoiceLocation(order.locationSnapshot), priceBasis: value.priceBasis!, lines, totals, vatBreakdown, paymentTerms: { ...paymentTerms }, paymentInstructions: request.paymentInstructions ?? value.paymentInstructions, dueDate, orderVersion: order.version, settingsVersion: config.version } };
 }
 
 interface AutoIssuance { since: number; leaseOwner: string }
+export interface ReviewedBatchInvoice {
+  invoice: InvoiceData;
+  billingRevision: number;
+  accountVersion: number;
+  customerVersion: number;
+  orders: Record<string, number>;
+}
+interface BatchIssuance extends Pick<ReviewedBatchInvoice, "accountVersion" | "customerVersion" | "orders"> {
+  itemId: number; owner: string; actorId: string;
+}
+interface InvoiceIssuance {
+  billingRevision: number;
+  automatic?: AutoIssuance;
+  tabVersions?: Record<string, number>;
+  batch?: BatchIssuance;
+  numberingCompany?: NumberingCompany;
+}
 
 /** Issue with the configured numbering: prefix + counter, or the next number in QuickBooks's series (asked afresh each
  *  time; if another invoice takes it first, the unique number refuses this one and the next is asked for). */
-async function insertNumbered(req: Request, env: Env, data: InvoiceData, config: InvoiceSettings, requestKey: string, actor: string, automatic?: AutoIssuance, tabVersions?: Record<string, number>) {
-  if (!config.sharedNumbering) return insertInvoice(env, data, config, requestKey, actor, automatic, tabVersions);
+async function insertNumbered(req: Request, env: Env, data: InvoiceData, config: InvoiceSettings, requestKey: string, actor: string, issuance: InvoiceIssuance) {
+  if (!config.sharedNumbering) return insertInvoice(env, data, config, requestKey, actor, issuance);
   for (let attempt = 0; attempt < 3; attempt++) {
-    const number = await nextSharedNumber(req, env);
-    try { return await insertInvoice(env, data, config, requestKey, actor, automatic, tabVersions, number); }
+    const number = await nextSharedNumber(req, env, issuance.numberingCompany);
+    try { return await insertInvoice(env, data, config, requestKey, actor, issuance, number); }
     catch (error) { if (!/UNIQUE constraint failed: wholesale_invoices\.invoice_number/.test(String((error as Error)?.message))) throw error; }
   }
   throw new NumberUnavailable("Another invoice kept taking the next number. It will be tried again.");
 }
 
 /** Check order versions, invoice coverage and automation permission in the same write as number allocation. */
-async function insertInvoice(env: Env, data: InvoiceData, config: InvoiceSettings, requestKey: string, actor: string, automatic?: AutoIssuance, tabVersions?: Record<string, number>, number?: string) {
+async function insertInvoice(env: Env, data: InvoiceData, config: InvoiceSettings, requestKey: string, actor: string, { billingRevision, automatic, tabVersions, batch }: InvoiceIssuance, number?: string) {
   const { orderId, customerId, orderVersion, settingsVersion } = data;
   const tab = orderId.startsWith("TAB-");
   const tabId = tab ? orderId.slice(4) : "";
-  const guard = tab ? `EXISTS(SELECT 1 FROM wholesale_tabs WHERE id=? AND customer_id=? AND cleared_at>=?)
+  const guard = batch ? `EXISTS(SELECT 1 FROM wholesale_invoice_batch_items WHERE id=? AND state='working' AND lease_owner=? AND lease_until>?)
+    AND EXISTS(SELECT 1 FROM users WHERE id=? AND role='admin' AND active=1)
+    AND EXISTS(SELECT 1 FROM wholesale_preview WHERE kind='customer' AND id=? AND version=? AND COALESCE(json_extract(data,'$.hidePrices'),0)=0)
+    AND COALESCE((SELECT version FROM wholesale_invoice_accounts WHERE customer_id=?),0)=?
+    AND NOT EXISTS(
+      SELECT 1 FROM json_each(?) reviewed
+      LEFT JOIN wholesale_preview o ON o.kind='order' AND o.id=reviewed.key AND o.version=reviewed.value
+        AND json_extract(o.data,'$.customerId')=? AND json_extract(o.data,'$.status')='Dispatched'
+        AND json_extract(o.data,'$.preview')=0 AND json_extract(o.data,'$.deletedAt') IS NULL
+        AND json_extract(o.data,'$.tab') IS NULL AND json_extract(o.data,'$.tabClearedId') IS NULL
+      WHERE o.id IS NULL OR EXISTS(SELECT 1 FROM wholesale_invoice_coverage WHERE order_id=o.id)
+    )` : tab ? `EXISTS(SELECT 1 FROM wholesale_tabs WHERE id=? AND customer_id=? AND cleared_at>=?)
     AND NOT EXISTS(
       SELECT 1 FROM json_each(?) reviewed
       LEFT JOIN wholesale_preview o ON o.kind='order' AND o.id=reviewed.key AND o.version=reviewed.value
         AND json_extract(o.data,'$.tabClearedId')=? AND json_extract(o.data,'$.customerId')=?
-      WHERE o.id IS NULL OR EXISTS(SELECT 1 FROM wholesale_invoices WHERE order_id=o.id)
+      WHERE o.id IS NULL OR EXISTS(SELECT 1 FROM wholesale_invoice_coverage WHERE order_id=o.id)
     )` : `EXISTS(
       SELECT 1 FROM wholesale_preview o WHERE o.kind='order' AND o.id=? AND o.version=?
       AND json_extract(o.data,'$.preview')=0 AND json_extract(o.data,'$.deletedAt') IS NULL AND json_extract(o.data,'$.status')<>'Cancelled'
-      AND NOT EXISTS(SELECT 1 FROM wholesale_invoices i WHERE i.order_id='TAB-'||json_extract(o.data,'$.tabClearedId')
-        AND EXISTS(SELECT 1 FROM json_each(i.data,'$.orderIds') WHERE value=o.id))
+      AND NOT EXISTS(SELECT 1 FROM wholesale_invoice_coverage WHERE order_id=o.id)
       ${automatic ? `AND json_extract(o.data,'$.status')='Dispatched' AND json_extract(o.data,'$.dispatchedAt')>=?
         AND json_extract(o.data,'$.tab') IS NULL AND json_extract(o.data,'$.tabClearedId') IS NULL` : ""}
     )`;
@@ -247,19 +288,22 @@ async function insertInvoice(env: Env, data: InvoiceData, config: InvoiceSetting
     AND EXISTS(SELECT 1 FROM wholesale_auto_invoicing WHERE id=1
       AND json_extract(data,'$.issue')=1 AND json_extract(data,'$.since')=?)
     AND EXISTS(SELECT 1 FROM wholesale_auto_invoices WHERE source=? AND lease_owner=? AND lease_until>?)
-    AND NOT EXISTS(SELECT 1 FROM wholesale_preview WHERE kind='customer' AND id=? AND json_extract(data,'$.hidePrices')=1)` : "";
+    AND NOT EXISTS(SELECT 1 FROM wholesale_preview WHERE kind='customer' AND id=? AND json_extract(data,'$.hidePrices')=1)
+    ${tab ? "" : "AND NOT EXISTS(SELECT 1 FROM wholesale_invoice_accounts WHERE customer_id=? AND cadence='monthly')"}` : "";
   const at = Date.now();
   const inserted = await env.DB.prepare(`INSERT INTO wholesale_invoices(seq,invoice_number,order_id,customer_id,request_key,data,issued_at,issued_by)
     SELECT next_seq, ${number ? "?" : "? || printf('%06d', ? + next_seq - 1)"}, ?,?,?,?,?,?
     FROM (SELECT COALESCE((SELECT seq FROM sqlite_sequence WHERE name='wholesale_invoices'),0)+1 AS next_seq)
     WHERE NOT EXISTS(SELECT 1 FROM wholesale_invoices WHERE order_id=?)
       AND EXISTS(SELECT 1 FROM wholesale_invoice_settings WHERE id=1 AND version=?)
+      AND COALESCE((SELECT MAX(id) FROM wholesale_invoice_billing_reviews WHERE customer_id=? AND environment='production'),0)=?
       AND ${guard}${automationGuard} RETURNING *`)
-    .bind(...(number ? [number] : [config.invoicePrefix, config.firstInvoiceNumber]), orderId, customerId, requestKey, JSON.stringify(data), at, actor, orderId, settingsVersion,
-      ...(tab ? [tabId, customerId, automatic?.since ?? 0, JSON.stringify(tabVersions), tabId, customerId] : [orderId, orderVersion, ...(automatic ? [automatic.since] : [])]),
-      ...(automatic ? [automatic.since, tab ? "tab:" + tabId : "order:" + orderId, automatic.leaseOwner, at, customerId] : []))
+    .bind(...(number ? [number] : [config.invoicePrefix, config.firstInvoiceNumber]), orderId, customerId, requestKey, JSON.stringify(data), at, actor, orderId, settingsVersion, customerId, billingRevision,
+      ...(batch ? [batch.itemId, batch.owner, at, batch.actorId, customerId, batch.customerVersion, customerId, batch.accountVersion, JSON.stringify(batch.orders), customerId]
+        : tab ? [tabId, customerId, automatic?.since ?? 0, JSON.stringify(tabVersions), tabId, customerId] : [orderId, orderVersion, ...(automatic ? [automatic.since] : [])]),
+      ...(automatic ? [automatic.since, tab ? "tab:" + tabId : "order:" + orderId, automatic.leaseOwner, at, customerId, ...(tab ? [] : [customerId])] : []))
     .first<InvoiceRow>();
-  if (inserted) await audit(env, "wholesale_invoice_issued", actor, `${actor} issued invoice ${inserted.invoice_number} for ${tab ? `a tab of ${data.orderIds?.length || 0} orders (${data.orderIds?.join(", ")})` : orderId}.`);
+  if (inserted) await audit(env, "wholesale_invoice_issued", actor, `${actor} issued invoice ${inserted.invoice_number} for ${data.orderIds?.length ? `${data.orderIds.length} orders` : orderId}.`);
   return inserted;
 }
 
@@ -289,10 +333,11 @@ export async function issueForOrder(req: Request, env: Env, orderId: string, act
   const order = await get<SourceOrder>(env, "order", orderId);
   if (!order || order.deletedAt != null || order.status === "Cancelled") throw new InvoiceHold("The order was deleted or cancelled.");
   if (order.tab || order.tabClearedId) return null;
+  if (order.customerId && await env.DB.prepare("SELECT 1 FROM wholesale_invoice_accounts WHERE customer_id=? AND cadence='monthly'").bind(order.customerId).first()) return null;
   if (order.status !== "Dispatched" || (order.dispatchedAt || 0) < automatic.since) throw new InvoiceHold("Waiting for an eligible dispatch.");
   if (order.customerId && (await get<Customer>(env, "customer", order.customerId))?.hidePrices) return null;
-  const existing = await invoiceByOrder(env, orderId);
-  if (existing) return document(existing);
+  const existing = await coveredInvoice(env, orderId);
+  if (existing) return existing.request_key.startsWith("batch:") ? null : document(existing);
   const config = await settings(env);
   if (!config.ready) throw new InvoiceHold("Invoice settings aren't finished: " + config.reasons.join(" "));
   const invoiceDate = today(), sent = order.dispatchedAt ? ukDay(order.dispatchedAt) : invoiceDate;
@@ -302,10 +347,10 @@ export async function issueForOrder(req: Request, env: Env, orderId: string, act
   try { built = await build(env, orderId, request); }
   catch (error) { if (error instanceof ApiError && error.status < 500) throw new InvoiceHold(error.message); throw error; }
   const key = await digest(request);
-  const inserted = await held(() => insertNumbered(req, env, built.data, built.config, key, actor, automatic));
+  const inserted = await held(() => insertNumbered(req, env, built.data, built.config, key, actor, { billingRevision: built.billingRevision, automatic }));
   if (inserted) return document(inserted);
   const raced = await invoiceByOrder(env, orderId);
-  if (raced) return document(raced);
+  if (raced) return raced.request_key.startsWith("batch:") ? null : document(raced);
   throw new ApiError(409, "conflict", "The order changed while it was being invoiced. It will be tried again.");
 }
 
@@ -324,7 +369,7 @@ export async function issueForTab(req: Request, env: Env, tabId: string, actor: 
     JOIN wholesale_preview o ON o.kind='order' AND o.id=member.value
     WHERE json_extract(o.data,'$.tabClearedId')=? AND json_extract(o.data,'$.customerId')=?
       AND json_extract(o.data,'$.preview')=0 AND json_extract(o.data,'$.deletedAt') IS NULL
-      AND json_extract(o.data,'$.status')<>'Cancelled' AND NOT EXISTS(SELECT 1 FROM wholesale_invoices WHERE order_id=o.id)
+      AND json_extract(o.data,'$.status')<>'Cancelled' AND NOT EXISTS(SELECT 1 FROM wholesale_invoice_coverage WHERE order_id=o.id)
     ORDER BY member.key`).bind(JSON.stringify(record.orderIds), tabId, tab.customer_id).all<Row>();
   const orders = loaded.results.map(decode<SourceOrder>);
   if (!orders.length) return null;
@@ -360,7 +405,7 @@ export async function issueForTab(req: Request, env: Env, tabId: string, actor: 
     else lines.push(...group);
   }
   if (lines.length > 150) throw new InvoiceHold("This tab has too many different lines for one invoice. Invoice it by hand.");
-  const billTo = await billingFor(env, latest);
+  const { billTo, revision } = await billingFor(env, latest);
   if (!billTo.name || !billTo.address) throw new InvoiceHold("Add the customer's billing address before this tab can be invoiced.");
   const invoiceDate = today(), sentDays = orders.map((o) => o.dispatchedAt).filter((at): at is number => !!at).map(ukDay).sort();
   const supplyDate = sentDays.length && sentDays.at(-1)! <= invoiceDate ? sentDays.at(-1)! : invoiceDate;
@@ -368,11 +413,75 @@ export async function issueForTab(req: Request, env: Env, tabId: string, actor: 
   const data: InvoiceData = { orderId: id, orderReference: `Tab: ${orders.length} ${orders.length === 1 ? "order" : "orders"}`, customerId: tab.customer_id, invoiceDate, supplyDate, seller: { ...value.seller }, billTo, deliveryLocation: invoiceLocation(latest.locationSnapshot), priceBasis: value.priceBasis!, lines, totals, vatBreakdown, paymentTerms: { ...paymentTerms }, paymentInstructions: value.paymentInstructions, dueDate: dueFor(paymentTerms, invoiceDate), orderVersion: 0, settingsVersion: config.version, orderIds: orders.map((o) => o.id) };
   const versions = Object.fromEntries(orders.map(o => [o.id, o.version]));
   const key = await digest({ tab: tabId, orderIds: data.orderIds, settingsVersion: config.version });
-  const inserted = await held(() => insertNumbered(req, env, data, value, key, actor, automatic, versions));
+  const inserted = await held(() => insertNumbered(req, env, data, value, key, actor, { billingRevision: revision, automatic, tabVersions: versions }));
   if (inserted) return document(inserted);
   const raced = await invoiceByOrder(env, id);
   if (raced) return document(raced);
   throw new ApiError(409, "conflict", "The tab's orders changed while it was being invoiced. It will be tried again.");
+}
+
+/** Prepare exactly the immutable invoice that an approved batch will issue. */
+export function prepareBatchInvoice(
+  orders: (SourceOrder & Versioned)[], customer: Customer & Versioned,
+  config: Awaited<ReturnType<typeof settings>>, accountVersion: number,
+  profile: { address: string; postcode: string; id: number } | null, period: string, monthly: boolean,
+): ReviewedBatchInvoice {
+  if (!orders.length) throw invalid("Choose dispatched orders to invoice.");
+  if (!config.ready) throw new InvoiceHold(config.reasons.join(" "));
+  const last = orders.at(-1)!;
+  const billTo = {
+    name: customer.business || last.business,
+    address: tidyPostalAddress(profile?.address || (!monthly && last.customerSnapshot?.address) || customer.address || ""),
+    postcode: profile ? profile.postcode : (!monthly && last.customerSnapshot?.address ? last.customerSnapshot.postcode : customer.postcode) || "",
+    vatNumber: "",
+  };
+  if (!billTo.name || !billTo.address) throw new InvoiceHold("Add the customer's billing address before issuing.");
+  const paymentTerms = paymentTermsOf(last);
+  if (orders.some(order => {
+    const terms = paymentTermsOf(order);
+    return terms.id !== paymentTerms.id || (terms.note || "") !== (paymentTerms.note || "");
+  })) throw new InvoiceHold("These orders have different agreed payment terms. Review them individually.");
+  const value = config.settings, priceBasis = value.priceBasis!;
+  const rate = value.vatRates.find(item => item.id === value.defaultCoffeeRateId)!;
+  const lines = orders.flatMap(order => {
+    const coffee: InvoiceLine[] = order.lines.map(line => ({
+      ...invoiceLine("coffee", line.title, line.quantity, line.price, rate, priceBasis),
+      packLabel: line.packLabel, grindLabel: line.grindLabel, ...productOf(line),
+    }));
+    const delivery = deliveryLineFor(order, value);
+    return delivery ? [...coffee, delivery] : coffee;
+  });
+  if (!lines.length || lines.length > 150) throw new InvoiceHold("This review needs between 1 and 150 invoice lines. Review the orders individually.");
+  const invoiceDate = today(), supplyDate = ukDay(last.dispatchedAt!);
+  if (supplyDate > invoiceDate) throw new InvoiceHold("The recorded dispatch date is in the future.");
+  const invoice: InvoiceData = {
+    orderId: monthly ? "MONTH-" + crypto.randomUUID() : last.id,
+    orderReference: monthly ? period + " · " + orders.length + " dispatched orders" : last.reference || "",
+    customerId: customer.id, invoiceDate, supplyDate, seller: { ...value.seller }, billTo,
+    deliveryLocation: monthly ? null : invoiceLocation(last.locationSnapshot), priceBasis, lines, ...summed(lines),
+    paymentTerms: { ...paymentTerms }, paymentInstructions: value.paymentInstructions, dueDate: dueFor(paymentTerms, invoiceDate),
+    orderVersion: last.version, settingsVersion: config.version,
+    ...(monthly ? { orderIds: orders.map(order => order.id) } : {}),
+  };
+  return { invoice, accountVersion, billingRevision: profile?.id ?? 0, customerVersion: customer.version,
+    orders: Object.fromEntries(orders.map(order => [order.id, order.version])) };
+}
+
+export async function issueReviewedBatchInvoice(
+  req: Request, env: Env, review: ReviewedBatchInvoice, itemId: number, owner: string,
+  actor: { id: string; name: string }, numberingCompany?: NumberingCompany,
+) {
+  const key = "batch:" + itemId;
+  // Recover the number if the request ended after issuing but before updating the batch.
+  const existing = await invoiceByOrder(env, review.invoice.orderId);
+  if (existing?.request_key === key) return document(existing);
+  const config = await settings(env);
+  if (!config.ready || config.version !== review.invoice.settingsVersion) throw conflict("Invoice settings changed. Prepare a new batch review.");
+  const saved = existing ? null : await insertNumbered(req, env, review.invoice, config.settings, key, actor.name, {
+    billingRevision: review.billingRevision, batch: { ...review, itemId, owner, actorId: actor.id }, numberingCompany,
+  });
+  if (saved) return document(saved);
+  throw conflict("An order, billing account or invoice changed. Review the remaining orders again.");
 }
 
 export async function handleInvoiceAdmin(req: Request, env: Env, route: string, actor: string): Promise<Response | null> {
@@ -418,31 +527,33 @@ export async function handleInvoiceAdmin(req: Request, env: Env, route: string, 
   }
   const order = /^orders\/((?:WS|PREVIEW)-[A-F0-9]{32})\/invoice(\/preview)?(\/pdf)?$/.exec(route);
   if (order && req.method === "GET" && !order[2]) {
-    let row = await invoiceByOrder(env, order[1]);
+    let row = await coveredInvoice(env, order[1]);
+    let billing;
     if (!row) {
       const saved = await get<SourceOrder>(env, "order", order[1]);
-      row = await tabInvoiceFor(env, order[1], saved?.tabClearedId);
       if (!row && (!saved || saved.deletedAt != null)) throw new ApiError(404, "not_found", "Order not found.");
       if (!order[1].startsWith("WS-") || saved?.preview !== false) throw invalid("Invoices can only be issued for real customer orders.");
+      if (!row && saved && !order[3]) billing = await billingFor(env, saved);
     }
     if (order[3]) { if (!row) throw missing(); return issuedPdf(env,row); }
-    return json({ invoice: row ? await presented(env,row) : null });
+    return json({ invoice: row ? await presented(env,row) : null, ...(billing ? { billing } : {}) });
   }
   if (order && req.method === "POST") {
     if (order[3] && !order[2]) throw new ApiError(404, "not_found", "Preview a draft PDF before issuing the invoice.");
     const request = requestBody(object(await readJson(req, 16 * 1024))), requestKey = await digest(request);
-    const existing = await invoiceByOrder(env, order[1]);
+    const existing = await coveredInvoice(env, order[1]);
     if (existing) {
+      if (existing.order_id.startsWith("TAB-")) throw invalid("This order was invoiced with its customer's tab. Open the tab's invoice.");
       if (order[2]) return order[3] ? issuedPdf(env,existing) : json({ invoice: await presented(env,existing), issued: true });
       if (existing.request_key !== requestKey) throw conflict("This order already has an issued invoice. Open that invoice; issued invoices cannot be changed.");
       return json({ invoice: await presented(env,existing) });
     }
-    const { data, config } = await build(env, order[1], request);
+    const { data, config, billingRevision } = await build(env, order[1], request);
     if (order[2]) {
       const preview: InvoiceDocument = { ...data, id: null, number: null, issuedAt: null, issuedBy: null, payment: { status: data.dueDate && data.dueDate < today() ? "overdue" : "unpaid", paid: false, paidDate: null, reference: "", version: 0, outstandingPence: data.totals.grossPence } };
       return order[3] ? invoicePdf(preview, { draft: true }) : json({ invoice: preview, issued: false });
     }
-    const inserted = await insertNumbered(req, env, data, config, requestKey, actor);
+    const inserted = await insertNumbered(req, env, data, config, requestKey, actor, { billingRevision });
     if (!inserted) {
       const raced = await invoiceByOrder(env, order[1]);
       if (raced?.request_key === requestKey) return json({ invoice: await presented(env,raced) });
@@ -537,22 +648,23 @@ export async function handleInvoiceCustomer(req: Request, env: Env, route: strin
   const id = /^invoices\/(\d+)(\/pdf)?$/.exec(route);
   const orderId = route.split("/")[1];
   const row = id ? await env.DB.prepare("SELECT * FROM wholesale_invoices WHERE seq=? AND customer_id=?").bind(integer(Number(id[1]), "invoice ID", 1, Number.MAX_SAFE_INTEGER), user.customerId).first<InvoiceRow>()
-    : await env.DB.prepare("SELECT * FROM wholesale_invoices WHERE customer_id=? AND (order_id=? OR (order_id LIKE 'TAB-%' AND EXISTS(SELECT 1 FROM json_each(data,'$.orderIds') WHERE value=?))) ORDER BY seq LIMIT 1").bind(user.customerId, orderId, orderId).first<InvoiceRow>();
+    : await env.DB.prepare("SELECT i.* FROM wholesale_invoice_coverage c JOIN wholesale_invoices i ON i.seq=c.invoice_id WHERE i.customer_id=? AND c.order_id=?").bind(user.customerId, orderId).first<InvoiceRow>();
   if (!row) throw missing(); return route.endsWith("/pdf") ? issuedPdf(env,row) : json({ invoice: await presented(env,row,false) });
 }
 
 export async function invoiceLinks<T extends { id: string; tabClearedId?: string }>(env: Env, orders: T[]) {
   if (!orders.length) return orders;
-  const invoices: { seq: number; invoice_number: string; order_id: string; ids: string | null }[] = [];
-  const keys = [...new Set(orders.flatMap((order) => [order.id, ...(order.tabClearedId ? ["TAB-" + order.tabClearedId] : [])]))];
+  const invoices = new Map<string, { id: number; number: string }>();
+  const keys = [...new Set(orders.map(order => order.id))];
   for (let start = 0; start < keys.length; start += 80) {
     const chunk = keys.slice(start, start + 80);
-    const result = await env.DB.prepare(`SELECT seq,invoice_number,order_id,json_extract(data,'$.orderIds') AS ids FROM wholesale_invoices WHERE order_id IN (${chunk.map(() => "?").join(",")})`).bind(...chunk).all<{ seq: number; invoice_number: string; order_id: string; ids: string | null }>();
-    invoices.push(...result.results);
+    const result = await env.DB.prepare(`SELECT c.order_id,i.seq,i.invoice_number FROM wholesale_invoice_coverage c
+      JOIN wholesale_invoices i ON i.seq=c.invoice_id WHERE c.order_id IN (${chunk.map(() => "?").join(",")})`)
+      .bind(...chunk).all<{ seq: number; invoice_number: string; order_id: string }>();
+    for (const row of result.results) invoices.set(row.order_id, { id: row.seq, number: row.invoice_number });
   }
   return orders.map((order) => {
-    const invoice = invoices.find((invoice) => invoice.order_id === order.id)
-      || (order.tabClearedId ? invoices.find((invoice) => invoice.order_id === "TAB-" + order.tabClearedId && (JSON.parse(invoice.ids || "[]") as string[]).includes(order.id)) : undefined);
-    return invoice ? { ...order, invoice: { id: invoice.seq, number: invoice.invoice_number } } : order;
+    const invoice = invoices.get(order.id);
+    return invoice ? { ...order, invoice } : order;
   });
 }

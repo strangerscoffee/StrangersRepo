@@ -947,9 +947,11 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
         form.querySelector("#wGrindCount").textContent = `${shown} of ${row.lines.length} packing lines · Order totals include all lines.`;
         return;
       }
-      if (action === "invoice-open") {
+      if (action === "invoice-open" || action === "invoice-account") {
         const draft = draftOf(form, row);
-        await invoiceUI.openOrder(row, () => editOrder(row.id, draft, row));
+        const back = () => editOrder(row.id, draft, row);
+        if (action === "invoice-account") await invoiceUI.openBillingAccount(row.customerId, back);
+        else await invoiceUI.openOrder(row, back);
         return;
       }
       if (action === "tab-toggle") {
@@ -1393,6 +1395,8 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     openInvoiceQueue: queue => invoiceUI.setFilter(queue),
     openRoastPlan: insightsUI.openRoastPlan,
     searchInvoices: invoiceUI.search,
+    searchBillingAccounts: invoiceUI.accountsSearch,
+    invoicingChange: invoiceUI.workspaceChange,
     async act(name, id) {
       if (name.startsWith("wh-invoice-")) { await invoiceUI.act(name, id); return; }
       if (name.startsWith("wh-ins-")) { await insightsUI.act(name, id); return; }

@@ -90,7 +90,7 @@ export interface Outgoing {
 }
 
 /** Sends one email (never throws): "sent", "off" (no API key), "limit" (the day's allowance is used) or "failed". */
-export async function sendOutcome(env: Env, o: Outgoing, idempotencyKey?: string): Promise<{ status: "sent" | "off" | "limit" | "failed"; uncertain?: boolean; permanent?: boolean }> {
+export async function sendOutcome(env: Env, o: Outgoing, idempotencyKey?: string, beforeSend?: () => Promise<void>): Promise<{ status: "sent" | "off" | "limit" | "failed"; uncertain?: boolean; permanent?: boolean; providerStatus?: number }> {
   if (!emailReady(env)) return { status: "off" };
   const prefix = isWholesaleEmail(o) ? "wholesale_email_" : "email_";
   let started = false;
@@ -105,6 +105,7 @@ export async function sendOutcome(env: Env, o: Outgoing, idempotencyKey?: string
       await audit(env, prefix + "failed", null, `The daily email limit delayed mail to ${o.to.name} (${o.about}).`);
       return { status: "limit" };
     }
+    if (beforeSend) await beforeSend();
     started = true;
     const res = await fetch(env.RESEND_API_URL || "https://api.resend.com/emails", {
       method: "POST",
@@ -122,7 +123,7 @@ export async function sendOutcome(env: Env, o: Outgoing, idempotencyKey?: string
     if (!res.ok) {
       const why = (await res.text().catch(() => "")).slice(0, 200);
       await audit(env, prefix + "failed", null, `Couldn't email ${o.to.name} (${o.about}). Resend returned ${res.status}${why ? ` ${why}` : ""}`);
-      return { status: "failed", uncertain: !!idempotencyKey && res.status === 409 };
+      return { status: "failed", uncertain: !!idempotencyKey && res.status === 409, providerStatus: res.status };
     }
     const acknowledged = await res.json().catch(()=>null) as {id?:unknown}|null;
     await recordAccepted(env, o, acknowledged?.id, idempotencyKey).catch(() => audit(env, prefix + "tracking_failed", null, "An accepted email could not be recorded for delivery feedback."));

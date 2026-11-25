@@ -1,4 +1,4 @@
-import { selectWholesaleSection } from "./admin-workspace-helpers.mjs";
+import { selectInvoiceView, selectWholesaleSection } from "./admin-workspace-helpers.mjs";
 // Admin → Wholesale → Insights and Invoicing: "Hide figures" blurs sales, money, customer names and charts on screen
 // with one tap (or H), remembered on the device, for when someone's looking at the display (the owner's request,
 // 23 Nov 2026). Phone, iPad and desktop, light and dark. Needs Playwright with Chromium.
@@ -79,11 +79,13 @@ for (const [screen, viewport, isMobile] of [["phone", { width: 390, height: 844 
 
     // Invoicing: still hidden (remembered), and after a reload.
     await selectWholesaleSection(p, "invoices");
+    await selectInvoiceView(p, "invoices");
     await p.locator('[data-act="wh-privacy"][aria-pressed="true"]').waitFor();
     await p.waitForFunction(() => /TEST-/.test(document.querySelector(".w-content")?.innerText || "")); await p.waitForTimeout(300);
     for (const text of ["Secret Sales Café", "£\\d"]) { const r = await readable(p, text); assert.ok(r.length && r.every((x) => !x), `${text} blurred on Invoicing ` + await where(p, text)); }
     if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/hide-invoices-${screen}-${scheme}-on.png`, fullPage: true });
     await p.reload(); await p.locator('[data-act="wh-privacy"][aria-pressed="true"]').waitFor();
+    await selectInvoiceView(p, "invoices");
     // H switches it back (not while typing).
     await p.locator("body").click({ position: { x: 2, y: 2 } }).catch(() => {});
     await p.keyboard.press("h");

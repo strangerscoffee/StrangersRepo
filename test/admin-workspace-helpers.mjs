@@ -18,3 +18,9 @@ export async function revealAdminOptions(page, selector) {
   const details = page.locator(selector);
   if (await details.getAttribute("open") === null) await details.locator("summary").click();
 }
+
+export async function selectInvoiceView(page, id) {
+  await page.locator('#iwView:visible, nav.iw-tabs:visible').first().waitFor();
+  if (await page.locator('#iwView').isVisible()) await page.locator('#iwView').selectOption(id);
+  else await page.locator(`nav.iw-tabs [data-id="${id}"]`).click();
+}

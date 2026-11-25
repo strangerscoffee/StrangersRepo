@@ -19,13 +19,21 @@ function invoiceFixture() {
  db.exec(`
    CREATE TABLE wholesale_preview(kind TEXT,id TEXT,data TEXT,version INTEGER,updated_at INTEGER,PRIMARY KEY(kind,id));
    CREATE TABLE wholesale_invoice_settings(id INTEGER,data TEXT,version INTEGER,updated_at INTEGER);
+   CREATE TABLE wholesale_invoice_accounts(customer_id TEXT PRIMARY KEY,cadence TEXT,version INTEGER);
+   CREATE TABLE wholesale_invoice_billing_reviews(id INTEGER PRIMARY KEY, invoice_id INTEGER, customer_id TEXT, environment TEXT, address TEXT, postcode TEXT,
+     actor TEXT, choice TEXT, created_at INTEGER);
    CREATE TABLE wholesale_invoices(seq INTEGER PRIMARY KEY AUTOINCREMENT,invoice_number TEXT UNIQUE,order_id TEXT UNIQUE,
      customer_id TEXT,request_key TEXT,data TEXT,issued_at INTEGER,issued_by TEXT,paid INTEGER DEFAULT 0,
      paid_date TEXT,paid_at INTEGER,payment_reference TEXT DEFAULT '',payment_version INTEGER DEFAULT 1);
+   CREATE TABLE wholesale_invoice_coverage(order_id TEXT PRIMARY KEY,invoice_id INTEGER);
+   CREATE TRIGGER wholesale_invoice_add_coverage AFTER INSERT ON wholesale_invoices BEGIN
+     INSERT INTO wholesale_invoice_coverage SELECT new.order_id,new.seq WHERE substr(new.order_id,1,3)='WS-'
+       UNION SELECT value,new.seq FROM json_each(new.data,'$.orderIds') WHERE type='text';
+   END;
    CREATE TABLE wholesale_tabs(id TEXT PRIMARY KEY,customer_id TEXT,cleared_at INTEGER,data TEXT);
    CREATE TABLE wholesale_auto_invoicing(id INTEGER PRIMARY KEY,data TEXT);
    CREATE TABLE wholesale_auto_invoices(source TEXT PRIMARY KEY,lease_owner TEXT,lease_until INTEGER);
-   CREATE TABLE quickbooks_exports(id INTEGER PRIMARY KEY,invoice_id INTEGER,environment TEXT,state TEXT,write_started_at INTEGER NOT NULL DEFAULT 0);
+   CREATE TABLE quickbooks_exports(id INTEGER PRIMARY KEY,invoice_id INTEGER,environment TEXT,state TEXT,write_started_at INTEGER NOT NULL DEFAULT 0,last_error TEXT);
    CREATE TABLE quickbooks_observations(export_id INTEGER,status TEXT,outstanding_pence INTEGER,paid_pence INTEGER,reason TEXT,observed_at INTEGER,payment_voided INTEGER NOT NULL DEFAULT 0,due_date TEXT,invoice_issue TEXT NOT NULL DEFAULT '');
    CREATE TABLE audit_log(at INTEGER,kind TEXT,actor TEXT,text TEXT);
  `);
@@ -57,7 +65,7 @@ test('production issuance and amendment cannot both win either invoice/order rac
   for(const [index,invoiceFirst] of [true,false].entries()){
    const id='WS-'+String(index).repeat(32);addOrder(id);
    const insert=()=>handleInvoiceAdmin(request(review),env,'orders/'+id+'/invoice','Audit');
-   const update=()=>db.prepare(amend).run(JSON.stringify(changed),3,id,1,null,null,id,'',id).changes;
+   const update=()=>db.prepare(amend).run(JSON.stringify(changed),3,id,1,null,null,id).changes;
    if(invoiceFirst){assert.equal((await insert()).status,201);assert.equal(update(),0);}
    else{assert.equal(update(),1);await assert.rejects(insert(),error=>error.status===409);}
   }

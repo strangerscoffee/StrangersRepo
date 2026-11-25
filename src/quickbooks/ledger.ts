@@ -14,6 +14,8 @@ import {observe,refreshObservation,observation} from './observations';
 import {operationDTO,sourceHash,type ExportOperation,type Observation} from './operationTypes';
 import {automaticAllowed} from './autoPolicy';
 import {wakeIntegration} from '../integrationSignals';
+import {BILLING_EXPORT_HOLD,billingMatchApproved,isBillingIssue,reviewedAccountAddress,reviewedAddress} from './billingReviews';
+import {billingAddressIdentity,invoiceAddressDifference,quickBooksBillingAddress} from './invoiceAddresses';
 const autoPermission=automaticAllowed('quickbooks_exports.invoice_id','quickbooks_exports.created_by');
 export async function operation(env:Env,id:number){const row=await env.DB.prepare('SELECT * FROM quickbooks_exports WHERE id=?').bind(id).first<ExportOperation>();if(!row)throw new ApiError(404,'not_found','QuickBooks export not found.');return row;}
 export async function operationResult(env:Env,row:ExportOperation){return{...operationDTO(row),observation:await observation(env,row.id)};}
@@ -25,6 +27,29 @@ function paidReviewVersion(invoice: InvoiceDocument, review: { paidInvoiceConfir
     throw new ApiError(409, 'quickbooks_payment_changed', 'The website payment changed. Review the current payment before sending.');
   }
   return payment.version;
+}
+
+/** Only an export that has never made a write can take a newly reviewed billing address. */
+async function applyBillingReview(env:Env,row:ExportOperation,preview:ExportPreview,customer:any,owner:string){
+  if(row.write_started_at || row.remote_id || !preview.candidate)return row;
+  const {billTo}=preview.candidate;
+  const observed=quickBooksBillingAddress(customer.BillAddr,billTo.name,customer.DisplayName);
+  if(!observed)return row;
+  const approved=await reviewedAddress(env,row,observed);
+  if(row.auto&&!approved&&invoiceAddressDifference(JSON.parse(row.payload).BillAddr,customer.BillAddr,billTo.name,customer.DisplayName)
+    && !await reviewedAccountAddress(env,row,preview.candidate,observed)){
+    throw new ApiError(409,'billing_review_required',BILLING_EXPORT_HOLD);
+  }
+  if(!approved||JSON.stringify(billingAddressIdentity(billTo))===JSON.stringify(billingAddressIdentity(approved)))return row;
+  preview.candidate={...preview.candidate,billTo:{...billTo,address:approved.address,postcode:approved.postcode}};
+  preview.fingerprint=await digest(JSON.stringify(preview.candidate));
+  const payload=JSON.stringify(buildPayload(preview).payload);
+  const saved=await env.DB.prepare(`UPDATE quickbooks_exports SET payload=?,payload_hash=?,preview=?,fingerprint=?,updated_at=?,version=version+1
+    WHERE id=? AND lease_owner=? AND lease_until>? AND write_started_at=0 AND remote_id='' RETURNING *`)
+    .bind(payload,await digest(payload),JSON.stringify(preview),preview.fingerprint,Date.now(),row.id,owner,Date.now())
+    .first<ExportOperation>();
+  if(!saved)throw changed();
+  return saved;
 }
 export async function queueInvoice(req:Request,env:Env,mode:Environment,invoiceId:number,body:Record<string,any>,user:User){
   const invoice=await issuedInvoice(env,invoiceId),row=await connection(env,mode);
@@ -121,7 +146,10 @@ export async function processExport(req:Request,env:Env,id:number){
       if(!Array.isArray(rows)||rows.length>1)return finish(env,id,owner,'review','More than one QuickBooks invoice has this number. Reconcile the duplicates before continuing.');remote=rows[0]||null;
     }
     if(remote){
-      const match=matchesInvoice(preview,JSON.parse(row.payload),remote,!!row.created_remote||!!row.write_started_at);
+      let match=matchesInvoice(preview,JSON.parse(row.payload),remote,!!row.created_remote||!!row.write_started_at);
+      if(isBillingIssue(match.reason)&&await billingMatchApproved(env,row,remote,preview.candidate.billTo.name)){
+        match=matchesInvoice(preview,JSON.parse(row.payload),remote,!!row.created_remote||!!row.write_started_at,true);
+      }
       if(!match.matches){if(row.write_started_at)await env.DB.prepare('UPDATE quickbooks_exports SET sandbox_eligible=0 WHERE id=? AND lease_owner=?').bind(id,owner).run();if(/^\d{1,32}$/.test(remote.Id||''))await saveRemote(env,id,owner,remote.Id);return finish(env,id,owner,'review',!row.created_remote&&!row.write_started_at?clashReason(remote,preview.candidate.number):match.reason);}
       // A matching record found before any create is adopted only after explicit review.
       if(!row.write_started_at&&!row.created_remote){await saveRemote(env,id,owner,remote.Id);return finish(env,id,owner,'review','A matching QuickBooks invoice exists. Review it and choose Link existing invoice.');}
@@ -129,7 +157,9 @@ export async function processExport(req:Request,env:Env,id:number){
     }
     const prefs=(await resources.read('/preferences?minorversion=75')).Preferences;
     if(prefs?.SalesFormsPrefs?.CustomTxnNumbers!==true||prefs?.SalesFormsPrefs?.AllowServiceDate!==true)throw new ApiError(409,'quickbooks_preferences','Enable custom invoice numbers and service dates in QuickBooks before exporting.');
-    await verifyFrozenReferences(resources.read,preview.candidate);await resources.check();await requireExportMode(req,env,company,JSON.parse(row.profiles),modeState.version);
+    const verifiedCustomer=await verifyFrozenReferences(resources.read,preview.candidate);
+    row=await applyBillingReview(env,row,preview,verifiedCustomer,owner);
+    await resources.check();await requireExportMode(req,env,company,JSON.parse(row.profiles),modeState.version);
     remote=(await resources.write('/invoice?minorversion=75&requestid='+encodeURIComponent(row.request_id),row.payload,'application/json',async()=>{
       // Automatic invoicing links new customers and coffees as it goes, which bumps the mappings version. Another order's link added
       // while this one was being checked mustn't stop it (25 Nov 2026): look again, and send only if this invoice's references still match.

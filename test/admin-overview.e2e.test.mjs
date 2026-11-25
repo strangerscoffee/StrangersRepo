@@ -1,4 +1,4 @@
-import { selectWholesaleSection } from './admin-workspace-helpers.mjs';
+import { selectInvoiceView, selectWholesaleSection } from './admin-workspace-helpers.mjs';
 import{test,before,after}from'node:test';import assert from'node:assert/strict';import{createRequire}from'node:module';import{mkdir}from'node:fs/promises';
 import{startServer,SETUP_CODE}from'./harness.mjs';import{seedOverview}from'./admin-overview-fixture.mjs';
 const{chromium}=createRequire(import.meta.url)('playwright');let srv,browser,admin;
@@ -68,9 +68,8 @@ test("Admin mobile section links restore the active order search when going back
   await page.waitForFunction(() => document.activeElement.id === "wSection");
   await selectWholesaleSection(page, "invoices");
   assert.equal(await page.locator("#wSection").evaluate(element => element === document.activeElement), true);
-  await page.getByRole("searchbox", {name:"Search invoices"}).waitFor();
   assert.equal(new URL(page.url()).hash, "#wholesale/invoices");
-  await page.getByRole("button",{name:"Overdue",exact:true}).click();
+  await selectInvoiceView(page, "collections");
   await page.locator('[data-act="wh-invoice-queue"][data-id="overdue"][aria-pressed="true"]').waitFor();
   await page.getByRole("searchbox",{name:"Search invoices"}).fill("OV-1");
   await page.locator('.wi-invoice-row', {hasText:"OV-1"}).waitFor();

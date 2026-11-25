@@ -36,6 +36,43 @@ function withoutRecipient(address: string, recipient: string) {
   return recipient && address.startsWith(recipient + ' ') ? address.slice(recipient.length + 1) : address;
 }
 
+export interface BillingAddress { address: string; postcode: string }
+
+/** Keep display casing while extracting the postal address from either QuickBooks layout. */
+export function quickBooksBillingAddress(address: Address | undefined, ...names: unknown[]): BillingAddress | null {
+  if (!address || typeof address !== 'object') return null;
+  const clean = (value: unknown) => typeof value === 'string'
+    ? value.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/,\s*(?:,\s*)+/g, ', ').trim()
+    : '';
+  const lines = fields.map(field => clean(address[field])).filter(Boolean);
+  const recipients = names.map(addressText).filter(Boolean);
+  while (lines.length && recipients.includes(addressText(lines[0]))) lines.shift();
+  const parts = postalDetails(address);
+  if (parts.conflictingPostcodes) return null;
+  let street = lines.join(', ');
+  const trailing = /\b((?:[a-z]{1,2}\d[a-z\d]?|gir)\s?\d[a-z]{2})(?:[ ,]+(?:uk|gb|gbr|united kingdom|great britain))?\s*$/i.exec(street);
+  if (trailing) street = street.slice(0, trailing.index).replace(/[ ,]+$/, '');
+  if (!street) return null;
+  for (const place of [address.City, address.CountrySubDivisionCode]) {
+    const label = clean(place);
+    if (label && !endsWith(addressText(street), addressText(label))
+      && !addressText(street).includes(' ' + addressText(label) + ' ')) {
+      street = [street, label].filter(Boolean).join(', ');
+    }
+  }
+  const country = clean(address.Country);
+  if (country && !ukCountry.test(addressText(country)) && !endsWith(addressText(street), addressText(country))) {
+    street = [street, country].filter(Boolean).join(', ');
+  }
+  const postcode = clean(address.PostalCode) || trailing?.[1] || '';
+  if (!street || street.length > 1000 || postcode.length > 20) return null;
+  return { address: street, postcode };
+}
+
+export function billingAddressIdentity(value: BillingAddress) {
+  return [addressText(value.address), postcodeText(value.postcode)];
+}
+
 /** Compare the address on the issued invoice with both QuickBooks address representations. */
 export function invoiceAddressDifference(saved: Address | undefined, remote: Address | undefined, recipient: string, customerName: unknown): 'address' | 'postcode' | null {
   if (!saved || !remote) return 'address';

@@ -1,5 +1,5 @@
 // Native Admin sheets. Credentials stay on the server; drafts stay in this window only.
-window.WholesaleQuickBooks = function ({api,html,raw,svg,show,title,footer,field,busy,closeSheet,reload,toast}) {
+window.WholesaleQuickBooks = function ({api,html,raw,svg,show,title,footer,field,busy,closeSheet,reload,toast,workflows}) {
   const root="/api/admin/wholesale/quickbooks", $=selector=>document.querySelector(selector), clone=value=>JSON.parse(JSON.stringify(value));
   const modeName=mode=>mode==="production"?"Live":"Sandbox";
   const money=value=>new Intl.NumberFormat("en-GB",{style:"currency",currency:"GBP"}).format(value/100);
@@ -223,15 +223,21 @@ window.WholesaleQuickBooks = function ({api,html,raw,svg,show,title,footer,field
     const [result,state]=await Promise.all([api("GET",path("/exports/"+id+"/review",scope)),api("GET",path("/status",scope))]);
     if(previous&&(!previous.isConnected||$("#scrim")?.hidden||previous.dataset.wiBusy))return;
     const row=result.export,observed=row.observation,active=scope===state.activeEnvironment,sameCompany=row.realmId===state.connection.realmId,linked=row.state==="linked",working=["queued","sending","uncertain"].includes(row.state);
+    const billing=sameCompany&&!working&&workflows?.billingIssue(linked?observed?.invoice_issue:row.lastError);
     const balanceLabels={voided:"Voided",settled:"No payment due",paid:"Paid","part-paid":"Part paid",unpaid:"Unpaid"};
     const form=show(html`<div id="qbExportDetail" class="wi-sheet wi-wide">${title(row.number+" · QuickBooks "+modeName(scope),row.companyName+" · Company #"+row.realmId)}<div class="wi-body wi-section"><div class="wi-section-heading"><span class="pill ${linked?"ok":"warn"}" id="qbExportState">${states[row.state]||row.state}</span>${refreshButton("qb-operation-status","Refresh export status")}</div>
       ${row.lastError?html`<div class="wi-reasons">${row.lastError}</div>`:""}${!sameCompany?html`<p class="wi-reasons">This export belongs to a different company. Reconnect its original ${modeName(scope)} company to continue.</p>`:""}${!active&&!linked?html`<p class="wi-reasons">${modeName(scope)} is inactive. Switch environments before retrying this saved export.</p>`:""}
       <dl class="qb-meta"><div class="kv"><span>Saved</span><span>${stamp(row.createdAt)}</span></div><div class="kv"><span>QuickBooks invoice ID</span><span>${row.remoteId||"Awaiting confirmation"}</span></div><div class="kv"><span>Attempts</span><span>${row.attempts}</span></div>${row.retryAt&&working?html`<div class="kv"><span>Next scheduled attempt</span><span>${stamp(row.retryAt)}</span></div>`:""}</dl>
       ${linked?html`<section class="wi-section"><div class="wi-section-heading"><h3>Payment status</h3>${sameCompany?refreshButton("qb-balance","Check payment in QuickBooks"):""}</div><p><strong>${balanceLabels[observed?.status]||"Balance unconfirmed"}</strong>${observed?.status&&observed.status!=="review"?" · "+money(observed.outstanding_pence)+" outstanding":""}</p>${observed?.payment_voided&&observed.status!=="voided"?html`<p class="hint">Payment voided in QuickBooks.</p>`:""}${observed?.invoice_issue?html`<p class="hint">${observed.invoice_issue}</p>`:""}${observed?.reason?html`<p class="wi-reasons">${observed.reason}</p>`:""}<p class="hint">Checked ${stamp(observed?.observed_at)}. ${scope==="sandbox"?"Sandbox balances are for testing and are never shown to customers.":"Record payments in QuickBooks. Verified remaining balances appear in the customer’s invoices."}</p></section>`:""}
       <details class="qb-review" ${!linked?raw("open"):""}><summary>Saved invoice review</summary>${financialReview(result.preview)}</details>
+      ${billing?html`<div class="row"><button class="btn soft" type="button" data-sheet="qb-review-billing">Review billing address</button></div>`:""}
       ${!linked&&!working&&active&&sameCompany?html`<div class="row"><button class="btn" type="button" data-sheet="qb-retry">Review and retry original export</button>${row.remoteId?html`<button class="btn soft" type="button" data-sheet="qb-adopt">Link existing invoice</button>`:""}</div>`:""}<p class="hint">An existing export is never moved to another company or given a new request ID.</p></div>${footer(null,"Back")}</div>`,async(action,element,current)=>{
       if(action==="qb-retry"||action==="qb-adopt"){operationConfirmation(action,row,result,state,back);return;}
-      await busy(current,async()=>{if(action==="qb-balance"){await api("POST",path("/exports/"+id+"/refresh",scope),{});notify("Payment status checked.");}await openOperation(scope,id,back);});
+      await busy(current,async()=>{
+        if(action==="qb-review-billing"){await workflows.openBilling(id,scope,()=>openOperation(scope,id,back));return;}
+        if(action==="qb-balance"){await api("POST",path("/exports/"+id+"/refresh",scope),{});notify("Payment status checked.");}
+        await openOperation(scope,id,back);
+      });
     },back);
     // Short polling only while this exact window is open; scheduled recovery continues on the server.
     if(working&&poll<8)setTimeout(async()=>{

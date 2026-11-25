@@ -6,13 +6,16 @@ import {reconcileInvoice,type ExportPreview,type Reconciliation} from './preview
 import {digest} from './crypto';
 import {sourceHash,type ExportOperation,type Observation} from './operationTypes';
 import {checkMissingPayments,hasVoidedPayment,invoicePaymentIds,rememberInvoicePayments} from './paymentLinks';
+import {BILLING_ISSUES,billingMatchApproved,isBillingIssue} from './billingReviews';
 const dayFormat=new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/London',year:'numeric',month:'2-digit',day:'2-digit'});
 const today=()=>dayFormat.format(new Date());
 // Shared by invoice lists and staff account flags. These queries use i for the invoice, e for its Live link and o for its observation.
 export const LIVE_ACCOUNTING_JOIN = `LEFT JOIN quickbooks_exports e ON e.invoice_id=i.seq AND e.environment='production' AND e.state='linked'
   LEFT JOIN quickbooks_observations o ON o.export_id=e.id`;
 export const UNCONFIRMED_BALANCE_SQL = "(e.id IS NOT NULL AND (o.status IS NULL OR o.status='review' OR o.outstanding_pence IS NULL))";
-export const INVOICE_REVIEW_SQL = `(${UNCONFIRMED_BALANCE_SQL} OR (e.id IS NOT NULL AND (o.invoice_issue<>'' OR o.reason<>'')))`;
+export const INVOICE_REVIEW_SQL = `(${UNCONFIRMED_BALANCE_SQL} OR (e.id IS NOT NULL AND (o.invoice_issue<>'' OR o.reason<>''))
+  OR EXISTS(SELECT 1 FROM quickbooks_exports pending WHERE pending.invoice_id=i.seq AND pending.state='review' AND
+    pending.last_error IN (${BILLING_ISSUES.map(issue=>"'"+issue+"'").join(',')})))`;
 export const PAYMENT_DUE_SQL = "COALESCE(o.due_date,json_extract(i.data,'$.dueDate'))";
 export const OUTSTANDING_BALANCE_SQL = `CASE WHEN ${UNCONFIRMED_BALANCE_SQL} OR o.status='voided' THEN 0
   WHEN e.id IS NOT NULL THEN COALESCE(o.outstanding_pence,0)
@@ -38,7 +41,10 @@ export async function observe(env:Env,operation:ExportOperation,remote:any,start
       const normal=remote&&remote.TxnTaxDetail?.TotalTax===undefined&&preview.candidate.totals.vatPence===0?{...remote,TxnTaxDetail:{...remote.TxnTaxDetail,TotalTax:0}}:remote;
       result=reconcileInvoice(preview,{...scope,localInvoiceId:operation.invoice_id,remoteInvoiceId:operation.remote_id,customerRef:preview.candidate.customerRef!,number:preview.candidate.number,requestId:operation.request_id,fingerprint:operation.fingerprint},scope,normal);
       if(result.status!=='review'&&result.status!=='voided'){
-        const match=matchesInvoice(preview,payload,remote,!!operation.created_remote);
+        let match=matchesInvoice(preview,payload,remote,!!operation.created_remote);
+        if(isBillingIssue(match.reason)&&await billingMatchApproved(env,operation,remote,preview.candidate.billTo.name)){
+          match=matchesInvoice(preview,payload,remote,!!operation.created_remote,true);
+        }
         if(!match.matches){
           if(operation.environment==='sandbox')result={status:'review',reason:match.reason};
           else invoiceIssue=match.reason;
