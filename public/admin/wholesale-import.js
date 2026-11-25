@@ -35,12 +35,15 @@ window.SCCustomerImport = (() => {
       const key = (qbName || business).toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
-      const join = (...parts) => parts.map((p) => String(p || "").replace(/\r/g, "").split("\n").map(tidy).filter(Boolean).join(", ")).filter(Boolean).join(", ");
+      const join = (...parts) => parts.flatMap((part) => String(part || "").split(/[\r\n,]+/).map(tidy)).filter(Boolean).join(", ");
       let address = cell("ship") ? join(cell("ship"), cell("shipCity")) : join(cell("bill"), cell("bill2"), cell("city"), cell("county"));
       let postcode = tidy(cell("shipPostcode") || (cell("ship") ? "" : cell("postcode")));
       const found = address.match(POSTCODE);
       if (!postcode && found) postcode = `${found[1]} ${found[2]}`.toUpperCase();
-      if (postcode) address = address.replace(new RegExp(`,?\\s*${postcode.replace(/\s+/g, "\\s*")}\\b`, "i"), "").replace(/,\s*(UK|United Kingdom|GB)$/i, "").trim();
+      if (postcode) {
+        const pattern = postcode.replace(/[.*+?^$\{\}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s*");
+        address = join(address.replace(new RegExp(",?\\s*" + pattern + "\\b", "i"), "").replace(/,\s*(UK|United Kingdom|GB)$/i, ""));
+      }
       const email = (cell("email").split(/[\s,;]+/).find((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) || "").toLowerCase();
       const contact = tidy(cell("contact") || [cell("first"), cell("last")].filter(Boolean).join(" "));
       const phone = tidy(cell("phone") || cell("mobile")).replace(/^(phone|mobile|tel)\s*:\s*/i, "").slice(0, 40);

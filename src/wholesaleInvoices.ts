@@ -4,6 +4,7 @@ import { audit } from "./audit";
 import { ApiError, type Env, invalid, json, readJson } from "./http";
 import { decode, get, object, text, version, type Row } from "./wholesaleStore";
 import type { Customer, OrderingUser } from "./wholesaleAccounts";
+import { tidyPostalAddress } from "./wholesaleCustomers";
 import { invoicePdf } from "./wholesaleInvoicePdf";
 import {withAccounting,accountingSummary,LIVE_ACCOUNTING_JOIN,INVOICE_REVIEW_SQL,PAYMENT_DUE_SQL,OUTSTANDING_BALANCE_SQL} from "./quickbooks/observations";
 
@@ -172,12 +173,15 @@ function dueFor(terms: Terms, invoiceDate: string): string | null {
  * address, such as a collection) the business's current address for that location, then its main one. */
 export async function billingFor(env: Env, order: Pick<SourceOrder, "business" | "customerId" | "customerSnapshot" | "locationId">): Promise<InvoiceData["billTo"]> {
   const name = order.business, saved = order.customerSnapshot;
-  if (saved?.address?.trim()) return { name, address: saved.address, postcode: saved.postcode || "", vatNumber: "" };
+  const savedAddress = tidyPostalAddress(saved?.address || "");
+  if (savedAddress) return { name, address: savedAddress, postcode: saved?.postcode || "", vatNumber: "" };
   const customer = order.customerId ? await get<Customer & { locations?: { id: string; address?: string; postcode?: string }[] }>(env, "customer", order.customerId) : null;
-  const location = customer?.locations?.find((item) => item.id === order.locationId && item.address?.trim());
-  const address = location?.address?.trim() ? location : customer?.address?.trim() ? { address: customer.address, postcode: customer.postcode } : null;
-  return { name, address: address?.address || "", postcode: address?.postcode || "", vatNumber: "" };
+  const location = customer?.locations?.find((item) => item.id === order.locationId && tidyPostalAddress(item.address || "")) || customer;
+  return { name, address: tidyPostalAddress(location?.address || ""), postcode: location?.postcode || "", vatNumber: "" };
 }
+const invoiceLocation = (location: SourceOrder["locationSnapshot"]) => location ? {
+  ...location, ...(typeof location.address === "string" ? { address: tidyPostalAddress(location.address) } : {}),
+} : null;
 async function build(env: Env, orderId: string, request: InvoiceRequest): Promise<{ data: InvoiceData; config: InvoiceSettings }> {
   const config = await settings(env);
   if (!config.ready) throw new ApiError(409, "invoice_settings_incomplete", config.reasons.join(" "));
@@ -189,7 +193,7 @@ async function build(env: Env, orderId: string, request: InvoiceRequest): Promis
   if (order.version !== request.orderVersion) throw conflict("The order changed. Review its details before issuing an invoice.");
   if (await tabInvoiceFor(env, orderId, order.tabClearedId)) throw invalid("This order was invoiced with its customer's tab. Open the tab's invoice.");
   const value = config.settings;
-  const billTo = request.billTo || await billingFor(env, order);
+  const billTo = request.billTo ? { ...request.billTo, address: tidyPostalAddress(request.billTo.address) } : await billingFor(env, order);
   if (!billTo.name || !billTo.address) throw invalid(request.billTo ? "Add the customer's billing name and full address before issuing an invoice." : "Add an address for this business (Customers → the business → Main location), then press Try again.");
   if (request.lineVatRateIds && request.lineVatRateIds.length !== order.lines.length) throw invalid("Choose one VAT rate for each saved order line.");
   const rate = (id: string) => { const found = value.vatRates.find((item) => item.id === id); if (!found) throw invalid("Choose a configured VAT rate."); return found; };
@@ -200,7 +204,7 @@ async function build(env: Env, orderId: string, request: InvoiceRequest): Promis
   if (agreedDueDate && request.dueDate && request.dueDate !== agreedDueDate) throw invalid("The due date must follow this order's agreed invoice payment terms.");
   const dueDate = agreedDueDate ?? request.dueDate;
   if (dueDate && dueDate < request.invoiceDate) throw invalid("The payment due date cannot be before the invoice date.");
-  return { config: value, data: { orderId, orderReference: order.reference || "", customerId: order.customerId, invoiceDate: request.invoiceDate, supplyDate: request.supplyDate, seller: { ...value.seller }, billTo: { ...billTo }, deliveryLocation: order.locationSnapshot ? { ...order.locationSnapshot } : null, priceBasis: value.priceBasis!, lines, totals, vatBreakdown, paymentTerms: { ...paymentTerms }, paymentInstructions: request.paymentInstructions ?? value.paymentInstructions, dueDate, orderVersion: order.version, settingsVersion: config.version } };
+  return { config: value, data: { orderId, orderReference: order.reference || "", customerId: order.customerId, invoiceDate: request.invoiceDate, supplyDate: request.supplyDate, seller: { ...value.seller }, billTo: { ...billTo }, deliveryLocation: invoiceLocation(order.locationSnapshot), priceBasis: value.priceBasis!, lines, totals, vatBreakdown, paymentTerms: { ...paymentTerms }, paymentInstructions: request.paymentInstructions ?? value.paymentInstructions, dueDate, orderVersion: order.version, settingsVersion: config.version } };
 }
 
 interface AutoIssuance { since: number; leaseOwner: string }
@@ -340,7 +344,7 @@ export async function issueForTab(env: Env, tabId: string, actor: string, automa
   const invoiceDate = today(), sentDays = orders.map((o) => o.dispatchedAt).filter((at): at is number => !!at).map(ukDay).sort();
   const supplyDate = sentDays.length && sentDays.at(-1)! <= invoiceDate ? sentDays.at(-1)! : invoiceDate;
   const { vatBreakdown, totals } = summed(lines);
-  const data: InvoiceData = { orderId: id, orderReference: `Tab: ${orders.length} ${orders.length === 1 ? "order" : "orders"}`, customerId: tab.customer_id, invoiceDate, supplyDate, seller: { ...value.seller }, billTo, deliveryLocation: latest.locationSnapshot ? { ...latest.locationSnapshot } : null, priceBasis: value.priceBasis!, lines, totals, vatBreakdown, paymentTerms: { ...paymentTerms }, paymentInstructions: value.paymentInstructions, dueDate: dueFor(paymentTerms, invoiceDate), orderVersion: 0, settingsVersion: config.version, orderIds: orders.map((o) => o.id) };
+  const data: InvoiceData = { orderId: id, orderReference: `Tab: ${orders.length} ${orders.length === 1 ? "order" : "orders"}`, customerId: tab.customer_id, invoiceDate, supplyDate, seller: { ...value.seller }, billTo, deliveryLocation: invoiceLocation(latest.locationSnapshot), priceBasis: value.priceBasis!, lines, totals, vatBreakdown, paymentTerms: { ...paymentTerms }, paymentInstructions: value.paymentInstructions, dueDate: dueFor(paymentTerms, invoiceDate), orderVersion: 0, settingsVersion: config.version, orderIds: orders.map((o) => o.id) };
   const versions = Object.fromEntries(orders.map(o => [o.id, o.version]));
   const inserted = await insertInvoice(env, data, value, await digest({ tab: tabId, orderIds: data.orderIds, settingsVersion: config.version }), actor, automatic, versions);
   if (inserted) return document(inserted);

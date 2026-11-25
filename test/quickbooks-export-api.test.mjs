@@ -187,6 +187,22 @@ test('Live payment status survives invoice edits and reports the QuickBooks bala
  const customerPath='/api/wholesale/invoices/'+invoice.id;
  const adminPath='/api/admin/wholesale/invoices/'+invoice.id;
  const remote=provider.state.pay('production',linked.remoteId,0);
+ const originalBilling=remote.BillAddr,originalDelivery=remote.ShipAddr;
+ remote.CustomerRef.name='QuickBooks Display Name';
+ remote.BillAddr={Line1:remote.CustomerRef.name,Line2:originalBilling.Line1,Line3:originalBilling.Line2+', '+originalBilling.PostalCode};
+ remote.ShipAddr={Line1:originalDelivery.Line2,PostalCode:originalDelivery.PostalCode.replaceAll(' ','')};
+ await ok('POST',route,{},ADMIN,'production');
+ const reformatted=(await ok('GET',adminPath)).body.invoice;
+ assert.equal(reformatted.payment.status,'paid');
+ assert.equal(reformatted.accounting.invoiceIssue,'');
+ assert.equal(reformatted.accounting.invoiceChanged,undefined);
+ assert.deepEqual(reformatted.billTo,invoice.billTo);
+
+ remote.ShipAddr={...originalDelivery,PostalCode:'NR2 2BB'};
+ await ok('POST',route,{},ADMIN,'production');
+ assert.equal((await ok('GET',adminPath)).body.invoice.accounting.invoiceIssue,'The QuickBooks delivery postcode differs from the issued invoice.');
+ remote.ShipAddr=originalDelivery;
+ remote.BillAddr={...originalBilling};
  remote.BillAddr.Line2='Updated invoicing address';
  await ok('POST',route,{},ADMIN,'production');
  const paid=(await ok('GET',customerPath,undefined,BUYER)).body.invoice;
@@ -195,7 +211,7 @@ test('Live payment status survives invoice edits and reports the QuickBooks bala
  assert.equal(paid.accounting.invoiceChanged,true);
  assert.equal(paid.accounting.invoiceIssue,undefined);
  assert.deepEqual(paid.billTo,invoice.billTo);
- assert.match((await ok('GET',adminPath)).body.invoice.accounting.invoiceIssue,/address differs/);
+ assert.equal((await ok('GET',adminPath)).body.invoice.accounting.invoiceIssue,'The QuickBooks billing address differs from the issued invoice.');
 
  provider.state.pay('production',linked.remoteId,23);
  remote.DueDate='2020-03-01';

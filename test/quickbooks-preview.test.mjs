@@ -1,9 +1,29 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {previewInvoice, creationDecision, decimalPence, reconcileInvoice} from '../src/quickbooks/preview.ts';
+import {invoiceAddressDifference} from '../src/quickbooks/invoiceAddresses.ts';
 import {exampleInvoice,exampleMappings,exampleLink,exampleRemote} from './fixtures/quickbooks.mjs';
 const has = (preview, code) => preview.blockers.some(item=>item.code===code);
 const preview = (invoice=exampleInvoice(), mappings=exampleMappings()) => previewInvoice(invoice,mappings);
+
+test('QuickBooks can return the same postal address in structured fields or as reformatted lines', () => {
+  const recipient = 'Example Business', customer = 'Example Business Ltd';
+  const street = "The Courtyard,, Merchant's Court,, 15 Market Street, Norwich, Norfolk";
+  const saved = {Line1:recipient,Line2:street,PostalCode:'NR3 1AB'};
+  const structured = {Line1:"The Courtyard, Merchant’s Court",Line2:'15 Market Street',City:'Norwich',CountrySubDivisionCode:'Norfolk',PostalCode:'nr31ab',Country:'GBR'};
+  const freeForm = {Line1:customer,Line2:recipient,Line3:"The Courtyard, Merchant’s Court",Line4:'15 Market Street',Line5:'Norwich, Norfolk NR3 1AB, UK'};
+  for (const actual of [saved, structured, freeForm, {...freeForm,City:'Norwich',CountrySubDivisionCode:'Norfolk',PostalCode:'NR31AB'}]) {
+    assert.equal(invoiceAddressDifference(saved,actual,recipient,customer),null);
+  }
+  assert.equal(invoiceAddressDifference(saved,{...structured,Line2:'51 Market Street'},recipient,customer),'address');
+  assert.equal(invoiceAddressDifference(saved,{...structured,City:'London'},recipient,customer),'address');
+  assert.equal(invoiceAddressDifference(saved,{...structured,Line4:'Unit 4'},recipient,customer),'address');
+  assert.equal(invoiceAddressDifference(saved,{...freeForm,Line1:'Another legal entity'},recipient,customer),'address');
+  assert.equal(invoiceAddressDifference(saved,{...structured,Country:'France'},recipient,customer),'address');
+  assert.equal(invoiceAddressDifference(saved,{...structured,PostalCode:'NR3 1BA'},recipient,customer),'postcode');
+  assert.equal(invoiceAddressDifference(saved,{...freeForm,PostalCode:'NR3 1BA'},recipient,customer),'postcode');
+  assert.equal(invoiceAddressDifference(saved,undefined,recipient,customer),'address');
+});
 
 test('QuickBooks preparation preserves exact mixed VAT, pack/grind, dates and terms without changing source or transmitting',async()=>{
   const invoice=exampleInvoice(), mappings=exampleMappings(), original=structuredClone({invoice,mappings});

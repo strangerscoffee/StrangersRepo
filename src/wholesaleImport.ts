@@ -15,6 +15,7 @@ import { orderSender } from "./email/sender";
 import { checkPassword, checkUsername, hashPassword, newId } from "./auth";
 import { audit } from "./audit";
 import { ApiError, type Env, invalid, json, readJson } from "./http";
+import { tidyPostalAddress } from "./wholesaleCustomers";
 import { customerKey } from "./insightsMath";
 import { cleanEmail, emailReady, send } from "./email/send";
 import { get, save } from "./wholesaleStore";
@@ -42,7 +43,7 @@ export async function importCustomers(env: Env, value: unknown, actor: string) {
   const rows: ImportRow[] = body.customers.map((raw: any, i: number) => {
     const business = str(raw?.business, 120), email = cleanEmail(str(raw?.email, 150));
     if (!business) throw invalid(`Customer ${i + 1} needs a business name.`);
-    return { business, contact: str(raw?.contact, 120), email: email || "", phone: str(raw?.phone, 40), address: typeof raw?.address === "string" ? raw.address.trim().slice(0, 500) : "", postcode: str(raw?.postcode, 20).toUpperCase(), quickbooksName: str(raw?.quickbooksName, 200) || business };
+    return { business, contact: str(raw?.contact, 120), email: email || "", phone: str(raw?.phone, 40), address: typeof raw?.address === "string" ? tidyPostalAddress(raw.address.trim().slice(0, 500)) : "", postcode: str(raw?.postcode, 20).toUpperCase(), quickbooksName: str(raw?.quickbooksName, 200) || business };
   });
   const existing = (await env.DB.prepare("SELECT id, data, version FROM wholesale_preview WHERE kind = 'customer'").all<Row>()).results.map((r) => ({ ...r, c: JSON.parse(r.data) as Customer & { quickbooksName?: string } }));
   const byQb = new Map(existing.filter((r) => r.c.quickbooksName).map((r) => [customerKey(r.c.quickbooksName!), r]));

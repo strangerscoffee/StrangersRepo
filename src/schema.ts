@@ -422,6 +422,15 @@ const MIGRATIONS: Migration[] = [
       WHERE e.environment='production' AND e.state='linked' AND (o.status IS NULL OR o.status='review' OR o.outstanding_pence IS NULL)
       ON CONFLICT(event_key) DO NOTHING`).bind(at,at).run();
   } },
+  { id: 43, name: "Recheck QuickBooks invoice addresses", run: async env => {
+    const at = Date.now(), legacy = "The QuickBooks billing or delivery address differs.";
+    await env.DB.prepare(`INSERT INTO quickbooks_events(event_key,environment,realm_id,entity,entity_id,operation,event_at,created_at)
+      SELECT 'address-recheck:'||e.id,e.environment,e.realm_id,'Invoice',e.remote_id,'refresh',?,?
+      FROM quickbooks_exports e JOIN quickbooks_observations o ON o.export_id=e.id
+      WHERE e.environment='production' AND e.state='linked' AND e.remote_id<>''
+        AND (o.invoice_issue=? OR (o.status='review' AND o.reason=?))
+      ON CONFLICT(event_key) DO NOTHING`).bind(at, at, legacy, legacy).run();
+  } },
 ];
 
 async function migrate(env: Env): Promise<void> {

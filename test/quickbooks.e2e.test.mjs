@@ -88,7 +88,7 @@ for(const [device,viewport]of [['phone',{width:393,height:852}],['ipad',{width:8
     await selectWholesaleSection(page,'invoices');
     await page.locator(`[data-act="wh-invoice-open"][data-id="${invoice.id}"]`).click();
     await page.locator('#wiIssuedInvoice .wi-issued-status').getByText('Paid',{exact:true}).waitFor();
-    await page.getByRole('region',{name:'QuickBooks balance'}).getByText('The QuickBooks billing or delivery address differs.').waitFor();
+    await page.getByRole('region',{name:'QuickBooks balance'}).getByText('The QuickBooks billing address differs from the issued invoice.').waitFor();
     await page.locator('[data-sheet="wi-quickbooks"]').click();
     await page.locator('#qbExportDetail strong',{hasText:/^Paid$/}).waitFor();
    }

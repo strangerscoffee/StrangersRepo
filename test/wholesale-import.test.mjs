@@ -4,6 +4,8 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
+import { readFileSync } from "node:fs";
+import { runInNewContext } from "node:vm";
 import { startServer, SETUP_CODE } from "./harness.mjs";
 
 let srv, mock, ADMIN, STAFF;
@@ -31,10 +33,21 @@ before(async () => {
 });
 after(async () => { await srv?.stop(); mock?.close(); });
 
+test("QuickBooks spreadsheet address cells with trailing commas produce a single separator", () => {
+  const window = {};
+  runInNewContext(readFileSync(new URL("../public/admin/wholesale-import.js", import.meta.url), "utf8"), { window });
+  const [row] = window.SCCustomerImport.rowsFrom([
+    ["Customer", "Billing address line 1", "Billing address line 2", "Billing city", "County", "Postcode"],
+    ["Example Retail", "The Courtyard,\r\nMerchant's Court,", "15 Market Street,", "Norwich,", "Norfolk", "nr3 1ab"],
+  ]);
+  assert.equal(row.address, "The Courtyard, Merchant's Court, 15 Market Street, Norwich, Norfolk");
+  assert.equal(row.postcode, "NR3 1AB");
+});
+
 test("import adds new businesses and fills gaps in existing ones, without duplicates or overwriting", async () => {
   const rows = [
     { business: "The Green Grocers", quickbooksName: "Green Grocers, The", contact: "Pip", email: "pip@greengrocers.example", phone: "07000 000000", address: "1 Earlham Rd, Norwich", postcode: "nr2 3rb" },
-    { business: "The Old Dairy", quickbooksName: "The Old Dairy", contact: "Sam Hall", email: "sam@olddairy.example", phone: "", address: "Dairy Lane, Norfolk", postcode: "NR9 4AA" },
+    { business: "The Old Dairy", quickbooksName: "The Old Dairy", contact: "Sam Hall", email: "sam@olddairy.example", phone: "", address: "Dairy Lane,, Norfolk,", postcode: "NR9 4AA" },
     { business: "Cal's Coffee", quickbooksName: "Cal's Coffee", contact: "", email: "", phone: "", address: "", postcode: "" },
   ];
   let r = await call("POST", "/api/admin/wholesale/customers/import", { customers: rows });

@@ -1,5 +1,6 @@
 // Reviewed UK invoice adapter. Source amounts are immutable integer pence.
 import {invalid} from '../http';
+import {invoiceAddressDifference} from './invoiceAddresses';
 import {decimalPence,isVoided,type ExportPreview,type InvoiceCandidate} from './preview';
 export const ADAPTER_VERSION='sc-qbo-invoice-v1';
 export const vatKey=(value:string)=>value.replace(/[^A-Za-z0-9]/g,'').replace(/^GB/i,'').toUpperCase();
@@ -56,7 +57,10 @@ export function matchesInvoice(preview:ExportPreview,payload:any,remote:any,requ
     const found=taxLines.filter((line:any)=>line.TaxLineDetail?.TaxRateRef?.value===expected.TaxLineDetail.TaxRateRef.value);
     if(expected.Amount!==0&&(found.length!==1||decimalPence(found[0].Amount)!==decimalPence(expected.Amount)||decimalPence(found[0].TaxLineDetail?.NetAmountTaxable)!==decimalPence(expected.TaxLineDetail.NetAmountTaxable)))return fail('The QuickBooks VAT breakdown differs from the issued invoice.');
   }
-  for(const key of ['BillAddr','ShipAddr'])for(const [field,expected]of Object.entries(payload[key]))if(field!=='Country'&&norm(remote[key]?.[field])!==norm(expected))return fail('The QuickBooks billing or delivery address differs.');
+  for (const [key, label, name] of [['BillAddr', 'billing', value.billTo.name], ['ShipAddr', 'delivery', value.shipping.name]]) {
+    const difference = invoiceAddressDifference(payload[key], remote[key], name, remote.CustomerRef?.name);
+    if (difference) return fail(`The QuickBooks ${label} ${difference} differs from the issued invoice.`);
+  }
   if(payload.SalesTermRef&&remote.SalesTermRef?.value!==payload.SalesTermRef.value)return fail('The QuickBooks payment terms differ.');
   return{matches:true,reason:''};
 }

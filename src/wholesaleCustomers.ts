@@ -10,6 +10,11 @@ export interface CustomerLocation {
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 export const validLocationId = (id: string) => id === "primary" || UUID.test(id);
 
+// Keep deliberately entered line breaks while removing empty parts left by pasted or imported commas.
+export const tidyPostalAddress = (address: string) => address.split(/\r\n?|\n/)
+  .map(line => line.trim().replace(/^(?:,\s*)+|(?:\s*,)+$/g, "").replace(/,(?:\s*,)+\s*/g, ", ").trim())
+  .filter(Boolean).join("\n");
+
 /** The main location is called after the business ("Café Lune"), and follows it if the business is renamed, unless
  *  someone has given it a name of its own. Stored as "Main location" (or no name) while it follows. */
 export const MAIN_LOCATION = "Main location";
@@ -40,7 +45,7 @@ export function editedCustomerLocations(customer: Customer, body: Record<string,
       if (!validLocationId(id) || (location.id !== undefined && !owned.has(id))) throw invalid("Choose a location saved to this business, or add a new location without an ID.");
       if (ids.has(id)) throw invalid("Each saved location must have its own ID.");
       ids.add(id);
-      return { id, name: text(location.name, "location name", 80, true), contact: text(location.contact, "location contact", 120), phone: text(location.phone, "location phone", 40), address: text(location.address, "location address", 500), postcode: text(location.postcode, "location postcode", 20), deliveryNotes: text(location.deliveryNotes, "location delivery notes", 1000) };
+      return { id, name: text(location.name, "location name", 80, true), contact: text(location.contact, "location contact", 120), phone: text(location.phone, "location phone", 40), address: tidyPostalAddress(text(location.address, "location address", 500)), postcode: text(location.postcode, "location postcode", 20), deliveryNotes: text(location.deliveryNotes, "location delivery notes", 1000) };
     });
     const primary = locations.find((location) => location.id === "primary");
     if (!primary) throw invalid("Keep the main location. You can rename or edit its address.");
@@ -52,8 +57,9 @@ export function editedCustomerLocations(customer: Customer, body: Record<string,
     defaultLocationId = "primary";
   }
   const primary = locations[0];
+  const address = tidyPostalAddress(primary.address);
   // A main location still called after the business (as it was shown, or renamed in this same save) keeps following it.
   const names = [customer.business, body.business, previousBusiness].filter((v) => typeof v === "string" && v.trim()).map((v) => String(v).trim());
-  if (names.includes(primary.name)) locations[0] = { ...primary, name: MAIN_LOCATION };
-  return { ...customer, contact: primary.contact, phone: primary.phone, address: primary.address, postcode: primary.postcode, deliveryNotes: primary.deliveryNotes, locations, defaultLocationId };
+  locations[0] = { ...primary, name: names.includes(primary.name) ? MAIN_LOCATION : primary.name, address };
+  return { ...customer, contact: primary.contact, phone: primary.phone, address, postcode: primary.postcode, deliveryNotes: primary.deliveryNotes, locations, defaultLocationId };
 }

@@ -5,6 +5,7 @@
 // derived from what it's for, so a lost reply can't make two.
 import { ApiError, type Env } from '../http';
 import { cleanEmail } from '../email/address';
+import { tidyPostalAddress } from '../wholesaleCustomers';
 import { get } from '../wholesaleStore';
 import type { InvoiceDocument } from '../wholesaleInvoices';
 import { ProviderError, id, type Connection } from './connection';
@@ -49,7 +50,7 @@ export async function ensureCustomer(env: Env, mode: Environment, company: Conne
   let created = false;
   if (!found) {
     const name = names.at(-1)!, email = cleanEmail(customer.accountsEmail || customer.email || '');
-    const lines = String(customer.address || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean).slice(0, 4);
+    const lines = tidyPostalAddress(String(customer.address || '')).split('\n').filter(Boolean).slice(0, 4);
     const body = {
       DisplayName: name, CompanyName: name,
       ...(email && email.length <= 100 ? { PrimaryEmailAddr: { Address: email } } : {}),
