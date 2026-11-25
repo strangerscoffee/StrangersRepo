@@ -80,7 +80,7 @@ export async function processAutoInvoice(env: Env, source: string, req: Request 
       const [kind, id] = source.split(/:(.*)/s);
       let invoice;
       const issuance = { since: settings.since, leaseOwner: owner };
-      try { invoice = kind === "order" ? await issueForOrder(env, id, ACTOR, issuance) : await issueForTab(env, id, ACTOR, issuance); }
+      try { invoice = kind === "order" ? await issueForOrder(req, env, id, ACTOR, issuance) : await issueForTab(req, env, id, ACTOR, issuance); }
       catch (error) {
         if (error instanceof InvoiceHold) return await finish(env, source, owner, "held", error.message, holdDelay(row.attempts));
         throw error;

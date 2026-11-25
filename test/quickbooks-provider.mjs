@@ -30,10 +30,12 @@ export async function startQuickBooksProvider(){
     if(url.pathname.endsWith('/cdc')){reply(200,{CDCResponse:[{QueryResponse:[{Invoice:[...state.invoices[environment].values()]}]}],time:new Date().toISOString()});return;}
     const payment=/\/payment\/(\d+)$/.exec(url.pathname);if(payment){const row=state.payments[environment].get(payment[1]);reply(row?200:404,row?{Payment:row}:{});return;}
     if(url.pathname.endsWith('/query')){
-      const query=url.searchParams.get('query'),name=/FROM (Customer|Item|TaxCode|Term|Invoice)/.exec(query)?.[1],position=Number(/STARTPOSITION (\d+)/.exec(query)?.[1]||1),document=/DocNumber\s*=\s*'([^']*)'/.exec(query)?.[1];
+      const query=url.searchParams.get('query'),name=/FROM (Customer|Item|TaxCode|Term|Invoice|SalesReceipt|CreditMemo)\b/.exec(query)?.[1],position=Number(/STARTPOSITION (\d+)/.exec(query)?.[1]||1),document=/DocNumber\s*=\s*'([^']*)'/.exec(query)?.[1];
       const named=/WHERE (DisplayName|Name) = '((?:[^'\\]|\\.)*)'/.exec(query),wanted=named?named[2].replace(/\\(.)/g,'$1').toLowerCase():null;
-      let rows=name==='Customer'?customers:name==='Item'?items:name==='TaxCode'?taxes:name==='Term'?terms:[...state.invoices[environment].values()].filter(invoice=>!document||invoice.DocNumber===document);
+      let rows=name==='Customer'?customers:name==='Item'?items:name==='TaxCode'?taxes:name==='Term'?terms:name==='SalesReceipt'||name==='CreditMemo'?(state.otherForms?.[environment]?.[name]||[]):[...state.invoices[environment].values()].filter(invoice=>!document||invoice.DocNumber===document);
       if(named)rows=rows.filter(row=>String(row[named[1]]||'').toLowerCase()===wanted);
+      if(/ORDERBY MetaData\.CreateTime DESC/.test(query))rows=[...rows].reverse();
+      if(state.unreachable){reply(503,{Fault:{Error:[{code:'500',Message:'Service unavailable'}]}});return;}
       reply(200,{QueryResponse:{[name]:rows.slice(position-1,position+99)}});return;
     }
     if(url.pathname.endsWith('/invoice')&&req.method==='POST'){

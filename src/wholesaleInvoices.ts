@@ -7,6 +7,7 @@ import type { Customer, OrderingUser } from "./wholesaleAccounts";
 import { tidyPostalAddress } from "./wholesaleCustomers";
 import { invoicePdf } from "./wholesaleInvoicePdf";
 import {withAccounting,accountingSummary,LIVE_ACCOUNTING_JOIN,INVOICE_REVIEW_SQL,PAYMENT_DUE_SQL,OUTSTANDING_BALANCE_SQL} from "./quickbooks/observations";
+import { nextSharedNumber, NumberUnavailable } from "./quickbooks/sharedNumber";
 
 export interface VatRate { id: string; label: string; basisPoints: number }
 export interface InvoiceSettings {
@@ -14,6 +15,8 @@ export interface InvoiceSettings {
   priceBasis: "inclusive" | "exclusive" | null; vatRates: VatRate[];
   defaultCoffeeRateId: string; deliveryRateId: string; invoicePrefix: string;
   firstInvoiceNumber: number; paymentInstructions: string; confirmed: boolean;
+  /** Take the next number in QuickBooks's own series instead of prefix + counter (src/quickbooks/sharedNumber.ts). */
+  sharedNumbering?: boolean;
   /** Whether customers see their invoices (My orders → Invoices, invoice PDFs, balances). Absent means on. */
   customersSeeInvoices?: boolean;
 }
@@ -98,7 +101,7 @@ function readiness(settings: InvoiceSettings) {
   if (!settings.priceBasis) reasons.push("Choose whether saved order prices include or exclude VAT.");
   if (!settings.vatRates.some((rate) => rate.id === settings.defaultCoffeeRateId)) reasons.push("Choose the default coffee VAT rate.");
   if (settings.deliveryRateId && !settings.vatRates.some((rate) => rate.id === settings.deliveryRateId)) reasons.push("Choose a configured delivery VAT rate.");
-  if (!settings.invoicePrefix) reasons.push("Choose the invoice number prefix.");
+  if (!settings.invoicePrefix && !settings.sharedNumbering) reasons.push("Choose the invoice number prefix.");
   if (!settings.confirmed) reasons.push("Confirm the supplier, VAT and numbering details before issuing invoices.");
   return { ready: reasons.length === 0, reasons };
 }
@@ -209,8 +212,20 @@ async function build(env: Env, orderId: string, request: InvoiceRequest): Promis
 
 interface AutoIssuance { since: number; leaseOwner: string }
 
+/** Issue with the configured numbering: prefix + counter, or the next number in QuickBooks's series (asked afresh each
+ *  time; if another invoice takes it first, the unique number refuses this one and the next is asked for). */
+async function insertNumbered(req: Request, env: Env, data: InvoiceData, config: InvoiceSettings, requestKey: string, actor: string, automatic?: AutoIssuance, tabVersions?: Record<string, number>) {
+  if (!config.sharedNumbering) return insertInvoice(env, data, config, requestKey, actor, automatic, tabVersions);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const number = await nextSharedNumber(req, env);
+    try { return await insertInvoice(env, data, config, requestKey, actor, automatic, tabVersions, number); }
+    catch (error) { if (!/UNIQUE constraint failed: wholesale_invoices\.invoice_number/.test(String((error as Error)?.message))) throw error; }
+  }
+  throw new NumberUnavailable("Another invoice kept taking the next number. It will be tried again.");
+}
+
 /** Check order versions, invoice coverage and automation permission in the same write as number allocation. */
-async function insertInvoice(env: Env, data: InvoiceData, config: InvoiceSettings, requestKey: string, actor: string, automatic?: AutoIssuance, tabVersions?: Record<string, number>) {
+async function insertInvoice(env: Env, data: InvoiceData, config: InvoiceSettings, requestKey: string, actor: string, automatic?: AutoIssuance, tabVersions?: Record<string, number>, number?: string) {
   const { orderId, customerId, orderVersion, settingsVersion } = data;
   const tab = orderId.startsWith("TAB-");
   const tabId = tab ? orderId.slice(4) : "";
@@ -235,12 +250,12 @@ async function insertInvoice(env: Env, data: InvoiceData, config: InvoiceSetting
     AND NOT EXISTS(SELECT 1 FROM wholesale_preview WHERE kind='customer' AND id=? AND json_extract(data,'$.hidePrices')=1)` : "";
   const at = Date.now();
   const inserted = await env.DB.prepare(`INSERT INTO wholesale_invoices(seq,invoice_number,order_id,customer_id,request_key,data,issued_at,issued_by)
-    SELECT next_seq, ? || printf('%06d', ? + next_seq - 1), ?,?,?,?,?,?
+    SELECT next_seq, ${number ? "?" : "? || printf('%06d', ? + next_seq - 1)"}, ?,?,?,?,?,?
     FROM (SELECT COALESCE((SELECT seq FROM sqlite_sequence WHERE name='wholesale_invoices'),0)+1 AS next_seq)
     WHERE NOT EXISTS(SELECT 1 FROM wholesale_invoices WHERE order_id=?)
       AND EXISTS(SELECT 1 FROM wholesale_invoice_settings WHERE id=1 AND version=?)
       AND ${guard}${automationGuard} RETURNING *`)
-    .bind(config.invoicePrefix, config.firstInvoiceNumber, orderId, customerId, requestKey, JSON.stringify(data), at, actor, orderId, settingsVersion,
+    .bind(...(number ? [number] : [config.invoicePrefix, config.firstInvoiceNumber]), orderId, customerId, requestKey, JSON.stringify(data), at, actor, orderId, settingsVersion,
       ...(tab ? [tabId, customerId, automatic?.since ?? 0, JSON.stringify(tabVersions), tabId, customerId] : [orderId, orderVersion, ...(automatic ? [automatic.since] : [])]),
       ...(automatic ? [automatic.since, tab ? "tab:" + tabId : "order:" + orderId, automatic.leaseOwner, at, customerId] : []))
     .first<InvoiceRow>();
@@ -262,10 +277,15 @@ function deliveryLineFor(order: SourceOrder, config: InvoiceSettings): InvoiceLi
 }
 const ukDay = (at: number) => dayFormat.format(new Date(at));
 export class InvoiceHold extends ApiError { constructor(message: string) { super(409, "invoice_held", message); } }
+/** Automatic invoicing waits (and tries again) when the shared number can't be chosen. */
+async function held<T>(work: () => Promise<T>) {
+  try { return await work(); }
+  catch (error) { if (error instanceof NumberUnavailable) throw new InvoiceHold(error.message); throw error; }
+}
 
 /** Automatic invoicing: an invoice for a dispatched customer order, dated today with the supply date the day it went out,
  *  the order's own delivery charge and the default VAT rates, as an admin issuing it with nothing changed would. */
-export async function issueForOrder(env: Env, orderId: string, actor: string, automatic: AutoIssuance): Promise<InvoiceDocument | null> {
+export async function issueForOrder(req: Request, env: Env, orderId: string, actor: string, automatic: AutoIssuance): Promise<InvoiceDocument | null> {
   const order = await get<SourceOrder>(env, "order", orderId);
   if (!order || order.deletedAt != null || order.status === "Cancelled") throw new InvoiceHold("The order was deleted or cancelled.");
   if (order.tab || order.tabClearedId) return null;
@@ -281,7 +301,8 @@ export async function issueForOrder(env: Env, orderId: string, actor: string, au
   let built;
   try { built = await build(env, orderId, request); }
   catch (error) { if (error instanceof ApiError && error.status < 500) throw new InvoiceHold(error.message); throw error; }
-  const inserted = await insertInvoice(env, built.data, built.config, await digest(request), actor, automatic);
+  const key = await digest(request);
+  const inserted = await held(() => insertNumbered(req, env, built.data, built.config, key, actor, automatic));
   if (inserted) return document(inserted);
   const raced = await invoiceByOrder(env, orderId);
   if (raced) return document(raced);
@@ -290,7 +311,7 @@ export async function issueForOrder(env: Env, orderId: string, actor: string, au
 
 /** Automatic invoicing for a cleared tab: one invoice covering its orders (not cancelled or deleted, and not already
  *  invoiced on their own), their bags merged by coffee, size, grind and price, and their delivery charges. */
-export async function issueForTab(env: Env, tabId: string, actor: string, automatic: AutoIssuance): Promise<InvoiceDocument | null> {
+export async function issueForTab(req: Request, env: Env, tabId: string, actor: string, automatic: AutoIssuance): Promise<InvoiceDocument | null> {
   const id = "TAB-" + tabId, existing = await invoiceByOrder(env, id);
   if (existing) return document(existing);
   const config = await settings(env);
@@ -346,7 +367,8 @@ export async function issueForTab(env: Env, tabId: string, actor: string, automa
   const { vatBreakdown, totals } = summed(lines);
   const data: InvoiceData = { orderId: id, orderReference: `Tab: ${orders.length} ${orders.length === 1 ? "order" : "orders"}`, customerId: tab.customer_id, invoiceDate, supplyDate, seller: { ...value.seller }, billTo, deliveryLocation: invoiceLocation(latest.locationSnapshot), priceBasis: value.priceBasis!, lines, totals, vatBreakdown, paymentTerms: { ...paymentTerms }, paymentInstructions: value.paymentInstructions, dueDate: dueFor(paymentTerms, invoiceDate), orderVersion: 0, settingsVersion: config.version, orderIds: orders.map((o) => o.id) };
   const versions = Object.fromEntries(orders.map(o => [o.id, o.version]));
-  const inserted = await insertInvoice(env, data, value, await digest({ tab: tabId, orderIds: data.orderIds, settingsVersion: config.version }), actor, automatic, versions);
+  const key = await digest({ tab: tabId, orderIds: data.orderIds, settingsVersion: config.version });
+  const inserted = await held(() => insertNumbered(req, env, data, value, key, actor, automatic, versions));
   if (inserted) return document(inserted);
   const raced = await invoiceByOrder(env, id);
   if (raced) return document(raced);
@@ -368,11 +390,23 @@ export async function handleInvoiceAdmin(req: Request, env: Env, route: string, 
     await audit(env, "wholesale_invoice_settings", actor, `${actor} turned customer invoices ${body.enabled ? "on" : "off"}.`);
     return json(await settings(env));
   }
+  if (route === "invoice-settings/numbering" && req.method === "PUT") {
+    const body = object(await readJson(req, 1024)), expected = version(body.ifVersion), at = Date.now();
+    if (typeof body.shared !== "boolean") throw invalid("Choose whether invoices use QuickBooks's numbers.");
+    const old = await settings(env);
+    if (old.version !== expected || expected === 0) throw conflict("Invoice settings changed on another device. Reload and try again.");
+    const next = body.shared ? await nextSharedNumber(req, env) : null;
+    const result = await env.DB.prepare("UPDATE wholesale_invoice_settings SET data=json_set(data,'$.sharedNumbering',json(?)),version=version+1,updated_at=? WHERE id=1 AND version=?").bind(String(body.shared), at, expected).run();
+    if (!result.meta.changes) throw conflict("Invoice settings changed on another device. Reload and try again.");
+    await audit(env, "wholesale_invoice_settings", actor, `${actor} switched QuickBooks invoice numbers ${body.shared ? `on (next ${next})` : "off"}.`);
+    return json({ ...(await settings(env)), ...(next ? { nextNumber: next } : {}) });
+  }
   if (route === "invoice-settings" && req.method === "PUT") {
     const body = object(await readJson(req, 16 * 1024)), expected = version(body.ifVersion), value = settingsBody(body), at = Date.now();
     const old = await settings(env);
     if (old.version !== expected) throw conflict("Invoice settings changed on another device. Reload before saving.");
     if (old.settings.customersSeeInvoices === false) value.customersSeeInvoices = false;
+    if (old.settings.sharedNumbering) value.sharedNumbering = true;
     const issued = await env.DB.prepare("SELECT COUNT(*) AS n FROM wholesale_invoices").first<{ n: number }>();
     if (issued?.n && value.firstInvoiceNumber !== old.settings.firstInvoiceNumber) throw invalid("The first invoice number cannot change after an invoice has been issued.");
     const result = expected === 0
@@ -408,7 +442,7 @@ export async function handleInvoiceAdmin(req: Request, env: Env, route: string, 
       const preview: InvoiceDocument = { ...data, id: null, number: null, issuedAt: null, issuedBy: null, payment: { status: data.dueDate && data.dueDate < today() ? "overdue" : "unpaid", paid: false, paidDate: null, reference: "", version: 0, outstandingPence: data.totals.grossPence } };
       return order[3] ? invoicePdf(preview, { draft: true }) : json({ invoice: preview, issued: false });
     }
-    const inserted = await insertInvoice(env, data, config, requestKey, actor);
+    const inserted = await insertNumbered(req, env, data, config, requestKey, actor);
     if (!inserted) {
       const raced = await invoiceByOrder(env, order[1]);
       if (raced?.request_key === requestKey) return json({ invoice: await presented(env,raced) });

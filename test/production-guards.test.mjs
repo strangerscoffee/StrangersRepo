@@ -89,7 +89,7 @@ test('tab and individual invoices cannot both bill a member even if both reviews
    db.prepare('INSERT INTO wholesale_auto_invoicing VALUES(1,?)').run(JSON.stringify({issue:true,since:1}));
    db.prepare('INSERT INTO wholesale_auto_invoices VALUES(?,?,?)').run('tab:'+tabId,owner,Date.now()+60000);
    const single=()=>handleInvoiceAdmin(request(review),env,'orders/'+id+'/invoice','Audit');
-   const tab=()=>issueForTab(env,tabId,'Automation',{since:1,leaseOwner:owner});
+   const tab=()=>issueForTab(new Request('https://admin.example.test/'),env,tabId,'Automation',{since:1,leaseOwner:owner});
    if(tabFirst){race(tab);await assert.rejects(single(),error=>error.status===409);}
    else{race(single);await assert.rejects(tab(),error=>error.status===409);}
    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM wholesale_invoices').get().n,1);
@@ -109,8 +109,8 @@ test('automatic issuance checks current order eligibility and reviewed tab versi
    db.prepare('INSERT INTO wholesale_auto_invoices VALUES(?,?,?)').run(tab?'tab:'+tabId:'order:'+id,owner,Date.now()+60000);
    race(()=>tab?db.prepare("UPDATE wholesale_preview SET version=2 WHERE id=?").run(id)
      :db.prepare("UPDATE wholesale_auto_invoicing SET data=json_set(data,'$.issue',0)").run());
-   await assert.rejects(tab?issueForTab(env,tabId,'Automation',{since:1,leaseOwner:owner})
-     :issueForOrder(env,id,'Automation',{since:1,leaseOwner:owner}),error=>error.status===409);
+   await assert.rejects(tab?issueForTab(new Request('https://admin.example.test/'),env,tabId,'Automation',{since:1,leaseOwner:owner})
+     :issueForOrder(new Request('https://admin.example.test/'),env,id,'Automation',{since:1,leaseOwner:owner}),error=>error.status===409);
    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM wholesale_invoices').get().n,0);
   }finally{db.close();}
  }

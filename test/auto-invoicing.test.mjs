@@ -326,3 +326,49 @@ test('A number already taken by an invoice typed into QuickBooks says whose it i
  assert.equal(provider.state.invoices.sandbox.get('7100').DocNumber,'10239','the typed-in invoice is left alone');
  assert.ok(!(await ok('GET','/api/admin/overview')).body.attention.some(a=>/Clash Cafe/.test(a.title)),'notice gone once sent');
 });
+
+test('Using QuickBooks invoice numbers: the next after the highest there, waiting (not guessing) when QuickBooks can\'t be reached',async()=>{
+ // The owner's request, 25 Nov 2026: one number series with QuickBooks, so invoices typed in there get the right suggestion.
+ await switches(true,true,true);
+ let config=(await ok('GET',root+'/invoice-settings')).body;
+ config=(await ok('PUT',root+'/invoice-settings/numbering',{ifVersion:config.version,shared:true})).body;
+ assert.equal(config.settings.sharedNumbering,true);assert.equal(config.ready,true);
+ // QuickBooks's own series: invoices typed in by hand up to 10238, and a sales receipt (same number list) 10239.
+ const template=[...provider.state.invoices.sandbox.values()].at(-1);
+ provider.state.invoices.sandbox.set('7200',{...structuredClone(template),Id:'7200',DocNumber:'10238',CustomerRef:{value:'98',name:'Strangers Roastery'}});
+ provider.state.otherForms={sandbox:{SalesReceipt:[{Id:'800',DocNumber:'10239'}],CreditMemo:[{Id:'801',DocNumber:'CN-7'}]}};
+ const {cookie}=await business('Shared Number Cafe');
+ const first=await order(cookie);await status(first,'Dispatched');
+ await waitForAuto('order:'+first.id,row=>['done','held'].includes(row.state),'numbered from QuickBooks');
+ assert.equal(autoRow('order:'+first.id).state,'done',autoRow('order:'+first.id).reason);
+ assert.equal(invoiceOf(first.id).invoice_number,'10240','the next after the highest plain number on any sales form');
+ assert.equal(JSON.parse(exportFor('order:'+first.id).payload).DocNumber,'10240');
+ // QuickBooks down: no number is guessed; the invoice waits and goes once it's back.
+ provider.state.unreachable=true;
+ const second=await order(cookie);await status(second,'Dispatched');
+ await waitForAuto('order:'+second.id,row=>row.state==='held','waiting for QuickBooks');
+ assert.match(autoRow('order:'+second.id).reason,/QuickBooks couldn't be reached to choose the next invoice number\. It will be tried again\./);
+ assert.equal(invoiceOf(second.id),undefined,'no number used');
+ provider.state.unreachable=false;
+ await ok('POST',`${root}/auto-invoicing/order:${second.id}/retry`,{});
+ await waitForAuto('order:'+second.id,row=>row.state==='done','sent once QuickBooks is back');
+ assert.equal(invoiceOf(second.id).invoice_number,'10241','follows its own last number, the highest now');
+ // Switching it on needs QuickBooks reachable; switching off goes back to the website's own series.
+ config=(await ok('GET',root+'/invoice-settings')).body;
+ config=(await ok('PUT',root+'/invoice-settings/numbering',{ifVersion:config.version,shared:false})).body;
+ assert.equal(config.settings.sharedNumbering,false);
+ provider.state.unreachable=true;
+ const refused=await call('PUT',root+'/invoice-settings/numbering',{ifVersion:config.version,shared:true});
+ assert.equal(refused.status,503,refused.text);provider.state.unreachable=false;
+ const third=await order(cookie);await status(third,'Dispatched');
+ await waitForAuto('order:'+third.id,row=>['done','held'].includes(row.state),'own series again');
+ assert.match(invoiceOf(third.id).invoice_number,/^[A-Za-z]/,'prefix and counter');
+ // A supplier settings save keeps the switch.
+ config=(await ok('GET',root+'/invoice-settings')).body;
+ config=(await ok('PUT',root+'/invoice-settings/numbering',{ifVersion:config.version,shared:true})).body;
+ assert.equal(config.nextNumber,'10242','says which number comes next');
+ const {settings:s}=config;
+ const saved=(await ok('PUT',root+'/invoice-settings',{...s,ifVersion:config.version})).body;
+ assert.equal(saved.settings.sharedNumbering,true);
+ await ok('PUT',root+'/invoice-settings/numbering',{ifVersion:saved.version,shared:false});
+});
