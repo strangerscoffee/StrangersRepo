@@ -3,8 +3,9 @@
 // count, kept 30 days. Shown in Admin → Activity → Errors and, when recent, on the Overview.
 import { Env } from "./http";
 
-/** Stored as the detail of a "Couldn't load" report when the site serves that file normally: not a fault in the site. */
+/** Saved marker for load reports whose asset was available when we checked. Keep its value for existing records. */
 export const FILE_SERVED = "File check: the site serves this file normally, so this browser didn't load it. That's usually an email system's link checker, a content blocker or a dropped signal, not a fault in the site.";
+export const FILE_RECHECK_NOTE = "The file was available when the server checked after this report.";
 
 export interface ErrorReport { source: "page" | "server"; app: string; page: string; message: string; detail?: string; ua?: string; who?: string | null }
 
@@ -60,6 +61,11 @@ export function whereOf(detail: string): string {
     return `${m[1]}:${m[3]}:${m[4]}${fn ? ` in ${fn}` : ""}${m[2] ? ` (file v${m[2].replace(/^W-/, "").slice(0, 8)})` : ""}`;
   }
   return "";
+}
+
+export function browserMessagingNoise(message: unknown, detail: unknown): boolean {
+  if (!/^(?:Unhandled: )?Invalid call to runtime\.sendMessage\(\)\. Tab not found\.?$/.test(String(message ?? "").trim())) return false;
+  return !whereOf(String(detail ?? "").replace(/(?:safari-web-extension|moz-extension|chrome-extension):\/\/[^\s)]+/g, ""));
 }
 
 /** A short device description from a User-Agent: "iPhone · Safari", "Mac · Chrome". */

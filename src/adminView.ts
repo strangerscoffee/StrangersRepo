@@ -4,7 +4,7 @@
 import { quarterAwaiting } from "./rota/leave/accrual";
 import { holidayStatus } from "./rota/leave/notify";
 import { audit } from "./audit";
-import { deviceOf, errorCode, FILE_SERVED, whereOf } from "./errors";
+import { browserMessagingNoise, deviceOf, errorCode, FILE_RECHECK_NOTE, FILE_SERVED, whereOf } from "./errors";
 import { emailReady, prefsOf, weeklySitesOf } from "./email/send";
 import { User, nameKey } from "./auth";
 import { listBackups } from "./backup";
@@ -371,6 +371,7 @@ export async function activity(env: Env, kind: string, query = new URLSearchPara
       .bind(floor, until, ...(reference ? [JSON.stringify(codes)] : q ? [q] : [])).all<{key:string;source:string;app:string;page:string;message:string;detail:string;ua:string;who:string|null;first_at:number;last_at:number;count:number}>();
     for (const e of result.results) {
       const code = errorCode(e.key), at = e.detail === FILE_SERVED ? "" : whereOf(e.detail), device = e.ua ? deviceOf(e.ua) : "";
+      const browserMessage = e.source === "page" && browserMessagingNoise(e.message, e.detail);
       // Everything needed to find and fix it, laid out to be read from a screenshot or pasted as text.
       const report = [
         `Strangers Coffee error ${code}`,
@@ -380,11 +381,11 @@ export async function activity(env: Env, kind: string, query = new URLSearchPara
         `When:   last ${uk(e.last_at)} (UK time)${e.count > 1 ? `; first ${uk(e.first_at)}; ${e.count} times` : ""}`,
         `Who:    ${[e.who || (e.source === "page" ? "signed out" : "the server"), device].filter(Boolean).join(" · ")}`,
         e.ua ? `Device: ${e.ua}` : "",
-        e.detail === FILE_SERVED ? `Note:   ${FILE_SERVED.replace(/^File check: /, "")}` : e.detail ? `${e.source === "server" ? "Detail" : "Stack"}:\n${e.detail.split("\n").map((l) => "  " + l.trim()).join("\n")}` : "",
+        e.detail === FILE_SERVED ? `Note:   ${FILE_RECHECK_NOTE}` : e.detail ? `${e.source === "server" ? "Detail" : "Stack"}:\n${e.detail.split("\n").map((l) => "  " + l.trim()).join("\n")}` : "",
       ].filter(Boolean).join("\n");
       items.push({ kind: "error", at: e.last_at, text: e.message, code, at_line: at,
-        where: [code, APP[e.app] || e.app, e.page, e.count > 1 ? `${e.count} times since ${shortDate(new Date(e.first_at).toISOString().slice(0, 10))}` : "", e.who || (e.source === "page" ? "signed out" : ""), device, e.detail === FILE_SERVED ? "not a site fault" : ""].filter(Boolean).join(" · "),
-        detail: e.detail, report } as any);
+        where: [code, APP[e.app] || e.app, e.page, e.count > 1 ? `${e.count} times since ${shortDate(new Date(e.first_at).toISOString().slice(0, 10))}` : "", e.who || (e.source === "page" ? "signed out" : ""), device, e.detail === FILE_SERVED ? "file available on recheck" : browserMessage ? "browser extension" : ""].filter(Boolean).join(" · "),
+        detail: e.detail === FILE_SERVED ? FILE_RECHECK_NOTE : e.detail, report } as any);
     }
   }
   items.sort((a, b) => b.at - a.at);

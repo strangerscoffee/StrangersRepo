@@ -10,6 +10,9 @@ const root = resolve(process.env.STRANGERS_ASSETS_DIRECTORY || 'public');
 const output = join(root, '_releases');
 const work = await mkdtemp(join(tmpdir(), 'strangers-assets-'));
 const staged = join(root, '._releases-build');
+const releaseLimit = 16;
+const historyLimit = 32;
+const retained = new Set();
 await rm(staged, { recursive: true, force: true });
 await mkdir(staged);
 
@@ -24,6 +27,7 @@ async function release(source) {
   const hash = createHash('sha256').update('strangers-browser-assets-v1\0');
   for (const [path, body] of assets) hash.update(path + '\0' + body + '\0');
   const id = hash.digest('hex').slice(0, 20);
+  if (retained.has(id)) return { id };
   for (const [path, body] of assets) {
     const file = join(staged, id, path);
     await mkdir(dirname(file), { recursive: true });
@@ -32,7 +36,20 @@ async function release(source) {
       (match, prefix, quote, asset) => assets.has(asset) ? prefix + quote + '/_releases/' + id + '/' + asset : match) : body;
     await writeFile(file, content);
   }
+  retained.add(id);
   return { id, files: [...assets.keys()].map(path => '/' + path) };
+}
+
+async function archivedRelease(commit) {
+  const source = await mkdtemp(join(work, 'source-'));
+  const archive = join(source, 'public.tar');
+  try {
+    execFileSync('git', ['archive', '--format=tar', '-o', archive, commit, 'public']);
+    execFileSync('tar', ['-xf', archive, '-C', source]);
+    return await release(join(source, 'public'));
+  } finally {
+    await rm(source, { recursive: true, force: true });
+  }
 }
 
 try {
@@ -40,25 +57,30 @@ try {
   const current = await release(root);
   const ref = process.env.STRANGERS_PRIOR_ASSETS_REF || 'HEAD^';
   const resolveParent = () => spawnSync('git', ['rev-parse', '--verify', ref + '^{commit}'], { encoding: 'utf8' });
-  let parent = resolveParent();
-  if (parent.status !== 0 && process.env.WORKERS_CI && ref === 'HEAD^') {
-    execFileSync('git', ['fetch', '--no-tags', '--depth=2', 'origin', source], { stdio: 'inherit' });
-    parent = resolveParent();
+  if (process.env.WORKERS_CI && ref === 'HEAD^' && execFileSync('git', ['rev-parse', '--is-shallow-repository'], { encoding: 'utf8' }).trim() === 'true') {
+    execFileSync('git', ['fetch', '--no-tags', `--depth=${historyLimit + 1}`, 'origin', source], { stdio: 'inherit' });
   }
+  const parent = resolveParent();
   if (parent.status !== 0 && process.env.WORKERS_CI) {
     throw new Error('Release assets require the previous production commit. Fetch parent history before building.');
   }
   let previous = null;
   if (parent.status === 0) {
-    const archive = join(work, 'previous.tar');
-    execFileSync('git', ['archive', '--format=tar', '-o', archive, parent.stdout.trim(), 'public']);
-    execFileSync('tar', ['-xf', archive, '-C', work]);
-    previous = (await release(join(work, 'public'))).id;
+    const commits = execFileSync('git', ['rev-list', '--first-parent', `--max-count=${historyLimit}`, parent.stdout.trim()], { encoding: 'utf8' }).trim().split('\n');
+    const trees = new Set();
+    for (const commit of commits) {
+      const tree = spawnSync('git', ['rev-parse', '--verify', commit + ':public'], { encoding: 'utf8' });
+      if (tree.status !== 0 || trees.has(tree.stdout)) continue;
+      trees.add(tree.stdout);
+      const archived = await archivedRelease(commit);
+      if (!previous) previous = archived.id;
+      if (retained.size >= releaseLimit) break;
+    }
   }
-  await writeFile(join(staged, 'manifest.json'), JSON.stringify({ source, current: current.id, files: current.files, previous }));
+  await writeFile(join(staged, 'manifest.json'), JSON.stringify({ source, current: current.id, files: current.files, previous, retained: [...retained] }));
   await rm(output, { recursive: true, force: true });
   await rename(staged, output);
-  console.log('Browser assets', current.id, 'previous', previous || 'unavailable');
+  console.log('Browser assets', current.id, 'retained releases', retained.size);
 } finally {
   await rm(work, { recursive: true, force: true });
   await rm(staged, { recursive: true, force: true });

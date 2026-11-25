@@ -132,6 +132,30 @@ test('invoices waiting for a balance review are excluded from the overdue queue 
  }finally{db.close();}
 });
 
+test('QuickBooks product numbers are allocated and read atomically without renumbering existing coffees', async () => {
+ const {build}=createRequire(import.meta.url)('esbuild');
+ const source=await build({entryPoints:[fileURLToPath(new URL('../src/quickbooks/autoLinks.ts',import.meta.url))],bundle:true,write:false,format:'esm',platform:'node'});
+ const {productNumber}=await import('data:text/javascript;base64,'+Buffer.from(source.outputFiles[0].text).toString('base64'));
+ const db=new DatabaseSync(':memory:');
+ try {
+  db.exec("CREATE TABLE wholesale_product_numbers(product_id TEXT PRIMARY KEY,number INTEGER NOT NULL UNIQUE,created_at INTEGER NOT NULL); INSERT INTO wholesale_product_numbers VALUES('existing',1032,7);");
+  const DB={
+   prepare(sql){return {bind(...args){return {sql,args};}};},
+   async batch(statements){
+    db.exec('BEGIN IMMEDIATE');
+    try {
+     const results=statements.map(({sql,args})=>({results:db.prepare(sql).all(...args)}));
+     db.exec('COMMIT');return results;
+    } catch(error){db.exec('ROLLBACK');throw error;}
+   },
+  };
+  const coffees=['existing','fresh-a','fresh-b','fresh-a','existing'];
+  assert.deepEqual(await Promise.all(coffees.map(coffee=>productNumber({DB},coffee))),[1032,1033,1034,1033,1032]);
+  assert.equal(db.prepare("SELECT created_at FROM wholesale_product_numbers WHERE product_id='existing'").get().created_at,7);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM wholesale_product_numbers').get().n,3);
+ } finally {db.close();}
+});
+
 test('an order arriving or changing after a tab review cannot commit a partial clear', async () => {
  const {build} = createRequire(import.meta.url)('esbuild');
  const source = await build({entryPoints:[fileURLToPath(new URL('../src/wholesaleTabs.ts',import.meta.url))],bundle:true,write:false,format:'esm',platform:'node'});

@@ -438,15 +438,15 @@ test("errors from pages are recorded once with a count, and shown to admins", as
   assert.match(e.report, /Who: {4}Sam Patel · iPhone · Safari/);
   assert.match(e.report, /Stack:\n {2}TypeError: x is undefined\n {2}at renderDay/);
   assert.ok(items.some((i) => i.text === "Couldn't load /theme.css" && /Staff Login · \/signin · signed out/.test(i.where)));
-  // The site serves /theme.css, so that browser didn't load it: kept, marked, not a fault (19 Nov 2026).
+  // The recheck is recorded separately from the original failed request.
   const served = items.find((i) => i.text === "Couldn't load /theme.css");
-  assert.match(served.where, /not a site fault$/);
-  assert.match(served.report, /Note: {3}the site serves this file normally/);
+  assert.match(served.where, /file available on recheck$/);
+  assert.match(served.report, /Note: {3}The file was available when the server checked/);
   assert.doesNotMatch(served.report, /Stack:/);
   // A file the site doesn't have is a real fault.
   await send({ app: "diary", page: "/", message: "Couldn't load /diary/not-here.js" });
   const gone = (await admin("GET", "activity?kind=errors")).body.items.find((i) => i.text === "Couldn't load /diary/not-here.js");
-  assert.doesNotMatch(gone.where, /not a site fault/);
+  assert.doesNotMatch(gone.where, /file available on recheck/);
   assert.ok(!(await admin("GET", "activity?kind=all")).body.items.some((i) => i.kind === "error"), "not mixed into the day's activity");
   const o = (await admin("GET", "overview")).body;
   assert.ok(o.attention.some((a) => /errors? on the site in the last day/.test(a.title)), "flagged on the Overview");

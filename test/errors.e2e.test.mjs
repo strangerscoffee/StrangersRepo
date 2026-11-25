@@ -137,20 +137,64 @@ test("only the site's own errors count; a dropped signal is noted but not shown;
 });
 
 
-test('unattributed browser autofill noise is ignored while the same message with an app frame is retained',async()=>{
+test('unattributed browser errors are ignored while the same messages with app frames are retained',async()=>{
  const context=await browser.newContext(),page=await context.newPage(),reports=[];
  await page.route('**/api/errors',async route=>{reports.push(route.request().postDataJSON());await route.fulfill({status:200,contentType:'application/json',body:'{}'})});
  try{
   await page.goto(srv.base+'/signin');await page.locator('#signin').waitFor();
   await page.evaluate(()=>{
-   const reason={message:'Could not find identifiable element',stack:'resolveElement@user-script:1:1'};
-   dispatchEvent(new PromiseRejectionEvent('unhandledrejection',{promise:Promise.resolve(),reason}));
-   dispatchEvent(new ErrorEvent('error',{message:reason.message,error:reason}));
+   for(const reason of [
+    {message:'Could not find identifiable element',stack:'resolveElement@user-script:1:1'},
+    {message:'Invalid call to runtime.sendMessage(). Tab not found.',stack:'dispatch@safari-web-extension://example/content.js:1:1'},
+   ]){
+    dispatchEvent(new PromiseRejectionEvent('unhandledrejection',{promise:Promise.resolve(),reason}));
+    dispatchEvent(new ErrorEvent('error',{message:reason.message,error:reason}));
+   }
   });
   await page.waitForTimeout(100);assert.deepEqual(reports,[]);assert.equal(await page.locator('#sc-error').count(),0);
-  await page.evaluate(()=>{const reason={message:'Could not find identifiable element',stack:'findElement@'+location.origin+'/diary/today.js:12:3'};dispatchEvent(new PromiseRejectionEvent('unhandledrejection',{promise:Promise.resolve(),reason}))});
+  await page.evaluate(()=>{const reason={message:'Invalid call to runtime.sendMessage(). Tab not found.',stack:'findElement@'+location.origin+'/diary/today.js:12:3'};dispatchEvent(new PromiseRejectionEvent('unhandledrejection',{promise:Promise.resolve(),reason}))});
   await page.locator('#sc-error').waitFor();await page.waitForFunction(()=>document.querySelector('#sc-error').textContent.includes('/diary/today.js:12:3'));
   for(let attempt=0;attempt<40&&reports.length<1;attempt++)await page.waitForTimeout(25);
-  assert.equal(reports.length,1);assert.match(reports[0].message,/Could not find identifiable element/);
+  assert.equal(reports.length,1);assert.match(reports[0].message,/Tab not found/);
  }finally{await context.close()}
+});
+
+test("wholesale sign-in reloads an expired release once and reports persistent failure", async () => {
+  for (const persists of [false, true]) {
+    const context = await browser.newContext({ ...devices["iPhone 15 Pro"] });
+    const page = await context.newPage(), reports = [];
+    let documents = 0;
+    const expired = "/_releases/ffffffffffffffffffff/wholesale/signin.js";
+    const url = srv.base + "/wholesale/signin?next=%2Fwholesale%2F";
+    try {
+      await page.route(/\/wholesale\/signin(?:\?.*)?$/, async route => {
+        documents++;
+        if (documents > 1 && !persists) return route.continue();
+        const response = await route.fetch();
+        const html = await response.text();
+        const body = html.replace(/src="(?:\/_releases\/[a-f0-9]{20})?\/wholesale\/signin\.js(?:\?[^"]*)?"/, `src="${expired}"`);
+        assert.notEqual(html, body);
+        await route.fulfill({ response, body });
+      });
+      await page.route("**/api/errors", async route => {
+        reports.push(route.request().postDataJSON());
+        await route.fulfill({ json: {} });
+      });
+      const reportResponse = persists && page.waitForResponse(r => r.url().endsWith("/api/errors"));
+      await page.goto(url, { waitUntil: "commit" });
+      if (persists) {
+        await page.locator("#sc-error").getByText("Couldn't load " + expired).waitFor();
+        await reportResponse;
+        assert.equal(reports.filter(r => r.message === "Couldn't load " + expired).length, 1);
+      } else {
+        await page.waitForFunction(() => document.querySelector("#login-submit")?.disabled === false);
+        assert.equal(await page.locator("#sc-error").count(), 0);
+        assert.deepEqual(reports, []);
+      }
+      assert.equal(documents, 2);
+      assert.equal(page.url(), url);
+    } finally {
+      await context.close();
+    }
+  }
 });

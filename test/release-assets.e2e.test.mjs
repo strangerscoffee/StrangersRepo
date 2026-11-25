@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
@@ -9,6 +9,30 @@ import ts from 'typescript';
 import { ROOT, SETUP_CODE, startServer } from './harness.mjs';
 
 const { chromium } = createRequire(import.meta.url)('playwright');
+
+test('asset builds keep older browser versions across commits with identical assets', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'strangers-asset-history-'));
+  const assets = join(dir, 'public'), file = join(assets, 'theme.css');
+  const git = (...args) => execFileSync('git', args, { cwd: dir, stdio: 'pipe' });
+  try {
+    git('init', '-q');
+    await mkdir(assets);
+    for (const version of ['old', 'middle', 'middle', 'new']) {
+      await writeFile(file, `/* ${version} */`);
+      git('add', 'public/theme.css');
+      git('-c', 'user.name=Test', '-c', 'user.email=assets@example.test', 'commit', '--allow-empty', '-qm', version);
+    }
+    const env = { ...process.env, STRANGERS_ASSETS_DIRECTORY: assets, STRANGERS_PRIOR_ASSETS_REF: 'HEAD^' };
+    execFileSync(process.execPath, [join(ROOT, 'scripts/build-assets.mjs')], { cwd: dir, env });
+    const { retained, current, previous } = JSON.parse(await readFile(join(assets, '_releases', 'manifest.json'), 'utf8'));
+    assert.deepEqual(retained.slice(0, 2), [current, previous]);
+    assert.equal(retained.length, 3);
+    assert.deepEqual(await Promise.all(retained.map(id => readFile(join(assets, '_releases', id, 'theme.css'), 'utf8'))),
+      ['/* new */', '/* middle */', '/* old */']);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
 
 test('versioned assets keep the previous release and keep the retail host boundary', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'strangers-versioned-assets-'));
@@ -41,6 +65,12 @@ test('versioned assets keep the previous release and keep the retail host bounda
     assert.match(old.headers.get('cache-control'), /immutable/);
     assert.doesNotMatch(await old.text(), /versioned fixture/);
     assert.match(await (await fetch(server.base + newCss)).text(), /versioned fixture/);
+    const expired = "/_releases/ffffffffffffffffffff";
+    const reporter = await fetch(server.base + expired + "/errors.js");
+    assert.equal(reporter.status, 200);
+    assert.match(reporter.headers.get("cache-control"), /no-store/);
+    assert.equal(await reporter.text(), await readFile(join(assets, "errors.js"), "utf8"));
+    assert.equal((await fetch(server.base + expired + "/shop/shop.js")).status, 404);
     for (const path of [`/_releases/${current}/admin/admin.js`, `/_releases/${current}/wholesale/source-prices.js`, '/_releases/manifest.json']) {
       assert.equal((await fetch(server.base + path)).status, 404, path);
     }

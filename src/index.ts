@@ -23,7 +23,7 @@ import { WRITE_OPS, handleDb } from "./docs";
 import { ApiError, Env, errorResponse, json, readJson } from "./http";
 import { handleRota } from "./rota";
 import { ensureSchema } from "./schema";
-import { codeFor, deviceOf, FILE_SERVED, recordError } from "./errors";
+import { browserMessagingNoise, codeFor, deviceOf, FILE_SERVED, recordError } from "./errors";
 import { audit } from "./audit";
 import { handleUnsubscribe } from "./email/unsubscribe";
 import { notifyLive, openLive } from "./live";
@@ -191,7 +191,13 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
       : isPublicAsset(asset) || isPublicCode(app, asset) ||
         (app === "preview" && ["/theme.css", "/shared/core.js", "/shared/focus.js"].includes(asset)));
     if (!isGet || !asset || !publicCode) return new Response("Not found", { status: 404 });
-    return staticFile(req, env, asset);
+    const response = await staticFile(req, env, asset);
+    // The standalone reporter can recover an expired page without loading a mixture of old and new app modules.
+    if (asset === "/errors.js" && response.status === 404) {
+      await response.body?.cancel();
+      return noStore(await env.ASSETS.fetch(pageRequest(req, new URL(asset, url))));
+    }
+    return response;
   }
   if (isRetailShopPath(p)) {
     if (url.hostname !== env.LEGACY_PREVIEW_HOST?.toLowerCase()) return new Response("Not found", { status: 404 });
@@ -277,9 +283,8 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
     await limitWrites(req, env, ctx, who?.id);
     const b = await readJson<any>(req, 8 * 1024).catch(() => null);
     if (!b || typeof b !== "object") return new Response(null, { status: 204 });
-    // A file the browser couldn't load: check whether the site itself serves it (the owner's report, 19 Nov 2026).
-    // If it does, the file is fine and it was that browser (often an email system's link checker, a content blocker
-    // or a dropped signal); it's kept, marked, but doesn't flag the Admin Overview (FILE_SERVED in src/errors.ts).
+    if (browserMessagingNoise(b.message, b.detail)) return new Response(null, { status: 204 });
+    // Record whether the requested file is available now. The original load could still have failed.
     let detail = b.detail;
     const missing = /^Couldn't load (\/[-\w./]+)$/.exec(String(b.message || ""))?.[1];
     if (missing && !missing.includes("..") && /\.(?:js|css|svg|png|ico|webmanifest)$/.test(missing)) {

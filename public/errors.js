@@ -83,10 +83,36 @@
   // between here and the phone added, like Cloudflare's analytics beacon, which the site's security rules block on
   // purpose) says nothing about the site and isn't reported.
   const ours = (u) => { try { return new URL(u, location.href).origin === location.origin; } catch (e) { return false; } };
-  const ownFrame = detail => (String(detail || "").match(/https?:\/\/[^\s)]+|\/[\w./-]+\.(?:js|mjs)(?:\?[^\s)]*)?(?::\d+:\d+)?/g) || []).some(ours);
-  const browserAutofill = (message, detail, file) => /^Could not find identifiable element\.?$/.test(message) && !(file && ours(file)) && !ownFrame(detail);
+  const ownFrame = detail => (String(detail || "").match(/[a-z][\w+.-]*:\/\/[^\s)]+|\/[\w./-]+\.(?:js|mjs)(?:\?[^\s)]*)?(?::\d+:\d+)?/gi) || []).some(ours);
+  const browserNoise = (message, detail, file) => /^(?:Could not find identifiable element|Invalid call to runtime\.sendMessage\(\)\. Tab not found)\.?$/.test(message) && !(file && ours(file)) && !ownFrame(detail);
+  const wholesaleSignin = app === "wholesale" && /^(?:\/wholesale)?\/signin(?:\.html)?$/.test(p);
+  const startupFiles = new Set(["/theme.css", "/wholesale/wholesale.css", "/shared/focus.js", "/shared/core.js", "/wholesale/terms.js", "/wholesale/signin.js"]);
+  const retryKey = "sc:wholesale-signin-reload";
+  let startupFailed = false, reloading = false, interacted = false;
+  if (wholesaleSignin) {
+    addEventListener("input", () => { interacted = true; }, { capture: true, once: true });
+    addEventListener("click", () => { interacted = true; }, { capture: true, once: true });
+    addEventListener("load", () => {
+      if (!startupFailed) try { sessionStorage.removeItem(retryKey); } catch {}
+    }, { once: true });
+  }
+  function recoverSignin(pathname) {
+    if (!wholesaleSignin || !startupFiles.has(pathname.replace(/^\/_releases\/[a-f0-9]{20}\//, "/"))) return false;
+    startupFailed = true;
+    if (navigator.onLine === false || interacted) return false;
+    // Some password managers fill without an input event.
+    if ([...document.querySelectorAll('form input:not([type="hidden"])')].some(input => input.value)) return false;
+    try {
+      if (sessionStorage.getItem(retryKey)) return false;
+      sessionStorage.setItem(retryKey, "1");
+    } catch { return false; }
+    reloading = true;
+    location.reload();
+    return true;
+  }
   const retriedBranding = new WeakSet(), retriedStyles = new WeakSet();
   addEventListener("error", (e) => {
+    if (reloading) return;
     const t = e.target;
     if (t && t !== window && (t.src || t.href)) {
       const u = String(t.src || t.href);
@@ -109,7 +135,9 @@
         queueMicrotask(() => { if (t.isConnected) { if (t.tagName === "IMG") t.src = retry.href; else t.href = retry.href; } });
         return;
       }
-      // A picture that didn't load is reported but doesn't interrupt anyone; a script or stylesheet breaks the page.
+      // Retry the entire sign-in document so all its scripts and styles use the same release.
+      if (!image && recoverSignin(new URL(u).pathname)) return;
+      // Keep an error visible if the recovery failed or the person already started signing in.
       report("Couldn't load " + u.replace(location.origin, "").split("?")[0], "", { quiet: image });
       return;
     }
@@ -118,18 +146,19 @@
     // was); and an error in a file from elsewhere isn't the site's.
     if (/ResizeObserver loop/.test(msg)) return;
     if (/^Script error\.?$/.test(msg) && !e.filename && !ownFrame(e.error && e.error.stack)) return;
-    if (browserAutofill(msg, e.error && e.error.stack, e.filename)) return;
+    if (browserNoise(msg, e.error && e.error.stack, e.filename)) return;
     if (e.filename && !ours(e.filename)) return;
     report(msg, (e.error && e.error.stack) || (e.filename ? `${e.filename}:${e.lineno}:${e.colno}` : ""));
   }, true);
   // How each browser says a request didn't reach the server (Safari, Chrome, Firefox).
   const NETWORK = /^(Load failed|Failed to fetch|NetworkError when attempting to fetch resource\.?|The network connection was lost\.?)$/;
   addEventListener("unhandledrejection", (e) => {
+    if (reloading) return;
     const r = e.reason;
     // Not reaching the server and being signed out are handled by the pages themselves.
     if (r && (r.code === "unavailable" || r.code === "unauthenticated" || r.name === "AbortError")) return;
     const msg = (r && r.message) || String(r);
-    if (browserAutofill(msg, r && r.stack)) return;
+    if (browserNoise(msg, r && r.stack)) return;
     // A request that didn't get through (the signal dropped) and that nothing caught: worth fixing, so it's
     // reported, but it isn't put in front of anyone; the page carries on and tries again.
     report("Unhandled: " + msg, r && r.stack, { quiet: r && r.name === "TypeError" && NETWORK.test(msg) });

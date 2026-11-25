@@ -35,7 +35,7 @@ export function withFingerprints(res: Response, env: AssetEnv, url: URL, aliases
   const pin = (attr: string) => ({
     async element(e: Element) {
       const v = e.getAttribute(attr);
-      if (!v || !/^\/[^/?#]*(\/[^/?#]+)*\.(js|css)$/.test(v)) return; // only this site's own files
+      if (!v || v === "/errors.js" || !/^\/[^/?#]*(\/[^/?#]+)*\.(js|css)$/.test(v)) return;
       const published = await release;
       if (published?.files.has(v)) {
         e.setAttribute(attr, "/_releases/" + published.id + v);

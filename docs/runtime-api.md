@@ -346,6 +346,8 @@ Binary PDF and catalogue photo requests enforce their existing limits while stre
 
 Admin static JS/CSS and shared helper code can load without a session so cached pages can verify identity. These routes return code with correct MIME/cache headers, never sign-in HTML. Admin page/data/image authorization remains unchanged. The dependency bootstrap preserves source fingerprints, retries a failed network resource once and stops after a missing dependency. Persistent CSS/JS failures remain visible in error reporting.
 
+Each deployment retains up to 16 distinct browser releases from recent main history. Wholesale sign-in reloads once if a required script or stylesheet fails before someone starts using the form. A persistent failure still shows its usual error card with the reload option.
+
 ## Email delivery feedback
 
 `GET /api/admin/wholesale/order-emails/delivery` returns at most 50 accepted message metadata rows, derived delivery states, at most 50 active suppressions, feedback readiness and public setup instructions. `GET .../delivery/dns` performs read-only DNS checks for configured sender domains using a fixed resolver and bounded responses/timeouts; it is admin-only. No key or email body is returned.

@@ -31,3 +31,16 @@ test("a file the site serves isn't flagged; a missing one is", async () => {
   await send({ app: "diary", page: "/", message: "Couldn't load /diary/not-here.js" });
   assert.equal(await flagged(), true, "a missing file is a real fault");
 });
+
+test("cached reporters ignore the browser messaging error while preserving one attributed to site code", async () => {
+  const message = "Unhandled: Invalid call to runtime.sendMessage(). Tab not found.";
+  const report = { app: "wholesale", page: "/", message };
+  assert.equal((await send(report)).status, 204);
+  assert.equal((await send({ ...report, detail: "dispatch@safari-web-extension://extension/content.js:1:1" })).status, 204);
+  assert.equal((await send({ ...report, detail: "fetchOrder@/wholesale/wholesale.js:12:5" })).status, 200);
+  const response = await fetch(srv.base + "/api/admin/activity?kind=errors", { headers: { cookie: ADMIN } });
+  const items = (await response.json()).items.filter(row => row.text === message);
+  assert.equal(items.length, 1);
+  assert.match(items[0].detail, /fetchOrder/);
+  assert.doesNotMatch(items[0].where, /browser extension/);
+});
