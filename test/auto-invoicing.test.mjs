@@ -367,6 +367,11 @@ test('Using QuickBooks invoice numbers: the next after the highest there, waitin
  config=(await ok('GET',root+'/invoice-settings')).body;
  config=(await ok('PUT',root+'/invoice-settings/numbering',{ifVersion:config.version,shared:true})).body;
  assert.equal(config.nextNumber,'10242','says which number comes next');
+ // Numbers already used under the prefix count by their digits: after AU-010300 comes 10301, never a lookalike.
+ srv.sql(`UPDATE wholesale_invoices SET invoice_number='AU-010300' WHERE order_id='${third.id}'`);
+ config=(await ok('PUT',root+'/invoice-settings/numbering',{ifVersion:config.version,shared:false})).body;
+ config=(await ok('PUT',root+'/invoice-settings/numbering',{ifVersion:config.version,shared:true})).body;
+ assert.equal(config.nextNumber,'10301','follows the digits of the website\'s own prefixed numbers');
  const {settings:s}=config;
  const saved=(await ok('PUT',root+'/invoice-settings',{...s,ifVersion:config.version})).body;
  assert.equal(saved.settings.sharedNumbering,true);

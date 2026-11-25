@@ -18,9 +18,13 @@ export class NumberUnavailable extends ApiError {
   constructor(message: string) { super(503, 'invoice_number_unavailable', message); }
 }
 
-/** The highest plain number the website has issued itself (its STR… numbers aren't plain, so they're left out). */
+const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-_/# ';
+
+/** The highest number issued here, plain or by the digits after its prefix. */
 export async function highestLocal(env: Env) {
-  const row = await env.DB.prepare("SELECT MAX(CAST(invoice_number AS INTEGER)) AS n FROM wholesale_invoices WHERE invoice_number<>'' AND invoice_number NOT GLOB '*[^0-9]*'").first<{ n: number | null }>();
+  // Prefixed numbers count by their digits (STR010248 as 10248), so the shared series never repeats a number
+  // the website has already used under its prefix, and no "10248" sits beside an older "STR010248".
+  const row = await env.DB.prepare(`SELECT MAX(CAST(digits AS INTEGER)) AS n FROM (SELECT ltrim(invoice_number, '${LETTERS}') AS digits FROM wholesale_invoices) WHERE digits<>'' AND digits NOT GLOB '*[^0-9]*'`).first<{ n: number | null }>();
   return row?.n || 0;
 }
 
