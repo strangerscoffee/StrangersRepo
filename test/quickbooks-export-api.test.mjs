@@ -188,7 +188,16 @@ test('Environment switching waits for an active send, while existing Live balanc
 
 function event(id,entityId,entity='invoice',operation='updated',realm='1234567890'){return[{specversion:'1.0',id,source:'intuit.test',type:`qbo.${entity}.${operation}.v1`,datacontenttype:'application/json',time:new Date().toISOString(),intuitaccountid:realm,intuitentityid:entityId,data:{}}];}
 async function webhook(environment,data,secret){const body=JSON.stringify(data),signature=createHmac('sha256',secret||(environment==='sandbox'?'sandbox-verifier-secret-for-tests':'production-verifier-secret-for-tests')).update(body).digest('base64');const response=await fetch(srv.base+'/api/quickbooks/webhook/'+environment,{method:'POST',headers:{'content-type':'application/json','intuit-signature':signature},body});return{status:response.status,text:await response.text()};}
-async function waitBalance(invoiceId,expected){for(let i=0;i<200;i++){const invoice=(await ok('GET','/api/wholesale/invoices/'+invoiceId,undefined,BUYER)).body.invoice;if(invoice.payment.outstandingPence===expected&&invoice.payment.status!=='review')return invoice;await new Promise(r=>setTimeout(r,25));}throw new Error('Payment balance did not reach '+expected);}
+async function waitForInvoice(invoiceId,check){
+ let invoice;
+ for(let i=0;i<200;i++){
+  invoice=(await ok('GET','/api/wholesale/invoices/'+invoiceId,undefined,BUYER)).body.invoice;
+  if(check(invoice))return invoice;
+  await new Promise(resolve=>setTimeout(resolve,25));
+ }
+ throw new Error('Customer invoice did not reach the expected state: '+JSON.stringify(invoice.payment));
+}
+const waitBalance=(invoiceId,expected)=>waitForInvoice(invoiceId,invoice=>invoice.payment.outstandingPence===expected&&invoice.payment.status!=='review');
 async function cron(){const response=await fetch(srv.base+'/__scheduled?cron='+encodeURIComponent('*/5 * * * *'));assert.equal(response.status,200,await response.text());await new Promise(r=>setTimeout(r,50));}
 test('Webhook signatures, environment isolation, unknown companies and unsupported employee data fail closed',async()=>{
  const before=provider.state.calls.length;
@@ -217,20 +226,88 @@ test('Payment creates and deletions reconcile linked invoices without creating m
  assert.equal((await webhook('production',event('payment-created','900','payment','created'))).status,200);await waitBalance(first.id,2000);
  provider.state.pay('production',live.remoteId,30);provider.state.payments.production.set('900',{Id:'900',Line:[]});
  assert.equal((await webhook('production',event('payment-reallocated','900','payment','updated'))).status,200);await waitBalance(first.id,3000);
- provider.state.pay('production',live.remoteId,36);provider.state.payments.production.delete('900');assert.equal((await webhook('production',event('payment-deleted','900','payment','deleted'))).status,200);await waitBalance(first.id,3600);
+ provider.state.pay('production',live.remoteId,36);provider.state.payments.production.delete('900');assert.equal((await webhook('production',event('payment-deleted','900','payment','deleted'))).status,200);
+ assert.equal((await waitBalance(first.id,3600)).payment.hasVoidedPayment,undefined);
  assert.equal(posts('production').length,before);assert.ok(!provider.state.calls.some(c=>c.method==='POST'&&c.path.endsWith('/payment')));
+});
+test('A verified voided payment shows alongside the reopened Live balance with cleared links',async()=>{
+ const live=(await ok('GET',root+'/exports?invoiceId='+first.id,undefined,ADMIN,'production')).body.exports[0];
+ const paymentId='910';
+ provider.state.pay('production',live.remoteId,0);
+ const payment={Id:paymentId,TotalAmt:36,Line:[{LinkedTxn:[{TxnType:'Invoice',TxnId:live.remoteId}]}]};
+ provider.state.payments.production.set(paymentId,payment);
+ assert.equal((await webhook('production',event('live-void-create',paymentId,'payment','created'))).status,200);
+ assert.equal((await waitBalance(first.id,0)).payment.hasVoidedPayment,undefined);
+
+ const voided={Id:paymentId,TotalAmt:0,PrivateNote:'Voided\nOriginal payment memo',Line:[]};
+ provider.state.payments.sandbox.set(paymentId,voided);
+ assert.equal((await webhook('sandbox',event('sandbox-void',paymentId,'payment','voided'))).status,200);
+ assert.equal((await ok('GET','/api/wholesale/invoices/'+first.id,undefined,BUYER)).body.invoice.payment.hasVoidedPayment,undefined);
+
+ provider.state.pay('production',live.remoteId,23);
+ provider.state.payments.production.set(paymentId,voided);
+ const notice=event('live-payment-void',paymentId,'payment','voided');
+ assert.equal((await webhook('production',notice)).status,200);
+ const fresh=await waitForInvoice(first.id,invoice=>invoice.payment.hasVoidedPayment===true&&invoice.payment.outstandingPence===2300);
+ assert.equal(fresh.payment.status,'part-paid');
+ assert.equal(fresh.payment.paid,false);
+ assert.equal(fresh.payment.paidPence,1300);
+ assert.equal((await ok('GET',root+`/exports/${live.id}`,undefined,ADMIN,'production')).body.export.observation.payment_voided,1);
+ assert.equal((await webhook('production',notice)).status,200);
+ assert.equal(srv.sql("SELECT COUNT(*) AS n FROM quickbooks_payment_voids WHERE environment='production' AND payment_id='910'")[0].n,1);
+});
+test('A reopened balance checks saved invoice payment links even when the void notification is missed',async()=>{
+ const live=(await ok('GET',root+'/exports?invoiceId='+first.id,undefined,ADMIN,'production')).body.exports[0];
+ const remote=provider.state.pay('production',live.remoteId,0);
+ remote.LinkedTxn=[{TxnType:'Payment',TxnId:'911'}];
+ const refresh=()=>ok('POST',root+`/exports/${live.id}/refresh`,{},ADMIN,'production');
+ await refresh();
+ assert.equal(srv.sql("SELECT COUNT(*) AS n FROM quickbooks_payment_links WHERE payment_id='911'")[0].n,1);
+ provider.state.pay('production',live.remoteId,36);
+ remote.LinkedTxn=[];
+ provider.state.payments.production.set('911',{Id:'911',TotalAmt:0,PrivateNote:'Voided',Line:[]});
+ await refresh();
+ const confirmed=()=>srv.sql("SELECT COUNT(*) AS n FROM quickbooks_payment_voids WHERE environment='production' AND payment_id='911'")[0].n;
+ for(let count=0;count<10&&!confirmed();count++)await cron();
+ assert.equal(confirmed(),1);
+ assert.equal((await waitBalance(first.id,3600)).payment.hasVoidedPayment,true);
 });
 test('Scheduled change capture recovers missed notifications using only saved invoice links',async()=>{
  const live=(await ok('GET',root+'/exports?invoiceId='+first.id,undefined,ADMIN,'production')).body.exports[0];provider.state.pay('production',live.remoteId,12.34);
+ srv.sql('UPDATE quickbooks_reconciliation SET updated_at=0');
  for(let count=0;count<12;count++){await cron();const own=(await ok('GET','/api/wholesale/invoices/'+first.id,undefined,BUYER)).body.invoice;if(own.payment.outstandingPence===1234)break;}
  assert.equal((await ok('GET','/api/wholesale/invoices/'+first.id,undefined,BUYER)).body.invoice.payment.outstandingPence,1234);assert.ok(provider.state.calls.some(c=>c.path.endsWith('/cdc')));
 });
-test('Voided or edited invoices are reviewed instead of falsely marked paid',async()=>{
- const live=(await ok('GET',root+'/exports?invoiceId='+first.id,undefined,ADMIN,'production')).body.exports[0],remote=provider.state.invoices.production.get(live.remoteId);remote.TotalAmt=0;remote.Balance=0;remote.SyncToken=String(Number(remote.SyncToken)+1);
+test('Zeroed invoice totals require review until QuickBooks confirms a void',async()=>{
+ const live=(await ok('GET',root+'/exports?invoiceId='+first.id,undefined,ADMIN,'production')).body.exports[0];
+ const before=(await ok('GET','/api/wholesale/invoices',undefined,BUYER)).body;
+ const original=before.invoices.find(invoice=>invoice.id===first.id);
+ const remote=provider.state.pay('production',live.remoteId,0);
+ remote.TotalAmt=0;
  srv.sql(`UPDATE wholesale_invoices SET paid=1,paid_date='2026-11-10' WHERE seq=${first.id}`);
+ await ok('POST',root+`/exports/${live.id}/refresh`,{},ADMIN,'production');
+ const unknown=await waitForInvoice(first.id,invoice=>invoice.payment.status==='review');
+ assert.equal(unknown.payment.paid,false);
+ assert.equal(unknown.accounting.reason,undefined);
+
+ provider.state.pay('production',live.remoteId,0);
+ remote.PrivateNote='Voided\n'+remote.PrivateNote;
+ remote.Line=[];
  assert.equal((await webhook('production',event('invoice-voided',live.remoteId,'invoice','voided'))).status,200);
- for(let i=0;i<200;i++){const own=(await ok('GET','/api/wholesale/invoices/'+first.id,undefined,BUYER)).body.invoice;if(own.payment.status==='review')break;await new Promise(r=>setTimeout(r,25));}
- const own=(await ok('GET','/api/wholesale/invoices/'+first.id,undefined,BUYER)).body.invoice;assert.equal(own.payment.status,'review');assert.equal(own.payment.paid,false);assert.equal(own.payment.paidDate,null);assert.equal(own.accounting.reason,undefined);const listed=(await ok('GET','/api/wholesale/invoices',undefined,BUYER)).body;assert.ok(listed.summary.reviewCount>=1);
+ const voided=await waitForInvoice(first.id,invoice=>invoice.payment.status==='voided');
+ assert.equal(voided.payment.paid,false);
+ assert.equal(voided.payment.paidDate,null);
+ assert.equal(voided.payment.outstandingPence,0);
+ assert.deepEqual(voided.totals,original.totals);
+ const listed=(await ok('GET','/api/wholesale/invoices',undefined,BUYER)).body;
+ assert.equal(listed.summary.outstandingPence,before.summary.outstandingPence-original.payment.outstandingPence);
+ const overdue=(await ok('GET','/api/admin/wholesale/invoices?queue=overdue')).body;
+ assert.ok(!overdue.invoices.some(invoice=>invoice.id===first.id));
+ const pdf=await ok('GET',`/api/wholesale/orders/${first.orderId}/invoice/pdf`,undefined,BUYER);
+ const strings=[...pdf.text.matchAll(/<([0-9a-f]+)>\s*Tj/g)].map(match=>Buffer.from(match[1],'hex').toString('latin1'));
+ assert.ok(strings.includes('VOIDED - VAT INVOICE'));
+ assert.ok(strings.includes('Amount due £0.00'));
+ assert.ok(!strings.includes('Test bank instructions'));
 });
 test('Missed-event reconciliation receives a scheduled turn even with an older notification backlog',async()=>{
  srv.sql("UPDATE quickbooks_reconciliation SET updated_at=0,retry_at=0,lease_owner=NULL,lease_until=0;WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<10) INSERT INTO quickbooks_events(event_key,environment,realm_id,entity,entity_id,operation,event_at,created_at) SELECT 'fairness-fixture:'||x,'production','1234567890','Invoice','999999','refresh',1,1 FROM n");

@@ -105,16 +105,31 @@ export function decimalPence(value: unknown): number | null {
   const pence = Number(match[1]) * 100 + Number((match[2] || "").padEnd(2, "0"));
   return money(pence) ? pence : null;
 }
-export interface RemoteInvoice {
-  Id?: string; DocNumber?: string; SyncToken?: string; CustomerRef?: { value?: string }; CurrencyRef?: { value?: string };
-  TotalAmt?: unknown; Balance?: unknown; TxnTaxDetail?: { TotalTax?: unknown };
+export interface TransactionStatus {
+  TxnStatus?: unknown; status?: unknown; invoiceStatus?: unknown; PrivateNote?: unknown; TotalAmt?: unknown;
 }
-export type Reconciliation = { status: "review"; reason: string } | { status: "unpaid" | "part-paid" | "paid"; outstandingPence: number; paidPence: number; syncToken: string };
+
+export function isVoided(transaction: TransactionStatus): boolean {
+  // QuickBooks prepends “Voided” to any existing private note when it clears a transaction.
+  return [transaction.TxnStatus, transaction.status, transaction.invoiceStatus].some(status => typeof status === "string" && /^void(?:ed)?$/i.test(status.trim()))
+    || (decimalPence(transaction.TotalAmt) === 0 && typeof transaction.PrivateNote === "string" && /^Voided\b/i.test(transaction.PrivateNote.trimStart()));
+}
+
+export interface RemoteInvoice extends TransactionStatus {
+  Id?: string; DocNumber?: string; SyncToken?: string; CustomerRef?: { value?: string }; CurrencyRef?: { value?: string };
+  Balance?: unknown; TxnTaxDetail?: { TotalTax?: unknown };
+}
+export type Reconciliation = { status: "review"; reason: string } | { status: "unpaid" | "part-paid" | "paid" | "voided"; outstandingPence: number; paidPence: number; syncToken: string };
 /** A read-only comparison. Caller must authenticate the response's company scope and persist observations with CAS. */
 export function reconcileInvoice(preview: ExportPreview, link: InvoiceLink, observedScope: CompanyScope, remote: RemoteInvoice | null): Reconciliation {
   if (creationDecision(preview, link) !== "already-linked" || !preview.candidate) return { status: "review", reason: "The local invoice or accounting link needs review." };
-  if (!remote || observedScope.realmId !== link.realmId || observedScope.environment !== link.environment || remote.Id !== link.remoteInvoiceId || remote.DocNumber !== link.number || remote.CustomerRef?.value !== link.customerRef || remote.CurrencyRef?.value !== "GBP" || !/^\d+$/.test(remote.SyncToken || "")) return { status: "review", reason: "Verify the company, invoice identity, customer, currency and current revision." };
+  if (!remote || observedScope.realmId !== link.realmId || observedScope.environment !== link.environment || remote.Id !== link.remoteInvoiceId || remote.DocNumber !== link.number || remote.CustomerRef?.value !== link.customerRef || remote.CurrencyRef?.value !== "GBP" || !/^\d{1,32}$/.test(remote.SyncToken || "")) return { status: "review", reason: "Verify the company, invoice identity, customer, currency and current revision." };
   const total = decimalPence(remote.TotalAmt), vat = decimalPence(remote.TxnTaxDetail?.TotalTax), balance = decimalPence(remote.Balance);
+  if (String(remote.status || remote.TxnStatus || "").toLowerCase() === "deleted") return { status: "review", reason: "The QuickBooks invoice was removed. Review it before using its balance." };
+  if (isVoided(remote)) {
+    if (total === 0 && balance === 0) return { status: "voided", outstandingPence: 0, paidPence: 0, syncToken: remote.SyncToken! };
+    return { status: "review", reason: "The voided QuickBooks invoice still has a total or balance to check." };
+  }
   if (total !== preview.candidate.totals.grossPence || vat !== preview.candidate.totals.vatPence || balance === null || balance > total) return { status: "review", reason: "The accounting amounts differ from the saved invoice; do not overwrite its payment state." };
   return { status: balance === 0 ? "paid" : balance === total ? "unpaid" : "part-paid", outstandingPence: balance, paidPence: total - balance, syncToken: remote.SyncToken! };
 }

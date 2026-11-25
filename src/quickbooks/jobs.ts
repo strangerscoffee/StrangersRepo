@@ -1,11 +1,12 @@
 // A bounded D1 inbox and scheduled reconciliation recover missed/out-of-order notifications.
 import {ApiError,type Env} from '../http';
-import type {Environment} from './preview';
-import {connection,configuration,ProviderError,resourceReader} from './connection';
+import {decimalPence,isVoided,type Environment,type TransactionStatus} from './preview';
+import {connection,configuration,ProviderError,resourceReader,type Connection} from './connection';
 import {processExport} from './ledger';
 import {refreshObservation} from './observations';
 import {settings} from './settings';
 import type {ExportOperation} from './operationTypes';
+import {confirmPaymentVoid,paymentInvoiceIds,rememberPaymentInvoices} from './paymentLinks';
 interface Event {event_key:string;environment:Environment;realm_id:string;entity:string;entity_id:string;operation:string;event_at:number;state:string;attempts:number;retry_at:number;lease_owner:string|null;lease_until:number;created_at:number}
 interface ReconcileState {environment:Environment;realm_id:string;checkpoint:string;cursor:number;updated_at:number;last_error:string;retry_at:number;lease_owner:string|null;lease_until:number}
 export const machineRequest=(env:Env)=>new Request(env.QUICKBOOKS_REDIRECT_URI||'https://'+(env.ADMIN_HOST||env.COOKIE_DOMAIN||'staffstrangerscoffee.com')+'/api/admin/wholesale/quickbooks/status');
@@ -28,6 +29,27 @@ export async function requestReconciliation(env:Env,mode:Environment){
 async function completeEvent(env:Env,row:Event,owner:string,state='done',error='',retryAt=0){
   await env.DB.prepare('UPDATE quickbooks_events SET state=?,last_error=?,retry_at=?,lease_owner=NULL,lease_until=0 WHERE event_key=? AND lease_owner=? AND lease_until>?').bind(state,error,retryAt,row.event_key,owner,Date.now()).run();
 }
+async function paymentEventInvoices(req: Request, env: Env, company: Connection, row: Event): Promise<string[] | undefined> {
+  if (!['create','update','void','check'].includes(row.operation)) return undefined;
+  const resources = await resourceReader(req,env,company);
+  let payment: (TransactionStatus & { Id?: unknown; Line?: unknown }) | undefined;
+  try { payment=(await resources.read('/payment/'+row.entity_id+'?minorversion=75')).Payment; }
+  catch(error) { if (!(error instanceof ProviderError&&error.providerStatus===404)) throw error; }
+  await resources.check();
+  if (!payment || String(payment.Id)!==row.entity_id) return row.operation==='check'?[]:undefined;
+
+  const scope = { environment: row.environment, realmId: row.realm_id };
+  const ids = paymentInvoiceIds(payment);
+  await rememberPaymentInvoices(env,scope,row.entity_id,ids);
+  if (isVoided(payment)&&decimalPence(payment.TotalAmt)===0) {
+    const affected = await confirmPaymentVoid(env,scope,row.entity_id);
+    return affected.length || row.operation==='check' ? affected : undefined;
+  }
+  // A void notice can reach us before QuickBooks serves the revised Payment record.
+  if (row.operation==='void') throw new ProviderError(503);
+  if (row.operation==='check') return [];
+  return row.operation==='create'&&Array.isArray(payment.Line)?ids:undefined;
+}
 export async function processEvents(req:Request,env:Env,limit=2,preferredKeys?:string[]){
   for(let count=0;count<limit;count++){
     const row=await env.DB.prepare("SELECT e.* FROM quickbooks_events e JOIN quickbooks_connections c ON c.environment=e.environment AND c.realm_id=e.realm_id AND c.status='connected' WHERE (e.state='queued' OR (e.state='processing' AND e.lease_until<=?)) AND e.retry_at<=?"+(preferredKeys?' AND e.event_key IN (SELECT value FROM json_each(?))':'')+" ORDER BY e.created_at,e.event_key LIMIT 1").bind(Date.now(),Date.now(),...(preferredKeys?[JSON.stringify(preferredKeys)]:[])).first<Event>();
@@ -38,18 +60,11 @@ export async function processEvents(req:Request,env:Env,limit=2,preferredKeys?:s
       if(row.entity==='Invoice'){
         const linked=await env.DB.prepare("SELECT * FROM quickbooks_exports WHERE environment=? AND realm_id=? AND remote_id=? AND state='linked'").bind(row.environment,row.realm_id,row.entity_id).first<ExportOperation>();if(linked)await refreshObservation(req,env,linked);
       }else if(row.entity==='Payment'){
-        let ids:string[]|undefined;
-        if(row.operation==='create'){
-          const resources=await resourceReader(req,env,company);let payment:any=null;
-          try{payment=(await resources.read('/payment/'+row.entity_id+'?minorversion=75')).Payment;}catch(error){if(!(error instanceof ProviderError&&error.providerStatus===404))throw error;}
-          await resources.check();
-          if(Array.isArray(payment?.Line))ids=payment.Line.flatMap((line:any)=>(Array.isArray(line?.LinkedTxn)?line.LinkedTxn:[])
-            .filter((link:any)=>link?.TxnType==='Invoice').map((link:any)=>String(link.TxnId)));
-        }
-        // Changed or removed payments no longer tell us every invoice they previously paid.
+        const ids=await paymentEventInvoices(req,env,company,row);
+        // Unknown allocations still need the existing company-wide balance recheck.
         const prefix='payment:'+row.event_key;
-        await enqueueInvoices(env,row.environment,row.realm_id,prefix,ids);
-        if(preferredKeys){
+        if(ids?.length!==0)await enqueueInvoices(env,row.environment,row.realm_id,prefix,ids);
+        if(preferredKeys&&ids?.length!==0){
           // Spend the remaining notification budget on its authoritative invoice reads.
           const children=(await env.DB.prepare(`SELECT q.event_key FROM quickbooks_events q
             JOIN quickbooks_exports e ON e.environment=q.environment AND e.realm_id=q.realm_id AND e.remote_id=q.entity_id AND e.state='linked'

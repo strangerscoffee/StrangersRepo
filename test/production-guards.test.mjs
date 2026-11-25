@@ -26,7 +26,7 @@ function invoiceFixture() {
    CREATE TABLE wholesale_auto_invoicing(id INTEGER PRIMARY KEY,data TEXT);
    CREATE TABLE wholesale_auto_invoices(source TEXT PRIMARY KEY,lease_owner TEXT,lease_until INTEGER);
    CREATE TABLE quickbooks_exports(id INTEGER PRIMARY KEY,invoice_id INTEGER,environment TEXT,state TEXT,write_started_at INTEGER NOT NULL DEFAULT 0);
-   CREATE TABLE quickbooks_observations(export_id INTEGER,status TEXT,outstanding_pence INTEGER,paid_pence INTEGER,reason TEXT,observed_at INTEGER);
+   CREATE TABLE quickbooks_observations(export_id INTEGER,status TEXT,outstanding_pence INTEGER,paid_pence INTEGER,reason TEXT,observed_at INTEGER,payment_voided INTEGER NOT NULL DEFAULT 0);
    CREATE TABLE audit_log(at INTEGER,kind TEXT,actor TEXT,text TEXT);
  `);
  const config={seller:{legalName:'Test Supplier',address:'Supplier Street',vatNumber:'123'},priceBasis:'inclusive',

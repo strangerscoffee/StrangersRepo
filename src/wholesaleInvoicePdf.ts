@@ -52,7 +52,7 @@ function roundedPanel(doc: PdfDoc, x: number, y: number, width: number, height: 
 }
 
 // Keep ordinary invoices compact while allowing long terms/instructions to flow past the totals card onto later pages.
-function paymentAndTotals(flow: PdfFlow, invoice: InvoiceDocument) {
+function paymentAndTotals(flow: PdfFlow, invoice: InvoiceDocument, voided: boolean) {
   flow.need(132);
   const start = flow.y, cardWidth = 211, cardHeight = 123, cardX = flow.doc.W - flow.m - cardWidth;
   const cardPage = flow.doc.pageCount, cardBottom = start + cardHeight, innerRight = cardX + cardWidth - 15;
@@ -62,7 +62,7 @@ function paymentAndTotals(flow: PdfFlow, invoice: InvoiceDocument) {
   flow.doc.text("VAT", cardX + 15, start + 43, { size: 9, color: "#e2efff" });
   flow.doc.text(money(invoice.totals.vatPence), innerRight, start + 43, { size: 9, color: "#ffffff", align: "right" });
   flow.doc.line(cardX + 15, start + 57, innerRight, start + 57, { color: "#8ebcf0" });
-  flow.doc.text("INVOICE TOTAL", cardX + 15, start + 79, { size: 8.5, bold: true, color: "#e2efff" });
+  flow.doc.text(voided ? "ORIGINAL INVOICE TOTAL" : "INVOICE TOTAL", cardX + 15, start + 79, { size: 8.5, bold: true, color: "#e2efff" });
   flow.doc.text(money(invoice.totals.grossPence), innerRight, start + 106, { size: 19, bold: true, color: "#ffffff", align: "right" });
   const available = () => flow.doc.pageCount === cardPage && flow.y < cardBottom + 7 ? cardX - flow.m - 24 : flow.width;
   function heading(value: string) {
@@ -83,11 +83,16 @@ function paymentAndTotals(flow: PdfFlow, invoice: InvoiceDocument) {
       }
     }
   }
-  heading("Payment terms");
-  paragraph(invoice.paymentTerms.label, 9.5);
-  paragraph(invoice.dueDate ? `Payment due: ${calendarDate(invoice.dueDate)}` : "Payment due: as stated in the agreed terms", 9.5);
-  if (invoice.paymentTerms.note) { flow.y += 4; paragraph(invoice.paymentTerms.note); }
-  if (invoice.paymentInstructions) { flow.y += 8; heading("Payment details"); paragraph(invoice.paymentInstructions); }
+  if (voided) {
+    heading("Voided in QuickBooks");
+    paragraph("Amount due " + money(0), 9.5);
+  } else {
+    heading("Payment terms");
+    paragraph(invoice.paymentTerms.label, 9.5);
+    paragraph(invoice.dueDate ? `Payment due: ${calendarDate(invoice.dueDate)}` : "Payment due: as stated in the agreed terms", 9.5);
+    if (invoice.paymentTerms.note) { flow.y += 4; paragraph(invoice.paymentTerms.note); }
+    if (invoice.paymentInstructions) { flow.y += 8; heading("Payment details"); paragraph(invoice.paymentInstructions); }
+  }
   if (flow.doc.pageCount === cardPage) flow.y = Math.max(flow.y, cardBottom + 8);
 }
 
@@ -95,7 +100,8 @@ export function renderWholesaleInvoicePdf(invoice: InvoiceDocument, options: { d
   const draft = options.draft ?? (invoice.id === null || invoice.number === null);
   if (!draft && (!invoice.number || invoice.issuedAt === null)) throw new Error("An issued invoice needs its saved number and issue timestamp.");
   const number = draft ? "Not allocated - draft" : invoice.number!;
-  const title = draft ? "DRAFT - VAT INVOICE" : "VAT INVOICE";
+  const voided = !draft && invoice.payment.status === "voided";
+  const title = draft ? "DRAFT - VAT INVOICE" : voided ? "VOIDED - VAT INVOICE" : "VAT INVOICE";
   const createdAt = invoice.issuedAt ?? Date.parse(invoice.invoiceDate + "T00:00:00Z");
   const doc = pdf.create({ title: `${title} - ${number}`, author: invoice.seller.legalName, createdAt });
   const flow = new pdf.Flow(doc, {
@@ -113,8 +119,8 @@ export function renderWholesaleInvoicePdf(invoice: InvoiceDocument, options: { d
     },
   });
   flow.table([
-    { label: "INVOICE DATE", w: "flex" }, { label: "SUPPLY DATE / TAX POINT", w: "flex" }, { label: "PAYMENT DUE", w: "flex" },
-  ], [[calendarDate(invoice.invoiceDate), calendarDate(invoice.supplyDate), invoice.dueDate ? calendarDate(invoice.dueDate) : "See payment terms"]], {
+    { label: "INVOICE DATE", w: "flex" }, { label: "SUPPLY DATE / TAX POINT", w: "flex" }, { label: voided ? "AMOUNT DUE" : "PAYMENT DUE", w: "flex" },
+  ], [[calendarDate(invoice.invoiceDate), calendarDate(invoice.supplyDate), voided ? money(0) : invoice.dueDate ? calendarDate(invoice.dueDate) : "See payment terms"]], {
     size: 10, head: 7.5, pad: 7, headFill: colours.pale, headColor: colours.muted, zebra: null,
   });
   const reference = (invoice as InvoiceDocument & { orderReference?: string }).orderReference;
@@ -145,7 +151,7 @@ export function renderWholesaleInvoicePdf(invoice: InvoiceDocument, options: { d
     { label: "VAT classification", w: "flex" }, { label: "Rate", w: 48, align: "right" },
     { label: "Net", w: 92, align: "right" }, { label: "VAT", w: 92, align: "right" }, { label: "Total", w: 92, align: "right" },
   ], invoice.vatBreakdown.map(item => [item.label, rate(item.basisPoints), money(item.netPence), money(item.vatPence), money(item.grossPence)]), { size: 8.5, head: 8, pad: 5, headFill: colours.pale, headColor: colours.muted, lineColor: colours.line });
-  flow.gap(16); paymentAndTotals(flow, invoice);
+  flow.gap(16); paymentAndTotals(flow, invoice, voided);
   return flow.finish();
 }
 

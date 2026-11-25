@@ -3,6 +3,7 @@ import { openWholesaleOrders } from './wholesale-ui-helpers.mjs';
 // End-to-end accounting controls. Only the loopback simulator receives financial requests.
 import {test,before,after} from 'node:test';
 import assert from 'node:assert/strict';
+import {createHmac} from 'node:crypto';
 import {createRequire} from 'node:module';
 import {mkdir} from 'node:fs/promises';
 import {startServer,SETUP_CODE} from './harness.mjs';
@@ -10,6 +11,7 @@ import {startQuickBooksProvider,quickBooksVars} from './quickbooks-provider.mjs'
 const {chromium}=createRequire(import.meta.url)('playwright');
 let srv,provider,browser,ADMIN,BUYER,customer,settings;
 const root='/api/admin/wholesale/quickbooks';
+const webhookToken='live-webhook-token-for-browser-tests';
 async function api(method,path,body,cookie=ADMIN){const r=await fetch(srv.base+path,{method,redirect:'manual',headers:{'content-type':'application/json',...(cookie?{cookie}:{})},body:body===undefined?undefined:JSON.stringify(body)});const data=await r.json();assert.ok(r.ok,path+': '+JSON.stringify(data));return{data,cookie:(r.headers.getSetCookie().find(v=>/^sf(?:bb|_wholesale)_session=[\w-]/.test(v))||'').split(';')[0]};}
 async function issued(){
  const profile=(await api('GET','/api/wholesale/session',undefined,BUYER)).data.customer;
@@ -17,7 +19,7 @@ async function issued(){
  return(await api('POST',`/api/admin/wholesale/orders/${order.id}/invoice`,{orderVersion:order.version,settingsVersion:settings.version,invoiceDate:'2026-11-10',supplyDate:'2026-11-09'})).data.invoice;
 }
 before(async()=>{
- provider=await startQuickBooksProvider();srv=await startServer({writeLimit:5000,vars:({base})=>({...quickBooksVars(provider.origin),QUICKBOOKS_REDIRECT_URI:base+root+'/callback'})});
+ provider=await startQuickBooksProvider();srv=await startServer({writeLimit:5000,vars:({base})=>({...quickBooksVars(provider.origin),QUICKBOOKS_REDIRECT_URI:base+root+'/callback',QUICKBOOKS_PRODUCTION_WEBHOOK_TOKEN:webhookToken})});
  ADMIN=(await api('POST','/api/auth/setup',{name:'QB UI Owner',username:'owner',password:'owner-password',code:SETUP_CODE},null)).cookie;
  customer=(await api('POST','/api/admin/wholesale/customers',{business:'Example QB Cafe',address:'Test address',postcode:'NR1 1AA',status:'Active',paymentTerms:'net-30'})).data.customer;
  const account=(await api('POST',`/api/admin/wholesale/customers/${customer.id}/account`,{username:'ui.buyer'})).data;
@@ -77,6 +79,43 @@ for(const [device,viewport]of [['phone',{width:393,height:852}],['ipad',{width:8
    await buyer.goto(srv.base+'/wholesale/');await buyer.locator('#products article').first().waitFor();await openWholesaleOrders(buyer);await buyer.locator('#history-invoices').click();const card=buyer.locator(`[data-customer-invoice="${invoice.id}"]`);await card.waitFor();assert.match(await card.textContent(),/Part paid/);assert.match(await card.textContent(),/Remaining balance\s+£20.00/);assert.match(await card.textContent(),/Payment status checked/);await shot('customer-partial',buyer);
    // Live refresh stays available while Sandbox is active and targets the existing Live link.
    await page.goto(srv.base+'/admin?test='+crypto.randomUUID()+'#wholesale');await selectWholesaleSection(page, "invoices");await page.locator(`[data-act="wh-invoice-open"][data-id="${invoice.id}"]`).click();await page.locator('[data-sheet="wi-quickbooks"]').click();await page.locator('#sheetTitle',{hasText:'QuickBooks Live'}).waitFor();provider.state.pay('production',live.remoteId,0);await page.locator('[data-sheet="qb-balance"]').click();await page.locator('#qbExportDetail strong',{hasText:/^Paid$/}).waitFor();await buyer.locator('#refresh-invoices').click();await card.locator('.invoice-state.paid').waitFor();assert.equal(await card.locator('.invoice-balance').count(),0);assert.ok(!(await card.textContent()).includes('Not set'));
+   const paymentId='950'+invoice.id;
+   const remote=provider.state.invoices.production.get(live.remoteId);
+   remote.LinkedTxn=[{TxnType:'Payment',TxnId:paymentId}];
+   await api('POST',root+'/exports/'+live.id+'/refresh?environment=production',{});
+   provider.state.pay('production',live.remoteId,36);
+   remote.LinkedTxn=[];
+   provider.state.payments.production.set(paymentId,{Id:paymentId,TotalAmt:0,PrivateNote:'Voided',Line:[]});
+   const notification=JSON.stringify([{specversion:'1.0',id:'void-'+paymentId,type:'qbo.payment.voided.v1',intuitaccountid:'1234567890',intuitentityid:paymentId}]);
+   const signature=createHmac('sha256',webhookToken).update(notification).digest('base64');
+   const received=await fetch(srv.base+'/api/quickbooks/webhook/production',{method:'POST',headers:{'content-type':'application/json','intuit-signature':signature},body:notification});
+   assert.equal(received.status,200);
+   await page.waitForFunction(async({url,id})=>{
+    const response=await fetch(url);
+    const result=await response.json();
+    return result.export?.invoiceId===id&&result.export.observation?.payment_voided===1;
+   },{url:root+'/exports/'+live.id+'?environment=production',id:invoice.id});
+   await page.locator('[data-sheet="qb-balance"]').click();
+   await page.locator('#qbExportDetail').getByText('Payment voided in QuickBooks.',{exact:true}).waitFor();
+   await buyer.locator('#refresh-invoices').click();
+   await card.getByText('Payment voided',{exact:true}).waitFor();
+   assert.match(await card.locator('.invoice-balance').textContent(),/£36\.00/);
+
+   provider.state.pay('production',live.remoteId,0);
+   remote.TotalAmt=0;
+   remote.PrivateNote='Voided\n'+remote.PrivateNote;
+   remote.Line=[];
+   await page.locator('[data-sheet="qb-balance"]').click();
+   await page.locator('#qbExportDetail strong',{hasText:/^Voided$/}).waitFor();
+   await page.locator('#qbExportDetail [data-sheet="wi-back"]').first().click();
+   await page.locator('#wiIssuedInvoice .wi-issued-status').getByText('Voided',{exact:true}).waitFor();
+   assert.match(await page.locator('#wiIssuedInvoice').textContent(),/£0\.00 due/);
+   assert.equal(await page.locator('#wiIssuedInvoice').getByRole('heading',{name:'How to pay'}).count(),0);
+   await buyer.locator('#refresh-invoices').click();
+   await card.getByText('Voided',{exact:true}).waitFor();
+   await card.getByText('Original invoice details',{exact:true}).click();
+   assert.match(await card.textContent(),/£0\.00 due/);
+   assert.equal(await card.getByText('How to pay',{exact:true}).count(),0);
    assert.deepEqual(errors,[]);const storage=await page.evaluate(()=>JSON.stringify({local:{...localStorage},session:{...sessionStorage}}));assert.ok(!storage.includes('fake-access'));assert.ok(!storage.includes('fake-refresh'));
   }finally{await adminContext.close();await customerContext.close();}
  });

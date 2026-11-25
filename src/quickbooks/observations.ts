@@ -5,6 +5,7 @@ import {ADAPTER_VERSION,matchesInvoice,vatKey} from './payload';
 import {reconcileInvoice,type ExportPreview,type Reconciliation} from './preview';
 import {digest} from './crypto';
 import {sourceHash,type ExportOperation,type Observation} from './operationTypes';
+import {checkMissingPayments,hasVoidedPayment,invoicePaymentIds,rememberInvoicePayments} from './paymentLinks';
 const dayFormat=new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/London',year:'numeric',month:'2-digit',day:'2-digit'});
 const today=()=>dayFormat.format(new Date());
 export async function observation(env:Env,id:number){return env.DB.prepare('SELECT * FROM quickbooks_observations WHERE export_id=?').bind(id).first<Observation>();}
@@ -19,24 +20,39 @@ export async function observe(env:Env,operation:ExportOperation,remote:any,start
   const preview=JSON.parse(operation.preview) as ExportPreview,payload=JSON.parse(operation.payload),scope={environment:operation.environment,realmId:operation.realm_id};
   const source=await env.DB.prepare('SELECT seq,invoice_number,data,paid FROM wholesale_invoices WHERE seq=?').bind(operation.invoice_id).first<{seq:number;invoice_number:string;data:string;paid:number}>();
   let result:Reconciliation={status:'review',reason:'The website invoice needs review.'};
+  let paymentVoided=false, currentPayments: string[] = [], openBalance: number | null = null;
   if(source){
     const value={...JSON.parse(source.data),id:source.seq,number:source.invoice_number} as InvoiceDocument;
-    const match=matchesInvoice(preview,payload,remote,!!operation.created_remote);
-    if(await sourceHash(value)!==operation.source_hash)result={status:'review',reason:'The restored website invoice differs from the saved export.'};
-    else if(!match.matches)result={status:'review',reason:match.reason};
+    if(!preview.candidate||await sourceHash(value)!==operation.source_hash)result={status:'review',reason:'The restored website invoice differs from the saved export.'};
     else{
-      const normal=remote.TxnTaxDetail?.TotalTax===undefined&&preview.candidate?.totals.vatPence===0?{...remote,TxnTaxDetail:{...remote.TxnTaxDetail,TotalTax:0}}:remote;
-      result=reconcileInvoice(preview,{...scope,localInvoiceId:operation.invoice_id,remoteInvoiceId:operation.remote_id,customerRef:preview.candidate!.customerRef!,number:preview.candidate!.number,requestId:operation.request_id,fingerprint:operation.fingerprint},scope,normal);
-      if(operation.environment==='production'&&source.paid&&result.status!=='paid'&&result.status!=='review')result={status:'review',reason:'The website records payment, but QuickBooks still shows a balance. Reconcile the payment in QuickBooks.'};
+      const normal=remote&&remote.TxnTaxDetail?.TotalTax===undefined&&preview.candidate.totals.vatPence===0?{...remote,TxnTaxDetail:{...remote.TxnTaxDetail,TotalTax:0}}:remote;
+      result=reconcileInvoice(preview,{...scope,localInvoiceId:operation.invoice_id,remoteInvoiceId:operation.remote_id,customerRef:preview.candidate.customerRef!,number:preview.candidate.number,requestId:operation.request_id,fingerprint:operation.fingerprint},scope,normal);
+      if(result.status!=='voided'){
+        const match=matchesInvoice(preview,payload,remote,!!operation.created_remote);
+        if(!match.matches)result={status:'review',reason:match.reason};
+        if(result.status!=='review'){
+          currentPayments=invoicePaymentIds(remote);
+          openBalance=result.outstandingPence;
+          await rememberInvoicePayments(env,operation,currentPayments);
+          paymentVoided=await hasVoidedPayment(env,operation,startedAt);
+        }
+      }
+      if(operation.environment==='production'&&source.paid&&!paymentVoided&&openBalance&&result.status!=='review'){
+        result={status:'review',reason:'The website records payment, but QuickBooks still shows a balance. Reconcile the payment in QuickBooks.'};
+      }
     }
   }
   const token=typeof remote?.SyncToken==='string'&&/^\d{1,32}$/.test(remote.SyncToken)?remote.SyncToken:'';
   for(let attempt=0;attempt<3;attempt++){
     const old=await observation(env,operation.id);
     if(old&&((token&&old.sync_token&&BigInt(token)<BigInt(old.sync_token))||((!token||token===old.sync_token)&&startedAt<old.read_started_at)))return old;
-    const values=[result.status,result.status==='review'?null:result.outstandingPence,result.status==='review'?null:result.paidPence,token||old?.sync_token||'',result.status==='review'?result.reason:'',startedAt,Date.now()];
-    const saved=old?await env.DB.prepare('UPDATE quickbooks_observations SET status=?,outstanding_pence=?,paid_pence=?,sync_token=?,reason=?,read_started_at=?,observed_at=?,version=version+1 WHERE export_id=? AND version=? RETURNING *').bind(...values,operation.id,old.version).first<Observation>():await env.DB.prepare('INSERT INTO quickbooks_observations(export_id,status,outstanding_pence,paid_pence,sync_token,reason,read_started_at,observed_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(export_id) DO NOTHING RETURNING *').bind(operation.id,...values).first<Observation>();
-    if(saved){if(result.status!=='review')await recordEvidence(env,operation,preview,result.status);return saved;}
+    if(!remote&&old?.status==='voided')return old;
+    if(old && openBalance !== null && old.outstanding_pence !== null && openBalance > old.outstanding_pence){
+      await checkMissingPayments(env,operation,currentPayments,startedAt);
+    }
+    const values=[result.status,result.status==='review'?null:result.outstandingPence,result.status==='review'?null:result.paidPence,token||old?.sync_token||'',result.status==='review'?result.reason:'',startedAt,Date.now(),paymentVoided?1:0];
+    const saved=old?await env.DB.prepare('UPDATE quickbooks_observations SET status=?,outstanding_pence=?,paid_pence=?,sync_token=?,reason=?,read_started_at=?,observed_at=?,payment_voided=MAX(payment_voided,?),version=version+1 WHERE export_id=? AND version=? RETURNING *').bind(...values,operation.id,old.version).first<Observation>():await env.DB.prepare('INSERT INTO quickbooks_observations(export_id,status,outstanding_pence,paid_pence,sync_token,reason,read_started_at,observed_at,payment_voided) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(export_id) DO NOTHING RETURNING *').bind(operation.id,...values).first<Observation>();
+    if(saved){if(result.status!=='review'&&result.status!=='voided')await recordEvidence(env,operation,preview,result.status);return saved;}
   }
   return observation(env,operation.id);
 }
@@ -50,7 +66,7 @@ export async function refreshObservation(req:Request,env:Env,operation:ExportOpe
 export async function withAccounting(env:Env,invoices:InvoiceDocument[],admin=false):Promise<InvoiceDocument[]>{
   if(!admin)invoices=invoices.map(invoice=>({...invoice,issuedBy:null,payment:{...invoice.payment,reference:''}}));
   const ids=invoices.filter(i=>i.id).map(i=>i.id!),rows:any[]=[];
-  for(let start=0;start<ids.length;start+=80){const batch=ids.slice(start,start+80);rows.push(...(await env.DB.prepare(`SELECT e.invoice_id,e.id AS export_id,o.status,o.outstanding_pence,o.paid_pence,o.reason,o.observed_at FROM quickbooks_exports e LEFT JOIN quickbooks_observations o ON o.export_id=e.id WHERE e.environment='production' AND e.state='linked' AND e.invoice_id IN (${batch.map(()=>'?').join(',')})`).bind(...batch).all()).results);}
+  for(let start=0;start<ids.length;start+=80){const batch=ids.slice(start,start+80);rows.push(...(await env.DB.prepare(`SELECT e.invoice_id,e.id AS export_id,o.status,o.outstanding_pence,o.paid_pence,o.reason,o.observed_at,o.payment_voided FROM quickbooks_exports e LEFT JOIN quickbooks_observations o ON o.export_id=e.id WHERE e.environment='production' AND e.state='linked' AND e.invoice_id IN (${batch.map(()=>'?').join(',')})`).bind(...batch).all()).results);}
   const lookup=new Map(rows.map(row=>[row.invoice_id,row]));
   return invoices.map(invoice=>{
     const row=lookup.get(invoice.id);if(!row)return invoice;
@@ -58,14 +74,14 @@ export async function withAccounting(env:Env,invoices:InvoiceDocument[],admin=fa
     const status=review?'review':row.status==='unpaid'&&invoice.dueDate&&invoice.dueDate<today()?'overdue':row.status;
     return{...invoice,payment:{...invoice.payment,status,paid:status==='paid',paidDate:null,
       outstandingPence:review?invoice.payment.outstandingPence:row.outstanding_pence,
-      paidPence:review?undefined:row.paid_pence,source:'quickbooks',checkedAt:row.observed_at||null},
+      paidPence:review?undefined:row.paid_pence,source:'quickbooks',checkedAt:row.observed_at||null,...(row.payment_voided?{hasVoidedPayment:true}:{})},
       accounting:{status:review?'review':row.status,checkedAt:row.observed_at||null,...(admin?{exportId:row.export_id,reason:row.reason||''}:{})}} as InvoiceDocument;
   });
 }
 export async function accountingSummary(env:Env,customerId?:string){
   const result=await env.DB.prepare(`WITH balances AS (
     SELECT json_extract(i.data,'$.dueDate') AS due_date,
-      CASE WHEN o.status IN ('unpaid','part-paid','paid') THEN o.outstanding_pence
+      CASE WHEN o.status='voided' THEN 0 WHEN o.status IN ('unpaid','part-paid','paid') THEN o.outstanding_pence
         WHEN i.paid=0 THEN json_extract(i.data,'$.totals.grossPence') ELSE 0 END AS outstanding,
       (e.id IS NOT NULL AND (o.status IS NULL OR o.status='review')) AS review
     FROM wholesale_invoices i

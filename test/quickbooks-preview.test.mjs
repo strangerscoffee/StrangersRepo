@@ -88,9 +88,19 @@ test('QuickBooks reconciliation rejects another invoice, currency, company or cu
   assert.equal(reconcileInvoice(plan,link,{...plan.scope,realmId:'999'},exampleRemote()).status,'review');
   assert.equal(reconcileInvoice(plan,link,{...plan.scope,environment:'production'},exampleRemote()).status,'review');
 });
-test('QuickBooks reconciliation does not mark voided, mismatched or missing invoices paid',async()=>{
+test('A missing invoice or a zeroed total without void evidence still requires review',async()=>{
   const plan=await preview(), link=exampleLink(plan);
   for(const remote of [null,{...exampleRemote('0'),TotalAmt:0},{...exampleRemote('0'),TxnTaxDetail:{TotalTax:0}},{...exampleRemote(),Balance:undefined},exampleRemote('-0.01'),exampleRemote('120.00'),exampleRemote('0.001')]) assert.equal(reconcileInvoice(plan,link,plan.scope,remote).status,'review');
+});
+
+test('A verified QuickBooks invoice void has zero due and is never a payment',async()=>{
+  const plan=await preview(), link=exampleLink(plan);
+  const remote={...exampleRemote('0'),TotalAmt:0,PrivateNote:'Voided\nThe original QuickBooks private note'};
+  assert.deepEqual(reconcileInvoice(plan,link,plan.scope,remote),{status:'voided',outstandingPence:0,paidPence:0,syncToken:remote.SyncToken});
+  assert.equal(reconcileInvoice(plan,link,plan.scope,{...remote,PrivateNote:'',TxnStatus:'Voided'}).status,'voided');
+  for(const mismatch of [{Id:'999'},{DocNumber:'OTHER'},{CustomerRef:{value:'100'}},{CurrencyRef:{value:'EUR'}},{SyncToken:''},{Balance:1},{status:'Deleted'}]){
+    assert.equal(reconcileInvoice(plan,link,plan.scope,{...remote,...mismatch}).status,'review');
+  }
 });
 
 test('QuickBooks preparation rejects absent installation IDs and loosely typed approval flags',async()=>{

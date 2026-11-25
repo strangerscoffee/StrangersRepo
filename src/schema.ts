@@ -387,6 +387,30 @@ const MIGRATIONS: Migration[] = [
     const has = await columns(env, "quickbooks_exports");
     if (!has.has("paid_review_version")) await env.DB.prepare("ALTER TABLE quickbooks_exports ADD COLUMN paid_review_version INTEGER NOT NULL DEFAULT 0").run();
   } },
+  { id: 41, name: "QuickBooks voided invoices and payments", run: async env => {
+    const has = await columns(env, "quickbooks_observations");
+    if (!has.has("payment_voided")) await env.DB.prepare("ALTER TABLE quickbooks_observations ADD COLUMN payment_voided INTEGER NOT NULL DEFAULT 0").run();
+    const at = Date.now();
+    await env.DB.batch([
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS quickbooks_payment_links (
+        export_id INTEGER NOT NULL REFERENCES quickbooks_exports(id), payment_id TEXT NOT NULL,
+        PRIMARY KEY(export_id,payment_id))`),
+      env.DB.prepare("CREATE INDEX IF NOT EXISTS quickbooks_payment_link_id ON quickbooks_payment_links(payment_id,export_id)"),
+      env.DB.prepare("CREATE INDEX IF NOT EXISTS quickbooks_pending_payment_event ON quickbooks_events(environment,realm_id,entity_id) WHERE entity='Payment' AND state IN ('queued','processing')"),
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS quickbooks_payment_voids (
+        environment TEXT NOT NULL, realm_id TEXT NOT NULL, payment_id TEXT NOT NULL, confirmed_at INTEGER NOT NULL,
+        PRIMARY KEY(environment,realm_id,payment_id))`),
+      // Recheck earlier invoice void reports against QuickBooks, whose old review reason also covered removals.
+      env.DB.prepare(`INSERT INTO quickbooks_events(event_key,environment,realm_id,entity,entity_id,operation,event_at,created_at)
+        SELECT 'void-recheck:'||e.id,e.environment,e.realm_id,'Invoice',e.remote_id,'refresh',?,?
+        FROM quickbooks_exports e JOIN quickbooks_observations o ON o.export_id=e.id
+        WHERE e.state='linked' AND o.status='review' AND (o.reason IN ('The QuickBooks invoice was voided or removed. Review it before using its balance.',
+          'QuickBooks net, VAT or total amounts differ from the issued invoice.')
+          OR EXISTS(SELECT 1 FROM quickbooks_events q WHERE q.environment=e.environment AND q.realm_id=e.realm_id
+            AND q.entity='Invoice' AND q.entity_id=e.remote_id AND q.operation='void'))
+        ON CONFLICT(event_key) DO NOTHING`).bind(at, at),
+    ]);
+  } },
 ];
 
 async function migrate(env: Env): Promise<void> {

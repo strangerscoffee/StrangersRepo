@@ -78,6 +78,7 @@
 .wi-draft-banner{display:grid;gap:4px;padding:14px 16px;border-radius:12px;background:var(--warn-bg)}
 .wi-draft-banner span{font-size:13px;color:var(--muted)}
 .wi-issued-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.wi-issued-status{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .wi-line-rate{flex-wrap:wrap;gap:12px}
 .wi-line-rate>.tx{flex:1 1 180px}
 .wi-line-rate>.btn{margin-inline-start:auto;min-width:0;max-width:100%;min-height:44px;white-space:normal;overflow-wrap:anywhere}

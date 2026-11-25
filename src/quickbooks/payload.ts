@@ -1,6 +1,6 @@
 // Reviewed UK invoice adapter. Source amounts are immutable integer pence.
 import {invalid} from '../http';
-import {decimalPence,type ExportPreview,type InvoiceCandidate} from './preview';
+import {decimalPence,isVoided,type ExportPreview,type InvoiceCandidate} from './preview';
 export const ADAPTER_VERSION='sc-qbo-invoice-v1';
 export const vatKey=(value:string)=>value.replace(/[^A-Za-z0-9]/g,'').replace(/^GB/i,'').toUpperCase();
 const pounds=(pence:number)=>pence/100;
@@ -36,7 +36,7 @@ export interface InvoiceMatch {matches:boolean;reason:string}
 export function matchesInvoice(preview:ExportPreview,payload:any,remote:any,requireMarker=true):InvoiceMatch{
   const fail=(reason:string)=>({matches:false,reason});const value=preview.candidate;
   if(!value||!remote||!/^\d{1,32}$/.test(remote.Id||'')||!/^\d{1,32}$/.test(remote.SyncToken||''))return fail('The QuickBooks invoice identity or revision needs review.');
-  if (['void', 'voided', 'deleted'].includes(String(remote.TxnStatus || remote.status || '').toLowerCase()) || norm(remote.PrivateNote).toLowerCase() === 'voided') return fail('The QuickBooks invoice was voided or removed. Review it before using its balance.');
+  if (isVoided(remote) || [remote.TxnStatus, remote.status].some(status => String(status || '').toLowerCase() === 'deleted')) return fail('The QuickBooks invoice was voided or removed. Review it before using its balance.');
   if(remote.DocNumber!==value.number||remote.CustomerRef?.value!==value.customerRef||remote.CurrencyRef?.value!=='GBP')return fail('The QuickBooks invoice number, customer or currency differs.');
   if(remote.TxnDate!==value.invoiceDate||remote.DueDate!==value.dueDate)return fail('The QuickBooks invoice or due date differs from the issued invoice.');
   if(requireMarker&&!norm(remote.PrivateNote).split('\n').includes('Strangers request: '+preview.requestId))return fail('An invoice with this number already exists. Review it before linking.');
