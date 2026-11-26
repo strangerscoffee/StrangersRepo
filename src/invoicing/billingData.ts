@@ -33,6 +33,6 @@ export const UNBILLED_ORDERS = `FROM wholesale_preview o
   JOIN wholesale_preview c ON c.kind='customer' AND c.id=${CUSTOMER}
   LEFT JOIN wholesale_invoice_accounts a ON a.customer_id=c.id
   WHERE o.kind='order' AND json_extract(o.data,'$.preview')=0 AND json_extract(o.data,'$.status')='Dispatched'
-    AND json_extract(o.data,'$.deletedAt') IS NULL AND COALESCE(json_extract(c.data,'$.hidePrices'),0)=0
+    AND json_extract(o.data,'$.deletedAt') IS NULL AND COALESCE(json_extract(c.data,'$.hidePrices'),0)=0 AND COALESCE(json_extract(c.data,'$.noInvoice'),0)=0
     AND NOT EXISTS(SELECT 1 FROM wholesale_billed_orders covered WHERE covered.order_id=o.id)`;
 export const OUTSIDE_TAB = "json_extract(o.data,'$.tab') IS NULL AND json_extract(o.data,'$.tabClearedId') IS NULL";

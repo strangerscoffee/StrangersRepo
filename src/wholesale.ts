@@ -57,6 +57,8 @@ interface Order {
   takenFor?: { source: string; at: number };
   /** Delivery charge in pence including VAT, fixed when the order was placed (absent on orders from before it was automatic). */
   deliveryPence?: number; totalPence?: number;
+  /** Placed for a business with Free delivery: no delivery charge, now or when its bags change. */
+  freeDelivery?: boolean;
   preview?: boolean; customerSnapshot?: Omit<ReturnType<typeof publicCustomer>, "locations" | "defaultLocationId">; deliveryNotes?: string;
   paymentTerms?: ReturnType<typeof paymentTermsFor>;
   locationId?: string; locationSnapshot?: CustomerLocation;
@@ -236,7 +238,10 @@ async function placeOrder(req: Request, env: Env, user: OrderingUser, links: Lin
     ...(takenFor ? { takenFor: { source: takenFor.source, at } } : {}),
     pence: lines.reduce((sum, line) => sum + line.price * line.quantity, 0), grams: lines.reduce((sum, line) => sum + line.grams * line.quantity, 0), packs: lines.reduce((sum, line) => sum + line.quantity, 0),
   };
-  order.deliveryPence = shippingFor(order.delivery, order.pence);
+  // A business with Free delivery (Admin, the owner's request of 26 Nov 2026) pays no delivery charge; the order keeps a
+  // note of it so later changes to its bags (amendLines) stay free too.
+  if (customer?.freeDelivery && order.delivery === "Delivery") order.freeDelivery = true;
+  order.deliveryPence = order.freeDelivery ? 0 : shippingFor(order.delivery, order.pence);
   order.totalPence = order.pence + order.deliveryPence;
   let saved;
   try { saved = await save(env, "order", body.id, order, 0); }
@@ -279,7 +284,7 @@ export async function handleWholesale(req: Request, env: Env, route: string, use
   const invoiceResponse = await handleInvoiceCustomer(req, env, route, user);
   if (invoiceResponse) return invoiceResponse;
   const customer = user.role === "wholesale" ? await wholesaleCustomer(env, user.customerId) : null;
-  if ((route === "catalogue" || route === "session") && req.method === "GET") return json({ ...(route === "catalogue" ? { products: catalogueFor(await catalogue(env), user.role === "wholesale" ? user.customerId : null), sourceDate: catalogueRetrievedAt } : {}), stage: "beta", invoices: !customer?.hidePrices && await customersSeeInvoices(env), minimumOrderGrams: minimumOrderGrams(env, customer), showPrices: !customer?.hidePrices, announcement: await activeAnnouncement(env), me: user, customer: customer ? publicCustomer(customer) : null, links: { ...(user.role === "wholesale" ? {} : links), preview: links.preview || "/wholesale/" }, preview: user.role !== "wholesale" });
+  if ((route === "catalogue" || route === "session") && req.method === "GET") return json({ ...(route === "catalogue" ? { products: catalogueFor(await catalogue(env), user.role === "wholesale" ? user.customerId : null), sourceDate: catalogueRetrievedAt } : {}), stage: "beta", invoices: !customer?.hidePrices && await customersSeeInvoices(env), minimumOrderGrams: minimumOrderGrams(env, customer), showPrices: !customer?.hidePrices, ...(customer?.freeDelivery ? { freeDelivery: true } : {}), announcement: await activeAnnouncement(env), me: user, customer: customer ? publicCustomer(customer) : null, links: { ...(user.role === "wholesale" ? {} : links), preview: links.preview || "/wholesale/" }, preview: user.role !== "wholesale" });
   if (route === "account" && req.method === "PUT" && customer) {
     const body = object(await readJson(req, 64 * 1024));
     if (body.orderingIdentity !== undefined && body.orderingIdentity !== user.id) throw new ApiError(409, "account_changed", "The signed-in account changed. Reload ordering before saving business details.");
@@ -562,6 +567,10 @@ export async function handleWholesaleAdmin(req: Request, env: Env, route: string
     if (body.hidePrices ?? oldCustomer?.hidePrices) data.hidePrices = true;
     if (body.autoTab !== undefined && typeof body.autoTab !== "boolean") throw invalid("Choose whether this business's orders go on a tab.");
     if (body.autoTab ?? oldCustomer?.autoTab) data.autoTab = true;
+    if (body.noInvoice !== undefined && typeof body.noInvoice !== "boolean") throw invalid("Choose whether this business is ever invoiced.");
+    if (body.noInvoice ?? oldCustomer?.noInvoice) data.noInvoice = true;
+    if (body.freeDelivery !== undefined && typeof body.freeDelivery !== "boolean") throw invalid("Choose whether this business gets free delivery.");
+    if (body.freeDelivery ?? oldCustomer?.freeDelivery) data.freeDelivery = true;
     if (oldCustomer?.quickbooksName) data.quickbooksName = oldCustomer.quickbooksName;
     data.paymentNote = body.paymentNote === undefined ? oldCustomer?.paymentNote || "" : text(body.paymentNote, "payment instructions", 500);
     if (paymentTerms === "custom" && !data.paymentNote.trim()) throw invalid("Add the agreed custom payment terms in payment instructions.");

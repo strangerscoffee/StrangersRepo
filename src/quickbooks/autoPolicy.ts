@@ -11,5 +11,5 @@ export function automaticAllowed(invoice: string, actor: string, email = false) 
         OR (b.delivery IN (${email ? "'email'" : "'export','email'"}) AND
           EXISTS(SELECT 1 FROM quickbooks_settings q JOIN quickbooks_connections c ON c.environment=q.active_environment
             WHERE q.id=1 AND c.environment=b.environment AND c.realm_id=b.realm_id AND c.generation=b.generation AND c.status='connected')))
-      AND NOT EXISTS(SELECT 1 FROM wholesale_preview WHERE kind='customer' AND id=a.customer_id AND json_extract(data,'$.hidePrices')=1))`;
+      AND NOT EXISTS(SELECT 1 FROM wholesale_preview WHERE kind='customer' AND id=a.customer_id AND (json_extract(data,'$.hidePrices')=1 OR json_extract(data,'$.noInvoice')=1)))`;
 }

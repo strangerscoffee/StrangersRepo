@@ -48,6 +48,9 @@ const photoIndexes = new Map();
 const canOrder = () => session?.customer?.status !== "On hold";
 // Strangers can hide prices from a business (its own shops): then the page shows bags and weights, never money.
 const pricesShown = () => session?.showPrices !== false;
+// Strangers can give a business free delivery (Admin); the server charges nothing for it either.
+const freeDelivery = () => session?.freeDelivery === true;
+const deliveryCharge = (delivery, coffeePence) => freeDelivery() ? 0 : shippingFor(delivery, coffeePence);
 const goSignIn = () => location.replace(location.pathname.startsWith("/wholesale/") ? "/wholesale/signin" : "/signin");
 
 // Elevation follows the real scroll position without changing the header's size or focus.
@@ -378,11 +381,12 @@ function renderBasket() {
   $("#subtotal").textContent = pricesShown() ? money(sum.pence) : "";
   const collecting = basketMethod === "collection";
   for (const input of document.querySelectorAll('input[name="basket-method"]')) input.checked = input.value === basketMethod;
-  const delivery = collecting ? 0 : shippingFor("Delivery", sum.pence);
+  const delivery = collecting ? 0 : deliveryCharge("Delivery", sum.pence);
   $("#basket-delivery-label").textContent = collecting ? "Roastery collection" : "Delivery";
   $("#basket-delivery").textContent = pricesShown() ? delivery ? money(delivery) : "Free" : "";
   $("#basket-estimate").textContent = pricesShown() ? money(sum.pence + delivery) : "";
   $("#delivery-note").textContent = !pricesShown() ? "" : collecting ? "No delivery charge when you collect from the Roastery, 10 Dove Street, Norwich."
+    : freeDelivery() ? "Delivery is free for your account."
     : sum.pence >= FREE_SHIPPING_FROM_PENCE ? "Free delivery on orders of £250 or more of coffee."
     : `Delivery is ${money(SHIPPING_PENCE)} including VAT, free on £250 or more of coffee (add ${money(FREE_SHIPPING_FROM_PENCE - sum.pence)} more). Collecting from the Roastery is free.`;
   // The minimum order (6 kg of any coffees and bag sizes) unless Strangers has exempted this business.
@@ -1026,7 +1030,7 @@ function historySchedule(order) {
   const parts = [];
   if (typeof order.dispatchDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(order.dispatchDate)) parts.push(`Dispatch day: ${escape(new Date(order.dispatchDate + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" }))}`);
   const every = order.standing?.every;
-  if ([1, 2, 4].includes(every)) parts.push(`Standing order, ${every === 1 ? "every week" : `every ${every} weeks`}`);
+  if ([1, 2, 4, "month"].includes(every)) parts.push(`Standing order, ${every === "month" ? "every month" : every === 1 ? "every week" : `every ${every} weeks`}`);
   const on = (at) => escape(new Date(at).toLocaleDateString("en-GB", { day: "numeric", month: "long", timeZone: "Europe/London" }));
   const once = Array.isArray(order.repeatLines) && order.repeatLines.length ? " This delivery only: the next one goes back to your usual bags." : "";
   const amended = Number.isSafeInteger(order.amendedAt) ? `<p class="history-amended">${order.amendedByCustomer ? "You changed the bags" : "Updated by Strangers"} on ${on(order.amendedAt)}. The bags below are the updated order.${once}</p>` : "";
@@ -1058,11 +1062,12 @@ function historyTrackingUrl(order) {
 // The delivery line in the review: worked out exactly as the server will charge it (shipping.js).
 function renderReviewDelivery(coffeePence = totals(basket).pence) {
   const delivery = $("#review-form").elements.delivery.value === "collection" ? "Roastery collection" : "Delivery";
-  const charge = shippingFor(delivery, coffeePence);
+  const charge = deliveryCharge(delivery, coffeePence);
   $("#review-delivery-label").textContent = delivery === "Delivery" ? "Delivery" : "Roastery collection";
   $("#review-delivery").textContent = charge ? money(charge) : "Free";
   $("#review-grand").textContent = money(coffeePence + charge);
   $("#review-delivery-note").textContent = !pricesShown() ? "" : delivery !== "Delivery" ? "No delivery charge when you collect from the roastery."
+    : freeDelivery() ? "Delivery is free for your account."
     : charge ? `Delivery is ${money(SHIPPING_PENCE)} including VAT. Orders of ${money(FREE_SHIPPING_FROM_PENCE)} or more of coffee are delivered free: add ${money(FREE_SHIPPING_FROM_PENCE - coffeePence)} more.`
     : `Free delivery on orders of ${money(FREE_SHIPPING_FROM_PENCE)} or more of coffee.`;
 }

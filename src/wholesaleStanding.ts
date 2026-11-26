@@ -1,9 +1,9 @@
 // Standing orders and dispatch days (Admin only). A customer order can be given a dispatch day and ticked as a standing
-// order that repeats every 1, 2 or 4 weeks. When a run is marked Dispatched (or Cancelled, to skip one) the next run is
+// order that repeats every 1, 2 or 4 weeks, or monthly on the same date. When a run is marked Dispatched (or Cancelled, to skip one) the next run is
 // made at once as a New order with the next dispatch day, so it can be prepared and amended ahead of time. Admins can
 // amend the bags on any New, Preparing or Ready customer order that has no invoice yet. Everything is stored in the order's
 // own JSON (no migration); customers see the dispatch day, the schedule and that Strangers updated the order.
-import { addDays, ukDay } from "./insightsMath";
+import { addDays, addMonths, ukDay } from "./insightsMath";
 import { shippingFor } from "../public/wholesale/shipping.js";
 import { validGrindId } from "../public/wholesale/grinds.js";
 import { MAX_QUANTITY } from "../public/wholesale/limits.js";
@@ -20,8 +20,10 @@ import { notifyNewOrder } from "./email/orders";
 import { notifySlackNewOrder } from "./slackOrders";
 import { isDay } from "./rota/util";
 
-export const STANDING_EVERY = [1, 2, 4] as const;
-export interface Standing { every: 1 | 2 | 4; seriesId: string; run: number }
+// Weeks between deliveries, or "month": the same date each calendar month (the owner's request, 26 Nov 2026).
+export const STANDING_EVERY = [1, 2, 4, "month"] as const;
+export type Every = typeof STANDING_EVERY[number];
+export interface Standing { every: Every; seriesId: string; run: number }
 const GRAMS: Record<string, number> = { quarter: 250, half: 500, kilo: 1000 };
 const LABELS: Record<string, string> = { quarter: "250 g bag", half: "500 g bag", kilo: "1 kg bag" };
 // Bags can be changed, and standing deliveries skipped, by anyone allowed to until the order is dispatched.
@@ -34,14 +36,15 @@ async function deferStanding(env: Env, saved: AnyOrder, actor: string, code = "c
     .bind(JSON.stringify(data), now, saved.id, saved.version).run();
   if (result.meta.changes && saved.standingIssue?.code !== code) await audit(env, "wholesale_standing_blocked", actor, `Standing order ${saved.id}: the next delivery needs review. No unavailable coffee or private price was copied.`);
 }
-const totals = (lines: any[], delivery: string) => {
-  const pence = lines.reduce((sum, line) => sum + line.price * line.quantity, 0), deliveryPence = shippingFor(delivery, pence);
+const totals = (lines: any[], delivery: string, free = false) => {
+  const pence = lines.reduce((sum, line) => sum + line.price * line.quantity, 0), deliveryPence = free && delivery === "Delivery" ? 0 : shippingFor(delivery, pence);
   return { pence, grams: lines.reduce((sum, line) => sum + line.grams * line.quantity, 0), packs: lines.reduce((sum, line) => sum + line.quantity, 0), deliveryPence, totalPence: pence + deliveryPence };
 };
-/** The first dispatch day `every` weeks on from `from` that isn't before today. */
-export function nextDispatchDay(from: string, every: number, today = ukDay(Date.now())): string {
-  let day = addDays(from, every * 7);
-  while (day < today) day = addDays(day, every * 7);
+/** The first dispatch day `every` weeks (or a month) on from `from` that isn't before today. */
+export function nextDispatchDay(from: string, every: Every, today = ukDay(Date.now())): string {
+  const step = (day: string) => every === "month" ? addMonths(day, 1) : addDays(day, every * 7);
+  let day = step(from);
+  while (day < today) day = step(day);
   return day;
 }
 
@@ -55,8 +58,9 @@ export function scheduleFields(order: AnyOrder, value: unknown): Record<string, 
   if (dispatchDate !== null && !isDay(dispatchDate)) throw invalid("Choose a dispatch day.");
   if (dispatchDate && dispatchDate !== order.dispatchDate && dispatchDate < ukDay(Date.now())) throw invalid("Choose a dispatch day from today onwards.");
   const every = body.every ?? 0;
-  if (every !== 0 && !STANDING_EVERY.includes(every)) throw invalid("Choose every week, every 2 weeks or every 4 weeks.");
+  if (every !== 0 && !STANDING_EVERY.includes(every)) throw invalid("Choose every week, every 2 weeks, every 4 weeks or every month.");
   if (every && !dispatchDate) throw invalid("Choose the dispatch day for this standing order.");
+  if (every === "month" && Number(dispatchDate.slice(8)) > 28) throw invalid("For a monthly standing order, choose a dispatch day from the 1st to the 28th, so every month has it.");
   const standing: Standing | undefined = every ? { every, seriesId: order.standing?.seriesId || order.id, run: order.standing?.run || 1 } : undefined;
   return { dispatchDate: dispatchDate || undefined, standing };
 }
@@ -91,10 +95,11 @@ export async function rollStanding(env: Env, saved: AnyOrder, actor: string, ctx
     Object.assign(fresh, { business: customer.business, customerSnapshot: { ...profile, contact: location.contact, phone: location.phone, address: location.address, postcode: location.postcode, deliveryNotes: location.deliveryNotes }, deliveryNotes: location.deliveryNotes, paymentTerms: paymentTermsFor(customer), locationId: location.id, locationSnapshot: { ...location } });
   }
   // A new run starts clean: no emails sent yet, not on a (possibly cleared) tab, no changes, no tracking or notes.
-  const now = Date.now(), { nextRunId, amendedAt, amendedBy, amendedByCustomer, originalLines, repeatLines, packedLines, skipped, trackingUrl, note, dispatchEmailedAt, dispatchedAt, standingIssue, standingRetryAt, tab, tabClearedId, ...base } = strip(saved);
+  const now = Date.now(), { nextRunId, amendedAt, amendedBy, amendedByCustomer, originalLines, repeatLines, packedLines, skipped, trackingUrl, note, dispatchEmailedAt, dispatchedAt, standingIssue, standingRetryAt, tab, tabClearedId, freeDelivery, ...base } = strip(saved);
+  const free = !!customer?.freeDelivery && saved.delivery === "Delivery";
   const next = {
     ...base, ...fresh, status: "New", note: "", trackingUrl: "", createdAt: now, date: ukDay(now), requestKey: `standing:${id}`, lines,
-    ...totals(lines, saved.delivery),
+    ...totals(lines, saved.delivery, free), ...(free ? { freeDelivery: true } : {}),
     dispatchDate: nextDispatchDay(saved.dispatchDate || ukDay(now), saved.standing.every),
     standing: { ...saved.standing, run: (saved.standing.run || 1) + 1 }, previousRunId: saved.id,
     ...autoTabFor(customer), // on the customer's tab if they're set to use one
@@ -122,7 +127,7 @@ export async function rollStanding(env: Env, saved: AnyOrder, actor: string, ctx
 /** Bounded repair for interrupted older rollovers, and closed runs that need a retry.
  * Existing next orders, including tombstones, are never replaced or recreated. */
 export async function repairStandingRuns(env: Env, limit = 3) {
-  const rows = await env.DB.prepare("SELECT id,data,version,updated_at FROM wholesale_preview p WHERE kind='order' AND json_extract(data,'$.preview')=0 AND json_extract(data,'$.deletedAt') IS NULL AND json_extract(data,'$.standing.every') IN (1,2,4) AND json_extract(data,'$.status') IN ('Dispatched','Cancelled') AND COALESCE(json_extract(data,'$.standingRetryAt'),0)<=? AND (json_extract(data,'$.nextRunId') IS NULL OR NOT EXISTS(SELECT 1 FROM wholesale_preview n WHERE n.kind='order' AND n.id=json_extract(p.data,'$.nextRunId'))) ORDER BY updated_at,id LIMIT ?")
+  const rows = await env.DB.prepare("SELECT id,data,version,updated_at FROM wholesale_preview p WHERE kind='order' AND json_extract(data,'$.preview')=0 AND json_extract(data,'$.deletedAt') IS NULL AND json_extract(data,'$.standing.every') IN (1,2,4,'month') AND json_extract(data,'$.status') IN ('Dispatched','Cancelled') AND COALESCE(json_extract(data,'$.standingRetryAt'),0)<=? AND (json_extract(data,'$.nextRunId') IS NULL OR NOT EXISTS(SELECT 1 FROM wholesale_preview n WHERE n.kind='order' AND n.id=json_extract(p.data,'$.nextRunId'))) ORDER BY updated_at,id LIMIT ?")
     .bind(Date.now(), Math.max(1, Math.min(10, limit))).all<{id:string;data:string;version:number;updated_at:number}>();
   let repaired = 0;
   for (const row of rows.results) try {
@@ -208,7 +213,7 @@ export async function amendLines(env: Env, id: string, value: unknown, actor: st
     if (!product.grindOptions.some(g => g.id === line.grind && g.enabled)) throw invalid("This grind is no longer available. Reduce or remove it.");
   }
   lines.sort((a, b) => `${a.productId}:${a.pack}:${a.grind}`.localeCompare(`${b.productId}:${b.pack}:${b.grind}`));
-  const sum = totals(lines, order.delivery);
+  const sum = totals(lines, order.delivery, !!order.freeDelivery);
   if (by.minimumGrams && sum.grams < by.minimumGrams) throw new ApiError(409, "below_minimum", `The minimum order is ${by.minimumGrams / 1000} kg of coffee. Add ${(by.minimumGrams - sum.grams) / 1000} kg more.`);
   const { repeatLines, packedLines, ...current } = strip(order as AnyOrder);
   const packingChanged = lines.length !== order.lines.length || lines.some((line, i) => {

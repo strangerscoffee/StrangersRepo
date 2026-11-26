@@ -106,7 +106,7 @@
      el('button',{type:'button',class:'btn soft sm',onclick:()=>openTotals([])},'Bags to process'));
  }
  // Dispatch day and standing order, set in Admin ("Dispatch Fri 20 Nov · Standing order, every 2 weeks").
- const dispatchText=(row)=>[row.dispatchDate?'Dispatch '+dispatchDay(row.dispatchDate):'',row.standingEvery?`Standing order, every ${row.standingEvery===1?'week':row.standingEvery+' weeks'}`:''].filter(Boolean).join(' · ');
+ const dispatchText=(row)=>[row.dispatchDate?'Dispatch '+dispatchDay(row.dispatchDate):'',row.standingEvery?`Standing order, every ${row.standingEvery==='month'?'month':row.standingEvery===1?'week':row.standingEvery+' weeks'}`:''].filter(Boolean).join(' · ');
  function orderRow(row){
   const chosen=picked.has(row.id),next=NEXT[row.status],working=busy.has(row.id);
   const bags=`${row.packs} ${row.packs===1?'bag':'bags'} · ${weight(row.grams)}`;

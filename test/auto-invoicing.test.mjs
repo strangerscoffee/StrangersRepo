@@ -80,6 +80,15 @@ test('Dispatched orders are invoiced automatically from when it is switched on; 
  const shop=await business('Our Own Shop',{hidePrices:true});
  const shopOrder=await order(shop.cookie);await status(shopOrder,'Dispatched');await cron();
  assert.equal(invoiceOf(shopOrder.id),undefined);assert.equal(autoRow('order:'+shopOrder.id),undefined);
+ // "Never invoice" (the owner's request, 26 Nov 2026): no invoice automatically or by hand, and not unbilled.
+ const never=await business('Never Invoiced',{noInvoice:true});
+ const neverOrder=await status(await order(never.cookie),'Dispatched');await cron();
+ assert.equal(invoiceOf(neverOrder.id),undefined);assert.equal(autoRow('order:'+neverOrder.id),undefined);
+ const settingsNow=(await ok('GET',root+'/invoice-settings')).body;
+ const refused=await call('POST',`${root}/orders/${neverOrder.id}/invoice`,{orderVersion:neverOrder.version,settingsVersion:settingsNow.version,invoiceDate:'2026-11-23',supplyDate:'2026-11-23'});
+ assert.equal(refused.status,409,refused.text);assert.equal(refused.body.code,'no_invoice');
+ assert.equal(srv.sql(`SELECT json_extract(data,'$.noInvoice') n FROM wholesale_preview WHERE kind='customer' AND id='${never.customer.id}'`)[0].n,1);
+ assert.equal(Object.hasOwn((await ok('GET','/api/wholesale/session',undefined,never.cookie)).body.customer,'noInvoice'),false,'admin-only');
  // A tab: nothing per order; one invoice for the orders when it's cleared.
  const tabbed=await business('Tab Cafe');
  const ids=[];

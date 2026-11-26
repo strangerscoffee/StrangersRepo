@@ -66,7 +66,7 @@ async function verifiedDraft(req: Request, env: Env, invoice: InvoiceDocument) {
   const customer = contact ? JSON.parse(contact.data) as Customer : null;
   const accounts = customer?.accountsEmail?.trim();
   const recipient = cleanEmail(accounts || customer?.email || '');
-  if (!contact || !customer || customer.hidePrices || !recipient) {
+  if (!contact || !customer || customer.hidePrices || customer.noInvoice || !recipient) {
     throw block('reminder_recipient', 'Add a valid accounts or order email to this customer before preparing a reminder.');
   }
   if (await recipientSuppressed(env, recipient)) {

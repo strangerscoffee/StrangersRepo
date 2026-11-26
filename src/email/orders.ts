@@ -13,6 +13,7 @@ import { deliverDispatchEmails, retryDispatchEmails, dispatchEvent } from "./out
 import { wakeIntegration } from "../integrationSignals";
 import { cleanEmail, emailReady, send, type Outgoing } from "./send";
 import { esc } from "./templates";
+const everyText = (every?: number | string) => every === "month" ? "every month" : every === 1 ? "every week" : every ? `every ${every} weeks` : "standing";
 import { sendSlackTest, slackReady, retrySlackPosts, deliverSlackPosts } from "../slackOrders";
 import { DEFAULT_ORDER_EMAIL, orderEmailAddress, orderEmailSettings } from "./orderSettings";
 
@@ -25,7 +26,7 @@ interface MailOrder {
   pence: number; deliveryPence?: number; totalPence?: number; grams: number; lines: Line[];
   takenFor?: { source?: string } | null; createdName?: string;
   /** Standing orders: the dispatch day, how often, and (for a run made after the last one went out) the run before. */
-  dispatchDate?: string; standing?: { every?: number } | null; previousRunId?: string;
+  dispatchDate?: string; standing?: { every?: number | string } | null; previousRunId?: string;
   customerSnapshot?: { name?: string; contact?: string; email?: string; phone?: string; address?: string; postcode?: string; deliveryNotes?: string } | null;
   paymentTerms?: { label?: string; note?: string } | null;
   trackingUrl?: string;
@@ -37,7 +38,6 @@ const kg = (grams: number) => `${new Intl.NumberFormat("en-GB", { maximumFractio
 const packName: Record<string, string> = { quarter: "250 g", kilo: "1 kg", half: "500 g" };
 const when = (at: number) => new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "Europe/London" }).format(new Date(at));
 
-const everyText = (every?: number) => every === 1 ? "every week" : every ? `every ${every} weeks` : "standing";
 const longDay = (day: string) => new Date(day + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" });
 const shortDay = (day: string) => new Date(day + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
 export function buildOrderEmail(order: MailOrder, orderUrl: string) {

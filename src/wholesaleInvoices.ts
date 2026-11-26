@@ -207,6 +207,7 @@ async function build(env: Env, orderId: string, request: InvoiceRequest): Promis
   if (order.status === "Cancelled") throw invalid("An invoice cannot be issued for a cancelled order.");
   if (order.version !== request.orderVersion) throw conflict("The order changed. Review its details before issuing an invoice.");
   if (await coveredInvoice(env, orderId)) throw invalid("This order is covered by an issued invoice. Open that invoice.");
+  if ((await get<Customer>(env, "customer", order.customerId))?.noInvoice) throw new ApiError(409, "no_invoice", "This business is set to Never invoice (Customers → the business).");
   const value = config.settings;
   const billing = await billingFor(env, order);
   if (request.billingRevision !== undefined && request.billingRevision !== billing.revision) throw conflict("The billing address changed. Reopen the invoice draft to review it.");
@@ -262,7 +263,7 @@ async function insertInvoice(env: Env, data: InvoiceData, config: InvoiceSetting
   const tabId = tab ? orderId.slice(4) : "";
   const guard = batch ? `EXISTS(SELECT 1 FROM wholesale_invoice_batch_items WHERE id=? AND state='working' AND lease_owner=? AND lease_until>?)
     AND EXISTS(SELECT 1 FROM users WHERE id=? AND role='admin' AND active=1)
-    AND EXISTS(SELECT 1 FROM wholesale_preview WHERE kind='customer' AND id=? AND version=? AND COALESCE(json_extract(data,'$.hidePrices'),0)=0)
+    AND EXISTS(SELECT 1 FROM wholesale_preview WHERE kind='customer' AND id=? AND version=? AND COALESCE(json_extract(data,'$.hidePrices'),0)=0 AND COALESCE(json_extract(data,'$.noInvoice'),0)=0)
     AND COALESCE((SELECT version FROM wholesale_invoice_accounts WHERE customer_id=?),0)=?
     AND NOT EXISTS(
       SELECT 1 FROM json_each(?) reviewed
@@ -288,7 +289,7 @@ async function insertInvoice(env: Env, data: InvoiceData, config: InvoiceSetting
     AND EXISTS(SELECT 1 FROM wholesale_auto_invoicing WHERE id=1
       AND json_extract(data,'$.issue')=1 AND json_extract(data,'$.since')=?)
     AND EXISTS(SELECT 1 FROM wholesale_auto_invoices WHERE source=? AND lease_owner=? AND lease_until>?)
-    AND NOT EXISTS(SELECT 1 FROM wholesale_preview WHERE kind='customer' AND id=? AND json_extract(data,'$.hidePrices')=1)
+    AND NOT EXISTS(SELECT 1 FROM wholesale_preview WHERE kind='customer' AND id=? AND (json_extract(data,'$.hidePrices')=1 OR json_extract(data,'$.noInvoice')=1))
     ${tab ? "" : "AND NOT EXISTS(SELECT 1 FROM wholesale_invoice_accounts WHERE customer_id=? AND cadence='monthly')"}` : "";
   const at = Date.now();
   const inserted = await env.DB.prepare(`INSERT INTO wholesale_invoices(seq,invoice_number,order_id,customer_id,request_key,data,issued_at,issued_by)
@@ -335,7 +336,7 @@ export async function issueForOrder(req: Request, env: Env, orderId: string, act
   if (order.tab || order.tabClearedId) return null;
   if (order.customerId && await env.DB.prepare("SELECT 1 FROM wholesale_invoice_accounts WHERE customer_id=? AND cadence='monthly'").bind(order.customerId).first()) return null;
   if (order.status !== "Dispatched" || (order.dispatchedAt || 0) < automatic.since) throw new InvoiceHold("Waiting for an eligible dispatch.");
-  if (order.customerId && (await get<Customer>(env, "customer", order.customerId))?.hidePrices) return null;
+  if (order.customerId && [(await get<Customer>(env, "customer", order.customerId))].some((c) => c?.hidePrices || c?.noInvoice)) return null;
   const existing = await coveredInvoice(env, orderId);
   if (existing) return existing.request_key.startsWith("batch:") ? null : document(existing);
   const config = await settings(env);
@@ -363,7 +364,7 @@ export async function issueForTab(req: Request, env: Env, tabId: string, actor: 
   if (!config.ready) throw new InvoiceHold("Invoice settings aren't finished: " + config.reasons.join(" "));
   const tab = await env.DB.prepare("SELECT customer_id, data, cleared_at FROM wholesale_tabs WHERE id=?").bind(tabId).first<{ customer_id: string; data: string; cleared_at: number }>();
   if (!tab) throw new InvoiceHold("The tab record wasn't found.");
-  if (tab.cleared_at < automatic.since || (await get<Customer>(env, "customer", tab.customer_id))?.hidePrices) return null;
+  if (tab.cleared_at < automatic.since || [(await get<Customer>(env, "customer", tab.customer_id))].some((c) => c?.hidePrices || c?.noInvoice)) return null;
   const record = JSON.parse(tab.data) as { orderIds: string[] };
   const loaded = await env.DB.prepare(`SELECT o.id,o.data,o.version,o.updated_at FROM json_each(?) member
     JOIN wholesale_preview o ON o.kind='order' AND o.id=member.value

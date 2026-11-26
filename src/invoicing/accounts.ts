@@ -37,7 +37,7 @@ async function ledger(env: Env, customerId: string, statement: boolean) {
 }
 async function customerAccount(env: Env, id: string) {
   const customer = await get<Customer>(env, "customer", id);
-  if (!customer || customer.hidePrices) throw new ApiError(404, "not_found", "Billing account not found.");
+  if (!customer || customer.hidePrices || customer.noInvoice) throw new ApiError(404, "not_found", "Billing account not found.");
   return customer;
 }
 async function accountDetails(env: Env, id: string) {
@@ -58,7 +58,7 @@ async function accounts(req: Request, env: Env) {
   const { results } = await env.DB.prepare(`SELECT c.id,json_extract(c.data,'$.business') AS business,
     COALESCE(a.cadence,'dispatch') AS cadence,lower(COALESCE(json_extract(c.data,'$.business'),''))||'|'||c.id AS cursor
     FROM wholesale_preview c LEFT JOIN wholesale_invoice_accounts a ON a.customer_id=c.id
-    WHERE c.kind='customer' AND COALESCE(json_extract(c.data,'$.hidePrices'),0)=0
+    WHERE c.kind='customer' AND COALESCE(json_extract(c.data,'$.hidePrices'),0)=0 AND COALESCE(json_extract(c.data,'$.noInvoice'),0)=0
       AND (instr(lower(COALESCE(json_extract(c.data,'$.business'),'')||' '||COALESCE(json_extract(c.data,'$.accountsEmail'),'')||' '||
         COALESCE(json_extract(c.data,'$.email'),'')||' '||COALESCE(json_extract(c.data,'$.postcode'),'')),?)>0 OR ?='')
       AND (lower(COALESCE(json_extract(c.data,'$.business'),''))||'|'||c.id)>?

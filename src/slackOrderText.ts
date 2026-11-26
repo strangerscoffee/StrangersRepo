@@ -34,7 +34,7 @@ interface Line { title: string; pack: string; packLabel?: string; grindLabel?: s
 export interface SlackOrder {
   id: string; business?: string; createdAt: number; delivery: string; reference?: string; customerNote?: string; grams: number; lines: Line[];
   locationSnapshot?: { name?: string; postcode?: string } | null; customerSnapshot?: { postcode?: string } | null;
-  dispatchDate?: string; standing?: { every?: number } | null; previousRunId?: string;
+  dispatchDate?: string; standing?: { every?: number | string } | null; previousRunId?: string;
 }
 // Slack's own escaping for message text: everything else is shown as typed.
 const esc = (value: unknown) => String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -54,7 +54,7 @@ export function buildSlackOrder(order: SlackOrder, ordersUrl: string, held: bool
   const note = order.customerNote ? `\n>${esc(order.customerNote).replace(/\n/g, "\n>")}` : "";
   // A standing order's next delivery, made when the last one was dispatched or skipped.
   const nextRun = !!(order.standing && order.previousRunId);
-  const every = order.standing ? (order.standing.every === 1 ? "every week" : `every ${order.standing.every} weeks`) : "";
+  const every = order.standing ? (order.standing.every === "month" ? "every month" : order.standing.every === 1 ? "every week" : `every ${order.standing.every} weeks`) : "";
   const schedule = order.standing ? `Standing order, ${every}${order.dispatchDate ? ` · dispatch ${esc(ukDate(order.dispatchDate))}` : ""}` : order.dispatchDate ? `Dispatch ${esc(ukDate(order.dispatchDate))}` : "";
   const text = [
     nextRun ? `:repeat: *Next standing order delivery: ${esc(business)}*` : `:coffee: *New wholesale order: ${esc(business)}*`,

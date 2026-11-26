@@ -303,3 +303,9 @@ export function buildInsights(input: { today: string; lines: SaleLine[]; open: O
     roast: { week: nextWeek, laterGrams, batchKg: settings.batchKg, yieldKg: settings.yieldKg, rows: roast, batches: roast.reduce((t, r) => t + r.batches, 0), greenKg: roast.reduce((t, r) => t + r.greenKg, 0) },
   };
 }
+
+/** The same date `months` calendar months on (monthly standing orders use the 1st to the 28th, so every month has it). */
+export function addMonths(day: string, months: number): string {
+  const [y, m, d] = day.split("-").map(Number), index = y * 12 + (m - 1) + months;
+  return `${Math.floor(index / 12)}-${String(index % 12 + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}

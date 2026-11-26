@@ -119,3 +119,42 @@ test("on a phone and an iPad, light and dark", async () => {
     await ctx.close();
   }
 });
+
+test("Admin: Every month, Never invoice and Free delivery (the owner's request, 26 Nov 2026)", async () => {
+  const id = await placeOrder();
+  for (const [name, viewport] of [["phone", { width: 390, height: 844 }], ["ipad", { width: 820, height: 1180 }]]) for (const colorScheme of ["light", "dark"]) {
+    const { ctx, p, errors } = await page(ADMIN, viewport, { isMobile: true, hasTouch: true, colorScheme });
+    await openOrder(p, id);
+    await p.locator("#wStanding").check();
+    assert.ok((await p.locator("#wEvery option").allInnerTexts()).includes("Every month (same date)"));
+    assert.deepEqual(errors, []);
+    await shot(p, `monthly-${name}-${colorScheme}`);
+    await ctx.close();
+  }
+  const { ctx, p, errors } = await page(ADMIN, { width: 1280, height: 900 });
+  await openOrder(p, id);
+  const first = ukDay(Date.now()).slice(0, 8) + "01", next = new Date(Date.parse(first + "T12:00:00Z")); next.setUTCMonth(next.getUTCMonth() + 1);
+  const day = next.toISOString().slice(0, 10);
+  await p.locator("#wDispatchDate").fill(day);
+  await p.locator("#wStanding").check();
+  await p.locator("#wEvery").selectOption("month");
+  await p.locator('#sheet button[type="submit"]').click();
+  await p.locator("#sheet .w-order-sheet").waitFor({ state: "detached" });
+  const row = p.locator(`[data-act="wh-order"][data-id="${id}"]`);
+  await row.locator(".w-dispatch").waitFor();
+  assert.match(await row.innerText(), /Standing order, every month/);
+  const saved = (await call("GET", `/api/wholesale/orders/${id}`)).body.order;
+  assert.equal(saved.standing.every, "month"); assert.equal(saved.dispatchDate, day);
+  // The customer's two switches.
+  const customerId = saved.customerId;
+  await p.goto(srv.base + "/admin#wholesale/customers");
+  await p.locator(`[data-act="wh-customer"][data-id="${customerId}"]`).click();
+  await p.locator("#wNoInvoice").check(); await p.locator("#wFreeDelivery").check();
+  await p.locator('#wCustomerForm button[type="submit"]').first().click();
+  await p.locator("#wCustomerForm").waitFor({ state: "detached" });
+  const customer = (await call("GET", "/api/admin/wholesale")).body.customers.find((c) => c.id === customerId);
+  assert.equal(customer.noInvoice, true); assert.equal(customer.freeDelivery, true);
+  await p.locator(`[data-act="wh-customer"][data-id="${customerId}"]`, { hasText: "Never invoiced · Free delivery" }).waitFor(); // after the list reloads
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
