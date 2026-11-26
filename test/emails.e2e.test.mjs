@@ -74,7 +74,7 @@ test("admin adds an address; publishing emails it; the person switches an email 
   await a.p.goto(srv.base + "/admin#overview");
   await a.p.locator("#overview-system > summary").click();
   await a.p.locator("#rem", { hasText: "Rota emails" }).waitFor();
-  assert.match(await a.p.locator("section[aria-labelledby=rem]").innerText(), /1 of 3 people have an email address/);
+  assert.match(await a.p.locator("section[aria-labelledby=rem]").innerText(), /1 email address on file across 3 active accounts\./);
   await a.ctx.close();
 
   // Shifts for Alex next week, then an admin publishes with emails.
