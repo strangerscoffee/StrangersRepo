@@ -215,7 +215,7 @@ test("wide Staff and Admin desks share packing and only dispatch after confirmat
     await desk.getByRole("checkbox").first().waitFor();
     assert.equal(await desk.getByRole("button",{name:"Mark ready"}).isDisabled(),true);
     await desk.getByRole("checkbox").first().check();
-    await page.waitForFunction(()=>document.querySelector("#packingDesk [data-pack-line='0']:enabled")?.checked);
+    await page.waitForFunction(()=>document.querySelector("#packingDesk [data-pack-line='0']:enabled")?.checked&&!document.querySelector("#packingDesk .wp-saving"));
     assert.equal(await desk.getByRole("button",{name:"Mark ready"}).isDisabled(),true);
     assert.deepEqual((await read()).packedLines,[0]);
     await totals.getByRole("button",{name:"Packed",exact:true}).click();
@@ -263,6 +263,61 @@ test("wide Staff and Admin desks share packing and only dispatch after confirmat
     assert.deepEqual([latest.status,latest.trackingUrl],["Dispatched","https://track.example/pack-desk"]);
     assert.deepEqual(dispatch.errors,[]);
   }finally{await dispatch.context.close();}
+});
+
+// Ticks show at once even on a slow connection (the owner's report, 26 Nov 2026), "Mark all coffees as bagged" ticks
+// every line, and Back moves an order to the stage before.
+test("packing ticks show at once, all can be ticked together, and an order can go back a stage",{timeout:120000},async()=>{
+  const session=(await call("GET","/api/wholesale/session",undefined,BUYER)).body;
+  const {order}=(await call("POST","/api/wholesale/orders",{requestId:crypto.randomUUID(),delivery:"Roastery collection",reference:"QUICK-TICKS",customerVersion:session.customer.version,
+    lines:[{productId:"brazil",pack:"kilo",grind:"beans",quantity:6,price:1800},{productId:"campo",pack:"quarter",grind:"filter",quantity:4,price:500},{productId:"brazil",pack:"quarter",grind:"beans",quantity:2,price:500}]},BUYER)).body;
+  const read=async()=>(await call("GET","/api/admin/wholesale/orders?q="+order.id)).body.orders[0];
+  const prep=await read();
+  await call("PATCH","/api/admin/wholesale/orders/"+order.id,{ifVersion:prep.version,customerId:prep.customerId,status:"Preparing"});
+  for(const [width,height,scheme] of [[390,844,"light"],[820,1180,"dark"]]){
+    const context=await b.newContext({viewport:{width,height},colorScheme:scheme,isMobile:width<500,hasTouch:true});
+    const [name,value]=STAFF.split("=");await context.addCookies([{name,value,url:srv.base}]);
+    const page=await context.newPage(),errors=[];page.on("pageerror",error=>errors.push(error.message));
+    // A slow signal: every packing save takes 1.5 seconds to come back.
+    let saves=0;
+    await page.route("**/packing",async route=>{saves++;await new Promise(r=>setTimeout(r,1500));await route.continue();});
+    try{
+      await page.goto(srv.base+"/orders");
+      await page.locator(`[data-order-id="${order.id}"]`).click();
+      const wide=await page.locator("#packingDesk").isVisible();
+      if(!wide)await page.getByRole("button",{name:"Pack order",exact:true}).click();
+      const host=page.locator(wide?"#packingDesk":"#mobilePacking");
+      await host.getByRole("heading",{name:"Pack by coffee"}).waitFor();
+      const boxes=host.locator("[data-pack-line]");
+      const started=Date.now();
+      await boxes.nth(0).check();await boxes.nth(1).check();
+      assert.ok(Date.now()-started<1200,"both ticks land before the first save has come back");
+      assert.deepEqual([await boxes.nth(0).isChecked(),await boxes.nth(1).isChecked()],[true,true]);
+      await host.locator(".wp-saving").waitFor();
+      await host.locator(".wp-saving").waitFor({state:"detached",timeout:10000});
+      assert.deepEqual((await read()).packedLines,[0,1]);
+      assert.ok(saves<=2,`quick ticks are merged into the next save (${saves})`);
+      await boxes.nth(0).uncheck();
+      await host.getByRole("button",{name:"Mark all coffees as bagged"}).click();
+      assert.equal(await boxes.evaluateAll(list=>list.every(box=>box.checked)),true);
+      if(process.env.SHOT_DIR)await page.screenshot({path:`${process.env.SHOT_DIR}/packing-ticks-${width}-${scheme}.png`,animations:"disabled"});
+      await host.getByRole("button",{name:"Mark ready"}).click();
+      await host.getByRole("button",{name:"Back to Preparing"}).waitFor({timeout:10000});
+      assert.deepEqual([(await read()).status,(await read()).packedLines],["Ready",[0,1,2]]);
+      await host.getByRole("button",{name:"Back to Preparing"}).click();
+      await host.getByRole("button",{name:"Back to Received"}).waitFor({timeout:10000});
+      assert.deepEqual([(await read()).status,(await read()).packedLines],["Preparing",[0,1,2]],"going back keeps the ticks");
+      page.once("dialog",dialog=>{assert.match(dialog.message(),/back to Received\? The ticks/);dialog.accept();});
+      await host.getByRole("button",{name:"Back to Received"}).click();
+      await page.waitForFunction(()=>!document.querySelector("[data-pack-back]")||true);
+      for(let i=0;i<50&&(await read()).status!=="New";i++)await new Promise(r=>setTimeout(r,100));
+      assert.equal((await read()).status,"New");
+      assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+      assert.deepEqual(errors,[]);
+      const again=await read();
+      await call("PATCH","/api/admin/wholesale/orders/"+order.id,{ifVersion:again.version,customerId:again.customerId,status:"Preparing"});
+    }finally{await context.close();}
+  }
 });
 
 test("Staff Wholesale dialogs keep their controls and keyboard focus on a small screen", async () => {

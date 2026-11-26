@@ -337,11 +337,17 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
       node.replaceChildren(SC.el("p", { class: "hint" }, "This order is outside the current queue."));
       return;
     }
-    const controls = packing.checklist(row, {
-      busy: quickBusy.has(row.id), problem: orderErrors.get(row.id)?.message || "",
-      change: (line, packed) => savePackingLine(row.id, line, packed),
-      advance: () => advanceOrder(row.id, true),
-      refresh: async () => { orderErrors.delete(row.id); await reload(); refreshPacking(row.id); }
+    const controls = packing.checklist(ticks.view(row), {
+      busy: quickBusy.has(row.id), saving: ticks.saving(row.id), problem: orderErrors.get(row.id)?.message || "",
+      change: (line, packed) => { const latest = packingRow(row.id); if (latest && !orderErrors.has(row.id)) ticks.tick(latest, line, packed); },
+      all: lines => { const latest = packingRow(row.id); if (latest && !orderErrors.has(row.id)) ticks.set(latest, lines); },
+      advance: async () => { if (await ticks.settle(row.id)) advanceOrder(row.id, true); },
+      back: async to => {
+        if (!(await ticks.settle(row.id))) return;
+        const latest = packingRow(row.id);
+        if (latest && packing.BACK[latest.status] === to && packing.confirmBack(latest, to)) advanceOrder(row.id, true, to);
+      },
+      refresh: async () => { ticks.forget(row.id); orderErrors.delete(row.id); await reload(); refreshPacking(row.id); }
     });
     const title = $("#wPackSheetTitle");
     if (node.id === "wPackSheet" && title) title.textContent = row.business || "Pack order";
@@ -350,30 +356,23 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
   function refreshPacking(id) {
     for (const node of document.querySelectorAll("#wPackSheet, #wPackChecklist")) if (node.dataset.id === id) mountPacking(node);
   }
-  async function savePackingLine(id, line, packed) {
-    if (quickBusy.has(id) || orderErrors.has(id)) return;
-    const row = packingRow(id);
-    if (!row || row.status !== "Preparing") return;
-    const session = packingSession;
-    quickBusy.add(id); refreshPacking(id);
-    try {
-      const { order } = await api("PATCH", `/api/admin/wholesale/orders/${id}/packing`, { ifVersion: row.version, line, packed });
-      if (session !== packingSession) return;
-      if (order?.id !== id || !Number.isSafeInteger(order.version) || order.version < row.version || !Array.isArray(order.packedLines) || order.packedLines.includes(line) !== packed) {
-        throw new Error("The packing update could not be confirmed.");
-      }
-      const index = data?.orders.findIndex(item => item.id === id) ?? -1;
+  // Ticks show at once and save in the background (packQueue in public/shared/wholesale-packing.js).
+  const ticks = packing.packQueue({
+    get: id => packingRow(id),
+    send: async (order, lines) => {
+      const session = packingSession;
+      const { order: saved } = await api("PATCH", `/api/admin/wholesale/orders/${order.id}/packing`, { ifVersion: order.version, packedLines: lines });
+      if (session !== packingSession) throw Object.assign(new Error("Packing closed."), { quiet: true });
+      return saved;
+    },
+    saved: order => {
+      const index = data?.orders.findIndex(item => item.id === order.id) ?? -1;
       if (index >= 0 && data.orders[index].version <= order.version) data.orders[index] = order;
-      if (data?.packingSelection?.id === id && data.packingSelection.version <= order.version) data.packingSelection = order;
-    } catch (error) {
-      if (session === packingSession && packingRow(id)) orderErrors.set(id, { version: row.version, message: error.message });
-    } finally {
-      if (session === packingSession) {
-        quickBusy.delete(id); refreshPacking(id);
-        if (document.activeElement === document.body) document.querySelector(`[data-id="${id}"] [data-pack-line="${line}"]:enabled`)?.focus({ preventScroll: true });
-      }
-    }
-  }
+      if (data?.packingSelection?.id === order.id && data.packingSelection.version <= order.version) data.packingSelection = order;
+    },
+    failed: (id, error) => { const row = packingRow(id); if (row) orderErrors.set(id, { version: row.version, message: (error.message || "Could not save the ticks.") + " Reload the order to see what was saved." }); },
+    redraw: id => refreshPacking(id)
+  });
   function openPackingSheet(row, back) {
     openSheet(html`<div class="w-sheet w-pack-sheet"><h2 id="sheetTitle" tabindex="-1">${row.business || "Pack order"}</h2>
       <p class="w-id">${row.id} · ${row.delivery}${row.dispatchDate ? " · " + day(row.dispatchDate) : ""}</p>
@@ -603,24 +602,24 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
       put(feedback, problem ? html`<p>${problem.message}</p><button class="btn sm soft" type="button" data-act="wh-refresh-orders" data-id="${id}">Reload orders</button>` : html``);
     }
   }
-  async function advanceOrder(id, fromChecklist = false) {
+  async function advanceOrder(id, fromChecklist = false, backTo = null) {
     if (quickBusy.has(id) || orderErrors.has(id)) return;
-    const row = packingRow(id), next = row && nextStatus(row);
+    const row = packingRow(id), next = row && (backTo || nextStatus(row));
     if (!next) return;
-    if (next === "Dispatched") { dispatchOrder(row); return; }
+    if (next === "Dispatched" && !backTo) { dispatchOrder(row); return; }
     const session = packingSession;
     const source = fromChecklist ? document.activeElement : document.querySelector(`[data-act="wh-next"][data-id="${id}"]`);
     const wasFocused = document.activeElement === source;
     let restoreFocus = false;
     quickBusy.add(id); refreshOrderFeedback(id); if (fromChecklist) refreshPacking(id);
     try {
-      const result = await api("PATCH", `/api/admin/wholesale/orders/${id}`, { ifVersion: row.version, status: next, customerId: row.customerId, note: row.note || "", ...(fromChecklist && next === "Ready" ? { requirePacked: true } : {}) });
+      const result = await api("PATCH", `/api/admin/wholesale/orders/${id}`, { ifVersion: row.version, status: next, customerId: row.customerId, note: row.note || "", ...(fromChecklist && next === "Ready" && !backTo ? { requirePacked: true } : {}) });
       if (session !== packingSession) return;
       if (result.order?.id !== id || result.order.status !== next || result.order.version !== row.version + 1) throw new Error("The status update could not be confirmed. Reload orders to check the latest status.");
       orderErrors.delete(id);
       restoreFocus = wasFocused && (document.activeElement === source || document.activeElement === document.body);
       await reload();
-      if (session === packingSession) toast(`${row.business || "Order"} marked ${next.toLowerCase()}.`);
+      if (session === packingSession) toast(backTo ? `${row.business || "Order"} moved back to ${next === "New" ? "Received" : next}.` : `${row.business || "Order"} marked ${next.toLowerCase()}.`);
     } catch (error) {
       if (session !== packingSession) return;
       orderErrors.set(id, { version: row.version, message: error.message + " Reload orders before updating this order again." });

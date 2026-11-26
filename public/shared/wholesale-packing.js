@@ -110,30 +110,84 @@
       }, index === 0 ? "Received" : stage)));
   }
 
-  function checklist(order, { change, advance, refresh, busy = false, problem = "" }) {
+  // Instant ticks (the owner's report, 26 Nov 2026: ticks took seconds to show). A tick shows at once; the ticks wanted
+  // for each order are saved in the background as one set, one request at a time, each against the version the last
+  // one returned, so quick ticks are merged into the next save instead of waiting for each other. A refused save puts
+  // the order back as the server has it and shows the problem.
+  function packQueue({ get, send, saved, failed, redraw }) {
+    const wanted = new Map(), running = new Map();
+    const same = (a, b) => [...a].sort((x, y) => x - y).join() === [...b].sort((x, y) => x - y).join();
+    async function pump(id) {
+      try {
+        for (;;) {
+          const order = get(id), lines = wanted.get(id);
+          if (!order || !lines || order.status !== "Preparing" || same(lines, order.packedLines || [])) { wanted.delete(id); return; }
+          const sent = [...lines].sort((a, b) => a - b);
+          const result = await send(order, sent);
+          if (!result || result.id !== id || !Number.isSafeInteger(result.version) || result.version < order.version || !same(result.packedLines || [], sent)) throw new Error("The packing update could not be confirmed.");
+          saved(result);
+        }
+      } catch (error) {
+        wanted.delete(id);
+        if (!error?.quiet) failed(id, error);
+      } finally { running.delete(id); redraw(id); }
+    }
+    return {
+      /** The order as it should look now: saved ticks plus any still being saved. */
+      view(order) { const lines = wanted.get(order.id); return lines ? { ...order, packedLines: [...lines] } : order; },
+      saving: (id) => running.has(id) || wanted.has(id),
+      set(order, lines) {
+        wanted.set(order.id, new Set(lines)); redraw(order.id);
+        if (!running.has(order.id)) running.set(order.id, pump(order.id));
+      },
+      tick(order, line, packed) { const lines = new Set(this.view(order).packedLines || []); packed ? lines.add(line) : lines.delete(line); this.set(order, lines); },
+      /** Waits for every tick on this order to be saved; true when they were. */
+      async settle(id) { while (running.has(id)) await running.get(id); return !wanted.has(id); },
+      forget(id) { wanted.delete(id); }
+    };
+  }
+
+  const BACK = { Preparing: "New", Ready: "Preparing", Dispatched: "Ready" };
+  const stageName = (status) => status === "New" ? "Received" : status;
+
+  function checklist(order, { change, all, advance, back, refresh, busy = false, saving = false, problem = "" }) {
     const checked = new Set(order.packedLines || []);
     const finished = order.status === "Ready" || order.status === "Dispatched";
     const packed = order.lines.reduce((sum, line, i) => sum + (finished || checked.has(i) ? line.quantity : 0), 0);
     const allPacked = order.lines.length > 0 && order.lines.every((_, i) => checked.has(i));
     const next = { New: "Start preparing", Preparing: "Mark ready", Ready: order.delivery === "Delivery" ? "Review dispatch" : "Review collection" }[order.status];
+    const previous = BACK[order.status], packing = order.status === "Preparing";
     return el("div", { class: "wp-checklist", "aria-busy": String(busy) },
       el("div", { class: "wp-check-head" }, el("h3", {}, "Pack by coffee"), el("small", {}, `${order.lines.length} ${order.lines.length === 1 ? "line" : "lines"}`)),
+      packing && all && order.lines.length > 1 ? el("button", { type: "button", class: "btn soft sm wp-check-all", "data-pack-all": "", disabled: busy || !!problem || allPacked,
+        onclick: () => all(order.lines.map((_, i) => i)) }, allPacked ? "All coffees bagged" : "Mark all coffees as bagged") : null,
       el("ul", { class: "wp-check-lines" }, ...order.lines.map((line, i) => {
         const grind = grindFor(line), done = finished || checked.has(i);
         return el("li", {}, el("label", { class: "wp-check-line", style: coffeeStyle(line) },
-          el("input", { type: "checkbox", checked: done, disabled: busy || !!problem || order.status !== "Preparing", "data-pack-line": i,
+          el("input", { type: "checkbox", checked: done, disabled: busy || !!problem || !packing, "data-pack-line": i,
             "aria-label": `Pack ${bags(line.quantity)} of ${line.title}, ${line.packLabel}, ${grind.label}`, onchange: event => change(i, event.target.checked) }),
           el("span", { class: "wp-check-product" }, el("b", {}, line.title, decafTag(!!line.decaf)),
             el("small", {}, `${line.packLabel} · ${grind.label}${done ? " · Packed" : ""}`), recipeOf(line)),
           el("strong", { class: "wp-check-qty" }, "× ", String(line.quantity))));
       })),
       el("div", { class: "wp-check-foot" },
-        el("div", { class: "wp-progress" }, el("p", {}, el("b", {}, `${packed} of ${order.packs}`), " bags packed"),
+        el("div", { class: "wp-progress" }, el("p", {}, el("b", {}, `${packed} of ${order.packs}`), " bags packed", saving ? el("span", { class: "wp-saving" }, " · Saving…") : null),
           el("progress", { "aria-label": "Bags packed", max: Math.max(order.packs || 0, 1), value: packed })),
-        next ? el("button", { type: "button", class: "btn sm", "data-pack-next": "", disabled: busy || !!problem || (order.status === "Preparing" && !allPacked), onclick: advance }, busy ? "Saving…" : next) : null),
+        next ? el("button", { type: "button", class: "btn sm", "data-pack-next": "", disabled: busy || !!problem || (packing && !allPacked), onclick: advance }, busy ? "Saving…" : next) : null),
+      previous && back ? el("div", { class: "wp-check-back" },
+        el("button", { type: "button", class: "btn soft sm", "data-pack-back": "", disabled: busy || !!problem, onclick: () => back(previous) }, `Back to ${stageName(previous)}`),
+        el("small", {}, { Preparing: "Started by mistake? Moves it back to Received and clears the ticks.", Ready: "Moves it back to Preparing; the ticks are kept.", Dispatched: "Not gone yet? Moves it back to Ready. The customer has already been emailed." }[order.status])) : null,
       problem ? el("div", { class: "wp-pack-problem", role: "alert" }, el("p", {}, problem),
         el("button", { type: "button", class: "btn soft sm", onclick: refresh }, "Reload order")) : null);
   }
 
-  window.SCWholesalePacking = Object.freeze({ totals, summaryBody, sheet, print, printOrders, stageTrack, checklist });
+  /** Asks before moving an order back a stage, saying what happens. */
+  function confirmBack(order, to) {
+    const name = order.business || "this order";
+    if (to === "New") return !(order.packedLines || []).length || confirm(`Move ${name} back to Received? The ${order.packedLines.length === 1 ? "tick" : "ticks"} on its coffees will be cleared.`);
+    if (to === "Ready" && order.status === "Dispatched") return confirm(`Move ${name} back to Ready? The customer has already been emailed that it's ${order.delivery === "Delivery" ? "shipped" : "collected"}, and any invoice already made stays as it is.`);
+    return true;
+  }
+
+  window.SCWholesalePacking = Object.freeze({ totals, summaryBody, sheet, print, printOrders, stageTrack, checklist, packQueue, confirmBack, BACK });
 })();

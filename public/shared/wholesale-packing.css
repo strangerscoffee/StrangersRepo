@@ -87,3 +87,7 @@
   .wp-checklist,.wp-stages{display:none!important}
 }
 .wp-check-line{border-inline-start-color:var(--w-coffee,var(--line));border-inline-start-width:3px}
+.wp-check-all{width:100%;min-height:44px;margin:2px 0 8px}
+.wp-check-back{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
+.wp-check-back small{flex:1 1 180px;font-size:12px;color:var(--muted)}
+.wp-saving{font-weight:400}

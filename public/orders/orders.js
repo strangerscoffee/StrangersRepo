@@ -180,12 +180,41 @@
   drawDesk();
   SC.reveal($('packingDesk').querySelector('.desk-panel-body'));
  }
+ // Ticks show at once and save in the background (packQueue in public/shared/wholesale-packing.js).
+ const ticks=packing.packQueue({
+  get:id=>findOrder(id),
+  send:async(order,lines)=>{
+   const owner=orderingIdentity;
+   const {order:saved}=await staffJson('PATCH','orders/'+encodeURIComponent(order.id)+'/packing',{ifVersion:order.version,packedLines:lines});
+   if(owner!==orderingIdentity||!started)throw Object.assign(new Error('The signed-in account changed.'),{quiet:true});
+   return saved;
+  },
+  saved:order=>{
+   const index=rows.findIndex(item=>item.id===order.id);
+   if(index>=0&&rows[index].version<=order.version)rows[index]=order;
+   if(heldOrder?.id===order.id&&heldOrder.version<=order.version)heldOrder=order;
+  },
+  failed:(id,error)=>packProblems.set(id,(error.message||'Could not save the ticks.')+' Reload the order to see what was saved.'),
+  redraw:id=>{if(!started)return;renderPackingProgress(id);if(!ticks.saving(id))loadDeskTotals();}
+ });
+ async function packAdvance(id){
+  if(!(await ticks.settle(id)))return;
+  const row=findOrder(id);if(!row)return;
+  if(row.status==='Ready')reviewDispatch(row);else saveDeskProgress(row,{status:NEXT[row.status]?.[0]});
+ }
+ async function packBack(id,to){
+  if(!(await ticks.settle(id)))return;
+  const row=findOrder(id);if(!row||packing.BACK[row.status]!==to||!packing.confirmBack(row,to))return;
+  saveDeskProgress(findOrder(id)||row,{status:to},null,true);
+ }
  function packingControls(row){
-  return packing.checklist(row,{
-   busy:busy.has(row.id),problem:packProblems.get(row.id)||'',
-   change:(line,packed)=>saveDeskProgress(row,{line,packed}),
-   advance:()=>row.status==='Ready'?reviewDispatch(row):saveDeskProgress(row,{status:NEXT[row.status]?.[0]}),
-   refresh:async()=>{await load();if(findOrder(row.id)){packProblems.delete(row.id);renderPackingProgress(row.id);}}
+  return packing.checklist(ticks.view(row),{
+   busy:busy.has(row.id),saving:ticks.saving(row.id),problem:packProblems.get(row.id)||'',
+   change:(line,packed)=>{const latest=findOrder(row.id);if(latest)ticks.tick(latest,line,packed);},
+   all:lines=>{const latest=findOrder(row.id);if(latest)ticks.set(latest,lines);},
+   advance:()=>packAdvance(row.id),
+   back:to=>packBack(row.id,to),
+   refresh:async()=>{ticks.forget(row.id);await load();if(findOrder(row.id)){packProblems.delete(row.id);renderPackingProgress(row.id);}}
   });
  }
  function packingOrderBody(row,mobile=false){
@@ -259,7 +288,7 @@
   if(active)renderPackingProgress(selected);
   else $('mobilePacking').replaceChildren();
  }
- async function saveDeskProgress(row,change,report){
+ async function saveDeskProgress(row,change,report,back=false){
   if(busy.has(row.id)||packProblems.has(row.id)||row.version!==findOrder(row.id)?.version)return false;
   const owner=orderingIdentity;
   const focusHost=mobilePacking&&selected===row.id?$('mobilePacking'):$('packingDesk');
@@ -279,8 +308,9 @@
    }
    if(owner!==orderingIdentity||!started)return false;
    if(change.status){
-    toast(`${row.business}: ${change.status}`);draw();
+    toast(back?`${row.business}: moved back to ${change.status==='New'?'Received':change.status}`:`${row.business}: ${change.status}`);draw();
     if(change.status==='Dispatched'){heldOrder=null;await load();}
+    else if(back)await load();
     else if(selected===row.id&&mobilePacking)renderDetail(findOrder(row.id));
    }
    loadDeskTotals();return true;

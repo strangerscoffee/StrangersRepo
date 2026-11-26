@@ -142,3 +142,29 @@ test('admin orders sort by order date, newest or oldest first',async()=>{
  assert.deepEqual(await staffIds('status=all&sort=ordered'),[made[2].id,made[1].id,made[0].id]);
  assert.deepEqual(await staffIds('status=all&sort=ordered-asc'),[made[0].id,made[1].id,made[2].id]);
 });
+
+// Packing ticks (the owner's report, 26 Nov 2026: ticks were slow): the page sends the whole set of ticked lines, so
+// several quick ticks or "Mark all coffees as bagged" are one save. And each stage can go back one.
+test('a whole set of ticks saves at once, and an order can go back a stage',async()=>{
+ const C=await customer('orders.c');
+ const two=(await ok('POST','/api/wholesale/orders',{requestId:crypto.randomUUID(),delivery:'Delivery',reference:'TWO',customerVersion:C.customer.version,lines:[{productId:'brazil',pack:'kilo',grind:'beans',quantity:4,price:1800},{productId:'brazil',pack:'quarter',grind:'beans',quantity:8,price:500}]},C.cookie)).body.order;
+ const path='/api/staff-orders/orders/'+two.id;
+ let order=(await ok('PATCH',path,{ifVersion:two.version,status:'Preparing'},STAFF)).body.order;
+ for(const bad of [[2],[0,0],[-1],['0'],[0,1,2]])assert.equal((await call('PATCH',path+'/packing',{ifVersion:order.version,packedLines:bad},STAFF)).status,400,JSON.stringify(bad));
+ order=(await ok('PATCH',path+'/packing',{ifVersion:order.version,packedLines:[1,0]},STAFF)).body.order;
+ assert.deepEqual(order.packedLines,[0,1]);
+ const same=(await ok('PATCH',path+'/packing',{ifVersion:order.version,packedLines:[0,1]},STAFF)).body.order;
+ assert.equal(same.version,order.version,'saving the same ticks changes nothing');
+ assert.equal((await call('PATCH',path+'/packing',{ifVersion:order.version-1,packedLines:[]},STAFF)).status,409,'version checked');
+ order=(await ok('PATCH',path,{ifVersion:order.version,status:'Ready',requirePacked:true},STAFF)).body.order;
+ // Back a stage: Ready → Preparing keeps the ticks; Preparing → New clears them; Dispatched → Ready.
+ order=(await ok('PATCH',path,{ifVersion:order.version,status:'Preparing'},STAFF)).body.order;
+ assert.deepEqual([order.status,order.packedLines],['Preparing',[0,1]]);
+ order=(await ok('PATCH',path,{ifVersion:order.version,status:'New'},STAFF)).body.order;
+ assert.deepEqual([order.status,Object.hasOwn(order,'packedLines')],['New',false]);
+ order=(await ok('PATCH',path,{ifVersion:order.version,status:'Dispatched'},STAFF)).body.order;
+ order=(await ok('PATCH',path,{ifVersion:order.version,status:'Ready'},STAFF)).body.order;
+ assert.equal(order.status,'Ready');
+ const admin=(await ok('GET','/api/admin/wholesale/orders?q='+two.id)).body.orders[0];
+ assert.equal(admin.dispatchedAt,undefined,'no longer dispatched');
+});

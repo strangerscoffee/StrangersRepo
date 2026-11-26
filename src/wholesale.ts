@@ -375,13 +375,22 @@ export async function updatePackingLine(env: Env, id: string, body: Record<strin
   if (!order || order.deletedAt != null || order.preview !== false) throw new ApiError(404, "not_found", "Order not found.");
   if (order.version !== expected) throw new ApiError(409, "conflict", "This order changed. Review the latest packing list before checking any more bags.");
   if (order.status !== "Preparing") throw new ApiError(409, "packing_closed", "Start preparing this order before checking off its bags.");
-  if (!Number.isSafeInteger(body.line) || body.line < 0 || body.line >= order.lines.length || typeof body.packed !== "boolean") throw invalid("Choose a line from this order's packing list.");
-  const marks = new Set(order.packedLines || []);
-  if (marks.has(body.line) === body.packed) return order;
-  if (body.packed) marks.add(body.line);
-  else marks.delete(body.line);
+  const inRange = (line: unknown): line is number => Number.isSafeInteger(line) && (line as number) >= 0 && (line as number) < order.lines.length;
+  let marks: Set<number>;
+  if (Array.isArray(body.packedLines)) {
+    // The whole set of ticked lines at once: what a phone sends after several quick ticks, or "Mark all coffees as bagged".
+    if (body.packedLines.length > order.lines.length || !body.packedLines.every(inRange) || new Set(body.packedLines).size !== body.packedLines.length) throw invalid("Choose lines from this order's packing list.");
+    marks = new Set(body.packedLines);
+  } else {
+    if (!inRange(body.line) || typeof body.packed !== "boolean") throw invalid("Choose a line from this order's packing list.");
+    marks = new Set(order.packedLines || []);
+    if (body.packed) marks.add(body.line);
+    else marks.delete(body.line);
+  }
+  const next = [...marks].sort((a, b) => a - b), now = [...(order.packedLines || [])].sort((a, b) => a - b);
+  if (next.join() === now.join()) return order;
   const { id: savedId, version: oldVersion, updatedAt, ...data } = order;
-  return save(env, "order", savedId, { ...data, packedLines: [...marks].sort((a,b) => a-b) }, expected);
+  return save(env, "order", savedId, { ...data, packedLines: next }, expected);
 }
 
 export async function updateOrderStatus(env: Env, id: string, body: Record<string, any>, actor: string, { allowRelink = false, customerOnly = false, allowSchedule = false, notify }: { allowRelink?: boolean; customerOnly?: boolean; allowSchedule?: boolean; notify?: { ctx?: ExecutionContext; ordersUrl: string } } = {}): Promise<Order & Versioned> {
