@@ -698,3 +698,5 @@ body[data-auth-view=login] #login-submit { margin-top:3px; }
 .privacy-back { justify-content: center; margin-top: 28px; }
 .privacy-panel .terms-list h2 { font-size: 17px; margin: 0 0 4px; }
 .privacy-panel .terms-list p { margin: 0; }
+.review-address-note { margin: 10px 0 0; padding: 10px 12px; border-radius: 12px; background: color-mix(in srgb, var(--warn, #b26b00) 14%, transparent); font-size: 14px; line-height: 1.45; }
+.review-address-note .link-button { min-height: 0; }

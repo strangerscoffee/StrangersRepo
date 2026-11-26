@@ -72,3 +72,42 @@ for (const [name, viewport] of screens) for (const colorScheme of ["light", "dar
     } finally { await ctx.close(); }
   });
 }
+
+// Delivery to a location with no address (the owner's report, 26 Nov 2026): the review says so before Place order and
+// offers collection, and switching to collection there lets the order go without reopening the basket.
+for (const [name, viewport, colorScheme] of [["phone", { width: 390, height: 844 }, "dark"], ["ipad", { width: 820, height: 1180 }, "light"]]) {
+  test(`review: no delivery address, switch to collection and order on a ${name} (${colorScheme})`, async () => {
+    const ctx = await b.newContext({ viewport, isMobile: true, hasTouch: true, colorScheme });
+    const [n, v] = BUYER.split("="); await ctx.addCookies([{ name: n, value: v, url: srv.base }]);
+    const p = await ctx.newPage(), errors = []; p.on("pageerror", (e) => errors.push(e.message));
+    let posted = 0; p.on("request", (r) => { if (r.method() === "POST" && r.url().endsWith("/api/wholesale/orders")) posted++; });
+    try {
+      await p.goto(srv.base + "/wholesale/"); await p.locator('#products[aria-busy="false"]').waitFor();
+      const card = p.locator(".product-card").first();
+      await card.locator("input[type=number]").fill("1"); await card.locator("button[type=submit]").click();
+      await openWholesaleBasket(p);
+      await p.locator("#basket-method label", { hasText: "Delivery" }).first().click();
+      await p.locator("#review-order").click();
+      await p.locator("#review-dialog[open]").waitFor();
+      const note = p.locator("#review-address-note");
+      await note.waitFor();
+      assert.match(await note.innerText(), /no delivery address/);
+      assert.equal(await p.locator("#submit-preview-order").isDisabled(), true, "no doomed submission");
+      if (process.env.SHOT_DIR) { await note.scrollIntoViewIfNeeded(); await p.waitForTimeout(400); await p.screenshot({ path: `${process.env.SHOT_DIR}/review-no-address-${name}-${colorScheme}.png` }); }
+      // Switching to collection in the review itself is enough.
+      await p.locator("#review-form .delivery-options label", { hasText: "Roastery collection" }).click();
+      assert.equal(await note.isHidden(), true);
+      assert.equal(await p.locator("#submit-preview-order").isDisabled(), false);
+      // And the note's own button does the same after going back to delivery.
+      await p.locator("#review-form .delivery-options label", { hasText: "Send it to me" }).click();
+      assert.equal(await p.locator("#submit-preview-order").isDisabled(), true);
+      await p.locator("#review-collect-instead").click();
+      assert.equal(await p.locator('#review-form input[name="delivery"][value="collection"]').isChecked(), true);
+      assert.equal(posted, 0);
+      await p.locator("#submit-preview-order").click();
+      await p.locator("#preview-complete").waitFor({ state: "visible" });
+      assert.equal(posted, 1);
+      assert.deepEqual(errors, []);
+    } finally { await ctx.close(); }
+  });
+}

@@ -75,6 +75,21 @@ function reviewBusiness(business) {
   input.value = business || "";
   input.readOnly = customer;
 }
+// Delivery needs an address: say so before Place order rather than after the server refuses (the owner's report,
+// 26 Nov 2026: switching to collection after that refusal left Place order stuck until the basket was reopened).
+function reviewAddressMissing() {
+  const form = $("#review-form"), customer = session?.customer;
+  if (!customer || form.elements.delivery.value === "collection") return false;
+  const location = locationsFor(customer).find(entry => entry.id === form.elements.locationId.value);
+  return !!location && (!String(location.address || "").trim() || !String(location.postcode || "").trim());
+}
+function updateReviewReady() {
+  if (pendingAttempt) return;
+  const missing = reviewAddressMissing();
+  $("#review-address-note").hidden = !missing;
+  if (!missing && /delivery address and postcode/.test($("#preview-submit-error").textContent)) $("#preview-submit-error").hidden = true;
+  if (!saving) $("#submit-preview-order").disabled = reviewNeedsRefresh || missing;
+}
 function renderReviewLocation() {
   const customer = session.customer, block = $("#review-location-block");
   block.hidden = !customer;
@@ -86,6 +101,7 @@ function renderReviewLocation() {
   $("#review-location-name").textContent = selected.name;
   $("#delivery-summary").textContent = locationSummary(selected) || "Add delivery details in My account, or choose roastery collection.";
   renderMoreSites();
+  updateReviewReady();
 }
 // "Send to more sites": the same bags as a separate order for each ticked location (one order per site).
 function moreSites() { return [...document.querySelectorAll('#more-site-choices input:checked')].map(input => input.value); }
@@ -531,6 +547,13 @@ $("#basket-method").addEventListener("change", event => {
   if (event.target.name !== "basket-method") return;
   setBasketMethod(event.target.value, true); renderBasket();
 });
+$("#review-collect-instead").addEventListener("click", () => {
+  if (saving || pendingAttempt) return;
+  const form = $("#review-form");
+  form.elements.delivery.value = "collection";
+  setBasketMethod("collection"); renderReviewLocation(); renderReviewDelivery(); renderBasket();
+  $("#submit-preview-order").focus({ preventScroll: true });
+});
 $("#review-location").addEventListener("click", () => {
   if (!session.customer || saving || pendingAttempt) return;
   const selected = $("#review-form").elements.locationId.value;
@@ -577,8 +600,8 @@ $("#review-order").addEventListener("click", async () => {
   $("#review-account").hidden = !session.customer;
   $("#review-payment-terms").textContent = session.customer ? `Payment terms: ${session.customer.paymentTerms.label}${session.customer.paymentTerms.note ? " · " + session.customer.paymentTerms.note : ""}` : "";
   requestId = crypto.randomUUID();
-  $("#submit-preview-order").disabled = false;
   $("#preview-submit-error").hidden = true;
+  updateReviewReady();
   $("#review-content").hidden = false;
   $("#preview-complete").hidden = true;
   $("#review-dialog").setAttribute("aria-labelledby", "review-title");
@@ -755,7 +778,7 @@ async function resumeAttempt() {
 }
 $("#review-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (saving || reviewNeedsRefresh || !ready || (!basket.length && !pendingAttempt)) return;
+  if (saving || reviewNeedsRefresh || !ready || (!basket.length && !pendingAttempt) || (!pendingAttempt && reviewAddressMissing())) return;
   if (pendingAttempt) { try { if (!await confirmIdentity()) return; } catch (error) { toast(error.message); return; } }
   if (saving) return;
   saving = true;
@@ -780,10 +803,12 @@ $("#review-form").addEventListener("submit", async (event) => {
   }
   catch (error) {
     // A validated rejection means nothing was saved. Network/5xx/invalid-response failures remain uncertain.
-    if (error.status >= 400 && error.status < 500 && error.status !== 401) { saveAttempt(null); reviewNeedsRefresh = true; lockReview(false); renderProducts(); filterProducts(); renderBasket(); }
+    // Nothing in the basket changed when only the delivery address was missing: the review stays open to fix it there.
+    const addressOnly = error.status === 400 && /delivery address and postcode/.test(error.message || "");
+    if (error.status >= 400 && error.status < 500 && error.status !== 401) { saveAttempt(null); reviewNeedsRefresh = !addressOnly; lockReview(false); renderProducts(); filterProducts(); renderBasket(); }
     $("#preview-submit-error").textContent = pendingAttempt ? "We couldn’t confirm this order. Retry the same order, or reopen this page to check its status. Your submission has been kept." : error.message;
     $("#preview-submit-error").hidden = false;
-  } finally { saving = false; button.disabled = reviewNeedsRefresh; }
+  } finally { saving = false; button.disabled = reviewNeedsRefresh; if (!pendingAttempt) updateReviewReady(); }
 });
 
 const dialogBusy = (dialog) => (saving && dialog.id === "review-dialog") || (accountSaving && dialog.id === "account-dialog");

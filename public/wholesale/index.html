@@ -123,7 +123,7 @@
           <label class="form-field">Purchase reference <span>(optional)</span><input name="reference" maxlength="80" placeholder="e.g. Your café name or PO number" autocomplete="off"></label>
           <label class="form-field">Additional comments or order information <span>(optional)</span><textarea name="customerNote" id="review-customer-note" rows="3" maxlength="1000" placeholder="e.g. Use our own custom labels"></textarea></label>
           <div class="checkout-terms" id="checkout-terms"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.5v.5"/></svg><p>By placing this order, you accept the payment terms and conditions set up for your account. <button class="link-button" type="button" data-terms>Read the terms and conditions</button></p></div>
-          <p class="quantity-error" id="preview-submit-error" role="alert" hidden></p><button class="button button-dark" id="submit-preview-order" type="submit">Place order</button>
+          <p class="review-address-note" id="review-address-note" role="status" hidden>This location has no delivery address yet. Choose <button class="link-button" type="button" id="review-collect-instead">Roastery collection</button>, or add the address with Edit delivery details.</p><p class="quantity-error" id="preview-submit-error" role="alert" hidden></p><button class="button button-dark" id="submit-preview-order" type="submit">Place order</button>
           <button class="button button-outline" type="button" data-close>Keep choosing coffee</button>
         </form>
       </div>
