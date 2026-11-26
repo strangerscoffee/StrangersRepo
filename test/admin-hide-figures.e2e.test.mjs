@@ -85,12 +85,21 @@ for (const [screen, viewport, isMobile] of [["phone", { width: 390, height: 844 
     for (const text of ["Secret Sales Café", "£\\d"]) { const r = await readable(p, text); assert.ok(r.length && r.every((x) => !x), `${text} blurred on Invoicing ` + await where(p, text)); }
     if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/hide-invoices-${screen}-${scheme}-on.png`, fullPage: true });
     await p.reload(); await p.locator('[data-act="wh-privacy"][aria-pressed="true"]').waitFor();
-    await selectInvoiceView(p, "invoices");
-    // H switches it back (not while typing).
-    await p.locator("body").click({ position: { x: 2, y: 2 } }).catch(() => {});
-    await p.keyboard.press("h");
-    await p.locator('[data-act="wh-privacy"][aria-pressed="false"]').waitFor();
-    await p.waitForFunction(() => /TEST-/.test(document.querySelector(".w-content")?.innerText || ""));
+    // H also switches it back while the invoice register loads.
+    const invoiceUrl = srv.base + "/api/admin/wholesale/invoices";
+    let allowInvoices;
+    const pending = new Promise(resolve => { allowInvoices = resolve; });
+    await p.route(invoiceUrl, async route => {
+      await pending;
+      await route.continue();
+    }, { times: 1 });
+    try {
+      await Promise.all([p.waitForRequest(invoiceUrl), selectInvoiceView(p, "invoices")]);
+      await toggle.press("h");
+      assert.equal(await toggle.getAttribute("aria-pressed"), "false");
+    } finally { allowInvoices(); }
+    await p.locator('#main[aria-busy="false"] .wi-records').waitFor();
+    assert.equal(await toggle.getAttribute("aria-pressed"), "false", "the completed refresh retains the new privacy setting");
     await p.waitForTimeout(400);
     assert.ok((await readable(p, "£\\d")).some(Boolean), "shown again");
     // Other pages never get the switch.
