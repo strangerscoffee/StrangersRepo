@@ -1,5 +1,5 @@
 // The staff admin workspace for the separate consumer storefront.
-window.AdminConsumer = ({ api, html, raw, svg, put, head, openSheet, closeSheet, toast, confirmSheet }) => {
+window.AdminConsumer = ({ api, html, raw, svg, put, head, toast, confirmSheet }) => {
   const endpoint = "/api/admin/consumer";
   const previewUrl = "https://preview.staffstrangerscoffee.com/";
   const tabs = [
@@ -27,6 +27,7 @@ window.AdminConsumer = ({ api, html, raw, svg, put, head, openSheet, closeSheet,
 
   let data, section = "overview", orderFilter = "to-pack", message = "", updating = false, generation = 0;
   let queue = { orders: [], count: 0, nextCursor: null, summary: {} }, selectedReference = "", queueVersion = 0, searchTimer;
+  let queuePending = false, orderDrilledIn = false, browseScroll = 0;
   const orderCache = new Map(), packing = new Map(), trackingDrafts = new Map(), orderErrors = new Map(), blockedOrders = new Set();
   let queries = {};
   const writes = new Set();
@@ -49,44 +50,49 @@ window.AdminConsumer = ({ api, html, raw, svg, put, head, openSheet, closeSheet,
     const known = statusById.get(status);
     return known ? badge(known.label, known.tone) : badge("Status unavailable", "");
   }
-  const empty = (icon, label) => html`<div class="consumer-empty">${svg(icon)}<p>${label}</p></div>`;
-  const heading = (title, note) => html`<div class="consumer-panel-title"><h2>${title}</h2>${note ? html`<p>${note}</p>` : ""}</div>`;
+  const empty = (icon, label) => html`<div class="consumer-empty"><span class="ic acc">${svg(icon)}</span><p>${label}</p></div>`;
+  const heading = (title, note) => html`<header class="consumer-panel-title"><h2>${title}</h2>${note ? html`<p>${note}</p>` : ""}</header>`;
 
   function navigation() {
     return html`<div class="seg consumer-tabs" id="consumerTabs" role="group" aria-label="Consumer sections">
       ${tabs.map(([id, label]) => html`<button type="button" data-act="consumer-tab" data-id="${id}" aria-controls="consumerPanel" aria-pressed="${String(section === id)}">${label}</button>`)}
-    </div>`;
+    </div><label class="field consumer-section-picker"><span class="fl">Consumer section</span>
+      <select id="consumerSection" aria-controls="consumerPanel">
+        ${tabs.map(([id, label]) => html`<option value="${id}" ${section === id ? raw("selected") : ""}>${label}</option>`)}
+      </select>
+    </label>`;
   }
 
   function overview() {
-    const { orders, customers, products, readiness, settings } = data;
+    const { orders, orderCount, customers, products, readiness, settings } = data;
     const checkoutEnabled = settings.acceptOrders;
     const summaries = [
-      ["orders", "bag", "Recent orders", orders.length],
+      ["orders", "bag", "Preview orders", orderCount ?? orders.length],
       ["customers", "people", "Recent profiles", customers.length],
       ["catalogue", "coffee", "Available coffees", products.filter(product => product.available).length],
     ];
     return html`
       <div class="consumer-summary" aria-label="Preview summary">
         ${summaries.map(([id, icon, title, number]) => html`<button class="item glass consumer-stat" type="button" data-act="consumer-tab" data-id="${id}">
-          <span class="ic acc">${svg(icon)}</span><span class="consumer-stat-text"><span>${title}</span><b class="num">${number}</b></span><span class="chev">${svg("chev")}</span>
+          <span class="ic acc">${svg(icon)}</span><span class="consumer-stat-text"><b class="num">${number}</b><span>${title}</span></span><span class="chev">${svg("chev")}</span>
         </button>`)}
       </div>
       <div class="consumer-overview">
         <section class="group glass consumer-card" aria-label="Beta readiness">
-          ${heading("Beta readiness", "Storefront services and launch dependencies.")}
+          ${heading("Beta readiness", "Storefront services and launch dependencies")}
           ${readiness.length ? html`<ul class="consumer-list" role="list">
             ${readiness.map(check => {
               const [label, tone] = readinessStates.get(check.state) || ["Needs review", "warn"];
-              return html`<li class="item"><span class="tx"><b>${check.label}</b>${check.detail ? html`<span>${check.detail}</span>` : ""}</span>${badge(label, tone)}</li>`;
+              return html`<li class="item consumer-readiness"><span class="tx"><b>${check.label}</b>${check.detail ? html`<span>${check.detail}</span>` : ""}</span>${badge(label, tone)}</li>`;
             })}
           </ul>` : empty("tune", "No readiness checks available.")}
         </section>
         <section class="group glass consumer-card" aria-label="Signed-in checkout">
-          ${heading("Signed-in checkout", "Accept or pause recorded demo orders from signed-in customers.")}
+          ${heading("Signed-in checkout")}
           <div class="consumer-checkout">
             ${badge(checkoutEnabled === true ? "Accepting orders" : checkoutEnabled === false ? "Paused" : "Unavailable", checkoutEnabled === true ? "ok" : "warn")}
-            <p>Test orders do not collect payment. Packing and dispatch records update customer order status without booking a shipment.</p>
+            <p>${checkoutEnabled ? "Signed-in customers can place test orders. Fulfilment updates their order history." : "Existing preview orders remain available while checkout is paused."}</p>
+            <p class="hint">Test orders carry no charge or shipment booking.</p>
             ${typeof checkoutEnabled === "boolean" ? html`<button class="btn soft" type="button" data-act="consumer-checkout" ${writes.has("checkout") ? raw("disabled") : ""}>${checkoutEnabled ? "Pause checkout" : "Resume checkout"}</button>` : ""}
           </div>
         </section>
@@ -104,15 +110,37 @@ window.AdminConsumer = ({ api, html, raw, svg, put, head, openSheet, closeSheet,
     </div>`;
   }
 
+  const queueFilters = [["to-pack", "To pack", "toPack"], ["ready", "Ready", "ready"], ["dispatched", "Dispatched", "dispatched"]];
+  function orderCount() {
+    return queue.count > queue.orders.length ? `${queue.orders.length} of ${queue.count} orders` : `${queue.orders.length} ${queue.orders.length === 1 ? "order" : "orders"}`;
+  }
+
+  function orderRows() {
+    return html`${queue.orders.length ? html`<ul class="consumer-list" role="list">${queue.orders.map(order => html`
+      <li><button class="consumer-queue-order" type="button" data-act="consumer-order" data-id="${order.reference}" aria-controls="consumerOrderDetail" aria-pressed="${String(selectedReference === order.reference)}">
+        <span class="ic acc">${svg("bag")}</span>
+        <span class="consumer-queue-info"><b>${order.reference}</b><span>${order.contact?.name || "Contact not recorded"} · ${method(order.method)}</span><small>${date(order.createdAt)}</small></span>
+        <span class="consumer-queue-badges">${orderBadge(order.status)}${paymentBadge(order)}</span>
+        <span class="chev">${svg("chev")}</span>
+      </button></li>`)}</ul>` : empty("bag", "No orders match this queue. Try another status or search.")}
+      ${queue.nextCursor ? html`<button class="btn soft consumer-more" type="button" data-act="consumer-order-more">Load earlier orders</button>` : ""}`;
+  }
+
   function orders() {
-    const chosen = orderCache.get(selectedReference), counts = queue.summary || {};
-    return html`<div class="consumer-fulfilment-heading"><div><p class="consumer-kicker">Consumer (Preview)</p><h2>Retail fulfilment</h2><p>Pack orders, add tracking and manage Norwich collections.</p></div><span class="pill">Retail orders</span></div>
-      <div class="consumer-queue-filters" role="group" aria-label="Fulfilment queues">${[["to-pack", "To pack", counts.toPack], ["ready", "Ready", counts.ready], ["dispatched", "Dispatched", counts.dispatched]].map(([id, label, count]) => html`<button type="button" data-act="consumer-queue" data-id="${id}" aria-pressed="${String(orderFilter === id)}"><span>${label}</span><b>${count || 0}</b></button>`)}</div>
-      ${searchTools("Search consumer orders", "Search reference, customer, email or phone", true)}
-      <div class="consumer-desk"><section class="group glass consumer-queue" aria-label="Order queue"><header><h3>Order queue</h3><span>${queue.orders.length} of ${queue.count} orders</span></header>
-      ${queue.orders.length ? html`<ul class="consumer-list" role="list">${queue.orders.map(order => html`<li><button class="consumer-queue-order" type="button" data-act="consumer-order" data-id="${order.reference}" aria-pressed="${String(selectedReference === order.reference)}"><span><b>${order.reference}</b><span>${order.contact?.name || "Contact not recorded"} · ${method(order.method)}</span><small>${date(order.createdAt)}</small></span><span class="consumer-queue-badges">${paymentBadge(order)}${orderBadge(order.status)}</span></button></li>`)}</ul>` : empty("bag", "No orders match this queue. Try another status or search.")}
-      ${queue.nextCursor ? html`<button class="btn soft consumer-more" type="button" data-act="consumer-order-more" ${updating ? raw("disabled") : ""}>Load earlier orders</button>` : ""}</section>
-      <section class="group glass consumer-fulfilment-detail" id="consumerOrderDetail" aria-label="Order details">${chosen ? fulfilmentDetail(chosen) : empty("bag", "Select an order to review its saved details and packing checklist.")}</section></div>`;
+    const chosen = orderCache.get(selectedReference);
+    return html`<div id="consumerOrders" class="consumer-orders" data-drilldown="${String(orderDrilledIn)}">
+      <section class="group glass consumer-queue-tools" aria-label="Order filters">
+        <div class="consumer-queue-filters" role="group" aria-label="Fulfilment queues">${queueFilters.map(([id, label, key]) => html`<button type="button" data-act="consumer-queue" data-id="${id}" aria-pressed="${String(orderFilter === id)}"><span>${label}</span><b data-consumer-count="${key}">${queue.summary?.[key] || 0}</b></button>`)}</div>
+        ${searchTools("Search consumer orders", "Search orders", true)}
+      </section>
+      <div class="consumer-desk">
+        <section class="group glass consumer-queue" aria-labelledby="consumerQueueTitle">
+          <header><h2 id="consumerQueueTitle">Preview orders</h2><span id="consumerQueueCount" role="status">${orderCount()}</span></header>
+          <div id="consumerQueueRows" aria-busy="false">${orderRows()}</div>
+        </section>
+        <section class="group glass consumer-fulfilment-detail" id="consumerOrderDetail" aria-label="Order details">${chosen ? fulfilmentDetail(chosen) : empty("bag", "Select an order to see its details and packing checklist.")}</section>
+      </div>
+    </div>`;
   }
 
   function paymentBadge(order) {
@@ -149,12 +177,11 @@ window.AdminConsumer = ({ api, html, raw, svg, put, head, openSheet, closeSheet,
     </ul>`;
   }
 
-  const lists = { orders, customers, catalogue, support };
+  const lists = { customers, catalogue, support };
   const listOptions = {
-    orders: ["Orders", "", "Search consumer orders", "Search order reference"],
-    customers: ["Customers", "Contact details saved by preview customers.", "Search consumer customers", "Search name or phone"],
-    catalogue: ["Catalogue", "Choose which coffees are available to order in the preview.", "Search consumer coffees", "Search coffees"],
-    support: ["Support", "Preview customer messages and order enquiries.", "Search consumer support", "Search messages or order references"],
+    customers: ["Customers", "Profiles saved by preview customers", "Search consumer customers", "Search name or phone"],
+    catalogue: ["Catalogue", "Control availability in the preview shop", "Search consumer coffees", "Search coffees"],
+    support: ["Support", "Messages and order enquiries from the preview", "Search consumer support", "Search messages or order references"],
   };
   function panel() {
     if (!data.connected) return html`<section class="group glass consumer-card consumer-unconnected" aria-label="Storefront connection">
@@ -167,14 +194,14 @@ window.AdminConsumer = ({ api, html, raw, svg, put, head, openSheet, closeSheet,
     const [title, note, label, placeholder] = listOptions[section];
     return html`<section class="group glass consumer-card" aria-label="${title}">
       ${heading(title, note)}
-      ${searchTools(label, placeholder, section === "orders")}
+      ${searchTools(label, placeholder, false)}
       <div id="consumerResults">${lists[section]()}</div>
     </section>`;
   }
 
   function workspace() {
     return html`
-      ${head("Consumer (Preview)", "Manage the separate retail storefront and prepare for beta.", html`<div class="consumer-actions">
+      ${head("Consumer (Preview)", "Retail orders, shop availability and customer support.", html`<div class="consumer-actions">
         <a class="btn soft" href="${storefront()}" target="_blank" rel="noopener">${svg("external")}Open storefront</a>
         ${data.connected ? html`<button class="btn soft consumer-refresh" id="consumerRefresh" type="button" data-act="consumer-refresh" ${updating || writes.size ? raw("disabled") : ""} aria-label="Refresh consumer preview data">
           ${svg("refresh")}<span>Refresh</span>
@@ -198,6 +225,9 @@ window.AdminConsumer = ({ api, html, raw, svg, put, head, openSheet, closeSheet,
 
   async function view() {
     const started = ++generation;
+    queueVersion++;
+    queuePending = false;
+    clearTimeout(searchTimer);
     const result = await load();
     if (started !== generation) return html``;
     acceptData(result);
@@ -207,9 +237,15 @@ window.AdminConsumer = ({ api, html, raw, svg, put, head, openSheet, closeSheet,
   }
   function acceptData(result) {
     data = result;
-    queue = result.orderQueue || { orders: result.orders || [], count: result.orderCount ?? result.orders.length, nextCursor: result.orderCursor, summary: result.orderSummary || {} };
+    acceptQueue(result.orderQueue || { orders: result.orders || [], count: result.orderCount ?? result.orders.length, nextCursor: result.orderCursor, summary: result.orderSummary || {} });
+  }
+  function acceptQueue(result) {
+    queue = result;
     queue.orders.forEach(rememberOrder);
-    if (!queue.orders.some(order => order.reference === selectedReference)) selectedReference = queue.orders[0]?.reference || "";
+    if (!queue.orders.some(order => order.reference === selectedReference)) {
+      orderDrilledIn = false;
+      selectedReference = queue.orders[0]?.reference || "";
+    }
   }
   function queuePath(cursor) {
     const query = new URLSearchParams();
@@ -229,16 +265,22 @@ window.AdminConsumer = ({ api, html, raw, svg, put, head, openSheet, closeSheet,
   }
   async function loadOrders(append = false) {
     const started = ++queueVersion, identity = generation;
-    updating = true;
+    const rows = find("consumerQueueRows");
+    queuePending = true;
+    syncOrderFilters();
+    rows?.setAttribute("aria-busy", "true");
     try {
       const result = await api("GET", queuePath(append ? queue.nextCursor : null));
       if (started !== queueVersion || identity !== generation) return;
-      queue = { ...result, orders: append ? [...new Map([...queue.orders, ...result.orders].map(order => [order.reference, order])).values()] : result.orders };
-      queue.orders.forEach(rememberOrder);
-      if (!queue.orders.some(order => order.reference === selectedReference)) selectedReference = queue.orders[0]?.reference || "";
-      updating = false; renderResults();
+      acceptQueue({ ...result, orders: append ? [...new Map([...queue.orders, ...result.orders].map(order => [order.reference, order])).values()] : result.orders });
+      renderResults();
     } catch (error) { if (started === queueVersion && identity === generation) report(error.message); }
-    finally { if (started === queueVersion) updating = false; }
+    finally {
+      if (started === queueVersion && identity === generation) {
+        queuePending = false;
+        rows?.setAttribute("aria-busy", "false");
+      }
+    }
   }
 
   function replaceWorkspace(returnFocus) {
@@ -260,24 +302,72 @@ window.AdminConsumer = ({ api, html, raw, svg, put, head, openSheet, closeSheet,
     if (!tabs.some(([key]) => key === id) || id === section || !data?.connected) return;
     section = id;
     queueVersion++;
+    queuePending = false;
+    clearTimeout(searchTimer);
+    orderDrilledIn = false;
+    browseScroll = 0;
     const tabGroup = find("consumerTabs");
     for (const button of tabGroup.querySelectorAll("button")) button.setAttribute("aria-pressed", button.dataset.id === id);
+    const picker = find("consumerSection");
+    picker.value = id;
     const panelRoot = find("consumerPanel");
+    report("");
     put(panelRoot, panel());
     SC.reveal(panelRoot, { offset: 5 });
-    if (!opener.isConnected) tabGroup.querySelector('[aria-pressed="true"]')?.focus({ preventScroll: true });
+    if (!opener.isConnected) {
+      const control = picker.getClientRects().length ? picker : tabGroup.querySelector('[aria-pressed="true"]');
+      control?.focus({ preventScroll: true });
+    }
     if (id === "orders") await loadOrders();
-    if (id === "support") { try { data.support = (await api("GET", endpoint + "/support")).messages || []; renderResults(); } catch (error) { report(error.message); } }
+    if (id === "support") {
+      const identity = generation;
+      try {
+        const result = await api("GET", endpoint + "/support");
+        if (identity !== generation || section !== "support") return;
+        data.support = result.messages || [];
+        renderResults();
+      } catch (error) { if (identity === generation && section === "support") report(error.message); }
+    }
+  }
+
+  function syncOrderFilters() {
+    const root = find("consumerOrders"), filter = find("consumerOrderFilter");
+    if (!root || !filter) return;
+    filter.value = orderFilter;
+    for (const button of root.querySelectorAll('[data-act="consumer-queue"]')) {
+      button.setAttribute("aria-pressed", button.dataset.id === orderFilter);
+      const count = button.querySelector("[data-consumer-count]");
+      count.textContent = queue.summary?.[count.dataset.consumerCount] || 0;
+    }
+  }
+
+  function orderButton(reference) {
+    return Array.from(find("consumerQueueRows")?.querySelectorAll('[data-act="consumer-order"]') || []).find(button => button.dataset.id === reference);
   }
 
   function renderResults() {
+    if (section === "orders") {
+      const rows = find("consumerQueueRows");
+      if (!rows) return;
+      const focused = rows.contains(document.activeElement) ? document.activeElement : null;
+      const wasDrilledIn = find("consumerOrders").dataset.drilldown === "true";
+      syncOrderFilters();
+      find("consumerQueueCount").textContent = orderCount();
+      put(rows, orderRows());
+      find("consumerOrders").dataset.drilldown = String(orderDrilledIn);
+      renderDetail();
+      if (focused?.dataset.id) (orderButton(focused.dataset.id) || find("consumerSearch"))?.focus({ preventScroll: true });
+      else if (focused) (rows.querySelector('[data-act="consumer-order-more"]') || find("consumerSearch"))?.focus({ preventScroll: true });
+      else if (wasDrilledIn && !orderDrilledIn && isOrderDrilldown()) find("consumerSearch")?.focus();
+      return;
+    }
     const root = find("consumerResults");
     if (root && lists[section]) put(root, lists[section]());
   }
 
   async function refresh(opener) {
-    if (updating || writes.size || [...packing.values()].some(state => state.running)) return;
-    const started = generation;
+    if (updating || queuePending || writes.size || [...packing.values()].some(state => state.running)) return;
+    const started = generation, navigation = queueVersion, activeSection = section;
     updating = true;
     const refreshButton = find("consumerRefresh");
     refreshButton.disabled = true;
@@ -285,7 +375,7 @@ window.AdminConsumer = ({ api, html, raw, svg, put, head, openSheet, closeSheet,
     find("consumerPanel").setAttribute("aria-busy", "true");
     try {
       const result = await load();
-      if (started !== generation) return;
+      if (started !== generation || navigation !== queueVersion || section !== activeSection) return;
       acceptData(result);
       updating = false;
       message = "";
@@ -312,9 +402,9 @@ window.AdminConsumer = ({ api, html, raw, svg, put, head, openSheet, closeSheet,
     writes.add(key);
     if (refreshButton) refreshButton.disabled = true;
     try {
-      await request();
+      const result = await request();
       if (started !== generation) return false;
-      apply();
+      apply(result);
       report("");
       return true;
     } finally {
@@ -329,32 +419,47 @@ window.AdminConsumer = ({ api, html, raw, svg, put, head, openSheet, closeSheet,
     const allPacked = order.lines.length > 0 && checked.size === order.lines.length;
     const tracking = trackingDrafts.get(order.reference) ?? order.tracking?.number ?? "";
     const error = orderErrors.get(order.reference);
-    return html`<header class="consumer-detail-head"><div><p>Order details</p><h3>${order.reference}</h3><span>${date(order.createdAt)}</span></div>${paymentBadge(order)}</header>
-      <div class="consumer-detail-summary"><div><span>Customer</span><b>${order.contact?.name || "Not recorded"}</b></div><div><span>Fulfilment</span><b>${order.method === "collection" ? order.cafe?.name || "Collection" : order.deliveryService || "Royal Mail Tracked 48"}</b></div><div><span>Total</span><b>${money(order.total)}</b></div></div>
+    return html`<header class="consumer-detail-head">
+        <button id="consumerOrderBack" class="btn soft consumer-order-back" type="button" data-act="consumer-order-back">${svg("chev")}<span>Preview orders</span></button>
+        <div class="consumer-detail-title"><div><h3 id="consumerDetailTitle" tabindex="-1">${order.reference}</h3><p>${method(order.method)} · ${date(order.createdAt)}</p></div>${orderBadge(order.status)}</div>
+      </header>
+      <dl class="consumer-detail-summary"><div><dt>Customer</dt><dd>${order.contact?.name || "Not recorded"}</dd></div><div><dt>Fulfilment</dt><dd>${order.method === "collection" ? order.cafe?.name || "Collection" : order.deliveryService || "Royal Mail Tracked 48"}</dd></div><div><dt>Total</dt><dd>${money(order.total)}</dd></div><div><dt>Payment</dt><dd>${paymentBadge(order)}</dd></div></dl>
       <div class="consumer-detail-body">${order.contact ? html`<section class="consumer-contact"><h4>Saved customer details</h4><p>${[order.contact.email, order.contact.phone].filter(Boolean).join(" · ") || "No contact details recorded"}</p>${order.method === "delivery" ? html`<p>${[order.contact.address, order.contact.town, order.contact.postcode].filter(Boolean).join(", ")}</p>` : html`<p>${order.cafe?.address || ""}</p>`}</section>` : html`<p class="hint">Customer details were not recorded on this older preview order.</p>`}
       <section><div class="consumer-packing-heading"><h4>Pack order</h4><span id="consumerPackedCount" role="status">${checked.size} of ${order.lines.length} lines${saving ? " · Saving…" : ""}</span></div>
+        ${order.lines.length ? html`<progress class="consumer-pack-progress" max="${order.lines.length}" value="${checked.size}" aria-label="Packing progress"></progress>` : ""}
         <div class="consumer-packing-lines">${order.lines.map((line, index) => html`<label class="consumer-packing-line"><input id="consumerPack-${index}" type="checkbox" data-consumer-packed-line="${index}" data-reference="${order.reference}" ${checked.has(index) ? raw("checked") : ""} ${!canPack || busy ? raw("disabled") : ""}><span><b>${line.product?.name || line.name || "Coffee"}</b><small>${line.size} · ${line.grind}</small></span><strong>× ${line.qty}</strong></label>`)}</div>
-        <div class="row consumer-detail-actions">${order.status === "placed" ? html`<button class="btn soft" type="button" data-act="consumer-status" data-id="preparing" ${busy || saving ? raw("disabled") : ""}>Start preparing</button>` : ""}${canPack ? html`<button class="btn" type="button" data-act="consumer-status" data-id="ready" ${!allPacked || busy || saving ? raw("disabled") : ""}>Mark packed</button>` : orderBadge(order.status)}</div></section>
+        ${canPack ? html`<div class="row consumer-detail-actions">${order.status === "placed" ? html`<button class="btn soft" type="button" data-act="consumer-status" data-id="preparing" ${busy || saving ? raw("disabled") : ""}>Start preparing</button>` : ""}<button class="btn" type="button" data-act="consumer-status" data-id="ready" ${!allPacked || busy || saving ? raw("disabled") : ""}>Mark packed</button></div>` : ""}</section>
       ${order.method === "delivery" && ["ready", "dispatched", "completed"].includes(order.status) ? html`<form id="consumerDispatchForm" data-reference="${order.reference}"><h4>${order.status === "ready" ? "Dispatch" : "Tracking details"}</h4><label class="field"><span class="fl">Royal Mail tracking number</span><input id="consumerTrackingNumber" name="tracking" maxlength="30" placeholder="e.g. AB123456789GB" autocomplete="off" spellcheck="false" value="${tracking}" ${busy ? raw("disabled") : ""} required></label><button class="btn" type="submit" ${busy || saving ? raw("disabled") : ""}>${order.status === "ready" ? "Save and dispatch" : "Save tracking"}</button>${order.tracking?.url ? html`<a class="btn soft" href="${order.tracking.url}" target="_blank" rel="noopener noreferrer">Track parcel</a>` : ""}</form>` : ""}
-      ${order.status === "ready" && order.method === "collection" ? html`<section><h4>Collection</h4><p>Ready to collect from ${order.cafe?.name || "the selected café"}.</p><button class="btn" type="button" data-act="consumer-status" data-id="completed" ${busy ? raw("disabled") : ""}>Mark collected</button></section>` : ""}
-      ${order.status === "dispatched" ? html`<button class="btn soft" type="button" data-act="consumer-status" data-id="completed" ${busy ? raw("disabled") : ""}>Mark delivered</button>` : ""}
-      <p class="hint">${order.paymentMode === "test" ? "Test payment: no charge was collected. " : ""}Dispatch records do not book a shipment. Cancellation does not issue a refund.</p>
-      ${error ? html`<div class="consumer-order-problem" role="alert"><p>${error}</p><button class="btn soft" type="button" data-act="consumer-order-reload">Reload latest order</button></div>` : ""}
-      <section><h4>Order timeline</h4><ol class="consumer-timeline">${(order.timeline || []).map(event => html`<li><b>${statusById.get(event.status)?.label || event.status}</b><span>${date(event.at)}</span></li>`)}</ol></section>
-      <div class="row consumer-detail-actions">${order.status === "ready" ? html`<button class="btn soft" type="button" data-act="consumer-status" data-id="preparing" ${busy ? raw("disabled") : ""}>Reopen packing</button>` : ""}${!["completed", "cancelled"].includes(order.status) ? html`<button class="btn soft bad" type="button" data-act="consumer-cancel" ${busy || saving ? raw("disabled") : ""}>Cancel order</button>` : ""}</div></div>`;
+      ${order.status === "ready" && order.method === "collection" ? html`<section class="consumer-collection"><h4>Collection</h4><p>Ready to collect from ${order.cafe?.name || "the selected café"}.</p><button class="btn" type="button" data-act="consumer-status" data-id="completed" ${busy ? raw("disabled") : ""}>Mark collected</button></section>` : ""}
+      ${order.status === "dispatched" ? html`<div><button class="btn soft" type="button" data-act="consumer-status" data-id="completed" ${busy ? raw("disabled") : ""}>Mark delivered</button></div>` : ""}
+      ${error ? html`<div class="consumer-order-problem" role="alert"><p>${error}</p>${blockedOrders.has(order.reference) ? html`<button class="btn soft" type="button" data-act="consumer-order-reload">Reload latest order</button>` : ""}</div>` : ""}
+      ${order.timeline?.length ? html`<section><h4>Order timeline</h4><ol class="consumer-timeline">${order.timeline.map(event => html`<li><b>${statusById.get(event.status)?.label || event.status}</b><span>${date(event.at)}</span></li>`)}</ol></section>` : ""}
+      ${!["completed", "cancelled"].includes(order.status) ? html`<div class="row consumer-detail-actions consumer-detail-footer">${order.status === "ready" ? html`<button class="btn soft" type="button" data-act="consumer-status" data-id="preparing" ${busy ? raw("disabled") : ""}>Reopen packing</button>` : ""}<button class="btn soft bad" type="button" data-act="consumer-cancel" ${busy || saving ? raw("disabled") : ""}>Cancel order</button></div>` : ""}</div>`;
   }
   function renderDetail() {
     const target = find("consumerOrderDetail"), order = orderCache.get(selectedReference);
-    if (!target || !order) return;
+    if (!target) return;
     const focused = target.contains(document.activeElement) ? document.activeElement.id : "";
-    put(target, fulfilmentDetail(order));
+    put(target, order ? fulfilmentDetail(order) : empty("bag", "Select an order to see its details and packing checklist."));
     if (focused) find(focused)?.focus({ preventScroll: true });
   }
+  const isOrderDrilldown = () => matchMedia("(max-width: 880px)").matches;
   function chooseOrder(reference) {
-    if (!orderCache.has(reference)) return;
-    selectedReference = reference; renderResults();
-    const detail = find("consumerOrderDetail");
-    if (matchMedia("(max-width:760px)").matches) SC.reveal(detail, { offset: 12 });
+    if (queuePending || !orderCache.has(reference)) return;
+    browseScroll = window.scrollY;
+    selectedReference = reference;
+    orderDrilledIn = true;
+    renderResults();
+    if (isOrderDrilldown()) {
+      window.scrollTo(0, 0);
+      find("consumerDetailTitle")?.focus({ preventScroll: true });
+    }
+  }
+  function backToOrders() {
+    orderDrilledIn = false;
+    find("consumerOrders").dataset.drilldown = "false";
+    window.scrollTo(0, browseScroll);
+    (orderButton(selectedReference) || find("consumerSearch"))?.focus({ preventScroll: true });
   }
   async function reloadOrder(reference) {
     const result = await api("GET", endpoint + "/orders?q=" + encodeURIComponent(reference));
@@ -366,6 +471,7 @@ window.AdminConsumer = ({ api, html, raw, svg, put, head, openSheet, closeSheet,
   async function updateOrder(fields) {
     const reference = selectedReference, order = orderCache.get(reference);
     if (!order || writes.has(reference) || blockedOrders.has(reference) || packing.get(reference)?.running) return;
+    orderErrors.delete(reference);
     writes.add(reference); renderDetail();
     const identity = generation, navigation = queueVersion;
     try {
@@ -419,7 +525,10 @@ window.AdminConsumer = ({ api, html, raw, svg, put, head, openSheet, closeSheet,
     const order = orderCache.get(selectedReference);
     await updateOrder({ tracking: { carrier: "royal-mail", number }, ...(order.status === "ready" ? { status: "dispatched" } : {}) });
   }
-  document.addEventListener("change", event => { if (event.target.matches("[data-consumer-packed-line]")) packingChanged(event.target); });
+  document.addEventListener("change", event => {
+    if (event.target.matches("[data-consumer-packed-line]")) packingChanged(event.target);
+    if (event.target.id === "consumerSection") void selectSection(event.target.value, event.target);
+  });
   document.addEventListener("input", event => { if (event.target.id === "consumerTrackingNumber") { const form = event.target.closest("form"); if (form?.dataset.reference) trackingDrafts.set(form.dataset.reference, event.target.value); } });
   document.addEventListener("submit", event => { if (event.target.id === "consumerDispatchForm") { event.preventDefault(); void dispatch(event.target); } });
 
@@ -487,25 +596,57 @@ window.AdminConsumer = ({ api, html, raw, svg, put, head, openSheet, closeSheet,
       orderFilter = "to-pack";
       message = "";
       updating = false;
+      queuePending = false;
+      orderDrilledIn = false;
+      browseScroll = 0;
       writes.clear();
       clearTimeout(searchTimer); queueVersion++; orderCache.clear(); packing.clear(); trackingDrafts.clear(); orderErrors.clear(); blockedOrders.clear(); selectedReference = "";
     },
-    search(value) { queries[section] = value; if (section === "orders") { clearTimeout(searchTimer); searchTimer = setTimeout(async () => { await loadOrders(); const input = find("consumerSearch"); if (input) { input.focus({ preventScroll: true }); input.setSelectionRange(value.length, value.length); } }, 250); } else renderResults(); },
-    filterOrders(value) { if (!["", "to-pack", ...statusById.keys()].includes(value)) return; orderFilter = value; void loadOrders(); },
+    search(value) {
+      queries[section] = value;
+      if (section !== "orders") { renderResults(); return; }
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => void loadOrders(), 250);
+    },
+    filterOrders(value) {
+      if (!["", "to-pack", ...statusById.keys()].includes(value)) return;
+      clearTimeout(searchTimer);
+      orderFilter = value;
+      void loadOrders();
+    },
     setAvailability,
     async act(name, id, opener) {
       if (name === "consumer-tab") await selectSection(id, opener);
       if (name === "consumer-refresh") await refresh(opener);
       if (name === "consumer-order") chooseOrder(id);
+      if (name === "consumer-order-back") backToOrders();
       if (name === "consumer-checkout") await checkout(opener);
-      if (name === "consumer-queue") { orderFilter = id; await loadOrders(); }
-      if (name === "consumer-order-more" && queue.nextCursor && !updating) await loadOrders(true);
+      if (name === "consumer-queue") {
+        clearTimeout(searchTimer);
+        orderFilter = id;
+        await loadOrders();
+      }
+      if (name === "consumer-order-more" && queue.nextCursor && !updating && !queuePending) await loadOrders(true);
       if (name === "consumer-status") await updateOrder({ status: id });
       if (name === "consumer-order-reload") { try { await reloadOrder(selectedReference); } catch (error) { report(error.message); } }
       if (name === "consumer-cancel" && await confirmSheet({ title: "Cancel this order?", text: "This records cancellation in the preview and customer history. No refund or carrier cancellation is sent.", confirm: "Cancel order" })) await updateOrder({ status: "cancelled" });
       if (name === "consumer-support") {
         const item = data.support?.find(message => message.reference === id);
-        if (item) { try { const result = await api("PATCH", endpoint + "/support/" + encodeURIComponent(id), { resolved: !item.resolved }); Object.assign(item, result.message); renderResults(); } catch (error) { report(error.message); } }
+        if (!item || writes.has(id) || updating) return;
+        const focused = document.activeElement === opener;
+        opener.disabled = true;
+        try {
+          const saved = await save(id, async () => {
+            const result = await api("PATCH", endpointFor("support", id), { resolved: !item.resolved });
+            return result.message;
+          }, updated => Object.assign(item, updated));
+          if (!saved || section !== "support") return;
+          renderResults();
+          if (focused && document.activeElement === document.body) {
+            Array.from(find("consumerResults").querySelectorAll('[data-act="consumer-support"]')).find(button => button.dataset.id === id)?.focus({ preventScroll: true });
+          }
+        } catch (error) { report(error.message); }
+        finally { if (opener.isConnected) opener.disabled = false; }
       }
     },
   };

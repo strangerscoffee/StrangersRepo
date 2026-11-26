@@ -1,0 +1,132 @@
+.team-columns,.team-stack{display:grid;grid-template-columns:minmax(0,1fr);gap:14px;min-width:0;align-items:start}
+.team-panel{min-width:0;border-radius:20px}
+.team-panel-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px 14px;padding:15px 17px;border-bottom:1px solid var(--line)}
+.team-panel-head>div{min-width:0}
+.team-panel-head h2{font-size:16px;font-weight:700;line-height:1.25;overflow-wrap:anywhere}
+.team-panel-head p,.team-panel-count{margin-top:3px;color:var(--muted);font-size:13px;line-height:1.35}
+.team-panel-count{flex:none;font-variant-numeric:tabular-nums;white-space:nowrap}
+.team-panel-note{margin:0;padding:13px 17px;border-top:1px solid var(--line);color:var(--muted);font-size:13px;line-height:1.5}
+.team-panel :is(.item,.empty),.people-directory :is(.item,.empty){padding-inline:17px}
+.team-toolbar{min-width:0;border-radius:20px;padding:11px 12px}
+.team-toolbar .search{min-width:0}
+.team-toolbar .search input{font-size:16px}
+.team-toolbar .seg{max-width:100%}
+.team-toolbar .seg button{min-height:40px}
+.team-panel .btn:where(:not(.activity-view)){white-space:normal;max-width:100%;text-align:center}
+.team-panel :is(button.item,summary):focus-visible,.people-directory>button.item:focus-visible{outline-offset:-3px}
+
+.people-workspace{display:grid;gap:14px;align-items:start}
+.people-start{display:none}
+.people-start .empty{padding:20px;align-items:flex-start}
+.people-start strong{display:block;color:var(--fg);font-size:16px}
+.people-start p{font-size:14px;margin-top:4px;line-height:1.45}
+.people-directory>.item{min-height:65px}
+.people-directory>.item[aria-expanded=true]{box-shadow:inset 3px 0 0 var(--accent)}
+.people-directory>.item .tx>span{line-height:1.3}
+.person-workspace{display:grid;gap:14px;padding:0;scroll-margin-top:16px}
+.person-back{justify-self:start}
+.person-back .i{transform:rotate(180deg)}
+.person-summary{background:var(--glass);border-radius:20px;padding:17px}
+.person-workspace-head{display:flex;align-items:center;gap:10px 12px;margin:0;flex-wrap:wrap}
+.person-workspace-head>.av{width:46px;height:46px;font-size:16px}
+.person-identity{min-width:0;flex:1 1 130px}
+.person-identity h2{letter-spacing:-.025em;line-height:1.2;font-size:clamp(19px,2vw,25px)}
+.person-identity p{font-size:14px;overflow-wrap:anywhere;color:var(--muted);margin-top:4px}
+.person-badges{display:flex;flex-wrap:wrap;gap:6px}
+.person-summary .dbar{padding-top:12px;border-top:1px solid var(--line)}
+.person-summary .dbar .btn{flex:0 1 auto;min-height:42px;white-space:normal}
+.person-account-actions{min-width:0}
+.person-workspace .cards{align-items:start}
+.person-workspace .card{border-radius:20px;padding:13px 16px;background:var(--glass)}
+.person-workspace .card .chead{margin-bottom:7px;flex-wrap:wrap}
+.person-workspace .card .btn{white-space:normal;min-height:42px;text-align:center}
+.person-workspace .card .kv{align-items:flex-start}
+.person-workspace .card .kv>span:first-child{flex:0 1 auto}
+
+.team-sites>.team-panel-head{padding-inline:0;padding-top:0;margin-bottom:13px}
+.team-sites .site{padding:0;min-width:0}
+.team-sites .site>summary{min-height:72px;padding:12px 14px;align-items:center;gap:10px}
+.team-sites .site>summary h3{font-size:16px;font-weight:700;overflow-wrap:anywhere}
+.site>summary>.i{flex:none;width:16px;height:16px;color:var(--muted)}
+.site-content{padding:0 15px 15px;border-top:1px solid var(--line);min-width:0}
+.site-content>.sub{margin-top:14px}
+.site-content .kv{font-size:14px}
+
+.activity-tools{display:grid;grid-template-columns:minmax(0,1fr);gap:10px}
+.activity-tools>.seg{justify-self:start}
+.activity-tools .activity-dates{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));width:100%;align-items:end}
+.activity-tools .activity-dates input{width:100%;min-width:0;max-width:100%;box-sizing:border-box;font-size:16px}
+.activity-tools .activity-dates .btn{justify-self:start}
+.activity-events .day{margin:0;padding:9px 17px;background:var(--sunk);border-bottom:1px solid var(--line);font-size:12px}
+.activity-day+.activity-day{border-top:1px solid var(--line)}
+.activity-day>.group{border-radius:0}
+.activity-event{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:start;column-gap:12px;row-gap:6px}
+.activity-event>.ic{grid-row:1;align-self:start}
+.activity-event>.tx{align-self:center}
+.activity-event>.time{padding-top:3px;font-variant-numeric:tabular-nums}
+.activity-event>.errdetail{grid-column:2 / -1;min-width:0}
+.activity-event>.errdetail summary{width:fit-content;min-height:38px}
+.activity-event>.errdetail summary:hover,.activity-event>.errdetail summary:focus-visible{color:var(--fg)}
+.activity-event .errdetail pre{overflow-wrap:anywhere}
+.activity-detail,.activity-view{display:none}
+.activity-detail-body{padding:14px 17px}
+.activity-detail-title{display:flex;gap:10px;align-items:center;margin-bottom:13px}
+.activity-detail-title h3{font-size:16px;line-height:1.35;overflow-wrap:anywhere}
+.activity-detail .kv{font-size:14px}
+.activity-detail-body>.btn{margin-top:6px}
+
+.team-security-stats .stat{min-width:0}
+.team-security-stats .stat .k{align-items:flex-start}
+.team-security-stats .stat .k .i{flex:none}
+.system-protections[open]>summary{border-bottom:1px solid var(--line)}
+.system-protections>.group{border-radius:0}
+.backup-latest{background:var(--sunk)}
+.backup-exports .item .tx .inline{margin-top:8px}
+.backup-exports .seg button,.backup-exports .inline select{min-height:42px}
+.backup-exports .inline[id$="Pick"]{min-width:0;max-width:100%}
+.backup-exports .inline[id$="Pick"] select{max-width:100%;min-width:0}
+.backup-exports .export-dates{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:8px}
+.export-dates label{display:grid;gap:4px;min-width:0}
+.export-dates input{box-sizing:border-box;width:100%;min-width:0;min-height:42px;border:1px solid var(--line);border-radius:10px;background:var(--surface);padding:0 6px;color:var(--fg);font:inherit}
+
+@media (min-width:1150px){
+  .people-workspace,.people-workspace.has-profile{grid-template-columns:minmax(275px,1fr) minmax(0,1.95fr)}
+  .people-start{display:block}
+  .person-back{display:none}
+  .team-columns{grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:16px}
+  .backup-workspace{grid-template-columns:minmax(0,1fr) minmax(0,1.2fr)}
+  .activity-tools{grid-template-columns:minmax(0,1.2fr) minmax(210px,1fr);align-items:center}
+  .activity-tools .activity-dates{grid-template-columns:repeat(2,minmax(135px,180px)) auto;justify-content:start;grid-column:1/-1}
+  .activity-detail{display:block;position:sticky;top:16px}
+  .activity-event{grid-template-columns:auto minmax(0,1fr) auto auto;align-items:center}
+  .activity-event:has(.activity-view[aria-pressed=true]){background:var(--tint);box-shadow:inset 3px 0 0 var(--accent)}
+  .activity-view{display:inline-flex;min-height:40px;width:40px;padding:0}
+}
+@media (width < 1150px){
+  main:has(>.people-workspace.has-profile)>.pagehead{display:none}
+}
+@media (max-width:600px){
+  .team-panel-head{padding:13px 14px}
+  .team-panel :is(.item,.empty),.people-directory :is(.item,.empty){padding-inline:14px}
+  .team-toolbar{padding:10px;gap:8px}
+  .team-toolbar :is(.search,.seg){width:100%}
+  .team-toolbar .seg button{min-height:44px}
+  .person-summary .dbar .btn,.person-workspace .card .btn{min-height:44px}
+  .person-workspace .card{padding-inline:14px}
+  .team-sites .site>summary{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:start;gap:5px 10px}
+  .team-sites .site>summary>.ic{grid-row:1 / 3}
+  .team-sites .site>summary>.pill{grid-row:2;grid-column:2;justify-self:start}
+  .team-sites .site>summary>.i{grid-row:1/3;grid-column:3;align-self:center}
+  .activity-events .activity-event>.errdetail{grid-column:1/-1;margin-inline-start:48px}
+  .activity-event>.errdetail summary{min-height:44px}
+  .system-actions .item.has-action>.end{justify-content:flex-start}
+  .backup-exports .item.has-action>.end{justify-content:flex-start}
+  .backup-exports .inline[id$="Pick"]:not([hidden]){display:grid;grid-template-columns:minmax(0,1fr);width:100%}
+  .backup-exports .inline[id$="Pick"] select{width:100%}
+}
+@media (max-width:360px){
+  .backup-exports .export-dates{grid-template-columns:minmax(0,1fr)}
+  .team-security-stats .stat{padding-inline:11px}
+  .activity-event{column-gap:8px}
+  .activity-events .activity-event>.errdetail{margin-inline-start:0}
+}

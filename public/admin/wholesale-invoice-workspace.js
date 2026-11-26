@@ -8,7 +8,7 @@ window.WholesaleInvoiceWorkspace = function ({ api, html, raw, svg, title, foote
   const scheduleLabel = (value) => value === "monthly" ? "Monthly" : "On dispatch";
   const stages = { issue: "Issue invoices", export: "Issue and post to QuickBooks", email: "Issue, post and email" };
   const statementPath = (id) => root + "/accounts/" + encodeURIComponent(id) + "/statement";
-  let active = "today", accountId = "", accountSearch = "", directory = null, searchTimer;
+  let active = "today", accountId = "", accountSearch = "", directory = null, searchTimer, accountSheetRequest = 0;
   let reviewMonth = "", reviewData = null;
   let picker = null;
   const done = async () => { closeSheet(); await reload(); };
@@ -41,7 +41,7 @@ window.WholesaleInvoiceWorkspace = function ({ api, html, raw, svg, title, foote
   async function todayView() {
     const { summary, issues, overdue, dispatched } = await api("GET", root + "/today");
     const { reviewCount = 0, overdueCount = 0, overduePence = 0, outstandingPence = 0 } = summary || {};
-    return html`${heading("Today", date(today()), action("Create batch", "batch", "", true))}
+    return html`${heading("Today", "Billing and collections", action("Create batch", "batch", "", true))}
       ${stats([["Needs review", reviewCount], ["Outstanding", money(outstandingPence)], ["Overdue", money(overduePence), countLabel(overdueCount, "invoice")]])}
       ${split(
         html`${panel("Needs attention", issues.length ? html`<div class="iw-list">${issues.map(invoice => {
@@ -97,18 +97,19 @@ window.WholesaleInvoiceWorkspace = function ({ api, html, raw, svg, title, foote
     const account = selected ? await api("GET", accountEndpoint(selected.id)) : null;
     const directoryView = html`<div class="iw-panel-body">
       <label class="search">${svg("search")}<input id="iwAccountSearch" type="search" aria-label="Search billing accounts" placeholder="Search billing accounts" value="${accountSearch}" maxlength="120"></label>
-      ${entries.length ? html`<label class="field iw-account-picker"><span class="fl">Billing account</span><select class="wi-picker" id="iwAccount">${entries.map(entry => html`<option value="${entry.id}" ${entry.id === accountId ? raw("selected") : ""}>${entry.business}</option>`)}</select></label>
-        <div class="iw-account-list iw-list group">${entries.map(entry => html`<button class="item" type="button" data-act="wh-invoice-account" data-id="${entry.id}" aria-pressed="${String(entry.id === accountId)}"><span class="tx"><b>${entry.business}</b><span>${scheduleLabel(entry.cadence)}</span></span><span class="chev">${svg("chev")}</span></button>`)}</div>`
+      ${entries.length ? html`<div class="iw-account-list iw-list group">${entries.map(entry => html`<button class="item" type="button" data-act="wh-invoice-account" data-id="${entry.id}" aria-pressed="${String(entry.id === accountId)}"><span class="tx"><b>${entry.business}</b><span>${scheduleLabel(entry.cadence)}</span></span><span class="chev">${svg("chev")}</span></button>`)}</div>`
         : note("No matching billing accounts.")}
       ${results.next ? action("More accounts", "accounts-more") : ""}
     </div>`;
-    return html`${heading("Billing accounts", "")}
+    return html`${heading("Billing accounts", "Addresses, payment terms and account statements.")}
       ${split(panel("Accounts", directoryView, tag(countLabel(entries.length, "account") + (results.next ? " shown" : ""))), account ? html`${heading(html`<span class="num">${account.business}</span>`, "", action("Preview statement", "statement", account.id, true))}
         ${accountContent(account)}` : "", "iw-accounts")}`;
   }
 
   async function openAccount(id, back) {
+    const opened = ++accountSheetRequest, route = location.hash, view = active;
     const account = await api("GET", accountEndpoint(id));
+    if (opened !== accountSheetRequest || route !== location.hash || view !== active) return;
     const reopen = () => openAccount(id, back);
     show(html`<div class="wi-sheet wi-workflow w-sensitive">${title("Billing account", account.business)}<div class="wi-body">${accountContent(account, true)}</div>${footer(null, "Back")}</div>`,
       async (name, element, form) => {
@@ -401,7 +402,6 @@ window.WholesaleInvoiceWorkspace = function ({ api, html, raw, svg, title, foote
   }
   async function change(target) {
     if (target.id === "iwView") { select(target.value); await reload(); return; }
-    if (target.id === "iwAccount") { accountId = target.value; await reload(); return; }
     if (target.id === "iwClosePeriod" && target.value) { reviewMonth = target.value; await reload(); return; }
     if (target.id === "iwBatchPeriod" && picker && target.value) {
       const state = picker, old = state.period, previousSelection = state.selected;
@@ -415,7 +415,12 @@ window.WholesaleInvoiceWorkspace = function ({ api, html, raw, svg, title, foote
   }
   async function act(name, id) {
     if (name === "view") { select(id); await reload(); return true; }
-    if (name === "account") { accountId = id; await reload(); return true; }
+    if (name === "account") {
+      accountId = id;
+      if (!document.querySelector(".iw-accounts > .iw-stack:last-child")?.getClientRects().length) await openAccount(id, done);
+      else await reload();
+      return true;
+    }
     if (name === "account-sheet") { await openAccount(id, done); return true; }
     if (name === "accounts-more" && directory?.next) {
       const previous = directory, search = accountSearch;
@@ -447,6 +452,6 @@ window.WholesaleInvoiceWorkspace = function ({ api, html, raw, svg, title, foote
       select(saved.active); accountId = saved.accountId || ""; accountSearch = saved.accountSearch || "";
       reviewMonth = saved.reviewMonth || ""; directory = null;
     },
-    clear() { active = "today"; accountId = accountSearch = reviewMonth = ""; directory = reviewData = picker = null; clearTimeout(searchTimer); },
+    clear() { accountSheetRequest++; active = "today"; accountId = accountSearch = reviewMonth = ""; directory = reviewData = picker = null; clearTimeout(searchTimer); },
   };
 };

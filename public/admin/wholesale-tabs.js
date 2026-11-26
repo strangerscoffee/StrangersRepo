@@ -54,7 +54,16 @@ window.WholesaleTabs = function ({ api, html, raw, svg, put, openSheet, closeShe
         : confirm && picked.length ? html`<span class="w-tab-confirm">${question}</span><button class="btn soft" type="button" data-sheet="tab-cancel">Cancel</button><button class="btn" type="submit">${all ? "Clear tab" : "Clear these"}</button>`
         : html`${all ? "" : html`<span class="w-tab-confirm">${picked.length ? `${weight(chosen.grams)} to clear · ${weight(rest.grams)} stays` : "Tick the orders to clear"}</span>`}<button class="btn soft" type="button" data-sheet="close">Close</button><button class="btn ${t.ready || !all ? "" : "soft"}" type="button" data-sheet="tab-clear" ${picked.length ? "" : raw("disabled")}>${all ? (t.ready ? "Clear tab" : "Clear tab early") : `Clear ${picked.length} of ${t.orders.length}`}</button>`}</div>
     </form>`, async (action, element) => {
-      if (action === "tab-pick") { const id = element.dataset.id; element.checked ? pick.add(id) : pick.delete(id); return openTab(customerId, false); }
+      if (action === "tab-pick") {
+        const id = element.dataset.id, sheet = element.closest("#sheet"), scroll = sheet?.scrollTop || 0;
+        element.checked ? pick.add(id) : pick.delete(id);
+        openTab(customerId);
+        if (sheet) {
+          sheet.scrollTop = scroll;
+          sheet.querySelector(`[data-sheet="tab-pick"][data-id="${CSS.escape(id)}"]`)?.focus({ preventScroll: true });
+        }
+        return;
+      }
       if (action === "tab-clear") return openTab(customerId, true);
       if (action === "tab-cancel") return openTab(customerId, false);
       if (action !== "submit" || !confirm) return;

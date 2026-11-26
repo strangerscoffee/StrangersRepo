@@ -187,7 +187,7 @@
     ["System", [["activity", "Activity", "pulse"], ["security", "Security", "shield"], ["data", "Backups & exports", "db"]]],
   ];
   const TABS = [["overview", "Overview", "grid"], ["wholesale", "Wholesale", "coffee"], ["people", "People", "people"], ["activity", "Activity", "pulse"], ["more", "More", "more"]];
-  const PAGES = [...NAV_GROUPS.flatMap(([, items]) => items.map(([id]) => id)), "more"];
+  const PAGE_LABELS = new Map([...NAV_GROUPS.flatMap(([, items]) => items), TABS.at(-1)].map(([id, title]) => [id, title]));
   const desktopNav = matchMedia("(min-width:1024px)");
   const splitPeople = matchMedia("(min-width:1150px)");
   let wholesaleExpanded = false;
@@ -204,6 +204,12 @@
     if (next?.getClientRects().length) next.focus({ preventScroll: true });
   }
   function renderNav() {
+    if (!S.me) return;
+    const today = londonToday();
+    $("#workspaceSection").textContent = PAGE_LABELS.get(S.page);
+    $("#workspaceDate").dateTime = today;
+    $("#workspaceDate").textContent = isoShort(today);
+    $("#workspaceContext").hidden = false;
     const badge = (limit = Infinity) => S.locked ? html`<span class="badge" aria-label="${plural(S.locked, "account")} locked">${S.locked > limit ? limit + "+" : S.locked}</span>` : "";
     const sideButton = ([id, title, icon]) => {
       if (id !== "wholesale") return html`<button class="nav" type="button" data-go="${id}" aria-current="${S.page === id ? "page" : "false"}">${svg(icon)}${title}${id === "security" ? badge() : ""}</button>`;
@@ -225,7 +231,14 @@
     wholesale.syncNavigation(desktopNav.matches);
   }
   async function refreshBadge() {
-    try { S.locked = (await api("GET", "/api/admin/security")).locked.length; renderNav(); } catch (e) { /* keep the last count */ }
+    const owner = S.me;
+    try {
+      const count = (await api("GET", "/api/admin/security")).locked.length;
+      if (!owner || S.me !== owner || count === S.locked) return;
+      S.locked = count;
+      if (S.page === "more") await reload();
+      else renderNav();
+    } catch (e) { /* keep the last count */ }
   }
 
   let seq = 0, routeEntry = 0;
@@ -241,7 +254,7 @@
   }
   function parseRoute() {
     const [page, section] = location.hash.slice(1).split("/");
-    return { page: PAGES.includes(page) ? page : "overview", section };
+    return { page: PAGE_LABELS.has(page) ? page : "overview", section };
   }
   async function restoreRoute() {
     if (!S.me) return;
@@ -255,9 +268,10 @@
     closeSheet();
     await show(page, { fromHistory: true, scroll: saved?.scroll });
   }
-  async function show(page, { keepScroll, fromHistory, scroll } = {}) {
-    if (page === "wholesale" && S.page !== "wholesale") wholesaleExpanded = true;
-    S.page = PAGES.includes(page) ? page : "overview";
+  async function show(page, { keepScroll, fromHistory, scroll, focusContent } = {}) {
+    const nextPage = PAGE_LABELS.has(page) ? page : "overview";
+    if (nextPage !== S.page) wholesaleExpanded = nextPage === "wholesale";
+    S.page = nextPage;
     const hash = routeHash();
     if (!keepScroll) {
       routeEntry = Math.max(routeEntry, Number(history.state?.adminEntry) || 0);
@@ -266,6 +280,7 @@
       else history.replaceState(entry, "", hash);
     }
     renderNav();
+    document.title = `${PAGE_LABELS.get(S.page)} · Strangers Coffee Admin`;
     const my = ++seq;
     const main = $("#main");
     if (!keepScroll) { main.replaceChildren(SC.skeleton({ label: "Loading " + S.page + "…", rows: 4 })); window.scrollTo(0, 0); }
@@ -281,12 +296,13 @@
       }
       if (!keepScroll) SC.reveal(main);
       if (S.page === "wholesale") wholesale.syncNavigation(desktopNav.matches);
-      document.title = "Strangers Coffee - Admin";
       if (scroll != null) window.scrollTo(0, scroll);
+      if (focusContent && document.activeElement === document.body) main.focus({ preventScroll: true });
       saveRoute();
     } catch (e) {
       if (my !== seq) return;
       put(main, html`${head("Couldn't load this page", "")}<div class="group glass"><div class="item has-action"><span class="ic warn">${svg("warn")}</span><span class="tx"><span>${e.message}</span></span><span class="end"><button class="btn soft" type="button" data-act="retry-page">Try again</button></span></div></div>`);
+      if (focusContent && document.activeElement === document.body) main.focus({ preventScroll: true });
     } finally { if (my === seq) main.setAttribute("aria-busy", "false"); }
   }
   async function reload() {
@@ -294,7 +310,7 @@
     const details = previous?.matches("summary") && previous.parentElement.dataset.preserveOpen;
     const key = details && main.contains(previous) ? `details[data-preserve-open="${CSS.escape(details)}"]>summary` :
       previous && main.contains(previous) && previous !== main
-      ? ["id", "data-act", "data-id", "data-filter", "data-feed", "data-person"]
+      ? ["id", "data-act", "data-id", "data-go", "data-filter", "data-feed", "data-person"]
         .filter((attr) => previous.hasAttribute(attr))
         .map((attr) => `[${attr}="${CSS.escape(previous.getAttribute(attr))}"]`).join("")
       : "";
@@ -325,6 +341,8 @@
     return overviewUI.view(d);
   };
 
+  const workspacePanelHead = (title, description = "", count = "") => html`<header class="team-panel-head"><div><h2>${title}</h2>${description ? html`<p>${description}</p>` : ""}</div>${count ? html`<span class="team-panel-count">${count}</span>` : ""}</header>`;
+
   VIEWS.people = async () => {
     // Searching, filtering and opening a row reuse what's loaded; anything else (a save, a page visit) loads afresh.
     const d = S.local && cache.peopleData ? cache.peopleData : await api("GET", "/api/admin/people");
@@ -341,19 +359,18 @@
       return S.filter === "all" || p.role === S.filter;
     };
     const list = d.people.filter((p) => inFilter(p) &&
-      (!q || p.name.toLowerCase().includes(q) || p.username.toLowerCase().includes(q) || (p.email || "").includes(q)));
+      (!q || p.name.toLowerCase().includes(q) || p.username.toLowerCase().includes(q) || (p.email || "").toLowerCase().includes(q)));
     const filters = [["all", "Everyone"], ["staff", "Staff"], ["manager", "Managers"], ["admin", "Admins"], ["locked", "Locked"], ["new", "Never signed in"], ...(hasInactive ? [["off", "Switched off"]] : [])];
     const selected = list.find(person => person.id === S.open);
     return html`
-      ${head("People", "Everyone's account, rota details and training in one place.", html`<button class="btn" type="button" data-act="add">${svg("plus")}Add person</button>`)}
-      <div class="toolbar people-tools">
-        <label class="search">${svg("search")}<input id="q" type="search" placeholder="Name or username" aria-label="Search people" value="${S.q}"></label>
+      ${head("People", "Manage staff accounts, rota details and training.", html`<button class="btn" type="button" data-act="add">${svg("plus")}Add person</button>`)}
+      <div class="toolbar glass people-tools team-toolbar">
+        <label class="search">${svg("search")}<input id="q" type="search" placeholder="Name, username or email" aria-label="Search people" value="${S.q}"></label>
         <div class="seg admin-filters" role="group" aria-label="Show">${filters.map(([k, t]) => html`<button type="button" aria-pressed="${S.filter === k}" data-filter="${k}">${t}</button>`)}</div>
       </div>
-      <div class="label people-count">${(filters.find((f) => f[0] === S.filter) || ["", "Everyone"])[1]} <span class="count">${plural(list.length, "person", "people")}</span></div>
       <div class="people-workspace ${selected ? "has-profile" : ""}">
-        <div class="group glass people-directory">${list.length ? list.map(personRow) : html`<div class="empty">${svg("search")}<span>No one matches.</span></div>`}</div>
-        ${selected ? personDetail(selected, d.topics) : ""}
+        <section class="group glass people-directory">${workspacePanelHead("Team directory", "", plural(list.length, "person", "people"))}${list.length ? list.map(personRow) : html`<div class="empty">${svg("search")}<span>No one matches.</span></div>`}</section>
+        ${selected ? personDetail(selected, d.topics) : html`<aside class="glass team-panel people-start"><div class="empty">${svg("people")}<div><strong>Staff profile</strong><p>Select someone to see their account, rota and training.</p></div></div></aside>`}
       </div>`;
   };
   function personRow(p) {
@@ -376,9 +393,9 @@
     const done = p.training.topics.length;
     const self = p.id === S.me.id;
     return html`
-      <div class="detail glass person-workspace"><header class="person-workspace-head"><h2>${p.name}</h2><button class="btn sm soft" type="button" data-act="person-back">Back to people</button></header>
+      <div class="person-workspace"><button class="btn soft person-back" type="button" data-act="person-back">${svg("chev")}Back to people</button><section class="detail glass person-summary"><header class="person-workspace-head"><span class="av" aria-hidden="true">${ini(p.name)}</span><div class="person-identity"><h2>${p.name}</h2><p>${worksAt(r)}</p></div><div class="person-badges">${rolePill(p.role)}${p.active ? p.locked ? html`<span class="pill bad">Locked</span>` : html`<span class="pill ok">Active</span>` : html`<span class="pill">Switched off</span>`}</div></header>
         <div class="dbar" role="group" aria-label="Account actions for ${p.name}">
-          <button class="btn sm soft" type="button" data-act="edit" data-id="${p.id}">${svg("pen")}Edit</button>
+          <button class="btn sm soft" type="button" data-act="edit" data-id="${p.id}">${svg("pen")}Edit account</button>
           <button class="btn sm soft" type="button" data-act="order-access" data-id="${p.id}">${svg("coffee")}Wholesale orders access</button>
           <details class="person-account-actions" data-preserve-open="person-${p.id}"><summary class="btn sm soft">Account actions${svg("chev")}</summary><div class="row">
           ${p.active ? html`<button class="btn sm soft" type="button" data-act="password" data-id="${p.id}">${svg("key")}Temporary password</button>` : ""}
@@ -386,16 +403,16 @@
           ${p.active ? html`<button class="btn sm soft" type="button" data-act="signout" data-id="${p.id}">${svg("out")}Sign out everywhere</button>` : ""}
           ${self ? "" : p.active ? html`<button class="btn sm bad" type="button" data-act="off" data-id="${p.id}">Switch off</button>` : html`<button class="btn sm" type="button" data-act="on" data-id="${p.id}">Switch back on</button>`}
           </div></details>
-        </div>
+        </div></section>
         <div class="cards">
-          <section class="card" aria-label="Account">
+          <section class="card glass" aria-label="Account">
             <div class="chead"><h3><span class="ic acc">${svg("user")}</span>Account</h3></div>
             ${kv("Username", p.username)}${kv("Role", rolePill(p.role))}${kv("Last sign-in", p.lastLoginAt ? cap(when(p.lastLoginAt)) : "Never")}
             ${kv("Quick PIN", p.role === "admin" ? "Admins use their password" : p.quickPin ? "Set" : "Not set")}
             ${p.role !== "staff" ? html`<div class="kv"><span>Monday summary</span><span class="kvact">${summaryText(p)} <button class="btn sm soft" type="button" data-act="summary" data-id="${p.id}">Change</button></span></div>` : ""}
             ${kv("Added", `${dmy(p.createdAt)}${p.createdBy ? ` by ${p.createdBy}` : ""}`)}
           </section>
-          <section class="card" aria-label="Staff profile">
+          <section class="card glass" aria-label="Staff profile">
             <div class="chead"><h3><span class="ic acc">${svg("user")}</span>Staff profile</h3><button class="btn sm soft" type="button" data-act="profile" data-id="${p.id}">${svg("pen")}Edit profile</button></div>
             ${kv("Start date", p.profile.startDate ? dmyIso(p.profile.startDate) : "Not set")}
             ${kv("Contact number", p.profile.phone || "Not given")}
@@ -403,7 +420,7 @@
             <div class="kv stack"><span>Home address</span><span class="addr">${p.profile.address || "Not given"}</span></div>
             <p class="hint">Visible to this person and admins. Staff can update their contact details in My profile. Only admins set the start date.</p>
           </section>
-          <section class="card" aria-label="Rota">
+          <section class="card glass" aria-label="Rota">
             <div class="chead"><h3><span class="ic acc">${svg("clock")}</span>Rota</h3><a class="link" href="${S.links.rota}">Open</a></div>
             <div class="hero">
               <div class="big"><b>${hrs(r.weekHours)}</b><span>this week · contract ${contract(r)}</span>${over ? html`<span class="pill warn">${hrs(over)} overtime</span>` : ""}</div>
@@ -417,11 +434,11 @@
             ${kv("Time off", offs)}
             ${p.active ? html`<div class="foot"><button class="btn sm soft" type="button" data-act="avail" data-id="${p.id}">${svg("pen")}Edit sites and availability</button></div>` : ""}
           </section>
-          <section class="card" aria-label="Kitchen Diary">
+          <section class="card glass" aria-label="Kitchen Diary">
             <div class="chead"><h3><span class="ic ok">${svg("cal")}</span>Kitchen Diary</h3><a class="link" href="${S.links.diary}#staff">Open</a></div>
             <div class="hero">
               <div class="big"><b>${done} of ${topics.length}</b><span>training topics${done === topics.length ? " · all done" : ""}</span></div>
-              ${meter((done / topics.length) * 100, done < topics.length ? "part" : "")}<div class="scale"><span>0</span><span>${topics.length} topics</span></div>
+              ${meter(topics.length ? (done / topics.length) * 100 : 0, done < topics.length ? "part" : "")}<div class="scale"><span>0</span><span>${topics.length} topics</span></div>
             </div>
             <div class="kv stack"><span>Topics</span><span class="chips left">${topics.map((k) => p.training.topics.includes(k) ? html`<span class="chip done">${svg("ok")}${TOPIC_NAMES[k] || k}</span>` : html`<span class="chip off">${TOPIC_NAMES[k] || k}</span>`)}</span></div>
             ${kv("Signed their record", p.training.signedAt ? dmy(p.training.signedAt) : "Not yet")}
@@ -446,26 +463,39 @@
         : html`<div class="callout">${svg("warn")}<span>Not connected yet. Add the channel's Slack webhook as the <b>${s.slack.secret}</b> secret in Cloudflare (README-deploy.md).</span></div>`}`;
     const other = (r) => { const e = Object.entries(r.dayHours || {}); return e.length ? e.map(([k, v]) => `${(DAYS.find((x) => x[0] === k) || [k, k, k])[2].slice(0, 3)} ${v.opensAt}–${v.closesAt}`).join(", ") : "Same every day"; };
     return html`
-      ${head("Sites", "Each site's diary setup and rota hours side by side. Change them in the diary's Setup and the Rota's settings.")}
+      ${head("Sites", "Review diary setup, opening hours and staffing by site.")}
+      <section class="team-panel team-sites" aria-label="Site directory">
+      ${workspacePanelHead("Site directory", `${d.sites.filter(site => site.setUp).length} of ${d.sites.length} set up`, plural(d.sites.length, "site"))}
       <div class="sites">
         ${d.sites.map((s) => !s.setUp ? html`
-          <details class="site glass" data-preserve-open="site-${s.id}"><summary><div><h2><span class="dot ${s.id}"></span>${s.name}</h2><p>${s.address}</p></div><span class="pill warn">Not set up</span>${svg("chev")}</summary>
+          <details class="site glass" data-preserve-open="site-${s.id}"><summary><span class="ic acc">${svg("house")}</span><div><h3>${s.name}</h3><p>${s.address}</p></div><span class="pill warn">Not set up</span>${svg("chev")}</summary><div class="site-content">
             <div class="callout">${svg("warn")}<span>The ${s.name} has no diary Setup yet, so it isn't counted in the diary and can't have shifts on the Rota.</span></div>
             ${kv("People who work here", s.people ? `${s.people}${s.anywhere ? `, plus ${s.anywhere} at any site` : ""}` : s.anywhere ? `${s.anywhere} at any site` : "None yet")}
-            <div class="acts">${d.sites.some((x) => x.setUp) ? html`<button class="btn sm" type="button" data-act="copy" data-id="${s.id}">${svg("copy")}Copy setup from another site</button>` : ""}<a class="btn sm soft" href="${diarySetup(s.id)}">Open Setup</a></div>${slack(s)}</details>` : html`
-          <details class="site glass" data-preserve-open="site-${s.id}"><summary><div><h2><span class="dot ${s.id}"></span>${s.name}</h2><p>${hoursText(s.rota)} · ${s.address}</p></div><span class="pill ok">${svg("ok")}Set up</span>${svg("chev")}</summary>
+            <div class="acts">${d.sites.some((x) => x.setUp) ? html`<button class="btn sm" type="button" data-act="copy" data-id="${s.id}">${svg("copy")}Copy setup from another site</button>` : ""}<a class="btn sm soft" href="${diarySetup(s.id)}">Open Setup</a></div>${slack(s)}</div></details>` : html`
+          <details class="site glass" data-preserve-open="site-${s.id}"><summary><span class="ic acc">${svg("house")}</span><div><h3>${s.name}</h3><p>${s.address}</p></div><span class="pill ok">${svg("ok")}Set up</span>${svg("chev")}</summary><div class="site-content">
             <div class="sub">${svg("cal")}Kitchen Diary</div>
             ${kv("Fridges and freezers", s.diary.units)}${kv("Checks", `${s.diary.opening} opening · ${s.diary.closing} closing · ${s.diary.weekly} weekly`)}
             ${kv("Closed on", s.diary.closedDays.length ? s.diary.closedDays.join(", ") : "Open every day")}
             <div class="sub">${svg("clock")}Rota</div>
             ${kv("Usual hours", hoursText(s.rota))}${kv("Other days", other(s.rota))}${kv("Minimum on shift", plural(s.rota.minPeople, "person", "people"))}
             ${kv("People who work here", `${s.people}${s.anywhere ? `, plus ${s.anywhere} at any site` : ""}`)}
-            <div class="acts"><a class="btn sm soft" href="${diarySetup(s.id)}">Diary Setup</a><a class="btn sm soft" href="${S.links.rota}#settings/${s.id}">Rota settings</a></div>${slack(s)}</details>`)}
+            <div class="acts"><a class="btn sm soft" href="${diarySetup(s.id)}">Diary Setup</a><a class="btn sm soft" href="${S.links.rota}#settings/${s.id}">Rota settings</a></div>${slack(s)}</div></details>`)}
       </div>
+      </section>
       `;
   };
 
   const KIND = { diary: ["ok", "cal", "Diary"], rota: ["acc", "clock", "Rota"], account: ["warn", "user", "Accounts"], error: ["bad", "warn", "Errors"] };
+  const activityIdentity = ({ kind, at, code, text, where }) => code || JSON.stringify([kind, at, text, where]);
+  function activityDetail({ kind, at, text, where, atLine, code }) {
+    const [tone, icon, label] = KIND[kind] || ["mut", "pulse", "Activity"];
+    return html`<header class="team-panel-head"><div><h2>Event details</h2></div></header>
+      <div class="activity-detail-body"><div class="activity-detail-title"><span class="ic ${tone}">${svg(icon)}</span><h3>${text}</h3></div>
+        ${kv("Type", label)}${kv("Date and time", `${dmy(Number(at))} · ${hm(Number(at))}`)}${where ? kv("Source", where) : ""}
+        ${atLine ? html`<div class="kv stack"><span>Code location</span><code class="errat">${atLine}</code></div>` : ""}
+        ${code ? html`<button class="btn sm soft" type="button" data-act="copyerr" data-id="${code}">${svg("copy")}Copy report</button>` : ""}
+      </div>`;
+  }
   VIEWS.activity = async () => {
     const params = new URLSearchParams({ kind: S.feed });
     if (S.fq.trim()) params.set("q", S.fq.trim());
@@ -479,16 +509,29 @@
       if (!groups.length || groups[groups.length - 1][0] !== label) groups.push([label, []]);
       groups[groups.length - 1][1].push(i);
     }
+    const inspected = $(".activity-view[aria-pressed=true]")?.dataset.id;
+    const selected = (inspected && items.find(item => activityIdentity(item) === inspected)) || items[0];
     return html`
-      ${head("Activity", "Who changed what in the diary, the Rota and accounts. Newest first.")}
-      <div class="toolbar activity-tools">
+      ${head("Activity", "Review recent changes and errors across the business.")}
+      <div class="toolbar glass activity-tools team-toolbar">
         <div class="seg admin-filters" role="group" aria-label="Activity type">${[["all", "Timeline"], ["diary", "Diary"], ["rota", "Rota"], ["account", "Accounts"], ["errors", "Errors"]].map(([k, t]) => html`<button type="button" aria-pressed="${S.feed === k}" data-feed="${k}">${t}</button>`)}</div>
         <label class="search">${svg("search")}<input id="fq" type="search" placeholder="${S.feed === "errors" ? "Reference, app or device" : "Search a name or site"}" aria-label="Search activity" maxlength="120" value="${S.fq}"></label>
         <div class="row activity-dates"><label class="field"><span class="fl">From</span><input id="activityFrom" type="date" aria-label="Activity from date" value="${S.activityFrom}"></label><label class="field"><span class="fl">To</span><input id="activityTo" type="date" aria-label="Activity to date" value="${S.activityTo}"></label>${S.activityFrom || S.activityTo ? html`<button class="btn sm soft" type="button" data-act="activity-clear">Clear dates</button>` : ""}</div>
       </div>
-      ${groups.length ? groups.map(([label, list]) => html`<div class="day">${label}</div><div class="group glass">${list.map((i) => html`
-        <div class="item${i.report ? " haserr" : ""}"><span class="ic ${KIND[i.kind][0]}">${svg(KIND[i.kind][1])}</span><span class="tx"><b class="plain">${i.text}</b><span>${i.where}</span>${i.at_line ? html`<span class="errat">${i.at_line}</span>` : ""}</span><span class="end time">${hm(i.at)}</span>${i.report ? html`<details class="errdetail" data-preserve-open="report-${i.code}"><summary>Report</summary><pre>${i.report}</pre><div class="errfoot"><button class="btn sm soft" type="button" data-act="copyerr" data-id="${i.code}">Copy report</button><span>Screenshot this, or copy it, to get it fixed.</span></div></details>` : ""}</div>`)}</div>`)
-        : html`<div class="group glass"><div class="empty">${svg("pulse")}<span>${S.fq || S.activityFrom || S.activityTo ? "No matching activity." : S.feed === "errors" ? "No errors in the last 30 days." : "Nothing yet."}</span></div></div>`}
+      <div class="team-columns activity-workspace">
+        <section class="group glass team-panel activity-events">${workspacePanelHead("Audit history", "", plural(items.length, "event"))}
+          ${groups.length ? groups.map(([label, list]) => html`<section class="activity-day"><h3 class="day">${label}</h3><div class="group">${list.map((i) => {
+            const [tone, icon] = KIND[i.kind] || ["mut", "pulse"];
+            return html`<div class="item activity-event${i.report ? " haserr" : ""}" data-kind="${i.kind}" data-at="${i.at}" data-text="${i.text}" data-where="${i.where}" data-at-line="${i.at_line}" data-code="${i.code}">
+              <span class="ic ${tone}">${svg(icon)}</span><span class="tx"><b class="plain">${i.text}</b><span>${i.where}</span>${i.at_line ? html`<span class="errat">${i.at_line}</span>` : ""}</span><span class="end time">${hm(i.at)}</span>
+              <button class="btn soft activity-view" type="button" data-act="activity-view" data-id="${activityIdentity(i)}" aria-label="Inspect event: ${i.text}" aria-pressed="${i === selected}" aria-controls="activityDetail">${svg("chev")}</button>
+              ${i.report ? html`<details class="errdetail" data-preserve-open="report-${i.code}"><summary>Report</summary><pre>${i.report}</pre><div class="errfoot"><button class="btn sm soft" type="button" data-act="copyerr" data-id="${i.code}">Copy report</button></div></details>` : ""}
+            </div>`;
+          })}</div></section>`)
+          : html`<div class="empty">${svg("pulse")}<span>${S.fq || S.activityFrom || S.activityTo ? "No matching activity." : S.feed === "errors" ? "No errors in the last 30 days." : "Nothing yet."}</span></div>`}
+        </section>
+        ${selected ? html`<aside class="group glass team-panel activity-detail" id="activityDetail" aria-live="polite">${activityDetail({ ...selected, atLine: selected.at_line })}</aside>` : ""}
+      </div>
       <p class="hint">${S.feed === "errors" ? "Errors from staff devices (a page that crashed, or a file that didn't load) and from the server. The same error on the same page is counted, not repeated, and keeps the same code (E-…), which is also what staff see on the screen when it happens: search for it here. Open Report and screenshot or copy it to get it fixed. Kept 30 days." : "Diary entries show each record's latest change. Account changes are kept for about a year."}</p>`;
   };
 
@@ -496,28 +539,31 @@
     const d = await api("GET", "/api/admin/security");
     S.locked = d.locked.length; renderNav();
     return html`
-      ${head("Security", "Sign-in problems, and controls for every account.")}
-      <div class="stats">
+      ${head("Security", "Review sign-ins and manage account access.")}
+      <div class="stats team-security-stats">
         <div class="stat glass"><span class="k">${svg("lock")}Locked now</span><span class="v">${d.locked.length}</span><span class="s">${d.locked.length ? d.locked.map((l) => l.name).join(", ") : "No one"}</span></div>
         <div class="stat glass"><span class="k">${svg("warn")}Failed sign-ins</span><span class="v">${d.failed24h}</span><span class="s">Last 24 hours</span></div>
         <div class="stat glass"><span class="k">${svg("key")}Quick PINs</span><span class="v">${d.quickPins}</span><span class="s">People using one</span></div>
         <div class="stat glass"><span class="k">${svg("shield")}Admins</span><span class="v">${d.admins}</span><span class="s">${d.switchedOff ? `${plural(d.switchedOff, "account")} switched off` : "Active admin accounts"}</span></div>
       </div>
-      ${d.locked.length ? html`<div class="label">Locked</div><div class="group glass">${d.locked.map((l) => html`
-        <div class="item has-action"><span class="av" aria-hidden="true">${ini(l.name)}</span><span class="tx"><b>${l.name}</b><span>Unlocks by itself at ${hm(l.until)}.${l.pinOff ? " Their quick PIN is switched off." : ""}</span></span><span class="end"><button class="btn sm soft" type="button" data-act="unlock" data-id="${l.id}">Unlock</button></span></div>`)}</div>` : ""}
-      ${d.recentFailed.length ? html`<div class="label">Recent failed sign-ins</div><div class="group glass">${d.recentFailed.map((f) => html`
-        <div class="item"><span class="ic warn">${svg("warn")}</span><span class="tx"><b class="plain">${f.text}</b></span><span class="end time">${hm(f.at)}</span></div>`)}</div>` : ""}
-      <details class="group glass system-protections" data-preserve-open="protections"><summary class="item">Protections${svg("chev")}</summary>
+      <div class="team-columns">
+      <div class="team-stack">
+      <section class="group glass team-panel">${workspacePanelHead("Locked accounts", "", String(d.locked.length))}${d.locked.length ? d.locked.map((l) => html`
+        <div class="item has-action"><span class="av" aria-hidden="true">${ini(l.name)}</span><span class="tx"><b>${l.name}</b><span>Unlocks by itself at ${hm(l.until)}.${l.pinOff ? " Their quick PIN is switched off." : ""}</span></span><span class="end"><button class="btn sm soft" type="button" data-act="unlock" data-id="${l.id}">Unlock</button></span></div>`) : html`<div class="empty">${svg("ok")}<span>No accounts are locked.</span></div>`}</section>
+      <section class="group glass team-panel">${workspacePanelHead("Recent failed sign-ins", "Last 24 hours")}${d.recentFailed.length ? d.recentFailed.map((f) => html`
+        <div class="item"><span class="ic warn">${svg("warn")}</span><span class="tx"><b class="plain">${f.text}</b></span><span class="end time">${hm(f.at)}</span></div>`) : html`<div class="empty">${svg("shield")}<span>No recent failed sign-ins.</span></div>`}</section>
+      </div>
+      <div class="team-stack">
+      <details class="group glass team-panel system-protections" data-preserve-open="protections"><summary class="item"><span class="ic ok">${svg("shield")}</span><span>Protections</span>${svg("chev")}</summary>
       <div class="group">
         ${[["Lockouts", "5 wrong passwords or PINs lock an account for 10 minutes; wrong PINs also switch the PIN off"], ["Sign-in limits", "30 failed attempts per connection every 15 minutes"], ["Script lock-down", "Only the site's own code can run on its pages"], ["Nightly backups", "Every night at 03:17, the last 30 kept"]]
           .map(([t, s]) => html`<div class="item"><span class="ic ok">${svg("ok")}</span><span class="tx"><b>${t}</b><span>${s}</span></span><span class="end"><span class="pill ok">On</span></span></div>`)}
       </div>
       </details>
-      <div class="label">For everyone</div>
-      <div class="group glass">
+      <section class="group glass team-panel system-actions">${workspacePanelHead("Controls for all accounts")}
         <div class="item has-action"><span class="ic warn">${svg("key")}</span><span class="tx"><b>Reset all quick PINs</b><span>For example when an iPad is lost. People set a new PIN after signing in with their password.</span></span><span class="end"><button class="btn sm soft" type="button" data-act="resetpins">Reset quick PINs</button></span></div>
         <div class="item has-action"><span class="ic bad">${svg("out")}</span><span class="tx"><b>Sign everyone out</b><span>Ends every session on every device, including yours.</span></span><span class="end"><button class="btn sm bad" type="button" data-act="signoutall">Sign everyone out</button></span></div>
-      </div>`;
+      </section></div></div>`;
   };
 
   VIEWS.data = async () => {
@@ -534,51 +580,49 @@
     const monthName = (m) => new Intl.DateTimeFormat("en-GB", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(m + "-01T12:00:00Z"));
     const hoursMode = S.hoursMode === "week" ? "week" : "month";
     return html`
-      ${head("Backups & exports", "Everything is backed up every night. Download a copy now and then and keep it somewhere safe.", html`<button class="btn" type="button" data-act="backup">${svg("db")}Back up now</button>`)}
-      <div class="group glass"><div class="item"><span class="ic ${d.backups.length ? "ok" : "warn"}">${svg("db")}</span><span class="tx"><b>${d.backups.length ? "Last completed backup" : "No completed backup"}</b><span>${d.backups.length ? cap(when(d.backups[0].at)) + " · Diary, rota, wholesale and account records" : "Use Back up now to create the first copy."}</span></span></div></div>
-      <div class="label">Backups <span class="count">${d.backups.length} of ${d.keep} kept</span></div>
-      <div class="group glass">
+      ${head("Backups & exports", "Download nightly backups, payroll hours and operating records.", html`<button class="btn" type="button" data-act="backup">${svg("db")}Back up now</button>`)}
+      <div class="team-columns backup-workspace">
+      <section class="group glass team-panel backup-history">${workspacePanelHead("Backup history", "", `${d.backups.length} of ${d.keep} kept`)}
+        <div class="item backup-latest"><span class="ic ${d.backups.length ? "ok" : "warn"}">${svg("db")}</span><span class="tx"><b>${d.backups.length ? "Last completed backup" : "No completed backup"}</b><span>${d.backups.length ? cap(when(d.backups[0].at)) : "Use Back up now to create the first copy."}</span></span></div>
         ${d.backups.length ? d.backups.slice(0, 10).map((b) => html`<div class="item has-action"><span class="ic mut">${svg("db")}</span><span class="tx"><b>${cap(when(b.at))}</b><span>${b.by === "daily" ? "Nightly" : `Made by ${b.by}`} · ${Math.max(1, Math.round(b.bytes / 1024))} KB · ${b.docs.toLocaleString("en-GB")} diary records</span></span><span class="end"><a class="btn sm soft" href="/api/admin/backups/${b.id}" download>${svg("dl")}Download</a></span></div>`)
-          : html`<div class="empty">${svg("db")}<span>No backups yet. The first is made tonight, or tap Back up now.</span></div>`}
-      </div>
-      <p class="hint">A backup holds every diary record, the rota and the list of accounts (never passwords). Allergen PDFs aren't included.</p>
-      <div class="label">Exports</div>
-      <div class="group glass">
+          : ""}
+        <p class="team-panel-note">Backups contain the diary, rota, wholesale and account records. Passwords and allergen PDFs are excluded.</p>
+      </section>
+      <section class="group glass team-panel backup-exports">${workspacePanelHead("Exports")}
         <div class="item has-action"><span class="ic acc">${svg("clock")}</span><span class="tx"><b>Hours for payroll</b><span id="hoursHint">${hoursMode === "month" ? "Rota · CSV for a calendar month: hours by site, basic and overtime, holiday and sick days" : "Rota · CSV per person and site for a week, with overtime"}</span>
           <span class="inline"><span class="seg" role="group" aria-label="Payroll period">${[["month", "Month"], ["week", "Week"]].map(([v, t]) => html`<button type="button" data-act="hours-mode" data-id="${v}" aria-pressed="${String(v === hoursMode)}">${t}</button>`)}</span>
             <span class="inline" id="hoursMonthPick" ${hoursMode === "month" ? "" : raw("hidden")}><label class="fl" for="hoursMonth">Month</label><select id="hoursMonth">${months.map((m, i) => html`<option value="${m}" ${m === pickMonth ? raw("selected") : ""}>${monthName(m)}${i === 0 ? " (this month)" : i === 1 ? " (last month)" : ""}</option>`)}</select></span>
             <span class="inline" id="hoursWeekPick" ${hoursMode === "week" ? "" : raw("hidden")}><label class="fl" for="hoursWeek">Week of</label><select id="hoursWeek">${weeks.map((w, i) => html`<option value="${w}">${isoShort(w)}${i === 0 ? " (this week)" : i === 1 ? " (last week)" : ""}</option>`)}</select></span></span></span>
           <span class="end"><button class="btn sm soft" type="button" data-act="hours" aria-label="Download payroll hours CSV">${svg("dl")}Download CSV</button></span></div>
         <div class="item has-action"><span class="ic acc">${svg("clock")}</span><span class="tx"><b>All shifts</b><span>Rota · CSV, planned and as worked</span>
-          <span class="inline"><input type="date" id="shFrom" value="${monthAgo}" aria-label="From"><span>to</span><input type="date" id="shTo" value="${today}" aria-label="To"></span></span>
+          <span class="export-dates"><label><span>From</span><input type="date" id="shFrom" value="${monthAgo}" aria-label="From"></label><label><span>To</span><input type="date" id="shTo" value="${today}" aria-label="To"></label></span></span>
           <span class="end"><button class="btn sm soft" type="button" data-act="shifts" aria-label="Download all shifts CSV">${svg("dl")}Download CSV</button></span></div>
         <div class="item has-action"><span class="ic warn">${svg("people")}</span><span class="tx"><b>People</b><span>Accounts · CSV of names, roles, sites and contracted hours. Never passwords.</span></span>
           <span class="end"><a class="btn sm soft" href="/api/admin/export/people.csv" aria-label="Download people CSV" download>${svg("dl")}CSV</a></span></div>
         <div class="item has-action"><span class="ic ok">${svg("cal")}</span><span class="tx"><b>EHO inspection pack</b><span>Kitchen Diary · a PDF for a period and a site, from EHO inspection mode</span></span>
           <span class="end"><a class="btn sm soft" href="${S.links.diary}#inspect">Open</a></span></div>
-      </div>`;
+      </section></div>`;
   };
 
   VIEWS.more = async () => html`
-    ${head("More", "")}
-    <div class="label">Work</div>
-    <div class="group glass"><button class="item" type="button" data-go="consumer"><span class="ic acc">${svg("bag")}</span><span class="tx"><b>Consumer (Preview)</b><span>Retail orders, customers and catalogue</span></span><span class="end"><span class="chev">${svg("chev")}</span></span></button></div>
-    <div class="label">Team and sites</div>
-    <div class="group glass">
-      <button class="item" type="button" data-go="sites"><span class="ic acc">${svg("house")}</span><span class="tx"><b>Sites</b><span>Site setup, diary settings and rota hours</span></span><span class="end"><span class="chev">${svg("chev")}</span></span></button>
-      <button class="item" type="button" data-go="sickness"><span class="ic warn">${svg("heart")}</span><span class="tx"><b>Sickness</b><span>Sickness forms and the Bradford Factor</span></span><span class="end"><span class="chev">${svg("chev")}</span></span></button>
-    </div><div class="label">System</div><div class="group glass">
-      <button class="item" type="button" data-go="security"><span class="ic ${S.locked ? "bad" : "ok"}">${svg("shield")}</span><span class="tx"><b>Security</b><span>${S.locked ? `${plural(S.locked, "account")} locked` : "Sign-ins, PINs and protections"}</span></span><span class="end">${S.locked ? html`<span class="badge">${S.locked}</span>` : ""}<span class="chev">${svg("chev")}</span></span></button>
-      <button class="item" type="button" data-go="data"><span class="ic mut">${svg("db")}</span><span class="tx"><b>Backups &amp; exports</b><span>Nightly backups, payroll hours and other downloads</span></span><span class="end"><span class="chev">${svg("chev")}</span></span></button>
+    ${head("More", "Team, retail preview and system")}
+    <div class="more-grid" role="group" aria-label="Admin shortcuts">
+      ${[["consumer", "bag"], ["sites", "house"], ["sickness", "heart"], ["security", "shield"], ["data", "db"]].map(([id, icon]) => html`
+        <button class="glass more-link" type="button" data-go="${id}">${svg(icon)}<span>${PAGE_LABELS.get(id)}</span>${id === "security" && S.locked ? html`<span class="badge" aria-label="${plural(S.locked, "account")} locked">${S.locked > 99 ? "99+" : S.locked}</span>` : ""}</button>`)}
+      ${[["invoices", "Invoicing", "doc"], ["royal-mail", "Royal Mail", "bag"], ["insights", "Insights", "pulse"]].map(([id, title, icon]) => html`
+        <button class="glass more-link" type="button" data-act="wh-tab" data-id="${id}">${svg(icon)}<span>${title}</span></button>`)}
     </div>
-    <div class="label">Staff workspaces</div>
-    <div class="group glass">
-      <a class="item" href="${S.links.diary}"><span class="ic ok">${svg("cal")}</span><span class="tx"><b>Kitchen Diary</b></span><span class="end"><span class="chev">${svg("chev")}</span></span></a>
-      <a class="item" href="${S.links.rota}"><span class="ic acc">${svg("clock")}</span><span class="tx"><b>Rota</b></span><span class="end"><span class="chev">${svg("chev")}</span></span></a>
-      <a class="item" href="${S.staffOrdersUrl}"><span class="ic acc">${svg("coffee")}</span><span class="tx"><b>Staff Wholesale</b></span><span class="end"><span class="chev">${svg("chev")}</span></span></a>
-    </div>
-    <div class="label">Account</div>
-    <div class="group glass"><div class="item"><span class="av" aria-hidden="true">${ini(S.me.name)}</span><span class="tx"><b>${S.me.name}</b><span>Admin</span></span><span class="end"><button class="btn sm soft" type="button" data-act="logout">Sign out</button></span></div></div>`;
+    <section class="more-section" aria-labelledby="moreStaff">
+      <h2 class="label" id="moreStaff">Staff workspaces</h2>
+      <div class="group glass">
+        ${[[S.links.diary, "Kitchen Diary", "cal"], [S.links.rota, "Rota", "clock"], [S.staffOrdersUrl, "Staff Wholesale", "coffee"]].map(([href, title, icon]) => html`
+          <a class="item" href="${href}"><span class="ic acc">${svg(icon)}</span><span class="tx"><b>${title}</b></span><span class="end"><span class="chev">${svg("chev")}</span></span></a>`)}
+      </div>
+    </section>
+    <section class="more-section more-account" aria-labelledby="moreAccount">
+      <h2 class="label" id="moreAccount">Account</h2>
+      <div class="group glass"><div class="item has-action"><span class="av" aria-hidden="true">${ini(S.me.name)}</span><span class="tx"><b>${S.me.name}</b><span>Admin</span></span><span class="end"><button class="btn sm soft" type="button" data-act="logout">Sign out</button></span></div></div>
+    </section>`;
 
   /* ---------- actions ---------- */
   const person = (id) => (cache.people || []).find((p) => p.id === id);
@@ -792,13 +836,13 @@
     if (name === "wh-sections") { wholesale.openNavigation(el, (id) => act("wh-tab", id, el)); return; }
     if (name === "wh-tab" || name === "wh-pending") {
       if (name === "wh-tab" && S.page === "wholesale" && id === wholesale.currentSection()) return;
-      const fromMobile = el?.closest("#wSectionsHost") || document.activeElement?.id === "wSection";
+      const fromPicker = el?.closest("#wSectionsHost,.more-grid") || document.activeElement?.id === "wSection";
       saveRoute();
       const section = name === "wh-pending" ? "customers" : id;
       if (!wholesale.selectSection(section, { pending: name === "wh-pending" })) return;
       wholesaleExpanded = true;
       await show("wholesale");
-      if (fromMobile && S.page === "wholesale" && wholesale.currentSection() === section && document.activeElement === document.body) {
+      if (fromPicker && S.page === "wholesale" && wholesale.currentSection() === section && document.activeElement === document.body) {
         (desktopNav.matches ? $(`#sideNav [data-act="wh-tab"][data-id="${CSS.escape(section)}"]`) : $("#wSection"))?.focus({ preventScroll: true });
       }
       return;
@@ -810,6 +854,7 @@
     const p = person(id);
     switch (name) {
       case "go": saveRoute(); show(id); return;
+      case "skip-content": $("#main").focus(); return;
       case "retry-page": await show(S.page); $("#main").focus({ preventScroll: true }); return;
       case "errors": saveRoute(); S.feed = "errors"; show("activity"); return;
       case "dismiss":
@@ -826,6 +871,14 @@
         catch (e) { toast(e.message); }
         return;
       case "activity-clear": S.activityFrom = S.activityTo = ""; await reload(); return;
+      case "activity-view": {
+        const row = el.closest(".activity-event"), detail = $("#activityDetail");
+        if (!row || !detail) return;
+        $(".activity-view[aria-pressed=true]")?.setAttribute("aria-pressed", "false");
+        el.setAttribute("aria-pressed", "true");
+        put(detail, activityDetail(row.dataset));
+        return;
+      }
       case "copyerr": {
         const text = (S.reports || {})[id] || "";
         try { await navigator.clipboard.writeText(text); toast("Copied the report for " + id); }
@@ -925,7 +978,7 @@
         return;
       }
       saveRoute();
-      show(g.dataset.go); return;
+      show(g.dataset.go, { focusContent: !!g.closest("#main") }); return;
     }
     const a = e.target.closest("[data-act]");
     if (a) { e.preventDefault(); act(a.dataset.act, a.dataset.id, a); return; }
@@ -936,7 +989,7 @@
       reload().then(() => {
         if (S.page !== "people") return;
         if (S.open && !splitPeople.matches) {
-          $(".person-workspace-head button")?.focus({ preventScroll: true });
+          $(".person-back")?.focus({ preventScroll: true });
           $(".person-workspace")?.scrollIntoView({ block: "start" });
         } else document.querySelector(`[data-person="${CSS.escape(pr.dataset.person)}"]`)?.focus({ preventScroll: true });
       });
@@ -1036,7 +1089,8 @@
     try {
       const me = await SC.startSession({ clear: () => {
         seq++; sickness.clear(); wholesale.clear(); consumer.clear(); routeSnapshots.clear(); clearTimeout(routeTimer);
-        cache = {}; S.me = null; S.open = null; S.q = ""; S.fq = ""; S.reports = {}; S.activityFrom = S.activityTo = ""; wholesaleExpanded = false;
+        cache = {}; S.me = null; S.open = null; S.q = ""; S.fq = ""; S.reports = {}; S.activityFrom = S.activityTo = ""; S.locked = 0; wholesaleExpanded = false;
+        $("#workspaceContext").hidden = true;
         closeSheet(); for (const id of ["#main", "#sheet", "#sideNav", "#tabBar", "#whoName", "#whoInit"]) $(id)?.replaceChildren();
       } });
       if (!me) return;

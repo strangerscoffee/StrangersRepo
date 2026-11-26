@@ -34,7 +34,7 @@ window.WholesaleQuickBooks = function ({api,html,raw,svg,show,title,footer,field
     scope=scope||state.activeEnvironment;
     if(scope!==state.environment)state=await api("GET",path("/status",scope));
     const connection=state.connection;
-    const form=show(html`<form id="qbConnectionForm" class="wi-sheet wi-wide">${title("QuickBooks Online",modeName(state.activeEnvironment)+" active for new exports")}
+    const form=show(html`<form id="qbConnectionForm" class="wi-sheet wi-wide qb-connection">${title("QuickBooks Online",modeName(state.activeEnvironment)+" active for new exports")}
       <div class="wi-body"><section class="wi-section qb-environment"><div class="qb-modes seg" role="group" aria-label="Accounting environment">${["sandbox","production"].map(mode=>html`<button class="btn" type="button" data-sheet="qb-mode" data-mode="${mode}" aria-pressed="${String(mode===state.activeEnvironment)}">${modeName(mode)}${mode===state.activeEnvironment?svg("ok"):""}</button>`)}</div><p class="hint">The active company receives new exports. Existing Live invoices keep receiving payment updates.</p></section>
       <div class="wi-settings-grid wi-editor-grid"><section class="wi-section wi-form-section"><div class="wi-section-heading"><h3>${modeName(scope)} connection</h3><span class="pill ${connection.status==="connected"?"ok":"warn"}">${label[connection.status]||"Not connected"}</span></div>
       ${scope!==state.activeEnvironment?html`<div class="wi-draft-banner"><strong>${modeName(scope)} setup</strong><span>${modeName(state.activeEnvironment)} remains active. Reviewing this connection does not switch environments.</span></div>`:""}${companyDetails(state)}

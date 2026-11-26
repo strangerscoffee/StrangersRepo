@@ -32,3 +32,12 @@ button.w-tab-cleared:hover{background:var(--sunk)}
 .w-tab-order.kept{background:var(--sunk)}
 .w-tab-order .end,.w-tab-sheet .item .end{display:flex;flex-direction:column;align-items:flex-end;gap:6px}
 .w-tab-summary .w-tab-meta+.w-tab-meta{margin-top:2px}
+.w-tabs-workspace{padding:18px}
+.w-tabs-head{padding:0 0 13px;border-bottom:1px solid var(--line)}
+.w-tabs-head h2{font-size:17px;font-weight:700}
+.w-tabs-head .hint{padding:0}
+.w-tab-cards{grid-template-columns:repeat(auto-fill,minmax(min(100%,250px),1fr))}
+.w-tab-card.ready{border-color:color-mix(in srgb,var(--ok) 50%,var(--line));box-shadow:inset 0 3px 0 var(--ok)}
+.w-tab-card .pill{max-width:50%;white-space:normal;text-align:center}
+.w-tabs-sub{font-size:16px}
+@media(max-width:600px){.w-tabs-workspace{padding:14px}.w-tabs-workspace>.group{min-width:0}}
