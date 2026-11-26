@@ -494,6 +494,19 @@ const MIGRATIONS: Migration[] = [
       env.DB.prepare("CREATE INDEX IF NOT EXISTS wholesale_invoice_closes_period ON wholesale_invoice_closes(period,id DESC)"),
     ]);
   } },
+  { id: 46, name: "Orders already invoiced in QuickBooks", run: async env => {
+    // Orders invoiced by hand in QuickBooks before automatic invoicing (the owner's request, 26 Nov 2026): matched to the
+    // QuickBooks invoice so they stop showing as unbilled, without the website issuing or emailing anything.
+    await env.DB.batch([
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS wholesale_invoiced_elsewhere (
+        order_id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, environment TEXT NOT NULL, realm_id TEXT NOT NULL,
+        remote_id TEXT NOT NULL, doc_number TEXT NOT NULL, txn_date TEXT NOT NULL, total_pence INTEGER NOT NULL,
+        order_total_pence INTEGER NOT NULL, actor TEXT NOT NULL, created_at INTEGER NOT NULL)`),
+      env.DB.prepare("CREATE INDEX IF NOT EXISTS wholesale_invoiced_elsewhere_remote ON wholesale_invoiced_elsewhere(environment,realm_id,remote_id)"),
+      env.DB.prepare(`CREATE VIEW IF NOT EXISTS wholesale_billed_orders AS
+        SELECT order_id FROM wholesale_invoice_coverage UNION ALL SELECT order_id FROM wholesale_invoiced_elsewhere`),
+    ]);
+  } },
 ];
 
 async function migrate(env: Env): Promise<void> {

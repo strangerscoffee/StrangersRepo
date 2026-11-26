@@ -258,6 +258,7 @@ window.WholesaleInvoiceWorkspace = function ({ api, html, raw, svg, title, foote
             ${accruing ? tag("Month in progress") : ""}</label>`;
         })}</div>` : note("No eligible dispatches in this month."), tag("Up to " + state.maxSelection + " entries"))}
         ${state.next ? inSheet("More dispatches", "batch-more") : ""}
+        <div class="iw-qb-match-link"><p class="hint">Invoiced by hand in QuickBooks already?</p>${inSheet("Match with QuickBooks", "qb-matches")}</div>
         ${state.recent.length ? panel("Recent runs", html`<div class="iw-list">${state.recent.map(entry => item(monthName(entry.period),
           checked(entry.at) + " · " + entry.issued + " of " + entry.entries + " issued", "doc", "mut", inSheet("View run", "batch-open", entry.id)))}</div>`) : ""}
       </div><footer class="wi-foot"><p class="err" id="wiError" role="alert"></p><div class="row">
@@ -269,6 +270,7 @@ window.WholesaleInvoiceWorkspace = function ({ api, html, raw, svg, title, foote
       await busy(form, async () => {
         state.delivery = form.elements.delivery.value;
         if (name === "batch-more") await loadBatchCandidates(state, true);
+        if (name === "qb-matches") { await quickbooksMatches(() => loadBatchCandidates(state)); return; }
         if (name === "batch-open") batchReview(await api("GET", batchEndpoint(element.dataset.id)), () => loadBatchCandidates(state));
         if (name !== "submit") return;
         if (!state.selected.size || state.selected.size > state.maxSelection) throw new Error("Choose up to " + state.maxSelection + " invoice entries.");
@@ -291,6 +293,52 @@ window.WholesaleInvoiceWorkspace = function ({ api, html, raw, svg, title, foote
       updateSelection();
     });
     updateSelection();
+  }
+
+  // Orders invoiced by hand in QuickBooks before automatic invoicing: matched to the QuickBooks invoice so they stop
+  // showing as unbilled. Nothing is issued, posted or emailed, and QuickBooks isn't changed.
+  async function quickbooksMatches(back) {
+    const data = await api("GET", root + "/quickbooks-matches");
+    const groups = [["exact", "Found in QuickBooks", "Same customer and total."],
+      ["amount", "Found with a different total", "Check these before ticking: the QuickBooks invoice's total isn't the order's."],
+      ["none", "Not found in QuickBooks", "No matching QuickBooks invoice. These stay unbilled."]];
+    const when = (entry) => "Ordered " + checked(entry.createdAt) + (entry.dispatchedAt ? " · dispatched " + checked(entry.dispatchedAt) : "") + (entry.onTab ? " · on a tab" : "");
+    const row = (entry) => entry.invoice ? html`<label class="item wi-check iw-batch-check"><input type="checkbox" name="match" value="${entry.orderId}" ${entry.match === "exact" ? raw("checked") : ""}>
+        <span class="tx"><b>${entry.business}</b><span>Order ${money(entry.totalPence)} · ${when(entry)}</span>
+        <span>QuickBooks ${entry.invoice.number || "invoice"} · ${money(entry.invoice.totalPence)} · ${date(entry.invoice.date)}${entry.invoice.balancePence === 0 ? " · paid" : ""}</span></span>
+        ${entry.match === "amount" ? tag("Total differs", "warn") : tag("Match", "ok")}</label>`
+      : item(entry.business, "Order " + money(entry.totalPence) + " · " + when(entry), "doc", "mut", "");
+    const form = show(html`<form id="iwQbMatches" class="wi-sheet wi-wide iw-batch w-sensitive">
+      ${title("Match with QuickBooks", data.company ? "QuickBooks Live · " + data.company : "QuickBooks Live")}
+      <div class="wi-body"><p class="hint">For orders already invoiced by hand in QuickBooks. Ticked orders are marked as invoiced, so they stop showing as unbilled. Nothing is sent to customers, and nothing changes in QuickBooks.</p>
+        ${data.suggestions.length ? groups.map(([kind, name, hint]) => {
+          const entries = data.suggestions.filter(entry => entry.match === kind);
+          return entries.length ? panel(name, html`<div class="iw-panel-body">${note(hint)}</div><div class="iw-list">${entries.map(row)}</div>`, tag(String(entries.length))) : "";
+        }) : note("No unbilled dispatches.")}
+      </div><footer class="wi-foot"><p class="err" id="wiError" role="alert"></p><div class="row">
+        <span class="iw-batch-progress" data-selection role="status"></span>
+        ${inSheet("Back", "wi-back")}
+        ${data.suggestions.some(entry => entry.invoice) ? html`<button type="submit" class="btn">Mark as already invoiced</button>` : ""}
+      </div></footer></form>`, async (name, _element, form) => {
+      if (name !== "submit") return;
+      await busy(form, async () => {
+        const chosen = new Set([...form.querySelectorAll("[name=match]:checked")].map(input => input.value));
+        const matches = data.suggestions.filter(entry => entry.invoice && chosen.has(entry.orderId))
+          .map(entry => ({ orderId: entry.orderId, version: entry.version, remoteId: entry.invoice.id }));
+        if (!matches.length) throw new Error("Tick the orders to mark as already invoiced.");
+        const result = await api("POST", root + "/quickbooks-matches", { matches });
+        toast(countLabel(result.recorded, "order") + " marked as invoiced in QuickBooks. Nothing was emailed.");
+        await back();
+      });
+    }, back);
+    const update = () => {
+      const size = form.querySelectorAll("[name=match]:checked").length;
+      form.querySelector("[data-selection]").textContent = size + " ticked";
+      const submit = form.querySelector("[type=submit]");
+      if (submit) { submit.disabled = !size; submit.textContent = size ? "Mark " + countLabel(size, "order") + " as already invoiced" : "Mark as already invoiced"; }
+    };
+    form.addEventListener("change", update);
+    update();
   }
 
   function batchReview(review, back) {

@@ -34,7 +34,7 @@ const ORDER_CANDIDATES = `SELECT o.id, json_extract(o.data,'$.customerId') AS cu
   AND COALESCE(CAST(json_extract(o.data,'$.dispatchedAt') AS INTEGER),0) >= ?1 AND json_extract(o.data,'$.tab') IS NULL AND json_extract(o.data,'$.tabClearedId') IS NULL
   AND NOT EXISTS(SELECT 1 FROM wholesale_preview c WHERE c.kind='customer' AND c.id=json_extract(o.data,'$.customerId') AND json_extract(c.data,'$.hidePrices')=1)
   AND NOT EXISTS(SELECT 1 FROM wholesale_invoice_accounts a WHERE a.customer_id=json_extract(o.data,'$.customerId') AND a.cadence='monthly')
-  AND NOT EXISTS(SELECT 1 FROM wholesale_invoice_coverage i WHERE i.order_id=o.id) AND NOT EXISTS(SELECT 1 FROM wholesale_auto_invoices a WHERE a.source='order:'||o.id)`;
+  AND NOT EXISTS(SELECT 1 FROM wholesale_billed_orders i WHERE i.order_id=o.id) AND NOT EXISTS(SELECT 1 FROM wholesale_auto_invoices a WHERE a.source='order:'||o.id)`;
 const TAB_CANDIDATES = `SELECT t.id, t.customer_id, COALESCE(json_extract(t.data,'$.business'),'') AS business FROM wholesale_tabs t WHERE t.cleared_at >= ?1
   AND NOT EXISTS(SELECT 1 FROM wholesale_preview c WHERE c.kind='customer' AND c.id=t.customer_id AND json_extract(c.data,'$.hidePrices')=1)
   AND NOT EXISTS(SELECT 1 FROM wholesale_invoices i WHERE i.order_id='TAB-'||t.id) AND NOT EXISTS(SELECT 1 FROM wholesale_auto_invoices a WHERE a.source='tab:'||t.id)`;

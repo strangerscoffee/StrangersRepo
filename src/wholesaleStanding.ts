@@ -140,7 +140,7 @@ export interface Changer { customerId?: string; minimumGrams?: number }
 async function saveChange(env: Env, order: AnyOrder, data: Record<string, any>, expected: number, by: Changer) {
   if (expected !== order.version) throw new ApiError(409, "conflict", "This order changed. Reload it before saving.");
   const at = Date.now();
-  const result = await env.DB.prepare("UPDATE wholesale_preview SET data=?,version=version+1,updated_at=? WHERE kind='order' AND id=? AND version=? AND json_extract(data,'$.deletedAt') IS NULL AND json_extract(data,'$.preview')=0 AND json_extract(data,'$.status') IN ('New','Preparing','Ready') AND (? IS NULL OR json_extract(data,'$.customerId')=?) AND NOT EXISTS(SELECT 1 FROM wholesale_invoice_coverage WHERE order_id=?)")
+  const result = await env.DB.prepare("UPDATE wholesale_preview SET data=?,version=version+1,updated_at=? WHERE kind='order' AND id=? AND version=? AND json_extract(data,'$.deletedAt') IS NULL AND json_extract(data,'$.preview')=0 AND json_extract(data,'$.status') IN ('New','Preparing','Ready') AND (? IS NULL OR json_extract(data,'$.customerId')=?) AND NOT EXISTS(SELECT 1 FROM wholesale_billed_orders WHERE order_id=?)")
     .bind(JSON.stringify(data), at, order.id, expected, by.customerId || null, by.customerId || null, order.id).run();
   if (!result.meta.changes) throw new ApiError(409, "conflict", "The order changed or was invoiced. Reload it before saving.");
   return { ...data, id: order.id, version: expected + 1, updatedAt: at } as AnyOrder;

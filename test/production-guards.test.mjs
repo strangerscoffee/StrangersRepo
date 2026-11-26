@@ -30,6 +30,8 @@ function invoiceFixture() {
      INSERT INTO wholesale_invoice_coverage SELECT new.order_id,new.seq WHERE substr(new.order_id,1,3)='WS-'
        UNION SELECT value,new.seq FROM json_each(new.data,'$.orderIds') WHERE type='text';
    END;
+   CREATE TABLE wholesale_invoiced_elsewhere(order_id TEXT PRIMARY KEY);
+   CREATE VIEW wholesale_billed_orders AS SELECT order_id FROM wholesale_invoice_coverage UNION ALL SELECT order_id FROM wholesale_invoiced_elsewhere;
    CREATE TABLE wholesale_tabs(id TEXT PRIMARY KEY,customer_id TEXT,cleared_at INTEGER,data TEXT);
    CREATE TABLE wholesale_auto_invoicing(id INTEGER PRIMARY KEY,data TEXT);
    CREATE TABLE wholesale_auto_invoices(source TEXT PRIMARY KEY,lease_owner TEXT,lease_until INTEGER);

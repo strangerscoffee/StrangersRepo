@@ -30,6 +30,7 @@ import { handleInvoiceReminders } from "./wholesaleInvoiceReminders";
 import { handleBillingAccounts } from "./invoicing/accounts";
 import { handleBatches } from "./invoicing/batches";
 import { handleReconciliation } from "./invoicing/reconciliation";
+import { handleQuickBooksMatches } from "./invoicing/quickbooksMatches";
 
 type Pack = "quarter" | "half" | "kilo";
 /** The minimum this business must order, in grams of coffee (0 when Admin has exempted it). */
@@ -462,7 +463,8 @@ export async function handleWholesaleAdmin(req: Request, env: Env, route: string
   if (route.startsWith("invoicing/")) {
     const action = route.slice("invoicing/".length);
     const workspace = await handleBillingAccounts(req, env, action, user)
-      || await handleBatches(req, env, action, user) || await handleReconciliation(req, env, action, user);
+      || await handleBatches(req, env, action, user) || await handleReconciliation(req, env, action, user)
+      || await handleQuickBooksMatches(req, env, action, user);
     if (!workspace) throw new ApiError(404, "not_found", "Invoicing action not found.");
     return workspace;
   }

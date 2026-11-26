@@ -144,6 +144,8 @@ test("security: staff can't use manager or admin features, managers can't use ad
       ["GET", "wholesale/invoicing/accounts/example/statement/pdf"], ["PUT", "wholesale/invoicing/accounts/example/schedule", { ifVersion: 0, cadence: "monthly" }],
       ["POST", "wholesale/invoicing/batches/preview", {}], ["POST", "wholesale/invoicing/batches/00000000-0000-0000-0000-000000000000/approve", {}],
       ["POST", "wholesale/invoicing/reconciliation", {}],
+      ["GET", "wholesale/invoicing/quickbooks-matches"], ["POST", "wholesale/invoicing/quickbooks-matches", { matches: [] }],
+      ["DELETE", "wholesale/invoicing/quickbooks-matches/WS-00000000000000000000000000000000"],
       ["GET", "wholesale"], ["GET", "wholesale/orders"], ["GET", "wholesale/customers"], ["POST", "wholesale/customers", {}], ["PUT", "wholesale/customers/00000000-0000-0000-0000-000000000000", {}],
       ["POST", "wholesale/customers/00000000-0000-0000-0000-000000000000/account", {}], ["PUT", "wholesale/customers/00000000-0000-0000-0000-000000000000/account", {}], ["POST", "wholesale/customers/00000000-0000-0000-0000-000000000000/account/reset-password", {}],
       ["PUT", "wholesale/catalogue/brazil", {}], ["PATCH", "wholesale/orders/PREVIEW-00000000000000000000000000000000", {}], ["DELETE", "wholesale/orders/PREVIEW-00000000000000000000000000000000", { ifVersion: 1 }],

@@ -157,7 +157,7 @@ export async function issuedInvoice(env: Env, id: number): Promise<InvoiceDocume
   if (!row) throw missing(); return document(row);
 }
 /** SQL: whether an order is covered by its own, a tab or a consolidated invoice. */
-export const INVOICED_SQL = "EXISTS(SELECT 1 FROM wholesale_invoice_coverage WHERE order_id=?)";
+export const INVOICED_SQL = "EXISTS(SELECT 1 FROM wholesale_billed_orders WHERE order_id=?)";
 async function coveredInvoice(env: Env, orderId: string) {
   return env.DB.prepare("SELECT i.* FROM wholesale_invoice_coverage c JOIN wholesale_invoices i ON i.seq=c.invoice_id WHERE c.order_id=?")
     .bind(orderId).first<InvoiceRow>();
@@ -270,17 +270,17 @@ async function insertInvoice(env: Env, data: InvoiceData, config: InvoiceSetting
         AND json_extract(o.data,'$.customerId')=? AND json_extract(o.data,'$.status')='Dispatched'
         AND json_extract(o.data,'$.preview')=0 AND json_extract(o.data,'$.deletedAt') IS NULL
         AND json_extract(o.data,'$.tab') IS NULL AND json_extract(o.data,'$.tabClearedId') IS NULL
-      WHERE o.id IS NULL OR EXISTS(SELECT 1 FROM wholesale_invoice_coverage WHERE order_id=o.id)
+      WHERE o.id IS NULL OR EXISTS(SELECT 1 FROM wholesale_billed_orders WHERE order_id=o.id)
     )` : tab ? `EXISTS(SELECT 1 FROM wholesale_tabs WHERE id=? AND customer_id=? AND cleared_at>=?)
     AND NOT EXISTS(
       SELECT 1 FROM json_each(?) reviewed
       LEFT JOIN wholesale_preview o ON o.kind='order' AND o.id=reviewed.key AND o.version=reviewed.value
         AND json_extract(o.data,'$.tabClearedId')=? AND json_extract(o.data,'$.customerId')=?
-      WHERE o.id IS NULL OR EXISTS(SELECT 1 FROM wholesale_invoice_coverage WHERE order_id=o.id)
+      WHERE o.id IS NULL OR EXISTS(SELECT 1 FROM wholesale_billed_orders WHERE order_id=o.id)
     )` : `EXISTS(
       SELECT 1 FROM wholesale_preview o WHERE o.kind='order' AND o.id=? AND o.version=?
       AND json_extract(o.data,'$.preview')=0 AND json_extract(o.data,'$.deletedAt') IS NULL AND json_extract(o.data,'$.status')<>'Cancelled'
-      AND NOT EXISTS(SELECT 1 FROM wholesale_invoice_coverage WHERE order_id=o.id)
+      AND NOT EXISTS(SELECT 1 FROM wholesale_billed_orders WHERE order_id=o.id)
       ${automatic ? `AND json_extract(o.data,'$.status')='Dispatched' AND json_extract(o.data,'$.dispatchedAt')>=?
         AND json_extract(o.data,'$.tab') IS NULL AND json_extract(o.data,'$.tabClearedId') IS NULL` : ""}
     )`;
@@ -369,7 +369,7 @@ export async function issueForTab(req: Request, env: Env, tabId: string, actor: 
     JOIN wholesale_preview o ON o.kind='order' AND o.id=member.value
     WHERE json_extract(o.data,'$.tabClearedId')=? AND json_extract(o.data,'$.customerId')=?
       AND json_extract(o.data,'$.preview')=0 AND json_extract(o.data,'$.deletedAt') IS NULL
-      AND json_extract(o.data,'$.status')<>'Cancelled' AND NOT EXISTS(SELECT 1 FROM wholesale_invoice_coverage WHERE order_id=o.id)
+      AND json_extract(o.data,'$.status')<>'Cancelled' AND NOT EXISTS(SELECT 1 FROM wholesale_billed_orders WHERE order_id=o.id)
     ORDER BY member.key`).bind(JSON.stringify(record.orderIds), tabId, tab.customer_id).all<Row>();
   const orders = loaded.results.map(decode<SourceOrder>);
   if (!orders.length) return null;
