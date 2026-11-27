@@ -231,7 +231,7 @@
       <button type="button" data-go="${id}" aria-current="${tab === id ? "page" : "false"}">
         ${svg(icon)}<span class="tab-label">${id === "wholesale" ? html`Whole<wbr>sale` : title}</span>${id === "more" ? badge(99) : ""}
       </button>`)}`);
-    wholesale?.syncNavigation(desktopNav.matches);
+    wholesale?.syncNavigation(desktopNav.matches, S.page === "wholesale");
   }
   async function refreshBadge() {
     const owner = S.me;

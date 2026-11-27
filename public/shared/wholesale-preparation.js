@@ -87,5 +87,49 @@ function packedEstimate(row){
   const bags=lines.reduce((sum,l)=>sum+((BAG_GRAMS[l.pack]??(Number(l.grams)>=1000?40:18))+OVERFILL_GRAMS)*(Number(l.quantity)||0),0);
   return Math.max(Number(row?.grams)||0,Math.round(coffee+bags+BOX_GRAMS));
 }
-window.SCWholesalePreparation=Object.freeze({grindFor,parcelEstimate,tooHeavyForOneParcel,OVER_LIMIT_STEPS,decafLine,coffeeColour,coffeeFill,coffeeStyle,packagingColours:Object.freeze(packaging.map(e=>Object.freeze({...e}))),iconPaths:Object.freeze({"grind-beans": "<path d=\"M18 4c-4-3-11 1-13 6s0 10 4 11 10-3 12-8 1-7-3-9Z\"/><path d=\"M17 5c-6 3-2 8-10 14\"/>", "grind-fine": "<path d=\"M5 4h14v5H5zM7 9v4h10V9M9 13v3h6v-3M5 21h14M10 18v3M14 18v3\"/>", "grind-medium": "<path d=\"m3 4 9 12 9-12H3ZM12 16v4M8 21h8M7 4l5 8 5-8\"/>", "grind-coarse": "<path d=\"M6 8h11v11H6zM4 21h15M4 4h15M11 2v6M17 10h2a3 3 0 0 1 0 6h-2\"/>"})});
+// Parcelforce uses the Royal Mail public tracker. Only S10 and 21-character hex references
+// are supported by our separately provisioned Tracking V2 integration.
+const trackingV2Pattern = /^(?:[A-Z]{2}[0-9]{9}[A-Z]{2}|[0-9A-F]{21})$/;
+function royalMailTrackingNumber(value) {
+  if (typeof value !== 'string' || value.length > 45) return null;
+  const text = value.trim();
+  if (!/^[A-Za-z0-9 -]+$/.test(text)) return null;
+  const number = text.toUpperCase();
+  const compact = number.replace(/[ -]/g, '');
+  if (trackingV2Pattern.test(compact)) return compact;
+  if (![9, 11, 13, 14, 16, 21].includes(number.length) || !/[0-9]/.test(number)) return null;
+  return /^[A-Z0-9]+$/.test(number) ? number : null;
+}
+function royalMailTrackingV2Number(value) {
+  const number = royalMailTrackingNumber(value);
+  return number && trackingV2Pattern.test(number) ? number : null;
+}
+function royalMailTrackingUrl(value) {
+  const number = royalMailTrackingNumber(value);
+  return number ? 'https://www.royalmail.com/track-your-item#/tracking-results/' + number : null;
+}
+// Older Parcelforce links can be reconciled with a booked label by the exact parcel number.
+function numberFromRoyalMailLink(value) {
+  if (typeof value !== 'string' || value.length > 2000) return null;
+  try {
+    const url = new URL(value);
+    if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || url.port) return null;
+    const royalMail = /^(?:www\.)?royalmail\.com$/.test(url.hostname);
+    const parcelforce = /^(?:www\.)?parcelforce\.com$/.test(url.hostname);
+    if (royalMail && /^\/track-your-item\/?$/.test(url.pathname) && !url.search) {
+      return royalMailTrackingNumber(/^#\/tracking-results\/([A-Za-z0-9]+)$/.exec(url.hash)?.[1]);
+    }
+    const legacy = royalMail && url.pathname === '/portal/rm/track' ||
+      parcelforce && /^\/(?:track-trace\/?|portal\/pw\/track)$/.test(url.pathname);
+    if (legacy && !url.hash) {
+      const number = /^\?trackNumber=([A-Za-z0-9]+)(?:&track=1)?$/.exec(url.search)?.[1];
+      return royalMailTrackingNumber(number);
+    }
+  } catch { /* An unrecognised courier link has no verified parcel reference. */ }
+  return null;
+}
+function isRoyalMailTrackingHost(hostname) {
+  return typeof hostname === 'string' && /(?:^|\.)(?:royalmail\.(?:com|net)|parcelforce\.com)\.?$/i.test(hostname);
+}
+globalThis.SCWholesalePreparation=Object.freeze({royalMailTrackingNumber,royalMailTrackingV2Number,royalMailTrackingUrl,numberFromRoyalMailLink,isRoyalMailTrackingHost,grindFor,parcelEstimate,tooHeavyForOneParcel,OVER_LIMIT_STEPS,decafLine,coffeeColour,coffeeFill,coffeeStyle,packagingColours:Object.freeze(packaging.map(e=>Object.freeze({...e}))),iconPaths:Object.freeze({"grind-beans": "<path d=\"M18 4c-4-3-11 1-13 6s0 10 4 11 10-3 12-8 1-7-3-9Z\"/><path d=\"M17 5c-6 3-2 8-10 14\"/>", "grind-fine": "<path d=\"M5 4h14v5H5zM7 9v4h10V9M9 13v3h6v-3M5 21h14M10 18v3M14 18v3\"/>", "grind-medium": "<path d=\"m3 4 9 12 9-12H3ZM12 16v4M8 21h8M7 4l5 8 5-8\"/>", "grind-coarse": "<path d=\"M6 8h11v11H6zM4 21h15M4 4h15M11 2v6M17 10h2a3 3 0 0 1 0 6h-2\"/>"})});
 })();

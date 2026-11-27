@@ -9,7 +9,7 @@ const { outputFiles } = await build({
   bundle: true, write: false, format: 'esm', platform: 'browser',
 });
 const {
-  RoyalMailError, createRoyalMailOrder, findRoyalMailOrder, fetchRoyalMailLabel, royalMailTrackingNumber, fetchRoyalMailTracking,
+  RoyalMailError, checkRoyalMailParcelService, createRoyalMailOrder, findRoyalMailOrder, fetchRoyalMailLabel, royalMailTrackingNumber, royalMailTrackingV2Number, fetchRoyalMailTracking,
 } = await import('data:text/javascript;base64,' + Buffer.from(outputFiles[0].contents).toString('base64'));
 
 const key = 'fixture-private-click-and-drop-key';
@@ -180,7 +180,78 @@ test("keeps Royal Mail's own reason for a refusal, without the recipient's detai
   error = await reason(() => Response.json([{ errorCode: 5, errorMessage: 'Weight too high for Sample Company' }], { status: 400 }));
   assert.match(error.message, /Weight too high for … \(code 5\)/);
   error = await reason(() => new Response('not json', { status: 400 }));
-  assert.equal(error.message, 'Royal Mail rejected the shipment details. Check the address, parcel and service.');
+  outcome('royal_mail_invalid_response', true)(error);
+});
+
+test("carrier diagnostics retain retry guards and never quote unrecognised error text or field values", async () => {
+  const privateValues = "private@example.test, 01603 123456, MY-KEY and an unknown customer's address";
+  const reason = { errorCode: 15, errorMessage: "Recipient phone number is required", fields: [
+    {fieldName:"recipient.phoneNumber", value:privateValues}, {fieldName:"private@example.test.recipient.phoneNumber"},
+  ] };
+  for (const status of [400, 422]) {
+    const reply = body => createRoyalMailOrder(key, input, async () => Response.json(body, {status}));
+    await assert.rejects(reply({errors:[reason, {errorMessage:privateValues}]}), error => {
+      assert.equal(error.uncertain, false);
+      assert.match(error.message, /phone number is required \(code 15, field recipient.phoneNumber\)/i);
+      assert.doesNotMatch(error.message, /private@|01603|MY-KEY|unknown customer/);
+      return true;
+    });
+    for (const extra of [{orderReference:"WS-OTHER"}, {label:privateValues}, {orderIdentifier:8}]) {
+      await assert.rejects(reply({errors:[{...reason, ...extra}]}), outcome("royal_mail_invalid_response", true));
+    }
+    await assert.rejects(reply({errors:[reason,{message:"Order was already booked"}]}), error => {
+      assert.equal(error.uncertain, true);
+      return true;
+    });
+  }
+});
+
+test("additional carrier validation formats preserve useful wording without quoting private values", async () => {
+  const rejection = body => createRoyalMailOrder(key, input, async () => Response.json(body, {status:422}));
+  for (const [textField, pathField] of [["detail", "propertyName"], ["title", "fieldName"], ["description", "field"]]) {
+    await assert.rejects(rejection([{[textField]:"Weight too high for some unrelated private customer", code:5, [pathField]:"packages[0].weightInGrams"}]), error => {
+      assert.equal(error.uncertain, false);
+      assert.match(error.message, /Weight too high for … \(code 5, field packages\[0\]\.weightInGrams\)/);
+      assert.doesNotMatch(error.message, /private customer/);
+      return true;
+    });
+  }
+  await assert.rejects(rejection({errors: [{errors: { "recipient.emailAddress": ["Email address is required", "other@example.test is the new contact"] }}],
+    code:"secret-client-value", detail:"1 eXaMpLe StReEt", fieldName:"private.name"}), error => {
+    assert.equal(error.uncertain, false);
+    assert.match(error.message, /Email address is required \(field recipient.emailAddress\)/);
+    assert.doesNotMatch(error.message, /@|secret-client-value|example street|private.name/i);
+    return true;
+  });
+});
+
+test("nested, batch and validation-map errors cannot hide duplicate, conflicting, or foreign booking evidence", async () => {
+  const message = {errorCode:3, errorMessage:"Invalid postcode"};
+  const envelope = error => ({successCount:0, errorsCount:1, failedOrders:[{order:{orderReference:input.reference},errors:[error]}]});
+  const unsafe = [
+    [message, {title:"201 Created"}],
+    {title:"Request acknowledged"},
+    {code:"OK", description:"Request received"},
+    {errors:[message, {description:"Created the order"}]},
+    {title:"One or more validation errors occurred.", errors:{orderReference:["Must be unique."]}},
+    {errors:[message, {detail:"Order WS-OTHER already received"}]},
+    {title:"Validation", errors:{postcode:[{message:"Invalid postcode",orderIdentifier:123}]}},
+    [message, {errors:[{message:"bad input",success:true}]}],
+    {...envelope(message), orderReference:"WS-OTHER"},
+    {...envelope(message), trackingNumber:"AB123456789GB"},
+    envelope({errors:[{message:"Order reference already used"}]}),
+    envelope({errors:{orderReference:["Duplicate order reference"]}}),
+    {errors:new Array(13).fill(message)},
+  ];
+  for (const status of [400, 422]) {
+    for (const body of unsafe) {
+      await assert.rejects(createRoyalMailOrder(key, input, async () => Response.json(body, {status})), error => {
+        assert.equal(error.uncertain,true);
+        assert.doesNotMatch(error.message,/WS-OTHER|AB123456789GB/);
+        return true;
+      });
+    }
+  }
 });
 
 test('only a confirmed missing or exact unique lookup can be used for reconciliation', async () => {
@@ -206,6 +277,25 @@ test('only a confirmed missing or exact unique lookup can be used for reconcilia
   assert.equal(royalMailTrackingNumber('ur041761424qi'), 'UR041761424QI');
   assert.equal(royalMailTrackingNumber('AB123456789GB_CON'), null);
   assert.equal(royalMailTrackingNumber('https://example.com'), null);
+});
+
+test('recognises Parcelforce public references without sending them to Tracking V2', async () => {
+  const references = ['123456789', 'pF123456789', 'P123456789012', 'PF123456789012', '1234567890123456', 'PF0123456789012345678'];
+  const credentials = { clientId: 'test-id', clientSecret: 'test-secret', acceptTerms: true };
+  for (const raw of references) {
+    assert.equal(royalMailTrackingNumber(raw), raw.toUpperCase());
+    assert.equal(royalMailTrackingV2Number(raw), null);
+    const response = [{ ...providerOrder, packages: [{ trackingNumber: raw }] }];
+    const order = await findRoyalMailOrder(key, input.reference, () => Response.json(response));
+    assert.equal(order.trackingNumber, raw.toUpperCase());
+    await assert.rejects(fetchRoyalMailTracking(credentials, [raw], () => assert.fail('public-only reference sent to V2')),
+      outcome('royal_mail_invalid_shipment', false));
+  }
+  for (const bad of ['notfound0/123', 'NOTFOUNDX', '1234567890', '123456789012345', '1234567890_CON', 'PF12345?6789', 'ORDER READY 2', 'PF1234567ß']) {
+    assert.equal(royalMailTrackingNumber(bad), null, bad);
+  }
+  const ambiguous = [{ ...providerOrder, trackingNumber: '123456789' }];
+  await assert.rejects(findRoyalMailOrder(key, input.reference, () => Response.json(ambiguous)), outcome('royal_mail_invalid_response', false));
 });
 
 test('retrieves a bounded, recognisable PDF by ID without sending another shipment', async () => {
@@ -298,4 +388,128 @@ test('reads Tracking V2 summaries with separate approved credentials and no proo
   await assert.rejects(fetchRoyalMailTracking(credentials, [number], async () => Response.json({
     mailPieces: [{ mailPieceId: 'ZZ123456789GB', status: '200', summary: {} }],
   })), outcome('royal_mail_invalid_response', false));
+});
+
+test('booking refusals identify carrier fields and codes without exposing order values', async () => {
+  const failed = {
+    successCount: 0, errorsCount: 1, createdOrders: [],
+    failedOrders: [{order: {orderReference: input.reference}, errors: [{
+      errorCode: 4321, errorMessage: 'Sample Person / Example Street',
+      fields: [{fieldName: 'items[0].postageDetails.serviceCode', value: key},
+        {fieldName: 'Recipient.Address.Postcode', value: 'PRIVATE POSTCODE'}],
+    }]}],
+  };
+  for (const status of [200, 400, 422]) {
+    await assert.rejects(createRoyalMailOrder(key, input, async () => Response.json(failed, {status})), error => {
+      assert.equal(error.code, 'royal_mail_rejected');
+      assert.equal(error.uncertain, false);
+      assert.match(error.message, /configured service/);
+      assert.match(error.message, /delivery postcode/);
+      assert.match(error.message, /4321/);
+      assert.doesNotMatch(error.message, /PRIVATE|fixture-private|Example Street|Sample Person/);
+      return true;
+    });
+  }
+  await assert.rejects(createRoyalMailOrder(key, input, async () => Response.json({
+    message: 'Invalid shipping account name: fixture-private', details: 'Example Street',
+  }, {status:400})), error => {
+    assert.match(error.message, /shipping account name in Royal Mail settings/);
+    assert.doesNotMatch(error.message, /fixture-private|Example Street/);
+    return true;
+  });
+});
+
+test('a reference lookup refusal is distinct from a purchase refusal and duplicate evidence requires recovery', async () => {
+  await assert.rejects(findRoyalMailOrder(key, input.reference, async () => Response.json({}, {status:400})), error => {
+    assert.match(error.message, /order-reference lookup/);
+    return true;
+  });
+  await assert.rejects(createRoyalMailOrder(key, input, async () => Response.json(
+    {message: 'An order with this order reference already exists.'}, {status:422},
+  )), error => {
+    assert.equal(error.uncertain, true);
+    assert.match(error.message, /already have this booking/);
+    return true;
+  });
+  await assert.rejects(createRoyalMailOrder(key, input, async () => Response.json(
+    {successCount:1,createdOrders:[providerOrder]}, {status:400},
+  )), outcome('royal_mail_invalid_response', true));
+});
+
+test('only an identified carrier error or a single correlated refusal unlocks a purchase retry', async () => {
+  const failure = {order:{orderReference: input.reference}, errors:[{message:"Invalid postcode"}]};
+  for (const status of [400, 422]) {
+    for (const body of ["", "carrier disconnected", "x".repeat(33000), "[]", "{}", JSON.stringify({ failedOrders: [failure] }),
+      JSON.stringify({message: "Bad parcel", errorsCount: 1, failedOrders: [failure, failure]}),
+      JSON.stringify({successCount: 0, errorsCount: 1, failedOrders: [{...failure, order: {orderReference: "OTHER"}}]}),
+      JSON.stringify({successCount: 0, errorsCount: 1, failedOrders: [{...failure, errors: [{}]}]}),
+      JSON.stringify({message: "Parcels processed", orderIdentifier: 32}),
+      JSON.stringify({message: "Invalid postcode", order: {orderReference: "OTHER"}}),
+      JSON.stringify({fields:[{fieldName:""}]}),
+    ]) {
+      await assert.rejects(createRoyalMailOrder(key, input, async () => new Response(body, {status})), outcome("royal_mail_invalid_response", true));
+    }
+    for (const body of [{code:"18"}, {fields:[{fieldName:"recipient.address.postcode"}]}, {message:"Invalid parcel format"}]) {
+      await assert.rejects(createRoyalMailOrder(key, input, async () => Response.json(body, {status})), outcome("royal_mail_rejected", false, status));
+    }
+  }
+  for (const error of [
+    {message:"OrderReference already exists."},
+    {message:"Order reference is already in use."},
+    {message:"Order has already been created."},
+    {message:"Order was successfully created."},
+    {code:"DuplicateOrderReference"},
+    {message:"Must be unique.", fields:[{fieldName:"orderReference"}]},
+  ]) {
+    for (const status of [200, 400, 422]) {
+      const envelope = {successCount:0, errorsCount:1, failedOrders:[{...failure, errors:[error]}]};
+      await assert.rejects(createRoyalMailOrder(key, input, async () => Response.json(envelope, {status})), e => {
+        assert.equal(e.uncertain, true); assert.match(e.message, /already have this booking/); return true;
+      });
+    }
+  }
+  await assert.rejects(createRoyalMailOrder(key, input, async () => Response.json({
+    successCount:1, errorsCount:0, createdOrders:[providerOrder], failedOrders:[failure],
+  })), outcome("royal_mail_invalid_response", true));
+});
+
+test('service discovery scopes the existing service to the weighed parcel and distinguishes unknowns', async () => {
+  const group = (shippingAccountName, serviceCode = "TPS48") => ({ shippingAccountName, carrierGuid: crypto.randomUUID(),
+    services: [{ serviceCode, serviceName: "Test service", carrierServiceGuid: crypto.randomUUID() }] });
+  const shippingAccountName = "Roastery & Co", configured = { serviceCode: "TPS48", shippingAccountName };
+  function lookup(settings, groups, accounts = []) {
+    const calls = [];
+    const check = checkRoyalMailParcelService(key, settings, "NR2 1DE", 8500, async (url, init) => {
+      assert.equal(init.method, "GET"); assert.equal(init.body, undefined); assert.equal(init.redirect, "manual");
+      assert.equal(init.headers.get("Authorization"), "Bearer " + key);
+      const { pathname, searchParams } = new URL(url);
+      calls.push(pathname);
+      if (pathname.endsWith("/carriers")) return Response.json(accounts);
+      assert.equal(pathname, "/api/v1/services");
+      assert.equal(searchParams.get("destinationCountryCode"), "GBR");
+      assert.equal(searchParams.get("destinationPostcode"), "NR2 1DE");
+      assert.equal(searchParams.get("packagingFormat"), "Parcel");
+      assert.equal(searchParams.get("packageWeight"), "8500");
+      assert.equal(searchParams.get("shippingAccountName"), settings.shippingAccountName || null);
+      return groups instanceof Response ? groups : Response.json(groups);
+    });
+    return { calls, check };
+  }
+  const single = lookup(configured, [group(shippingAccountName)]);
+  assert.equal((await single.check).available, true);
+  assert.deepEqual(single.calls, ["/api/v1/services"]);
+  const multiple = lookup({ serviceCode: "TPS48" }, [group(shippingAccountName)], [{ shippingAccountName }, { shippingAccountName: "Other account" }]);
+  assert.match((await multiple.check).message, /multiple shipping accounts/i);
+  assert.deepEqual(multiple.calls, ["/api/v1/services", "/api/v1/carriers"]);
+  assert.equal((await lookup({ serviceCode: "TPS48" }, [group(shippingAccountName)], [{ shippingAccountName }]).check).available, true);
+  assert.equal((await lookup(configured, []).check).available, false);
+  assert.equal((await lookup(configured, [group(shippingAccountName, "OTHER")]).check).available, false);
+  const register = await lookup({ ...configured, serviceRegisterCode: "04" }, [group(shippingAccountName)]).check;
+  assert.equal(register.available, null); assert.match(register.message, /register 04/);
+  assert.equal((await lookup(configured, [group("Wrong account")]).check).available, null);
+  assert.equal((await lookup(configured, [{ shippingAccountName, services: [{}] }]).check).available, null);
+  for (const status of [400, 401, 403, 429, 500]) {
+    const uncertain = await lookup(configured, new Response("private customer and carrier detail", { status })).check;
+    assert.equal(uncertain.available, null); assert.doesNotMatch(uncertain.message, /private customer/);
+  }
 });

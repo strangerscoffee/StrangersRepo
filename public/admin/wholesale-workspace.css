@@ -114,3 +114,58 @@
   .w-operations .w-orders-panel .w-list-header .btn{padding-inline:9px}
   .w-rm-card-head{flex-wrap:wrap}
 }
+
+.w-rm-box-check summary{cursor:pointer;font-weight:650;min-height:44px;align-content:center}
+.w-rm-box-form,.w-rm-box-fields,.w-rm-box-fields label{display:grid;gap:8px}
+.w-rm-box-form{gap:12px;padding-block:8px}
+.w-rm-box-fields{grid-template-columns:repeat(auto-fit,minmax(min(100%,125px),1fr))}
+.w-rm-box-fields label{font-size:.88rem;min-width:0}
+.w-rm-box-fields input{min-width:0;width:100%}
+.w-rm-box-form button{justify-self:start}
+.w-rm-box-form [role=status]:empty{display:none}
+
+.w-rm-nav{display:flex;gap:4px;flex-wrap:wrap;align-self:start;width:fit-content;max-width:100%;padding:4px;margin-bottom:14px;background:var(--sunk);border:1px solid var(--line);border-radius:17px}
+.w-rm-nav button{border:0;min-height:44px;border-radius:13px;padding:6px 14px;color:var(--muted);background:transparent;font:inherit;font-weight:600;cursor:pointer}
+.w-rm-nav button[aria-current="page"]{background:var(--glass);box-shadow:var(--glass-hi),var(--lift);color:var(--accent)}
+#wRoyalMailChecks,.rm-check-column{display:grid;align-content:start;gap:14px;min-width:0}
+@media(min-width:1280px){#wRoyalMailChecks:has(.rm-check-column){grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}}
+.rm-check-panel{gap:0}
+.rm-check-intro{display:flex;align-items:start;gap:12px;margin-bottom:14px}
+.rm-check-intro .ic{flex:none}
+.rm-check-intro>div,.rm-check-description{min-width:0}
+.rm-check-intro p,.rm-check-description p{margin-top:4px}
+.rm-check-list{margin:0;padding:0;list-style:none}
+.rm-check-list li{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 0;border-top:1px solid var(--line)}
+.rm-check-list li:last-child{padding-bottom:0}
+.rm-check-list h3{font-size:15px;line-height:1.3}
+.rm-check-list :is(p,.pill){overflow-wrap:anywhere}
+.rm-check-list .pill{white-space:normal;text-align:center;flex:none}
+.rm-check-actions{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:8px;flex-shrink:0}
+.rm-check-actions .btn,.rm-check-run .btn,.rm-check-help{min-height:44px}
+.rm-check-run{background:var(--sunk);border-radius:14px;padding:12px 14px;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:6px 14px}
+.rm-check-run>.btn{grid-column:2;grid-row:1/4;justify-self:end}
+.rm-check-run>.hint{grid-column:1}
+.rm-sample-toggle{display:flex;gap:8px;align-items:center;min-height:44px;font-weight:600;cursor:pointer}
+.rm-sample-toggle input,.rm-evidence-fields input[type=checkbox]{accent-color:var(--accent);flex:none;width:18px;height:18px}
+.rm-sample-fields,.rm-evidence-fields{display:grid;gap:12px;min-width:0}
+.rm-sample-fields{grid-template-columns:repeat(2,minmax(0,1fr))}
+.rm-sample-fields[hidden]{display:none}
+.rm-sample-fields .field{margin:0}
+.rm-check-stamp{padding:12px 0}
+.rm-check-messages:not(:has(>button,>p:not(:empty))){display:none}
+.rm-check-messages p:empty,.rm-evidence-fields+p:empty,#wRoyalMailEvidence [role=alert]:empty{display:none}
+.rm-check-messages{display:grid;gap:8px;justify-items:start;margin-top:12px}
+.rm-evidence-fields{border:0;margin:0;padding:0}
+.rm-check-help{display:inline-flex;align-items:center;gap:6px;color:var(--accent);justify-self:start;font-weight:600}
+.rm-check-help .i{width:15px;height:15px;flex:none}
+.rm-check-context{padding:12px;border-radius:12px;background:var(--sunk);overflow-wrap:anywhere}
+#wRoyalMailEvidence .w-editor-footer>.btn{justify-self:start;min-height:44px}
+@media(max-width:650px){
+  .w-rm-nav{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));width:100%;gap:2px}
+  .w-rm-nav button{font-size:13px;line-height:1.25;padding:5px}
+  .rm-check-list li:has(.rm-check-actions){align-items:flex-start;flex-direction:column;gap:8px}
+  .rm-check-actions{flex-shrink:1;justify-content:space-between;width:100%}
+  .rm-check-run{grid-template-columns:minmax(0,1fr)}
+  .rm-check-run>.btn{grid-column:1;grid-row:auto;justify-self:start;margin-top:5px}
+}
+@media(max-width:360px){.rm-sample-fields{grid-template-columns:minmax(0,1fr)}.rm-check-intro>.ic{display:none}}

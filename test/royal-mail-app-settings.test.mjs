@@ -63,7 +63,7 @@ const bundle = await build({
   format: "esm", platform: "browser", target: "es2022", external: ["cloudflare:*"],
 });
 
-async function fixture(t, secret = encryptionKey) {
+async function fixture(t, secret = encryptionKey, workerBookingKey = existing.booking.key) {
   const requests = [];
   const records = new Map();
   let onLookup;
@@ -83,7 +83,7 @@ async function fixture(t, secret = encryptionKey) {
           LIVE: { type: "durable-object", worker: "royal-mail-app-settings", exportName: "LiveHub" },
           SETUP_CODE: binding(setupCode), ADMIN_HOST: binding("admin.staffstrangerscoffee.com"),
           COOKIE_DOMAIN: binding("staffstrangerscoffee.com"), QUICKBOOKS_TOKEN_KEY: binding(secret),
-          WHOLESALE_ROYAL_MAIL_CLICK_DROP_KEY: binding(existing.booking.key),
+          WHOLESALE_ROYAL_MAIL_CLICK_DROP_KEY: binding(workerBookingKey),
           WHOLESALE_ROYAL_MAIL_SERVICE_CODE: binding(existing.booking.serviceCode),
           WHOLESALE_ROYAL_MAIL_TRACKING_CLIENT_ID: binding(existing.tracking.clientId),
           WHOLESALE_ROYAL_MAIL_TRACKING_CLIENT_SECRET: binding(existing.tracking.clientSecret),
@@ -238,8 +238,12 @@ test("Royal Mail credential settings protect booking and tracking secrets", asyn
     assert.equal(retained.credentialSetup.bookingSource, "admin");
     assert.equal((await save({ kind: "tracking", clientId: "", clientSecret: "", acceptTerms: true })).trackingConfigured, true);
     const start = requests.length;
-    const { path } = await seedOrder(2);
+    const { id, path } = await seedOrder(2);
     await expectJson(await call(path, "POST", packageDetails), 201);
+    const expectedScope = Buffer.from(await crypto.subtle.digest("SHA-256",
+      new TextEncoder().encode(savedBooking.key + "\u0000" + savedBooking.shippingAccountName))).toString("base64");
+    const shipment = await db.prepare("SELECT booking_account_scope FROM wholesale_royal_mail_shipments WHERE order_id = ?").bind(id).first();
+    assert.equal(shipment.booking_account_scope, expectedScope, "confirmed create binds setup evidence to the chosen billing account");
     const view = await expectJson(await call(path + "/refresh", "POST", {}));
     assert.equal(view.shipment.carrierStatus, "Accepted at a Post Office");
     const fresh = requests.slice(start);
@@ -328,7 +332,7 @@ test("Royal Mail credential settings protect booking and tracking secrets", asyn
     assert.equal(downloaded.royalMailSettings.version, (await settings()).version);
     const text = JSON.stringify(downloaded);
     const row = await policy();
-    assert.doesNotMatch(text, /booking_config|tracking_config/);
+    assert.doesNotMatch(text, /booking_config|tracking_config|booking_connection/);
     assert.equal(text.includes(row.booking_config), false);
     assert.equal(text.includes(row.tracking_config), false);
     for (const encrypted of [row.booking_config, row.tracking_config]) {
@@ -359,4 +363,166 @@ test("a missing encryption key prevents saves and never activates Worker credent
   const { path } = await seedOrder(5);
   assert.ok([409, 503].includes((await call(path, "POST", packageDetails)).status));
   assert.equal(requests.length, 0);
+});
+
+test("setup checks record carrier evidence and dated Admin confirmations without purchasing postage", async t => {
+  const { call, db, interceptLookup, requests, save, sessionCookie } = await fixture(t);
+  const path = settingsPath + "/checks";
+  const get = () => call(path).then(r => expectJson(r));
+  const write = (state, method, data) => call(path, method, { ifVersion: state.version, scope: state.scope, ...data });
+  const request = async (method, data, status = 200) => expectJson(await write(await get(), method, data), status);
+  const confirm = (id, evidence, status) => request("PUT", { id, evidence, confirmed: true }, status);
+  const initial = await get();
+  assert.deepEqual(initial, { version: 0, scope: initial.scope, serviceCode: existing.booking.serviceCode, serviceRegisterCode: null, automated: null, manual: {} });
+  assert.match(initial.scope, /^[a-f0-9]{64}$/);
+  const secretsInDb = await db.prepare("SELECT scope_key FROM wholesale_royal_mail_setup_checks").first();
+  assert.ok(!JSON.stringify(initial).includes(secretsInDb.scope_key));
+  assert.equal(requests.length, 0);
+
+  await t.test("only Admin can view, check and confirm; state changes require the site origin and current settings", async () => {
+    const staff = { username: "setupchecks.staff", password: "Fixture test temp password 123!" };
+    await expectJson(await call("/api/admin/users", "POST", { ...staff, name: "Checks Staff", role: "staff" }));
+    const signedIn = await call("/api/auth/change", "POST", { ...staff, newPassword: "Own checks password 123!" }, { cookie: "" });
+    const cookie = sessionCookie(signedIn);
+    assert.ok(cookie);
+    for (const method of ["GET", "POST", "PUT"]) {
+      const payload = method === "GET" ? undefined : { ifVersion: 0, scope: initial.scope };
+      assert.equal((await call(path, method, payload, { cookie })).status, 403);
+      assert.equal((await call(path, method, payload, { cookie: "" })).status, 401);
+      if (method === "GET") continue;
+      assert.equal((await call(path, method, payload, { headers: { origin: "https://other.example.test" } })).status, 403);
+      assert.equal((await call(path, method, payload, { headers: { "x-expected-user-id": "another-user" } })).status, 409);
+    }
+    assert.equal((await call(path, "DELETE")).status, 405);
+    assert.equal((await call(path, "POST", { ifVersion: 0, scope: "stale" })).status, 409);
+    assert.equal((await call(path, "PUT", { ifVersion: 0 })).status, 409);
+    assert.equal(requests.length, 0);
+  });
+
+  await t.test("manual evidence is limited to structured fields, can be edited or removed, and changes are attributed to the Admin", async () => {
+    await confirm("printer", { format: "a4", document: existing.booking.key }, 400);
+    await confirm("returnAddress", { address: "18 Example Lane" }, 400);
+    await confirm("register", { requirement: "configured" }, 400);
+    await confirm("collection", { carrier: "parcelforce", site: "warehouse", cutoff: "24:00", owner: "shiftSupervisor" }, 400);
+    await confirm("parcelLimits", { maxWeightGrams: 30001, maxLengthCm: 150 }, 400);
+    await confirm("parcelLimits", { maxWeightGrams: 30000, maxLengthCm: 150, maxLengthPlusGirthCm: 50 }, 400);
+    await confirm("__proto__", {}, 400);
+    assert.deepEqual((await get()).manual, {});
+
+    await confirm("returnAddress", {});
+    const start = await get();
+    const updates = await Promise.all(["a4", "thermal4x6"].map(format => write(start, "PUT", { id: "printer", evidence: { format }, confirmed: true })));
+    assert.deepEqual(updates.map(r => r.status).sort(), [200, 409]);
+    const result = await confirm("printer", { format: "thermal4x6" });
+    assert.deepEqual(result.manual.printer.evidence, { format: "thermal4x6" });
+    assert.equal(result.manual.printer.confirmedBy, "Settings Admin");
+    assert.ok(result.manual.printer.confirmedAt > 0);
+    assert.deepEqual((await get()).manual, result.manual);
+    await confirm("register", { requirement: "notRequired" });
+    await confirm("collection", { carrier: "parcelforce", site: "warehouse", cutoff: "16:30", owner: "shiftSupervisor" });
+    await confirm("parcelLimits", { maxWeightGrams: 20000, maxLengthCm: 120, maxLengthPlusGirthCm: 190 });
+    const state = await request("PUT", { id: "returnAddress", confirmed: false });
+    assert.equal(state.manual.returnAddress, undefined);
+    assert.ok(state.manual.printer, "removing one check preserves the others");
+    assert.equal(requests.length, 0);
+    assert.equal(state.automated, null);
+    assert.equal((await db.prepare("SELECT enabled FROM wholesale_royal_mail_settings").first()).enabled, 0);
+  });
+
+  await t.test("the end-of-day manifest only counts on its handover date in London", async () => {
+    const evidence = { owner: "dispatchLead", site: "warehouse", proof: "signedManifest" };
+    const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date());
+    await request("PUT", { id: "manifest", confirmed: true, evidence }, 409);
+    const invalidDate = await request("PUT", { id: "manifest", confirmed: true, evidence, manifestDay: "2000-01-01" }, 409);
+    assert.equal(invalidDate.code, "conflict");
+    const state = await request("PUT", { id: "manifest", confirmed: true, evidence, manifestDay: today });
+    assert.deepEqual(state.manual.manifest.evidence, evidence);
+    await db.prepare("UPDATE wholesale_royal_mail_setup_checks SET manual = json_set(manual, '$.manifest.confirmedAt', ?) WHERE id = 1")
+      .bind(Date.now() - 48 * 60 * 60 * 1000).run();
+    const expired = await get();
+    assert.equal(expired.manual.manifest, undefined);
+    assert.ok(expired.manual.collection);
+    assert.ok((await request("PUT", { id: "manifest", confirmed: true, evidence, manifestDay: today })).manual.manifest.confirmedAt > Date.now() - 60_000);
+  });
+
+  await t.test("sample addresses are transient; running and opening checks never buys postage, downloads on behalf of packers or touches orders", async () => {
+    const sample = { weightGrams: 2610, postcode: "NR33 7EX" };
+    const before = requests.length;
+    for (const invalid of [{ postcode: "BT1 1AA", weightGrams: 1000 }, { ...sample, weightGrams: 0 }, { ...sample, name: "Example Coffee Bar" }]) {
+      await request("POST", { sample: invalid }, 400);
+    }
+    assert.equal(requests.length, before);
+    const state = await request("POST", { sample });
+    assert.equal(state.automated.checkedBy, "Settings Admin");
+    assert.ok(state.automated.checkedAt > 0 && state.automated.checks.length >= 4);
+    assert.ok(state.automated.checks.some(row => row.status !== "passed"));
+    assert.ok(requests.length > before);
+    assert.ok(requests.slice(before).every(row => row.method === "GET"));
+    const settled = requests.length;
+    assert.deepEqual(await get(), state);
+    assert.equal(requests.length, settled, "opening the page is local only");
+    assert.deepEqual((await db.prepare("SELECT order_id FROM wholesale_royal_mail_shipments").all()).results, []);
+    const saved = await db.prepare("SELECT * FROM wholesale_royal_mail_setup_checks").first();
+    const trail = (await db.prepare("SELECT text FROM audit_log WHERE kind = 'wholesale_royal_mail'").all()).results;
+    for (const content of [state, saved, trail]) {
+      const encoded = JSON.stringify(content);
+      assertNoCredentials(encoded);
+      assert.ok(!encoded.includes(sample.postcode));
+      assert.ok(!encoded.includes("Example Coffee Bar"));
+    }
+    assert.ok(trail.some(e => e.text.includes("confirmed in Royal Mail setup")));
+  });
+
+  await t.test("a Worker credential change invalidates evidence even when the saved settings version stays the same", async () => {
+    const saved = await db.prepare("SELECT * FROM wholesale_royal_mail_setup_checks").first();
+    const rotated = await fixture(t, encryptionKey, "fixture-rotated-worker-booking-key");
+    await rotated.db.prepare("UPDATE wholesale_royal_mail_setup_checks SET scope_key=?, version=?, scope=?, automated=?, manual=? WHERE id=1")
+      .bind(saved.scope_key, saved.version, saved.scope, saved.automated, saved.manual).run();
+    const current = await expectJson(await rotated.call(path));
+    assert.equal((await rotated.settings()).version, 0);
+    assert.notEqual(current.scope, saved.scope);
+    assert.equal(current.automated, null);
+    assert.deepEqual(current.manual, {});
+    assert.equal(rotated.requests.length, 0);
+    await rotated.db.prepare("UPDATE wholesale_royal_mail_settings SET booking_config = 'unreadable' WHERE id = 1").run();
+    const missing = await expectJson(await rotated.call(path));
+    assert.equal(missing.serviceCode, null);
+    assert.equal(missing.serviceRegisterCode, null);
+    for (const [id, evidence] of [["register", { requirement: "notRequired" }], ["parcelLimits", { maxWeightGrams: 5000, maxLengthCm: 100 }]]) {
+      const denied = await expectJson(await rotated.call(path, "PUT", { ifVersion: missing.version, scope: missing.scope, id, evidence, confirmed: true }), 400);
+      assert.match(denied.message, /save a valid booking service/i);
+    }
+  });
+
+  await t.test("credential rotation during provider checks discards the in-flight result and invalidates previous evidence", async () => {
+    const previous = await get();
+    let enter, release;
+    const entered = new Promise(resolve => { enter = resolve; });
+    const held = new Promise(resolve => { release = resolve; });
+    interceptLookup(async () => { enter(); await held; });
+    const checking = write(previous, "POST", { sample: { postcode: "NR1 4AA", weightGrams: 300 } });
+    try {
+      const early = await Promise.race([entered.then(() => null), checking]);
+      if (early) assert.fail(await early.text());
+      await save({ ...savedBooking, serviceCode: "NDB" });
+    } finally { release(); interceptLookup(undefined); }
+    assert.equal((await expectJson(await checking, 409)).code, "conflict");
+    const changed = await get();
+    assert.notEqual(changed.scope, previous.scope);
+    assert.equal(changed.serviceCode, "NDB");
+    assert.equal(changed.serviceRegisterCode, savedBooking.serviceRegisterCode);
+    assert.equal(changed.automated, null);
+    assert.deepEqual(changed.manual, {});
+    assert.equal((await write(previous, "PUT", { id: "printer", confirmed: true, evidence: { format: "a4" } })).status, 409);
+    const limits = { maxWeightGrams: 30000, maxLengthCm: 150, maxVolumeLitres: 220 };
+    const oversizeContract = { ...limits, maxLengthCm: 175, maxVolumeLitres: 250 };
+    assert.deepEqual((await confirm("parcelLimits", oversizeContract)).manual.parcelLimits.evidence, oversizeContract,
+      "the agreement can allow parcels above express24's standard surcharge thresholds");
+    await confirm("parcelLimits", { ...limits, maxVolumeLitres: undefined }, 400);
+    await confirm("register", { requirement: "notRequired" }, 400);
+    assert.deepEqual((await confirm("parcelLimits", limits)).manual.parcelLimits.evidence, limits);
+    const valid = await confirm("register", { requirement: "configured" });
+    await expectJson(await call(settingsPath, "PUT", { ifVersion: (await expectJson(await call(settingsPath))).version, enabled: true }));
+    assert.deepEqual(await get(), valid, "turning bookings on preserves preparatory checks for the same connection");
+  });
 });

@@ -1,5 +1,6 @@
 // The release applies the schema before activating a Worker. Local and legacy environments can initialise it on demand.
 import { ApiError, type Env } from "./http";
+import { DISPATCH_QUEUE_KEY, DISPATCH_QUEUE_ORDERS } from "./wholesale/dispatchQueueCandidates";
 import { migrateHolidayReminders, migrateLeave } from "./rota/leave/schema";
 import { migrateSickness } from "./rota/sickness";
 import { migrateInvites } from "./wholesaleImport";
@@ -600,6 +601,41 @@ const MIGRATIONS: Migration[] = [
       )`),
       env.DB.prepare("CREATE INDEX IF NOT EXISTS staff_passkey_challenges_expiry ON staff_passkey_challenges(expires_at)"),
       env.DB.prepare("CREATE INDEX IF NOT EXISTS staff_passkey_challenges_owner ON staff_passkey_challenges(user_id)"),
+    ]);
+  } },
+  { id: 54, name: "Wholesale dispatch label downloads and booking recovery", run: async env => {
+    const table = "wholesale_royal_mail_shipments";
+    for (const [column, definition] of [
+      ["label_downloaded_at", "INTEGER"], ["recovery_attempts", "INTEGER NOT NULL DEFAULT 0"],
+      ["recovery_due_at", "INTEGER"], ["booking_connection", "TEXT"],
+    ]) {
+      if ((await columns(env, table)).has(column)) continue;
+      try { await env.DB.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`).run(); }
+      catch (error) { if (!(await columns(env, table)).has(column)) throw error; }
+    }
+    await env.DB.prepare(`CREATE INDEX IF NOT EXISTS wholesale_royal_mail_recovery_due
+      ON wholesale_royal_mail_shipments(COALESCE(recovery_due_at, updated_at + 60000), order_id)
+      WHERE provider_id IS NULL AND state IN ('booking','review') AND recovery_due_at IS NOT 0`).run();
+    await env.DB.batch([
+      env.DB.prepare(`CREATE INDEX IF NOT EXISTS wholesale_dispatch_queue_orders ON wholesale_preview(${DISPATCH_QUEUE_KEY}) WHERE ${DISPATCH_QUEUE_ORDERS}`),
+      env.DB.prepare("CREATE INDEX IF NOT EXISTS wholesale_elsewhere_customer ON wholesale_invoiced_elsewhere(customer_id,environment)"),
+    ]);
+  } },
+  { id: 55, name: "Wholesale Royal Mail setup checks", run: async env => {
+    const shipments = "wholesale_royal_mail_shipments";
+    if (!(await columns(env, shipments)).has("booking_account_scope")) {
+      try { await env.DB.prepare("ALTER TABLE wholesale_royal_mail_shipments ADD COLUMN booking_account_scope TEXT").run(); }
+      catch (error) { if (!(await columns(env, shipments)).has("booking_account_scope")) throw error; }
+    }
+    await env.DB.batch([
+      env.DB.prepare(`CREATE INDEX IF NOT EXISTS wholesale_royal_mail_setup_evidence
+        ON wholesale_royal_mail_shipments(booking_connection, (tracking_number IS NULL), updated_at DESC, order_id)
+        WHERE provider_id > 0 AND review_required = 0 AND state IN ('labelled','dispatched')`),
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS wholesale_royal_mail_setup_checks (
+        id INTEGER PRIMARY KEY CHECK (id = 1), scope_key TEXT NOT NULL,
+        version INTEGER NOT NULL DEFAULT 0, scope TEXT, automated TEXT, manual TEXT NOT NULL DEFAULT '{}'
+      )`),
+      env.DB.prepare("INSERT OR IGNORE INTO wholesale_royal_mail_setup_checks (id, scope_key) VALUES (1, hex(randomblob(32)))"),
     ]);
   } },
 ];

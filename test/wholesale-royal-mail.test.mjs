@@ -23,7 +23,19 @@ const packageDetails = { ifVersion: 1, weightGrams: 2140, recipient: {
 } };
 
 test("wholesale shipping keeps booking, label validity and dispatch consistent across requests", async t => {
-  const bundle = await build({ absWorkingDir: root, entryPoints: ["src/index.ts"], bundle: true,
+  const bundle = await build({ absWorkingDir: root, bundle: true,
+    stdin: { resolveDir: root, contents: `
+      import app from "./src/index.ts";
+      import { recoverRoyalMailBookings } from "./src/royalMailRecovery.ts";
+      export { LiveHub } from "./src/index.ts";
+      export default { ...app, async fetch(request, env, ctx) {
+        if (new URL(request.url).hostname === "recovery.fixture") {
+          await recoverRoyalMailBookings(env);
+          return new Response("done");
+        }
+        return app.fetch(request, env, ctx);
+      } };
+    ` },
     format: "esm", platform: "browser", target: "es2022", external: ["cloudflare:*"], write: false });
   const records = new Map();
   const requests = [];
@@ -72,6 +84,12 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
       }
       assert.equal(url.host, "api.parcel.royalmail.com");
       assert.equal(request.headers.get("authorization"), "Bearer fixture-click-drop");
+      if (url.pathname === "/api/v1/services") {
+        assert.equal(request.method, "GET");
+        assert.deepEqual(Object.fromEntries(url.searchParams), { destinationCountryCode: "GBR", destinationPostcode: "NR2 1DE", packagingFormat: "Parcel", packageWeight: "2140" });
+        return RuntimeResponse.json([{ shippingAccountName: "Local fulfilment", services: [{ serviceCode: "TPS48" }] }]);
+      }
+      if (url.pathname === "/api/v1/carriers") return RuntimeResponse.json([{ shippingAccountName: "Local fulfilment" }]);
       if (request.method === "POST") {
         const { items: [item] } = await request.json();
         assert.equal(item.packages[0].weightInGrams, 2140);
@@ -252,10 +270,45 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     await setBookings(true);
   });
 
+  await t.test("Parcelforce references stay pinned through verification, PDF, handover and customer email", async () => {
+    const id = orderRef(99), parcel = "PF123456789";
+    const expectedLink = "https://www.royalmail.com/track-your-item#/tracking-results/" + parcel;
+    await seed(id);
+    assert.equal((await create(id)).status, 201);
+    records.set(id, { ...records.get(id), trackingNumber: parcel, printedOn: "2026-11-26T09:00:00Z" });
+    await refresh(id);
+    assert.equal((await read(id)).reviewRequired, true);
+    assert.equal((await call(shipPath(id) + "/label")).status, 409);
+    assert.equal((await call(shipPath(id) + "/verify", "POST", { ifVersion: 1, trackingNumber: parcel, confirmed: true })).status, 200);
+    await releaseRefresh(id);
+    const start = requests.length;
+    assert.equal((await refresh(id)).status, 200);
+    assert.equal(requests.length, start + 1, "exact Click & Drop lookup only");
+    assert.equal((await read(id)).trackingUrl, expectedLink);
+    assert.equal((await call(shipPath(id) + "/label")).status, 200);
+    const matched = records.get(id);
+    records.set(id, { ...matched, trackingNumber: null });
+    await releaseRefresh(id);
+    await refresh(id);
+    assert.equal((await read(id)).reviewRequired, true, "temporarily missing carrier reference must not release the pinned label");
+    assert.equal((await call(shipPath(id) + "/label")).status, 409);
+    records.set(id, matched);
+    assert.equal((await call(shipPath(id) + "/verify", "POST", { ifVersion: 1, trackingNumber: parcel, confirmed: true })).status, 200);
+    assert.equal((await dispatch(id, 1, "https://www.parcelforce.com/track-trace?trackNumber=wrong")).status, 409);
+    assert.equal((await dispatch(id, 1, "https://www.parcelforce.com/track-trace?trackNumber=" + parcel + "&next=https://example.test")).status, 409);
+    const result = await dispatch(id, 1, "http://www.parcelforce.com/portal/pw/track?trackNumber=" + parcel);
+    assert.equal((await result.json()).order.trackingUrl, expectedLink);
+    const email = await db.prepare("SELECT payload FROM wholesale_email_outbox WHERE order_id=?").bind(id).first();
+    assert.ok(JSON.parse(email.payload).mail.text.includes(expectedLink));
+  });
+
   await t.test("carrier conflicts require exact verification and cannot send stale tracking", async () => {
     const id = orderRef(2);
     await seed(id);
     assert.equal((await create(id)).status, 201);
+    assert.equal((await call(shipPath(id) + "/label")).status, 200);
+    const released = () => db.prepare("SELECT label_downloaded_at AS at FROM wholesale_royal_mail_shipments WHERE order_id=?").bind(id).first("at");
+    assert.ok(await released());
     const original = records.get(id);
     const booked = await read(id);
     records.set(id, { ...original, orderIdentifier: original.orderIdentifier + 40 });
@@ -272,6 +325,7 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     assert.equal((await read(id)).trackingNumber, number, "the original number stays pinned");
     assert.equal((await verify(number)).status, 409);
     assert.equal((await verify(replacement)).status, 200);
+    assert.equal(await released(), null, "a replacement tracking number requires the replacement label to be downloaded");
     assert.equal((await read(id)).reviewRequired, false);
     assert.equal((await read(id)).trackingNumber, replacement);
     assert.equal((await dispatch(id, 1, booked.trackingUrl)).status, 409);
@@ -328,6 +382,96 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     assert.equal((await create(unstarted)).status, 201);
   });
 
+  await t.test("recovery bounds lookups, escalates missing bookings and accepts late carrier evidence", async () => {
+    const id = orderRef(81);
+    await seed(id);
+    lostReplies.add(id);
+    const before = posts();
+    assert.equal((await create(id)).status, 202);
+    const carrier = records.get(id);
+    records.delete(id); // Click & Drop accepted the POST but its lookup has not indexed the reference yet.
+    const recover = async () => {
+      const response = await worker.dispatchFetch("https://recovery.fixture/run");
+      assert.equal(response.status, 200);
+      await response.text();
+    };
+    const expire = () => db.prepare("UPDATE wholesale_royal_mail_shipments SET recovery_due_at=1,refresh_after=0 WHERE order_id=?").bind(id).run();
+    const lookups = () => requests.filter(req => req.method === "GET" && decodeURIComponent(req.path).endsWith('"' + id + '"')).length;
+    await setBookings(false);
+    await recover();
+    assert.equal((await read(id)).recovery.attempts, 0, "a new booking has a grace period");
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      await expire();
+      const prior = lookups();
+      await Promise.all([recover(), recover()]);
+      assert.equal(lookups() - prior, 1, "concurrent recovery runs use one lookup");
+      const { recovery } = await read(id);
+      assert.equal(recovery.attempts, attempt);
+      assert.equal(recovery.status, attempt === 4 ? "needs_admin" : "checking");
+      assert.ok(recovery.lastCheckedAt);
+      if (attempt < 4) assert.ok(recovery.nextCheckAt > Date.now());
+      else assert.equal(recovery.nextCheckAt, null);
+      await recover();
+      assert.equal(lookups() - prior, 1, "no lookup while waiting or escalated");
+      assert.equal((await create(id)).status, 202, "retrying the booking cannot purchase again");
+    }
+    await db.prepare("UPDATE wholesale_royal_mail_shipments SET refresh_after=0 WHERE order_id=?").bind(id).run();
+    records.set(id, carrier);
+    assert.equal((await refresh(id)).status, 200);
+    const recovered = await read(id);
+    assert.equal(recovered.state, "labelled");
+    assert.equal(recovered.recovery, null);
+    assert.equal(recovered.reviewRequired, false);
+    assert.equal(await (await call(shipPath(id) + "/label")).text(), pdf);
+    assert.equal(posts() - before, 1, "there was only the original purchase");
+    const { results: events } = await db.prepare("SELECT text FROM audit_log WHERE kind='wholesale_royal_mail' AND text LIKE ? ORDER BY at").bind("%" + id + "%").all();
+    assert.deepEqual(events.map(event => event.text), [
+      `Royal Mail booking for ${id} needs Admin review in Click & Drop.`, `Royal Mail booking recovered for ${id}.`,
+    ]);
+    await setBookings(true);
+  });
+
+  await t.test("old uncertain requests remain blocked and recovered unpinned labels require verification", async () => {
+    const id = orderRef(82);
+    await seed(id);
+    await db.prepare(`INSERT INTO wholesale_royal_mail_shipments
+      (order_id,state,operation,order_version,weight_grams,updated_at) VALUES (?,'review','legacy',1,2140,0)`).bind(id).run();
+    assert.equal((await refresh(id)).status, 200);
+    assert.equal((await read(id)).state, "review", "a missing legacy marker is not proof that a request was never sent");
+    const before = posts();
+    assert.equal((await create(id)).status, 202);
+    records.set(id, { orderIdentifier: 1782, orderReference: id, trackingNumber: number, printedOn: "2026-11-26T09:00:00Z" });
+    await db.prepare("UPDATE wholesale_royal_mail_shipments SET refresh_after=0 WHERE order_id=?").bind(id).run();
+    await refresh(id);
+    assert.equal((await read(id)).reviewRequired, true);
+    assert.equal((await call(shipPath(id) + "/label")).status, 409);
+    assert.equal(posts(), before);
+  });
+
+  await t.test("an expired last lease escalates without another lookup, and an outbound marker fences a stale result", async () => {
+    const last = orderRef(83), racing = orderRef(84);
+    await seed(last);
+    await seed(racing);
+    await db.prepare(`INSERT INTO wholesale_royal_mail_shipments
+      (order_id,state,operation,order_version,weight_grams,updated_at,requested_at,recovery_attempts,recovery_due_at)
+      VALUES (?,'review','interrupted-check',1,2140,0,1,4,1)`).bind(last).run();
+    const before = requests.length;
+    await (await worker.dispatchFetch("https://recovery.fixture/run")).text();
+    assert.equal((await read(last)).recovery.status, "needs_admin");
+    assert.equal(requests.length, before, "an interrupted last check cannot cause an extra carrier request");
+    await db.prepare(`INSERT INTO wholesale_royal_mail_shipments
+      (order_id,state,operation,order_version,weight_grams,updated_at,requested_at)
+      VALUES (?,'booking','race',1,2140,0,0)`).bind(racing).run();
+    interceptLookup = async reference => {
+      if (reference === racing) await db.prepare("UPDATE wholesale_royal_mail_shipments SET requested_at=? WHERE order_id=?")
+        .bind(Date.now(), racing).run();
+    };
+    try { assert.equal((await refresh(racing)).status, 200); }
+    finally { interceptLookup = undefined; }
+    assert.equal((await read(racing)).state, "booking", "a lookup that began before transmission cannot release this reservation");
+    assert.equal((await create(racing)).status, 202);
+  });
+
   await t.test("an existing Click & Drop label cannot use an unsubmitted recipient draft", async () => {
     const id = orderRef(7);
     await seed(id, { locationSnapshot: { address: "16 Example Lane, Norwich", postcode: "NR1 5AB" } });
@@ -345,6 +489,68 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     const email = JSON.parse(event.payload);
     assert.match(email.mail.text, /16 Example Lane, Norwich, NR1 5AB/);
     assert.doesNotMatch(email.mail.text, /18 Example Lane/);
+  });
+
+  await t.test("admin parcel corrections and selectively saved future locations have separate lifetimes", async () => {
+    const id = orderRef(92), locationId = "ca350624-18ec-4a05-a57d-84da862782d0";
+    const address = "10 Dove Street, Norwich, Norfolk";
+    const location = { id: locationId, name: "Roastery", contact: "Original Contact", address, postcode: "NR2 1DE", phone: "01603 000000", deliveryNotes: "Side door" };
+    const customer = crypto.randomUUID(), snapshot = { ...location, contact: null };
+    await db.prepare("INSERT INTO wholesale_preview(kind,id,data,version,updated_at) VALUES ('customer',?,?,1,?)")
+      .bind(customer, JSON.stringify({ business, address: "Old primary", email: "receipts@example.test", locations: [location] }), Date.now()).run();
+    await seed(id, { customerId: customer, locationId, locationSnapshot: snapshot, customerSnapshot: { email: "original-order@example.test" } });
+    const path = shipPath(id), locationPath = path + "/location";
+    const reviewed = await (await call(path)).json();
+    const original = reviewed.recipient;
+    const serviceCheck = path + "/service-check";
+    const parcel = { ifVersion: reviewed.orderVersion, bookingVersion: reviewed.bookingVersion, postcode: "nr21de", weightGrams: 2140 };
+    const beforeCheck = requests.length;
+    assert.equal((await call(serviceCheck)).status, 405);
+    assert.equal((await call(serviceCheck, "POST", { ...parcel, bookingVersion: parcel.bookingVersion + 1 })).status, 409);
+    assert.equal((await call(serviceCheck, "POST", { ...parcel, ifVersion: 0 })).status, 409);
+    assert.equal((await call(serviceCheck, "POST", { ...parcel, weightGrams: 30001 })).status, 400);
+    assert.equal((await call(serviceCheck, "POST", { ...parcel, postcode: "BT1 1AA" })).status, 400);
+    assert.equal(requests.length, beforeCheck, "invalid parcel checks never reach Royal Mail");
+    const checked = await call(serviceCheck, "POST", parcel);
+    assert.equal(checked.status, 200);
+    assert.equal((await checked.json()).available, true);
+    assert.deepEqual(requests.slice(beforeCheck).map(({ method, path }) => [method, path]), [["GET", "/api/v1/services"], ["GET", "/api/v1/carriers"]]);
+    assert.equal(await read(id), null, "checking service cannot reserve a booking");
+    assert.deepEqual(original, { name: business, line1: "10 Dove Street", line2: "", city: "Norwich", county: "Norfolk", postcode: "NR2 1DE" });
+    const corrected = { ...original, line1: "12 Dove Street", name: "Parcel recipient", county: "Norfolk", postcode: "nr21de" };
+    const pinned = { ...packageDetails, recipient: corrected, bookingService: reviewed.bookingService, bookingVersion: reviewed.bookingVersion };
+    await setBookings(false);
+    await setBookings(true);
+    assert.equal((await (await call(path, "POST", pinned)).json()).code, "royal_mail_booking_policy_changed");
+    assert.equal(await read(id), null);
+    const latestPolicy = await (await call(path)).json();
+    let carrierRecipient;
+    interceptCreate = (reference, item) => { if (reference === id) carrierRecipient = item.recipient; };
+    try {
+      assert.equal((await call(path, "POST", { ...pinned, bookingVersion: latestPolicy.bookingVersion })).status, 201);
+    } finally { interceptCreate = undefined; }
+    const carrierAddress = carrierRecipient.address;
+    assert.deepEqual([carrierAddress.addressLine1, carrierAddress.city, carrierAddress.county, carrierAddress.postcode],
+      ["12 Dove Street", "Norwich", "Norfolk", "NR2 1DE"]);
+    assert.equal(carrierRecipient.emailAddress, "original-order@example.test");
+    assert.equal(carrierRecipient.phoneNumber, undefined);
+    assert.deepEqual((await read(id)).destination, { address: "12 Dove Street, Norwich, Norfolk", postcode: "NR2 1DE" });
+    const before = await (await call(locationPath)).json();
+    assert.equal(before.address, address, "booking does not change the address book");
+    const request = { customerId: customer, locationId, orderVersion: 1, ifVersion: before.version, recipient: corrected };
+    assert.equal((await call(locationPath, "PUT", { ...request, locationId: "primary" })).status, 409);
+    const result = await call(locationPath, "PUT", request);
+    assert.equal(result.status, 200);
+    assert.equal((await result.json()).address, "12 Dove Street\nNorwich\nNorfolk");
+    assert.equal((await call(locationPath, "PUT", { ...request, recipient: original })).status, 409);
+    const stored = JSON.parse((await db.prepare("SELECT data FROM wholesale_preview WHERE kind='customer' AND id=?").bind(customer).first()).data);
+    const addressBook = stored.locations.find(item => item.id === locationId);
+    assert.equal(addressBook.contact, location.contact);
+    assert.equal(addressBook.phone, location.phone);
+    assert.equal(addressBook.deliveryNotes, location.deliveryNotes);
+    assert.equal(stored.address, "Old primary");
+    assert.deepEqual((await (await call(path)).json()).recipient, original, "existing order keeps its snapshot");
+    assert.equal((await (await call(locationPath)).json()).postcode, "NR2 1DE");
   });
 
   await t.test("authorised staff use the saved destination and service, with payment and access checked before purchase", async () => {
@@ -369,7 +575,8 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     await accountStatus("Active");
     await seed(billed, { paymentTerms: { id: "before-dispatch" } });
     await seed(racing, net30);
-    await seed(paid, { ...net30, locationSnapshot: { contact: "Shipping contact", address: "18 Example Lane, Unit 2\nNorwich, Norfolk NR1 5AB\nUnited Kingdom", postcode: "NR1 5AB" } });
+    await seed(paid, { ...net30, customerSnapshot: { email: "delivery@example.test", phone: "01603 000099" },
+      locationSnapshot: { contact: "Shipping contact", phone: "01603 000011", address: "18 Example Lane, Unit 2\nNorwich, Norfolk NR1 5AB\nUnited Kingdom", postcode: "NR1 5AB" } });
     await seed(collection, { ...net30, delivery: "Roastery collection" });
     await seed(incomplete, { ...net30, locationSnapshot: { address: "18 Example Lane, Norfolk", postcode: "NR1 5AB" } });
     await seed(thirdParty, net30);
@@ -386,6 +593,14 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     assert.equal(ready.canCreate, true);
     assert.deepEqual(ready.eligibility, { eligible: true });
     assert.equal(ready.bookingService, "TPS48");
+    assert.deepEqual((await (await call(shipPath(paid))).json()).recipient, ready.recipient);
+    assert.equal((await staff(paid, "GET", undefined, "/location")).status, 403);
+    assert.equal((await staff(paid, "PUT", {}, "/location")).status, 403);
+    assert.equal((await staff(paid, "POST", {}, "/service-check")).status, 403);
+    const ambiguous = await (await call(shipPath(incomplete))).json();
+    assert.equal(ambiguous.recipient, null);
+    assert.deepEqual(ambiguous.recipientDraft, { name: business, line1: "18 Example Lane", line2: "", city: "", county: "Norfolk", postcode: "NR1 5AB" });
+    assert.equal((await (await staff(incomplete)).json()).recipientDraft, undefined);
     assert.deepEqual(ready.recipient, { name: "Shipping contact", line1: "18 Example Lane", line2: "Unit 2", city: "Norwich", postcode: "NR1 5AB", county: "Norfolk" });
     assert.doesNotMatch(JSON.stringify(ready), /fixture-click-drop|fixture-tracking|grossPence|shippingAccountName/);
     const initialRequests = requests.length;
@@ -435,6 +650,8 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     }
     assert.equal(sent.postageDetails.serviceCode, "TPS48");
     assert.equal(sent.label.includeLabelInResponse, true);
+    assert.equal(sent.recipient.emailAddress, "delivery@example.test");
+    assert.equal(sent.recipient.phoneNumber, undefined);
     assert.equal(sent.recipient.address.fullName, "Shipping contact");
     assert.equal(sent.recipient.address.addressLine1, "18 Example Lane");
     assert.equal(sent.recipient.address.city, "Norwich");
@@ -447,7 +664,10 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     assert.equal(await label.text(), pdf);
     assert.equal(posts(), beforePosts + 1, "repeat booking and label download do not buy again");
     await accountStatus("On hold");
-    assert.equal((await (await staff(paid)).json()).canDownloadLabel, false);
+    const heldShipment = await (await staff(paid)).json();
+    assert.equal(heldShipment.canDownloadLabel, false);
+    assert.equal(heldShipment.shipment.trackingNumber, null);
+    assert.equal(heldShipment.shipment.trackingUrl, null);
     assert.equal((await staff(paid, "GET", undefined, "/label")).status, 409);
     const handover = (id, trackingUrl = "") => call("/api/staff-orders/orders/" + id, "PATCH",
       { ifVersion: 1, status: "Dispatched", trackingUrl }, diary, staffCookie);
@@ -455,6 +675,7 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     assert.equal((await (await handover(thirdParty, "https://www.royalmail.com/track-your-item#/tracking-results/" + number)).json()).code,
       "royal_mail_account_on_hold");
     assert.equal((await (await handover(thirdParty, "https://tracking.royalmail.net./" + number)).json()).code, "royal_mail_account_on_hold");
+    assert.equal((await (await handover(thirdParty, "https://www.parcelforce.com/track-trace?trackNumber=123456789")).json()).code, "royal_mail_account_on_hold");
     assert.equal(await db.prepare("SELECT state FROM wholesale_email_outbox WHERE order_id=?").bind(paid).first(), null);
     assert.equal((await handover(thirdParty, "https://example.test/other-courier")).status, 200);
     await accountStatus("Active");
