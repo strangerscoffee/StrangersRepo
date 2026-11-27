@@ -204,8 +204,8 @@ test("dispatch review warns on a held Royal Mail label and accepts another couri
   const { page, dialog } = await staffPage(t, desktop, async route => route.fulfill({ json: state }));
   await dialog.getByRole("button", { name: "Done" }).click();
   await page.locator("#packingDesk").getByRole("button", { name: "Review dispatch" }).click();
-  const dispatch = page.getByRole("dialog", { name: "Confirm dispatch" });
-  await dispatch.getByText(/account has an overdue balance/).waitFor();
+  const dispatch = page.getByRole("dialog", { name: "Ship this order" });
+  await dispatch.getByText(/account has an overdue balance/).first().waitFor();
   const confirm = dispatch.getByRole("button", { name: "Mark dispatched" });
   assert.equal(await confirm.isDisabled(), true);
   const tracking = dispatch.getByLabel("Tracking link (optional)");
@@ -269,3 +269,42 @@ test("an order over 30 kg packed says to book and split it in Click & Drop", asy
   assert.ok(await ap.locator('input[name="weightGrams"]').isDisabled());
   await ap.screenshot({ path: `${process.env.SHOT_DIR || "/tmp"}/royal-mail-over-30kg-ipad-dark.png` });
 });
+
+// The owner's request, 27 Nov 2026: request the label from the order's dispatch step, then mark it dispatched or keep it
+// Ready and come back later, without leaving for a separate Royal Mail window.
+for (const [name, options] of [["phone", phone], ["ipad", { viewport: { width: 820, height: 1180 }, isMobile: true, hasTouch: true }], ["desktop", desktop]]) for (const colorScheme of ["light", "dark"]) {
+  test(`the dispatch step requests the Royal Mail label, then keeps the order Ready (${name}, ${colorScheme})`, async (t) => {
+    const context = await browser.newContext({ ...options, colorScheme });
+    t.after(() => context.close());
+    const [cookieName, value] = staffCookie.split("=");
+    await context.addCookies([{ name: cookieName, value, url: server.base }]);
+    const page = await context.newPage();
+    const errors = []; page.on("pageerror", (e) => errors.push(e.message));
+    let state = eligible(), posts = 0;
+    await page.route("**/api/staff-orders/orders/" + order.id + "/shipping**", async (route) => {
+      if (route.request().method() === "POST") { posts++; assert.equal(route.request().postDataJSON().weightGrams, 1555); state = labelled(state); }
+      return route.fulfill({ json: state });
+    });
+    await page.goto(server.base + "/orders");
+    await page.locator('[data-order-id="' + order.id + '"]').click();
+    if (options.isMobile) await page.locator("#orderDialogAction").getByRole("button", { name: "Process dispatch" }).click();
+    await page.getByRole("button", { name: "Review dispatch" }).locator("visible=true").first().click();
+    const ship = page.getByRole("dialog", { name: "Ship this order" });
+    await ship.getByRole("heading", { name: "Royal Mail label" }).waitFor();
+    const grams = ship.getByRole("spinbutton", { name: "Packed parcel weight (grams)" });
+    assert.equal(await grams.inputValue(), "1555");
+    await ship.getByRole("button", { name: "Review label request" }).click();
+    await ship.getByRole("button", { name: "Request Royal Mail label" }).click();
+    await ship.getByRole("button", { name: "Download label PDF" }).waitFor();
+    assert.equal(posts, 1);
+    // The label's tracking goes straight into the dispatch below it.
+    await page.waitForFunction(() => /AB123456789GB/i.test(document.querySelector("#deskTracking")?.value || ""));
+    assert.equal(await ship.getByRole("button", { name: "Mark dispatched" }).isEnabled(), true);
+    assert.equal(await page.getByRole("dialog", { name: "Royal Mail" }).count(), 0, "no separate Royal Mail window");
+    await page.screenshot({ path: `${process.env.SHOT_DIR || "/tmp"}/ship-this-order-${name}-${colorScheme}.png` });
+    await ship.getByRole("button", { name: "Keep as Ready" }).click();
+    await ship.waitFor({ state: "hidden" });
+    assert.equal((await call("GET", "/api/wholesale/orders/" + order.id)).order.status, "Ready");
+    assert.deepEqual(errors, []);
+  });
+}
