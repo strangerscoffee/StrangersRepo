@@ -185,7 +185,8 @@
     <p class="dialog-intro" id="standing-summary"></p>
     <form id="standing-form" novalidate>
       <div id="standing-lines" class="standing-lines"></div>
-      <fieldset class="standing-add"><legend>Add a coffee</legend>
+      <p id="standing-add-unavailable" hidden>No coffees are available to add right now. You can still reduce or remove existing bags.</p>
+      <fieldset id="standing-add-options" class="standing-add"><legend>Add a coffee</legend>
         <label><span>Coffee</span><select id="standing-coffee"></select></label>
         <label><span>Bag</span><select id="standing-pack"></select></label>
         <label><span>Grind</span><select id="standing-grind"></select></label>

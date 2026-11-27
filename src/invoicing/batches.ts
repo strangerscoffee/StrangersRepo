@@ -18,6 +18,8 @@ import { accountsEmail, DISPATCHED, month, OUTSIDE_TAB, periodOf, UNBILLED_ORDER
 
 const PAGE_SIZE = 40;
 const BATCH_SIZE = 12;
+// Allow another five-minute cron tick before retrying a failed issuance.
+const BATCH_RETRY_DELAY = 6 * 60 * 1000;
 const BATCH_KEY = "CASE WHEN a.cadence='monthly' THEN 'monthly:'||c.id ELSE o.id END";
 const SCOPED_ORDERS = `${UNBILLED_ORDERS} AND ${OUTSIDE_TAB} AND ${DISPATCHED}>=?1 AND ${DISPATCHED}<?2`;
 type Delivery = "issue" | "export" | "email";
@@ -149,12 +151,12 @@ async function previewBatch(req: Request, env: Env, user: User, body: Record<str
 }
 
 /** Explicit approval survives a reload. A leased item either recovers its own invoice or passes the current issue guards. */
-export async function advanceBatchItem(req: Request, env: Env, saved: BatchRow, itemId: number) {
+export async function advanceBatchItem(req: Request, env: Env, saved: BatchRow, itemId: number, manual = false) {
   if (saved.state !== "approved") return;
   const owner = crypto.randomUUID(), at = Date.now();
   const item = await env.DB.prepare(`UPDATE wholesale_invoice_batch_items SET state='working',lease_owner=?,lease_until=?
-    WHERE id=? AND batch_id=? AND state IN ('waiting','working') AND lease_until<=? RETURNING *`)
-    .bind(owner, at + 120000, itemId, saved.id, at).first<Work>();
+    WHERE id=? AND batch_id=? AND state IN ('waiting','working') AND (lease_until<=? OR (?=1 AND state='waiting' AND lease_owner IS NULL)) RETURNING *`)
+    .bind(owner, at + 120000, itemId, saved.id, at, manual ? 1 : 0).first<Work>();
   if (!item) return;
   try {
     const review = JSON.parse(item.data) as ReviewedBatchInvoice;
@@ -172,8 +174,10 @@ export async function advanceBatchItem(req: Request, env: Env, saved: BatchRow, 
   } catch (error) {
     const permanent = error instanceof ApiError && error.status < 500;
     const waitingForNumber = error instanceof NumberUnavailable;
-    await env.DB.prepare(`UPDATE wholesale_invoice_batch_items SET state=?,reason=?,lease_owner=NULL,lease_until=0
-      WHERE id=? AND lease_owner=?`).bind(permanent ? "failed" : "waiting", permanent || waitingForNumber ? error.message : "Waiting to retry issuance.", item.id, owner).run();
+    // On an unowned waiting item, lease_until is the earliest automatic retry time.
+    await env.DB.prepare(`UPDATE wholesale_invoice_batch_items SET state=?,reason=?,lease_owner=NULL,lease_until=?
+      WHERE id=? AND lease_owner=?`).bind(permanent ? "failed" : "waiting", permanent || waitingForNumber ? error.message : "Waiting to retry issuance.",
+      permanent ? 0 : Date.now() + BATCH_RETRY_DELAY, item.id, owner).run();
     if (!permanent && !waitingForNumber) throw error;
   }
 }
@@ -181,7 +185,7 @@ export async function advanceBatchItem(req: Request, env: Env, saved: BatchRow, 
 export async function runInvoiceBatches(env: Env) {
   const row = await env.DB.prepare(`SELECT j.id,j.batch_id FROM wholesale_invoice_batch_items j
     JOIN wholesale_invoice_batches b ON b.id=j.batch_id AND b.state='approved'
-    WHERE j.state IN ('waiting','working') AND j.lease_until<=? ORDER BY j.id LIMIT 1`)
+    WHERE j.state IN ('waiting','working') AND j.lease_until<=? ORDER BY MAX(j.lease_until,COALESCE(b.approved_at,0)),j.id LIMIT 1`)
     .bind(Date.now()).first<{ id: number; batch_id: string }>();
   if (row) await advanceBatchItem(machineRequest(env), env, await batch(env, row.batch_id), row.id);
 }
@@ -220,7 +224,7 @@ export async function handleBatches(req: Request, env: Env, route: string, user:
   if (itemId && req.method === "POST") {
     await readJson(req, 1024);
     if (!Number.isSafeInteger(Number(itemId)) || Number(itemId) < 1) throw invalid("Choose a batch item.");
-    await advanceBatchItem(req, env, saved, Number(itemId));
+    await advanceBatchItem(req, env, saved, Number(itemId), true);
     return json(await batchView(env, saved));
   }
   return null;

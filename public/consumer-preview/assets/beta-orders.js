@@ -40,12 +40,15 @@ export function clearOrderAttempt() {
   try { sessionStorage.removeItem(attemptKey); } catch {}
 }
 
-async function orderRequest(path, body, credentials = 'same-origin') {
+async function orderRequest(path, body, expectedSession) {
   const response = await fetch('/api/retail/orders' + path, {
     method: 'POST',
-    credentials,
+    credentials: expectedSession === 'guest' ? 'omit' : 'same-origin',
     cache: 'no-store',
-    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    headers: {
+      Accept: 'application/json', 'Content-Type': 'application/json',
+      ...(expectedSession ? { 'X-Retail-Profile-Session': expectedSession } : {}),
+    },
     signal: AbortSignal.timeout(15_000),
     body: JSON.stringify(body),
   });
@@ -63,13 +66,12 @@ async function orderRequest(path, body, credentials = 'same-origin') {
   return result;
 }
 
-export function placeRetailOrder(currentAttempt) {
-  return orderRequest('', { ...currentAttempt.payload, idempotencyKey: currentAttempt.key },
-    currentAttempt.identity === 'guest' ? 'omit' : 'same-origin');
+export function placeRetailOrder(currentAttempt, expectedSession) {
+  return orderRequest('', { ...currentAttempt.payload, idempotencyKey: currentAttempt.key }, expectedSession);
 }
 
-export function loadRetailOrder(reference, token) {
-  return orderRequest('/' + encodeURIComponent(reference), token ? { token } : {});
+export function loadRetailOrder(reference, token, expectedSession) {
+  return orderRequest('/' + encodeURIComponent(reference), token ? { token } : {}, token ? 'guest' : expectedSession);
 }
 
 export function trackingPath(reference, token) {

@@ -324,6 +324,10 @@ window.WholesaleInsights = function ({ api, html, raw, svg, put, openSheet, clos
 
   /* ---------- import ---------- */
   function openImport() {
+    if (!window.SCSalesImport) {
+      openSheet(html`<div class="w-sheet ins-import"><h2 id="sheetTitle" tabindex="-1">Import QuickBooks history</h2><p role="alert">QuickBooks history import couldn’t start.</p><div class="row"><button class="btn soft" type="button" data-sheet="close">Close</button><button class="btn" type="button" data-sheet="reload-admin">Reload Admin</button></div></div>`);
+      return;
+    }
     let parsed = null;
     const intro = html`<ol class="ins-steps"><li>In QuickBooks, open <b>Reports</b> → <b>Sales by Product/Service Detail</b>.</li><li>Set the dates (for example, the last three years) and run the report.</li><li>Choose <b>Export</b> → <b>Export to Excel</b> (or CSV) and pick the file here.</li></ol>
       <p class="hint">Only sales are kept: invoices, sales receipts, credit notes and refunds. Importing the same report again adds nothing twice.</p>`;

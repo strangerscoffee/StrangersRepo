@@ -29,6 +29,8 @@ window.AdminConsumer = ({ api, html, raw, svg, put, head, toast, confirmSheet })
   let queue = { orders: [], count: 0, nextCursor: null, summary: {} }, selectedReference = "", queueVersion = 0, searchTimer;
   let queuePending = false, orderDrilledIn = false, browseScroll = 0;
   const orderCache = new Map(), packing = new Map(), trackingDrafts = new Map(), orderErrors = new Map(), blockedOrders = new Set();
+  const orderReloads = new Map();
+  let supportInbox, supportPending = false, supportVersion = 0;
   let queries = {};
   const writes = new Set();
   const find = id => document.getElementById(id);
@@ -148,8 +150,14 @@ window.AdminConsumer = ({ api, html, raw, svg, put, head, toast, confirmSheet })
     return order.paymentMode === "live" && order.paymentStatus === "paid" ? badge("Paid", "ok") : badge("Payment not recorded", "");
   }
   function support() {
-    const rows = (data.support || []).filter(item => matches(item.reference, item.name, item.email, item.message, item.orderReference));
-    return rows.length ? html`<ul class="consumer-list consumer-support-list" role="list">${rows.map(item => html`<li class="item"><div class="tx"><b>${item.subject || item.reference}</b><span>${item.name} · ${item.email}</span><span>${date(item.createdAt)}${item.orderReference ? " · Order " + item.orderReference : ""}</span><p class="consumer-support-message">${item.message}</p><div class="row"><a class="btn sm soft" href="mailto:${encodeURIComponent(item.email)}">Reply by email</a><button class="btn sm soft" type="button" data-act="consumer-support" data-id="${item.reference}" ${writes.has(item.reference) ? raw("disabled") : ""}>${item.resolved ? "Reopen" : "Mark resolved"}</button>${badge(item.resolved ? "Resolved" : "Open", item.resolved ? "ok" : "warn")}</div></div></li>`)}</ul>` : empty("people", "No support messages match this view.");
+    if (!supportInbox) return supportPending ? empty("people", "Loading support messages…") : "";
+    const { messages: rows, count, nextCursor, limited } = supportInbox;
+    const total = count ?? rows.length;
+    return html`<p class="hint" role="status">${limited
+      ? `Showing ${rows.length} loaded ${rows.length === 1 ? "message" : "messages"}. Full inbox search and pagination are temporarily unavailable.`
+      : `${rows.length < total ? `${rows.length} of ${total}` : total} ${total === 1 ? "message" : "messages"}`}</p>
+      ${rows.length ? html`<ul class="consumer-list consumer-support-list" role="list">${rows.map(item => html`<li class="item"><div class="tx"><b>${item.subject || item.reference}</b><span>${item.name} · ${item.email}</span><span>${date(item.createdAt)} · ${item.reference}${item.orderReference ? " · Order " + item.orderReference : ""}</span><p class="consumer-support-message">${item.message}</p><div class="row"><a class="btn sm soft" href="mailto:${encodeURIComponent(item.email)}">Reply by email</a><button class="btn sm soft" type="button" data-act="consumer-support" data-id="${item.reference}" ${writes.has(item.reference) ? raw("disabled") : ""}>${item.resolved ? "Reopen" : "Mark resolved"}</button>${badge(item.resolved ? "Resolved" : "Open", item.resolved ? "ok" : "warn")}</div></div></li>`)}</ul>` : empty("people", "No support messages match this view.")}
+      ${nextCursor ? html`<button class="btn soft consumer-more" type="button" data-act="consumer-support-more">Load more messages</button>` : ""}`;
   }
 
   function customers() {
@@ -215,7 +223,10 @@ window.AdminConsumer = ({ api, html, raw, svg, put, head, toast, confirmSheet })
   async function load() {
     const result = await api("GET", endpoint);
     if (result.connected && section === "orders") result.orderQueue = await api("GET", queuePath());
-    if (result.connected && section === "support") result.support = (await api("GET", endpoint + "/support")).messages || [];
+    if (result.connected && section === "support") {
+      const search = supportQuery();
+      result.support = supportPage(await api("GET", supportPath(search)), search);
+    }
     return {
       ...result,
       orders: result.orders || [], customers: result.customers || [], products: result.products || [],
@@ -225,6 +236,8 @@ window.AdminConsumer = ({ api, html, raw, svg, put, head, toast, confirmSheet })
 
   async function view() {
     const started = ++generation;
+    supportVersion++;
+    supportPending = false;
     queueVersion++;
     queuePending = false;
     clearTimeout(searchTimer);
@@ -237,6 +250,7 @@ window.AdminConsumer = ({ api, html, raw, svg, put, head, toast, confirmSheet })
   }
   function acceptData(result) {
     data = result;
+    supportInbox = result.support;
     acceptQueue(result.orderQueue || { orders: result.orders || [], count: result.orderCount ?? result.orders.length, nextCursor: result.orderCursor, summary: result.orderSummary || {} });
   }
   function acceptQueue(result) {
@@ -253,6 +267,57 @@ window.AdminConsumer = ({ api, html, raw, svg, put, head, toast, confirmSheet })
     if (orderFilter) query.set("status", orderFilter);
     if (cursor) query.set("cursor", cursor);
     return endpoint + "/orders" + (query.size ? "?" + query : "");
+  }
+  const supportQuery = () => (queries.support || "").trim();
+  function supportPath(search, cursor) {
+    const query = new URLSearchParams();
+    if (search) query.set("q", search);
+    if (cursor) query.set("cursor", cursor);
+    return endpoint + "/support" + (query.size ? "?" + query : "");
+  }
+  function supportPage(result, search, cursor = null, previous = []) {
+    const rows = result.messages || [];
+    const merged = [...new Map([...previous, ...rows].map(item => [item.reference, item])).values()];
+    if (result.supportGateway === 1 && result.query?.search === search && result.query.cursor === cursor &&
+        Number.isSafeInteger(result.count) && result.count >= rows.length &&
+        (!cursor || (result.nextCursor !== cursor && (rows.length ? merged.length > previous.length : !result.nextCursor)))) {
+      return { ...result, messages: merged };
+    }
+    const term = search.toLowerCase();
+    const messages = (cursor ? previous : rows).filter(item =>
+      [item.reference, item.name, item.email, item.subject, item.message, item.orderReference]
+        .some(value => String(value ?? "").toLowerCase().includes(term)));
+    return { messages, limited: true };
+  }
+  async function loadSupport(append = false, restoreFocus) {
+    const started = ++supportVersion, identity = generation;
+    const root = find("consumerResults");
+    supportPending = true;
+    root?.setAttribute("aria-busy", "true");
+    if (!supportInbox) renderResults();
+    try {
+      const search = supportQuery(), cursor = append ? supportInbox.nextCursor : null;
+      const result = await api("GET", supportPath(search, cursor));
+      if (started !== supportVersion || identity !== generation || section !== "support") return;
+      supportInbox = supportPage(result, search, cursor, append ? supportInbox.messages : []);
+      const active = document.activeElement;
+      report("");
+      renderResults();
+      if (restoreFocus && root && (root.contains(active) || document.activeElement === document.body)) {
+        const buttons = [...root.querySelectorAll('[data-act="consumer-support"]')];
+        const control = buttons.find(button => button.dataset.id === restoreFocus)
+          || root.querySelector('[data-act="consumer-support-more"]') || find("consumerSearch");
+        control?.focus({ preventScroll: true });
+      }
+    } catch (error) {
+      if (started === supportVersion && identity === generation) report(error.message);
+    } finally {
+      if (started === supportVersion && identity === generation) {
+        supportPending = false;
+        root?.setAttribute("aria-busy", "false");
+        if (!supportInbox) renderResults();
+      }
+    }
   }
   function rememberOrder(order) {
     const cached = orderCache.get(order.reference);
@@ -301,6 +366,8 @@ window.AdminConsumer = ({ api, html, raw, svg, put, head, toast, confirmSheet })
   async function selectSection(id, opener) {
     if (!tabs.some(([key]) => key === id) || id === section || !data?.connected) return;
     section = id;
+    supportVersion++;
+    supportPending = false;
     queueVersion++;
     queuePending = false;
     clearTimeout(searchTimer);
@@ -319,15 +386,7 @@ window.AdminConsumer = ({ api, html, raw, svg, put, head, toast, confirmSheet })
       control?.focus({ preventScroll: true });
     }
     if (id === "orders") await loadOrders();
-    if (id === "support") {
-      const identity = generation;
-      try {
-        const result = await api("GET", endpoint + "/support");
-        if (identity !== generation || section !== "support") return;
-        data.support = result.messages || [];
-        renderResults();
-      } catch (error) { if (identity === generation && section === "support") report(error.message); }
-    }
+    if (id === "support") await loadSupport();
   }
 
   function syncOrderFilters() {
@@ -366,8 +425,8 @@ window.AdminConsumer = ({ api, html, raw, svg, put, head, toast, confirmSheet })
   }
 
   async function refresh(opener) {
-    if (updating || queuePending || writes.size || [...packing.values()].some(state => state.running)) return;
-    const started = generation, navigation = queueVersion, activeSection = section;
+    if (updating || queuePending || supportPending || writes.size || [...packing.values()].some(state => state.running)) return;
+    const started = generation, navigation = queueVersion, activeSection = section, inboxVersion = supportVersion;
     updating = true;
     const refreshButton = find("consumerRefresh");
     refreshButton.disabled = true;
@@ -375,7 +434,7 @@ window.AdminConsumer = ({ api, html, raw, svg, put, head, toast, confirmSheet })
     find("consumerPanel").setAttribute("aria-busy", "true");
     try {
       const result = await load();
-      if (started !== generation || navigation !== queueVersion || section !== activeSection) return;
+      if (started !== generation || navigation !== queueVersion || inboxVersion !== supportVersion || section !== activeSection) return;
       acceptData(result);
       updating = false;
       message = "";
@@ -414,8 +473,8 @@ window.AdminConsumer = ({ api, html, raw, svg, put, head, toast, confirmSheet })
   }
 
   function fulfilmentDetail(order) {
-    const state = packing.get(order.reference), checked = state?.wanted || new Set(order.packedLines || []);
-    const busy = writes.has(order.reference) || blockedOrders.has(order.reference), saving = !!state?.running, canPack = ["placed", "preparing"].includes(order.status);
+    const state = packing.get(order.reference), checked = packedWithChanges(order, state?.changes);
+    const busy = updating || writes.has(order.reference) || blockedOrders.has(order.reference), saving = !!state?.running, canPack = ["placed", "preparing"].includes(order.status);
     const allPacked = order.lines.length > 0 && checked.size === order.lines.length;
     const tracking = trackingDrafts.get(order.reference) ?? order.tracking?.number ?? "";
     const error = orderErrors.get(order.reference);
@@ -432,9 +491,9 @@ window.AdminConsumer = ({ api, html, raw, svg, put, head, toast, confirmSheet })
       ${order.method === "delivery" && ["ready", "dispatched", "completed"].includes(order.status) ? html`<form id="consumerDispatchForm" data-reference="${order.reference}"><h4>${order.status === "ready" ? "Dispatch" : "Tracking details"}</h4><label class="field"><span class="fl">Royal Mail tracking number</span><input id="consumerTrackingNumber" name="tracking" maxlength="30" placeholder="e.g. AB123456789GB" autocomplete="off" spellcheck="false" value="${tracking}" ${busy ? raw("disabled") : ""} required></label><button class="btn" type="submit" ${busy || saving ? raw("disabled") : ""}>${order.status === "ready" ? "Save and dispatch" : "Save tracking"}</button>${order.tracking?.url ? html`<a class="btn soft" href="${order.tracking.url}" target="_blank" rel="noopener noreferrer">Track parcel</a>` : ""}</form>` : ""}
       ${order.status === "ready" && order.method === "collection" ? html`<section class="consumer-collection"><h4>Collection</h4><p>Ready to collect from ${order.cafe?.name || "the selected café"}.</p><button class="btn" type="button" data-act="consumer-status" data-id="completed" ${busy ? raw("disabled") : ""}>Mark collected</button></section>` : ""}
       ${order.status === "dispatched" ? html`<div><button class="btn soft" type="button" data-act="consumer-status" data-id="completed" ${busy ? raw("disabled") : ""}>Mark delivered</button></div>` : ""}
-      ${error ? html`<div class="consumer-order-problem" role="alert"><p>${error}</p>${blockedOrders.has(order.reference) ? html`<button class="btn soft" type="button" data-act="consumer-order-reload">Reload latest order</button>` : ""}</div>` : ""}
+      ${error ? html`<div class="consumer-order-problem" role="alert"><p>${error}</p>${blockedOrders.has(order.reference) ? html`<button class="btn soft" type="button" data-act="consumer-order-reload" data-id="${order.reference}" ${orderReloads.get(order.reference)?.generation === generation ? raw("disabled") : ""}>Reload latest order</button>` : ""}</div>` : ""}
       ${order.timeline?.length ? html`<section><h4>Order timeline</h4><ol class="consumer-timeline">${order.timeline.map(event => html`<li><b>${statusById.get(event.status)?.label || event.status}</b><span>${date(event.at)}</span></li>`)}</ol></section>` : ""}
-      ${!["completed", "cancelled"].includes(order.status) ? html`<div class="row consumer-detail-actions consumer-detail-footer">${order.status === "ready" ? html`<button class="btn soft" type="button" data-act="consumer-status" data-id="preparing" ${busy ? raw("disabled") : ""}>Reopen packing</button>` : ""}<button class="btn soft bad" type="button" data-act="consumer-cancel" ${busy || saving ? raw("disabled") : ""}>Cancel order</button></div>` : ""}</div>`;
+      ${!["completed", "cancelled"].includes(order.status) ? html`<div class="row consumer-detail-actions consumer-detail-footer">${order.status === "ready" ? html`<button class="btn soft" type="button" data-act="consumer-status" data-id="preparing" ${busy ? raw("disabled") : ""}>Reopen packing</button>` : ""}<button class="btn soft bad" type="button" data-act="consumer-cancel" data-id="${order.reference}" ${busy || saving ? raw("disabled") : ""}>Cancel order</button></div>` : ""}</div>`;
   }
   function renderDetail() {
     const target = find("consumerOrderDetail"), order = orderCache.get(selectedReference);
@@ -462,15 +521,43 @@ window.AdminConsumer = ({ api, html, raw, svg, put, head, toast, confirmSheet })
     (orderButton(selectedReference) || find("consumerSearch"))?.focus({ preventScroll: true });
   }
   async function reloadOrder(reference) {
-    const result = await api("GET", endpoint + "/orders?q=" + encodeURIComponent(reference));
-    const order = result.orders.find(item => item.reference === reference);
-    if (!order) throw new Error("This order is no longer available. Refresh the queue.");
-    rememberOrder(order); packing.delete(reference); orderErrors.delete(reference); blockedOrders.delete(reference); renderDetail();
-    return order;
+    if (!blockedOrders.has(reference) || orderReloads.get(reference)?.generation === generation) return;
+    const request = { generation };
+    orderReloads.set(reference, request);
+    renderDetail();
+    const current = () => generation === request.generation && orderReloads.get(reference) === request;
+    try {
+      const result = await api("GET", endpoint + "/orders?q=" + encodeURIComponent(reference));
+      if (!current()) return;
+      const order = result.orders.find(item => item.reference === reference);
+      if (!order) throw new Error("This order is no longer available. Refresh the queue.");
+      if (!Number.isSafeInteger(order.version) || order.version < orderCache.get(reference)?.version) {
+        throw new Error("A newer order was loaded while you waited. Reload the latest order again.");
+      }
+      rememberOrder(order);
+      orderErrors.delete(reference);
+      blockedOrders.delete(reference);
+    } catch (error) {
+      if (current() && section === "orders" && selectedReference === reference) report(error.message);
+    } finally {
+      if (orderReloads.get(reference) === request) orderReloads.delete(reference);
+      if (generation === request.generation && selectedReference === reference) renderDetail();
+    }
   }
-  async function updateOrder(fields) {
-    const reference = selectedReference, order = orderCache.get(reference);
-    if (!order || writes.has(reference) || blockedOrders.has(reference) || packing.get(reference)?.running) return;
+  async function cancelOrder(reference) {
+    const order = orderCache.get(reference), identity = generation;
+    if (!order || section !== "orders" || selectedReference !== reference) return;
+    if (!await confirmSheet({ title: `Cancel order ${reference}?`, text: "This records cancellation in the preview and customer history. No refund or carrier cancellation is sent.", confirm: "Cancel order", danger: true })) return;
+    if (identity !== generation || section !== "orders") return;
+    if (selectedReference !== reference || orderCache.get(reference)?.version !== order.version || updating) {
+      report("The order view changed. Review the order before confirming cancellation again.");
+      return;
+    }
+    await updateOrder({ status: "cancelled" }, order);
+  }
+  async function updateOrder(fields, order = orderCache.get(selectedReference)) {
+    const reference = order?.reference;
+    if (!order || updating || writes.has(reference) || blockedOrders.has(reference) || packing.get(reference)?.running) return;
     orderErrors.delete(reference);
     writes.add(reference); renderDetail();
     const identity = generation, navigation = queueVersion;
@@ -486,35 +573,50 @@ window.AdminConsumer = ({ api, html, raw, svg, put, head, toast, confirmSheet })
     } catch (error) { if (identity === generation) { blockedOrders.add(reference); orderErrors.set(reference, error.message + " Reload the latest order before trying again."); } }
     finally { writes.delete(reference); renderDetail(); }
   }
+  function packedWithChanges(order, changes) {
+    const checked = new Set(order.packedLines || []);
+    for (const [line, change] of changes || []) {
+      if (change.checked) checked.add(line); else checked.delete(line);
+    }
+    return checked;
+  }
   async function flushPacking(reference, state) {
     if (state.running) return;
     state.running = true; renderDetail();
     const refreshButton = find("consumerRefresh"); if (refreshButton) refreshButton.disabled = true;
     const identity = generation;
     try {
-      while (identity === generation) {
-        const order = orderCache.get(reference), wanted = [...state.wanted].sort((a, b) => a - b);
-        if (JSON.stringify(wanted) === JSON.stringify(order.packedLines || [])) break;
-        const result = await api("PATCH", endpointFor("orders", reference), { ifVersion: order.version, packedLines: wanted });
-        if (result.order?.reference !== reference || !Number.isSafeInteger(result.order.version)) throw new Error("The packing save could not be confirmed.");
-        if (identity !== generation) return;
-        rememberOrder(result.order); orderErrors.delete(reference);
+      while (identity === generation && state.changes.size) {
+        const order = orderCache.get(reference), sent = new Map(state.changes);
+        const wanted = [...packedWithChanges(order, sent)].sort((a, b) => a - b);
+        if (wanted.length !== (order.packedLines || []).length || wanted.some(line => !order.packedLines.includes(line))) {
+          const result = await api("PATCH", endpointFor("orders", reference), { ifVersion: order.version, packedLines: wanted });
+          if (identity !== generation) return;
+          if (result.order?.reference !== reference || !Number.isSafeInteger(result.order.version)) throw new Error("The packing save could not be confirmed.");
+          rememberOrder(result.order);
+          orderErrors.delete(reference);
+        }
+        for (const [line, change] of sent) {
+          if (state.changes.get(line) === change) state.changes.delete(line);
+        }
       }
     } catch (error) {
       if (identity === generation) {
-        state.wanted = new Set(orderCache.get(reference)?.packedLines || []);
         blockedOrders.add(reference);
         orderErrors.set(reference, error.message + " Reload the latest order before changing its packing again.");
       }
-    } finally { state.running = false; if (selectedReference === reference) renderDetail(); if (refreshButton?.isConnected) refreshButton.disabled = updating || writes.size > 0 || [...packing.values()].some(item => item.running); }
+    } finally {
+      if (packing.get(reference) === state) packing.delete(reference);
+      if (identity === generation && selectedReference === reference) renderDetail();
+      if (refreshButton?.isConnected) refreshButton.disabled = updating || writes.size > 0 || [...packing.values()].some(item => item.running);
+    }
   }
   function packingChanged(input) {
     const reference = input.dataset.reference, order = orderCache.get(reference);
-    if (!order || writes.has(reference) || blockedOrders.has(reference) || !["placed", "preparing"].includes(order.status)) { input.checked = (order?.packedLines || []).includes(Number(input.dataset.consumerPackedLine)); return; }
+    if (!order || updating || writes.has(reference) || blockedOrders.has(reference) || !["placed", "preparing"].includes(order.status)) { input.checked = (order?.packedLines || []).includes(Number(input.dataset.consumerPackedLine)); return; }
     let state = packing.get(reference);
-    if (!state) { state = { wanted: new Set(order.packedLines || []), running: false }; packing.set(reference, state); }
-    const index = Number(input.dataset.consumerPackedLine);
-    if (input.checked) state.wanted.add(index); else state.wanted.delete(index);
+    if (!state) { state = { changes: new Map(), running: false }; packing.set(reference, state); }
+    state.changes.set(Number(input.dataset.consumerPackedLine), { checked: input.checked });
     void flushPacking(reference, state);
     if (selectedReference === reference) renderDetail();
   }
@@ -593,6 +695,9 @@ window.AdminConsumer = ({ api, html, raw, svg, put, head, toast, confirmSheet })
       data = null;
       section = "overview";
       queries = {};
+      supportInbox = null;
+      supportVersion++;
+      supportPending = false;
       orderFilter = "to-pack";
       message = "";
       updating = false;
@@ -600,13 +705,21 @@ window.AdminConsumer = ({ api, html, raw, svg, put, head, toast, confirmSheet })
       orderDrilledIn = false;
       browseScroll = 0;
       writes.clear();
-      clearTimeout(searchTimer); queueVersion++; orderCache.clear(); packing.clear(); trackingDrafts.clear(); orderErrors.clear(); blockedOrders.clear(); selectedReference = "";
+      clearTimeout(searchTimer); queueVersion++; orderCache.clear(); packing.clear(); trackingDrafts.clear(); orderErrors.clear(); blockedOrders.clear(); orderReloads.clear(); selectedReference = "";
     },
     search(value) {
       queries[section] = value;
-      if (section !== "orders") { renderResults(); return; }
-      clearTimeout(searchTimer);
-      searchTimer = setTimeout(() => void loadOrders(), 250);
+      if (section === "support") {
+        supportVersion++;
+        supportInbox = null;
+        supportPending = true;
+        renderResults();
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => void loadSupport(), 250);
+      } else if (section === "orders") {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => void loadOrders(), 250);
+      } else renderResults();
     },
     filterOrders(value) {
       if (!["", "to-pack", ...statusById.keys()].includes(value)) return;
@@ -628,11 +741,14 @@ window.AdminConsumer = ({ api, html, raw, svg, put, head, toast, confirmSheet })
       }
       if (name === "consumer-order-more" && queue.nextCursor && !updating && !queuePending) await loadOrders(true);
       if (name === "consumer-status") await updateOrder({ status: id });
-      if (name === "consumer-order-reload") { try { await reloadOrder(selectedReference); } catch (error) { report(error.message); } }
-      if (name === "consumer-cancel" && await confirmSheet({ title: "Cancel this order?", text: "This records cancellation in the preview and customer history. No refund or carrier cancellation is sent.", confirm: "Cancel order" })) await updateOrder({ status: "cancelled" });
+      if (name === "consumer-order-reload") await reloadOrder(id);
+      if (name === "consumer-cancel") await cancelOrder(id);
+      if (name === "consumer-support-more" && supportInbox?.nextCursor && !supportPending && !updating && !writes.size) {
+        await loadSupport(true, document.activeElement === opener ? "more" : null);
+      }
       if (name === "consumer-support") {
-        const item = data.support?.find(message => message.reference === id);
-        if (!item || writes.has(id) || updating) return;
+        const item = supportInbox?.messages.find(message => message.reference === id);
+        if (!item || writes.has(id) || updating || supportPending) return;
         const focused = document.activeElement === opener;
         opener.disabled = true;
         try {
@@ -645,6 +761,8 @@ window.AdminConsumer = ({ api, html, raw, svg, put, head, toast, confirmSheet })
           if (focused && document.activeElement === document.body) {
             Array.from(find("consumerResults").querySelectorAll('[data-act="consumer-support"]')).find(button => button.dataset.id === id)?.focus({ preventScroll: true });
           }
+          clearTimeout(searchTimer);
+          await loadSupport(false, focused ? id : null);
         } catch (error) { report(error.message); }
         finally { if (opener.isConnected) opener.disabled = false; }
       }

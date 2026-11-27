@@ -38,6 +38,16 @@ export async function catalogue(env: Env, admin = false): Promise<Coffee[]> {
   const added = entries.filter((row) => row.product && !originals.some((source) => source.id === row.id)).map((entry) => decorate(entry.product!, entry, entry.version, admin));
   return [...sourced, ...added];
 }
+// Version zero represents a bundled coffee with no saved override.
+export const CATALOGUE_REVISIONS_MATCH_SQL = `NOT EXISTS (
+  SELECT 1 FROM json_each(?) AS expected
+  LEFT JOIN wholesale_preview AS current ON current.kind = 'catalogue' AND current.id = json_extract(expected.value, '$.id')
+  WHERE COALESCE(current.version, 0) <> json_extract(expected.value, '$.version')
+)`;
+export function catalogueRevisions(coffees: Coffee[], lines: ReadonlyArray<{ productId: string }>): string {
+  const ids = new Set(lines.map(({ productId }) => productId));
+  return JSON.stringify(coffees.filter(({ id }) => ids.has(id)).map(({ id, version }) => ({ id, version })));
+}
 function settingsFor(coffee: Coffee): Settings {
   const { active, inStock, images, imageUrls, version, grindOptions, ...product } = coffee;
   return { product, prices: product.prices, active, inStock, images, grindOptions };

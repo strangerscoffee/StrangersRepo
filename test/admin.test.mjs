@@ -36,7 +36,11 @@ test("admin page: at /admin for admins (no admin address here), others go back t
   const page = await fetch(srv.base + "/admin", { headers: { cookie: ADMIN } });
   assert.equal(page.status, 200);
   const htmlText = await page.text();
-  assert.match(htmlText, /<script type="application\/x-sc-script" data-sc-module="" src="(?:\/admin\/admin\.js\?v=[0-9a-f]+|\/_releases\/[0-9a-f]{20}\/admin\/admin\.js)"><\/script>/, "ordered dependency linked by fingerprint");
+  const appScript = htmlText.match(/<script\b(?=[^>]*\bsrc="(?:\/admin\/admin\.js\?v=[0-9a-f]+|\/_releases\/[0-9a-f]{20}\/admin\/admin\.js)")[^>]*><\/script>/)?.[0];
+  assert.ok(appScript, "ordered dependency linked by fingerprint");
+  assert.match(appScript, /\btype="application\/x-sc-script"/);
+  assert.match(appScript, /\bdata-sc-module="SCAdminStarted"/);
+  assert.match(appScript, /\bdata-sc-required(?=\s|>)/);
   assert.doesNotMatch(htmlText, /<script>/, "no inline scripts (the CSP allows only the site's own files)");
   assert.equal(page.headers.get("cache-control"), "private, no-store");
   for (const cookie of [STAFF, MANAGER]) for (const p of ["/admin", "/admin/", "/admin.html", "/admin/index.html"]) {

@@ -11,12 +11,18 @@ const stepsOf=(st,temps)=>[["Temps",temps?st.temps==="y":true],["Opening",st.ope
  * When the site's week is published on the rota, Today lists today's shifts and says who opens and who closes.
  * Nothing changes on Today when there's no published rota. Data from use("rota") in claude-shim.js. */
 S.rota=null;S.rotaUrl="/rota/";
+let rotaRequest=null;
 async function loadRota(){
-  const svc=await window.claude?.use?.("rota");if(!svc)return;
-  const site=S.site,r=await svc.today(site).catch(()=>null);
-  if(site!==S.site)return;
-  if(r){S.rota=r;if(r.rotaUrl)S.rotaUrl=r.rotaUrl}
-  renderOnShift();if(S.tab==="day")renderDay();
+  const site=S.site;
+  if(!S.db||rotaRequest?.site===site)return;
+  const request={site};rotaRequest=request;
+  try{
+    const svc=await window.claude?.use?.("rota");if(!svc||rotaRequest!==request)return;
+    const r=await svc.today(site).catch(()=>null);
+    if(rotaRequest!==request||site!==S.site)return;
+    if(r){S.rota=r;if(r.rotaUrl)S.rotaUrl=r.rotaUrl}
+    if(S.tab==="day")renderDay();else renderOnShift();
+  }finally{if(rotaRequest===request)rotaRequest=null}
 }
 const rotaToday=()=>S.rota&&S.rota.site===S.site&&S.rota.day===today()&&S.date===today()&&S.rota.published?{...S.rota,shifts:S.rota.shifts.filter(x=>S.role==="admin"||x.me||x.open)}:null;
 // "You're opening", "Priya closes", "Alex and Priya open".

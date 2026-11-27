@@ -1,9 +1,9 @@
-import { products, cafes } from './products.js';
+import { products, cafes, availability } from './products.js';
 import { productPath } from './product-paths.js';
 import { getServerAccount, setupAccount } from './account.js';
 import { escapeHtml as html } from './html.js';
 import { availableTastingFlight, finderMarkup, finderVariant, tastingFlightId, updateFinderAnswers } from './finder.js';
-import { createStore, money, FREE_SHIPPING } from './store.js';
+import { createStore, money, FREE_SHIPPING, CART_KEY } from './store.js';
 import { grindLabel, lineOptions, orderTotals, sizeNames } from './checkout.js';
 
 const store = createStore(products);
@@ -32,6 +32,8 @@ let dialogCloseSequence = 0;
 let productQty = 1;
 const finder = { brew: '', taste: '', caffeine: 'regular' };
 let refreshCheckoutCart;
+let renderProductPage;
+let stockNotice;
 
 function bagCount() {
   const count = store.totals().count;
@@ -56,7 +58,7 @@ function renderShelf() {
   } else {
     grid.innerHTML = shown.map(product => `<article class="product">
       <div class="product-image"><img src="${product.image}" width="580" height="410" alt="" loading="lazy">
-      ${product.available === false ? '' : `<button class="product-quick-view" type="button" data-product="${product.id}" aria-label="Quick view ${html(product.name)}">Quick view</button>`}</div>
+      ${!availability.known || product.available === false ? '' : `<button class="product-quick-view" type="button" data-product="${product.id}" aria-label="Quick view ${html(product.name)}">Quick view</button>`}</div>
       <div class="product-info"><p class="origin">${product.country} · ${product.profile}</p><h3>${product.name}</h3><p class="notes">${product.shortCopy}</p>
       <div class="product-actions"><span>${product.available === false ? 'Unavailable' : `From ${money(product.prices['250g'])}`}</span><a class="button outline product-open" href="${productPath(product)}" aria-label="View ${html(product.name)}"><span class="product-open-full">View coffee</span><span class="product-open-short">View</span></a></div></div>
     </article>`).join('');
@@ -140,8 +142,8 @@ function closePanel() {
   }
 }
 
-function quantityMarkup(qty, label, index) {
-  const line = index === undefined ? '' : ` data-line="${index}"`;
+function quantityMarkup(qty, label, key) {
+  const line = key === undefined ? '' : ` data-line="${html(key)}"`;
   return `<div class="qty" role="group" aria-label="Quantity for ${label}">
     <button type="button" data-qty="-1"${line} aria-label="Decrease quantity for ${label}" ${qty === 1 ? 'disabled' : ''}>−</button>
     <output aria-live="polite">${qty}</output><button type="button" data-qty="1"${line} aria-label="Increase quantity for ${label}" ${qty === 99 ? 'disabled' : ''}>+</button></div>`;
@@ -159,6 +161,10 @@ function resizeQty(group, qty) {
 }
 
 function showProduct(id, opener, { grind: suggestedGrind = 'Whole bean', fromFinder = false } = {}) {
+  if (!availability.known) {
+    void checkDrawerStock(opener, () => showProduct(id, undefined, { grind: suggestedGrind, fromFinder }));
+    return;
+  }
   const product = productById.get(id);
   if (!product) return;
   productQty = 1;
@@ -186,7 +192,32 @@ function updateProductPrice(form) {
   document.querySelector('#product-error').hidden = true;
 }
 
+async function checkDrawerStock(opener, onSuccess) {
+  showPanel('stock', 'Coffee availability', '<p role="status">Checking coffee availability…</p>', opener);
+  const sequence = dialogCloseSequence;
+  const ok = await availability.refresh();
+  if (!dialog.open || dialog.dataset.view !== 'stock' || sequence !== dialogCloseSequence) return;
+  if (ok) {
+    refreshStockView();
+    onSuccess();
+  } else {
+    showPanel('stock', 'Coffee availability', '<p>We couldn’t check coffee availability.</p><button class="button outline" type="button" data-retry-drawer-stock>Try again</button>');
+    body.querySelector('[data-retry-drawer-stock]').addEventListener('click', () => void checkDrawerStock(undefined, onSuccess));
+  }
+}
+
+function refreshStockView() {
+  stockNotice?.remove();
+  if (shelf) renderShelf();
+  renderProductPage?.();
+  refreshCheckoutCart?.();
+}
+
 function showFinder(opener) {
+  if (!availability.known) {
+    void checkDrawerStock(opener, () => showFinder());
+    return;
+  }
   showPanel('finder', 'Find my coffee', finderMarkup('brew', products, finder), opener);
 }
 
@@ -224,9 +255,9 @@ function bagMarkup(message) {
   return `<div class="drawer-content">
     ${message ? `<p role="status" class="checkout-note">${html(message)}</p>` : ''}
     <div class="shipping-progress" aria-live="polite"><span>${progress}</span><progress aria-label="Progress towards free UK delivery" max="${FREE_SHIPPING + 1}" value="${Math.min(subtotal, FREE_SHIPPING + 1)}"></progress></div>
-    <ul>${cart.map((line, index) => `<li class="cart-line"><img src="${line.product.image}" alt="" width="64" height="64">
+    <ul>${cart.map(line => `<li class="cart-line"><img src="${line.product.image}" alt="" width="64" height="64">
       <div><h3>${line.product.name}</h3><p>${html(lineOptions(line))}</p>
-      <div class="cart-controls">${quantityMarkup(line.qty, [line.product.name, lineOptions(line)].join(', '), index)}<button type="button" class="remove" data-remove="${index}" aria-label="Remove ${line.product.name}, ${lineOptions(line)}">Remove</button><span class="line-price">${money(line.unitPrice * line.qty)}</span></div></div></li>`).join('')}</ul>
+      <div class="cart-controls">${quantityMarkup(line.qty, [line.product.name, lineOptions(line)].join(', '), line.key)}<button type="button" class="remove" data-remove="${html(line.key)}" aria-label="Remove ${line.product.name}, ${lineOptions(line)}">Remove</button><span class="line-price">${money(line.unitPrice * line.qty)}</span></div></div></li>`).join('')}</ul>
     <div aria-live="polite">${orderTotals(store.totals('delivery'), 'delivery')}</div>
     <div class="drawer-actions">${retailCheckout ? '<button class="button" type="button" data-checkout data-return-checkout>Resume checkout</button>' : '<a class="button" href="/checkout/" data-checkout>Checkout</a>'}
       <button class="button outline" type="button" data-keep-shopping>Keep shopping</button></div>
@@ -234,6 +265,8 @@ function bagMarkup(message) {
 }
 
 function showBag(opener, message) {
+  store.refresh();
+  bagCount();
   showPanel('bag', 'Your cart', bagMarkup(message), opener);
 }
 
@@ -241,12 +274,26 @@ function updateBag(focusSelector) {
   const offset = body.scrollTop;
   body.innerHTML = bagMarkup();
   body.scrollTop = offset;
-  const nextFocus = body.querySelector(focusSelector + ':not(:disabled)') ?? body.querySelector('[data-checkout],[data-keep-shopping]') ?? closeButton;
+  if (focusSelector === undefined) return;
+  const nextFocus = (focusSelector && body.querySelector(focusSelector + ':not(:disabled)')) ?? body.querySelector('[data-checkout],[data-keep-shopping]') ?? closeButton;
   nextFocus.focus({ preventScroll: true });
+}
+
+function orderRetryMessage(opener) {
+  const notice = opener.closest('.account-order-body')?.querySelector('.account-notice');
+  if (notice?.isConnected) notice.textContent = 'Availability checked. Select Buy again to add these coffees.';
 }
 
 function reorderAccountOrder(order, opener) {
   if (dialog.open) return;
+  if (!availability.known) {
+    void checkDrawerStock(opener, () => {
+      closePanel();
+      // Reordering is a fresh action from the account after the stock check.
+      orderRetryMessage(opener);
+    });
+    return 0;
+  }
   let added = 0;
   let skipped = false;
   for (const line of order.lines) {
@@ -310,11 +357,11 @@ document.addEventListener('click', event => {
     closePanel();
     document.querySelector('#coffee').scrollIntoView();
   } else if (action.remove !== undefined) {
-    const line = store.cart()[Number(action.remove)];
-    if (line && store.remove(line.key)) {
-      bagCount();
-      updateBag(`[data-remove="${Math.min(Number(action.remove), store.cart().length - 1)}"]`);
-    }
+    const index = store.cart().findIndex(line => line.key === action.remove);
+    store.remove(action.remove);
+    bagCount();
+    const next = store.cart()[Math.min(index, store.cart().length - 1)];
+    updateBag(next ? `[data-remove="${CSS.escape(next.key)}"]` : null);
   } else if (action.qty) {
     const delta = Number(action.qty);
     if (action.line === undefined) {
@@ -322,11 +369,11 @@ document.addEventListener('click', event => {
       resizeQty(control.closest('.qty'), productQty);
       updateProductPrice(document.querySelector('#product-form'));
     } else {
-      const line = store.cart()[Number(action.line)];
-      if (line && store.setQty(line.key, line.qty + delta)) {
-        bagCount();
-        updateBag(`[data-line="${action.line}"][data-qty="${line.qty + delta === 1 ? 1 : delta}"]`);
-      }
+      store.adjustQty(action.line, delta);
+      bagCount();
+      const line = store.cart().find(item => item.key === action.line);
+      const nextDelta = line?.qty === 1 ? 1 : line?.qty === 99 ? -1 : delta;
+      updateBag(`[data-line="${CSS.escape(action.line)}"][data-qty="${nextDelta}"]`);
     }
   }
   if (siteMenu.contains(control) && control.matches('a')) menuOpen(false, true);
@@ -360,32 +407,69 @@ bagCount();
 if (shelf) renderShelf();
 const productPage = document.querySelector('[data-retail-product]');
 if (productPage) {
-  const { setupProductPage } = await import('./product-page.js');
-  setupProductPage(productPage, {
-    store,
-    onAdd(product, opener) {
-      bagCount();
-      showBag(opener, `${product.name} added to your cart.`);
-    },
+  void import('./product-page.js').then(({ setupProductPage }) => {
+    renderProductPage = () => setupProductPage(productPage, {
+      store,
+      stockKnown: availability.known,
+      onAdd(product, opener) {
+        bagCount();
+        showBag(opener, `${product.name} added to your cart.`);
+      },
+    });
+    renderProductPage();
   });
+}
+if (shelf || productPage || retailCheckout) {
+  stockNotice = document.createElement('p');
+  stockNotice.className = 'container checkout-note';
+  stockNotice.setAttribute('role', 'status');
+  (shelf || productPage || retailCheckout).before(stockNotice);
+  async function checkStock() {
+    stockNotice.replaceChildren('Checking coffee availability…');
+    if (await availability.refresh()) {
+      refreshStockView();
+    } else {
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.className = 'text-button';
+      retry.textContent = 'Try again';
+      retry.addEventListener('click', checkStock);
+      stockNotice.replaceChildren('We couldn’t check coffee availability. ', retry);
+    }
+  }
+  void checkStock();
 }
 if (document.querySelector('.retail-home')) {
   void import('./home.js').then(({ populateHome }) => populateHome(products));
 }
 if (document.querySelector('#cafe-detail')) renderCafes();
 const accountPage = document.querySelector('#account-page');
-if (accountPage) setupAccount(accountPage, reorderAccountOrder);
+const refreshAccount = accountPage ? setupAccount(accountPage, reorderAccountOrder) : null;
 if (retailCheckout) {
   void import('./checkout-page.js').then(({ setupRetailCheckout }) => {
-    refreshCheckoutCart = setupRetailCheckout(retailCheckout, { cafes, store, cartChanged: bagCount, getServerAccount });
+    refreshCheckoutCart = setupRetailCheckout(retailCheckout, { cafes, store, cartChanged: bagCount, getServerAccount, availability });
   }).catch(() => {
     retailCheckout.innerHTML = '<p role="alert">Checkout couldn’t load. <a href="/checkout/">Try again</a>.</p>';
   });
 }
+function syncCart() {
+  store.refresh();
+  bagCount();
+  if (dialog.open && dialog.dataset.view === 'bag') {
+    const focused = document.activeElement;
+    const { line, qty, remove } = focused.dataset;
+    const target = line ? `[data-line="${CSS.escape(line)}"][data-qty="${qty}"]`
+      : remove ? `[data-remove="${CSS.escape(remove)}"]` : null;
+    updateBag(body.contains(focused) ? target : undefined);
+  }
+}
+window.addEventListener('storage', event => {
+  if ((event.key === CART_KEY || event.key === null) && event.storageArea === localStorage) syncCart();
+});
 window.addEventListener('pageshow', event => {
   if (event.persisted) {
-    store.refresh();
-    bagCount();
+    refreshAccount?.();
+    syncCart();
   }
 });
 

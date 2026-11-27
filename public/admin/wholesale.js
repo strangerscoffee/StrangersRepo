@@ -1,12 +1,13 @@
 // Native Admin → Wholesale view. Uses the admin shell, escaped templates and shared D1 wholesale APIs.
-window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, closeSheet, reload, toast, onNavigationChange = () => {}, onSectionChange = () => {} }) {
+window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, openSheet, closeSheet, reload, toast, onNavigationChange = () => {}, onSectionChange = () => {} }) {
   const $ = (selector) => document.querySelector(selector);
   const wideOrders = matchMedia("(min-width:1340px)");
-  const packing = window.SCWholesalePacking;
-  const invoiceUI = window.WholesaleInvoices({ api, html, raw, svg, put, openSheet, closeSheet, reload, toast });
-  const printUI = window.WholesalePrint({ api, html, raw, svg, put, openSheet, closeSheet, toast });
-  const insightsUI = window.WholesaleInsights({ api, html, raw, svg, put, openSheet, closeSheet, reload, toast });
-  const tabsUI = window.WholesaleTabs({ api, html, raw, svg, put, openSheet, closeSheet, reload, toast });
+  const packing = window.SCWholesalePacking, preparation = window.SCWholesalePreparation;
+  const invoiceUI = install(window.WholesaleInvoices, { api, html, raw, svg, put, openSheet, closeSheet, reload, toast });
+  const printUI = install(window.WholesalePrint, { api, html, raw, svg, put, openSheet, closeSheet, toast });
+  const insightsUI = install(window.WholesaleInsights, { api, html, raw, svg, put, openSheet, closeSheet, reload, toast });
+  const tabsUI = install(window.WholesaleTabs, { api, html, raw, svg, put, openSheet, closeSheet, reload, toast });
+  const unavailable = (feature, inSheet = false) => html`<div class="group glass" role="alert"><div class="item has-action"><span class="tx">${feature} couldn’t start.</span><button class="btn soft" type="button" ${raw(inSheet ? 'data-sheet="reload-admin"' : 'data-act="reload-admin"')}>Reload Admin</button></div></div>`;
   // Picking orders to print: while on, tapping an order ticks it instead of opening it.
   let picking = false; const picked = new Set();
   // Batch actions on the picked orders: {status, confirm} while asking, {running, done, total} while saving.
@@ -96,18 +97,18 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
       </div>`);
   }
   function workspaceState() {
-    return { tab, status, approval, query, orderQueue, orderPages, customerPages, previewOrder, packingOrder, hideOrderPreview, dispatchScope, orderSort, sortChosen, invoices: invoiceUI.state(), insights: insightsUI.state() };
+    return { tab, status, approval, query, orderQueue, orderPages, customerPages, previewOrder, packingOrder, hideOrderPreview, dispatchScope, orderSort, sortChosen, invoices: invoiceUI?.state(), insights: insightsUI?.state() };
   }
   function restoreWorkspace(saved) {
     if (!saved || !sections.some(([id]) => id === saved.tab)) return;
     clearTimeout(timer);
     ({ tab, status, approval, query, orderQueue, orderPages, customerPages, previewOrder, packingOrder, hideOrderPreview, dispatchScope, orderSort, sortChosen = false } = saved);
-    invoiceUI.restore(saved.invoices); insightsUI.restore(saved.insights);
+    invoiceUI?.restore(saved.invoices); insightsUI?.restore(saved.insights);
   }
 
   function selectSection(id, { pending = false, queue = "", resetStatus = false } = {}) {
     if (!sections.some(([value]) => value === id)) return false;
-    clearTimeout(timer); tab = id; query = ""; previewOrder = packingOrder = ""; dispatchScope = "all"; invoiceUI.resetList(); approval = pending && id === "customers" ? "pending" : "all"; orderPages = customerPages = 1;
+    clearTimeout(timer); tab = id; query = ""; previewOrder = packingOrder = ""; dispatchScope = "all"; invoiceUI?.resetList(); approval = pending && id === "customers" ? "pending" : "all"; orderPages = customerPages = 1;
     orderQueue = id === "orders" && ["prepare", "ready", "due-prepare", "due-ready"].includes(queue) ? queue : "";
     if (orderQueue || resetStatus) status = "all";
     onNavigationChange(); return true;
@@ -132,7 +133,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
   const buttons = (label) => html`<p class="err" id="wErr" role="alert"></p><div class="row w-actions"><button class="btn soft" type="button" data-sheet="close">Cancel</button><button class="btn" type="submit">${label}</button></div>`;
   const editorHead = (title, close = "") => html`<header class="w-editor-head"><h2 id="sheetTitle" tabindex="-1">${title}</h2>${close ? html`<button class="btn soft" type="button" data-sheet="close" aria-label="${close}">${svg("x")}</button>` : ""}</header>`;
   const note = html`<p class="hint">Manage payment and invoicing according to the customer’s agreed terms.</p>`;
-  const {grindFor,decafLine,coffeeColour,coffeeFill,coffeeStyle} = window.SCWholesalePreparation;
+  const {grindFor,decafLine,coffeeColour,coffeeFill,coffeeStyle} = preparation || {};
   const matches = (value) => value.toLowerCase().includes(query.toLowerCase().trim());
   const minimumKg = () => `${(data?.minimumOrderGrams || 6000) / 1000} kg`;
   const termsFor = (row) => data.paymentTermChoices.find((term) => term.id === row.paymentTerms)?.label || "To be agreed";
@@ -193,6 +194,9 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
 
   async function view() {
     const current = ++sequence, section = tab, settingsGeneration = royalMailGeneration, filter = { query, status, approval, queue: orderQueue, dispatch: dispatchScope, sort: orderSort, sortChosen };
+    if ((!preparation && ["orders", "customers", "custom", "catalogue"].includes(section)) || (!packing && section === "orders")) {
+      return workspace(section, unavailable(sections.find(([id]) => id === section)[1]));
+    }
     const snapshot = section === "royal-mail" ? { stats: data?.stats, accounts: data?.accounts } : await api("GET", "/api/admin/wholesale");
     if (section === "orders" || section === "customers") {
       const result = await pages(snapshot, section, section === "orders" ? orderPages : customerPages, filter);
@@ -217,14 +221,17 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
       royalMailConfig = snapshot.royalMail || null; royalMailIssue = snapshot.royalMailIssue || ""; royalMailNeedsReload = !!royalMailIssue;
     }
     onNavigationChange();
-    const content = section === "orders" ? orders()
-      : section === "customers" ? customers()
-      : section === "invoices" ? await invoiceUI.view()
-      : section === "insights" ? await insightsUI.view()
-      : section === "tabs" ? await tabsUI.view()
+    const content = section === "orders" ? html`${printUI ? "" : unavailable("Printing and packing totals")}${orders()}`
+      : section === "customers" ? html`${window.SCCustomerImport ? "" : unavailable("QuickBooks customer import")}${customers()}`
+      : section === "invoices" ? (invoiceUI ? await invoiceUI.view() : unavailable("Invoicing"))
+      : section === "insights" ? (insightsUI ? await insightsUI.view() : unavailable("Insights"))
+      : section === "tabs" ? (tabsUI ? await tabsUI.view() : unavailable("Customer tabs"))
       : section === "royal-mail" ? royalMailSettings()
       : catalogue();
     if (current !== sequence) return html``;
+    return workspace(section, content);
+  }
+  function workspace(section, content) {
     // The privacy preference can change while the section's data loads.
     const sensitive = section === "insights" || section === "invoices";
     document.documentElement.toggleAttribute("data-w-sensitive", sensitive);
@@ -382,11 +389,11 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     const statusChoices = ["all", ...(wideOrders.matches ? ["open"] : []), ...data.statuses];
     const statusLabel = value => value === "all" ? "All orders" : value === "open" ? "Open orders" : value;
     const dispatch = html`<label class="w-dispatch-scope"><span>Dispatch date</span><select id="wDispatchScope" aria-label="Dispatch date">${[["all","All dates"],["today","Today"],["upcoming","Upcoming"]].map(([id,label]) => html`<option value="${id}" ${dispatchScope === id ? raw("selected") : ""}>${label}</option>`)}</select></label>`;
-    const tools = html`${queueControls}${data.standingIssues?.length ? html`<div class="w-order-feedback" id="wStandingIssues" role="status"><b>${data.standingIssues[0].count} standing ${data.standingIssues[0].count === 1 ? "delivery needs" : "deliveries need"} review</b><p>The next delivery is paused. Check the business account and available coffee, size and grind before retrying.</p><div class="toolbar">${data.standingIssues.slice(0, 5).map(issue => html`<button class="btn sm soft" type="button" data-act="wh-standing-review" data-id="${issue.id}">Review ${issue.business || "standing order"}</button>`)}</div></div>` : ""}<div class="w-order-toolbar"><div class="toolbar">${search("Search wholesale orders", "Search orders")}${dispatch}</div>
+    const tools = html`${queueControls}${data.standingIssues?.length ? html`<div class="w-order-feedback" id="wStandingIssues" role="status"><b>${data.standingIssues[0].count} standing ${data.standingIssues[0].count === 1 ? "delivery needs" : "deliveries need"} review</b><p>The next delivery is paused. Check the business account, saved delivery location and available coffee, size and grind before retrying.</p><div class="toolbar">${data.standingIssues.slice(0, 5).map(issue => html`<button class="btn sm soft" type="button" data-act="wh-standing-review" data-id="${issue.id}">Review ${issue.business || "standing order"}</button>`)}</div></div>` : ""}<div class="w-order-toolbar"><div class="toolbar">${search("Search wholesale orders", "Search orders")}${dispatch}</div>
       <div class="segwrap w-filters"><div class="seg" role="group" aria-label="Order status">${statusChoices.map(value => html`<button type="button" data-act="wh-status" data-id="${value}" aria-pressed="${status === value}">${statusLabel(value)}${dispatchScope === "all" && countStatus(value) > 0 ? html`<span class="w-status-count">${countStatus(value)}</span>` : ""}</button>`)}</div></div>
       ${wideOrders.matches ? html`<select class="w-status-select" id="wOrderStatus" aria-label="Order status">${statusChoices.map(value => html`<option value="${value}" ${status === value ? raw("selected") : ""}>${statusLabel(value)}</option>`)}</select>` : ""}
-      ${picking ? html`<div class="w-print-bar w-picking" role="region" aria-label="Choose orders"><span class="w-picked-count" aria-live="polite">${picked.size ? `${picked.size} selected` : "Tap orders to select them"}</span><button class="btn sm soft" type="button" data-act="wh-pick-all">Select all shown</button><button class="btn sm soft" type="button" data-act="wh-totals" ${picked.size ? "" : raw("disabled")}>Bag totals</button><button class="btn sm" type="button" data-act="wh-print-picked" ${picked.size ? "" : raw("disabled")}>${svg("doc")}Print selected</button><button class="btn sm soft" type="button" data-act="wh-pick-done">Done</button><div class="w-batch" id="wBatch" role="group" aria-label="Change the selected orders">${batchControls()}</div></div>`
-        : html`<div class="w-print-bar">${hasNew || rows.length ? html`<details class="w-print-menu"><summary class="btn sm ${rows.length ? "" : "soft"}">${svg("doc")}Print<span aria-hidden="true">⌄</span></summary><div class="w-print-options"><button class="btn sm soft" type="button" data-act="wh-print-shown" ${canPrintShown ? "" : raw("disabled")}>${rows.length > 200 ? "Print up to 200 selected orders" : "Print shown orders"}</button><button class="btn sm soft" type="button" data-act="wh-print-new" ${hasNew ? "" : raw("disabled")}>Print new orders</button><button class="btn sm soft" type="button" data-act="wh-pick-start" ${rows.length ? "" : raw("disabled")}>Select to print</button></div></details>` : html`<button class="btn sm" type="button" disabled>${svg("doc")}Print<span aria-hidden="true">⌄</span></button>`}<button class="btn sm soft" type="button" data-act="wh-pick-start" ${rows.length ? "" : raw("disabled")}>Select</button><button class="btn sm soft" type="button" data-act="wh-totals" ${hasPreparation ? "" : raw("disabled")}>Bag totals</button></div>`}</div>`;
+      ${picking ? html`<div class="w-print-bar w-picking" role="region" aria-label="Choose orders"><span class="w-picked-count" aria-live="polite">${picked.size ? `${picked.size} selected` : "Tap orders to select them"}</span><button class="btn sm soft" type="button" data-act="wh-pick-all">Select all shown</button><button class="btn sm soft" type="button" data-act="wh-totals" ${printUI && picked.size ? "" : raw("disabled")}>Bag totals</button><button class="btn sm" type="button" data-act="wh-print-picked" ${printUI && picked.size ? "" : raw("disabled")}>${svg("doc")}Print selected</button><button class="btn sm soft" type="button" data-act="wh-pick-done">Done</button><div class="w-batch" id="wBatch" role="group" aria-label="Change the selected orders">${batchControls()}</div></div>`
+        : html`<div class="w-print-bar">${!printUI ? "" : hasNew || rows.length ? html`<details class="w-print-menu"><summary class="btn sm ${rows.length ? "" : "soft"}">${svg("doc")}Print<span aria-hidden="true">⌄</span></summary><div class="w-print-options"><button class="btn sm soft" type="button" data-act="wh-print-shown" ${canPrintShown ? "" : raw("disabled")}>${rows.length > 200 ? "Print up to 200 selected orders" : "Print shown orders"}</button><button class="btn sm soft" type="button" data-act="wh-print-new" ${hasNew ? "" : raw("disabled")}>Print new orders</button><button class="btn sm soft" type="button" data-act="wh-pick-start" ${rows.length ? "" : raw("disabled")}>Select to print</button></div></details>` : html`<button class="btn sm" type="button" disabled>${svg("doc")}Print<span aria-hidden="true">⌄</span></button>`}<button class="btn sm soft" type="button" data-act="wh-pick-start" ${rows.length ? "" : raw("disabled")}>Select</button><button class="btn sm soft" type="button" data-act="wh-totals" ${printUI && hasPreparation ? "" : raw("disabled")}>Bag totals</button></div>`}</div>`;
     const list = listing("wOrdersTitle", "Order queue", resultCount(rows.length, data.matchingCount, "order"), wideOrders.matches ? html`` : tools,
       rows.length ? html`${orderColumns()}${rows.map(orderRow)}` : emptyState(filtered ? "search" : "coffee", filtered ? "No matching orders" : "No orders yet", filtered ? "Try another search or status, or clear your filters to see all orders." : "Customer orders will appear here when they’re placed.", filtered),
       html`${more("orders")}<p class="hint">Coffee subtotals are saved with each order. Delivery and invoicing are managed separately.</p>`, html`<button class="btn sm soft w-expand-queue" type="button" data-act="wh-full-queue" aria-pressed="${hideOrderPreview}">${hideOrderPreview ? "Show preview" : "Full width"}</button><a class="btn sm w-new-order" href="${(data.links?.diary || "").replace(/\/$/, "")}/orders#new"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>New order</a> <details class="w-order-settings"><summary class="btn sm soft" aria-label="Order settings"><span class="w-settings-label">Order settings</span>${svg("chev")}<span class="w-settings-icon" aria-hidden="true">${svg("tune")}</span></summary><div class="w-order-settings-actions"><button class="btn sm soft w-alerts-button" type="button" data-act="wh-announcement"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1zM15.5 8.5a5 5 0 0 1 0 7"/></svg>Announcement</button> <button class="btn sm soft w-alerts-button" type="button" data-act="wh-order-emails"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>Order alerts</button></div></details>`);
@@ -438,7 +445,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
         <div class="w-preview-stages" data-order-stage="${row.status}"></div>
         <div class="w-preview-destination"><b>${row.delivery}${row.locationSnapshot?.name ? " · " + row.locationSnapshot.name : ""}</b><span>${row.dispatchDate ? day(row.dispatchDate) : "Unscheduled"}</span>${row.delivery === "Delivery" && row.locationSnapshot?.address ? html`<span>${[row.locationSnapshot.address,row.locationSnapshot.postcode].filter(Boolean).join(", ")}</span>` : ""}</div>
         ${row.customerNote ? html`<p class="wp-work-note"><b>Customer note</b>${row.customerNote}</p>` : ""}
-        ${active ? html`<div id="wPackChecklist" data-id="${row.id}"></div><div class="w-preview-actions"><button class="btn sm soft" type="button" data-act="wh-print-one" data-id="${row.id}">Print list</button><button class="btn sm soft" type="button" data-act="wh-exit-pack">Exit packing</button></div>` : html`
+        ${active ? html`<div id="wPackChecklist" data-id="${row.id}"></div><div class="w-preview-actions">${printUI ? html`<button class="btn sm soft" type="button" data-act="wh-print-one" data-id="${row.id}">Print list</button>` : ""}<button class="btn sm soft" type="button" data-act="wh-exit-pack">Exit packing</button></div>` : html`
           <section class="w-preview-lines" aria-label="Packing list">
             <h3 class="w-preview-lines-title">Packing list</h3>${(row.lines || []).map(line => html`<div class="kv"><span>${line.title} · ${grindFor(line).label}</span><strong>${line.quantity} × ${line.packLabel}</strong></div>`)}
             <div class="kv"><span>Order total</span><strong>${money(row.totalPence ?? row.pence)}</strong></div>
@@ -446,7 +453,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
           <div class="w-preview-actions">${nextStatus(row) ? html`<button class="btn sm" type="button" data-act="wh-pack" data-id="${row.id}">${row.status === "Ready" ? "Process dispatch" : "Pack order"}</button>` : ""}
             <button class="btn sm soft" type="button" data-act="wh-edit-preview" data-id="${row.id}">Open order</button>
             ${canShipRoyalMail(row) ? html`<button class="btn sm soft" type="button" data-act="wh-preview-shipment" data-id="${row.id}">Royal Mail shipping</button>` : ""}
-            ${row.preview === false ? html`<button class="btn sm soft" type="button" data-act="wh-preview-invoice" data-id="${row.id}">Review invoice</button>` : ""}
+            ${invoiceUI && row.preview === false ? html`<button class="btn sm soft" type="button" data-act="wh-preview-invoice" data-id="${row.id}">Review invoice</button>` : ""}
           </div>`}</div>` : html`<p class="hint w-preview-body">Select an order to see its packing list and dispatch details.</p>`}
       </section>`;
   }
@@ -501,7 +508,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     for (const node of document.querySelectorAll("#wPackSheet, #wPackChecklist")) if (node.dataset.id === id) mountPacking(node);
   }
   // Ticks show at once and save in the background (packQueue in public/shared/wholesale-packing.js).
-  const ticks = packing.packQueue({
+  const ticks = packing?.packQueue({
     get: id => packingRow(id),
     send: async (order, lines) => {
       const session = packingSession;
@@ -726,7 +733,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
       put(icon, chosen ? svg("ok") : html`<span class="w-pick-ring" aria-hidden="true"></span>`);
     });
     const count = $(".w-picked-count"); if (count) count.textContent = picked.size ? `${picked.size} selected` : "Tap orders to select them";
-    for (const act of ["wh-totals", "wh-print-picked"]) { const button = $(`.w-picking [data-act="${act}"]`); if (button) button.disabled = !picked.size; }
+    for (const act of ["wh-totals", "wh-print-picked"]) { const button = $(`.w-picking [data-act="${act}"]`); if (button) button.disabled = !printUI || !picked.size; }
     if (!batch?.running) { batch = null; refreshBatch(); }
   }
   function refreshOrderFeedback(id) {
@@ -1181,7 +1188,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
   function customers() {
     const rows = [...data.customers].sort((a,b) => Number(accountFor(b.id)?.approvalStatus === "pending") - Number(accountFor(a.id)?.approvalStatus === "pending"));
     const filtered = !!query.trim() || approval !== "all";
-    const tools = html`<div class="toolbar">${search("Search wholesale customers", "Search business, contact or email")}<button class="btn" type="button" data-act="wh-customer">${svg("plus")}Add customer</button><button class="btn soft" type="button" data-act="wh-import-customers">Import from QuickBooks</button><button class="btn soft" type="button" data-act="wh-accounts-emails">${svg("mail")}Accounts emails</button><button class="btn soft" type="button" data-act="wh-invite-customers">${svg("mail")}Invite to order online</button></div>
+    const tools = html`<div class="toolbar">${search("Search wholesale customers", "Search business, contact or email")}<button class="btn" type="button" data-act="wh-customer">${svg("plus")}Add customer</button>${window.SCCustomerImport ? html`<button class="btn soft" type="button" data-act="wh-import-customers">Import from QuickBooks</button><button class="btn soft" type="button" data-act="wh-accounts-emails">${svg("mail")}Accounts emails</button>` : ""}<button class="btn soft" type="button" data-act="wh-invite-customers">${svg("mail")}Invite to order online</button></div>
       <div class="segwrap w-filters"><div class="seg" role="group" aria-label="Customer access">${[["all", "All customers"], ["pending", "Awaiting review"]].map(([id, label]) => html`<button type="button" data-act="wh-approval" data-id="${id}" aria-pressed="${approval === id}">${label}</button>`)}</div></div>`;
     return listing("wCustomersTitle", "Customers", resultCount(rows.length, data.matchingCount, "customer"), tools,
       rows.length ? rows.map((row) => html`<button class="item w-customer" type="button" data-act="wh-customer" data-id="${row.id}"><span class="ic ${accountFor(row.id)?.approvalStatus === "pending" ? "warn" : "ok"}">${svg("people")}</span><span class="tx"><b>${row.business}</b><span>${[row.contact, row.email].filter(Boolean).join(" · ") || "No contact details"}</span><span>${accountFor(row.id)?.approvalStatus === "pending" ? "Awaiting account approval" : accountFor(row.id) ? accountFor(row.id).active ? "Sign-in enabled" : "Sign-in disabled" : inviteText(row.id)} · ${termsFor(row)}${row.noMinimumOrder ? " · No minimum order" : ""}${row.hidePrices ? " · Prices hidden" : ""}${row.autoTab ? " · On a tab" : ""}${row.noInvoice ? " · Never invoiced" : ""}${row.freeDelivery ? " · Free delivery" : ""}</span></span><span class="end">${pill(row.status)}<span class="chev">${svg("chev")}</span></span></button>`) : emptyState(filtered ? "search" : "people", filtered ? "No matching customers" : "No customers yet", filtered ? "Try another search or clear your filters to see all customers." : "Add a business, or review new registrations as they arrive.", filtered),
@@ -1199,11 +1206,17 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
   function scheduleSection(row, draft) {
     const dispatchDate = draft ? draft.dispatchDate || "" : row.dispatchDate || "", every = draft ? draft.every : row.standing?.every || 0;
     const closed = ["Dispatched", "Cancelled"].includes(row.status);
+    const locationIssue = row.standingIssue?.code === "delivery_location_missing"
+      ? "The saved delivery location was removed. Untick Standing order and save. Then use New order in the Orders section to place an order for the correct location and set its dispatch day and repeat schedule."
+      : row.standingIssue?.code === "delivery_location_changed"
+      ? "The saved delivery location needs a street address and postcode. Edit that location under Customers, then return here and save the order to retry."
+      : "";
     return html`<section class="w-order-section w-schedule" aria-labelledby="wScheduleTitle"><h3 id="wScheduleTitle">Dispatch and standing order</h3>
+      ${locationIssue ? html`<p class="w-order-feedback" role="status">${locationIssue}</p>` : ""}
       ${field("Dispatch day", html`<input id="wDispatchDate" type="date" min="${dispatchDate && dispatchDate < today() ? dispatchDate : today()}" value="${dispatchDate}">`)}
       <div class="checks"><label><input id="wStanding" type="checkbox" ${every ? raw("checked") : ""}>Standing order</label></div>
       ${field("Repeats", html`<select id="wEvery">${EVERY.map(([n, label]) => html`<option value="${n}" ${n === (every || 1) ? raw("selected") : ""}>${label}</option>`)}</select>`)}
-      <p class="hint">${row.nextRunId ? html`The next run has been made: <button class="link" type="button" data-sheet="open-run" data-id="${row.nextRunId}">${shortId(row.nextRunId)}…</button>` : closed && row.standing ? "Saving makes the next run." : "When a standing order is marked dispatched (or cancelled, to skip one), the next run is made straight away as a New order for the next dispatch day, so you can prepare it and change its bags in advance."}${row.standing?.run > 1 ? ` This is run ${row.standing.run}.` : ""}${row.previousRunId ? html` <button class="link" type="button" data-sheet="open-run" data-id="${row.previousRunId}">Previous run</button>` : ""}</p>
+      <p class="hint">${row.nextRunId ? html`The next run has been made: <button class="link" type="button" data-sheet="open-run" data-id="${row.nextRunId}">${shortId(row.nextRunId)}…</button>` : closed && row.standing ? (locationIssue ? "" : "Saving makes the next run.") : "When a standing order is marked dispatched (or cancelled, to skip one), the next run is made straight away as a New order for the next dispatch day, so you can prepare it and change its bags in advance."}${row.standing?.run > 1 ? ` This is run ${row.standing.run}.` : ""}${row.previousRunId ? html` <button class="link" type="button" data-sheet="open-run" data-id="${row.previousRunId}">Previous run</button>` : ""}</p>
       <p class="hint">Untick Standing order to stop it repeating. The customer sees the dispatch day and the schedule on their orders.</p></section>`;
   }
   // Change the bags on a customer order until it's dispatched. Kept lines keep the price they were ordered at; added ones
@@ -1264,7 +1277,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
       <section class="w-order-section" aria-labelledby="wPackingTitle"><div class="w-section-head"><h3 id="wPackingTitle">Packing list</h3>${row.preview === false && ["New", "Preparing"].includes(row.status) ? html`<span class="row">${row.standing ? html`<button class="btn sm soft" type="button" data-sheet="skip-run">Skip this delivery</button>` : ""}<button class="btn sm soft" type="button" data-sheet="edit-lines">Edit bags</button></span>` : ""}</div>${row.amendedAt ? html`<p class="hint w-amended">Bags changed${row.amendedBy ? ` by ${row.amendedBy}${row.amendedByCustomer ? " (the customer)" : ""}` : ""} on ${date(row.amendedAt)}${row.repeatLines ? ", for this delivery only: the next delivery goes back to the usual bags" : ""}. The customer sees the updated order.</p>` : ""}${row.skipped ? html`<p class="hint w-amended">Delivery skipped by ${row.skipped.by}${row.skipped.customer ? " (the customer)" : ""} on ${date(row.skipped.at)}.</p>` : ""}${choices.length > 1 ? html`<div class="w-grind-filters" role="group" aria-label="Filter packing list by grind"><button type="button" data-sheet="grind-filter" data-grind-key="" aria-pressed="true">All grinds</button>${choices.map(grind => html`<button type="button" class="w-grind-tone" style="--w-grind-h:${grind.hue}" data-sheet="grind-filter" data-grind-key="${grind.key}" aria-pressed="false">${svg(grind.icon)}${grind.label}</button>`)}</div><p id="wGrindCount" class="hint" role="status">${row.lines.length} packing lines · Order totals include all lines.</p>` : ""}<div class="group w-packing-list">${row.lines.map((line, index) => { const grind = grinds[index]; return html`<div class="item w-packing-line w-grind-tone w-coffee-tone" style="--w-grind-h:${grind.hue};${coffeeStyle(line, data.products)}" data-grind-line="${grind.key}"><span class="w-pack-quantity"><b>${line.quantity}</b><span>${line.quantity === 1 ? "bag" : "bags"}</span></span><span class="tx"><b class="w-pack-coffee"><span class="w-coffee-swatch" aria-hidden="true"></span>${line.title}${decafLine(line) ? html`<span class="w-decaf-label">Decaf</span>` : ""}</b>${line.recipe ? html`<span class="w-recipe">Made from ${line.recipe}</span>` : ""}<span class="w-pack-size">${line.packLabel}</span><span class="w-grind-details"><span class="w-grind-badge">${svg(grind.icon)}${grind.label}</span>${grind.hint ? html`<span class="w-grind-hint">${grind.hint}</span>` : ""}</span></span><span class="end num">${money(line.price * line.quantity)}</span></div>`; })}</div><div class="kv"><span>${row.packs} ${row.packs === 1 ? "bag" : "bags"} · ${weight(row.grams)} total</span><strong>${money(row.pence)}</strong></div>${Number.isSafeInteger(row.deliveryPence) ? html`<div class="kv"><span>${row.delivery === "Delivery" ? "Delivery (including VAT)" : "Roastery collection"}</span><strong>${row.deliveryPence ? money(row.deliveryPence) : "Free"}</strong></div><div class="kv"><span>Order total</span><strong>${money(row.totalPence ?? row.pence + row.deliveryPence)}</strong></div>` : ""}</section>
       <section class="w-order-section" aria-labelledby="wDeliveryTitle"><h3 id="wDeliveryTitle">${row.delivery}</h3>${snapshot ? html`<p class="w-address">${[snapshot.contact, snapshot.email, snapshot.phone].filter(Boolean).join(" · ") || "No contact details recorded"}</p>${row.delivery === "Delivery" ? html`<div class="kvs"><div class="kv"><span>Delivery address at checkout</span><span class="w-address">${[snapshot.address, snapshot.postcode].filter(Boolean).join("\n") || "Not recorded"}</span></div><div class="kv"><span>Delivery instructions</span><span class="w-address">${row.deliveryNotes || "None supplied"}</span></div></div>` : ""}` : html`<p class="hint">Staff preview order.</p>`}</section>
       ${row.preview === false ? html`<section class="w-order-section" aria-labelledby="wTermsTitle"><h3 id="wTermsTitle">Payment terms at order</h3><p>${row.paymentTerms?.label || "Not recorded on this order"}</p>${row.paymentTerms?.note ? html`<p class="w-address">${row.paymentTerms.note}</p>` : ""}</section>` : ""}
-      ${invoiceUI.orderPanel(row)}
+      ${invoiceUI ? invoiceUI.orderPanel(row) : unavailable("Invoicing", true)}
       ${row.preview === false && row.customerId ? html`<section class="w-order-section" aria-labelledby="wTabTitle"><div class="w-section-head"><h3 id="wTabTitle">Customer tab</h3>${row.tabClearedId ? "" : html`<button class="btn sm soft" type="button" data-sheet="tab-toggle">${row.tab ? "Take off tab" : "Put on tab"}</button>`}</div>
         <p class="hint">${row.tabClearedId ? "On a tab that has been cleared." : row.tab ? `On this customer’s tab${row.tab.auto ? " (added automatically)" : row.tab.by ? ` (added by ${row.tab.by})` : ""}.` : "Not on a tab."} Tabs are cleared in Wholesale → Tabs here, or on the staff <a href="${(data.links?.diary || "").replace(/\/$/, "")}/orders#tabs">Wholesale orders page</a>.</p></section>` : ""}
       ${row.preview === false ? scheduleSection(row, draft?.schedule) : ""}
@@ -1299,8 +1312,8 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
       if (action === "invoice-open" || action === "invoice-account") {
         const draft = draftOf(form, row);
         const back = () => editOrder(row.id, draft, row);
-        if (action === "invoice-account") await invoiceUI.openBillingAccount(row.customerId, back);
-        else await invoiceUI.openOrder(row, back);
+        if (action === "invoice-account") await invoiceUI?.openBillingAccount(row.customerId, back);
+        else await invoiceUI?.openOrder(row, back);
         return;
       }
       if (action === "tab-toggle") {
@@ -1737,7 +1750,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     drawPhotos();
   }
   return {
-    clear() { invoiceUI.clear(); insightsUI.clear(); sequence++; emailHealthToken++; packingSession++; royalMailGeneration++; royalMailConfig = null; royalMailBusy = royalMailNeedsReload = false; royalMailIssue = royalMailFeedback = ""; data = null; previewOrder = packingOrder = ""; hideOrderPreview = false; quickBusy.clear(); orderErrors.clear(); emailDraft = null; batch = null; picked.clear(); picking = false; clearTimeout(timer); },
+    clear() { invoiceUI?.clear(); insightsUI?.clear(); sequence++; emailHealthToken++; packingSession++; royalMailGeneration++; royalMailConfig = null; royalMailBusy = royalMailNeedsReload = false; royalMailIssue = royalMailFeedback = ""; data = null; previewOrder = packingOrder = ""; hideOrderPreview = false; quickBusy.clear(); orderErrors.clear(); emailDraft = null; batch = null; picked.clear(); picking = false; clearTimeout(timer); },
     view,
     navigation,
     syncNavigation,
@@ -1745,18 +1758,18 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
     selectSection,
     currentSection: () => tab,
     workspaceState, restoreWorkspace,
-    openInvoiceQueue: queue => invoiceUI.setFilter(queue),
-    openRoastPlan: insightsUI.openRoastPlan,
-    searchInvoices: invoiceUI.search,
-    searchBillingAccounts: invoiceUI.accountsSearch,
-    invoicingChange: invoiceUI.workspaceChange,
+    openInvoiceQueue: queue => invoiceUI?.setFilter(queue),
+    openRoastPlan: insightsUI?.openRoastPlan,
+    searchInvoices: invoiceUI?.search,
+    searchBillingAccounts: invoiceUI?.accountsSearch,
+    invoicingChange: invoiceUI?.workspaceChange,
     async act(name, id) {
       if (name === "wh-royal-mail-credentials") { await openRoyalMailCredentials(id); return; }
       if (name === "wh-royal-mail-toggle" || name === "wh-royal-mail-reload") { await changeRoyalMailSettings(name === "wh-royal-mail-reload"); return; }
-      if (name.startsWith("wh-invoice-")) { await invoiceUI.act(name, id); return; }
-      if (name.startsWith("wh-ins-")) { await insightsUI.act(name, id); return; }
-      if (name.startsWith("wh-tabs-")) { await tabsUI.act(name, id); return; }
-      if (name === "wh-standing-review") { selectSection("orders"); query = id; status = "all"; orderQueue = ""; await reload(); editOrder(id); return; }
+      if (name.startsWith("wh-invoice-")) { await invoiceUI?.act(name, id); return; }
+      if (name.startsWith("wh-ins-")) { await insightsUI?.act(name, id); return; }
+      if (name.startsWith("wh-tabs-")) { await tabsUI?.act(name, id); return; }
+      if (name === "wh-standing-review") { if (!preparation || !packing) return; selectSection("orders"); query = id; status = "all"; orderQueue = ""; await reload(); editOrder(id); return; }
       if (name === "wh-queue") { clearTimeout(timer); orderQueue = ["prepare", "ready"].includes(id) ? id : ""; status = id === "open" ? "open" : "all"; orderPages = 1; previewOrder = packingOrder = ""; await reload(); return; }
       if (name === "wh-review-queue") { $("#wStandingIssues")?.scrollIntoView({ block: "center" }); $("#wStandingIssues button")?.focus({ preventScroll: true }); return; }
       if (name === "wh-privacy") { setFiguresHidden(!figuresHidden()); return; }
@@ -1776,7 +1789,7 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
       }
       if (name === "wh-preview-invoice") {
         const row = data.orders.find(order => order.id === id);
-        if (row) await invoiceUI.openOrder(row, () => { closeSheet(); document.querySelector('[data-act="wh-preview-invoice"]')?.focus({ preventScroll: true }); });
+        if (row) await invoiceUI?.openOrder(row, () => { closeSheet(); document.querySelector('[data-act="wh-preview-invoice"]')?.focus({ preventScroll: true }); });
         return;
       }
       if (name === "wh-preview-shipment") {
@@ -1787,19 +1800,19 @@ window.WholesaleAdmin = function ({ api, html, raw, svg, put, head, openSheet, c
       if (name === "wh-edit-preview") { editOrder(id); return; }
       if (name === "wh-order-emails") { await openOrderEmails(); return; }
       if (name === "wh-announcement") { await openAnnouncement(); return; }
-      if (name === "wh-print-shown" && data.orders.length && data.orders.length <= 200) { await printUI.printOrders({ ids: data.orders.map(row => row.id), label: "Orders in this view" }); return; }
-      if (name === "wh-print-one" && id) { await printUI.printOrders({ ids: [id], label: "Order packing list" }); return; }
-      if (name === "wh-print-new") { await printUI.printOrders(printUI.scopes.New); return; }
-      if (name === "wh-totals") { await printUI.openTotals(picking ? [...picked] : []); return; }
+      if (name === "wh-print-shown" && data.orders.length && data.orders.length <= 200) { await printUI?.printOrders({ ids: data.orders.map(row => row.id), label: "Orders in this view" }); return; }
+      if (name === "wh-print-one" && id) { await printUI?.printOrders({ ids: [id], label: "Order packing list" }); return; }
+      if (name === "wh-print-new") { await printUI?.printOrders(printUI.scopes.New); return; }
+      if (name === "wh-totals") { await printUI?.openTotals(picking ? [...picked] : []); return; }
       if (name === "wh-pick-start" || name === "wh-pick-done") { if (batch?.running) return; picking = name === "wh-pick-start"; picked.clear(); batch = null; await reload(); return; }
       if (name === "wh-batch" && id) { if (batch?.running) return; if (id === "Dispatched") { batch = { confirm: true }; refreshBatch(); $('[data-act="wh-batch-confirm"]')?.focus({ preventScroll: true }); } else await runBatch(id); return; }
       if (name === "wh-batch-confirm") { await runBatch("Dispatched"); return; }
       if (name === "wh-batch-cancel") { batch = null; refreshBatch(); return; }
       if (name === "wh-pick" && id) { picked.has(id) ? picked.delete(id) : picked.add(id); refreshPicks(); return; }
       if (name === "wh-pick-all") { for (const row of data.orders) picked.add(row.id); refreshPicks(); return; }
-      if (name === "wh-print-picked" && picked.size) { await printUI.printOrders({ ids: [...picked], label: `${picked.size} selected ${picked.size === 1 ? "order" : "orders"}` }); return; }
-      if (name === "wh-import-customers") { openCustomerImport(); return; }
-      if (name === "wh-accounts-emails") { openAccountsEmails(); return; }
+      if (name === "wh-print-picked" && picked.size) { await printUI?.printOrders({ ids: [...picked], label: `${picked.size} selected ${picked.size === 1 ? "order" : "orders"}` }); return; }
+      if (name === "wh-import-customers") { if (window.SCCustomerImport) openCustomerImport(); return; }
+      if (name === "wh-accounts-emails") { if (window.SCCustomerImport) openAccountsEmails(); return; }
       if (name === "wh-invite-customers") { await openInvites(); return; }
       if (name === "wh-tab" && selectSection(id)) await reload();
       if ((name === "wh-status" || name === "wh-status-select") && ["all", "open", ...data.statuses].includes(id)) { clearTimeout(timer); orderQueue = ""; packingOrder = ""; status = id; orderPages = 1; await reload(); if (name === "wh-status-select") $("#wOrderStatus")?.focus({ preventScroll:true }); }

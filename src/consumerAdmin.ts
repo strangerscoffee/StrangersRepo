@@ -34,6 +34,20 @@ function queueSearch(req: Request): string {
   return "?" + query.toString();
 }
 
+function supportSearch(req: Request): string {
+  const params = new URL(req.url).searchParams;
+  const query = new URLSearchParams();
+  const search = (params.get("q") || "").trim();
+  const cursor = params.get("cursor");
+  if (search.length > 120 || /[\u0000-\u001f\u007f]/.test(search) ||
+      (cursor !== null && (cursor.length > 160 || !/^[A-Za-z0-9_-]+$/.test(cursor)))) {
+    throw new ApiError(400, "invalid_argument", "Check the support search and try again.");
+  }
+  if (search) query.set("q", search);
+  if (cursor) query.set("cursor", cursor);
+  return query.size ? "?" + query : "";
+}
+
 function orderUpdate(input: Record<string, unknown>): string {
   const { ifVersion, status, packedLines, tracking } = input;
   const legacy = ifVersion === undefined && Object.keys(input).length === 1 && typeof status === "string";
@@ -84,7 +98,8 @@ export async function handleConsumerAdmin(req: Request, env: Env, route: string)
     }
   }
 
-  const destination = CONTROL_PATH + (route ? "/" + route : "") + (queue ? queueSearch(req) : "");
+  const query = queue ? queueSearch(req) : route === "support" ? supportSearch(req) : "";
+  const destination = CONTROL_PATH + (route ? "/" + route : "") + query;
   try {
     const response = await retailServiceRequest(env, destination, {
       method: req.method, body,
@@ -93,6 +108,7 @@ export async function handleConsumerAdmin(req: Request, env: Env, route: string)
       const bytes = await readBytes(response, MAX_OVERVIEW_BYTES, "The preview response was too large.");
       const result = JSON.parse(new TextDecoder().decode(bytes));
       if (response.ok && route === "") result.previewUrl = BRANDED_RETAIL_ORIGIN + "/";
+      if (response.ok && route === "support") result.supportGateway = 1;
       return json(result, response.status);
     }
     await response.body?.cancel();

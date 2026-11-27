@@ -81,7 +81,9 @@ for (const [screen, viewport, isMobile] of [["phone", { width: 390, height: 844 
     await selectWholesaleSection(p, "invoices");
     await selectInvoiceView(p, "invoices");
     await p.locator('[data-act="wh-privacy"][aria-pressed="true"]').waitFor();
-    await p.waitForFunction(() => /TEST-/.test(document.querySelector(".w-content")?.innerText || "")); await p.waitForTimeout(300);
+    // The retained Today view can already contain the invoice prefix while the register loads.
+    const register = p.locator('.wi-records [data-act="wh-invoice-open"]').filter({ hasText: "Secret Sales Café" });
+    await register.waitFor();
     for (const text of ["Secret Sales Café", "£\\d"]) { const r = await readable(p, text); assert.ok(r.length && r.every((x) => !x), `${text} blurred on Invoicing ` + await where(p, text)); }
     if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/hide-invoices-${screen}-${scheme}-on.png`, fullPage: true });
     await p.reload(); await p.locator('[data-act="wh-privacy"][aria-pressed="true"]').waitFor();

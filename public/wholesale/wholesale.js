@@ -1,5 +1,5 @@
 import { availableGrinds, grindLabel, grindHint, isGrindAvailable } from "./grinds.js";
-import { shippingFor, SHIPPING_PENCE, FREE_SHIPPING_FROM_PENCE } from "./shipping.js";
+import { isWholesaleDelivery, shippingFor, SHIPPING_PENCE, FREE_SHIPPING_FROM_PENCE } from "./shipping.js";
 import { createCoffeeChoices, setupCatalogueSearch } from "./catalogue-ui.js";
 // A fresh module URL avoids reusing a cached pre-migration model that imported the price snapshot.
 // This is not a ?v= fingerprint: it retains the normal short revalidation period for future model changes.
@@ -1051,7 +1051,7 @@ function historyStatus(order) {
   return `<div class="history-status">${badge}<p>${descriptions[status] || "Contact Strangers for an update."}</p></div>${current >= 0 ? `<ol class="history-progress" aria-label="Order progress">${states.map((step, i) => `<li ${i < current ? 'class="done"' : ""} ${i === current ? 'aria-current="step"' : ""}><span class="progress-marker" aria-hidden="true">${i < current ? "✓" : i + 1}</span><span>${step === "New" ? "Received" : step}<span class="sr-only">${i < current ? ", completed" : i === current ? ", current stage" : ", not reached"}</span></span></li>`).join("")}</ol>` : ""}`;
 }
 function historyTrackingUrl(order) {
-  if (!session?.customer || order.preview || order.status !== "Dispatched" || order.delivery !== "Delivery") return "";
+  if (!session?.customer || order.preview || order.status !== "Dispatched" || !isWholesaleDelivery(order.delivery)) return "";
   const value = typeof order.trackingUrl === "string" ? order.trackingUrl.trim() : "";
   if (!value || value.length > 2000 || !/^https?:\/\//i.test(value) || /[\u0000-\u001f\u007f]/.test(value)) return "";
   try {
@@ -1074,11 +1074,16 @@ function renderReviewDelivery(coffeePence = totals(basket).pence) {
 const orderTotal = (order) => Number.isSafeInteger(order.totalPence) ? order.totalPence : order.pence;
 function historyCard(order, expanded) {
   const date = new Date(order.createdAt).toLocaleDateString("en-GB", { timeZone: "Europe/London", day: "numeric", month: "short", year: "numeric" });
-  const snapshot = order.customerSnapshot;
+  const snapshot = order.locationSnapshot || order.customerSnapshot;
+  const isDelivery = isWholesaleDelivery(order.delivery);
   const trackingUrl = historyTrackingUrl(order);
+  const deliveryReason = order.deliveryPence ? "Including VAT"
+    : !isDelivery ? "No delivery charge"
+    : order.freeDelivery ? "Free delivery for this account"
+    : `Free on orders of ${money(FREE_SHIPPING_FROM_PENCE)} or more`;
   return `<article class="history-card" data-history-order="${escape(order.id)}"><div class="history-card-head"><h3>${date}</h3>${pricesShown() ? `<strong>${money(orderTotal(order))}</strong>` : ""}</div><p class="history-summary">${bagCount(order.packs)} · ${escape(order.delivery)}</p>${order.reference ? `<p class="history-summary">Reference: ${escape(order.reference)}</p>` : ""}${historySchedule(order)}${historyStatus(order)}${order.standingIssue ? `<p class="standing-hint">Your next standing delivery needs a check from Strangers. Please contact us before expecting the next delivery.</p>` : ""}
     ${trackingUrl ? `<a class="button button-outline history-tracking" data-order-tracking="${escape(order.id)}" href="${escape(trackingUrl)}" target="_blank" rel="noopener noreferrer">Track delivery <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg><span class="sr-only">(opens in a new tab)</span></a>` : ""}
-    <details class="history-details" ${expanded.has(order.id) ? "open" : ""}><summary>Order details · ${bagCount(order.packs)}</summary><p class="history-id">${escape(order.id)}</p><ul class="history-lines">${order.lines.map(line => `<li><span>${line.quantity} × ${escape(line.title)}</span><small>${escape(line.packLabel)} · ${escape(line.grindLabel)}</small>${pricesShown() ? `<strong>${money(line.price * line.quantity)}</strong>` : ""}</li>`).join("")}${Number.isSafeInteger(order.deliveryPence) && pricesShown() ? `<li><span>${order.delivery === "Delivery" ? "Delivery" : "Roastery collection"}</span><small>${order.deliveryPence ? "Including VAT" : order.delivery === "Delivery" ? "Free on orders of £250 or more" : "No delivery charge"}</small><strong>${order.deliveryPence ? money(order.deliveryPence) : "Free"}</strong></li>` : ""}</ul>${order.customerNote ? `<p class="history-address"><b>Your comments</b><br>${escape(order.customerNote)}</p>` : ""}${order.locationSnapshot ? `<p class="history-address"><b>Location at order</b><br>${escape(order.locationSnapshot.name)}</p>` : ""}${snapshot?.address && order.delivery === "Delivery" ? `<p class="history-address"><b>Delivery address at order</b><br>${escape(snapshot.address)}<br>${escape(snapshot.postcode || "")}</p>` : ""}${order.deliveryNotes ? `<p class="history-address">${escape(order.deliveryNotes)}</p>` : ""}${order.paymentTerms ? `<p class="payment-terms">Payment terms: ${escape(order.paymentTerms.label)}${order.paymentTerms.note ? `<br>${escape(order.paymentTerms.note)}` : ""}</p>` : ""}</details>
+    <details class="history-details" ${expanded.has(order.id) ? "open" : ""}><summary>Order details · ${bagCount(order.packs)}</summary><p class="history-id">${escape(order.id)}</p><ul class="history-lines">${order.lines.map(line => `<li><span>${line.quantity} × ${escape(line.title)}</span><small>${escape(line.packLabel)} · ${escape(line.grindLabel)}</small>${pricesShown() ? `<strong>${money(line.price * line.quantity)}</strong>` : ""}</li>`).join("")}${Number.isSafeInteger(order.deliveryPence) && pricesShown() ? `<li><span>${isDelivery ? "Delivery" : "Roastery collection"}</span><small>${deliveryReason}</small><strong>${order.deliveryPence ? money(order.deliveryPence) : "Free"}</strong></li>` : ""}</ul>${order.customerNote ? `<p class="history-address"><b>Your comments</b><br>${escape(order.customerNote)}</p>` : ""}${order.locationSnapshot ? `<p class="history-address"><b>Location at order</b><br>${escape(order.locationSnapshot.name)}</p>` : ""}${snapshot?.address && isDelivery ? `<p class="history-address"><b>Delivery address at order</b><br>${escape(snapshot.address)}<br>${escape(snapshot.postcode || "")}</p>` : ""}${order.deliveryNotes ? `<p class="history-address">${escape(order.deliveryNotes)}</p>` : ""}${order.paymentTerms ? `<p class="payment-terms">Payment terms: ${escape(order.paymentTerms.label)}${order.paymentTerms.note ? `<br>${escape(order.paymentTerms.note)}` : ""}</p>` : ""}</details>
     ${standingChangeable(order) ? `<div class="standing-actions"><button class="button button-dark" type="button" data-standing-change="${escape(order.id)}">Change bags</button><button class="button button-outline" type="button" data-standing-skip="${escape(order.id)}">Skip this delivery</button></div><p class="standing-hint">You can change or skip this delivery until it's dispatched.</p>` : ""}
     <button class="button button-outline history-reorder" type="button" data-reorder="${escape(order.id)}" ${pendingAttempt ? "disabled" : ""}>Order again</button></article>`;
 }
@@ -1194,12 +1199,12 @@ const standingDay = (order) => /^\d{4}-\d{2}-\d{2}$/.test(order?.dispatchDate ||
 let standing = null; // { order, lines, mode, busy }
 function openStanding(order, mode) {
   if (!standingChangeable(order)) return;
-  standing = { order, mode, busy: false, lines: order.lines.map(l => ({ productId: l.productId, pack: l.pack, grind: l.grind, quantity: l.quantity, title: l.title, packLabel: l.packLabel, grindLabel: l.grindLabel, price: l.price })) };
+  standing = { order, mode, busy: false, lines: order.lines.map(l => ({ productId: l.productId, pack: l.pack, grind: l.grind, quantity: l.quantity, title: l.title, packLabel: l.packLabel, grindLabel: l.grindLabel, price: l.price, grams: l.grams })) };
   const day = standingDay(order);
   $("#standing-title").textContent = mode === "skip" ? "Skip this delivery?" : "Change this delivery";
   $("#standing-summary").textContent = mode === "skip"
     ? `Nothing will be sent${day ? ` on ${day}` : ""}. Your standing order carries on with the delivery after it, with your usual bags.`
-    : `${day ? `Dispatch day: ${day}. ` : ""}Change how many bags, remove a coffee (set it to 0) or add one.`;
+    : `${day ? `Dispatch day: ${day}. ` : ""}Change how many bags or remove a coffee by setting its quantity to 0.`;
   $("#standing-form").hidden = mode === "skip"; $("#standing-skip").hidden = mode !== "skip";
   $("#standing-error").hidden = true; $("#standing-skip-error").hidden = true;
   $("#standing-form").elements.scope.value = "once";
@@ -1214,32 +1219,41 @@ function fillStandingCoffees() {
 }
 function fillStandingOptions() {
   const product = productFor($("#standing-coffee").value);
-  $("#standing-pack").innerHTML = packsFor(product).map(([id, pack]) => `<option value="${id}">${escape(pack.short)}${pricesShown() ? ` · ${money(unitPrice(product, id))}` : ""}</option>`).join("");
-  $("#standing-grind").innerHTML = availableGrinds(product).map(g => `<option value="${escape(g.id)}">${escape(g.label)}</option>`).join("");
+  const available = isAvailable(product);
+  $("#standing-add-options").disabled = !available;
+  $("#standing-add-unavailable").hidden = available;
+  $("#standing-pack").innerHTML = !available ? "" : packsFor(product).map(([id, pack]) => `<option value="${id}">${escape(pack.short)}${pricesShown() ? ` · ${money(unitPrice(product, id))}` : ""}</option>`).join("");
+  $("#standing-grind").innerHTML = !available ? "" : availableGrinds(product).map(g => `<option value="${escape(g.id)}">${escape(g.label)}</option>`).join("");
 }
 function standingSums() {
   let grams = 0, pence = 0, bags = 0;
-  for (const l of standing.lines) { grams += (packs[l.pack]?.grams || 0) * l.quantity; pence += (l.price || 0) * l.quantity; bags += l.quantity; }
+  for (const l of standing.lines) { grams += (l.grams ?? packs[l.pack]?.grams ?? 0) * l.quantity; pence += (l.price || 0) * l.quantity; bags += l.quantity; }
   return { grams, pence, bags };
 }
+function standingQuantityLimit(line) {
+  if (isAvailable(productFor(line.productId)) && lineOrderable(line)) return MAX_QUANTITY;
+  return standing.order.lines.find((original) => lineKey(original) === lineKey(line))?.quantity ?? 0;
+}
 function drawStanding() {
-  $("#standing-lines").innerHTML = standing.lines.map((l, i) => `<div class="standing-line"><span><b>${escape(l.title)}</b><small>${escape(l.packLabel)} · ${escape(l.grindLabel)}${pricesShown() && l.price ? ` · ${money(l.price)} each` : ""}</small></span><label><span class="sr-only">Bags of ${escape(l.title)}, ${escape(l.packLabel)}, ${escape(l.grindLabel)}</span><input type="number" inputmode="numeric" min="0" max="${MAX_QUANTITY}" step="1" value="${l.quantity}" data-standing-line="${i}"></label></div>`).join("") || '<p class="standing-empty">No bags yet: add a coffee below.</p>';
+  $("#standing-lines").innerHTML = standing.lines.map((l, i) => `<div class="standing-line"><span><b>${escape(l.title)}</b><small>${escape(l.packLabel)} · ${escape(l.grindLabel)}${pricesShown() && l.price ? ` · ${money(l.price)} each` : ""}</small></span><label><span class="sr-only">Bags of ${escape(l.title)}, ${escape(l.packLabel)}, ${escape(l.grindLabel)}</span><input type="number" inputmode="numeric" min="0" max="${standingQuantityLimit(l)}" step="1" value="${l.quantity}" data-standing-line="${i}"></label></div>`).join("") || '<p class="standing-empty">No bags yet: add a coffee below.</p>';
+  drawStandingTotals();
+}
+function drawStandingTotals() {
   const { grams, pence, bags } = standingSums(), min = minimumGrams();
   const short = min && grams < min;
-  $("#standing-total").innerHTML = `${bagCount(bags)} · ${escape(weight(grams))}${pricesShown() ? ` · ${money(pence)} of coffee` : ""}${short ? `<br><span class="standing-short">The minimum order is ${escape(weight(min))}: add ${escape(weight(min - grams))} more.</span>` : ""}`;
+  $("#standing-total").innerHTML = `${bagCount(bags)} · ${escape(weight(grams))}${pricesShown() ? ` · ${money(pence)} of coffee` : ""}${short ? `<br><span class="standing-short">The minimum order is ${escape(weight(min))}.${$("#standing-add-options").disabled ? "" : ` Add ${escape(weight(min - grams))} more.`}</span>` : ""}`;
   $("#standing-save").disabled = standing.busy || !bags || !!short;
 }
 $("#standing-coffee").addEventListener("change", fillStandingOptions);
 $("#standing-lines").addEventListener("input", (event) => {
   const input = event.target.closest("[data-standing-line]"); if (!input || !standing) return;
-  const n = Math.max(0, Math.min(MAX_QUANTITY, Math.floor(Number(input.value) || 0)));
-  standing.lines[Number(input.dataset.standingLine)].quantity = n;
-  const { grams, pence, bags } = standingSums(), min = minimumGrams(), short = min && grams < min;
-  $("#standing-total").innerHTML = `${bagCount(bags)} · ${escape(weight(grams))}${pricesShown() ? ` · ${money(pence)} of coffee` : ""}${short ? `<br><span class="standing-short">The minimum order is ${escape(weight(min))}: add ${escape(weight(min - grams))} more.</span>` : ""}`;
-  $("#standing-save").disabled = standing.busy || !bags || !!short;
+  const line = standing.lines[Number(input.dataset.standingLine)];
+  line.quantity = Math.max(0, Math.min(standingQuantityLimit(line), Math.floor(Number(input.value) || 0)));
+  if (input.value && Number(input.value) !== line.quantity) input.value = String(line.quantity);
+  drawStandingTotals();
 });
 $("#standing-add").addEventListener("click", () => {
-  const product = productFor($("#standing-coffee").value); if (!product || !standing) return;
+  const product = productFor($("#standing-coffee").value); if (!isAvailable(product) || !standing) return;
   const line = { productId: product.id, pack: $("#standing-pack").value, grind: $("#standing-grind").value };
   const same = standing.lines.find(l => lineKey(l) === lineKey(line));
   if (same) same.quantity = Math.min(MAX_QUANTITY, same.quantity + 1);

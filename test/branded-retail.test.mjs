@@ -243,13 +243,29 @@ test("account requests use only the retail cookie and accept writes only from th
 
   const read = await callGateway("/api/account", { headers: { cookie, authorization: "Bearer fixture-staff" } });
   assert.equal(read.status, 200);
-  assert.deepEqual(await read.json(), account);
+  const { profileSession, ...details } = await read.json();
+  assert.deepEqual(details, account);
+  assert.match(profileSession, /^[0-9a-f]{64}$/);
   assert.equal(read.headers.get("set-cookie"), null);
   assert.match(read.headers.get("cache-control"), /no-store/);
 
+  const laterCookie = `${retailCookie}=${Buffer.alloc(32, 42).toString("base64url")}`;
+  for (const headers of [
+    { cookie },
+    { cookie: laterCookie, "x-retail-profile-session": profileSession },
+  ]) {
+    const stale = await callGateway("/api/account", {
+      method: "PUT",
+      headers: { ...headers, origin: brandedOrigin, "content-type": "application/json" },
+      body: JSON.stringify(account.profile),
+    });
+    assert.equal(stale.status, 409);
+    assert.equal((await stale.json()).error, "account_changed");
+  }
+  assert.equal(upstream.mock.callCount(), 1);
   const update = await callGateway("/api/account", {
     method: "PUT",
-    headers: { cookie, origin: brandedOrigin, "content-type": "application/json" },
+    headers: { cookie, origin: brandedOrigin, "content-type": "application/json", "x-retail-profile-session": profileSession },
     body: JSON.stringify(account.profile),
   });
   assert.equal(update.status, 200);
@@ -259,7 +275,7 @@ test("account requests use only the retail cookie and accept writes only from th
 
   const recorded = await callGateway("/api/account/orders", {
     method: "POST",
-    headers: { cookie, origin: brandedOrigin, "content-type": "application/json" },
+    headers: { cookie, origin: brandedOrigin, "content-type": "application/json", "x-retail-profile-session": profileSession },
     body: JSON.stringify(order),
   });
   assert.equal(recorded.status, 201);
@@ -371,6 +387,38 @@ describe("first-party retail authentication through the actual local Worker", ()
     publicKey = await crypto.subtle.importKey("jwk", (await keyResponse.json()).key, { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]);
   });
   after(async () => { await runtime?.dispose(); });
+
+  test("first order submission is bound to the reviewed account or an explicit guest", async () => {
+    const body = '{"fixture":"order"}';
+    const cookie = `${retailCookie}=${retailToken}`;
+    const replacement = `${retailCookie}=${Buffer.alloc(32, 42).toString("base64url")}`;
+    const binding = createHash("sha256").update("retail-profile:" + retailToken).digest("hex");
+    const initialCalls = serviceCalls.length;
+    const place = headers => runtime.dispatchFetch(brandedOrigin + "/api/retail/orders", {
+      method: "POST", headers: { origin: brandedOrigin, "content-type": "application/json", ...headers }, body,
+    });
+    for (const headers of [
+      { "x-retail-profile-session": binding },
+      { cookie: replacement, "x-retail-profile-session": binding },
+      { cookie },
+    ]) {
+      const response = await place(headers);
+      assert.equal(response.status, 409);
+      assert.equal((await response.json()).error, "checkout_session_unverified");
+    }
+    assert.equal(serviceCalls.length, initialCalls, "the stale order never reaches placement");
+    responder = record => {
+      assert.equal(record.path, "/consumer-orders-service/orders");
+      assert.equal(record.body, body);
+      return RuntimeResponse.json({ placed: true });
+    };
+    const signedIn = await place({ cookie, "x-retail-profile-session": binding });
+    assert.equal(signedIn.status, 200);
+    assert.equal(serviceCalls.at(-1).headers.get("authorization"), "Bearer " + retailToken);
+    const guest = await place({ cookie: replacement, "x-retail-profile-session": "guest" });
+    assert.equal(guest.status, 200);
+    assert.equal(serviceCalls.at(-1).headers.get("authorization"), null);
+  });
 
   test("the public service key persists and exposes no private signing material", async () => {
     const first = await runtime.dispatchFetch(brandedOrigin + "/consumer-auth/service-key");

@@ -72,7 +72,7 @@ function switchSite(id){
   if(S.plan)closePlan();if(S.insp)closeInsp();if(S.onb)closeOnb();
   $("#toast").hidden=true; // an Undo still showing belongs to the site being left
   pendingMaintJob=null;
-  S.site=id;diaryLoading={ready:new Set(),failed:new Set()};updateDiaryLoading();try{localStorage.setItem("sfbb.site",id)}catch(e){}
+  S.site=id;S.rota=null;diaryLoading={ready:new Set(),failed:new Set()};updateDiaryLoading();try{localStorage.setItem("sfbb.site",id)}catch(e){}
   Object.assign(S,{days:{},weeks:{},allergens:[],allergenDocs:[],reviews:[],extras:[],cleaning:[],deliveries:[],maintenance:[],fire:[],accidents:[],suppliers:[],contacts:[],plans:[],onboarding:[],inspections:[],staff:[],prove:[],rev:{}});
   S.settings=S.sum[id]&&S.sum[id].ready?S.sum[id].settings:normSettings(null);S.cfg=activeCfg(S.settings);
   SE=null;setupDirty=false;pubNote="";$("#setupMsg").textContent="";
@@ -83,7 +83,7 @@ function switchSite(id){
   for(const x of["#pMsg","#algConfirm","#tMsg","#revMsg","#pubMsg","#inMsg"])$(x).textContent="";
   fillProve();applyTabs();renderAll();
   if(S.db)subscribeSite();
-  S.rota=null;loadRota();
+  loadRota();
   window.scrollTo({top:0});
 }
 // The four lists that grow every day (days, weeks, deliveries, Prove it) load only their latest records when the
@@ -203,11 +203,11 @@ $("#revSave").addEventListener("click",async()=>{
   const date=today();
   if(await save(()=>D("reviews",date).set({date,answers:S.rev,notes:$("#revNotes").value.trim(),by:S.me,at:Date.now()}))){S.rev={};$("#revNotes").value="";$("#revMsg").textContent="Review signed and saved."}
 });
-document.querySelectorAll(".note.intro").forEach(n=>{n.setAttribute("title","Tap to read more");n.addEventListener("click",()=>n.classList.toggle("full"))});
 
 /* ---------- boot ---------- */
 // The shared session guard shields first, then clears the old person's private page before reloading.
 window.addEventListener("sc:session-invalid",()=>{
+  rotaRequest=null;
   Object.assign(S,{staff:[],contacts:[],onboarding:[],accidents:[],team:[],days:{},weeks:{},reviews:[],plans:[],inspections:[],sum:{},names:{},plan:null,onb:null,insp:null,rota:null,editStaff:null,myUserId:"",myName:"",role:"",me:null,db:null,canWrite:false});
   contactPrivacy={};editCon=null;IN.data=null;IN.loading=null;IN.key="";
   pendingMaintJob=null;

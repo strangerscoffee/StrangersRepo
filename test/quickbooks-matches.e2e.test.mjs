@@ -45,8 +45,12 @@ test("orders invoiced by hand in QuickBooks are matched and marked, without issu
     const page = await context.newPage(), errors = [];
     page.on("pageerror", error => errors.push(error.message));
     let posted = null;
-    await page.route("**/invoicing/quickbooks-matches", async route => {
-      if (route.request().method() === "GET") return route.fulfill({ json: { company: "Example Coffee Ltd", suggestions } });
+    await page.route("**/invoicing/quickbooks-matches*", async route => {
+      if (route.request().method() === "GET") {
+        const after = new URL(route.request().url()).searchParams.get("after");
+        const review = after ? { suggestions: [], complete: false, limit: 200 } : { suggestions, complete: true, review: "fixture-review", next: "next-page" };
+        return route.fulfill({ json: { company: "Example Coffee Ltd", ...review } });
+      }
       posted = route.request().postDataJSON();
       return route.fulfill({ json: { recorded: posted.matches.length } });
     });
@@ -59,6 +63,11 @@ test("orders invoiced by hand in QuickBooks are matched and marked, without issu
       await page.getByRole("button", { name: "Match with QuickBooks" }).click();
       const sheet = page.locator("#iwQbMatches");
       await sheet.waitFor();
+      await sheet.getByRole("button", { name: "Next orders" }).click();
+      await sheet.getByText("This date range contains too many orders or QuickBooks invoices", { exact: false }).waitFor();
+      assert.equal(await sheet.getByRole("button", { name: "Mark as already invoiced" }).count(), 0);
+      await sheet.getByRole("button", { name: "Previous orders" }).click();
+      await sheet.getByRole("button", { name: "Next orders" }).waitFor();
       const boxes = sheet.locator("[name=match]");
       assert.equal(await boxes.count(), 2, "the order not found in QuickBooks has nothing to tick");
       assert.deepEqual([await boxes.nth(0).isChecked(), await boxes.nth(1).isChecked()], [true, false], "a different total starts unticked");
@@ -69,7 +78,7 @@ test("orders invoiced by hand in QuickBooks are matched and marked, without issu
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       await sheet.getByRole("button", { name: "Mark 1 order as already invoiced" }).click();
       await page.locator("#iwBatchPicker").waitFor();
-      assert.deepEqual(posted, { matches: [{ orderId: cafe.id, version: cafe.version, remoteId: "58925" }] });
+      assert.deepEqual(posted, { matches: [{ orderId: cafe.id, version: cafe.version, remoteId: "58925" }], review: "fixture-review", after: null, limit: null });
       assert.deepEqual(errors, []);
     } finally { await context.close(); }
   }

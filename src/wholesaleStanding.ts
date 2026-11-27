@@ -4,10 +4,10 @@
 // amend the bags on any New, Preparing or Ready customer order that has no invoice yet. Everything is stored in the order's
 // own JSON (no migration); customers see the dispatch day, the schedule and that Strangers updated the order.
 import { addDays, addMonths, ukDay } from "./insightsMath";
-import { shippingFor } from "../public/wholesale/shipping.js";
+import { isWholesaleDelivery, shippingFor } from "../public/wholesale/shipping.js";
 import { validGrindId } from "../public/wholesale/grinds.js";
 import { MAX_QUANTITY } from "../public/wholesale/limits.js";
-import { catalogue, packsOf } from "./wholesaleCatalogue";
+import { catalogue, packsOf, catalogueRevisions, CATALOGUE_REVISIONS_MATCH_SQL } from "./wholesaleCatalogue";
 import { object, get, version, type Versioned } from "./wholesaleStore";
 import { publicCustomer, wholesaleCustomer, paymentTermsFor } from "./wholesaleAccounts";
 import { customerLocations } from "./wholesaleCustomers";
@@ -34,7 +34,9 @@ async function deferStanding(env: Env, saved: AnyOrder, actor: string, code = "c
   const now = Date.now(), data = { ...strip(saved), standingIssue: { code, at: now }, standingRetryAt: now + 15 * 60000 };
   const result = await env.DB.prepare("UPDATE wholesale_preview SET data=?,version=version+1,updated_at=? WHERE kind='order' AND id=? AND version=?")
     .bind(JSON.stringify(data), now, saved.id, saved.version).run();
-  if (result.meta.changes && saved.standingIssue?.code !== code) await audit(env, "wholesale_standing_blocked", actor, `Standing order ${saved.id}: the next delivery needs review. No unavailable coffee or private price was copied.`);
+  if (result.meta.changes && saved.standingIssue?.code !== code) await audit(env, "wholesale_standing_blocked", actor,
+    `Standing order ${saved.id}: ${code === "delivery_location_missing" ? "the saved delivery location was removed." :
+      code === "delivery_location_changed" ? "the saved delivery location needs an address and postcode." : "the next delivery needs review."}`);
 }
 const totals = (lines: any[], delivery: string, free = false) => {
   const pence = lines.reduce((sum, line) => sum + line.price * line.quantity, 0), deliveryPence = free && delivery === "Delivery" ? 0 : shippingFor(delivery, pence);
@@ -88,15 +90,22 @@ export async function rollStanding(env: Env, saved: AnyOrder, actor: string, ctx
     const { recipe, ...rest } = line, now = product?.recipe?.length ? recipeText(product) : product ? "" : recipe;
     return { ...rest, price: Number.isInteger(price) ? price : line.price, ...(now ? { recipe: now } : {}) };
   });
-  const fresh: Record<string, unknown> = {};
-  if (customer) {
-    const location = customerLocations(customer).find((l) => l.id === (saved.locationId || "primary")) || customerLocations(customer)[0];
-    const { locations, defaultLocationId, ...profile } = publicCustomer(customer);
-    Object.assign(fresh, { business: customer.business, customerSnapshot: { ...profile, contact: location.contact, phone: location.phone, address: location.address, postcode: location.postcode, deliveryNotes: location.deliveryNotes }, deliveryNotes: location.deliveryNotes, paymentTerms: paymentTermsFor(customer), locationId: location.id, locationSnapshot: { ...location } });
+  const savedLocations = customerLocations(customer);
+  const selected = savedLocations.find((location) => location.id === (saved.locationId || "primary"));
+  if (isWholesaleDelivery(saved.delivery) && (!selected?.address?.trim() || !selected.postcode?.trim())) {
+    await deferStanding(env, saved, actor, selected ? "delivery_location_changed" : "delivery_location_missing");
+    return null;
   }
+  const location = selected || savedLocations[0];
+  const { locations, defaultLocationId, ...profile } = publicCustomer(customer);
+  const fresh = {
+    business: customer.business,
+    customerSnapshot: { ...profile, contact: location.contact, phone: location.phone, address: location.address, postcode: location.postcode, deliveryNotes: location.deliveryNotes },
+    deliveryNotes: location.deliveryNotes, paymentTerms: paymentTermsFor(customer), locationId: location.id, locationSnapshot: { ...location },
+  };
   // A new run starts clean: no emails sent yet, not on a (possibly cleared) tab, no changes, no tracking or notes.
   const now = Date.now(), { nextRunId, amendedAt, amendedBy, amendedByCustomer, originalLines, repeatLines, packedLines, skipped, trackingUrl, note, dispatchEmailedAt, dispatchedAt, standingIssue, standingRetryAt, tab, tabClearedId, freeDelivery, ...base } = strip(saved);
-  const free = !!customer?.freeDelivery && saved.delivery === "Delivery";
+  const free = !!customer.freeDelivery && saved.delivery === "Delivery";
   const next = {
     ...base, ...fresh, status: "New", note: "", trackingUrl: "", createdAt: now, date: ukDay(now), requestKey: `standing:${id}`, lines,
     ...totals(lines, saved.delivery, free), ...(free ? { freeDelivery: true } : {}),
@@ -108,11 +117,20 @@ export async function rollStanding(env: Env, saved: AnyOrder, actor: string, ctx
   // exact parent JSON and revision tie the INSERT to this update, even in a race.
   const parentData = strip(saved); delete parentData.standingIssue; delete parentData.standingRetryAt;
   const parent = JSON.stringify({ ...parentData, nextRunId: id });
+  const currentInputs = `EXISTS(SELECT 1 FROM wholesale_preview WHERE kind='customer' AND id=? AND version=? AND updated_at=?)
+    AND ${CATALOGUE_REVISIONS_MATCH_SQL}`;
+  const inputs = [customer.id, customer.version, customer.updatedAt, catalogueRevisions(coffees, usual)];
   const results = await env.DB.batch([
-    env.DB.prepare("UPDATE wholesale_preview SET data=?,version=version+1,updated_at=? WHERE kind='order' AND id=? AND version=? AND NOT EXISTS(SELECT 1 FROM wholesale_preview WHERE kind='order' AND id=?)")
-      .bind(parent, now, saved.id, saved.version, id),
-    env.DB.prepare("INSERT INTO wholesale_preview(kind,id,data,version,updated_at) SELECT 'order',?,?,1,? WHERE EXISTS(SELECT 1 FROM wholesale_preview WHERE kind='order' AND id=? AND version=? AND data=?) AND NOT EXISTS(SELECT 1 FROM wholesale_preview WHERE kind='order' AND id=?)")
-      .bind(id, JSON.stringify(next), now, saved.id, saved.version + 1, parent, id),
+    env.DB.prepare(`UPDATE wholesale_preview SET data=?,version=version+1,updated_at=?
+      WHERE kind='order' AND id=? AND version=?
+      AND NOT EXISTS(SELECT 1 FROM wholesale_preview WHERE kind='order' AND id=?)
+      AND ${currentInputs}`)
+      .bind(parent, now, saved.id, saved.version, id, ...inputs),
+    env.DB.prepare(`INSERT INTO wholesale_preview(kind,id,data,version,updated_at) SELECT 'order',?,?,1,?
+      WHERE EXISTS(SELECT 1 FROM wholesale_preview WHERE kind='order' AND id=? AND version=? AND data=?)
+      AND NOT EXISTS(SELECT 1 FROM wholesale_preview WHERE kind='order' AND id=?)
+      AND ${currentInputs}`)
+      .bind(id, JSON.stringify(next), now, saved.id, saved.version + 1, parent, id, ...inputs),
   ]);
   if (!results[1].meta.changes) return null;
   await audit(env, "wholesale_standing_run", actor, `Standing order ${saved.standing.seriesId}: ${saved.skipped?.by || actor} ${saved.status === "Cancelled" ? "skipped" : "dispatched"} ${saved.id}; next run ${id} is due for dispatch on ${next.dispatchDate}.`);

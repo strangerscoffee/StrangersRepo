@@ -191,3 +191,47 @@ test("A lost checklist request cannot reapply an older tap after reconnect", { t
     await context.close();
   }
 });
+
+test("the diary ignores an earlier Today response after returning to a site and shows whole introductions", async () => {
+  const phone = await b.newContext({ viewport: { width: 320, height: 568 } });
+  const held = Promise.withResolvers(), release = Promise.withResolvers();
+  try {
+    await phone.addCookies([{ name: "sfbb_session", value: C.split("=")[1], url: srv.base }]);
+    const page = await phone.newPage();
+    let roasteryRequests = 0;
+    const published = (site, name) => ({
+      site, day: new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()),
+      published: true, shifts: [{ name, start: "08:00", end: "10:00" }],
+    });
+    await page.route("**/api/rota/today?site=*", async (route) => {
+      const site = new URL(route.request().url()).searchParams.get("site");
+      if (site === "roastery" && ++roasteryRequests === 1) {
+        held.resolve();
+        await release.promise;
+        await route.fulfill({ json: published(site, "Earlier Person") });
+      } else {
+        await route.fulfill({ json: published(site, site === "roastery" ? "Current Person" : "Cafe Person") });
+      }
+    });
+    await page.goto(srv.base + "/#day", { waitUntil: "domcontentloaded" });
+    await held.promise;
+    await page.evaluate(() => loadRota());
+    assert.equal(roasteryRequests, 1, "a second refresh while the first is pending is coalesced");
+    await page.evaluate(() => switchSite("cafe"));
+    await page.locator("#onShift").waitFor();
+    await page.evaluate(() => switchSite("roastery"));
+    await page.locator("#onShift button").click();
+    await page.getByText("Current Person", { exact: true }).waitFor();
+    const received = page.waitForResponse("**/api/rota/today?site=roastery");
+    release.resolve();
+    await (await received).finished();
+    assert.equal(await page.getByText("Current Person", { exact: true }).isVisible(), true);
+    await page.evaluate(() => show("accidents"));
+    const note = page.locator('[data-panel="accidents"] .note.intro');
+    await note.waitFor();
+    assert.equal(await note.evaluate((node) => node.scrollHeight <= node.clientHeight), true);
+  } finally {
+    release.resolve();
+    await phone.close();
+  }
+});

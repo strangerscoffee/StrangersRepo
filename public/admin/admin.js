@@ -46,7 +46,7 @@
     tune: '<path d="M4 6h9m4 0h3M4 12h3m4 0h9M4 18h9m4 0h3"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="15" cy="18" r="2"/>',
     copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>',
   };
-  Object.assign(P, window.SCWholesalePreparation.iconPaths);
+  Object.assign(P, window.SCWholesalePreparation?.iconPaths);
   const svg = (k) => raw(`<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${P[k]}</svg>`);
   document.querySelectorAll("[data-icon]").forEach((e) => { e.innerHTML = svg(e.dataset.icon)[RAW]; });
 
@@ -144,6 +144,7 @@
     const b = e.target.closest("[data-sheet]");
     if (!b) return;
     if (b.dataset.sheet === "close") { closeSheet(); return; }
+    if (b.dataset.sheet === "reload-admin") { location.reload(); return; }
     if (sheetDone) once(b, () => sheetDone(b.dataset.sheet, b));
   });
   sheet.addEventListener("submit", (e) => { e.preventDefault(); if (sheetDone) once(e.target, () => sheetDone("submit", e.target)); });
@@ -214,12 +215,13 @@
     const sideButton = ([id, title, icon]) => {
       if (id !== "wholesale") return html`<button class="nav" type="button" data-go="${id}" aria-current="${S.page === id ? "page" : "false"}">${svg(icon)}${title}${id === "security" ? badge() : ""}</button>`;
       const current = S.page === "wholesale";
+      if (!wholesale) return html`<button class="nav" type="button" data-go="wholesale" aria-current="${current ? "page" : "false"}">${svg(icon)}${title}</button>`;
       return html`<div class="nav-wholesale">
         <div class="nav-wholesale-heading ${current ? "is-current" : ""}">
           <button class="nav" type="button" data-go="wholesale" aria-current="${current && !wholesaleExpanded ? "page" : "false"}">${svg(icon)}${title}</button>
           <button class="nav-wholesale-toggle" type="button" data-act="wh-sidebar-toggle" aria-expanded="${wholesaleExpanded}" aria-controls="wholesaleSubnav" aria-label="${wholesaleExpanded ? "Collapse" : "Expand"} Wholesale sections">${svg("chev")}</button>
         </div>
-        <div id="wholesaleSubnav" class="nav-wholesale-subnav" role="group" aria-label="Wholesale sections" ${wholesaleExpanded ? "" : raw("hidden")}>${wholesale.navigation({ active: current })}</div>
+        <div id="wholesaleSubnav" class="nav-wholesale-subnav" role="group" aria-label="Wholesale sections" ${wholesaleExpanded ? "" : raw("hidden")}>${wholesale?.navigation({ active: current })}</div>
       </div>`;
     };
     updateNav($("#sideNav"), html`${NAV_GROUPS.map(([title, items]) => html`<div class="side-group" role="group" aria-label="${title}"><p class="side-label" aria-hidden="true">${title}</p>${items.map(sideButton)}</div>`)}`);
@@ -228,7 +230,7 @@
       <button type="button" data-go="${id}" aria-current="${tab === id ? "page" : "false"}">
         ${svg(icon)}<span class="tab-label">${id === "wholesale" ? html`Whole<wbr>sale` : title}</span>${id === "more" ? badge(99) : ""}
       </button>`)}`);
-    wholesale.syncNavigation(desktopNav.matches);
+    wholesale?.syncNavigation(desktopNav.matches);
   }
   async function refreshBadge() {
     const owner = S.me;
@@ -243,11 +245,11 @@
 
   let seq = 0, routeEntry = 0;
   const routeSnapshots = new Map();
-  const routeHash = () => S.page === "wholesale" ? "#wholesale/" + wholesale.currentSection() : "#" + S.page;
+  const routeHash = () => S.page === "wholesale" ? "#wholesale/" + (wholesale?.currentSection() || parseRoute().section || "orders") : "#" + S.page;
   function saveRoute() {
     if (!history.state?.adminEntry) return;
     routeSnapshots.set(history.state.adminEntry, {
-      wholesale: wholesale.workspaceState(), open: S.open, filter: S.filter, q: S.q,
+      wholesale: wholesale?.workspaceState(), open: S.open, filter: S.filter, q: S.q,
       feed: S.feed, fq: S.fq, from: S.activityFrom, to: S.activityTo, scroll: window.scrollY,
     });
     if (routeSnapshots.size > 60) routeSnapshots.delete(routeSnapshots.keys().next().value);
@@ -261,10 +263,10 @@
     const { page, section } = parseRoute();
     const saved = routeSnapshots.get(history.state?.adminEntry);
     if (saved) {
-      wholesale.restoreWorkspace(saved.wholesale);
+      wholesale?.restoreWorkspace(saved.wholesale);
       Object.assign(S, { open: saved.open, filter: saved.filter, q: saved.q, feed: saved.feed, fq: saved.fq, activityFrom: saved.from, activityTo: saved.to });
-    } else if (page === "wholesale") wholesale.selectSection(section || "orders");
-    if (page === "wholesale" && section && wholesale.currentSection() !== section) wholesale.selectSection(section);
+    } else if (page === "wholesale") wholesale?.selectSection(section || "orders");
+    if (page === "wholesale" && section && wholesale?.currentSection() !== section) wholesale?.selectSection(section);
     closeSheet();
     await show(page, { fromHistory: true, scroll: saved?.scroll });
   }
@@ -295,13 +297,13 @@
         if (details) details.open = true;
       }
       if (!keepScroll) SC.reveal(main);
-      if (S.page === "wholesale") wholesale.syncNavigation(desktopNav.matches);
+      if (S.page === "wholesale") wholesale?.syncNavigation(desktopNav.matches);
       if (scroll != null) window.scrollTo(0, scroll);
       if (focusContent && document.activeElement === document.body) main.focus({ preventScroll: true });
       saveRoute();
     } catch (e) {
       if (my !== seq) return;
-      put(main, html`${head("Couldn't load this page", "")}<div class="group glass"><div class="item has-action"><span class="ic warn">${svg("warn")}</span><span class="tx"><span>${e.message}</span></span><span class="end"><button class="btn soft" type="button" data-act="retry-page">Try again</button></span></div></div>`);
+      put(main, html`${head("Couldn't load this page", "")}<div class="group glass"><div class="item has-action"><span class="ic warn">${svg("warn")}</span><span class="tx"><span>${e.message}</span></span><span class="end"><button class="btn soft" type="button" data-act="${e.reloadAdmin ? "reload-admin" : "retry-page"}">${e.reloadAdmin ? "Reload Admin" : "Try again"}</button></span></div></div>`);
       if (focusContent && document.activeElement === document.body) main.focus({ preventScroll: true });
     } finally { if (my === seq) main.setAttribute("aria-busy", "false"); }
   }
@@ -326,20 +328,27 @@
 
   /* ---------- views ---------- */
   const VIEWS = {};
-  const wholesale = window.WholesaleAdmin({ api, html, raw, svg, put, head, openSheet, closeSheet, reload, toast, onNavigationChange: () => { if (S.me) renderNav(); }, onSectionChange: id => act("wh-tab", id) });
-  VIEWS.wholesale = wholesale.view;
-  const sickness = window.AdminSickness({ api, html, raw, svg, put, head, openSheet, closeSheet, reload, toast, links: () => S.links || {} });
-  VIEWS.sickness = sickness.view;
-  const consumer = window.AdminConsumer({ api, html, raw, svg, put, head, openSheet, closeSheet, toast, confirmSheet });
-  VIEWS.consumer = consumer.view;
+  const install = (factory, options) => {
+    try { return factory?.(options); }
+    catch (error) { window.SCReportError?.(error.message, error.stack || "", { quiet: true }); }
+  };
+  const unavailable = (page) => () => {
+    throw Object.assign(new Error(PAGE_LABELS.get(page) + " couldn’t start. Reload Admin to try again."), { reloadAdmin: true });
+  };
+  const wholesale = install(window.WholesaleAdmin, { install, api, html, raw, svg, put, head, openSheet, closeSheet, reload, toast, onNavigationChange: () => { if (S.me) renderNav(); }, onSectionChange: id => act("wh-tab", id) });
+  VIEWS.wholesale = wholesale?.view || unavailable("wholesale");
+  const sickness = install(window.AdminSickness, { api, html, raw, svg, put, head, openSheet, closeSheet, reload, toast, links: () => S.links || {} });
+  VIEWS.sickness = sickness?.view || unavailable("sickness");
+  const consumer = install(window.AdminConsumer, { api, html, raw, svg, put, head, openSheet, closeSheet, toast, confirmSheet });
+  VIEWS.consumer = consumer?.view || unavailable("consumer");
   let cache = {};
 
-  const overviewUI = window.AdminOverview({ html, raw, svg, openSheet, getData: () => cache.overview, links: () => S.links });
-  VIEWS.overview = async () => {
+  const overviewUI = install(window.AdminOverview, { html, raw, svg, openSheet, getData: () => cache.overview, links: () => S.links });
+  VIEWS.overview = overviewUI ? async () => {
     const d = await api("GET", "/api/admin/overview");
     cache.overview = d; S.locked = d.stats.people.locked; renderNav();
     return overviewUI.view(d);
-  };
+  } : unavailable("overview");
 
   const workspacePanelHead = (title, description = "", count = "") => html`<header class="team-panel-head"><div><h2>${title}</h2>${description ? html`<p>${description}</p>` : ""}</div>${count ? html`<span class="team-panel-count">${count}</span>` : ""}</header>`;
 
@@ -811,50 +820,51 @@
   }
 
   async function act(name, id, el) {
-    if (name === "overview-site") { overviewUI.site(id); return; }
+    if (name === "overview-site") { overviewUI?.site(id); return; }
     if (name === "overview-roast") {
       saveRoute();
-      wholesale.selectSection("insights");
-      wholesale.openRoastPlan();
+      wholesale?.selectSection("insights");
+      wholesale?.openRoastPlan?.();
       await show("wholesale"); return;
     }
     if (name === "overview-wholesale") {
       saveRoute();
       const invoice = id === "invoices" || id === "invoice-review";
-      wholesale.selectSection(invoice ? "invoices" : "orders", { queue: id, resetStatus: true });
-      if (invoice) wholesale.openInvoiceQueue(id === "invoice-review" ? "review" : "overdue");
+      wholesale?.selectSection(invoice ? "invoices" : "orders", { queue: id, resetStatus: true });
+      if (invoice) wholesale?.openInvoiceQueue(id === "invoice-review" ? "review" : "overdue");
       wholesaleExpanded = true; await show("wholesale"); return;
     }
-    if (name.startsWith("sick-")) { await sickness.act(name, id); return; }
-    if (name.startsWith("consumer-")) { await consumer.act(name, id, el); return; }
+    if (name.startsWith("sick-")) { await sickness?.act(name, id); return; }
+    if (name.startsWith("consumer-")) { await consumer?.act(name, id, el); return; }
     if (name === "wh-sidebar-toggle") {
       wholesaleExpanded = !wholesaleExpanded;
       renderNav();
       if (wholesaleExpanded) SC.reveal($("#wholesaleSubnav"), { offset: -4 });
       return;
     }
-    if (name === "wh-sections") { wholesale.openNavigation(el, (id) => act("wh-tab", id, el)); return; }
+    if (name === "wh-sections") { wholesale?.openNavigation(el, (id) => act("wh-tab", id, el)); return; }
     if (name === "wh-tab" || name === "wh-pending") {
-      if (name === "wh-tab" && S.page === "wholesale" && id === wholesale.currentSection()) return;
+      if (name === "wh-tab" && S.page === "wholesale" && id === wholesale?.currentSection()) return;
       const fromPicker = el?.closest("#wSectionsHost,.more-grid") || document.activeElement?.id === "wSection";
       saveRoute();
       const section = name === "wh-pending" ? "customers" : id;
-      if (!wholesale.selectSection(section, { pending: name === "wh-pending" })) return;
+      if (wholesale && !wholesale.selectSection(section, { pending: name === "wh-pending" })) return;
       wholesaleExpanded = true;
       await show("wholesale");
-      if (fromPicker && S.page === "wholesale" && wholesale.currentSection() === section && document.activeElement === document.body) {
+      if (fromPicker && S.page === "wholesale" && wholesale?.currentSection() === section && document.activeElement === document.body) {
         (desktopNav.matches ? $(`#sideNav [data-act="wh-tab"][data-id="${CSS.escape(section)}"]`) : $("#wSection"))?.focus({ preventScroll: true });
       }
       return;
     }
     if (name.startsWith("wh-")) {
-      try { await wholesale.act(name, id); } catch (error) { toast(error.message); }
+      try { await wholesale?.act(name, id); } catch (error) { toast(error.message); }
       return;
     }
     const p = person(id);
     switch (name) {
       case "go": saveRoute(); show(id); return;
       case "skip-content": $("#main").focus(); return;
+      case "reload-admin": location.reload(); return;
       case "retry-page": await show(S.page); $("#main").focus({ preventScroll: true }); return;
       case "errors": saveRoute(); S.feed = "errors"; show("activity"); return;
       case "dismiss":
@@ -972,7 +982,7 @@
     if (g) {
       e.preventDefault();
       if (g.dataset.go === S.page && g.closest("#tabBar,#sideNav")) {
-        if (S.page === "wholesale" && !wholesaleExpanded && g.closest("#sideNav")) {
+        if (S.page === "wholesale" && wholesale && !wholesaleExpanded && g.closest("#sideNav")) {
           wholesaleExpanded = true; renderNav(); SC.reveal($("#wholesaleSubnav"), { offset: -4 });
         }
         return;
@@ -1003,11 +1013,11 @@
   // Search as you type, keeping the cursor in the box.
   let searchT;
   document.addEventListener("input", (e) => {
-    if (e.target.id === "consumerSearch") { consumer.search(e.target.value); return; }
-    if (e.target.id === "sickSearch") { sickness.search(e.target.value); return; }
-    if (e.target.id === "wiSearch") { wholesale.searchInvoices(e.target.value); return; }
-    if (e.target.id === "iwAccountSearch") { wholesale.searchBillingAccounts(e.target.value); return; }
-    if (e.target.id === "wq") { wholesale.search(e.target.value); return; }
+    if (e.target.id === "consumerSearch") { consumer?.search(e.target.value); return; }
+    if (e.target.id === "sickSearch") { sickness?.search(e.target.value); return; }
+    if (e.target.id === "wiSearch") { wholesale?.searchInvoices?.(e.target.value); return; }
+    if (e.target.id === "iwAccountSearch") { wholesale?.searchBillingAccounts?.(e.target.value); return; }
+    if (e.target.id === "wq") { wholesale?.search(e.target.value); return; }
     if (e.target.id !== "q" && e.target.id !== "fq") return;
     const id = e.target.id, page = S.page;
     if (id === "q") S.q = e.target.value; else S.fq = e.target.value;
@@ -1024,10 +1034,10 @@
   window.addEventListener("popstate", routeChanged);
   window.addEventListener("hashchange", routeChanged);
   document.addEventListener("change", event => {
-    if (event.target.id === "consumerOrderFilter") { consumer.filterOrders(event.target.value); return; }
-    if (event.target.matches("[data-consumer-product]")) { consumer.setAvailability(event.target); return; }
+    if (event.target.id === "consumerOrderFilter") { consumer?.filterOrders(event.target.value); return; }
+    if (event.target.matches("[data-consumer-product]")) { consumer?.setAvailability(event.target); return; }
     if (["iwView", "iwAccount", "iwClosePeriod", "iwBatchPeriod"].includes(event.target.id)) {
-      wholesale.invoicingChange(event.target).catch(error => toast(error.message));
+      wholesale?.invoicingChange?.(event.target).catch(error => toast(error.message));
       return;
     }
     if (event.target.id === "wOrderStatus") act("wh-status-select", event.target.value, event.target);
@@ -1063,7 +1073,7 @@
       const tab = desktopNav.matches || TABS.some(([key]) => key === id) ? id : "more";
       target = $(`${selector} [data-go="${CSS.escape(tab)}"]`);
     } else {
-      const id = previous?.dataset.id || wholesale.currentSection();
+      const id = previous?.dataset.id || wholesale?.currentSection();
       const selector = previous?.dataset.act === "wh-pending" ? '#sideNav [data-act="wh-pending"]' :
         `#sideNav [data-act="wh-tab"][data-id="${CSS.escape(id)}"]`;
       target = desktopNav.matches ? $(selector) : $("#wSection");
@@ -1075,7 +1085,7 @@
      Every 15 seconds while the page is in view, ask whether accounts, the rota or the diary changed elsewhere and,
      if so, redraw the page, unless a sheet is open or something is being typed. */
   const typing = () => document.activeElement && /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName);
-  SC.watchChanges(15000, (c) => `${c.accounts}.${c.rota}.${S.page === "overview" || S.page === "activity" ? c.docs : ""}`, () => S.page !== "consumer" && $("#scrim").hidden && !typing(), () => reload());
+  SC.watchChanges(15000, (c) => `${c.accounts}.${c.rota}.${S.page === "overview" || S.page === "activity" ? c.docs : ""}`, () => !!S.me && S.page !== "consumer" && $("#scrim").hidden && !typing(), () => reload());
   // Deadlines and the UK date can change without a write. Never refresh over an open editor.
   setInterval(() => {
     if (S.me && S.page === "overview" && !document.hidden && $("#scrim").hidden && !typing() && $("#main").getAttribute("aria-busy") !== "true") reload();
@@ -1088,7 +1098,7 @@
   (async () => {
     try {
       const me = await SC.startSession({ clear: () => {
-        seq++; sickness.clear(); wholesale.clear(); consumer.clear(); routeSnapshots.clear(); clearTimeout(routeTimer);
+        seq++; sickness?.clear(); wholesale?.clear(); consumer?.clear(); routeSnapshots.clear(); clearTimeout(routeTimer);
         cache = {}; S.me = null; S.open = null; S.q = ""; S.fq = ""; S.reports = {}; S.activityFrom = S.activityTo = ""; S.locked = 0; wholesaleExpanded = false;
         $("#workspaceContext").hidden = true;
         closeSheet(); for (const id of ["#main", "#sheet", "#sideNav", "#tabBar", "#whoName", "#whoInit"]) $(id)?.replaceChildren();
@@ -1105,14 +1115,19 @@
       $("#meBtn").textContent = ini(S.me.name); $("#meBtn").setAttribute("aria-label", `Signed in as ${S.me.name}`);
       $("#whoInit").textContent = ini(S.me.name); $("#whoName").textContent = S.me.name;
       const route = parseRoute(), quickbooksReview = new URLSearchParams(location.search).get("quickbooks") === "review";
-      if (quickbooksReview) { wholesale.selectSection("invoices"); const clean = new URL(location.href); for (const key of ["quickbooks","qbEnvironment","quickbooksError"]) clean.searchParams.delete(key); history.replaceState(null,"",clean); }
-      else if (route.page === "wholesale") wholesale.selectSection(route.section || "orders");
+      if (quickbooksReview) { wholesale?.selectSection("invoices"); const clean = new URL(location.href); for (const key of ["quickbooks","qbEnvironment","quickbooksError"]) clean.searchParams.delete(key); history.replaceState(null,"",clean); }
+      else if (route.page === "wholesale") wholesale?.selectSection(route.section || "orders");
       history.scrollRestoration = "manual";
       await show(quickbooksReview ? "wholesale" : route.page, { fromHistory: true });
-      if (quickbooksReview) await wholesale.act("wh-invoice-quickbooks");
+      if (quickbooksReview) await wholesale?.act("wh-invoice-quickbooks");
       refreshBadge();
     } catch (e) {
-      put($("#main"), html`<div class="group glass"><div class="empty">${svg("warn")}<span>${e.message}</span></div></div>`);
+      window.SCAdminStartupFailed?.(e.message);
+      if (!window.SCAdminStartupFailed) {
+        put($("#main"), html`<div class="group glass" role="alert"><p>${e.message}</p><button class="btn" type="button" id="reloadAdmin">Reload Admin</button></div>`);
+        $("#reloadAdmin").addEventListener("click", () => location.reload());
+      }
     }
   })();
+  window.SCAdminStarted = true;
 })();

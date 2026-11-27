@@ -6,7 +6,7 @@ The customer domain and `www.strangerscoffee.trade` are Worker custom domains de
 
 The consumer preview at `https://preview.staffstrangerscoffee.com/` serves retail only. Wholesale customers use their existing credentials at `https://strangerscoffee.trade/`, where their accounts, saved orders, catalogue and invoices remain available. Sessions, browser baskets and pending checkout payloads from the former preview address stay with that origin. Staff sign in on the staff domain and open `https://staffstrangerscoffee.com/wholesale/`.
 
-The branded consumer storefront is maintained in `public/consumer-preview/`. The pinned packaging script is the original import, so it refuses to replace the locally maintained pages and assets. Consumer accounts, order snapshots, tracking and the support inbox use a separate retail database. Deploy additive retail database migrations and the signed retail service before releasing storefront and Consumer Admin changes through the normal GitHub workflow. Keep catalogue additions and the shared cart-pricing rules in sync with the retail service build.
+The branded consumer storefront is maintained in `public/consumer-preview/`. The packaging command verifies the current storefront inventory and can export it for local review. Consumer accounts, order snapshots, tracking and the support inbox use a separate retail database. Deploy additive retail database migrations and the signed retail service before releasing storefront and Consumer Admin changes through the normal GitHub workflow. Keep catalogue additions and the shared cart-pricing rules in sync with the retail service build.
 
 Consumer checkout records test payments and fulfilment. A real payment gateway, order email sender and carrier integration require dedicated retail configuration. Staff can review test orders, pack them, record tracking and reply to preview support messages in **Admin → Consumer (Preview)**.
 
@@ -39,7 +39,7 @@ Data lives in a D1 database (`kitchen-diary`); allergen PDFs and uploaded catalo
 1. **Free up the addresses.** If another Worker already uses `staffstrangerscoffee.com` or `www.staffstrangerscoffee.com`, open it under **Workers & Pages → that Worker → Settings → Domains & Routes** and remove the domain. If the zone already has A, AAAA or CNAME records for either name (for example a parked page from the registrar), delete them under **DNS → Records**, or the deploy can't add its own.
 2. **Connect the repo.** **Workers & Pages → Create → Import a repository**, connect GitHub and pick `StrangersRepo`.
    - Project name: `strangers-kitchen-diary` (it must match `name` in `wrangler.jsonc`).
-   - Build command: leave empty, or `npm run build` (it does nothing). Deploy command: `npx wrangler deploy`.
+   - Build command: leave empty to use the build command in `wrangler.jsonc`. Deploy command: `npx wrangler deploy`.
    - Click **Deploy**. Cloudflare creates the database, the PDF store and the address.
 3. **Add the setup code.** In the Worker: **Settings → Variables and Secrets → Add**, type **Secret**, name `SETUP_CODE`, value a long random string (32+ characters). It must be a runtime secret, not a build variable. Keep it somewhere safe.
 4. **Create the first admin.** Open the site. With no accounts yet it shows "Set up the first admin": enter your name, a username, a password and the setup code.
@@ -354,5 +354,11 @@ Rota mobile leave and Requests refinement (17 November 2026): sheet content/date
 ## Public retail preview
 
 The public preview is at `https://preview.staffstrangerscoffee.com/`. Older `/shop/` page links forward to the storefront. The retail account and checkout routes are isolated from staff and wholesale. Wholesale sessions, order drafts and browser storage are never imported into retail.
+
+Edit the production storefront in `public/consumer-preview`. Account, cart and availability files live alongside the other storefront assets. The shared Worker handles the retail API, account and checkout routes.
+
+Run `npm run package:branded-retail` to verify the storefront inventory. The production asset build runs the same check. For new storefront files, add them to Git or mark them with `git add -N`. After adding, removing or renaming files, run `npm run package:branded-retail -- --update-manifest` and include the manifest in the change.
+
+For local review, run `npm run package:branded-retail -- --out /tmp/strangers-storefront-review`. Choose a new directory with an existing parent outside the repository. The export copies the storefront files and manifest byte for byte. For account and checkout flows, use the shared Worker and its retail APIs. Historical `--dist` and `--revision` imports are retired.
 
 The [standalone retail preview guide](docs/retail-dev-preview.md) covers the older local shop and its Instagram feed.

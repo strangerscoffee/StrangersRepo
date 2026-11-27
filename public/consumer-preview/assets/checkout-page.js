@@ -1,3 +1,4 @@
+import { authChangeKey } from './account.js';
 import { clearOrderAttempt, loadRetailOrder, orderReferencePattern, orderTokenPattern, pendingOrderAttempt, placeRetailOrder, prepareOrderAttempt, trackingPath } from './beta-orders.js';
 import { detailsForm, processingMarkup, progress, receiptMarkup, reviewDetails, summary } from './checkout.js';
 import { escapeHtml as html } from './html.js';
@@ -37,24 +38,28 @@ function focusHeading(root) {
   if (heading.getBoundingClientRect().top < 0) heading.scrollIntoView({ block: 'nearest' });
 }
 
-export function setupRetailCheckout(root, { cafes, store, cartChanged, getServerAccount }) {
+export function setupRetailCheckout(root, { cafes, store, cartChanged, getServerAccount, availability }) {
   const header = document.getElementById('retail-checkout-heading');
   const cafeById = new Map(cafes.map(cafe => [cafe.id, cafe]));
   const defaultCafe = cafeById.has('dove-street') ? 'dove-street' : cafes[0]?.id;
   const returnDraft = readReturnDraft();
   const previous = pendingOrderAttempt();
-  const resumed = previous?.payload ?? returnDraft;
+  const resumed = returnDraft;
   const contact = Object.fromEntries(contactFields.map(name => [name, String(resumed?.contact?.[name] ?? '')]));
   const dirty = new Set(contactFields.filter(name => contact[name]));
   let method = resumed?.method === 'collection' ? 'collection' : 'delivery';
   let cafe = cafeById.has(resumed?.cafe) ? resumed.cafe : defaultCafe;
-  let auth = document.body.hasAttribute('data-retail-signed-in') ? 'loading' : 'guest';
+  let auth = document.body.hasAttribute('data-retail-signed-in') || previous && previous.identity !== 'guest' ? 'loading' : 'guest';
+  let accountIdentity;
+  let receiptIdentity;
+  let sessionSequence = 0;
   let phase = '';
   let reviewed = null;
   let posting = false;
-  let tracking = false;
+  let trackingSequence = 0;
   let receipt = null;
   let trackingToken = '';
+  let receiptReference;
   let summaryOpen = false;
 
   function formNow() {
@@ -99,10 +104,6 @@ export function setupRetailCheckout(root, { cafes, store, cartChanged, getServer
       const input = form.elements[name];
       if (!dirty.has(name) && !input.value && contact[name]) input.value = contact[name];
     }
-    if (phase === 'details' && !resumed && !dirty.has('method') && !dirty.has('cafe')) {
-      form.elements.method.value = method;
-      form.elements.cafe.value = cafe;
-    }
   }
 
   function updateProfileHint() {
@@ -111,7 +112,6 @@ export function setupRetailCheckout(root, { cafes, store, cartChanged, getServer
     const states = {
       loading: 'Checking your saved details…',
       ready: 'Your saved details are filled in. You can change them for this order.',
-      unavailable: 'Saved details couldn’t be loaded. Enter them for this order.',
       guest: 'You can enter details and continue as a guest.',
     };
     hint.textContent = states[auth];
@@ -153,7 +153,7 @@ export function setupRetailCheckout(root, { cafes, store, cartChanged, getServer
     const unavailable = lines.some(line => line.product.available === false);
     const notice = root.querySelector('[data-cart-message]');
     notice.hidden = !unavailable;
-    paintSummary(lines, store.totals(method), 'details', unavailable);
+    paintSummary(lines, store.totals(method), 'details', !availability.known || unavailable);
   }
 
   function renderDetails(focus = false, failure = '') {
@@ -184,6 +184,24 @@ export function setupRetailCheckout(root, { cafes, store, cartChanged, getServer
     if (focus) focusHeading(root);
   }
 
+  function clearContact() {
+    for (const name of contactFields) contact[name] = '';
+    dirty.clear();
+    reviewed = null;
+    method = 'delivery';
+    cafe = defaultCafe;
+  }
+
+  function renderSessionGate(message) {
+    phase = 'session';
+    header.textContent = 'Checkout';
+    root.hidden = false;
+    root.innerHTML = `<div class="retail-checkout-message"><h2 tabindex="-1">Check your checkout session</h2><p>${html(message)}</p>
+      <div class="retail-checkout-receipt-actions"><button class="button outline" type="button" data-checkout-recheck>Check again</button>
+      <a class="button" href="/account/?mode=login&amp;return_to=%2Fcheckout%2F">Sign in</a>
+      <button class="button outline" type="button" data-checkout-guest>Continue as a guest</button></div></div>`;
+  }
+
   function renderReview() {
     phase = 'review';
     const { payload, lines, pricing } = reviewed;
@@ -202,7 +220,7 @@ export function setupRetailCheckout(root, { cafes, store, cartChanged, getServer
     root.innerHTML = `${progress(1)}<section class="retail-checkout-message" aria-labelledby="retail-recover-heading">
       <h2 id="retail-recover-heading" tabindex="-1">Confirm your test order</h2>
       <p>${html(message)}</p>
-      ${signIn ? '<a class="button" href="/account/?return_to=%2Fcheckout%2F">Sign in to continue</a>' : '<button type="button" class="button" data-retry-retail-order>Confirm order</button>'}
+      ${signIn ? '<a class="button" href="/account/?mode=login&amp;return_to=%2Fcheckout%2F">Sign in to continue</a> <button type="button" class="button outline" data-checkout-recheck>Check again</button>' : '<button type="button" class="button" data-retry-retail-order>Confirm order</button>'}
     </section>`;
     focusHeading(root);
   }
@@ -215,42 +233,58 @@ export function setupRetailCheckout(root, { cafes, store, cartChanged, getServer
     if (focus) focusHeading(root);
   }
 
-  async function loadReceipt(reference, token, refreshing = false) {
-    if (tracking) return;
-    tracking = true;
-    if (!refreshing) {
-      phase = 'tracking';
-      header.textContent = 'Track your order';
-      root.innerHTML = '<p class="retail-checkout-message" role="status">Opening your order…</p>';
-    }
-    const refresh = root.querySelector('[data-checkout-refresh]');
-    if (refresh) refresh.disabled = true;
+  function renderTrackingFailure(message) {
+    receipt = null;
+    phase = 'tracking';
+    root.hidden = false;
+    header.textContent = 'Track your order';
+    root.innerHTML = `<div class="retail-checkout-message"><h2 tabindex="-1">Order unavailable</h2><p>${html(message)}</p>
+      <div class="retail-checkout-receipt-actions"><button type="button" class="button" data-retry-retail-tracking>Try again</button>
+      <a class="button outline" href="/account/#orders">My account</a></div></div>`;
+    focusHeading(root);
+  }
+
+  async function loadReceipt(reference, token, refreshing = false, identity) {
+    const request = ++trackingSequence, session = sessionSequence;
+    const current = () => request === trackingSequence && session === sessionSequence;
+    phase = 'tracking';
+    root.hidden = false;
+    header.textContent = 'Track your order';
+    root.innerHTML = '<p class="retail-checkout-message" role="status">Opening your order…</p>';
     try {
-      const result = await loadRetailOrder(reference, token);
+      const result = await loadRetailOrder(reference, token, identity?.session);
+      if (!current()) return;
       receipt = result.order;
+      receiptReference = reference;
+      receiptIdentity = identity?.email;
       trackingToken = token;
       renderReceipt(false, !refreshing);
       if (refreshing) root.querySelector('[data-track-feedback]').textContent = 'Order status refreshed.';
     } catch (error) {
-      const message = error.status === 401 || error.status === 403 || error.status === 404
+      if (!current()) return;
+      renderTrackingFailure([401, 403, 404, 409].includes(error.status)
         ? 'We couldn’t open this order. Check your tracking link or open it from My account.'
-        : 'We couldn’t load this order right now. Try again.';
-      if (refreshing) {
-        root.querySelector('[data-track-feedback]').textContent = message;
-      } else {
-        root.innerHTML = `<div class="retail-checkout-message"><h2 tabindex="-1">Order unavailable</h2><p>${html(message)}</p>
-          <div class="retail-checkout-receipt-actions"><button type="button" class="button" data-retry-retail-tracking>Try again</button>
-          <a class="button outline" href="/account/#orders">My account</a></div></div>`;
-        focusHeading(root);
-      }
-    } finally {
-      tracking = false;
-      if (refresh?.isConnected) refresh.disabled = false;
+        : 'We couldn’t load this order right now. Try again.');
     }
   }
 
-  async function submit(currentAttempt) {
+  function renderLegacyRecovery() {
+    phase = 'recovery';
+    root.hidden = false;
+    root.innerHTML = `<div class="retail-checkout-message"><h2 tabindex="-1">Check for your test order</h2>
+      <p>Open your order history under the account that started this checkout. If the order is absent, you can start a new checkout.</p>
+      <div class="retail-checkout-receipt-actions"><a class="button" href="/account/#orders">My account</a>
+      <button class="button outline" type="button" data-checkout-reset-attempt>Start a new checkout</button></div></div>`;
+  }
+
+  async function submit(currentAttempt, firstSubmission = false) {
     if (!currentAttempt || posting) return;
+    const guest = currentAttempt.identity === 'guest';
+    const expectedSession = guest ? 'guest' : accountIdentity?.session;
+    if (!guest && (auth !== 'ready' || currentAttempt.identity?.email !== accountIdentity?.email)) {
+      renderRecovery('Sign in to the Strangers account that started this order to confirm the same attempt.', true);
+      return;
+    }
     posting = true;
     phase = 'processing';
     root.innerHTML = processingMarkup();
@@ -258,19 +292,34 @@ export function setupRetailCheckout(root, { cafes, store, cartChanged, getServer
     const animation = matchMedia('(prefers-reduced-motion: reduce)').matches
       ? Promise.resolve() : new Promise(resolve => setTimeout(resolve, 860));
     try {
-      const result = await placeRetailOrder(currentAttempt);
+      const result = await placeRetailOrder(currentAttempt, expectedSession);
       receipt = result.order;
+      receiptReference = result.order.reference;
+      receiptIdentity = guest ? null : currentAttempt.identity.email;
       trackingToken = orderTokenPattern.test(result.claimToken ?? '') ? result.claimToken : '';
       store.consume(currentAttempt.payload.lines);
       clearOrderAttempt();
       cartChanged();
-      const link = trackingPath(receipt.reference, trackingToken);
-      history.replaceState(history.state, '', link);
       await animation;
-      renderReceipt(true, true);
+      if (receiptIdentity && auth === 'ready' && receiptIdentity !== accountIdentity?.email) {
+        receipt = null;
+        receiptReference = null;
+        clearContact();
+        renderDetails(true, 'Your account changed. Open My account to view orders for the current account.');
+      } else if (receiptIdentity && auth === 'unavailable') {
+        receipt = null;
+        receiptReference = null;
+        clearContact();
+        renderSessionGate('Sign in to view orders from your account.');
+      } else {
+        if (!receiptIdentity || auth === 'ready') history.replaceState(history.state, '', trackingPath(receipt.reference, trackingToken));
+        renderReceipt(true, true);
+      }
     } catch (error) {
-      if (error.status === 401 || error.code === 'checkout_session_changed') {
-        renderRecovery('Sign in again to confirm the same test order.', true);
+      if (!guest && (error.status === 401 || ['checkout_session_changed', 'checkout_session_unverified'].includes(error.code))) {
+        // The gateway rejects this first submission before forwarding it. An earlier uncertain retry must keep its key.
+        if (firstSubmission && error.code === 'checkout_session_unverified') clearOrderAttempt();
+        void verifySession();
         return;
       }
       if ([400, 409, 422].includes(error.status) && error.code !== 'idempotency_conflict') {
@@ -299,6 +348,7 @@ export function setupRetailCheckout(root, { cafes, store, cartChanged, getServer
     const form = formNow();
     if (event.target !== form || phase !== 'details') return;
     event.preventDefault();
+    if (auth !== 'ready' && auth !== 'guest') return;
     collectForm(form);
     for (const name of contactFields) form.elements[name].value = contact[name];
     if (!form.reportValidity()) return;
@@ -308,12 +358,13 @@ export function setupRetailCheckout(root, { cafes, store, cartChanged, getServer
     }
     store.refresh();
     const lines = store.cart();
-    if (!lines.length || lines.some(line => line.product.available === false)) {
+    if (!availability.known || !lines.length || lines.some(line => line.product.available === false)) {
       cartChanged();
       return;
     }
     reviewed = {
       lines,
+      identity: auth === 'guest' ? 'guest' : accountIdentity,
       pricing: store.totals(method),
       payload: {
         method,
@@ -347,6 +398,19 @@ export function setupRetailCheckout(root, { cafes, store, cartChanged, getServer
       form.elements.name.focus({ preventScroll: true });
     }
     if (control.hasAttribute('data-checkout-edit')) renderDetails(true);
+    if (control.hasAttribute('data-checkout-recheck')) void verifySession();
+    if (control.hasAttribute('data-checkout-reset-attempt') && pendingOrderAttempt()?.identity === 'account') {
+      clearOrderAttempt();
+      clearContact();
+      void verifySession();
+    }
+    if (control.hasAttribute('data-checkout-guest')) {
+      ++sessionSequence;
+      auth = 'guest';
+      accountIdentity = null;
+      clearContact();
+      renderDetails(true);
+    }
     if (control.hasAttribute('data-place-retail-order') && phase === 'review') {
       store.refresh();
       if (!sameSelection(reviewed.payload.lines, store.cart())) {
@@ -354,11 +418,17 @@ export function setupRetailCheckout(root, { cafes, store, cartChanged, getServer
         renderDetails(true, 'Your cart changed. Review your order again.');
         return;
       }
-      void submit(prepareOrderAttempt(reviewed.payload, auth === 'guest' ? 'guest' : 'account'));
+      if (!reviewed || reviewed.identity !== (auth === 'guest' ? 'guest' : accountIdentity) || auth === 'loading') return;
+      const existingAttempt = pendingOrderAttempt();
+      void submit(prepareOrderAttempt(reviewed.payload, reviewed.identity), !existingAttempt);
     }
     if (control.hasAttribute('data-retry-retail-order')) void submit(pendingOrderAttempt());
-    if (control.hasAttribute('data-checkout-refresh') && receipt) await loadReceipt(receipt.reference, trackingToken, true);
-    if (control.hasAttribute('data-retry-retail-tracking') && requestedOrder) await loadReceipt(requestedOrder, requestedToken);
+    if (control.hasAttribute('data-checkout-refresh') || control.hasAttribute('data-retry-retail-tracking')) {
+      const reference = receiptReference || requestedOrder;
+      const token = trackingToken || requestedToken;
+      if (reference && token) await loadReceipt(reference, token, true);
+      else if (reference) await verifySession(true);
+    }
     if (control.hasAttribute('data-copy-tracking')) {
       const fallback = root.querySelector('[data-tracking-fallback]');
       const input = fallback.querySelector('input');
@@ -377,36 +447,119 @@ export function setupRetailCheckout(root, { cafes, store, cartChanged, getServer
   const requestedOrder = url.searchParams.get('order');
   const token = url.hash.slice(1);
   const requestedToken = orderTokenPattern.test(token) ? token : '';
-  if (requestedOrder && orderReferencePattern.test(requestedOrder)) {
-    void loadReceipt(requestedOrder, requestedToken);
-  } else if (requestedOrder) {
+
+  function suspendSession() {
+    if (auth === 'guest') return;
+    ++sessionSequence;
+    root.hidden = true;
+    auth = 'loading';
+  }
+
+  async function verifySession(refreshingReceipt = false) {
+    if (auth === 'guest') return;
+    suspendSession();
+    const sequence = sessionSequence;
+    let account;
+    try { account = await getServerAccount(); } catch {}
+    if (sequence !== sessionSequence) return;
+    const email = account?.identity?.email, session = account?.profileSession;
+    const active = pendingOrderAttempt();
+    const signedReceipt = !trackingToken && (requestedOrder || (['receipt', 'tracking'].includes(phase) && receiptReference));
+    root.hidden = false;
+    if (active?.identity === 'account' && !signedReceipt) {
+      renderLegacyRecovery();
+      return;
+    }
+    if (!email || !/^[a-f0-9]{64}$/.test(session ?? '')) {
+      auth = 'unavailable';
+      accountIdentity = null;
+      receipt = null;
+      clearContact();
+      if (signedReceipt) {
+        renderTrackingFailure('Sign in to the account for this order or use its tracking link.');
+      } else if (active && active.identity !== 'guest') {
+        renderRecovery('Sign in to the Strangers account that started this order to confirm the same attempt.', true);
+      } else {
+        renderSessionGate('Sign in to use your saved details, or continue as a guest with new details.');
+      }
+      return;
+    }
+
+    auth = 'ready';
+    const unchanged = accountIdentity?.session === session;
+    const changed = !!accountIdentity && !unchanged;
+    if (!unchanged) accountIdentity = { session, email };
+    if (signedReceipt) {
+      if (receiptIdentity && receiptIdentity !== email) {
+        renderTrackingFailure('Open this order from the Strangers account that placed it.');
+        return;
+      }
+      await loadReceipt(signedReceipt, '', refreshingReceipt, accountIdentity);
+      if (sequence === sessionSequence && receipt && !requestedOrder) {
+        history.replaceState(history.state, '', trackingPath(receipt.reference));
+      }
+      return;
+    }
+    if (changed) clearContact();
+    if (active && !posting) {
+      const sameAccount = active.identity === 'guest' || active.identity?.email === email;
+      renderRecovery(sameAccount ? undefined : 'Sign in to the Strangers account that started this order to confirm the same attempt.', !sameAccount);
+      return;
+    }
+    if (posting && phase === 'processing') return;
+    if ((phase === 'receipt' || phase === 'review') && !changed) return;
+    if (phase !== 'details' || changed) renderDetails(false, changed ? 'Your account changed. Review your new checkout details.' : '');
+    const profile = { ...account.profile, email };
+    const form = formNow();
+    if (form && (!resumed || changed) && !dirty.has('method') && !dirty.has('cafe')) {
+      form.elements.method.value = method = profile.method === 'collection' ? 'collection' : 'delivery';
+      form.elements.cafe.value = cafe = cafeById.has(profile.cafe) ? profile.cafe : defaultCafe;
+    }
+    rememberContact(profile);
+    updateDetails();
+    updateProfileHint();
+  }
+
+  function resumeSession() {
+    if (auth !== 'guest') void verifySession();
+  }
+
+  if (requestedOrder && !orderReferencePattern.test(requestedOrder)) {
     header.textContent = 'Track your order';
     root.innerHTML = '<div class="retail-checkout-message"><h2 tabindex="-1">Invalid tracking link</h2><p>Check the link or open your order from My account.</p><a class="button" href="/account/#orders">My account</a></div>';
-  } else if (previous) {
-    renderRecovery();
-  } else {
-    renderDetails();
-    if (auth === 'loading') {
-      void getServerAccount().then(account => {
-        if (!account) {
-          auth = 'guest';
-          updateProfileHint();
-          return;
-        }
-        auth = 'ready';
-        const profile = { ...account.profile, email: account.identity.email };
-        if (phase === 'details' && !resumed && !dirty.has('method') && !dirty.has('cafe')) {
-          method = profile.method === 'collection' ? 'collection' : 'delivery';
-          cafe = cafeById.has(profile.cafe) ? profile.cafe : defaultCafe;
-        }
-        rememberContact(profile);
-        updateDetails();
-        updateProfileHint();
-      }).catch(() => {
-        auth = 'unavailable';
-        updateProfileHint();
-      });
-    }
+    return updateDetails;
   }
+
+  if (requestedOrder && requestedToken) {
+    auth = 'guest';
+    void loadReceipt(requestedOrder, requestedToken);
+  } else if (requestedOrder) {
+    auth = 'loading';
+    void verifySession();
+  } else if (previous?.identity === 'account') {
+    renderLegacyRecovery();
+  } else if (previous?.identity === 'guest') {
+    auth = 'guest';
+    renderRecovery();
+  } else if (auth === 'guest') {
+    renderDetails();
+  } else {
+    root.innerHTML = '<p role="status">Checking your checkout session…</p>';
+    void verifySession();
+  }
+  window.addEventListener('pagehide', suspendSession);
+  window.addEventListener('pageshow', event => { if (event.persisted) resumeSession(); });
+  window.addEventListener('blur', suspendSession);
+  window.addEventListener('focus', resumeSession);
+  window.addEventListener('popstate', resumeSession);
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) suspendSession();
+    else resumeSession();
+  });
+  window.addEventListener('storage', event => {
+    if (event.key !== authChangeKey || auth === 'guest') return;
+    if (document.hidden) suspendSession();
+    else resumeSession();
+  });
   return updateDetails;
 }

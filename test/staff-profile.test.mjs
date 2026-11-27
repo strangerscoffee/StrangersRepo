@@ -60,7 +60,12 @@ test("staff see and change only their own contact details; the start date is the
   assert.equal(mine.status, 200, mine.text);
   assert.deepEqual(mine.body.profile, { name: "Alex Brown", startDate: null, phone: "", email: "alex@example.test", address: "", version: 0 });
 
-  // Only an admin sets the start date.
+  // Only an admin sets the start date, and February must have that day in the given year.
+  assert.equal((await req("PATCH", `/api/admin/users/${ids.alex}`, { startDate: "2024-02-29" })).status, 200);
+  for (const startDate of ["2025-02-29", "2026-02-31"]) {
+    assert.equal((await req("PATCH", `/api/admin/users/${ids.alex}`, { startDate })).status, 400);
+  }
+  assert.equal((await req("GET", "/api/rota/me/profile", undefined, ALEX)).body.profile.startDate, "2024-02-29");
   assert.equal((await req("PATCH", `/api/admin/users/${ids.alex}`, { startDate: "2024-03-04" })).status, 200);
   const stale = await req("PUT", "/api/rota/me/profile", { ifVersion: 0, phone: "07700 900123" }, ALEX);
   assert.equal(stale.status, 409, "the admin's change moved the version on");

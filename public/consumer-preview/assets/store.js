@@ -1,7 +1,7 @@
 export const SHIPPING = 350;
 export const FREE_SHIPPING = 4500;
 
-const CART_KEY = 'strangers-coffee-proposal.cart.v1';
+export const CART_KEY = 'strangers-coffee-proposal.cart.v1';
 const MAX_QUANTITY = 99;
 const LIGHT_SHIPPING = 300;
 const BAG_GRAMS = { '250g': 250, '300g': 300, '500g': 500, '1kg': 1000 };
@@ -76,18 +76,18 @@ export function createStore(products, storage = browserStorage()) {
   }
 
   function remove(key) {
+    refresh();
     if (!lines.delete(key)) return false;
     persist();
     return true;
   }
 
-  function setQty(key, qty) {
+  function adjustQty(key, delta) {
+    refresh();
     const line = lines.get(key);
-    if (!line) return false;
-    if (qty === 0) return remove(key);
-    if (!validQuantity(qty)) return false;
+    if (!line || !Number.isInteger(delta) || !validQuantity(line.qty + delta)) return false;
 
-    line.qty = qty;
+    line.qty += delta;
     persist();
     return true;
   }
@@ -129,7 +129,7 @@ export function createStore(products, storage = browserStorage()) {
   }
 
   refresh();
-  return { cart, add, setQty, remove, clear, totals, refresh, consume };
+  return { cart, add, adjustQty, remove, clear, totals, refresh, consume };
 }
 
 function browserStorage() {

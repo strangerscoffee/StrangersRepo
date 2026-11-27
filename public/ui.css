@@ -407,12 +407,6 @@ section.panel.onlywide{display:none}
   .xrow .xhead .chev svg{transition:transform .2s}
 }
 
-/* Section introductions: two lines on phones; tap to read the rest. */
-@media (max-width:759px){
-  .note.intro{display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;cursor:pointer}
-  .note.intro.full{display:block}
-}
-
 /* File picker: the whole dashed area is the button (the real file input covers it, invisible). */
 .drop{position:relative;cursor:pointer}
 .drop input[type=file]{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}

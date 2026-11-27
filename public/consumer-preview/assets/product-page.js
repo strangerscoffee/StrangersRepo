@@ -149,7 +149,7 @@ function voucherMarkup(id, voucher) {
     </div>`;
 }
 
-export function setupProductPage(page, { store, onAdd }) {
+export function setupProductPage(page, { store, onAdd, stockKnown }) {
   const route = productFromPath(location.pathname);
   const product = products.find(item => item.id === route?.id);
   const voucher = route && Object.hasOwn(voucherPages, route.id) ? voucherPages[route.id] : null;
@@ -176,7 +176,7 @@ export function setupProductPage(page, { store, onAdd }) {
   const initialGrind = product.grinds.includes(suggestedGrind) ? suggestedGrind : product.grinds[0];
   const related = relatedProducts(product);
   description?.setAttribute('content', intro);
-  document.body.classList.toggle('has-retail-purchase', product.available !== false);
+  document.body.classList.toggle('has-retail-purchase', stockKnown && product.available !== false);
   page.innerHTML = `${breadcrumb(product.name, gift)}
     <article class="retail-product-intro">
       ${galleryMarkup(photos, product.name, product.region || product.country || 'Strangers Coffee')}
@@ -184,7 +184,7 @@ export function setupProductPage(page, { store, onAdd }) {
         <p class="eyebrow">${html(origin)}</p><h1>${html(product.name)}</h1>
         <p class="retail-product-lede">${html(intro)}</p>
         ${product.notes.length ? `<ul class="retail-product-notes" aria-label="Tasting notes">${product.notes.map(note => `<li>${html(note)}</li>`).join('')}</ul>` : ''}
-        ${product.available === false ? '<p class="retail-product-unavailable" role="status">Currently unavailable.</p>' : productOptions(product, initialGrind)}
+        ${!stockKnown ? '' : product.available === false ? '<p class="retail-product-unavailable" role="status">Currently unavailable.</p>' : productOptions(product, initialGrind)}
         <p class="retail-product-delivery"><a href="/shipping/">UK delivery and returns</a><span aria-hidden="true">·</span><a href="/location/">Norwich collection</a></p>
       </div>
     </article>

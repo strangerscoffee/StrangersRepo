@@ -6,6 +6,7 @@ import { money } from './store.js';
 
 const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium', timeZone: 'Europe/London' });
 const profileFields = ['name', 'phone', 'address', 'town', 'postcode', 'method', 'cafe'];
+export const authChangeKey = 'strangers-retail.account-changed';
 const fallbackImage = '/consumer-preview/assets/mark.svg';
 const orderReference = /^SC-[A-F0-9]{8}$/;
 
@@ -170,7 +171,7 @@ async function accountRequest(options = {}) {
   if (response.status === 401) return null;
   const body = await response.json().catch(() => null);
   if (!response.ok || !body) {
-    throw new Error(typeof body?.message === 'string' ? body.message : 'Your account is temporarily unavailable. Try again.');
+    throw Object.assign(new Error(typeof body?.message === 'string' ? body.message : 'Your account is temporarily unavailable. Try again.'), { code: body?.error });
   }
   return body;
 }
@@ -263,6 +264,10 @@ async function authRequest(action, values) {
   }
 }
 
+function announceAuthChange() {
+  try { localStorage.setItem(authChangeKey, crypto.randomUUID()); } catch {}
+}
+
 export function setupAccount(root, reorder) {
   const access = root.querySelector('#account-access');
   const accessTitle = root.querySelector('#account-access-title');
@@ -304,7 +309,8 @@ export function setupAccount(root, reorder) {
   }
 
   let currentOrders = [];
-  let currentEmail = null;
+  let currentSession = null;
+  let accountVisible = false;
   let loadSequence = 0;
   let saving = false;
   let authPending = false;
@@ -321,18 +327,24 @@ export function setupAccount(root, reorder) {
     }));
   }
 
+  function concealAccount() {
+    accountVisible = false;
+    dashboard.hidden = true;
+    session.hidden = true;
+    updateGreeting('');
+  }
+
   function showAccess() {
-    currentEmail = null;
+    concealAccount();
+    currentSession = null;
+    authMode = null;
     currentOrders = [];
     orderHistory.replaceChildren();
     form.reset();
     saveStatus.textContent = '';
     dashboardStatus.textContent = '';
     controls.forEach(control => { control.disabled = true; });
-    dashboard.hidden = true;
-    session.hidden = true;
     updateSavedAddress({});
-    updateGreeting('');
     access.hidden = false;
     authPanel.hidden = true;
     retry.hidden = true;
@@ -396,6 +408,7 @@ export function setupAccount(root, reorder) {
         return;
       }
       token = null;
+      announceAuthChange();
       window.location.replace(returnPath);
       navigating = true;
     } catch (error) {
@@ -450,6 +463,8 @@ export function setupAccount(root, reorder) {
   }
 
   function showDashboard(name) {
+    accountVisible = true;
+    authMode = null;
     updateGreeting(name);
     dashboardStatus.textContent = '';
     const previous = new Map([...orderHistory.querySelectorAll('[data-order-reference]')]
@@ -468,31 +483,31 @@ export function setupAccount(root, reorder) {
 
   async function refreshOrders() {
     const sequence = ++loadSequence;
+    concealAccount();
     try {
       const account = await getServerAccount();
       if (sequence !== loadSequence) return;
       if (!account) {
-        showAuth('login');
+        if (authMode !== 'login') showAuth('login');
         return;
       }
-      if (!account.identity?.email || !account.profile || !Array.isArray(account.orders)) {
+      if (!account.identity?.email || !/^[a-f0-9]{64}$/.test(account.profileSession) || !account.profile || !Array.isArray(account.orders)) {
         throw new Error('Your account is temporarily unavailable. Try again.');
       }
       const email = account.identity.email;
-      if (currentEmail !== email) fillProfile(account.profile, email);
-      currentEmail = email;
+      if (currentSession !== account.profileSession) {
+        showAccess();
+        fillProfile(account.profile, email);
+      }
+      currentSession = account.profileSession;
       currentOrders = account.orders;
       showDashboard(account.profile.name || account.identity.name || '');
     } catch (error) {
       if (sequence !== loadSequence) return;
-      if (currentEmail) {
-        dashboardStatus.textContent = 'Your orders couldn’t be refreshed. Reload the page to try again.';
-      } else {
-        showAccess();
-        accessTitle.textContent = 'Your Strangers account';
-        accessStatus.textContent = error.message;
-        retry.hidden = false;
-      }
+      showAccess();
+      accessTitle.textContent = 'Your Strangers account';
+      accessStatus.textContent = error.message;
+      retry.hidden = false;
     }
   }
 
@@ -521,7 +536,10 @@ export function setupAccount(root, reorder) {
     openTab('details');
     form.elements.address.focus();
   });
-  window.addEventListener('popstate', syncTab);
+  window.addEventListener('popstate', () => {
+    syncTab();
+    resumeAccount();
+  });
   window.addEventListener('hashchange', syncTab);
   syncTab();
 
@@ -534,15 +552,17 @@ export function setupAccount(root, reorder) {
   signOut.addEventListener('click', async () => {
     if (signOut.disabled) return;
     signOut.disabled = true;
+    loadSequence += 1;
+    concealAccount();
     try {
       await authRequest('logout', {});
-      loadSequence += 1;
+      announceAuthChange();
       showAuth('login');
       window.location.replace('/account/');
     } catch (error) {
-      const status = details.hidden ? dashboardStatus : saveStatus;
-      status.textContent = error.message;
       signOut.disabled = false;
+      await refreshOrders();
+      (accountVisible ? dashboardStatus : accessStatus).textContent = error.message;
     }
   });
 
@@ -553,8 +573,9 @@ export function setupAccount(root, reorder) {
   });
   form.addEventListener('submit', async event => {
     event.preventDefault();
-    if (saving || !currentEmail) return;
-    const email = currentEmail;
+    if (saving || !accountVisible || !currentSession) return;
+    const profileSession = currentSession;
+    const email = form.elements.email.value;
     const values = Object.fromEntries(profileFields.map(name => [name, form.elements[name].value.trim()]));
     if (values.phone && (!/^\+?[0-9 ().-]+$/.test(values.phone) || !/^\d{7,15}$/.test(values.phone.replace(/\D/g, '')))) {
       form.elements.phone.setCustomValidity('Enter a phone number with 7 to 15 digits.');
@@ -571,10 +592,10 @@ export function setupAccount(root, reorder) {
     try {
       const result = await accountRequest({
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Retail-Profile-Session': profileSession },
         body: JSON.stringify(values),
       });
-      if (currentEmail !== email) return;
+      if (currentSession !== profileSession) return;
       if (!result) {
         showAuth('login', 'Sign in again to update your account details.');
         accessTitle.focus({ preventScroll: true });
@@ -582,16 +603,19 @@ export function setupAccount(root, reorder) {
       }
       if (!result.profile) throw new Error('Your details couldn’t be saved. Try again.');
       fillProfile(result.profile, email);
-      updateGreeting(result.profile.name || '');
+      if (accountVisible) updateGreeting(result.profile.name || '');
       saveStatus.textContent = 'Account details saved.';
     } catch (error) {
-      if (currentEmail === email) {
+      if (currentSession === profileSession && error.code === 'account_changed') {
+        showAccess();
+        void refreshOrders();
+      } else if (currentSession === profileSession) {
         saveStatus.textContent = error.message;
         saveStatus.classList.add('account-save-error');
       }
     } finally {
       saving = false;
-      if (currentEmail === email) controls.forEach(control => { control.disabled = false; });
+      if (accountVisible) controls.forEach(control => { control.disabled = false; });
     }
   });
 
@@ -604,7 +628,7 @@ export function setupAccount(root, reorder) {
 
   orderHistory.addEventListener('click', event => {
     const button = event.target.closest('[data-account-reorder], [data-account-receipt]');
-    if (!button) return;
+    if (!button || !accountVisible) return;
     const receipt = button.dataset.accountReceipt;
     const order = currentOrders.find(record => record.reference === (receipt ?? button.dataset.accountReorder));
     if (!order) return;
@@ -621,5 +645,29 @@ export function setupAccount(root, reorder) {
   } else {
     void refreshOrders();
   }
-  return () => { if (currentEmail) void refreshOrders(); };
+  function suspendAccount() {
+    loadSequence += 1;
+    concealAccount();
+  }
+
+  function resumeAccount() {
+    if (!authPending && !signOut.disabled && (!authMode || authMode === 'login')) void refreshOrders();
+  }
+
+  window.addEventListener('pagehide', suspendAccount);
+  window.addEventListener('blur', suspendAccount);
+  window.addEventListener('focus', resumeAccount);
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) suspendAccount();
+    else resumeAccount();
+  });
+  window.addEventListener('storage', event => {
+    if (event.key !== authChangeKey) return;
+    suspendAccount();
+    if (!authPending && !signOut.disabled && (!authMode || authMode === 'login')) {
+      showAccess();
+      if (!document.hidden) resumeAccount();
+    }
+  });
+  return resumeAccount;
 }

@@ -1,7 +1,7 @@
 // Wholesale identities never become staff identities. Their host-only cookie is accepted only by wholesale routes.
 import { checkPassword, checkUsername, hashPassword, newId, tempPassword, type User } from "./auth";
 import { audit } from "./audit";
-import { ApiError, type Env, invalid, json, readJson, safeEqual } from "./http";
+import { ApiError, type Env, invalid, json, readJson, safeEqual, SQL_NOW_MS } from "./http";
 import { locationDefaults, type CustomerLocation } from "./wholesaleCustomers";
 import { handleInvite } from "./wholesaleImport";
 import { handleReset } from "./wholesaleReset";
@@ -66,12 +66,19 @@ export function publicCustomer(row: CustomerRecord) {
   const { locations, defaultLocationId } = locationDefaults(row);
   return { id: row.id, version: row.version, updatedAt: row.updatedAt, business: row.business, contact: row.contact, email: row.email, accountsEmail: row.accountsEmail || "", phone: row.phone || "", address: row.address || "", postcode: row.postcode || "", deliveryNotes: row.deliveryNotes || "", status: row.status, paymentTerms: paymentTermsFor(row), locations, defaultLocationId };
 }
-export async function wholesaleSession(req: Request, env: Env): Promise<WholesaleUser | null> {
+export const WHOLESALE_SESSION_SQL = `FROM wholesale_sessions s JOIN wholesale_accounts a ON a.id = s.account_id
+  WHERE s.hash = ? AND s.expires_at > ${SQL_NOW_MS} AND s.session_ver = a.session_ver AND a.active = 1 AND a.must_change = 0 AND a.approval_status = 'approved'`;
+export async function wholesaleSessionHash(req: Request) {
   const token = tokenFrom(req);
-  if (!token) return null;
-  const row = await env.DB.prepare("SELECT a.id, a.customer_id, a.username, c.data FROM wholesale_sessions s JOIN wholesale_accounts a ON a.id = s.account_id JOIN wholesale_preview c ON c.kind = 'customer' AND c.id = a.customer_id WHERE s.hash = ? AND s.expires_at > ? AND s.session_ver = a.session_ver AND a.active = 1 AND a.must_change = 0 AND a.approval_status = 'approved'")
-    .bind(await digest(token), Date.now()).first<{ id: string; customer_id: string; username: string; data: string }>();
-  if (!row) return null;
+  return token ? digest(token) : null;
+}
+export async function wholesaleSession(req: Request, env: Env): Promise<WholesaleUser | null> {
+  const hash = await wholesaleSessionHash(req);
+  if (!hash) return null;
+  const row = await env.DB.prepare(`SELECT a.id, a.customer_id, a.username,
+    (SELECT data FROM wholesale_preview WHERE kind = 'customer' AND id = a.customer_id) AS data ${WHOLESALE_SESSION_SQL}`)
+    .bind(hash).first<{ id: string; customer_id: string; username: string; data: string }>();
+  if (!row?.data) return null;
   const customer: Customer = JSON.parse(row.data);
   return { id: "wholesale:" + row.id, accountId: row.id, customerId: row.customer_id, username: row.username, name: customer.contact || customer.business, role: "wholesale" };
 }

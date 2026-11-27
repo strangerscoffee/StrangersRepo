@@ -49,3 +49,12 @@ test("orders to print: new customer orders by status, or exactly the ones picked
   for (const bad of ["", "?status=Lost", "?ids=nope", `?ids=${Array.from({ length: 201 }, () => first.id).join(",")}`]) assert.equal((await call("GET", "/api/admin/wholesale/orders/print" + bad)).status, 400, bad);
   for (const cookie of [null, A]) assert.equal((await call("GET", "/api/admin/wholesale/orders/print?status=New", undefined, cookie)).status, 401);
 });
+
+test("200 picked IDs fit D1's bind limit and preserve order", async () => {
+  const first = await place([line("brazil", "kilo", 1)]);
+  const second = await place([line("campo", "kilo", 1)]);
+  const omitted = Array.from({ length: 198 }, () => "WS-" + crypto.randomUUID().replaceAll("-", "").toUpperCase());
+  const picked = await call("GET", `/api/admin/wholesale/orders/print?ids=${[second.id, ...omitted, first.id].join(",")}`);
+  assert.equal(picked.status, 200, picked.text);
+  assert.deepEqual(picked.body.orders.map((o) => o.id), [second.id, first.id]);
+});

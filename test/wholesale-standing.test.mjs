@@ -120,3 +120,52 @@ test("staff previews can't have a dispatch day, and only admins can set one", as
   const denied = await call("PATCH", `/api/admin/wholesale/orders/${o.id}`, { ifVersion: o.version, status: o.status, schedule: { dispatchDate: today, every: 1 } }, STAFF);
   assert.ok([401, 403].includes(denied.status), String(denied.status));
 });
+
+test("standing delivery pauses if its original branch is removed or loses its postcode", async () => {
+  let customer = (await call("GET", "/api/wholesale/session", undefined, A)).body.customer;
+  const branch = { name: "Second shop", contact: "Sam", address: "4 Market Place", postcode: "NR2 1AA" };
+  const updateLocations = (locations) => call("PUT", "/api/wholesale/account", { ifVersion: customer.version, locations }, A);
+  const added = await updateLocations([customer.locations[0], branch]);
+  assert.equal(added.status, 200, added.text);
+  const refreshCustomer = async () => { customer = (await call("GET", "/api/wholesale/session", undefined, A)).body.customer; };
+  await refreshCustomer();
+  const branchId = customer.locations[1].id;
+  const runs = [];
+  for (const delivery of ["Delivery", "Delivery", "Roastery collection"]) {
+    const placed = await call("POST", "/api/wholesale/orders", {
+      requestId: crypto.randomUUID(), lines: [{ productId: "campo", pack: "kilo", grind: "beans", quantity: 6, price: 1800 }],
+      delivery, locationId: branchId, customerVersion: customer.version,
+    }, A);
+    assert.equal(placed.status, 201, placed.text);
+    const scheduled = await patch(placed.body.order, { schedule: { dispatchDate: today, every: 1 } });
+    assert.equal(scheduled.status, 200, scheduled.text);
+    runs.push(scheduled.body.order);
+  }
+  const edited = await updateLocations([customer.locations[0], { ...customer.locations[1], postcode: "" }]);
+  assert.equal(edited.status, 200, edited.text);
+  const incomplete = await patch(runs[0], { status: "Cancelled" });
+  assert.equal(incomplete.status, 200, incomplete.text);
+  assert.equal(incomplete.body.order.standingIssue?.code, "delivery_location_changed");
+  assert.equal(incomplete.body.order.nextRunId, undefined);
+  await refreshCustomer();
+  const repaired = await updateLocations([customer.locations[0], { ...customer.locations[1], postcode: "NR2 1AB" }]);
+  assert.equal(repaired.status, 200, repaired.text);
+  const retried = await patch(incomplete.body.order, { status: "Cancelled" });
+  assert.equal(retried.status, 200, retried.text);
+  assert.equal(retried.body.order.standingIssue, undefined);
+  const next = await order(retried.body.order.nextRunId);
+  assert.equal(next.locationId, branchId);
+  assert.equal(next.locationSnapshot.postcode, "NR2 1AB");
+  await refreshCustomer();
+  const removed = await updateLocations([customer.locations[0]]);
+  assert.equal(removed.status, 200, removed.text);
+  const missing = await patch(runs[1], { status: "Cancelled" });
+  assert.equal(missing.status, 200, missing.text);
+  assert.equal(missing.body.order.standingIssue?.code, "delivery_location_missing");
+  assert.equal(missing.body.order.nextRunId, undefined);
+  assert.equal(missing.body.order.locationId, branchId);
+  assert.equal(missing.body.order.locationSnapshot.postcode, branch.postcode);
+  const collection = await patch(runs[2], { status: "Cancelled" });
+  assert.equal(collection.status, 200, collection.text);
+  assert.equal((await order(collection.body.order.nextRunId)).locationId, "primary");
+});

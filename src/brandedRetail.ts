@@ -139,6 +139,12 @@ async function authApi(req: Request, env: Env, action: string, ctx?: ExecutionCo
   return json({ signedIn: true }, 200, { "set-cookie": setCookie(SESSION_COOKIE, session.token, seconds) });
 }
 
+// The browser receives a one-way session binding, never the upstream bearer.
+async function profileBinding(session: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("retail-profile:" + session));
+  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
+}
+
 async function accountApi(req: Request, path: string): Promise<Response> {
   const profile = path === "/api/account";
   const writing = req.method === (profile ? "PUT" : "POST");
@@ -162,11 +168,16 @@ async function accountApi(req: Request, path: string): Promise<Response> {
     }
   }
 
+  const binding = await profileBinding(session);
+  if (writing && req.headers.get("x-retail-profile-session") !== binding) {
+    return json({ error: profile ? "account_changed" : "checkout_session_changed",
+      message: "Your account session changed. Open the page again before continuing." }, 409);
+  }
   const result = await accountService(path, req.method, session, body, writing ? BRANDED_RETAIL_ORIGIN : undefined);
   if (!result) return unavailable();
-  const headers = new Headers();
-  if (result.status === 401) headers.append("set-cookie", setCookie(SESSION_COOKIE, "", 0));
-  return json(result.data, result.status, headers);
+  // A delayed read from a revoked session must leave a newer sign-in cookie intact.
+  if (profile && !writing && result.status === 200) return json({ ...result.data, profileSession: binding }, 200);
+  return json(result.data, result.status);
 }
 
 async function availability(): Promise<Response> {
@@ -193,7 +204,11 @@ async function retailWriteApi(req: Request, env: Env, path: string, maxBytes: nu
   } catch {
     throw new ApiError(400, "invalid_json", "This request must use UTF-8.");
   }
-  const session = support ? "" : cookie(req, SESSION_COOKIE);
+  const expectedSession = req.headers.get("x-retail-profile-session");
+  const session = support || expectedSession === "guest" ? "" : cookie(req, SESSION_COOKIE);
+  if (!support && expectedSession !== "guest" && (!proof(session) || expectedSession !== await profileBinding(session))) {
+    return json({ error: "checkout_session_unverified", message: "Your account session changed. Review the checkout under the correct account." }, 409);
+  }
   try {
     const response = await retailServiceRequest(env, path, {
       method: "POST", body, client: req.headers.get("cf-connecting-ip"),
@@ -203,7 +218,6 @@ async function retailWriteApi(req: Request, env: Env, path: string, maxBytes: nu
     if (result) {
       const headers = new Headers({ "referrer-policy": "no-referrer" });
       if (result.retryAfter && /^\d{1,6}$/.test(result.retryAfter)) headers.set("retry-after", result.retryAfter);
-      if (result.status === 401 && proof(session)) headers.set("set-cookie", setCookie(SESSION_COOKIE, "", 0));
       return json(result.data, result.status, headers);
     }
   } catch {

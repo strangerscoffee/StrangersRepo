@@ -3,10 +3,15 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-if (process.argv.includes('--workers-ci') && !process.env.WORKERS_CI) process.exit(0);
-
+const workersBuild = process.argv.includes('--workers-ci');
 const root = resolve(process.env.STRANGERS_ASSETS_DIRECTORY || 'public');
+if (workersBuild || root === fileURLToPath(new URL('../public', import.meta.url))) {
+  execFileSync(process.execPath, [fileURLToPath(new URL('package-branded-retail.mjs', import.meta.url))], { stdio: 'inherit' });
+}
+if (workersBuild && !process.env.WORKERS_CI) process.exit(0);
+
 const output = join(root, '_releases');
 const work = await mkdtemp(join(tmpdir(), 'strangers-assets-'));
 const staged = join(root, '._releases-build');

@@ -482,3 +482,52 @@ for (const [label, viewport] of [["phone", { width: 393, height: 852 }], ["iPad"
     await m.ctx.close();
   });
 }
+
+test("a late rota week cannot replace the selected week's heading or planner data", async () => {
+  const { ctx, page } = await pageFor({ width: 1440, height: 900 });
+  const held = Promise.withResolvers(), release = Promise.withResolvers();
+  const older = "2030-01-07", current = "2030-01-14";
+  try {
+    await page.route(`**/api/rota/week?start=${older}`, async (route) => {
+      const response = await route.fetch();
+      held.resolve();
+      await release.promise;
+      await route.fulfill({ response, json: { ...await response.json(), people: [] } });
+    });
+    await page.goto(srv.base + "/rota/#week", { waitUntil: "domcontentloaded" });
+    await page.locator("#page[aria-busy=false] .people").waitFor();
+    await page.evaluate((week) => { location.hash = "week/" + week; }, older);
+    await held.promise;
+    await page.evaluate((week) => { location.hash = "week/" + week; }, current);
+    await page.locator("#page[aria-busy=false] .people").waitFor();
+    const title = await page.locator("#pageTitle").innerText();
+    const received = page.waitForResponse(`**/api/rota/week?start=${older}`);
+    release.resolve();
+    await (await received).finished();
+    await page.locator(".people .pr").filter({ hasText: "Alex Brown" }).click();
+    assert.equal(await page.locator("#pageTitle").innerText(), title);
+    assert.equal(await page.locator("#pageTitle .wstatus").count(), 1);
+    assert.equal(await page.locator(".people .pr").filter({ hasText: "Alex Brown" }).getAttribute("aria-pressed"), "true");
+  } finally {
+    release.resolve();
+    await ctx.close();
+  }
+});
+
+test("availability time controls announce their expanded state after keyboard activation", async () => {
+  const { ctx, page } = await pageFor({ width: 390, height: 844 });
+  try {
+    await page.goto(srv.base + "/rota/#avail");
+    const button = page.locator(".avrow .tchip").first();
+    await button.waitFor();
+    const times = page.locator("#" + await button.getAttribute("aria-controls"));
+    assert.equal(await button.getAttribute("aria-expanded"), "false");
+    assert.equal(await times.isVisible(), false);
+    await button.press("Enter");
+    assert.equal(await button.getAttribute("aria-expanded"), "true");
+    assert.equal(await times.isVisible(), true);
+    await button.press("Space");
+    assert.equal(await button.getAttribute("aria-expanded"), "false");
+    assert.equal(await times.isVisible(), false);
+  } finally { await ctx.close(); }
+});

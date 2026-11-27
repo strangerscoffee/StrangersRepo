@@ -1,191 +1,75 @@
 import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
-import { basename, dirname, join, relative, resolve, sep } from 'node:path';
+import { copyFile, lstat, mkdir, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { applyConsumerAccount } from './consumer-account/package.mjs';
 
-const reviewedRevision = '65dd7832948df051a2a03a908d17b63f4b9889e9';
-const pages = new Set([
-  'index.html',
-  ...['about', 'account', 'brewguides', 'coffee', 'contact', 'location', 'privacy-policy', 'shipping', 'terms-conditions']
-    .map(page => `${page}/index.html`),
-]);
-const assetPath = '/consumer-preview/assets/';
+const repository = fileURLToPath(new URL('../', import.meta.url));
+const source = join(repository, 'public', 'consumer-preview');
 const marker = '.branded-retail-package.json';
-const isAsset = path => /^assets\/[a-zA-Z0-9_-][a-zA-Z0-9._-]*\.(css|js|svg|webp|woff2|txt)$/.test(path);
-const isPublicFile = path => pages.has(path) || isAsset(path);
+const storefrontDirectory = /^(?:assets|[a-z0-9]+(?:-[a-z0-9]+)*)$/;
+const storefrontPage = /^(?:(?!assets\/)[a-z0-9]+(?:-[a-z0-9]+)*\/)?index\.html$/;
+const storefrontAsset = /^assets\/[a-z0-9][a-z0-9_.-]{0,110}\.(?:css|js|svg|webp|woff2|txt)$/i;
+const storefrontTypes = 'assets/product-paths.d.ts';
 
-const { values } = parseArgs({ options: { dist: { type: 'string' }, revision: { type: 'string' } } });
-if (!values.dist || !values.revision || !/^[a-f0-9]{7,40}$/.test(values.revision)) {
-  throw new Error('Provide the reviewed checkout using --dist <path to dist> --revision <commit SHA>.');
+if (process.argv.slice(2).some(arg => /^--(?:dist|revision)(?:=|$)/.test(arg))) {
+  throw new Error('Historical retail imports are retired. Verify the current storefront with npm run package:branded-retail.');
+}
+const { values: { out, 'update-manifest': update } } = parseArgs({
+  options: { out: { type: 'string' }, 'update-manifest': { type: 'boolean' } },
+});
+if (out !== undefined && (!out || update)) {
+  throw new Error('Use --out <new directory outside the repository> or --update-manifest separately.');
+}
+if (!(await lstat(source)).isDirectory() || await realpath(source) !== join(await realpath(repository), 'public', 'consumer-preview')) {
+  throw new Error('Expected a regular storefront source directory.');
 }
 
-const suppliedDist = resolve(values.dist);
-const dist = await realpath(suppliedDist);
-const sourceRoot = dirname(dist);
-const git = args => execFileSync('git', ['-C', sourceRoot, ...args], { encoding: 'utf8' });
-
-if (dist !== suppliedDist || basename(dist) !== 'dist' || git(['rev-parse', '--show-toplevel']).trim() !== sourceRoot) {
-  throw new Error('The source must be the dist directory of the reviewed checkout.');
-}
-const sourceRevision = git(['rev-parse', '--verify', `${values.revision}^{commit}`]).trim();
-if (sourceRevision !== reviewedRevision) {
-  throw new Error(`Expected the reviewed retail source at ${reviewedRevision}.`);
-}
-
-const tracked = new Map();
-for (const record of git(['ls-tree', '-rz', sourceRevision, '--', 'dist/']).split('\0').filter(Boolean)) {
-  const [metadata, fullPath] = record.split('\t');
-  const path = fullPath.slice('dist/'.length);
-  if (!isPublicFile(path)) continue;
-  const match = metadata.match(/^100(?:644|755) blob ([a-f0-9]+)$/);
-  if (!match) throw new Error(`Expected a regular reviewed file at ${fullPath}.`);
-  tracked.set(path, match[1]);
-}
-for (const path of [...pages, 'assets/app.js', 'assets/products.js', 'assets/style.css']) {
-  if (!tracked.has(path)) throw new Error(`The reviewed source is missing dist/${path}.`);
-}
-
-const hashAlgorithm = git(['rev-parse', '--show-object-format']).trim();
-const files = new Map();
-for (const [path, hash] of tracked) {
-  const file = join(dist, path);
-  if (await realpath(file) !== file || !(await lstat(file)).isFile()) {
-    throw new Error(`dist/${path} is not a regular checked-in file.`);
+const tracked = new Set(execFileSync('git', ['-C', source, 'ls-files', '-z', '--', '.'], { encoding: 'utf8' }).split('\0'));
+const files = [];
+for (const entry of await readdir(source, { recursive: true, withFileTypes: true })) {
+  const path = relative(source, join(entry.parentPath, entry.name)).split(sep).join('/');
+  if (entry.isDirectory() && storefrontDirectory.test(path)) continue;
+  const isPackageFile = path === marker || path === storefrontTypes || storefrontPage.test(path) || storefrontAsset.test(path);
+  if (!entry.isFile() || !isPackageFile) {
+    throw new Error(`Unsupported storefront entry at public/consumer-preview/${path}. Use storefront pages and supported assets only.`);
   }
-  const buffer = await readFile(file);
-  const actualHash = createHash(hashAlgorithm).update(`blob ${buffer.length}\0`).update(buffer).digest('hex');
-  if (actualHash !== hash) throw new Error(`dist/${path} differs from the reviewed source.`);
-
-  let output = buffer;
-  if (/\.(html|css|js)$/.test(path)) {
-    output = rewriteAssetPaths(buffer.toString('utf8'));
-    if (path === 'assets/products.js') output = attachAvailability(output);
-    if (path === 'assets/checkout.js') output = retargetOrderImages(output);
+  if (!tracked.has(path)) {
+    throw new Error(`Untracked storefront file at public/consumer-preview/${path}. Add intended source files to Git before packaging.`);
   }
-  files.set(path, output);
+  if (path !== marker) files.push(path);
 }
-await applyConsumerAccount(files, assetPath);
-
-const publicRoot = fileURLToPath(new URL('../public/', import.meta.url)).replace(/\/$/, '');
-if (await realpath(publicRoot) !== publicRoot) throw new Error('The public directory must not be a symlink.');
-const target = join(publicRoot, 'consumer-preview');
-const hasPrevious = await assertGeneratedOutput(target);
-const work = await mkdtemp(join(publicRoot, '.consumer-preview-build-'));
-const staged = join(work, 'retail');
-const backup = join(work, 'previous');
-let keepBackup = false;
-try {
-  for (const [path, contents] of files) {
-    const output = join(staged, path);
-    await mkdir(dirname(output), { recursive: true });
-    await writeFile(output, contents);
+files.sort();
+const manifest = JSON.stringify({ files }, null, 2) + '\n';
+const manifestPath = join(source, marker);
+if (update) {
+  if (!(await lstat(manifestPath)).isFile()) throw new Error('Expected a regular storefront manifest.');
+  await writeFile(manifestPath, manifest);
+  console.log(`Updated storefront manifest (${files.length} files).`);
+} else {
+  if (await readFile(manifestPath, 'utf8') !== manifest) {
+    throw new Error('Storefront manifest is out of date. Run npm run package:branded-retail -- --update-manifest and review the diff.');
   }
-  await writeFile(join(staged, marker), JSON.stringify({
-    sourceRevision,
-    files: [...files.keys()].sort(),
-  }, null, 2) + '\n');
-
-  if (hasPrevious) await rename(target, backup);
-  try {
-    await rename(staged, target);
-  } catch (error) {
-    if (hasPrevious) {
-      keepBackup = true;
-      await rename(backup, target);
-      keepBackup = false;
+  if (out) {
+    const requested = resolve(out);
+    const destination = join(await realpath(dirname(requested)), basename(requested));
+    const withinRepository = relative(await realpath(repository), destination);
+    if (!withinRepository || (withinRepository !== '..' && !withinRepository.startsWith('..' + sep) && !isAbsolute(withinRepository))) {
+      throw new Error('Choose a new storefront export directory outside the repository.');
     }
-    throw error;
+    await mkdir(destination);
+    try {
+      for (const path of [...files, marker]) {
+        const target = join(destination, path);
+        await mkdir(dirname(target), { recursive: true });
+        await copyFile(join(source, path), target);
+      }
+    } catch (error) {
+      await rm(destination, { recursive: true, force: true });
+      throw error;
+    }
+    console.log(`Exported ${files.length} storefront files to ${destination}.`);
+  } else {
+    console.log(`Verified storefront manifest (${files.length} files).`);
   }
-} finally {
-  if (!keepBackup) await rm(work, { recursive: true, force: true });
-}
-
-console.log(`Packaged ${pages.size} reviewed retail pages and ${files.size - pages.size} assets at public/consumer-preview (${sourceRevision}).`);
-
-function rewriteAssetPaths(contents) {
-  // The reviewed pages use quoted asset URLs. Also support the unquoted CSS url() form.
-  return contents.replace(/(["'\x60]|\burl\(\s*)\/assets\//g, (_match, prefix) => prefix + assetPath);
-}
-
-function attachAvailability(contents) {
-  const generated = contents.match(/^export const products = (\[[\s\S]+?\]);\nexport const cafes = (\[[\s\S]+\]);\s*$/);
-  if (!generated) throw new Error('Expected the reviewed catalogue module to contain two JSON arrays.');
-  const products = JSON.parse(generated[1]);
-  const cafes = JSON.parse(generated[2]);
-  const ids = new Set(products.map(product => product?.id));
-  if (!products.length || ids.size !== products.length ||
-      [...ids].some(id => typeof id !== 'string' || !/^[a-z0-9][a-z0-9-]*$/.test(id))) {
-    throw new Error('The reviewed catalogue must have unique normalised product IDs.');
-  }
-
-  return `const catalogue = ${JSON.stringify(products, null, 2)};
-export const cafes = ${JSON.stringify(cafes, null, 2)};
-
-async function loadUnavailable() {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 1250);
-  try {
-    const response = await fetch('/consumer-auth/availability', {
-      headers: { accept: 'application/json' },
-      cache: 'no-store',
-      redirect: 'error',
-      signal: controller.signal,
-    });
-    if (!response.ok) return new Set();
-    const data = await response.json();
-    if (!Array.isArray(data?.unavailable)) return new Set();
-    return new Set(data.unavailable.filter(id => typeof id === 'string').map(id => id.trim().toLowerCase()));
-  } catch {
-    return new Set();
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-const unavailable = await loadUnavailable();
-export const products = catalogue.map(product =>
-  unavailable.has(product.id) ? { ...product, available: false } : product
-);
-`;
-}
-
-
-function retargetOrderImages(contents) {
-  const reviewed = 'html(line.product.image)';
-  if (!contents.includes(reviewed)) throw new Error('Could not find the reviewed order image markup.');
-  return "import { orderImagePath } from './account-store.js';\n" +
-    contents.replaceAll(reviewed, `html(orderImagePath(line.product.image) || '${assetPath}mark.svg')`);
-}
-
-async function assertGeneratedOutput(directory) {
-  const stat = await lstat(directory).catch(error => {
-    if (error.code === 'ENOENT') return null;
-    throw error;
-  });
-  if (!stat) return false;
-  if (!stat.isDirectory()) throw new Error('Refusing to replace an output path that is not a directory.');
-
-  const entries = await readdir(directory, { recursive: true, withFileTypes: true });
-  if (entries.some(entry => !entry.isFile() && !entry.isDirectory())) {
-    throw new Error('Refusing to replace a retail output directory containing a symlink or special file.');
-  }
-
-  const entryPath = entry => relative(directory, join(entry.parentPath, entry.name)).split(sep).join('/');
-  const existing = entries.filter(entry => entry.isFile()).map(entryPath);
-  if (!existing.includes(marker)) throw new Error('Refusing to replace an output directory without a packaging marker.');
-
-  const previous = JSON.parse(await readFile(join(directory, marker), 'utf8'));
-  if (!/^[a-f0-9]{40}$/.test(previous?.sourceRevision) || !Array.isArray(previous?.files) ||
-      previous.files.some(path => typeof path !== 'string' || !isPublicFile(path))) {
-    throw new Error('Refusing to replace an output directory with an invalid packaging marker.');
-  }
-  const listed = new Set([marker, ...previous.files]);
-  const directories = new Set(previous.files.map(dirname));
-  if (existing.some(path => !listed.has(path)) || entries.some(entry => entry.isDirectory() && !directories.has(entryPath(entry)))) {
-    throw new Error('Refusing to replace an output directory containing entries outside the packaging marker.');
-  }
-  return true;
 }

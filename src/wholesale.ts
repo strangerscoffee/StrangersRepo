@@ -4,15 +4,15 @@ import { validGrindId } from "../public/wholesale/grinds.js";
 import { isWholesaleDelivery, shippingFor } from "../public/wholesale/shipping.js";
 import { MAX_QUANTITY, MINIMUM_ORDER_GRAMS } from "../public/wholesale/limits.js";
 import { catalogueRetrievedAt } from "./wholesale/catalogue.js";
-import type { User } from "./auth";
+import { staffSessionForWrite, type User } from "./auth";
 import { object, text, version, decode, get, save, type Row, type Versioned } from "./wholesaleStore";
-import { catalogue, handleCatalogueAdmin, serveCatalogueImage, packsOf } from "./wholesaleCatalogue";
+import { catalogue, handleCatalogueAdmin, serveCatalogueImage, packsOf, catalogueRevisions, CATALOGUE_REVISIONS_MATCH_SQL } from "./wholesaleCatalogue";
 import { adminWholesalePage, adminWholesaleStats } from "./wholesaleAdminLists";
 import { packingTotals } from "./wholesalePacking";
 import { audit } from "./audit";
-import { ApiError, type Env, invalid, json, readJson } from "./http";
+import { ApiError, type Env, invalid, json, readJson, SQL_NOW_MS } from "./http";
 import { handleAutoInvoiceAdmin, startAutoInvoice } from "./autoInvoice";
-import { manageWholesaleAccount, publicCustomer, wholesaleAccounts, wholesaleCustomer, paymentTermsFor, PAYMENT_TERMS, type Customer, type OrderingUser } from "./wholesaleAccounts";
+import { manageWholesaleAccount, publicCustomer, wholesaleAccounts, wholesaleCustomer, paymentTermsFor, PAYMENT_TERMS, WHOLESALE_SESSION_SQL, wholesaleSessionHash, type Customer, type OrderingUser } from "./wholesaleAccounts";
 import { customerLocations, editedCustomerLocations, locationDefaults, validLocationId, type CustomerLocation } from "./wholesaleCustomers";
 import { notifyCustomerChange, standingChangeToCustomer, confirmToCustomer, prepareDispatchEmail, prepareReadyEmail, handleOrderEmailsAdmin, notifyNewOrder } from "./email/orders";
 import { DEFAULT_ORDER_EMAIL, orderEmailSettings } from "./email/orderSettings";
@@ -172,14 +172,14 @@ async function createOrder(req: Request, env: Env, user: OrderingUser, links: Li
 }
 
 /** Staff with wholesale orders access (and admins) take an order for a customer. */
-export async function takeOrderFor(req: Request, env: Env, staff: { id: string; name: string }, links: Links, ctx?: ExecutionContext) {
+export async function takeOrderFor(req: Request, env: Env, staff: User, links: Links, ctx?: ExecutionContext) {
   const submitted = object(await readJson(req, 32 * 1024));
   const customerId = text(submitted.customerId, "customer", 36, true);
   const source = TAKEN_SOURCES.find((s) => s === submitted.source);
   if (!source) throw invalid("Choose how the order came in: email, in person, phone or other.");
   if (submitted.emailCustomer !== undefined && typeof submitted.emailCustomer !== "boolean") throw invalid("Choose whether to email the customer.");
   if (submitted.onTab !== undefined && typeof submitted.onTab !== "boolean") throw invalid("Choose whether to put the order on the customer's tab.");
-  return placeOrder(req, env, { id: staff.id, name: staff.name, role: "staff" } as OrderingUser, links, ctx, { customerId, source, emailCustomer: submitted.emailCustomer === true, onTab: submitted.onTab === true }, submitted);
+  return placeOrder(req, env, staff, links, ctx, { customerId, source, emailCustomer: submitted.emailCustomer === true, onTab: submitted.onTab === true }, submitted);
 }
 
 async function placeOrder(req: Request, env: Env, user: OrderingUser, links: Links, ctx: ExecutionContext | undefined, takenFor?: TakenFor, already?: Record<string, any>): Promise<{ order: Order & Versioned; created: boolean }> {
@@ -245,15 +245,38 @@ async function placeOrder(req: Request, env: Env, user: OrderingUser, links: Lin
   if (customer?.freeDelivery && order.delivery === "Delivery") order.freeDelivery = true;
   order.deliveryPence = order.freeDelivery ? 0 : shippingFor(order.delivery, order.pence);
   order.totalPence = order.pence + order.deliveryPence;
-  let saved;
-  try { saved = await save(env, "order", body.id, order, 0); }
-  catch (error) {
-    if (!(error instanceof ApiError) || error.code !== "conflict") throw error;
+  const staffSession = user.role === "wholesale" ? null : await staffSessionForWrite(req, env);
+  const identity = user.role === "wholesale"
+    ? { sql: `AND EXISTS (SELECT 1 ${WHOLESALE_SESSION_SQL} AND a.id = ? AND a.customer_id = ?)`, args: [await wholesaleSessionHash(req), user.accountId, user.customerId] }
+    : {
+      sql: `AND EXISTS (
+        SELECT 1 FROM users u WHERE u.id = ? AND u.role = ? AND u.active = 1 AND u.session_ver = ?
+        AND ? >= ${SQL_NOW_MS} AND NOT EXISTS (SELECT 1 FROM revoked_sessions WHERE sid = ?)
+        ${takenFor ? "AND (u.role = 'admin' OR EXISTS (SELECT 1 FROM staff_order_access WHERE user_id = u.id AND enabled = 1))" : ""}
+      )`,
+      args: [staffSession?.user.id === user.id ? user.id : null, user.role, staffSession?.sessionVersion ?? null, staffSession?.exp ?? null, staffSession?.sid ?? null],
+    };
+  // Compare the records read during validation in the same statement that creates the order.
+  // Bundled coffees without a saved override have version zero.
+  const result = await env.DB.prepare(`
+    INSERT INTO wholesale_preview (kind, id, data, version, updated_at)
+    SELECT 'order', ?, ?, 1, ?
+    WHERE (? IS NULL OR EXISTS (
+      SELECT 1 FROM wholesale_preview WHERE kind = 'customer' AND id = ? AND version = ? AND updated_at = ?
+    ))
+    AND ${CATALOGUE_REVISIONS_MATCH_SQL}
+    ${identity.sql}
+    ON CONFLICT(kind, id) DO NOTHING`)
+    .bind(body.id, JSON.stringify(order), at, customer?.id ?? null, customer?.id ?? null,
+      customer?.version ?? null, customer?.updatedAt ?? null, catalogueRevisions(coffees, lines), ...identity.args).run();
+  if (!result.meta.changes) {
     const raced = await get<Order>(env, "order", body.id);
-    if (!raced || raced.createdBy !== user.id || raced.requestKey !== requestKey) throw error;
+    if (!raced) throw new ApiError(409, "conflict", "The catalogue or account changed. Reload and review your order again.");
+    if (raced.createdBy !== user.id || raced.requestKey !== requestKey) throw new ApiError(409, "conflict", "That requestId has already been used for another order.");
     if (raced.deletedAt != null) throw new ApiError(410, "order_deleted", "This order was removed by Strangers. Close this review and review your basket before placing a new order.");
     return { order: raced, created: false };
   }
+  const saved = { ...order, id: body.id, version: 1, updatedAt: at };
   await audit(env, customer ? "wholesale_order" : "wholesale_preview_order", user.name, takenFor
     ? `${user.name} took order ${body.id} for ${customer!.business} (${takenFor.source.toLowerCase()}).`
     : `${user.name} placed ${customer ? "wholesale" : "staff preview"} order ${body.id}.`);
@@ -367,7 +390,7 @@ export async function ordersToPrint(env: Env, query: URLSearchParams, { customer
   if (ids.length > 200 || ids.some((id) => !/^(?:PREVIEW|WS)-[A-F0-9]{32}$/.test(id))) throw invalid("Choose up to 200 orders to print.");
   if (!ids.length && (!statuses.length || statuses.some((value) => !STATUSES.includes(value)))) throw invalid("Choose which orders to print.");
   const rows = ids.length
-    ? await env.DB.prepare(`SELECT id, data, version, updated_at FROM wholesale_preview WHERE kind = 'order' AND id IN (${ids.map(() => "?").join(",")}) AND json_extract(data, '$.deletedAt') IS NULL${customerOnly ? " AND json_extract(data, '$.preview') = 0" : ""}`).bind(...ids).all<Row>()
+    ? await env.DB.prepare(`SELECT id, data, version, updated_at FROM wholesale_preview WHERE kind = 'order' AND id IN (SELECT value FROM json_each(?)) AND json_extract(data, '$.deletedAt') IS NULL${customerOnly ? " AND json_extract(data, '$.preview') = 0" : ""}`).bind(JSON.stringify(ids)).all<Row>()
     : await env.DB.prepare(`SELECT id, data, version, updated_at FROM wholesale_preview WHERE kind = 'order' AND json_extract(data, '$.preview') = 0 AND json_extract(data, '$.deletedAt') IS NULL AND json_extract(data, '$.status') IN (${statuses.map(() => "?").join(",")}) ORDER BY json_extract(data, '$.createdAt') LIMIT 501`).bind(...statuses).all<Row>();
   if (rows.results.length > 500) throw invalid("There are more than 500 orders to print. Choose fewer.");
   const orders = rows.results.map((row) => decode<Order>(row) as Order & Versioned);

@@ -298,8 +298,12 @@ window.WholesaleInvoiceWorkspace = function ({ api, html, raw, svg, title, foote
 
   // Orders invoiced by hand in QuickBooks before automatic invoicing: matched to the QuickBooks invoice so they stop
   // showing as unbilled. Nothing is issued, posted or emailed, and QuickBooks isn't changed.
-  async function quickbooksMatches(back) {
-    const data = await api("GET", root + "/quickbooks-matches");
+  async function quickbooksMatches(back, after = null, limit = null, previous = []) {
+    const query = new URLSearchParams();
+    if (after) query.set("after", after);
+    if (limit) query.set("limit", limit);
+    const data = await api("GET", root + "/quickbooks-matches" + (query.size ? "?" + query : ""));
+    const shrink = data.complete === false && data.limit > 1;
     const groups = [["exact", "Found in QuickBooks", "Same customer and total."],
       ["amount", "Found with a different total", "Check these before ticking: the QuickBooks invoice's total isn't the order's."],
       ["none", "Not found in QuickBooks", "No matching QuickBooks invoice. These stay unbilled."]];
@@ -315,19 +319,30 @@ window.WholesaleInvoiceWorkspace = function ({ api, html, raw, svg, title, foote
         ${data.suggestions.length ? groups.map(([kind, name, hint]) => {
           const entries = data.suggestions.filter(entry => entry.match === kind);
           return entries.length ? panel(name, html`<div class="iw-panel-body">${note(hint)}</div><div class="iw-list">${entries.map(row)}</div>`, tag(String(entries.length))) : "";
-        }) : note("No unbilled dispatches.")}
+        }) : data.complete === false
+          ? note("This date range contains too many orders or QuickBooks invoices to confirm matches." + (shrink ? " Try reviewing fewer orders at once." : data.next ? " Continue to the next order to keep reviewing." : ""))
+          : note("No unbilled dispatches on this page.")}
+        ${shrink ? inSheet("Review fewer orders", "wi-matches-smaller") : ""}
       </div><footer class="wi-foot"><p class="err" id="wiError" role="alert"></p><div class="row">
         <span class="iw-batch-progress" data-selection role="status"></span>
         ${inSheet("Back", "wi-back")}
+        ${previous.length ? inSheet("Previous orders", "wi-matches-previous") : ""}
+        ${data.next ? inSheet("Next orders", "wi-matches-next") : ""}
         ${data.suggestions.some(entry => entry.invoice) ? html`<button type="submit" class="btn">Mark as already invoiced</button>` : ""}
       </div></footer></form>`, async (name, _element, form) => {
+      if (name === "wi-matches-smaller") return busy(form, () => quickbooksMatches(back, after, Math.ceil(data.limit / 2), previous));
+      if (name === "wi-matches-next") return busy(form, () => quickbooksMatches(back, data.next, limit, [...previous, { after, limit }]));
+      if (name === "wi-matches-previous") {
+        const page = previous.at(-1);
+        return busy(form, () => quickbooksMatches(back, page.after, page.limit, previous.slice(0, -1)));
+      }
       if (name !== "submit") return;
       await busy(form, async () => {
         const chosen = new Set([...form.querySelectorAll("[name=match]:checked")].map(input => input.value));
         const matches = data.suggestions.filter(entry => entry.invoice && chosen.has(entry.orderId))
           .map(entry => ({ orderId: entry.orderId, version: entry.version, remoteId: entry.invoice.id }));
         if (!matches.length) throw new Error("Tick the orders to mark as already invoiced.");
-        const result = await api("POST", root + "/quickbooks-matches", { matches });
+        const result = await api("POST", root + "/quickbooks-matches", { matches, review: data.review, after, limit });
         toast(countLabel(result.recorded, "order") + " marked as invoiced in QuickBooks. Nothing was emailed.");
         await back();
       });

@@ -241,7 +241,7 @@
     }
     box.setAttribute("aria-busy", "true");
     try {
-      const out = await PAGE_RENDER[page](args);
+      const out = await PAGE_RENDER[page](args, () => seq === renderSeq);
       if (seq !== renderSeq) return;
       // The way into the sickness form, at the top of My shifts and Holidays.
       box.replaceChildren(...[page === "mine" || page === "leave" ? Sick.link() : null, out].flat().filter(Boolean));
@@ -481,12 +481,16 @@
 
   /* ---------- week planner (admins) ---------- */
 
-  async function loadWeek(week, force) {
+  let weekRequest = 0;
+  async function loadWeek(week, force, isCurrent = () => true) {
     if (!force && R.weekData && R.weekData.week === week && Date.now() - R.weekData._at < 15000) return R.weekData;
+    const request = ++weekRequest;
     const d = await get("/api/rota/week?start=" + week);
     d._at = Date.now();
-    rememberHues(d.people);
-    if (mgr()) R.weekData = d;
+    if (isCurrent() && request === weekRequest) {
+      rememberHues(d.people);
+      if (mgr()) R.weekData = d;
+    }
     return d;
   }
   const personOf = (d, id) => d.people.find((p) => p.id === id);
@@ -804,10 +808,12 @@
       el("button", { type: "button", class: "iconbtn", "aria-label": "Next week", disabled: max && cur >= max, onclick: () => set(addDays(cur, 7)) }, svgi(ICON.chevR))];
   }
 
-  async function renderWeek([day] = []) {
+  async function renderWeek([day], isCurrent) {
     // #week/<date> (from the admin section) opens that week; the address then goes back to #week.
     if (/^\d{4}-\d{2}-\d{2}$/.test(day || "")) { R.week = monday(day); try { history.replaceState(null, "", "#week"); } catch (e) { /* ignore */ } }
-    const d = await loadWeek(R.week, true);
+    const d = await loadWeek(R.week, true, isCurrent);
+    if (!isCurrent()) return [];
+    R.weekData = d;
     if (R.focusWeek !== d.week) { R.focusPerson = null; R.probsOpen = undefined; R.focusWeek = d.week; }
     if (R.focusPerson && !personOf(d, R.focusPerson)) R.focusPerson = null;
     const total = r2(d.shifts.reduce((a, s) => a + s.hours, 0));
@@ -1057,9 +1063,10 @@
 
   /* ---------- day view (admins) ---------- */
 
-  async function renderDay([site, day]) {
+  async function renderDay([site, day], isCurrent) {
     if (!site || !/^\d{4}-\d{2}-\d{2}$/.test(day || "")) { go("week"); return []; }
-    const d = await loadWeek(monday(day), true);
+    const d = await loadWeek(monday(day), true, isCurrent);
+    if (!isCurrent()) return [];
     R.week = d.week;
     const s = d.sites.find((x) => x.id === site);
     if (!s) { go("week"); return []; }
@@ -1211,11 +1218,12 @@
 
   /* ---------- my shifts (everyone) ---------- */
 
-  async function renderMine() {
+  async function renderMine(_args, isCurrent) {
     const u = R.me.user;
     const toggle = isAdmin() ? seg([["mine", "Mine"], ["all", "Everyone"]], R.everyone ? "all" : "mine", (v) => { R.everyone = v === "all"; render(); }, "Whose shifts") : null;
     if (R.everyone && isAdmin()) {
-      const d = await loadWeek(R.everyoneWeek || (R.everyoneWeek = monday(londonToday())), true);
+      const d = await loadWeek(R.everyoneWeek || (R.everyoneWeek = monday(londonToday())), true, isCurrent);
+      if (!isCurrent()) return [];
       setHead("mine", "My shifts", `${weekLabel(d.week)} · ${d.published ? "published" : mgr() ? "draft (staff can't see it yet)" : "not published yet"}`, {
         actions: [el("button", { type: "button", class: "iconbtn", "aria-label": "Previous week", onclick: () => { R.everyoneWeek = addDays(d.week, -7); render(); } }, svgi(ICON.chevL)),
           el("button", { type: "button", class: "iconbtn", "aria-label": "Next week", onclick: () => { R.everyoneWeek = addDays(d.week, 7); render(); } }, svgi(ICON.chevR))],
@@ -1235,6 +1243,7 @@
     // One request covers the chosen week and the next four weeks from today.
     const from = wk < today ? wk : today, to = addDays(wk, 6) > addDays(today, 27) ? addDays(wk, 6) : addDays(today, 27);
     const [r, me, open] = await Promise.all([get(`/api/rota/mine?from=${from}&to=${to}`), get("/api/rota/me"), get("/api/rota/open").catch(() => ({ shifts: [] }))]);
+    if (!isCurrent()) return [];
     R.approvers = me.approvers;
     const ap = approverText(), apWord = ap === "An admin" ? "an admin" : ap;
     setHead("mine", "My shifts", u.name, { actions: weekNav(wk, (w) => { R.mineWeek = w; render(); }, { min: lo, max: hi }) });
@@ -1525,13 +1534,15 @@
 
   /* ---------- when I can work (everyone) ---------- */
 
-  async function renderAvail([uid] = []) {
+  async function renderAvail([uid], isCurrent) {
     const me = await get("/api/rota/me");
+    if (!isCurrent()) return [];
     R.approvers = me.approvers;
     const other = uid && uid !== me.user.id && isAdmin();
     let person = null;
     if (other) {
-      person = (await loadWeek(R.week, true)).people.find((p) => p.id === uid);
+      person = (await loadWeek(R.week, true, isCurrent)).people.find((p) => p.id === uid);
+      if (!isCurrent()) return [];
       if (!person) { go("settings"); return []; }
     }
     const canEdit = isAdmin();
@@ -1568,12 +1579,15 @@
       sw.onchange = () => { pattern[k] = sw.checked ? "any" : "off"; drawRows(); saveSoon(); };
       const desc = dayText(v);
       const row = el("div", { class: "lrow avrow" }, el("b", { class: "dn", text: fmt(addDays("2026-11-09", i), { weekday: "short" }) }),
-        on ? el("button", { type: "button", class: "tchip" + (v === "any" ? " any" : ""), "data-w": "", "aria-expanded": "false", onclick: () => times.hidden = !times.hidden }, desc) : el("span", { class: "s", text: desc }),
+        on ? el("button", { type: "button", class: "tchip" + (v === "any" ? " any" : ""), "data-w": "", "aria-expanded": "false", "aria-controls": "av_times_" + k, onclick: (e) => {
+          times.hidden = !times.hidden;
+          e.currentTarget.setAttribute("aria-expanded", String(!times.hidden));
+        } }, desc) : el("span", { class: "s", text: desc }),
         el("span", { class: "grow" }), el("label", { class: "rswitch" }, sw));
       const fromI = el("input", { type: "time", value: typeof v === "object" ? v.from || "" : "", "aria-label": `${DAY_NAMES[i]} from` });
       const toI = el("input", { type: "time", value: typeof v === "object" ? v.to || "" : "", "aria-label": `${DAY_NAMES[i]} until` });
       const apply = () => { const o = {}; if (fromI.value) o.from = fromI.value; if (toI.value) o.to = toI.value; if (o.from && o.to && o.to <= o.from) { toast("Until has to be after from."); return; } pattern[k] = Object.keys(o).length ? o : "any"; drawRows(); saveSoon(); };
-      const times = el("div", { class: "avtimes", hidden: true }, el("label", {}, "From ", fromI), el("label", {}, "Until ", toI),
+      const times = el("div", { class: "avtimes", id: "av_times_" + k, hidden: true }, el("label", {}, "From ", fromI), el("label", {}, "Until ", toI),
         ghost("Any time", () => { pattern[k] = "any"; drawRows(); saveSoon(); }, { class: "btn ghost sm" }), btn("Set", apply, "btn sm"));
       return el("div", { class: "avwrap" }, row, times);
     }));
@@ -1754,10 +1768,11 @@
   const monthLabel = (m) => fmt(m + "-01", { month: "long", year: "numeric" });
   const hoursSwitch = () => el("div", { class: "row hmode" }, seg([["week", "Week"], ["month", "Month"]], R.hoursMode || "week", (v) => { R.hoursMode = v; render(); }, "Show hours for"));
 
-  async function renderHours() {
-    if (R.hoursMode === "month") return renderMonthHours();
+  async function renderHours(_args, isCurrent) {
+    if (R.hoursMode === "month") return renderMonthHours(isCurrent);
     const w = R.hoursWeek || (R.hoursWeek = R.week);
     const r = await get("/api/rota/hours?start=" + w);
+    if (!isCurrent()) return [];
     setHead("hours", "Hours", `${weekLabel(r.week)} · all sites${r.published ? "" : " · draft"}`, {
       back: ["More", "more"],
       actions: [el("button", { type: "button", class: "iconbtn", "aria-label": "Previous week", onclick: () => { R.hoursWeek = addDays(r.week, -7); render(); } }, svgi(ICON.chevL)),
@@ -1777,9 +1792,10 @@
       el("div", { class: "row" }, el("a", { class: "btn ghost", href: `/api/rota/hours?start=${r.week}&format=csv`, download: `rota-hours-${r.week}.csv` }, "Download CSV"))];
   }
 
-  async function renderMonthHours() {
+  async function renderMonthHours(isCurrent) {
     const m = R.hoursMonth || (R.hoursMonth = londonToday().slice(0, 7));
     const r = await get("/api/rota/hours?month=" + m);
+    if (!isCurrent()) return [];
     setHead("hours", "Hours", `${monthLabel(r.month)} · all sites · for payroll`, {
       back: ["More", "more"],
       actions: [el("button", { type: "button", class: "iconbtn", "aria-label": "Previous month", onclick: () => { R.hoursMonth = monthAdd(r.month, -1); render(); } }, svgi(ICON.chevL)),
@@ -1817,9 +1833,10 @@
       el("p", { class: "note", text: "The payroll CSV has one row a person: hours worked, basic and overtime hours, holiday, sick, unpaid, unauthorised and other time off with their dates, and hours by site. Every shift lists each shift's planned and actual times, for checking." })];
   }
 
-  async function renderSettings([siteId] = []) {
+  async function renderSettings([siteId], isCurrent) {
     setHead("settings", isAdmin() ? "Rota settings" : "Site rota settings", isAdmin() ? "Opening times, minimum cover and contracted hours" : "Opening times and minimum cover", { back: ["More", "more"] });
-    const [sites, wk] = await Promise.all([get("/api/rota/sites"), isAdmin() ? loadWeek(R.week, true) : Promise.resolve(null)]);
+    const [sites, wk] = await Promise.all([get("/api/rota/sites"), isAdmin() ? loadWeek(R.week, true, isCurrent) : Promise.resolve(null)]);
+    if (!isCurrent()) return [];
     const out = [label("Sites")];
     const dayAb = (n) => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][n];
     const configured = sites.sites.filter(site => !site.adHoc);

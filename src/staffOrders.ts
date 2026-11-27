@@ -134,7 +134,7 @@ export async function handleStaffOrders(req:Request,env:Env,route:string,user:Us
   // Taking an order for a customer (by email, phone or at the door): the same checks as the ordering site, at
   // today's catalogue prices, which this page never shows.
   if(route==="orders"&&req.method==="POST"){
-    const placed=await takeOrderFor(req,env,{id:user.id,name:user.name},{admin:"",diary:new URL(links.diary||"/",req.url).href,preview:links.preview},ctx);
+    const placed=await takeOrderFor(req,env,user,{admin:"",diary:new URL(links.diary||"/",req.url).href,preview:links.preview},ctx);
     await requireStaffOrders(env,user);
     return json({order:staffView(placed.order),created:placed.created},placed.created?201:200);
   }

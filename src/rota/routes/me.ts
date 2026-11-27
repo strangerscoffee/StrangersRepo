@@ -1,6 +1,7 @@
 // Rota routes for the person signed in: their shifts, who's on today, their details, and their availability.
 import { profileRow, profileView, saveOwnProfile, tellAdmins } from "../../profile";
 import { policy } from "../leave/model";
+import { saveRotaPerson } from "../people";
 import { invalid, json } from "../../http";
 import { approvers, loadPeople, loadShifts, publishedWeeks, weekRow } from "../load";
 import { visibleRequests } from "../requests";
@@ -110,14 +111,12 @@ export async function meRoutes(r: RotaRequest): Promise<Response | null> {
   if (route === "me/availability" && m === "PUT") {
     needAdmin();
     const b = await body();
-    const cur = await env.DB.prepare("SELECT primary_site FROM rota_people WHERE user_id = ?").bind(user.id).first<{ primary_site: string | null }>();
-    const primary = "primarySite" in b ? checkPrimarySite(b.primarySite) : cur?.primary_site ?? null;
-    const pattern = checkPattern(b.pattern), sites = checkSites(b.sites).filter((s) => s !== primary);
-    await env.DB.prepare(
-      `INSERT INTO rota_people (user_id, sites, pattern, primary_site, updated_at) VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT (user_id) DO UPDATE SET sites = excluded.sites, pattern = excluded.pattern, primary_site = excluded.primary_site, updated_at = excluded.updated_at`,
-    ).bind(user.id, JSON.stringify(sites), JSON.stringify(pattern), primary, nowMs()).run();
-    return json({ pattern, sites, primarySite: primary });
+    const { pattern, sites, primarySite } = await saveRotaPerson(env, user.id, {
+      primarySite: "primarySite" in b ? checkPrimarySite(b.primarySite) : undefined,
+      pattern: checkPattern(b.pattern),
+      sites: checkSites(b.sites),
+    });
+    return json({ pattern, sites, primarySite });
   }
 
   return null;

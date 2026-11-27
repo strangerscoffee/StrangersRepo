@@ -8,6 +8,7 @@ import { Env, invalid } from "./http";
 import { audit } from "./audit";
 import { cleanEmail } from "./email/send";
 import { ApiError } from "./http";
+import { isDay } from "./rota/util";
 
 export const PROFILE_LABELS = { phone: "contact number", email: "contact email", address: "home address" } as const;
 export type ProfileField = keyof typeof PROFILE_LABELS;
@@ -33,7 +34,7 @@ export function cleanAddress(v: unknown): string {
 }
 export function cleanStartDate(v: unknown): string | null {
   if (v == null || v === "") return null;
-  if (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(v) || Number.isNaN(Date.parse(v + "T12:00:00Z"))) throw invalid("Enter the start date as a date.");
+  if (!isDay(v)) throw invalid("Enter the start date as a date.");
   return v;
 }
 

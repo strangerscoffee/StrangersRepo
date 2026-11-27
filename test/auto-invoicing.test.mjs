@@ -410,6 +410,7 @@ test('Using QuickBooks invoice numbers: the next after the highest there, waitin
  } finally {
    provider.state.unreachable=false;
  }
+ srv.sql(`UPDATE wholesale_invoice_batch_items SET lease_until=0 WHERE id=${review.items[0].id}`);
  await cron();
  await until(async()=>{
    const item=(await ok('GET',batchUrl)).body.items[0];
@@ -456,4 +457,35 @@ test('A held automatic export rechecks the chosen billing address and retries th
  assert.equal(receipt.billingHistory[0].postcode,'NR2 3AB');
  const next=await order(cookie);
  assert.equal((await ok('GET',root+'/orders/'+next.id+'/invoice')).body.billing.billTo.postcode,'NR2 1AB','Sandbox review is isolated from future live billing');
+});
+
+test('A temporary issuance failure lets a later approved batch progress', async () => {
+ await switches(false, false, false);
+ const {cookie} = await business('Batch retry cafe');
+ const period = new Intl.DateTimeFormat('en-CA', {timeZone:'Europe/London'}).format(new Date()).slice(0,7);
+ async function approveBatch() {
+  const dispatched = await status(await order(cookie), 'Dispatched');
+  const review = (await ok('POST', root+'/invoicing/batches/preview', {period, selected:[dispatched.id], delivery:'issue'})).body;
+  const url = root+'/invoicing/batches/'+review.id;
+  await ok('POST', url+'/approve', {reviewed:true});
+  return {orderId:dispatched.id, itemId:review.items[0].id, url};
+ }
+ const oldest = await approveBatch(), later = await approveBatch();
+ srv.sql(`CREATE TRIGGER test_batch_issue_failure BEFORE INSERT ON wholesale_invoices
+   WHEN NEW.order_id='${oldest.orderId}' BEGIN SELECT RAISE(ABORT,'temporary batch issuance failure'); END;`);
+ const item = async batch => (await ok('GET', batch.url)).body.items[0];
+ try {
+  await cron();
+  await until(async () => (await item(oldest)).reason === 'Waiting to retry issuance.', 'oldest batch was delayed');
+  assert.equal(invoiceOf(oldest.orderId), undefined);
+  await cron();
+  await until(async () => (await item(later)).state === 'issued', 'later batch issued while oldest waited');
+  assert.equal((await item(oldest)).state, 'waiting');
+  assert.equal(invoiceOf(oldest.orderId), undefined);
+ } finally {
+  srv.sql('DROP TRIGGER test_batch_issue_failure');
+ }
+ // An explicit retry can proceed immediately after the operator fixes the problem.
+ assert.equal((await ok('POST', oldest.url+'/items/'+oldest.itemId+'/run', {})).body.items[0].state, 'issued');
+ assert.ok(invoiceOf(oldest.orderId));
 });

@@ -17,7 +17,7 @@ import { handleConsumerAdmin } from "./consumerAdmin";
 import { handleStaffOrders } from "./staffOrders";
 import { requireStaffOrders } from "./staffOrdersAccess";
 import { handleAdminView } from "./adminView";
-import { handleAuth } from "./auth";
+import { handleAuth, SessionUnavailableError } from "./auth";
 import { handleBackups, makeBackup } from "./backup";
 import { deleteAsset, serveBlob, uploadAsset } from "./assets";
 import { WRITE_OPS, handleDb } from "./docs";
@@ -33,6 +33,7 @@ import { handleWholesale, handleWholesaleAdmin } from "./wholesale";
 import { handleWholesaleAuth, wholesaleSession } from "./wholesaleAccounts";
 import {handleWebhook} from "./quickbooks/webhooks";
 import {processEvents,runQuickBooksJobs} from "./quickbooks/jobs";
+import { QB_ROOT } from "./quickbooks/connection";
 import { runAutoInvoicing } from "./autoInvoice";
 import { runInvoiceBatches } from "./invoicing/batches";
 import {trustedOrigin} from "./requestOrigins";
@@ -59,7 +60,9 @@ export default {
     let res: Response;
     // Reads are tried once more if the database drops out for a moment (D1 can, briefly, during its own maintenance
     // or a network blip), instead of showing someone an error. Only reads: a write might have happened.
-    const readOnly = req.method === "GET" || req.method === "HEAD" || (req.method === "POST" && /^\/api\/db\/(get|query|poll|profiles)$/.test(url.pathname));
+    const readOnly = (req.method === "GET" || req.method === "HEAD")
+      ? !sideEffectingRead(url.pathname)
+      : req.method === "POST" && /^\/api\/db\/(get|query|poll|profiles)$/.test(url.pathname);
     const spare = readOnly && req.method === "POST" ? req.clone() : null;
     try {
       try {
@@ -79,9 +82,13 @@ export default {
         const ref = codeFor(report);
         const msg = String((e as Error)?.message || e);
         // D1 reports a full database as SQLITE_FULL; the page shows a specific message for quota_exceeded.
-        res = /SQLITE_FULL|database or disk is full/i.test(msg)
-          ? json({ code: "quota_exceeded", message: "The database is full." }, 507)
-          : json({ code: "internal", ref, message: `Something went wrong on the server (error ${ref}). Try again; if it keeps happening, send a screenshot of this to whoever looks after the site.` }, 500);
+        if (e instanceof SessionUnavailableError) {
+          res = json({ code: "session_unavailable", ref, message: "Sign-in could not be checked. Try again shortly." }, 503);
+        } else if (/SQLITE_FULL|database or disk is full/i.test(msg)) {
+          res = json({ code: "quota_exceeded", message: "The database is full." }, 507);
+        } else {
+          res = json({ code: "internal", ref, message: `Something went wrong on the server (error ${ref}). Try again; if it keeps happening, send a screenshot of this to whoever looks after the site.` }, 500);
+        }
       }
     }
     // A write other devices should hear about: tell every open page (src/live.ts), after answering this one.
@@ -163,9 +170,40 @@ function isTransient(e: unknown): boolean {
   return /network connection lost|connection reset|storage caused object to be reset|object to be reset|D1_ERROR: (internal|overloaded)|timed? ?out|Durable Object reset|try again/i.test(String((e as Error)?.message || e));
 }
 
-/** Moves the change counters that GET /api/changes reports, after a write that other devices should see. */
-async function bumpChanges(env: Env, ...keys: string[]) {
-  await env.DB.prepare(`UPDATE meta SET v = v + 1 WHERE k IN (${keys.map(() => "?").join(",")})`).bind(...keys).run();
+function sideEffectingRead(path: string): boolean {
+  if (path === "/api/live" || /^\/api\/wholesale\/auth\/(?:invite|reset)$/.test(path)) return true;
+  if (path === "/api/admin/wholesale/quickbooks-matches") return true;
+  if (!path.startsWith(QB_ROOT + "/")) return false;
+  // The callback consumes OAuth state. The provider reads can rotate the refresh token.
+  const action = path.slice(QB_ROOT.length);
+  return action === "/callback" || action === "/references" ||
+    /^\/(?:invoices\/\d+\/preview|exports\/\d+\/billing-review)$/.test(action);
+}
+
+/** Moves the change counters that GET /api/changes reports, after the underlying write has committed. */
+async function bumpChanges(env: Env, ctx: ExecutionContext, page: string, ...keys: string[]) {
+  const bump = () => env.DB.prepare(`UPDATE meta SET v = v + 1 WHERE k IN (${keys.map(() => "?").join(",")})`).bind(...keys).run();
+  try {
+    await bump();
+  } catch (error) {
+    // Preserve the write's response. Repeating a notification increment can only invalidate a cache again.
+    ctx.waitUntil((async () => {
+      let failure = error;
+      if (isTransient(error)) {
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        try {
+          await bump();
+          await notifyLive(env);
+          return;
+        } catch (retryError) {
+          failure = retryError;
+        }
+      }
+      console.error("Change counters failed after a successful write", failure);
+      await recordError(env, { source: "server", app: "worker", page,
+        message: "Change counters failed after a successful write.", detail: String((failure as Error)?.stack || failure) });
+    })());
+  }
 }
 
 const redirect = (location: string) => new Response(null, { status: 302, headers: { location, "cache-control": "no-store" } });
@@ -315,7 +353,7 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
     return json({ code });
   }
 
-  if (p.startsWith("/api/auth/")) return handleAuth(req, env, p.slice("/api/auth/".length), caller.kind === "user" ? caller.user : null);
+  if (p.startsWith("/api/auth/")) return handleAuth(req, env, p.slice("/api/auth/".length), caller.kind === "user" ? caller : null);
 
   // Wholesale cookies have their own namespace and are never accepted by any staff route.
   const wholesaleScope = app === "preview" || (app === "diary" && (p.startsWith("/api/wholesale/") || WHOLESALE_PAGES.has(p) || OLD_WHOLESALE_DASHBOARD.has(p) || (p.startsWith("/wholesale/") && isPreviewFile(p))));
@@ -323,7 +361,7 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
     if (p.startsWith("/api/wholesale/auth/")) {
       if (!isGet) await limitWrites(req, env, ctx);
       const response = await handleWholesaleAuth(req, env, p.slice("/api/wholesale/auth/".length), ctx);
-      if (!isGet && response.ok) await bumpChanges(env, "accounts");
+      if (!isGet && response.ok) await bumpChanges(env, ctx, p, "accounts");
       return response;
     }
     const user = await wholesaleSession(req, env) || (!customerOnly && caller.kind === "user" ? caller.user : null);
@@ -335,7 +373,7 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
     if (p.startsWith("/api/wholesale/")) {
       if (!isGet) await limitWrites(req, env, ctx, user.id);
       const response = await handleWholesale(req, env, p.slice("/api/wholesale/".length), user, links, ctx);
-      if (!isGet && response.ok) await bumpChanges(env, "accounts");
+      if (!isGet && response.ok) await bumpChanges(env, ctx, p, "accounts");
       return response;
     }
     if (p.startsWith("/api/") || p.startsWith("/_blob/")) throw new ApiError(404, "not_found", "Not available on the ordering address.");
@@ -371,7 +409,7 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
     if(app!=="diary")throw new ApiError(404,"not_found","Not available on this address.");
     if(!isGet)await limitWrites(req,env,ctx,user.id);
     const response=await handleStaffOrders(req,env,p.slice("/api/staff-orders/".length),user,links,ctx);
-    if(!isGet&&response.ok)await bumpChanges(env,"accounts");
+    if(!isGet&&response.ok)await bumpChanges(env,ctx,p,"accounts");
     return response;
   }
   if(app==="diary"&&isGet&&(p==="/orders"||p.startsWith("/orders/"))){
@@ -402,7 +440,7 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
 
   if (p.startsWith("/api/rota/")) {
     const res = await handleRota(req, env, ctx, p.slice("/api/rota/".length), user, links);
-    if (!isGet && res.ok) await bumpChanges(env, "rota");
+    if (!isGet && res.ok) await bumpChanges(env, ctx, p, "rota");
     return res;
   }
 
@@ -451,14 +489,14 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
       res = await handleWholesaleAdmin(req, env, r === "wholesale" ? "" : r.slice("wholesale/".length), user, links, ctx);
     } else res = (await handleAdminView(req, env, r, user, links)) ?? (await handleAdmin(req, env, r, user));
     // Accounts and sites show on the rota too (names, who's switched off, opening hours).
-    if (!isGet && res.ok) await bumpChanges(env, "accounts", "rota");
+    if (!isGet && res.ok) await bumpChanges(env, ctx, p, "accounts", "rota");
     return res;
   }
 
   if (p.startsWith("/api/wholesale/")) {
     if (!isGet) await limitWrites(req, env, ctx, user.id);
     const response = await handleWholesale(req, env, p.slice("/api/wholesale/".length), user, links, ctx);
-    if (!isGet && response.ok) await bumpChanges(env, "accounts");
+    if (!isGet && response.ok) await bumpChanges(env, ctx, p, "accounts");
     return response;
   }
 

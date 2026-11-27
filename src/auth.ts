@@ -216,47 +216,71 @@ async function signedIn(req: Request, env: Env, user: { id: string; session_ver:
 /** The signed-in person, or null. Checks the signature, expiry, and that the account is still active and
  * hasn't been signed out everywhere since (session_ver). */
 export async function sessionUser(req: Request, env: Env): Promise<User | null> {
-  return (await currentSession(req, env))?.user ?? null;
+  return (await staffSessionForWrite(req, env))?.user ?? null;
 }
 
-/** The session cookie that signs this request in, with its raw value and time left. */
-async function currentSession(req: Request, env: Env): Promise<{ user: User; value: string; leftSec: number; sid?: string | null; exp?: number } | null> {
+/** The DB-backed identity and signed expiry to recheck during a guarded write. */
+export interface StaffSession {
+  user: User;
+  sessionVersion: number;
+  sid: string | null;
+  exp: number;
+}
+
+export class SessionUnavailableError extends Error {
+  constructor(cause: unknown) {
+    super(String((cause as Error)?.message || cause), { cause });
+    this.name = "SessionUnavailableError";
+  }
+}
+
+export async function staffSessionForWrite(req: Request, env: Env): Promise<StaffSession | null> {
+  try {
+    return await currentSession(req, env);
+  } catch (error) {
+    throw new SessionUnavailableError(error);
+  }
+}
+
+/** The exact signed session that currently authorizes the request. */
+async function currentSession(req: Request, env: Env): Promise<StaffSession | null> {
+  let key: CryptoKey | undefined;
   for (const { payload, sig } of cookieValues(req, COOKIE)) {
+    let signature;
+    try { signature = unb64url(sig); } catch { continue; }
+    if (signature.length !== 32) continue;
+    key ??= await sessionKey(env);
+    if (!(await crypto.subtle.verify("HMAC", key, signature, enc.encode(payload)))) continue;
+    let s;
     try {
-      if (!(await crypto.subtle.verify("HMAC", await sessionKey(env), unb64url(sig), enc.encode(payload)))) continue;
-      const s = JSON.parse(new TextDecoder().decode(unb64url(payload)));
-      if (typeof s.e !== "number" || s.e < Date.now()) continue;
-      // One read: the person, and whether this session was signed out (sessions from before ids had no s).
-      const row = await env.DB.prepare(
-        "SELECT id, name, role, active, session_ver, EXISTS (SELECT 1 FROM revoked_sessions WHERE sid = ?) AS revoked FROM users WHERE id = ?",
-      ).bind(typeof s.s === "string" ? s.s : "", s.u).first<{ id: string; name: string; role: Role; active: number; session_ver: number; revoked: number }>();
-      if (!row || !row.active || row.session_ver !== s.v || row.revoked) continue;
-      return { user: { id: row.id, name: row.name, role: row.role }, value: `${payload}.${sig}`, leftSec: Math.floor((s.e - Date.now()) / 1000), sid: typeof s.s === "string" ? s.s : null, exp: s.e };
-    } catch {}
+      s = JSON.parse(new TextDecoder().decode(unb64url(payload)));
+    } catch { continue; }
+    if (typeof s?.u !== "string" || !Number.isFinite(s.e) || s.e < Date.now()) continue;
+    const sid = typeof s.s === "string" ? s.s : null;
+    // Database errors must reach the Worker so the request can recover instead of appearing signed out.
+    const row = await env.DB.prepare(
+      "SELECT id, name, role, active, session_ver, EXISTS (SELECT 1 FROM revoked_sessions WHERE sid = ?) AS revoked FROM users WHERE id = ?",
+    ).bind(sid, s.u).first<{ id: string; name: string; role: Role; active: number; session_ver: number; revoked: number }>();
+    if (!row || !row.active || row.session_ver !== s.v || row.revoked) continue;
+    return { user: { id: row.id, name: row.name, role: row.role }, sessionVersion: row.session_ver, sid, exp: s.e };
   }
   return null;
 }
 
 /* ---------- sign-in rate limits ---------- */
 
-async function ipFailures(env: Env, ip: string): Promise<number> {
-  const window = Math.floor(Date.now() / WINDOW_MS) * WINDOW_MS;
-  const row = await env.DB.prepare("SELECT n FROM rate_limits WHERE ip = ? AND window = ?").bind("login:" + ip, window).first<{ n: number }>();
-  return row?.n ?? 0;
-}
-
 /**
  * Take one attempt from this connection's allowance before checking anything, in one statement, so attempts
  * sent at the same moment can't all see the old count. A right answer gives it back (`refundIpAttempt`).
  */
-async function takeIpAttempt(env: Env, ip: string, message: string): Promise<void> {
+async function takeIpAttempt(env: Env, ip: string, message: string): Promise<number> {
   const window = Math.floor(Date.now() / WINDOW_MS) * WINDOW_MS;
   const r = await env.DB.prepare("INSERT INTO rate_limits (ip, window, n) VALUES (?, ?, 1) ON CONFLICT (ip, window) DO UPDATE SET n = n + 1 RETURNING n")
     .bind("login:" + ip, window).first<{ n: number }>();
   if ((r?.n ?? 0) > IP_FAILS) throw new ApiError(429, "rate_limited", message);
+  return window;
 }
-async function refundIpAttempt(env: Env, ip: string): Promise<void> {
-  const window = Math.floor(Date.now() / WINDOW_MS) * WINDOW_MS;
+async function refundIpAttempt(env: Env, ip: string, window: number): Promise<void> {
   await env.DB.prepare("UPDATE rate_limits SET n = MAX(0, n - 1) WHERE ip = ? AND window = ?").bind("login:" + ip, window).run();
 }
 /**
@@ -264,18 +288,22 @@ async function refundIpAttempt(env: Env, ip: string): Promise<void> {
  * counted (including ones still being checked). Returns how many tries that makes.
  */
 async function takeAccountAttempt(env: Env, row: UserRow, now: number, what: string): Promise<number> {
-  const r = await env.DB.prepare("UPDATE users SET failed = failed + 1 WHERE id = ? AND locked_until <= ? AND failed < ? RETURNING failed")
-    .bind(row.id, now, MAX_FAILS).first<{ failed: number }>();
+  const quick = what === "tries";
+  const pinGuard = quick ? " AND quick_hash IS ? AND quick_salt IS ? AND role = ? AND must_change = 0" : "";
+  const pinArgs = quick ? [row.quick_hash, row.quick_salt, row.role] : [];
+  const r = await env.DB.prepare(
+    `UPDATE users SET failed = failed + 1 WHERE id = ? AND active = 1 AND pin_hash = ? AND pin_salt = ?
+     AND locked_until <= ? AND failed < ?${pinGuard} RETURNING failed`,
+  ).bind(row.id, row.pin_hash, row.pin_salt, now, MAX_FAILS, ...pinArgs).first<{ failed: number }>();
   if (r) return r.failed;
-  const cur = await env.DB.prepare("SELECT locked_until FROM users WHERE id = ?").bind(row.id).first<{ locked_until: number }>();
-  const mins = Math.max(1, Math.ceil(((cur?.locked_until || now + LOCK_MS) - now) / 60000));
+  const cur = await env.DB.prepare(
+    `SELECT locked_until FROM users WHERE id = ? AND active = 1 AND pin_hash = ? AND pin_salt = ?${pinGuard}`,
+  ).bind(row.id, row.pin_hash, row.pin_salt, ...pinArgs).first<{ locked_until: number }>();
+  if (!cur) {
+    throw new ApiError(409, "conflict", "This account changed. Sign in again.");
+  }
+  const mins = Math.max(1, Math.ceil(((cur.locked_until || now + LOCK_MS) - now) / 60000));
   throw new ApiError(423, "locked", `Too many wrong ${what}. Try again in ${mins} minute${mins === 1 ? "" : "s"}${what === "passwords" ? ", or ask an admin to reset your password" : ", or sign in with a password"}.`);
-}
-
-async function recordIpFailure(env: Env, ip: string): Promise<void> {
-  const window = Math.floor(Date.now() / WINDOW_MS) * WINDOW_MS;
-  await env.DB.prepare("INSERT INTO rate_limits (ip, window, n) VALUES (?, ?, 1) ON CONFLICT (ip, window) DO UPDATE SET n = n + 1")
-    .bind("login:" + ip, window).run();
 }
 
 /** Why setup can't start, naming the text settings the Worker can see (names only, never values) so a
@@ -292,7 +320,7 @@ function missingTokenMessage(env: Env): string {
 
 /* ---------- routes: /api/auth/* ---------- */
 
-const publicUser = (u: UserRow | User) => ({
+const publicUser = (u: User & { username?: string }) => ({
   id: u.id, name: u.name, role: u.role, recordId: "web:" + u.name, ...("username" in u ? { username: u.username } : {}),
 });
 
@@ -305,17 +333,17 @@ const setupCode = (env: Env) => env.SETUP_CODE || env.SYNC_TOKEN || "";
 
 async function checkSetupCode(env: Env, ip: string, code: unknown): Promise<void> {
   if (!setupCode(env)) throw new ApiError(503, "no_setup_code", missingTokenMessage(env));
-  if ((await ipFailures(env, ip)) >= IP_FAILS) throw new ApiError(429, "rate_limited", "Too many attempts. Wait 15 minutes.");
+  const window = await takeIpAttempt(env, ip, "Too many attempts. Wait 15 minutes.");
   if (typeof code !== "string" || !(await safeEqual(code.trim(), setupCode(env)))) {
-    await recordIpFailure(env, ip);
     await audit(env, "signin_failed", null, "Wrong setup code");
     throw new ApiError(403, "wrong_setup_code", "That setup code isn't right. It's the secret saved in Cloudflare.");
   }
+  await refundIpAttempt(env, ip, window);
 }
 
 /** Checks a username and password, counting failures per account and per IP. Returns the account. */
 async function verifyLogin(env: Env, ip: string, username: unknown, password: unknown): Promise<UserRow> {
-  await takeIpAttempt(env, ip, "Too many wrong attempts from this connection. Wait 15 minutes.");
+  const window = await takeIpAttempt(env, ip, "Too many wrong attempts from this connection. Wait 15 minutes.");
   const u = typeof username === "string" ? username.trim().toLowerCase() : "";
   const pw = typeof password === "string" ? password : "";
   const row = u ? await env.DB.prepare("SELECT * FROM users WHERE username = ?").bind(u).first<UserRow>() : null;
@@ -330,20 +358,40 @@ async function verifyLogin(env: Env, ip: string, username: unknown, password: un
   const failed = await takeAccountAttempt(env, row, now, "passwords");
   if (!(await passwordMatches(pw, row))) {
     const lock = failed >= MAX_FAILS;
-    if (lock) await env.DB.prepare("UPDATE users SET failed = 0, locked_until = ? WHERE id = ?").bind(now + LOCK_MS, row.id).run();
+    // A session revocation leaves this password's failure count in place. A replacement password starts a new count.
+    const locked = lock && (await env.DB.prepare(
+      "UPDATE users SET failed = 0, locked_until = ? WHERE id = ? AND pin_hash = ? AND pin_salt = ?",
+    ).bind(now + LOCK_MS, row.id, row.pin_hash, row.pin_salt).run()).meta.changes > 0;
     await audit(env, "signin_failed", null, `Wrong password for ${row.name}`);
-    if (lock) await audit(env, "locked", null, `${row.name} was locked out after 5 wrong passwords`);
+    if (locked) await audit(env, "locked", null, `${row.name} was locked out after 5 wrong passwords`);
     if (lock) throw new ApiError(423, "locked", "Too many wrong passwords. Try again in 10 minutes, or ask an admin to reset your password.");
     const left = MAX_FAILS - failed;
     throw new ApiError(401, "wrong_password", `That username and password don't match. ${left} ${left === 1 ? "try" : "tries"} left before a 10-minute lock.`);
   }
-  await env.DB.prepare("UPDATE users SET failed = 0 WHERE id = ?").bind(row.id).run();
-  await refundIpAttempt(env, ip);
+  await env.DB.prepare("UPDATE users SET failed = 0 WHERE id = ? AND pin_hash = ? AND pin_salt = ?")
+    .bind(row.id, row.pin_hash, row.pin_salt).run();
+  await refundIpAttempt(env, ip, window);
   return row;
 }
 
-export async function handleAuth(req: Request, env: Env, route: string, current: User | null): Promise<Response> {
+/** Replace only the credential and eligible account state this request verified. */
+async function replacePassword(req: Request, env: Env, row: UserRow, password: string): Promise<Response> {
+  const { hash, salt } = await hashPassword(password);
+  const saved = await env.DB.prepare(
+    `UPDATE users SET pin_hash = ?, pin_salt = ?, must_change = 0, failed = 0, locked_until = 0,
+       session_ver = session_ver + 1, updated_at = ${SQL_NOW_MS}, last_login_at = ${SQL_NOW_MS}
+     WHERE id = ? AND active = 1 AND role = ? AND username = ? AND session_ver = ?
+       AND pin_hash = ? AND pin_salt = ? AND must_change = ?
+     RETURNING id, name, role, username, session_ver`,
+  ).bind(hash, salt, row.id, row.role, row.username, row.session_ver, row.pin_hash, row.pin_salt, row.must_change)
+    .first<Pick<UserRow, "id" | "name" | "role" | "username" | "session_ver">>();
+  if (!saved) throw new ApiError(409, "conflict", "This account changed while you were choosing a password. Start again.");
+  return json({ user: publicUser(saved) }, 200, await signedIn(req, env, saved));
+}
+
+export async function handleAuth(req: Request, env: Env, route: string, session: StaffSession | null): Promise<Response> {
   const ip = req.headers.get("cf-connecting-ip") || "local";
+  const current = session?.user ?? null;
 
   if (route === "me" && req.method === "GET") {
     // Fresh identity proof needs no setup, PIN-device or notification queries. Never renew cookies here.
@@ -364,10 +412,9 @@ export async function handleAuth(req: Request, env: Env, route: string, current:
   if (route === "logout" && req.method === "POST") {
     // Ends this session on the server too, so a copy of the cookie (another tab, a shared device's backup) stops
     // working: kept until it would have expired anyway. The person's other sessions carry on.
-    const cur = await currentSession(req, env);
-    if (cur?.sid) {
+    if (session?.sid) {
       await env.DB.batch([
-        env.DB.prepare("INSERT OR IGNORE INTO revoked_sessions (sid, exp) VALUES (?, ?)").bind(cur.sid, cur.exp ?? Date.now() + SESSION_MS),
+        env.DB.prepare("INSERT OR IGNORE INTO revoked_sessions (sid, exp) VALUES (?, ?)").bind(session.sid, session.exp),
         env.DB.prepare("DELETE FROM revoked_sessions WHERE exp < ?").bind(Date.now()),
       ]);
     }
@@ -401,12 +448,7 @@ export async function handleAuth(req: Request, env: Env, route: string, current:
       ? await env.DB.prepare("SELECT * FROM users WHERE username = ? AND role = 'admin' AND active = 1").bind(username).first<UserRow>()
       : null;
     if (!row) throw new ApiError(404, "not_admin", "There's no active admin with that username.");
-    const { hash, salt } = await hashPassword(checkPassword(body.password));
-    await env.DB.prepare(
-      `UPDATE users SET pin_hash = ?, pin_salt = ?, must_change = 0, failed = 0, locked_until = 0, session_ver = session_ver + 1,
-         updated_at = ${SQL_NOW_MS}, last_login_at = ${SQL_NOW_MS} WHERE id = ?`,
-    ).bind(hash, salt, row.id).run();
-    return json({ user: publicUser(row) }, 200, await signedIn(req, env, { id: row.id, session_ver: row.session_ver + 1 }));
+    return replacePassword(req, env, row, checkPassword(body.password));
   }
 
   // Sign in. A temporary password (set by an admin, or carried over from a PIN) signs nobody in: the
@@ -414,11 +456,12 @@ export async function handleAuth(req: Request, env: Env, route: string, current:
   if (route === "login" && req.method === "POST") {
     const body = await readJson<any>(req, 4096);
     const row = await verifyLogin(env, ip, body.username, body.password);
-    if (row.must_change) {
-      await env.DB.prepare("UPDATE users SET failed = 0 WHERE id = ?").bind(row.id).run();
-      return json({ mustChange: true, name: row.name });
-    }
-    await env.DB.prepare(`UPDATE users SET failed = 0, locked_until = 0, last_login_at = ${SQL_NOW_MS} WHERE id = ?`).bind(row.id).run();
+    if (row.must_change) return json({ mustChange: true, name: row.name });
+    const signed = await env.DB.prepare(
+      `UPDATE users SET failed = 0, locked_until = 0, last_login_at = ${SQL_NOW_MS}
+       WHERE id = ? AND active = 1 AND session_ver = ? AND pin_hash = ? AND pin_salt = ?`,
+    ).bind(row.id, row.session_ver, row.pin_hash, row.pin_salt).run();
+    if (!signed.meta.changes) throw new ApiError(409, "conflict", "This account changed. Sign in again.");
     return json({ user: publicUser(row) }, 200, await signedIn(req, env, row));
   }
 
@@ -428,12 +471,7 @@ export async function handleAuth(req: Request, env: Env, route: string, current:
     const row = await verifyLogin(env, ip, body.username, body.password);
     const next = checkPassword(body.newPassword);
     if (next === body.password) throw invalid("Choose a password different from the current one.");
-    const { hash, salt } = await hashPassword(next);
-    await env.DB.prepare(
-      `UPDATE users SET pin_hash = ?, pin_salt = ?, must_change = 0, failed = 0, locked_until = 0, session_ver = session_ver + 1,
-         updated_at = ${SQL_NOW_MS}, last_login_at = ${SQL_NOW_MS} WHERE id = ?`,
-    ).bind(hash, salt, row.id).run();
-    return json({ user: publicUser(row) }, 200, await signedIn(req, env, { id: row.id, session_ver: row.session_ver + 1 }));
+    return replacePassword(req, env, row, next);
   }
 
   /* ---------- quick switching ----------
@@ -443,19 +481,22 @@ export async function handleAuth(req: Request, env: Env, route: string, current:
 
   // Set or remove your own quick PIN: {pin: "1234"} or {pin: null}.
   if (route === "pin" && req.method === "POST") {
-    if (!current) throw new ApiError(401, "unauthenticated", "Sign in to continue.");
-    if (current.role === "admin") throw new ApiError(403, "permission_denied", "Admins sign in with their password, so they don't have a quick PIN.");
+    if (!session) throw new ApiError(401, "unauthenticated", "Sign in to continue.");
+    const { user, sessionVersion, exp, sid } = session;
+    if (user.role === "admin") throw new ApiError(403, "permission_denied", "Admins sign in with their password, so they don't have a quick PIN.");
     const body = await readJson<any>(req, 1024);
-    if (body.pin === null) {
-      await env.DB.prepare(`UPDATE users SET quick_hash = NULL, quick_salt = NULL, updated_at = ${SQL_NOW_MS} WHERE id = ?`).bind(current.id).run();
-      return json({ ok: true });
-    }
-    if (typeof body.pin !== "string" || !/^\d{4}$/.test(body.pin)) throw invalid("A quick PIN is 4 digits.");
-    if (/^(\d)\1{3}$|^(0123|1234|2345|3456|4567|5678|6789|9876|8765|7654|6543|5432|4321|3210)$/.test(body.pin)) {
+    if (body.pin !== null && (typeof body.pin !== "string" || !/^\d{4}$/.test(body.pin))) throw invalid("A quick PIN is 4 digits.");
+    if (body.pin !== null && /^(\d)\1{3}$|^(0123|1234|2345|3456|4567|5678|6789|9876|8765|7654|6543|5432|4321|3210)$/.test(body.pin)) {
       throw invalid("Choose a PIN that's harder to guess than repeated or running digits.");
     }
-    const { hash, salt } = await hashPassword(body.pin);
-    await env.DB.prepare(`UPDATE users SET quick_hash = ?, quick_salt = ?, updated_at = ${SQL_NOW_MS} WHERE id = ?`).bind(hash, salt, current.id).run();
+    const { hash, salt } = body.pin === null ? { hash: null, salt: null } : await hashPassword(body.pin);
+    // If a fifth guess was still being checked, let the replacement PIN start without that pending attempt.
+    const saved = await env.DB.prepare(
+      `UPDATE users SET quick_hash = ?, quick_salt = ?, failed = CASE WHEN failed >= ? THEN 0 ELSE failed END, updated_at = ${SQL_NOW_MS}
+       WHERE id = ? AND active = 1 AND role = ? AND must_change = 0 AND session_ver = ?
+         AND ? >= ${SQL_NOW_MS} AND NOT EXISTS (SELECT 1 FROM revoked_sessions WHERE sid = ?)`,
+    ).bind(hash, salt, MAX_FAILS, user.id, user.role, sessionVersion, exp, sid).run();
+    if (!saved.meta.changes) throw new ApiError(409, "session_changed", "The signed-in account changed. Sign in again.");
     return json({ ok: true });
   }
 
@@ -497,7 +538,7 @@ export async function handleAuth(req: Request, env: Env, route: string, current:
       throw new ApiError(403, "untrusted_device", "Quick switching only works on a device someone has signed in on with a password.");
     }
     const body = await readJson<any>(req, 1024);
-    await takeIpAttempt(env, ip, "Too many wrong attempts from this connection. Wait 15 minutes.");
+    const window = await takeIpAttempt(env, ip, "Too many wrong attempts from this connection. Wait 15 minutes.");
     const row = typeof body.id === "string" ? await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(body.id).first<UserRow>() : null;
     if (!row || !row.active || row.role === "admin" || !row.quick_hash || row.must_change) {
       throw new ApiError(404, "not_found", "That person can't switch in with a PIN. Sign in with a password instead.");
@@ -509,17 +550,25 @@ export async function handleAuth(req: Request, env: Env, route: string, current:
       const lock = failed >= MAX_FAILS;
       // Five wrong PINs in a row also switch the PIN off, so it can't be guessed slowly, 5 tries every 10 minutes,
       // on a shared device: the person signs in with their password and sets a new one.
-      if (lock) await env.DB.prepare("UPDATE users SET failed = 0, locked_until = ?, quick_hash = NULL, quick_salt = NULL WHERE id = ?").bind(now + LOCK_MS, row.id).run();
+      const locked = lock && (await env.DB.prepare(
+        `UPDATE users SET failed = 0, locked_until = ?, quick_hash = NULL, quick_salt = NULL
+         WHERE id = ? AND pin_hash = ? AND pin_salt = ? AND quick_hash IS ? AND quick_salt IS ? AND failed >= ?`,
+      ).bind(now + LOCK_MS, row.id, row.pin_hash, row.pin_salt, row.quick_hash, row.quick_salt, MAX_FAILS).run()).meta.changes > 0;
       await audit(env, "signin_failed", null, `Wrong quick PIN for ${row.name}`);
-      if (lock) await audit(env, "locked", null, `${row.name} was locked out after 5 wrong quick PINs, and their PIN was switched off`);
-      if (lock) throw new ApiError(423, "locked", "Too many wrong tries, so this quick PIN is switched off. Sign in with your password (after 10 minutes) and set a new one.");
+      if (locked) await audit(env, "locked", null, `${row.name} was locked out after 5 wrong quick PINs, and their PIN was switched off`);
+      if (locked) throw new ApiError(423, "locked", "Too many wrong tries, so this quick PIN is switched off. Sign in with your password (after 10 minutes) and set a new one.");
+      if (lock) throw new ApiError(409, "conflict", "This account changed. Sign in with a password.");
       const left = MAX_FAILS - failed;
       throw new ApiError(401, "wrong_pin", `Wrong PIN. ${left} ${left === 1 ? "try" : "tries"} left.`);
     }
     // Only if the PIN is still the one just checked (it may have been switched off by a lock meanwhile).
-    const ok = await env.DB.prepare(`UPDATE users SET failed = 0, locked_until = 0, last_login_at = ${SQL_NOW_MS} WHERE id = ? AND quick_hash = ?`).bind(row.id, row.quick_hash).run();
+    const ok = await env.DB.prepare(
+      `UPDATE users SET failed = 0, locked_until = 0, last_login_at = ${SQL_NOW_MS}
+       WHERE id = ? AND active = 1 AND role = ? AND must_change = 0 AND session_ver = ?
+         AND pin_hash = ? AND pin_salt = ? AND quick_hash IS ? AND quick_salt IS ?`,
+    ).bind(row.id, row.role, row.session_ver, row.pin_hash, row.pin_salt, row.quick_hash, row.quick_salt).run();
     if (!ok.meta.changes) throw new ApiError(423, "locked", "This quick PIN was just switched off. Sign in with your password.");
-    await refundIpAttempt(env, ip);
+    await refundIpAttempt(env, ip, window);
     return json({ user: publicUser(row) }, 200, await sessionCookie(req, env, row));
   }
 

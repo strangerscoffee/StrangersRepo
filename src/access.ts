@@ -1,9 +1,9 @@
-import { User, sessionUser } from "./auth";
+import { type StaffSession, type User, staffSessionForWrite } from "./auth";
 import { ApiError, Env } from "./http";
 
 /** Who is making a request. */
 export type Caller =
-  | { kind: "user"; user: User } // a signed-in member of staff
+  | ({ kind: "user" } & StaffSession) // a signed-in member of staff
   | { kind: "anon" }; // not signed in
 
 /**
@@ -14,8 +14,8 @@ export type Caller =
  * do (see canWrite below).
  */
 export async function authorize(req: Request, env: Env): Promise<Caller> {
-  const user = await sessionUser(req, env);
-  return user ? { kind: "user", user } : { kind: "anon" };
+  const session = await staffSessionForWrite(req, env);
+  return session ? { kind: "user", ...session } : { kind: "anon" };
 }
 
 /** Pages and files anyone may load: the sign-in screen and what it needs. */

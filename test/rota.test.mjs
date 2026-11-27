@@ -810,3 +810,29 @@ test("shared sign-in: login sets COOKIE_DOMAIN, identity reads are side-effect-f
     assert.ok(out.some((c) => c.includes("Domain=")) && out.some((c) => !c.includes("Domain=")));
   } finally { await host.stop(); }
 });
+
+test("contract history rolls back with the saved rota person and concurrent patches merge", async () => {
+  const uid = ids.Will;
+  const path = "people/" + uid;
+  const history = () => srv.sql(`SELECT contract_min, contract_max FROM rota_contract_history WHERE user_id='${uid}' ORDER BY from_day DESC LIMIT 1`)[0];
+  assert.equal((await rota("PUT", path, { contractMin: 10, contractMax: 30 })).status, 200);
+  srv.sql(`CREATE TRIGGER rota_reject_history BEFORE INSERT ON rota_contract_history WHEN NEW.user_id='${uid}' BEGIN SELECT RAISE(ABORT,'history rejected'); END`);
+  try {
+    const failed = await rota("PUT", path, { contractMin: 12 });
+    assert.equal(failed.status, 500, failed.text);
+    assert.equal((await rota("GET", "me")).body.contractMin, 10);
+    assert.deepEqual(history(), { contract_min: 10, contract_max: 30 });
+  } finally {
+    srv.sql("DROP TRIGGER rota_reject_history");
+  }
+  const results = await Promise.all([
+    rota("PUT", path, { contractMin: 12 }),
+    rota("PUT", path, { contractMax: 32 }),
+    rota("PUT", "me/availability", { sites: ["asg", "cafe"], primarySite: "asg", pattern: { mon: "off" } }),
+  ]);
+  for (const result of results) assert.equal(result.status, 200, result.text);
+  const current = (await rota("GET", "me")).body;
+  assert.deepEqual([current.contractMin, current.contractMax, current.contractHours, current.primarySite, current.sites, current.pattern],
+    [12, 32, 32, "asg", ["cafe"], { mon: "off" }]);
+  assert.deepEqual(history(), { contract_min: 12, contract_max: 32 });
+});

@@ -41,9 +41,14 @@ export async function startQuickBooksProvider(){
       const named=/WHERE (DisplayName|Name) = '((?:[^'\\]|\\.)*)'/.exec(query),wanted=named?named[2].replace(/\\(.)/g,'$1').toLowerCase():null;
       let rows=name==='Customer'?customers:name==='Item'?items:name==='TaxCode'?taxes:name==='Term'?terms:name==='SalesReceipt'||name==='CreditMemo'?(state.otherForms?.[environment]?.[name]||[]):[...state.invoices[environment].values()].filter(invoice=>!document||invoice.DocNumber===document);
       if(named)rows=rows.filter(row=>String(row[named[1]]||'').toLowerCase()===wanted);
+      const from=/TxnDate >= '(\d{4}-\d{2}-\d{2})'/.exec(query)?.[1],to=/TxnDate <= '(\d{4}-\d{2}-\d{2})'/.exec(query)?.[1];
+      if(from)rows=rows.filter(row=>row.TxnDate>=from);
+      if(to)rows=rows.filter(row=>row.TxnDate<=to);
+      if(/ORDERBY Id\b/.test(query))rows=[...rows].sort((a,b)=>a.Id.localeCompare(b.Id));
       if(/ORDERBY MetaData\.CreateTime DESC/.test(query))rows=[...rows].reverse();
       if(state.unreachable){reply(503,{Fault:{Error:[{code:'500',Message:'Service unavailable'}]}});return;}
-      reply(200,{QueryResponse:{[name]:rows.slice(position-1,position+99)}});return;
+      const size=Number(/MAXRESULTS (\d+)/.exec(query)?.[1]||100);
+      reply(200,{QueryResponse:{[name]:rows.slice(position-1,position-1+size)}});return;
     }
     if(url.pathname.endsWith('/invoice')&&req.method==='POST'){
       if(state.rateLimitNext){state.rateLimitNext=false;res.setHeader('retry-after','1');reply(429,{});return;}

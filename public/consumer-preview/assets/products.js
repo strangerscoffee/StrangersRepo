@@ -1,3 +1,4 @@
+import { createAvailability } from './availability.js';
 import { catalogueAdditions } from './products-additions.js';
 
 const catalogue = [
@@ -456,29 +457,5 @@ export const cafes = [
   }
 ];
 
-async function loadUnavailable() {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 1250);
-  try {
-    const response = await fetch('/consumer-auth/availability', {
-      headers: { accept: 'application/json' },
-      cache: 'no-store',
-      redirect: 'error',
-      signal: controller.signal,
-    });
-    if (!response.ok) return new Set();
-    const data = await response.json();
-    if (!Array.isArray(data?.unavailable)) return new Set();
-    return new Set(data.unavailable.filter(id => typeof id === 'string').map(id => id.trim().toLowerCase()));
-  } catch {
-    return new Set();
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-const unavailable = await loadUnavailable();
-export const products = [...catalogue, ...catalogueAdditions].map(product =>
-  unavailable.has(product.id) || product.contents?.some(id => unavailable.has(id))
-    ? { ...product, available: false } : product
-);
+export const products = [...catalogue, ...catalogueAdditions];
+export const availability = createAvailability(products);

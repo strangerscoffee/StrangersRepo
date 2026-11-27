@@ -62,11 +62,31 @@
     const row = mk("div", { display: "flex", gap: "8px", marginTop: "10px" });
     const btn = (label, primary, fn) => { const b = mk("button", { flex: "1", font: "600 15px/1 -apple-system, BlinkMacSystemFont, system-ui, sans-serif", padding: "11px 12px", borderRadius: "12px", border: "0", cursor: "pointer",
       background: primary ? (dark ? "#4ea4ff" : "#0062cc") : (dark ? "#2b3342" : "#eef1f5"), color: primary ? (dark ? "#03101f" : "#ffffff") : fg }, label); b.type = "button"; b.addEventListener("click", fn); return b; };
-    row.append(btn("Reload", true, () => location.reload()), btn("Hide", false, () => { card.remove(); }));
+    row.append(btn("Reload", true, () => location.reload()), btn("Hide", false, () => { card.remove(); card = null; extra = 0; }));
     card.append(more, row);
     const put = () => (document.body || document.documentElement).appendChild(card);
     if (document.body) put(); else addEventListener("DOMContentLoaded", put, { once: true });
   }
+
+  function showStartupFailure(detail) {
+    const main = document.querySelector("#main");
+    if (!main) return;
+    const panel = document.createElement("section");
+    panel.setAttribute("role", "alert");
+    const title = document.createElement("h1");
+    title.textContent = "Admin couldn’t start";
+    const message = document.createElement("p");
+    message.textContent = detail + ". Reload to try again.";
+    const retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "btn";
+    retry.textContent = "Reload Admin";
+    retry.addEventListener("click", () => location.reload());
+    panel.append(title, message, retry);
+    main.setAttribute("aria-busy", "false");
+    main.replaceChildren(panel);
+  }
+  if (app === "admin") window.SCAdminStartupFailed = showStartupFailure;
 
   function report(message, detail, opts) {
     const m = String(message || "Unknown error").slice(0, 300);
@@ -118,7 +138,7 @@
       const u = String(t.src || t.href);
       if (!ours(u)) return;
       // Managed Admin dependencies are retried and reported by their ordered bootstrap.
-      if (t.tagName === "SCRIPT" && t.dataset.scManaged === "1") return;
+      if (t.dataset?.scManaged === "1") return;
       if (t.tagName === "LINK" && t.relList?.contains("stylesheet") && t.isConnected && navigator.onLine !== false && !retriedStyles.has(t)) {
         retriedStyles.add(t);
         const retry = new URL(u); retry.searchParams.set("sc-asset-retry", "1");
@@ -138,9 +158,13 @@
       // Retry the entire sign-in document so all its scripts and styles use the same release.
       if (!image && recoverSignin(new URL(u).pathname)) return;
       // Keep an error visible if the recovery failed or the person already started signing in.
-      report("Couldn't load " + u.replace(location.origin, "").split("?")[0], "", { quiet: image });
+      const message = "Couldn't load " + u.replace(location.origin, "").split("?")[0];
+      report(message, "", { quiet: image });
+      if (app === "admin" && /\/admin\/boot\.js$/.test(new URL(u).pathname)) showStartupFailure(message);
       return;
     }
+    // The Admin bootstrap classifies startup exceptions while the script is executing.
+    if (e.filename && [...document.querySelectorAll('script[data-sc-managed="1"][src]')].some(script => script.src === e.filename)) return;
     const msg = e.message || "Script error";
     // Chrome's harmless layout warning; "Script error." with no file is another site's script (browsers hide what it
     // was); and an error in a file from elsewhere isn't the site's.
