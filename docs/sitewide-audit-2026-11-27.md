@@ -28,3 +28,17 @@ A second Chromium check measured a cold Admin More page with 80 ms of emulated l
 The current public shop at strangerscoffee.com is hosted by Squarespace. Its homepage and 92-entry sitemap were reachable. The homepage HTML response measured 1,420,355 bytes and included 95 image elements, 32 external script elements and 13 stylesheet links. Two image elements lacked an alt attribute. The third-party CMS configuration, template editor, checkout backend and source are outside these codebases. Those observations are separate from the repairs to the branded consumer preview.
 
 Very dense QuickBooks searches return an explicit incomplete result and disable confirmation. Local tests establish application behavior against fixtures. Live provider limits, production configuration, traffic latency and historical business records require separate evidence. For a release, the retail service can go first, followed by the staff Worker and bundled storefront assets. The changes were prepared for review locally.
+
+## Final verification
+
+The application gates ran on a frozen checkout of `67d063be5cb3df6c12b1b60baf044b4541e15895`. The separate retail service build was verified at `018e21b59635c189beb7f9ab86914e1be974be5e`.
+
+| Gate | Result |
+| --- | --- |
+| Staff Worker API and logic suite | 570 passed, 0 failed, 0 skipped |
+| Full Chromium browser suite | 461 passed, 0 failed, 0 skipped |
+| Separate retail service suite | 5 passed, 0 failed, 0 skipped |
+| TypeScript, production browser assets, standalone preview and retail service build | Passed |
+| Branded storefront file inventory | 104 files verified |
+
+Both repositories have local review branches. No production deployment or historical data migration was performed.
