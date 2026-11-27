@@ -98,3 +98,5 @@ Wholesale now uses wider grouped desktop editors, a viewport-sized basket and a 
 ### Staff wholesale orders
 
 Authorised employees can view customer orders at **https://staffstrangerscoffee.com/orders**, from the desktop sidebar or **More → Wholesale orders**. Admins enable access per employee in **People → Wholesale orders access**; staff and managers start without access. The dashboard shows colour-coded grinds, delivery details and overdue-account warnings. Authorised staff can update order statuses, notes and tracking, manage tabs, print packing lists and bag totals, and view customer contact and delivery details. Invoices, payments and employee information retain their existing access restrictions.
+
+For a **Ready** delivery order, open **Royal Mail**, check the saved destination and configured service, then enter the sealed parcel weight and request the label. Staff can download the PDF when Click & Drop makes it available. A payment hold explains what needs checking. Ask an admin to review the account if the hold persists. Mark the order dispatched when the parcel is handed over.

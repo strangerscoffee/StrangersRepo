@@ -32,7 +32,7 @@ import { handleBatches } from "./invoicing/batches";
 import { handleReconciliation } from "./invoicing/reconciliation";
 import { handleQuickBooksMatches } from "./invoicing/quickbooksMatches";
 import { handleRoyalMailSettings } from "./royalMailAppSettings";
-import { handleWholesaleRoyalMail, resolveWholesaleHandover, ROYAL_MAIL_ORDER_ROUTE } from "./wholesaleRoyalMail";
+import { handleWholesaleRoyalMail, requireStaffLabelEligibility, resolveWholesaleHandover, ROYAL_MAIL_ORDER_ROUTE } from "./wholesaleRoyalMail";
 
 type Pack = "quarter" | "half" | "kilo";
 /** The minimum this business must order, in grams of coffee (0 when Admin has exempted it). */
@@ -424,7 +424,7 @@ export async function updatePackingLine(env: Env, id: string, body: Record<strin
   return save(env, "order", savedId, { ...data, packedLines: next }, expected);
 }
 
-export async function updateOrderStatus(env: Env, id: string, body: Record<string, any>, actor: string, { allowRelink = false, customerOnly = false, allowSchedule = false, notify }: { allowRelink?: boolean; customerOnly?: boolean; allowSchedule?: boolean; notify?: { ctx?: ExecutionContext; ordersUrl: string } } = {}): Promise<Order & Versioned> {
+export async function updateOrderStatus(env: Env, id: string, body: Record<string, any>, actor: string, { allowRelink = false, customerOnly = false, allowSchedule = false, staffHandover = false, notify }: { allowRelink?: boolean; customerOnly?: boolean; allowSchedule?: boolean; staffHandover?: boolean; notify?: { ctx?: ExecutionContext; ordersUrl: string } } = {}): Promise<Order & Versioned> {
   const order = await get<Order>(env, "order", id);
   if (!order || order.deletedAt != null || (customerOnly && order.preview !== false)) throw new ApiError(404, "not_found", "Order not found.");
   if (!STATUSES.includes(body.status)) throw invalid("Choose a listed order status.");
@@ -452,7 +452,7 @@ export async function updateOrderStatus(env: Env, id: string, body: Record<strin
   const firstReady = body.status === "Ready" && order.status !== "Ready" && order.preview === false && !isWholesaleDelivery(order.delivery);
   const suppliedTracking = body.trackingUrl === undefined ? order.trackingUrl || "" : trackingUrl(body.trackingUrl);
   const handover = body.status === "Dispatched" && order.status !== "Dispatched" && order.preview === false &&
-    customerId && isWholesaleDelivery(order.delivery) ? await resolveWholesaleHandover(env, order, suppliedTracking) : null;
+    customerId && isWholesaleDelivery(order.delivery) ? await resolveWholesaleHandover(env, order, suppliedTracking, staffHandover) : null;
   const guard = handover?.guard;
   const data: Order = { ...current, ...(schedule || {}), status: body.status, customerId, note, trackingUrl: handover?.trackingUrl ?? suppliedTracking };
   if (data.status === "New" || data.status === "Cancelled") delete data.packedLines;
@@ -475,6 +475,7 @@ export async function updateOrderStatus(env: Env, id: string, body: Record<strin
     const writes = outgoing ? await env.DB.batch([dispatchEvent(env, id, expected, outgoing, emailKind!, guard), write]) : [await write.run()];
     if (!writes[writes.length - 1].meta.changes) {
       if (guard && (await get<Order>(env, "order", id))?.version === expected) {
+        if (handover?.staffRoyalMail) await requireStaffLabelEligibility(env, order);
         throw new ApiError(409, "royal_mail_handover_review", "Royal Mail shipping changed while confirming dispatch. Review the shipment and try again.");
       }
       throw new ApiError(409, "conflict", "This order changed on another device. Reload it before saving.");

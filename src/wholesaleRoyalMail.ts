@@ -3,6 +3,9 @@ import { isWholesaleDelivery } from "../public/wholesale/shipping.js";
 import { ApiError, type Env, invalid, json, readJson } from "./http";
 import { createRoyalMailOrder, fetchRoyalMailLabel, fetchRoyalMailTracking, findRoyalMailOrder, RoyalMailError, royalMailTrackingNumber } from "./royalMail";
 import { loadRoyalMailConnections, readRoyalMailPolicy } from "./royalMailAppSettings";
+import { requireStaffOrders } from "./staffOrdersAccess";
+import { staffLabelEligibility, staffLabelEligibilityGuard } from "./wholesale/staffLabelEligibility";
+import type { User } from "./auth";
 import { get, object, text, version, type Versioned } from "./wholesaleStore";
 import type { CustomerLocation } from "./wholesaleCustomers";
 
@@ -65,6 +68,53 @@ function field(value: unknown, name: string, limit: number, required = true) {
   if (/[\u0000-\u001f\u007f]/.test(cleaned)) throw invalid(`Check ${name}.`);
   return cleaned;
 }
+
+function postcodeFor(value: unknown) {
+  const code = field(value, "the UK postcode", 12).toUpperCase().replace(/ /g, "");
+  if (!/^(?:GIR0AA|[A-Z]{1,2}[0-9][0-9A-Z]?[0-9][A-Z]{2})$/.test(code) || /^(?:BT|GY|JE|IM)/.test(code)) {
+    throw invalid("Enter a valid Great Britain postcode.");
+  }
+  return code.slice(0, -3) + " " + code.slice(-3);
+}
+
+const countyLine = /(?:shire$|^(?:(?:East|West|North|South) )?(?:Norfolk|Suffolk|Essex|Kent|Surrey|Sussex|Somerset|Dorset|Devon|Cornwall|Cumbria|Rutland|Middlesex|Durham|Hampshire|Isle of Wight|West Midlands|Greater London|Greater Manchester|Merseyside|Glamorgan|Gwent|Powys|Clwyd|Gwynedd|Dyfed|Antrim|Down|Armagh|Tyrone|Fermanagh|Londonderry)$)/i;
+const streetLine = /\s(?:road|street|lane|close|drive|avenue|way|terrace|court|place|crescent)$/i;
+
+function savedRecipient(order: Order) {
+  const saved = order.locationSnapshot ?? order.customerSnapshot;
+  if (typeof saved?.address !== "string") return null;
+  try {
+    const postcode = postcodeFor(saved.postcode);
+    const [outward, inward] = postcode.split(" ");
+    const postcodeSuffix = new RegExp(`(?:^|\\s+)${outward}\\s*${inward}$`, "i");
+    const parts = saved.address.split(/[,\r\n]+/).map(line => line.trim()).filter(Boolean);
+    const removeCountry = () => {
+      if (/^(?:UK|United Kingdom|Great Britain|England|Scotland|Wales)$/i.test(parts.at(-1) || "")) parts.pop();
+    };
+    removeCountry();
+    if (parts.length && postcodeSuffix.test(parts.at(-1)!)) {
+      const town = parts.pop()!.replace(postcodeSuffix, "");
+      if (town) parts.push(town);
+    }
+    removeCountry();
+    const county = countyLine.test(parts.at(-1) || "") ? parts.pop() : undefined;
+    const city = parts.pop() || "";
+    if (!parts.length || !/^[\p{L}][\p{L} .’'-]+$/u.test(city) || countyLine.test(city) || streetLine.test(city)) return null;
+    return {
+      name: field((typeof saved.contact === "string" && saved.contact.trim()) || order.business, "recipient name", 100),
+      line1: field(parts[0], "address line 1", 100),
+      line2: field(parts.slice(1).join(", "), "address line 2", 100, false),
+      city: field(city, "town or city", 100),
+      postcode,
+      ...(county ? { county: field(county, "county", 100) } : {}),
+    };
+  } catch (error) {
+    if (error instanceof ApiError) return null;
+    throw error;
+  }
+}
+
+const savedAddressWarning = "The saved delivery address needs review. Ask an admin to check the destination.";
 
 function eligibleOrder(order: Order | null): order is Order {
   return !!order && order.deletedAt == null && order.preview === false && !!order.customerId && isWholesaleDelivery(order.delivery);
@@ -131,22 +181,35 @@ function handoverReview() {
 }
 
 function isRoyalMailLink(link: string) {
-  try { return /(?:^|\.)royalmail\.(?:com|net)$/.test(new URL(link).hostname); }
+  try { return /(?:^|\.)royalmail\.(?:com|net)$/.test(new URL(link).hostname.replace(/\.$/, "")); }
   catch { return false; }
 }
 
+export async function requireStaffLabelEligibility(env: Env, order: ShippingOrder) {
+  const eligibility = await staffLabelEligibility(env, order);
+  if (!eligibility.eligible) throw new ApiError(409, eligibility.code, eligibility.message);
+}
+
 /** Resolve the local label at handover and guard the order and email writes against racing shipment changes. */
-export async function resolveWholesaleHandover(env: Env, order: ShippingOrder, link: string) {
+export async function resolveWholesaleHandover(env: Env, order: ShippingOrder, link: string, staff = false) {
   const row = await getShipment(env, order.id);
+  const royalMailLink = isRoyalMailLink(link);
+  const staffRoyalMail = staff && (royalMailLink || (!link && !!row && row.state !== "failed"));
+  if (staffRoyalMail) await requireStaffLabelEligibility(env, order);
+  const combine = (shipment: ShippingGuard): ShippingGuard => {
+    if (!staffRoyalMail) return shipment;
+    const eligibility = staffLabelEligibilityGuard(order);
+    return { sql: shipment.sql + eligibility.sql, args: [...shipment.args, ...eligibility.args] };
+  };
   const exclude = (condition: string): ShippingGuard => ({
     sql: ` AND NOT EXISTS (SELECT 1 FROM wholesale_royal_mail_shipments WHERE order_id = ? AND ${condition})`,
     args: [order.id],
   });
-  if (link && !isRoyalMailLink(link)) {
+  if (link && !royalMailLink) {
     if (row?.state === "booking") throw handoverReview();
     return { trackingUrl: link, guard: exclude("state = 'booking'") };
   }
-  if (!row || row.state === "failed") return { trackingUrl: link, guard: exclude("state <> 'failed'") };
+  if (!row || row.state === "failed") return { trackingUrl: link, guard: combine(exclude("state <> 'failed'")), staffRoyalMail };
   if (!row.provider_id || !labelReady(row) || row.review_required || await orderChanged(row, order)) throw handoverReview();
   const canonical = trackingLink(row.tracking_number);
   if (link && link !== canonical) throw handoverReview();
@@ -157,7 +220,7 @@ export async function resolveWholesaleHandover(env: Env, order: ShippingOrder, l
   };
   const destination = row.requested_at && row.destination_address && row.destination_postcode
     ? { address: row.destination_address, postcode: row.destination_postcode } : undefined;
-  return { trackingUrl: canonical || "", guard, destination };
+  return { trackingUrl: canonical || "", guard: combine(guard), destination, staffRoyalMail };
 }
 
 async function recordCarrier(env: Env, id: string, operation: string,
@@ -182,7 +245,22 @@ async function recordCarrier(env: Env, id: string, operation: string,
   return false;
 }
 
-export async function handleWholesaleRoyalMail(req: Request, env: Env, id: string, action: string | undefined, actor: { role: string; name: string }): Promise<Response> {
+export async function handleWholesaleRoyalMail(req: Request, env: Env, id: string, action: string | undefined, actor: User, entry: "admin" | "staff" = "admin"): Promise<Response> {
+  const staff = entry === "staff";
+  const checkStaffAccess = async () => {
+    if (staff) await requireStaffOrders(env, actor);
+  };
+  const checkEligibility = async (current: ShippingOrder) => {
+    if (staff) await requireStaffLabelEligibility(env, current);
+  };
+  const checkStaffLabel = async (current: ShippingOrder) => {
+    await checkStaffAccess();
+    await checkEligibility(current);
+  };
+  await checkStaffAccess();
+  if (action === "verify" && (staff || actor.role !== "admin")) {
+    throw new ApiError(403, "permission_denied", "Verify Royal Mail shipments from the Admin wholesale dashboard.");
+  }
   const order = await get<Order>(env, "order", id);
   if (!eligibleOrder(order)) {
     throw new ApiError(404, "not_found", "Royal Mail shipping is available on wholesale delivery orders.");
@@ -194,12 +272,24 @@ export async function handleWholesaleRoyalMail(req: Request, env: Env, id: strin
     const [latest, shipment, latestPolicy] = await Promise.all([get<Order>(env, "order", id), getShipment(env, id), readRoyalMailPolicy(env)]);
     if (!eligibleOrder(latest)) throw new ApiError(404, "not_found", "This order is no longer available.");
     const current = latestPolicy.version === policy.version ? connections : await loadRoyalMailConnections(env, latestPolicy);
+    const eligibility = staff ? await staffLabelEligibility(env, latest) : null;
+    const recipient = staff ? savedRecipient(latest) : null;
+    const view = await shipmentView(shipment, latest);
     return json({ enabled: !!current.booking.key,
       bookingEnabled: latestPolicy.enabled === 1,
       bookingConfigured: current.bookingConfigured,
-      canCreate: current.bookingConfigured && latestPolicy.enabled === 1 && actor.role === "admin" &&
+      canCreate: current.bookingConfigured && latestPolicy.enabled === 1 &&
+        (staff ? !!recipient && eligibility?.eligible === true : actor.role === "admin") &&
         latest.status === "Ready" && !latest.skipped && (!shipment || shipment.state === "failed"),
-      orderVersion: latest.version, shipment: await shipmentView(shipment, latest), trackingEnabled: !!current.tracking,
+      orderVersion: latest.version, shipment: view, trackingEnabled: !!current.tracking,
+      ...(staff ? {
+        eligibility, recipient,
+        ...(!recipient ? { recipientWarning: savedAddressWarning } : {}),
+        bookingService: current.booking.serviceCode,
+        bookingVersion: latestPolicy.version,
+        canDownloadLabel: !!current.booking.key && !!shipment?.provider_id && labelReady(shipment) &&
+          !view?.orderChanged && !view?.reviewRequired && eligibility?.eligible === true,
+      } : {}),
       ...(trackingWarning ? { trackingWarning } : {}),
     }, status);
   };
@@ -216,6 +306,7 @@ export async function handleWholesaleRoyalMail(req: Request, env: Env, id: strin
     }
     const review = () => new ApiError(409, "label_needs_review", "Check the label in Click & Drop before using it for this order.");
     if (existing.review_required || await orderChanged(existing, order)) throw review();
+    if (staff) await checkStaffLabel(order);
     let pdf: Uint8Array;
     try {
       // Verify the pinned identifier in the active account before requesting private label bytes.
@@ -226,6 +317,7 @@ export async function handleWholesaleRoyalMail(req: Request, env: Env, id: strin
           .bind(id, existing.operation).run();
         throw review();
       }
+      if (staff) await checkStaffLabel(order);
       pdf = await fetchRoyalMailLabel(settings.key, existing.provider_id);
     } catch (error) {
       if (error instanceof ApiError) throw error;
@@ -236,11 +328,11 @@ export async function handleWholesaleRoyalMail(req: Request, env: Env, id: strin
         shipment.tracking_number !== existing.tracking_number || !labelReady(shipment) || shipment.review_required || await orderChanged(shipment, latest)) {
       throw review();
     }
+    if (staff) await checkStaffLabel(latest);
     return new Response(pdf, { headers: { "content-type": "application/pdf", "cache-control": "no-store",
       "content-disposition": `attachment; filename="Royal-Mail-${id}.pdf"` } });
   }
   if (action === "verify") {
-    if (actor.role !== "admin") throw new ApiError(403, "permission_denied", "An admin must verify the Royal Mail shipment.");
     const body = object(await readJson(req, 1024));
     if (version(body.ifVersion) !== order.version) throw new ApiError(409, "conflict", "Review the latest order before verifying the shipment.");
     const number = royalMailTrackingNumber(body.trackingNumber);
@@ -269,6 +361,7 @@ export async function handleWholesaleRoyalMail(req: Request, env: Env, id: strin
       AND (state <> 'booking' OR updated_at <= ?)`)
       .bind(now + REFRESH_INTERVAL, id, existing.operation, now, now - BOOKING_GRACE).run();
     if (!claimed.meta.changes) return getView();
+    await checkStaffAccess();
     try {
       const carrier = await findRoyalMailOrder(settings.key, id);
       const checkedAt = Date.now();
@@ -316,7 +409,7 @@ export async function handleWholesaleRoyalMail(req: Request, env: Env, id: strin
     }
   }
 
-  if (actor.role !== "admin") throw new ApiError(403, "permission_denied", "An admin must create Royal Mail shipments.");
+  if (!staff && actor.role !== "admin") throw new ApiError(403, "permission_denied", "An admin must create Royal Mail shipments.");
   if (existing && existing.state !== "failed") return getView(existing.provider_id ? 200 : 202);
   const { key, serviceCode, serviceRegisterCode, shippingAccountName } = settings;
   if (!serviceCode) throw new ApiError(503, "royal_mail_not_configured", "Configure the Royal Mail Click & Drop service before creating postage.");
@@ -325,18 +418,31 @@ export async function handleWholesaleRoyalMail(req: Request, env: Env, id: strin
 
   const body = object(await readJson(req, 4096));
   if (version(body.ifVersion) !== order.version) throw new ApiError(409, "conflict", "Review the latest order before creating postage.");
+  if (staff) {
+    if (Object.keys(body).some(key => !["ifVersion", "bookingVersion", "bookingService", "weightGrams"].includes(key))) {
+      throw invalid("Use the saved address and configured Royal Mail service.");
+    }
+    checkBookingPolicy(policy, version(body.bookingVersion));
+    if (body.bookingService !== serviceCode) {
+      throw new ApiError(409, "royal_mail_booking_policy_changed", "Royal Mail setup changed. Review the parcel and request the label again.");
+    }
+    await checkEligibility(order);
+  }
   const weight = body.weightGrams;
   if (!Number.isInteger(weight) || !Number.isSafeInteger(order.grams) || weight < Math.max(1, order.grams) || weight > 30_000) {
     throw invalid("Enter the packed weight in grams. It must cover all the coffee and be at most 30 kg for one parcel.");
   }
-  const recipient = object(body.recipient);
-  const postcode = field(recipient.postcode, "the UK postcode", 12).toUpperCase().replace(/ /g, "");
-  if (!/^(?:GIR0AA|[A-Z]{1,2}[0-9][0-9A-Z]?[0-9][A-Z]{2})$/.test(postcode) || /^(?:BT|GY|JE|IM)/.test(postcode)) {
-    throw invalid("Enter a valid Great Britain postcode.");
-  }
+  const recipient = staff ? savedRecipient(order) : object(body.recipient);
+  if (!recipient) throw new ApiError(409, "royal_mail_address_review", savedAddressWarning);
   const address = { name: field(recipient.name, "recipient name", 100), companyName: order.business.slice(0, 100),
     addressLine1: field(recipient.line1, "address line 1", 100), addressLine2: field(recipient.line2, "address line 2", 100, false),
-    city: field(recipient.city, "town or city", 100), postcode: postcode.slice(0, -3) + " " + postcode.slice(-3) };
+    city: field(recipient.city, "town or city", 100), postcode: postcodeFor(recipient.postcode),
+    ...(staff && recipient.county ? { county: recipient.county } : {}) };
+
+  const eligibilityGuard = staff ? staffLabelEligibilityGuard(order) : { sql: "", args: [] };
+  const accessGuard = staff && actor.role !== "admin"
+    ? { sql: " AND EXISTS (SELECT 1 FROM staff_order_access WHERE user_id = ? AND enabled = 1)", args: [actor.id] }
+    : { sql: "", args: [] };
 
   const operation = crypto.randomUUID();
   const fingerprint = await shippingFingerprint(order);
@@ -345,22 +451,26 @@ export async function handleWholesaleRoyalMail(req: Request, env: Env, id: strin
       destination_address, destination_postcode)
     SELECT ?, 'booking', ?, ?, ?, ?, ?, 0, ?, ? WHERE EXISTS (
       SELECT 1 FROM wholesale_preview WHERE kind='order' AND id=? AND version=? AND json_extract(data,'$.status')='Ready'
-    ) AND ${BOOKING_ALLOWED} ON CONFLICT(order_id) DO UPDATE SET state=excluded.state, operation=excluded.operation,
+    ) AND ${BOOKING_ALLOWED}${eligibilityGuard.sql}${accessGuard.sql} ON CONFLICT(order_id) DO UPDATE SET state=excluded.state, operation=excluded.operation,
       order_version=excluded.order_version, shipping_fingerprint=excluded.shipping_fingerprint,
       weight_grams=excluded.weight_grams, updated_at=excluded.updated_at, requested_at=0, checked_at=NULL, refresh_after=NULL, problem=NULL,
       destination_address=excluded.destination_address, destination_postcode=excluded.destination_postcode
     WHERE wholesale_royal_mail_shipments.state = 'failed' RETURNING operation`)
     .bind(id, operation, order.version, fingerprint, weight, Date.now(),
-      [address.addressLine1, address.addressLine2, address.city].filter(Boolean).join(", "), address.postcode,
-      id, order.version, policy.version).first();
+      [address.addressLine1, address.addressLine2, address.city, address.county].filter(Boolean).join(", "), address.postcode,
+      id, order.version, policy.version, ...eligibilityGuard.args, ...accessGuard.args).first();
   if (!reserved) {
+    await checkStaffAccess();
     checkBookingPolicy(await readRoyalMailPolicy(env), policy.version);
+    await checkEligibility(order);
     if (await getShipment(env, id)) return getView(202);
     throw new ApiError(409, "conflict", "The order changed. Review it before creating postage.");
   }
 
   let outcome: "lookup" | "requested" | "known" = "lookup";
   try {
+    await checkStaffAccess();
+    await checkEligibility(order);
     const prior = await findRoyalMailOrder(key, id);
     if (!prior) {
       // Commit the outbound marker before transmission. A process stopped before this point can release the reservation.
@@ -368,10 +478,12 @@ export async function handleWholesaleRoyalMail(req: Request, env: Env, id: strin
       const sending = await env.DB.prepare(`UPDATE wholesale_royal_mail_shipments SET requested_at = ?, updated_at = ?
         WHERE order_id = ? AND operation = ? AND state = 'booking' AND requested_at = 0
         AND EXISTS (SELECT 1 FROM wholesale_preview WHERE kind = 'order' AND id = ? AND version = ?)
-        AND ${BOOKING_ALLOWED}`)
-        .bind(at, at, id, operation, id, order.version, policy.version).run();
+        AND ${BOOKING_ALLOWED}${eligibilityGuard.sql}${accessGuard.sql}`)
+        .bind(at, at, id, operation, id, order.version, policy.version, ...eligibilityGuard.args, ...accessGuard.args).run();
       if (!sending.meta.changes) {
+        await checkStaffAccess();
         checkBookingPolicy(await readRoyalMailPolicy(env), policy.version);
+        await checkEligibility(order);
         throw new ApiError(409, "conflict", "The order changed while Royal Mail was checked. Review it before creating postage.");
       }
     }

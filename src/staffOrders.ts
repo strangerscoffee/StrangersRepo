@@ -67,7 +67,7 @@ export async function handleStaffOrders(req:Request,env:Env,route:string,user:Us
   await requireStaffOrders(env,user);
   const shipping=ROYAL_MAIL_ORDER_ROUTE.exec(route);
   if(shipping){
-    const response=await handleWholesaleRoyalMail(req,env,shipping[1],shipping[2],user);
+    const response=await handleWholesaleRoyalMail(req,env,shipping[1],shipping[2],user,"staff");
     await requireStaffOrders(env,user);
     return response;
   }
@@ -100,7 +100,7 @@ export async function handleStaffOrders(req:Request,env:Env,route:string,user:Us
   if(orderMatch){
     if(req.method!=="PATCH")return json({code:"method_not_allowed",message:"Use PATCH to change an order."},405,{Allow:"PATCH"});
     const body=object(await readJson(req,8192));
-    const updated=await updateOrderStatus(env,orderMatch[1],{ifVersion:body.ifVersion,status:body.status,note:body.note,trackingUrl:body.trackingUrl,requirePacked:body.requirePacked},user.name,{customerOnly:true,notify:{ctx,ordersUrl:customerOrdersUrl(env,links,req)}});
+    const updated=await updateOrderStatus(env,orderMatch[1],{ifVersion:body.ifVersion,status:body.status,note:body.note,trackingUrl:body.trackingUrl,requirePacked:body.requirePacked},user.name,{customerOnly:true,staffHandover:true,notify:{ctx,ordersUrl:customerOrdersUrl(env,links,req)}});
     await requireStaffOrders(env,user);
     return json({order:staffView(updated)});
   }

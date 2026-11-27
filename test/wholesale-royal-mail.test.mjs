@@ -6,6 +6,7 @@ import { Miniflare, Response as RuntimeResponse } from "miniflare";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const host = "https://admin.staffstrangerscoffee.com";
+const diary = "https://staffstrangerscoffee.com";
 const number = "AB123456789GB";
 const replacement = "UR041761424QI";
 const pdf = "%PDF-1.7\nFixture label\n%%EOF\n";
@@ -80,7 +81,7 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
           result.label = Buffer.from(pdf).toString("base64");
           result.printedOn = "2026-11-26T09:00:00Z";
         }
-        await interceptCreate?.(reference);
+        await interceptCreate?.(reference, item);
         records.set(reference, result);
         return lostReplies.has(reference) ? new RuntimeResponse("carrier response lost", { status: 502 })
           : RuntimeResponse.json({ createdOrders: [result], successCount: 1, errorsCount: 0 });
@@ -344,5 +345,131 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     const email = JSON.parse(event.payload);
     assert.match(email.mail.text, /16 Example Lane, Norwich, NR1 5AB/);
     assert.doesNotMatch(email.mail.text, /18 Example Lane/);
+  });
+
+  await t.test("authorised staff use the saved destination and service, with payment and access checked before purchase", async () => {
+    const staffPath = id => "/api/staff-orders/orders/" + id + "/shipping";
+    const userResponse = await call("/api/admin/users", "POST", { name: "Staff Label Tester", username: "packing.staff",
+      role: "staff", password: "Temporary Packing Password!" });
+    const userResult = await userResponse.json();
+    assert.equal(userResponse.status, 200, JSON.stringify(userResult));
+    const { user } = userResult;
+    const signedIn = await call("/api/auth/change", "POST", { username: "packing.staff", password: "Temporary Packing Password!",
+      newPassword: "Staff Packing Password!" }, diary, null);
+    assert.equal(signedIn.status, 200);
+    const staffCookie = signedIn.headers.getSetCookie().find(value => /^sfbb_session=[^;]/.test(value)).split(";")[0];
+    const staff = (id, method = "GET", body, suffix = "") => call(staffPath(id) + suffix, method, body, diary, staffCookie);
+    const access = "/api/admin/users/" + user.id + "/orders-access";
+    const grant = (enabled, ifVersion) => call(access, "PUT", { enabled, ifVersion });
+    const billed = orderRef(41), racing = orderRef(42), paid = orderRef(43), collection = orderRef(44), incomplete = orderRef(45);
+    const thirdParty = orderRef(46), wrongPostcode = orderRef(47);
+    const net30 = { paymentTerms: { id: "net-30" } };
+    const accountStatus = status => db.prepare("UPDATE wholesale_preview SET data=json_set(data,'$.status',?) WHERE kind='customer' AND id=?")
+      .bind(status, customerId).run();
+    await accountStatus("Active");
+    await seed(billed, { paymentTerms: { id: "before-dispatch" } });
+    await seed(racing, net30);
+    await seed(paid, { ...net30, locationSnapshot: { contact: "Shipping contact", address: "18 Example Lane, Unit 2\nNorwich, Norfolk NR1 5AB\nUnited Kingdom", postcode: "NR1 5AB" } });
+    await seed(collection, { ...net30, delivery: "Roastery collection" });
+    await seed(incomplete, { ...net30, locationSnapshot: { address: "18 Example Lane, Norfolk", postcode: "NR1 5AB" } });
+    await seed(thirdParty, net30);
+    await seed(wrongPostcode, { ...net30, locationSnapshot: { address: "18 Example Lane, Norwich\nNR1 6AB", postcode: "NR1 5AB" } });
+    assert.equal((await staff(paid)).status, 403);
+    assert.equal((await staff(paid, "GET", undefined, "/label")).status, 403);
+    assert.equal((await grant(true, 0)).status, 200);
+    assert.equal((await call(staffPath(paid))).status, 404);
+    assert.equal((await call(shipPath(paid), "POST", packageDetails, host, staffCookie)).status, 403);
+    assert.equal((await call(settingsPath, "GET", undefined, host, staffCookie)).status, 403);
+    assert.equal((await staff(collection)).status, 404);
+    const ready = await (await staff(paid)).json();
+    const payload = { ifVersion: ready.orderVersion, bookingVersion: ready.bookingVersion, bookingService: ready.bookingService, weightGrams: 2140 };
+    assert.equal(ready.canCreate, true);
+    assert.deepEqual(ready.eligibility, { eligible: true });
+    assert.equal(ready.bookingService, "TPS48");
+    assert.deepEqual(ready.recipient, { name: "Shipping contact", line1: "18 Example Lane", line2: "Unit 2", city: "Norwich", postcode: "NR1 5AB", county: "Norfolk" });
+    assert.doesNotMatch(JSON.stringify(ready), /fixture-click-drop|fixture-tracking|grossPence|shippingAccountName/);
+    const initialRequests = requests.length;
+    assert.equal((await staff(paid, "POST", {}, "/verify")).status, 403);
+    assert.equal((await staff(paid, "POST", { ...payload, recipient: { postcode: "W1 1AA" } })).status, 400);
+    assert.equal((await staff(paid, "POST", { ...payload, serviceCode: "OTHER" })).status, 400);
+    assert.equal((await staff(paid, "POST", { ...payload, bookingService: "OTHER" })).status, 409);
+    assert.equal((await staff(paid, "POST", { ...payload, bookingVersion: payload.bookingVersion - 1 })).status, 409);
+    assert.equal((await staff(paid, "POST", { ...payload, weightGrams: 1999 })).status, 400);
+    assert.equal((await (await staff(incomplete, "POST", payload)).json()).code, "royal_mail_address_review");
+    assert.equal((await (await staff(wrongPostcode, "POST", payload)).json()).code, "royal_mail_address_review");
+    const payment = await staff(billed, "POST", payload);
+    assert.equal(payment.status, 409);
+    assert.equal((await payment.json()).code, "royal_mail_payment_required");
+    await db.prepare(`INSERT INTO wholesale_invoices
+      (seq,invoice_number,order_id,customer_id,request_key,data,issued_at,issued_by,paid)
+      VALUES (6501,'PRIVATE-6501',?,?,'staff-label-due',?,1,'Private',0)`)
+      .bind(billed, customerId, JSON.stringify({ dueDate: "2020-01-01", totals: { grossPence: 1234 } })).run();
+    const overdue = await (await staff(paid)).json();
+    assert.equal(overdue.canCreate, false);
+    assert.equal(overdue.eligibility.code, "royal_mail_account_overdue");
+    assert.doesNotMatch(JSON.stringify(overdue), /PRIVATE-6501|1234/);
+    assert.equal((await (await staff(paid, "POST", payload)).json()).code, "royal_mail_account_overdue");
+    assert.equal(requests.length, initialRequests, "refused operations make no carrier requests");
+    await db.prepare("UPDATE wholesale_invoices SET paid=1 WHERE seq=6501").run();
+    assert.equal((await (await staff(billed)).json()).canCreate, true);
+
+    interceptLookup = async reference => { if (reference === racing) await accountStatus("On hold"); };
+    const beforePosts = posts();
+    try {
+      const held = await staff(racing, "POST", payload);
+      assert.equal(held.status, 409);
+      assert.equal((await held.json()).code, "royal_mail_account_on_hold");
+    } finally {
+      interceptLookup = undefined;
+      await accountStatus("Active");
+    }
+    assert.equal(posts(), beforePosts, "account hold during carrier lookup prevents the purchase");
+    assert.equal((await read(racing)).state, "failed");
+
+    let sent;
+    interceptCreate = (reference, item) => { if (reference === paid) sent = item; };
+    try {
+      assert.equal((await staff(paid, "POST", payload)).status, 201);
+    } finally {
+      interceptCreate = undefined;
+    }
+    assert.equal(sent.postageDetails.serviceCode, "TPS48");
+    assert.equal(sent.label.includeLabelInResponse, true);
+    assert.equal(sent.recipient.address.fullName, "Shipping contact");
+    assert.equal(sent.recipient.address.addressLine1, "18 Example Lane");
+    assert.equal(sent.recipient.address.city, "Norwich");
+    assert.equal(sent.recipient.address.county, "Norfolk");
+    assert.equal(sent.recipient.address.postcode, "NR1 5AB");
+    assert.equal((await staff(paid, "POST", payload)).status, 200);
+    const label = await staff(paid, "GET", undefined, "/label");
+    assert.equal(label.status, 200);
+    assert.equal(label.headers.get("cache-control"), "no-store");
+    assert.equal(await label.text(), pdf);
+    assert.equal(posts(), beforePosts + 1, "repeat booking and label download do not buy again");
+    await accountStatus("On hold");
+    assert.equal((await (await staff(paid)).json()).canDownloadLabel, false);
+    assert.equal((await staff(paid, "GET", undefined, "/label")).status, 409);
+    const handover = (id, trackingUrl = "") => call("/api/staff-orders/orders/" + id, "PATCH",
+      { ifVersion: 1, status: "Dispatched", trackingUrl }, diary, staffCookie);
+    assert.equal((await (await handover(paid)).json()).code, "royal_mail_account_on_hold");
+    assert.equal((await (await handover(thirdParty, "https://www.royalmail.com/track-your-item#/tracking-results/" + number)).json()).code,
+      "royal_mail_account_on_hold");
+    assert.equal((await (await handover(thirdParty, "https://tracking.royalmail.net./" + number)).json()).code, "royal_mail_account_on_hold");
+    assert.equal(await db.prepare("SELECT state FROM wholesale_email_outbox WHERE order_id=?").bind(paid).first(), null);
+    assert.equal((await handover(thirdParty, "https://example.test/other-courier")).status, 200);
+    await accountStatus("Active");
+    assert.equal((await handover(paid)).status, 200);
+    await accountStatus("On hold");
+    assert.equal((await staff(paid, "GET", undefined, "/label")).status, 409);
+    assert.equal((await call(shipPath(paid) + "/label")).status, 200);
+    await accountStatus("Active");
+    interceptLabel = async () => { assert.equal((await grant(false, 1)).status, 200); };
+    try {
+      const revoked = await staff(paid, "GET", undefined, "/label");
+      assert.equal(revoked.status, 403);
+      assert.equal((await revoked.json()).code, "permission_denied");
+    } finally {
+      interceptLabel = undefined;
+    }
   });
 });
