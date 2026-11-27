@@ -28,10 +28,24 @@ declare module "*consumer-preview/assets/editor-model.js" {
     theme: string;
     pages: Record<string,ConsumerEditorPage>;
   }
-  export const PAGES: Record<string,{ label:string; path:string; root:string; fields:Array<{id:string;label:string;kind:string;selector:string;default:string}>; sections:Array<{id:string;label:string;selector:string;locked?:boolean}> }>;
+  export interface ConsumerEditorField {
+    id: string;
+    label: string;
+    kind: string;
+    selector: string;
+    default: string;
+    inline?: import("../public/consumer-preview/assets/editor-text.js").InlinePart[];
+  }
+  export const PAGES: Record<string,{ label:string; path:string; root:string; fields: ConsumerEditorField[]; sections:Array<{id:string;label:string;selector:string;locked?:boolean}> }>;
   export function emptyDocument(): ConsumerEditorDocument;
   export function validateDocument(value: unknown): ConsumerEditorDocument;
   export function referencedMedia(document: ConsumerEditorDocument): string[];
   export function pageForPath(path: string): string | null;
+  export function cataloguePageForKey(key: string, product?: {id: string; name: string} | null): (typeof PAGES)[string] | null;
   export function customPageForKey(key: string, title?: string): {label:string; path:string; root:string; sections:unknown[]; fields:unknown[]} | null;
+}
+
+declare module "*consumer-preview/assets/editor-text.js" {
+  export type InlinePart = string | ["em" | "strong" | "b" | "i" | "br", ...InlinePart[]];
+  export function formattedText(template: InlinePart[], value: string): InlinePart[];
 }

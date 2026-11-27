@@ -1,10 +1,19 @@
-import { PAGES, customPageForKey } from "/api/admin/consumer/editor/assets/editor-model.js";
+import { PAGES, cataloguePageForKey, customPageForKey } from "/api/admin/consumer/editor/assets/editor-model.js";
+
+import { products } from "/api/admin/consumer/editor/assets/products.js";
 
 export function editorPages(doc) {
   const pages = { ...PAGES };
+  for (const product of products) {
+    const key = 'product:' + product.id;
+    if (!pages[key]) {
+      const page = cataloguePageForKey(key, product);
+      if (page) pages[key] = page;
+    }
+  }
   for (const [key, settings] of Object.entries(doc.pages || {})) {
-    if (!key.startsWith("custom:")) continue;
-    const page = customPageForKey(key, settings.title);
+    if (pages[key]) continue;
+    const page = customPageForKey(key, settings.title) || cataloguePageForKey(key);
     if (page) pages[key] = page;
   }
   return pages;

@@ -1,12 +1,14 @@
 // Only the authenticated editor canvas calls these presenters. Preview carts, account details
 // and receipts exist solely for this request and never call a shopper or fulfilment service.
+import { storefrontProducts } from "../public/consumer-preview/assets/availability.js";
+import { highlightsMarkup } from "../public/consumer-preview/assets/home.js";
 import { authField, authModes, modeLabels, orderMarkup } from "../public/consumer-preview/assets/account.js";
 import { detailsStage, emptyCheckoutMarkup, priceAction, processingMarkup, receiptMarkup, reviewStage, summary } from "../public/consumer-preview/assets/checkout.js";
 import { finderMarkup } from "../public/consumer-preview/assets/finder.js";
 import { productPageView } from "../public/consumer-preview/assets/product-page.js";
 import { cafes, products } from "../public/consumer-preview/assets/products.js";
 import { createStore } from "../public/consumer-preview/assets/store.js";
-import { cartView, shelfProducts } from "../public/consumer-preview/assets/storefront-views.js";
+import { cartView, giftProducts, shelfProducts } from "../public/consumer-preview/assets/storefront-views.js";
 
 const sampleContact = {
   name: "Jamie Reed", email: "jamie@example.com", phone: "",
@@ -117,15 +119,30 @@ function drawerSurface(rewriter, scope, state) {
   } });
 }
 
-export function applyEditorPreviewSurfaces(rewriter, scope, state) {
+export function applyEditorPreviewSurfaces(rewriter, scope, state, rows) {
+  const catalogue = rows ? storefrontProducts(rows) : products;
+  if (scope === "home" && rows) {
+    const markup = highlightsMarkup(catalogue);
+    contents(rewriter, "#home-roasting-grid", markup, true);
+    if (!markup) contents(rewriter, "#home-roasting-intro", "Explore the full coffee range online.");
+  }
   if (scope === "product" || scope.startsWith("product:")) {
-    const view = productPageView(scope === "product" ? "bom-jesus" : scope.slice(8), null, true);
+    const id = scope === "product" ? (catalogue.find(item => item.id === "bom-jesus") ?? catalogue.find(item => !item.category))?.id : scope.slice(8);
+    const view = productPageView(id, null, true, catalogue);
     if (view) {
       contents(rewriter, "[data-retail-product]", view.markup, true);
       attribute(rewriter, "[data-retail-product]", "aria-busy", null);
+    } else {
+      contents(rewriter, "[data-retail-product]", "<p>This product is outside the current range.</p>", true);
+      attribute(rewriter, "[data-retail-product]", "aria-busy", null);
     }
   } else if (scope === "shop") {
-    const coffees = products.filter(product => !product.category);
+    if (rows) {
+      rewriter.on("[data-catalogue-gifts] [data-catalogue-id]", { element(element) { element.remove(); } });
+      const gifts = giftProducts(catalogue.filter(product => product.category));
+      rewriter.on("[data-catalogue-gifts]", { element(element) { element.append(gifts, {html:true}); } });
+    }
+    const coffees = catalogue.filter(product => !product.category);
     contents(rewriter, "#products", shelfProducts(coffees, true), true);
     contents(rewriter, "#shelf-status", `${coffees.length} coffees`);
   } else if (scope === "account") accountSurface(rewriter, state);

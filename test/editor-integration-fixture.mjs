@@ -70,8 +70,8 @@ export async function startEditorFixture({ retailWorker, assetsDirectory = ROOT 
   }
 }
 
-export async function openLocalBrowser(fixture, browser, viewport, signedIn = false) {
-  const context = await browser.newContext({viewport, serviceWorkers: "block"});
+export async function openLocalBrowser(fixture, browser, viewport, signedIn = false, {hasTouch = false} = {}) {
+  const context = await browser.newContext({viewport, hasTouch, serviceWorkers: "block"});
   if (signedIn) {
     const [name, value] = fixture.cookie.split("=");
     await context.addCookies([{name, value, url: admin, httpOnly: true, secure: true, sameSite: "Lax"}]);

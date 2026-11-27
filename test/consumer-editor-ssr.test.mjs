@@ -18,7 +18,7 @@ test('the initial retail HTML includes published policy edits, native photos and
         [field('shipping','text','.support-policy-heading > h1')]:'Delivery from our roastery',
         [field('shipping','link','.support-quick-links > a:nth-of-type(1)')]:'/contact/',
       }},
-      home:{fields:{[field('home','image','#top > .home-hero-image > img')]:'asset:roastery.webp'}},
+      home:{fields:{'hero-title':'Seasonal coffee roasted in Norwich.',[field('home','image','#top > .home-hero-image > img')]:'asset:roastery.webp'}},
       shared:{fields:{'header-shop':'Shop beans'}},
       'custom:coffee-club':{title:'Coffee & company',inNavigation:true,sections:['w-photo','w-story'],widgets:[
         {id:'w-story',type:'text',heading:'Roast <notes>',body:'Pick a morning delivery.',label:'Visit us',href:'/location/'},
@@ -43,6 +43,7 @@ test('the initial retail HTML includes published policy edits, native photos and
     const home = await read('/');
     assert.match(home,/<figure class="home-hero-image">\s*<img[^>]+src="\/consumer-preview\/assets\/roastery.webp"/);
     assert.match(home,/<a data-consumer-page-link href="\/pages\/coffee-club\/">Coffee &amp; company<\/a>/);
+    assert.match(home, /<h1 id="hero-title">Seasonal coffee <em>roasted in Norwich\.<\/em><\/h1>/);
     const custom = await read('/pages/coffee-club/');
     assert.match(custom,/<h1 class="consumer-page-title">Coffee &amp; company<\/h1>/);
     assert.match(custom,/<img loading="lazy" src="\/consumer-preview\/assets\/roastery.webp" alt="Our roasting room">/);

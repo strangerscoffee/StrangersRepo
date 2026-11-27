@@ -32,6 +32,7 @@ export function createRetailWidget(doc, widget, design, {preview = false} = {}) 
     const li = doc.createElement('li');
     const card = doc.createElement('a');
     card.className = 'consumer-retail-card';
+    if (shelf) card.dataset.catalogueId = item.id;
     card.href = shelf ? productPath(item) : '/location/#' + item.id;
     let src = item.image;
     if (preview && src) src = src.startsWith('/consumer-product-media/')
@@ -66,34 +67,48 @@ export function createRetailWidget(doc, widget, design, {preview = false} = {}) 
 // List pages and finder results use shorter native names until the merchant explicitly changes the
 // individual coffee. Add presentation overrides to the renderer’s reversible map so undo also
 // restores the original short label, accessible name, image attributes and source.
-export function applyLinkedProductFields(doc, design, {preview = false, desired}) {
+export function applyLinkedProductFields(doc, design, {preview = false, desired, mark}) {
   if (!desired) return;
   const overrides = design.productFields || design.pages || {};
-  if (!Object.keys(overrides).some(key => key.startsWith('product:'))) return;
+  if (!preview && !Object.keys(overrides).some(key => key.startsWith('product:'))) return;
   const cards = [
-    ['.product', '.product-info h3', '.product-image img'],
+    ['.consumer-retail-card[data-catalogue-id]', 'h3', 'img'],
+    ['.product', '.product-info h3', '.product-image img', '.product-info .notes'],
     ['.home-coffee', 'h3', 'figure img'],
-    ['.shop-gift', 'h3', 'img'],
-    ['.retail-related-card', 'strong', 'img'],
+    ['.shop-gift', 'h3', 'img', '.shop-gift-description > p:only-child'],
+    ['.retail-related-card', 'strong', 'img', 'strong + span'],
     ['.finder-best', '.finder-best-copy h4', '.finder-best-photo img'],
     ['.finder-alternative', 'h5 a', 'img'],
     ['.cart-line[data-catalogue-id]', 'h3', 'img'],
-    ['#dialog[data-view="product"]', '#dialog-title', '.detail-media img'],
+    ['#dialog[data-view="product"]', '#dialog-title', '.detail-media img', '.detail-notes'],
   ];
   function set(node, key, value) {
     if (!node) return;
     if (!desired.has(node)) desired.set(node, new Map());
     desired.get(node).set(key, value);
   }
-  for (const [selector, title, imageSelector] of cards) {
+  for (const [selector, title, imageSelector, descriptionSelector] of cards) {
     for (const card of doc.querySelectorAll(selector)) {
       const link = card.matches('a') ? card : card.querySelector('a[href^="/coffee/p/"]');
       const route = productFromPath(link?.getAttribute('href')?.split(/[?#]/, 1)[0] || '', products);
-      const id = route?.id || card.dataset.catalogueId;
+      const id = card.dataset.catalogueId || route?.id;
       if (!id) continue;
       const fields = productFields(design, id);
+      const titleNode = card.querySelector(title);
+      const image = card.querySelector(imageSelector);
+      const description = descriptionSelector && card.querySelector(descriptionSelector);
+      if (preview && mark) {
+        const scope = 'product:' + id;
+        if (description) mark(description, scope, {field: 'product-description'});
+        if (titleNode) mark(titleNode, scope, {field: 'product-title'});
+        if (image) {
+          mark(image, scope, {field: 'product-image'});
+          mark(image, scope, {field: 'product-image-alt'});
+        }
+      }
+      if (Object.hasOwn(fields, 'product-description')) set(description, 'text', fields['product-description']);
       if (Object.hasOwn(fields, 'product-title')) {
-        set(card.querySelector(title), 'text', fields['product-title']);
+        set(titleNode, 'text', fields['product-title']);
         for (const action of card.querySelectorAll('.product-open,.shop-gift-copy a[aria-label],.home-coffee-actions a[aria-label]')) {
           set(action, 'aria-label', 'View ' + fields['product-title']);
         }
@@ -107,7 +122,6 @@ export function applyLinkedProductFields(doc, design, {preview = false, desired}
           set(card.querySelector('[data-remove]'), 'aria-label', 'Remove ' + name);
         }
       }
-      const image = card.querySelector(imageSelector);
       if (Object.hasOwn(fields, 'product-image')) {
         const source = photo(fields['product-image'], preview);
         set(image, 'data-consumer-image-hidden', source ? null : '');

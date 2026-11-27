@@ -561,3 +561,9 @@ export const productContent = {
     ]
   }
 };
+
+export const brewGuidance = {
+  Chocolatey: ['Try it as a pour-over', 'Start with a medium grind and bring out the sweeter chocolate and nut flavours with a longer, steady pour.', 'brew-v60.webp', 'V60 coffee brewing'],
+  Fruity: ['Bring out the brighter notes', 'A medium-ground filter brew lets the fruit flavours come through. Adjust your grind a little at a time to find your balance.', 'brew-v60.webp', 'V60 coffee brewing'],
+  Decaf: ['Make a slower brew', 'Start with a coarse grind for a cafetière and follow the brew guide for a balanced cup.', 'brew-french-press.webp', 'Coffee brewing in a cafetière'],
+};

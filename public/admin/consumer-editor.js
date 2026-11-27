@@ -1,11 +1,12 @@
 import {
-  COFFEE_CHOICES, THEMES, LAYOUTS, WIDGET_TYPES, ASSETS, TEMPLATES, emptyDocument, imageUrl, referencedMedia, validateDocument,
+  COFFEE_CHOICES, THEMES, LAYOUTS, WIDGET_TYPES, ASSETS, TEMPLATES, emptyDocument, imageUrl, referencedMedia, safeLink, validateDocument,
 } from '/api/admin/consumer/editor/assets/editor-model.js';
 import { availability } from '/api/admin/consumer/editor/assets/products.js';
 import { mountEditorCanvas } from '/api/admin/consumer/editor/assets/editor-render.js';
 
 import { editorPages, mountEditorPages } from './consumer-editor-pages.js';
 import { buildPublishReview, renderPublishReview } from './consumer-editor-review.js';
+import { mountDirectEditor } from './consumer-editor-direct.js';
 
 const previewStates = {
   finder: [['brew','Brew method'], ['taste','Taste'], ['match','Coffee match']],
@@ -18,6 +19,7 @@ const uploadLimit = 1536 * 1024;
 const tabs = { content: 'Content', design: 'Design', media: 'Photos', history: 'Versions' };
 const sizes = { desktop: 1180, mobile: 390 };
 const textLimit = 16000;
+const arrangements = [['stack', 'Stacked'], ['split', 'Image left'], ['reverse', 'Image right']];
 const clone = value => JSON.parse(JSON.stringify(value));
 const snapshot = JSON.stringify;
 const date = value => new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Europe/London' }).format(new Date(value));
@@ -125,6 +127,7 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
   let busy = false, conflict = false, notice = '', problem = false, device = matchMedia('(max-width: 740px)').matches ? 'mobile' : 'desktop';
   let viewState = '', outlineOpen = false, expanded = false, expandButton, previewGeneration = 0, lastField = '', previewReady = false;
   let coffees = COFFEE_CHOICES, catalogueUnavailable = false;
+  let direct, directSession, picker, pickerToggle;
   const undo = [], redo = [], usable = new AbortController();
   const isDirty = () => Boolean(draft && snapshot(draft) !== saved);
   const shelf = () => draft.pages[pick.scope] || {};
@@ -175,8 +178,11 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
     redo.length = 0;
     lastField = key;
   }
+  function finishDirect() {
+    return !directSession || direct.close({restoreFocus:false}) !== false;
+  }
   function change(callback, options = {}) {
-    if (busy || !active) return;
+    if (busy || !active || (options.direct !== true && !finishDirect())) return;
     remember(options.key);
     callback();
     if (!conflict) { notice = ''; problem = false; }
@@ -186,7 +192,7 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
   }
   function travel(backward) {
     const from = backward ? undo : redo, to = backward ? redo : undo;
-    if (busy || !from.length) return;
+    if (busy || !finishDirect() || !from.length) return;
     to.push(snapshot(draft));
     draft = JSON.parse(from.pop());
     ensureScope();
@@ -209,7 +215,7 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
     canvas?.update(draft);
   }
   async function operation(task) {
-    if (busy || !active) return;
+    if (busy || !active || !finishDirect()) return;
     busy = true;
     renderStatus();
     try { await task(); }
@@ -317,6 +323,7 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
     fitPreview();
   }
   function chooseDevice(value) {
+    if (busy || !finishDirect()) return;
     device = value;
     for (const control of deviceGroup.children) control.setAttribute('aria-pressed', String(control.dataset.device === value));
     fitPreview();
@@ -329,7 +336,7 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
     bar.toggleAttribute('data-custom-page', scope.startsWith('custom:'));
     mountEditorPages(pageTools, { getDocument: () => draft, getPage: () => scope, confirmSheet,
       onChange: (next, target) => {
-        if (busy || !active) return;
+        if (busy || !active || !finishDirect()) return;
         remember();
         draft = next;
         if (scope === target) {
@@ -343,6 +350,7 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
     statePicker.replaceChildren();
     const states = previewStates[scope];
     if (states) statePicker.append(field('Preview state', select(states, viewState || states[0][0], value => {
+      if (!finishDirect()) { refreshPageControls(); return; }
       viewState = value;
       pick = { scope };
       renderInspector();
@@ -356,6 +364,7 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
   }
   function chooseScope(value) {
     if (!Object.hasOwn(pages(), value) || (scope === value && previewReady)) return;
+    if (!finishDirect()) { pageSelect.value = scope; return; }
     scope = value;
     if (!problem && !conflict) setNotice('');
     viewState = '';
@@ -368,12 +377,15 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
     loadCanvas();
   }
   async function loadCanvas() {
+    direct?.close({force:true, restoreFocus:false});
     canvasRequest?.abort();
     canvasRequest = new AbortController();
     const request = canvasRequest, token = ++previewGeneration;
     canvas?.destroy();
     canvas = undefined;
     previewReady = false;
+    pickerToggle.disabled = true;
+    hidePicker();
     stage.replaceChildren();
     stage.hidden = true;
     frameMessage.hidden = false;
@@ -385,25 +397,15 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
       if (!response.ok) throw new Error('The storefront preview could not open.');
       const canvasMarkup = await response.text();
       if (!active || token !== previewGeneration) return;
-      frame = element('iframe', { title: 'Editable storefront preview · ' + pages()[scope].label, sandbox: 'allow-same-origin', tabindex:'-1', referrerpolicy: 'no-referrer' });
+      frame = element('iframe', { title: 'Editable storefront preview · ' + pages()[scope].label, sandbox: 'allow-same-origin', tabindex:'-1', 'aria-describedby':'ce-canvas-hint', referrerpolicy: 'no-referrer' });
       frame.addEventListener('load', () => {
         if (!active || token !== previewGeneration) return;
         try {
           const doc = frame.contentDocument;
           if (!doc || !doc.querySelector('main')) throw new Error('The storefront returned an incomplete preview.');
-          canvas = mountEditorCanvas(doc, { scope, document: draft, onSelect: selected => {
-            if (!active || busy || !selected || !Object.hasOwn(pages(), selected.scope || scope)) return;
-            pick = { ...selected, scope: selected.scope || scope };
-            if (pick.widget && pick.scope.startsWith('product:') && !selectedWidget() &&
-                draft.pages.product?.widgets?.some(item => item.id === pick.widget)) pick.scope = 'product';
-            tab = 'content';
-            lastField = '';
-            if (expanded) expandCanvas(false);
-            canvas?.select(pick);
-            renderInspector();
-            if (matchMedia('(max-width: 820px)').matches) inspector.scrollIntoView({ block: 'nearest', behavior: 'instant' });
-          } });
+          canvas = mountEditorCanvas(doc, { scope, document: draft, onSelect: pickOnCanvas });
           previewReady = true;
+          pickerToggle.disabled = false;
           frameMessage.hidden = true;
           stage.hidden = false;
           fitPreview();
@@ -419,7 +421,216 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
     frameMessage.hidden = false;
     frameMessage.replaceChildren('The page preview is unavailable. You can still edit using the inspector.', button('Retry preview', loadCanvas, 'soft sm'));
   }
+  function photoChoice(value, label) {
+    return {value, label, src:imageUrl(value, true).replace('/consumer-preview/assets/', endpoint + '/assets/')};
+  }
+
+  // A layout or content edit may override a product template. Reverting it
+  // must restore inheritance, including on pages with no saved settings yet.
+  function pageSetting(key, group, id, fallback) {
+    const originalPage = draft.pages[key], originalGroup = originalPage?.[group];
+    const present = Object.hasOwn(originalGroup || {}, id);
+    const inherited = key.startsWith('product:') ? draft.pages.product?.[group]?.[id] : undefined;
+    return {
+      value:originalGroup?.[id] ?? inherited ?? fallback,
+      set:(value, original) => {
+        const page = draft.pages[key] ||= {};
+        if (!original || present) { (page[group] ||= {})[id] = value; return; }
+        delete page[group][id];
+        if (!originalGroup && !Object.keys(page[group]).length) delete page[group];
+        if (!originalPage && !Object.keys(page).length) delete draft.pages[key];
+      },
+    };
+  }
+
+  function directFields(selection, hit) {
+    const source = selection.scope;
+    if (selection.pageTitle && source.startsWith('custom:') && draft.pages[source]) {
+      return [{id:'title', kind:'text', label:'Page name', value:draft.pages[source].title, maxLength:80,
+        set:value => { draft.pages[source].title = value; }}];
+    }
+    if (selection.section && !selection.field) {
+      const section = pages()[source].sections.find(item => item.id === selection.section);
+      if (!section || section.locked) return [];
+      return [{id:'width', kind:'choice', label:'Section width', choices:Object.entries(LAYOUTS),
+        ...pageSetting(source, 'sectionLayouts', section.id, 'standard')}];
+    }
+    if (selection.widget) {
+      const widget = draft.pages[source]?.widgets?.find(item => item.id === selection.widget);
+      if (!widget || widget.type === 'divider') return [];
+      if (!selection.part) {
+        const present = Object.hasOwn(widget, 'layout');
+        return [{id:'layout', kind:'choice', label:'Widget arrangement', choices:arrangements, value:widget.layout ?? 'stack',
+          set:(value, original) => {
+            if (original && !present) delete widget.layout;
+            else widget.layout = value;
+          }}];
+      }
+      const parts = {heading:['text','Heading text',240], body:['text','Body text',8000], label:['text','Button label',160],
+        href:['link','Link destination',2048], image:['image','Photo'], alt:['alt','Alternative text',500]};
+      if (!Object.hasOwn(parts, selection.part)) return [];
+      const keys = [selection.part];
+      if (selection.part === 'label') keys.push('href');
+      if (selection.part === 'image') keys.push('alt');
+      return keys.map(id => {
+        const [kind,label,maxLength] = parts[id];
+        const present = Object.hasOwn(widget, id);
+        return {id, kind, label, maxLength, value:widget[id] ?? '', set:(value, original) => {
+          if (original && !present) delete widget[id];
+          else widget[id] = value;
+        }};
+      });
+    }
+
+    return (hit.fields || []).map(item => {
+      const {scope:key, id, kind, node} = item;
+      let initial = item.default ?? '';
+      let label = item.label;
+      if (kind === 'text') {
+        initial = node.textContent.trim();
+        label = node.closest('button,a') ? 'Button label' : node.closest('h1,h2,h3,h4,h5,h6') ? 'Heading text' : 'Page text';
+      } else if (kind === 'link') {
+        initial = node.getAttribute('href') ?? initial;
+        label = 'Link destination';
+      } else if (kind === 'alt') {
+        initial = node.getAttribute('alt') ?? initial;
+        label = 'Alternative text';
+      } else if (kind === 'image') {
+        label = 'Photo';
+        const path = node.getAttribute('src') || '';
+        const value = /\/(?:consumer-media|api\/admin\/consumer\/editor\/media)\/([^/?#]+)/.exec(path);
+        const file = /\/assets\/([^/?#]+)/.exec(path);
+        if (value && imageUrl('media:' + value[1])) initial = 'media:' + value[1];
+        else if (file && ASSETS.includes(file[1])) initial = 'asset:' + file[1];
+      }
+      return {id, kind, label, maxLength:kind === 'alt' ? 500 : kind === 'link' ? 2048 : textLimit,
+        ...pageSetting(key, 'fields', id, initial)};
+    });
+  }
+
+  function hidePicker() {
+    picker.hidden = true;
+    picker.replaceChildren();
+    pickerToggle.setAttribute('aria-expanded', 'false');
+  }
+  function showPicker() {
+    if (!picker.hidden) { hidePicker(); return; }
+    if (!finishDirect() || !canvas) return;
+    const targets = canvas.targetList();
+    picker.hidden = false;
+    pickerToggle.setAttribute('aria-expanded', 'true');
+    if (!targets.length) { picker.replaceChildren(help('There are no editable elements in this view.')); return; }
+    const definitions = pages();
+    const options = targets.map(({selection, hit}, index) => {
+      const field = hit.fields.find(item => item.id === selection.field);
+      if (!field && selection.section) {
+        const section = definitions[selection.scope].sections.find(item => item.id === selection.section);
+        return [String(index), 'Section · ' + section.label];
+      }
+      if (selection.widget && !selection.part) {
+        const widget = draft.pages[selection.scope]?.widgets?.find(item => item.id === selection.widget);
+        return [String(index), 'Widget · ' + (widget?.heading || WIDGET_TYPES[widget?.type] || 'Layout')];
+      }
+      const text = selection.part === 'image' || field?.kind === 'image'
+        ? hit.node.getAttribute('alt') || field?.label || 'Widget photo'
+        : (field?.node || hit.node).textContent.trim().replace(/\s+/g, ' ') || field?.label || selection.part || 'Page name';
+      const kind = selection.pageTitle ? 'Page name' : selection.part || field?.kind || 'Element';
+      return [String(index), kind.charAt(0).toUpperCase() + kind.slice(1) + ' · ' + text.slice(0, 100)];
+    });
+    const chosen = select(options, '0', () => {}, {'aria-label':'Preview element'});
+    const edit = button('Edit element', () => {
+      const item = targets[Number(chosen.value)];
+      if (!item.hit.node.isConnected) { hidePicker(); showPicker(); return; }
+      hidePicker();
+      item.hit.node.scrollIntoView({block:'center', behavior:'instant'});
+      pickOnCanvas(item.selection, item.hit, pickerToggle);
+    }, 'soft sm');
+    chosen.addEventListener('keydown', event => {
+      if (event.key === 'Escape') { event.preventDefault(); hidePicker(); pickerToggle.focus(); }
+    });
+    picker.replaceChildren(chosen, edit);
+    chosen.focus({preventScroll:true});
+  }
+  function pickOnCanvas(selection, hit, returnFocus) {
+    if (!active || busy || !hit || !pages()[selection.scope]) return;
+    if (!finishDirect()) {
+      canvas.select(pick, {scroll:false});
+      return;
+    }
+    if (!picker.hidden) hidePicker();
+    lastField = '';
+    pick = selection;
+    tab = 'content';
+    renderInspector();
+    canvas.select(selection, {scroll:false, node:hit.node});
+    const fields = directFields(selection, hit);
+    if (!fields.length) return;
+
+    const edits = new Map();
+    const start = snapshot(draft), oldUndo = undo.slice(), oldRedo = redo.slice();
+    const session = {};
+    directSession = session;
+    const restore = () => {
+      draft = JSON.parse(start);
+      undo.splice(0, undo.length, ...oldUndo);
+      redo.splice(0, redo.length, ...oldRedo);
+      canvas.update(draft);
+      if (selection.pageTitle) refreshPageControls();
+      renderInspector();
+      renderStatus();
+    };
+    function finish(cancelled) {
+      if (directSession !== session) return;
+      directSession = null;
+      lastField = '';
+      if (session.changed && (cancelled || !edits.size)) restore();
+      else if (session.changed && selection.pageTitle) refreshPageControls();
+    }
+    const hasPhoto = fields.some(item => item.kind === 'image');
+    const hasLink = fields.some(item => item.kind === 'link');
+    let label = selection.pageTitle ? 'Page title' : hasPhoto ? 'Photo' : hasLink || hit.node.closest('a,button') ? 'Button' : fields[0].label;
+    if (selection.scope !== scope) label += ' · ' + pages()[selection.scope].label;
+    let caretOffset;
+    if (fields.length === 1 && fields[0].kind === 'text' && Number.isInteger(hit.caretOffset)) {
+      const text = hit.node.textContent;
+      if (fields[0].value === text) caretOffset = hit.caretOffset;
+      else if (fields[0].value === text.trim()) {
+        caretOffset = Math.max(0, Math.min(fields[0].value.length, hit.caretOffset - (text.length - text.trimStart().length)));
+      }
+    }
+    const opened = direct.open({
+      frame, label, fields, caretOffset, returnFocus, getTarget:() => canvas?.getTarget(selection)?.node,
+      inlineText:!hit.fields?.some(field => field.kind === 'text' && field.node !== hit.node),
+      photos:hasPhoto ? [...state.media.map(item => photoChoice('media:' + item.id, item.name)),
+        ...ASSETS.map(name => photoChoice('asset:' + name, name.replace(/\.[^.]+$/, '').replaceAll('-', ' ')))] : [],
+      upload:async file => {
+        const media = await registerPhoto(file);
+        return photoChoice('media:' + media.id, media.name);
+      },
+      onChange:(id, input) => {
+        if (!active || directSession !== session) return;
+        const item = fields.find(field => field.id === id);
+        if (!item) return;
+        if (selection.pageTitle && !input.trim()) throw new Error('Give the page a name.');
+        if (item.kind === 'choice' && !item.choices.some(([key]) => key === input)) throw new Error('Choose an available layout.');
+        const value = item.kind === 'link' ? safeLink(input, draft.pages) : input;
+        if (value === (edits.has(id) ? edits.get(id) : item.value)) return;
+        if (value === item.value) edits.delete(id);
+        else edits.set(id, value);
+        session.changed = true;
+        change(() => item.set(value, value === item.value), {key:session, direct:true});
+        if (selection.pageTitle) {
+          const option = Array.from(pageSelect.options).find(option => option.value === selection.scope);
+          if (option) option.textContent = value;
+        }
+      },
+      onFinish:() => finish(false), onCancel:() => finish(true),
+    });
+    if (opened === false) directSession = null;
+  }
+
   function selectItem(selection) {
+    if (!finishDirect()) return;
     lastField = '';
     pick = { scope, ...selection };
     tab = 'content';
@@ -560,7 +771,7 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
     if (widget.type !== 'divider') {
       box.append(textControl('Heading', widget.heading, value => update('heading', value), { max: 240 }));
       box.append(textControl('Text', widget.body, value => update('body', value), { multiline: true, max: 8000 }));
-      box.append(field('Arrangement', select([['stack', 'Stacked'], ['split', 'Image left'], ['reverse', 'Image right']], widget.layout || 'stack', value => update('layout', value, true))));
+      box.append(field('Arrangement', select(arrangements, widget.layout || 'stack', value => update('layout', value, true))));
       box.append(picture(widget.image, value => update('image', value, true)));
       box.append(textControl('Photo description', widget.alt, value => update('alt', value), { max: 500 }));
       box.append(textControl('Button text', widget.label, value => update('label', value), { max: 160 }));
@@ -616,7 +827,7 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
     else if (descriptor) wrapper.append(editNative(descriptor));
     else if (section) {
       wrapper.append(title(section.label));
-      if (!section.locked) wrapper.append(field('Section width', select(Object.entries(LAYOUTS), current.sectionLayouts?.[section.id] || 'standard', value => change(() => {
+      if (!section.locked) wrapper.append(field('Section width', select(Object.entries(LAYOUTS), pageSetting(pick.scope, 'sectionLayouts', section.id, 'standard').value, value => change(() => {
         const entry = pageForEdit();
         entry.sectionLayouts ||= {};
         entry.sectionLayouts[section.id] = value;
@@ -704,18 +915,20 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
     });
     canvas?.select(pick);
   }
+  async function registerPhoto(file) {
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file?.type) || file.size <= 0 || file.size > 24 * 1024 * 1024) {
+      throw new Error('Choose a JPEG, PNG or WebP photo up to 24 MB.');
+    }
+    const prepared = await preparePhoto(file);
+    const result = await api('POST', endpoint + '/media', { name:prepared.name, type:prepared.type, data:await fileData(prepared) });
+    if (active) state.media = [result.media, ...state.media.filter(entry => entry.id !== result.media.id)];
+    return result.media;
+  }
   async function upload(file) {
     if (!file) return;
-    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size <= 0 || file.size > 24 * 1024 * 1024) {
-      setNotice('Choose a JPEG, PNG or WebP photo up to 24 MB.', true);
-      return;
-    }
     return operation(async () => {
-      const prepared = await preparePhoto(file);
-      const result = await api('POST', endpoint + '/media', { name: prepared.name, type: prepared.type, data: await fileData(prepared) });
-      if (!active) return;
-      state.media = [result.media, ...state.media.filter(entry => entry.id !== result.media.id)];
-      setNotice('Photo added to the library.');
+      await registerPhoto(file);
+      if (active) setNotice('Photo added to the library.');
     });
   }
   async function removePhoto(entry) {
@@ -779,7 +992,7 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
     return controls;
   }
   function chooseTab(value) {
-    if (!Object.hasOwn(tabs, value)) return;
+    if (!Object.hasOwn(tabs, value) || !finishDirect()) return;
     lastField = '';
     tab = value;
     renderInspector();
@@ -816,7 +1029,11 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
     stage = element('div', { class: 'ce-stage' });
     frameMessage = element('div', { class: 'ce-frame-message', role: 'status' });
     canvasArea = element('div', { class: 'ce-viewport' }, frameMessage, stage);
-    const canvasPanel = element('section', { class: 'glass group ce-canvas', 'aria-label': 'Page preview' }, canvasHeading, canvasArea);
+    picker = element('div', {id:'ce-canvas-picker', class:'ce-canvas-picker', role:'group', 'aria-label':'Choose an element', hidden:''});
+    pickerToggle = button('Choose an element', showPicker, 'soft sm', {'aria-controls':'ce-canvas-picker', 'aria-expanded':'false', disabled:true});
+    const hint = element('div', {class:'ce-canvas-hint'},
+      element('span', {id:'ce-canvas-hint'}, 'Select text, a button or a photo to edit it here.'), pickerToggle);
+    const canvasPanel = element('section', { class: 'glass group ce-canvas', 'aria-label': 'Page preview' }, canvasHeading, hint, picker, canvasArea);
     tabGroup = element('div', { class: 'seg ce-tabs ce-inspector-tabs', role: 'group', 'aria-label': 'Editor tools' });
     for (const [id, text] of Object.entries(tabs)) tabGroup.append(element('button', { type: 'button', 'data-tab': id, onclick: () => chooseTab(id) }, text));
     inspectorBody = element('div', { class: 'ce-inspector-body' });
@@ -827,6 +1044,7 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
     const back = button('View page preview', () => { canvasPanel.scrollIntoView({block:'start'}); deviceGroup.querySelector('[aria-pressed=true]')?.focus({preventScroll:true}); }, 'soft sm ce-mobile-action');
     inspector.append(back);
     host.append(bar, messages, element('div', { class: 'ce-workspace' }, canvasPanel, inspector));
+    direct = mountDirectEditor(host);
     if (typeof ResizeObserver !== 'undefined') {
       resizeObserver = new ResizeObserver(fitPreview); resizeObserver.observe(canvasArea);
     }
@@ -851,6 +1069,8 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
         if (!active || token !== serial || !Array.isArray(result.products)) return;
         coffees = result.products.filter(item => item.category === 'coffee' || !item.category);
         availability.setProducts(result.products.filter(item => !item.archived));
+        pageSelect.replaceChildren(...listOfPages(pages()).children);
+        pageSelect.value = scope;
         canvas?.update(draft);
         if (selectedWidget()?.type === 'coffee-shelf') renderInspector();
       }).catch(() => {
@@ -865,19 +1085,20 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
     }
   }
 
-  host.addEventListener('keydown', event => {
+  document.addEventListener('keydown', event => {
+    if (!host.contains(event.target) && !(directSession && event.target.closest('.ce-direct'))) return;
     if ((!event.metaKey && !event.ctrlKey) || event.altKey || !state || busy || event.defaultPrevented) return;
     const key = event.key.toLowerCase();
     if (key === 's') {
       event.preventDefault();
       if (isDirty() && !conflict) saveDraft();
     }
-    if (key === 'z' && !event.target.closest('input,textarea,[contenteditable=true]')) {
+    if (key === 'z' && !event.target.isContentEditable && !event.target.closest('input,textarea')) {
       event.preventDefault(); travel(!event.shiftKey);
     }
   }, {signal:usable.signal});
   window.addEventListener('beforeunload', event => {
-    if (!isDirty() && !busy) return;
+    if (!isDirty() && !busy && (!directSession || direct.canClose())) return;
     event.preventDefault();
     event.returnValue = '';
   }, { signal: usable.signal });
@@ -885,12 +1106,14 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
   return {
     isDirty,
     async canLeave() {
+      if (!finishDirect()) return false;
       if (busy) { setNotice('Wait for the current change to finish.'); return false; }
       if (!isDirty()) return true;
       return confirmSheet({ title: 'Leave unsaved edits?', text: 'Save your draft to continue editing it later, or discard the changes in this tab.', confirm: 'Discard and leave', danger: true });
     },
     destroy() {
       active = false;
+      direct?.destroy();
       usable.abort();
       canvasRequest?.abort();
       canvas?.destroy();

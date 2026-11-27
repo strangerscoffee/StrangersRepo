@@ -85,6 +85,21 @@ def simple(n, parent):
     index = next(i for i,v in enumerate(group,1) if v is n)
     return n.tag + (f':nth-of-type({index})' if len(group) > 1 else ''), False
 
+def inline_template(node):
+    """Only reproduce the site's plain typographic tags. Controls and attributes stay native."""
+    parts = []
+    for child in node.children:
+        if isinstance(child, str):
+            parts.append(child)
+        else:
+            if child.tag not in {'em', 'strong', 'b', 'i', 'br'} or child.attrs:
+                return None
+            children = inline_template(child)
+            if children is None:
+                return None
+            parts.append([child.tag, *children])
+    return parts
+
 def walk(n, selector, section, fields, page, product_anchor=None):
     if product_id := n.attrs.get('data-catalogue-id'):
         product_anchor = (selector, '[data-catalogue-id="' + product_id + '"]')
@@ -99,7 +114,12 @@ def walk(n, selector, section, fields, page, product_anchor=None):
         # Historical IDs come from the original markup. Target the product itself
         # on live shelves, whose position changes whenever the catalogue changes.
         target = selector.replace(*product_anchor, 1) if product_anchor else selector
-        fields.append(dict(id=id, label=name, selector=target, kind=kind, default=default, section=section))
+        descriptor = dict(id=id, label=name, selector=target, kind=kind, default=default, section=section)
+        if kind == 'text' and n.elements():
+            formatting = inline_template(n)
+            if formatting:
+                descriptor['inline'] = formatting
+        fields.append(descriptor)
     if n.tag == 'img' and n.attrs.get('src','').startswith('/consumer-preview/assets/'):
         filename = n.attrs['src'].split('/')[-1]
         label = n.attrs.get('alt') or filename.split('.')[0].replace('-',' ').capitalize()

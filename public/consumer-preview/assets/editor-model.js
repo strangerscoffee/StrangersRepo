@@ -1,6 +1,6 @@
 import { assetFiles, staticPages } from './editor-inventory.js';
-import { productRoutes } from './product-paths.js';
-import { productContent } from './product-content.js';
+import { productPath, productRoutes } from './product-paths.js';
+import { brewGuidance, productContent } from './product-content.js';
 import { products } from './products.js';
 import { authModes } from './account.js';
 import { finderOptions } from './finder.js';
@@ -48,6 +48,8 @@ function sharedFields() {
     link('announcement-link', 'Announcement · link', '.notice > a', '/shipping/'),
     ...photo('header-logo', 'Header logo', '.site-header .brand img', 'asset:logo.svg', 'Strangers Coffee Company'),
     ...photo('footer-logo', 'Footer logo', '.footer-brand img', 'asset:logo.svg', 'Strangers Coffee Company'),
+    field('account-label', 'My account link', '.footer-identity-copy a, .mobile-links > a:nth-of-type(5)', 'My account'),
+    field('menu-label', 'Mobile menu accessible label', '.site-header .menu-button .sr-only', 'Menu'),
     field('footer-name', 'Footer company name', '.footer-identity-copy p', 'Strangers Coffee Company Norwich'),
     field('explore', 'Explore navigation heading', '#footer-explore', 'Explore'),
     field('care', 'Customer care heading', '#footer-care', 'Customer care'),
@@ -189,7 +191,20 @@ const productSections = [
   { id: 'producer', label: 'Producer and brew guide', selector: '#producer' },
   { id: 'related', label: 'Related coffees', selector: '.retail-product-section:not(:has(~ .retail-product-section))' },
 ];
+function brewFields(profile) {
+  const [title, copy, image, alt] = brewGuidance[profile] || brewGuidance.Chocolatey;
+  return [
+    field('brew-title', 'Brew guide heading', '.retail-product-brew h2', title, 'text', 'producer'),
+    field('brew-copy', 'Brewing instructions', '.retail-product-brew h2 + p', copy, 'text', 'producer'),
+    ...photo('brew-image', 'Brew guide photograph', '.retail-product-brew img', 'asset:'+image, alt, 'producer'),
+  ];
+}
+const productTitleSelector = '.retail-product-copy h1, .retail-product-crumb [aria-current="page"], .retail-product-figure figcaption > span:first-child';
 const defaultProductFields = [
+  field('size-label', 'Size selector label', '.retail-product-form legend', 'Bag size'),
+  field('add-to-cart', 'Add to cart button', '.retail-product-purchase button[type="submit"]', 'Add to cart'),
+  field('quantity-label', 'Quantity label', 'label[for="retail-product-quantity"]', 'Quantity'),
+  field('grind-label', 'Grind label', 'label[for="retail-product-grind"]', 'Grind'),
   field('related-title', 'Related coffees heading', '.retail-product-section:not(:has(~ .retail-product-section)) h2', 'You might also like'),
   field('producer-label', 'Producer label', '.retail-product-origin .eyebrow', 'From the producer'),
   field('producer-title', 'Producer title', '.retail-product-origin h2', 'Meet the coffee'),
@@ -197,6 +212,8 @@ const defaultProductFields = [
   field('brew-guide', 'Brew guide link label', '.retail-product-brew a', 'Read our brew guides'),
   link('brew-link','Brew guide destination','.retail-product-brew a','/brewguides/'),
   field('delivery-label','Delivery information label','.retail-product-delivery a:first-child','UK delivery and returns'),
+  link('delivery-link','Delivery information destination','.retail-product-delivery a:first-child','/shipping/'),
+  link('collection-link','Collection information destination','.retail-product-delivery a:last-child','/location/'),
   field('collection-label','Collection information label','.retail-product-delivery a:last-child','Norwich collection'),
 ];
 function productFieldSection(f) {
@@ -215,6 +232,17 @@ export const PAGES = {
   finder: { label: 'Coffee finder', path: '/', root: '#dialog[data-view="finder"]', sections: [], fields: finderFields, widgets: false },
   cart: { label: 'Cart drawer', path: '/', root: '#dialog[data-view="bag"]', sections: [], fields: cartFields, widgets: false },
 };
+PAGES.home.fields.push(field('featured-action', 'Featured coffee · product button', '#home-roasting-grid .home-coffee-actions a', 'View coffee', 'text', 'featured'));
+PAGES.shop.fields.push(
+  field('quick-view-action', 'Coffee card · quick view button', '#products .product-quick-view', 'Quick view', 'text', 'catalogue'),
+  field('product-action', 'Coffee card · product button', '#products .product-open-full', 'View coffee', 'text', 'catalogue'),
+  field('product-action-short', 'Coffee card · compact product button', '#products .product-open-short', 'View', 'text', 'catalogue'),
+);
+PAGES.account.fields.push(field('account-heading', 'Signed-out page title', '#account-page:has(#account-session[hidden]) #account-title', 'My account', 'text', 'hero'));
+PAGES.checkout.fields.push(
+  field('checkout-heading', 'Checkout page title', '.retail-checkout-page:has(#retail-checkout-form,.retail-review-card,.retail-checkout-processing,[data-checkout-empty]) #retail-checkout-heading', 'Checkout', 'text', 'heading'),
+  field('confirmation-heading', 'Confirmation page title', '.retail-checkout-page:has([data-order-confirmed]) #retail-checkout-heading', 'Order confirmation', 'text', 'heading'),
+);
 PAGES.checkout.fields.push(...checkoutFields.map(f=>({...f,section:'checkout'})));
 for (const [mode, settings] of Object.entries(authModes)) {
   const scope = '#account-access:has(#account-auth-form[data-auth-mode="'+mode+'"]:not([hidden])) ';
@@ -239,7 +267,7 @@ for (const [slug, {id, name}] of Object.entries(productRoutes)) {
       if (f.id.startsWith('brew-')) return isCoffee;
       return Boolean(product);
     }),
-    field('product-title', 'Product title', '.retail-product-copy h1', name),
+    field('product-title', 'Product title', productTitleSelector, name),
     field('product-description', 'Product description', '.retail-product-copy h1 + .retail-product-lede', intro),
   ];
   const photos = [
@@ -252,6 +280,7 @@ for (const [slug, {id, name}] of Object.entries(productRoutes)) {
     fields.push(...photo(i?'gallery-'+i:'product-image',i?'Gallery photograph '+(i+1):'Primary product photograph',selector,'asset:'+p.file,p.alt,'intro'));
   });
   if (isCoffee) {
+    fields.push(...brewFields(product.profile));
     if (producer) fields.push(field('producer-intro','Producer introduction','.retail-product-origin > h2 + p',producer));
     for (const [index, [title, value]] of provenance.entries()) {
       const row='.retail-product-origin dl > div:nth-of-type('+(index+1)+') ';
@@ -273,10 +302,38 @@ for (const [slug, {id, name}] of Object.entries(productRoutes)) {
     fields.push(field('flight-heading','Flight contents heading',selector+' h2','In the flight'));
   }
   if (!product) {
+    fields.push(field('voucher-buy', 'Gift card purchase button', '.retail-voucher-actions .button', 'Buy on the Strangers shop'),
+      field('voucher-terms-label', 'Gift voucher terms label', '.retail-voucher-actions a:last-child', 'Gift voucher terms'),
+      link('voucher-terms-link', 'Gift voucher terms destination', '.retail-voucher-actions a:last-child', '/terms-conditions/'));
     fields.push(field('voucher-note','Gift card redemption note','.retail-product-copy p.retail-product-lede + p',id==='online-gift-card'?'Online gift cards have no expiry date and can be redeemed in our online shop.':'It can be redeemed in our shops.'));
   }
   for (const f of fields) f.section ||= productFieldSection(f);
   PAGES['product:'+id] = { label:name, path:'/coffee/p/'+slug+'/',root:'main',sections,fields };
+}
+// Catalogue products created after a release use the same fixed, server-owned selectors.
+// Their default copy/photos come from the current catalogue and never become saved overrides.
+export function cataloguePageForKey(key, product) {
+  if (typeof key !== 'string' || !key.startsWith('product:')) return null;
+  const id = key.slice(8);
+  if (!id || id.length > 100 || !productIdPattern.test(id)) return null;
+  if (Object.hasOwn(PAGES,key)) return PAGES[key];
+  const item = product === undefined ? products.find(row => row.id === id) : product;
+  const name = item?.name || id;
+  const selector = '[data-gallery-main][data-gallery-current="0"], [data-gallery-index="0"] img';
+  const file = item?.image?.split('/').pop();
+  const fields = [...defaultProductFields, ...brewFields(item?.profile),
+    field('producer-intro', 'Producer introduction', '.retail-product-origin > h2 + p', item?.story || '', 'text', 'producer'),
+    field('product-title', 'Product title', productTitleSelector, name, 'text', 'intro'),
+    field('product-description', 'Product description', '.retail-product-copy h1 + .retail-product-lede', item?.shortCopy || '', 'text', 'intro'),
+    ...photo('product-image', 'Primary product photograph', selector, ASSETS.includes(file) ? 'asset:'+file : '', name, 'intro'),
+  ];
+  // The Products form supports twelve notes. Persist a saved override even if the merchant
+  // later shortens this product's list, while only presenting its actual notes in the editor.
+  const noteCount = item ? (item.notes?.length || 0) : 12;
+  for (let i = 0; i < noteCount; i++) {
+    fields.push(field('note-'+(i+1), 'Tasting note '+(i+1), '.retail-product-notes li:nth-child('+(i+1)+')', item?.notes[i] || '', 'text', 'intro'));
+  }
+  return {label:name, path:productPath({id}), root:'main', sections:productSections, fields};
 }
 const slugs = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 export function customPageForKey(key, title) {
@@ -289,7 +346,11 @@ const pageByPath = new Map(Object.entries(PAGES)
 export function pageForPath(path) {
   const pathname = typeof path === 'string' ? path.split(/[?#]/,1)[0].replace(/\/?$/, '/') : '';
   const slug = /^\/pages\/([a-z0-9-]+)\/$/.exec(pathname)?.[1];
-  return pageByPath.get(pathname) ?? (slug && customPageForKey('custom:'+slug) ? 'custom:'+slug : null);
+  const known = pageByPath.get(pathname);
+  if (known) return known;
+  const productId = /^\/coffee\/p\/([a-z0-9-]{1,100})\/$/.exec(pathname)?.[1];
+  if (productId && productIdPattern.test(productId)) return 'product:'+productId;
+  return slug && customPageForKey('custom:'+slug) ? 'custom:'+slug : null;
 }
 export const EMPTY_DOCUMENT = Object.freeze({schema:1,theme:'heritage',pages:Object.freeze({})});
 export function emptyDocument() { return {schema:1,theme:'heritage',pages:{}}; }
@@ -319,7 +380,7 @@ function textValue(value, max, label) {
   if (typeof value !== 'string' || value.length > max || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value)) invalid('Check '+label+' (up to '+max+' characters).');
   return value;
 }
-function safeLink(value, pages) {
+export function safeLink(value, pages) {
   textValue(value,2048,'link');
   if (!value) return '';
   if (/\s|\\|[\u0000-\u001f\u007f]/.test(value) || /%(?:[01][0-9a-f]|7f|2f|5c|2e)/i.test(value)) invalid('Choose a valid link.');
@@ -377,7 +438,7 @@ export function validateDocument(raw) {
   const result={schema:1,theme:choice(doc.theme,THEMES,'storefront theme'),pages:{}};
   for (const [key,rawPage] of Object.entries(pages)) {
     const custom=customPageForKey(key);
-    const def=Object.hasOwn(PAGES,key)?PAGES[key]:custom;
+    const def=Object.hasOwn(PAGES,key)?PAGES[key]:custom || cataloguePageForKey(key, null);
     if (!def) invalid('Unknown storefront page.');
     const page=record(rawPage,'page settings');
     const pageKeys=['theme','layout','sectionLayouts','fields','sections','hidden','widgets'];
@@ -448,7 +509,7 @@ export function referencedMedia(doc) {
     if (typeof value==='string' && value.startsWith('media:') && uuid.test(value.slice(6))) ids.add(value.slice(6));
   }
   for (const [key,page] of Object.entries(doc.pages)) {
-    const def=PAGES[key];
+    const def=PAGES[key] || cataloguePageForKey(key);
     for (const field of def?.fields || []) if (field.kind==='image') collect(page.fields?.[field.id]);
     for (const widget of page.widgets || []) collect(widget.image);
   }

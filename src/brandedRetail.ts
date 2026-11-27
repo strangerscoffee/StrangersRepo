@@ -8,7 +8,7 @@ import { noStore, staticFile, withFingerprints } from "./siteAssets";
 import { applyStaticConsumerFields, customConsumerContent, applyConsumerFooterLinks } from "./consumerEditorStatic";
 import { applyConsumerPageMetadata } from "./consumerEditorMetadata";
 import { readPublishedConsumerEditor, readPublishedConsumerMedia } from "./consumerEditorClient";
-import { PAGES as EDITOR_PAGES, customPageForKey, pageForPath, type ConsumerEditorPage } from "../public/consumer-preview/assets/editor-model.js";
+import { PAGES as EDITOR_PAGES, cataloguePageForKey, customPageForKey, pageForPath, type ConsumerEditorPage } from "../public/consumer-preview/assets/editor-model.js";
 import { productFromPath, productPath, type ProductRoute } from "../public/consumer-preview/assets/product-paths.js";
 
 export const BRANDED_RETAIL_ORIGIN = "https://preview.staffstrangerscoffee.com";
@@ -263,14 +263,14 @@ async function retailPage(req: Request, env: Env, url: URL, page = url.pathname,
   // Give the renderer only their published merchandising fields, not unrelated pages' editorial content.
   const productFields = Object.fromEntries(Object.entries(pages).filter(([id]) => id.startsWith("product:"))
     .map(([id, config]) => [id, {fields:Object.fromEntries(Object.entries(config.fields ?? {}).filter(([key]) =>
-      ["product-title","product-image","product-image-alt","product-description","note-1","note-2","note-3"].includes(key)))}] as const)
+      ["product-title","product-image","product-image-alt","product-description"].includes(key) || /^note-(?:[1-9]|1[0-2])$/.test(key)))}] as const)
     .filter(([, config]) => Object.keys(config.fields).length));
   function definition(key: string, config: ConsumerEditorPage, generic?: ConsumerEditorPage) {
-    const builtIn = EDITOR_PAGES[key] ?? (key.startsWith("product:") ? EDITOR_PAGES.product : undefined);
+    const builtIn = EDITOR_PAGES[key] ?? cataloguePageForKey(key);
     const meta = builtIn ?? customPageForKey(key,config.title);
     if (!meta) return null;
     const fields = builtIn?.fields.filter(f => Object.hasOwn(config.fields ?? {}, f.id)
-      || Object.hasOwn(generic?.fields ?? {}, f.id)).map(({id,kind,selector}) => ({id,kind,selector})) ?? [];
+      || Object.hasOwn(generic?.fields ?? {}, f.id)).map(({id,kind,selector,inline}) => ({id,kind,selector,inline})) ?? [];
     const needsSections = (item?: ConsumerEditorPage) => item && (item.sections?.length || item.widgets?.length ||
       item.hidden?.length || Object.keys(item.sectionLayouts ?? {}).length);
     const sections = needsSections(config) || needsSections(generic)

@@ -186,7 +186,7 @@ export function receiptMarkup(order, { confirmed, trackingLink, guest }) {
     </section>`;
 }
 
-export const emptyCheckoutMarkup = `<div class="retail-checkout-message"><h2 tabindex="-1">Your cart is empty</h2>
+export const emptyCheckoutMarkup = `<div class="retail-checkout-message" data-checkout-empty><h2 tabindex="-1">Your cart is empty</h2>
         <p>Choose a coffee to begin.</p><a class="button" href="/coffee/">Shop coffee</a></div>`;
 
 export function priceAction(kind, price, unready = false) {

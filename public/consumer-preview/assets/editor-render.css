@@ -44,7 +44,8 @@ html[data-consumer-layout="wide"] main :where(.container),html[data-consumer-lay
 .consumer-widget:is([data-widget-layout="split"],[data-widget-layout="reverse"]) img + .consumer-widget-copy {margin-top:0}
 html[data-consumer-canvas] {scroll-behavior:auto;}
 html[data-consumer-canvas] [data-consumer-editable]{cursor:pointer}
-html[data-consumer-canvas] [data-consumer-editable]:hover {outline:2px dashed #047659;outline-offset:-2px}
+html[data-consumer-canvas] :is([data-consumer-hovered],[data-consumer-editable]:focus-visible) {outline:2px dashed #047659;outline-offset:-2px}
+html[data-consumer-canvas] .consumer-widget-copy > [data-consumer-editable]:empty {min-height:1em;min-width:2ch}
 html[data-consumer-canvas] [data-consumer-selected]{outline:3px solid #05765a!important;outline-offset:-3px!important}
 @media(max-width:640px){
   .consumer-widget[data-widget-layout="split"]:has(img),.consumer-widget[data-widget-layout="reverse"]:has(img){grid-template-columns:minmax(0,1fr)}

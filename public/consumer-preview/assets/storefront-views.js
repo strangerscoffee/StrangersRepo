@@ -4,7 +4,7 @@ import { money, FREE_SHIPPING } from './store.js';
 import { lineOptions, orderTotals } from './checkout.js';
 
 export function shelfProducts(shown, known) {
-  return shown.map(product => `<article class="product">
+  return shown.map(product => `<article class="product" data-catalogue-id="${html(product.id)}">
       <div class="product-image"><img src="${html(product.image)}" width="580" height="410" alt="" loading="lazy">
       ${!known || product.available === false ? '' : `<button class="product-quick-view" type="button" data-product="${html(product.id)}" aria-label="Quick view ${html(product.name)}">Quick view</button>`}</div>
       <div class="product-info"><p class="origin">${html(product.country)} · ${html(product.profile)}</p><h3>${html(product.name)}</h3><p class="notes">${html(product.shortCopy)}</p>

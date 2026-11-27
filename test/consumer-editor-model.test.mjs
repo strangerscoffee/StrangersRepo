@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
 import {productRoutes} from '../public/consumer-preview/assets/product-paths.js';
-import {PAGES, TEMPLATES, COFFEE_CHOICES, customPageForKey, emptyDocument, imageUrl,
+import {PAGES, TEMPLATES, COFFEE_CHOICES, cataloguePageForKey, customPageForKey, emptyDocument, imageUrl,
   pageForPath, referencedMedia, validateDocument} from '../public/consumer-preview/assets/editor-model.js';
 
 const uuid='fb323423-a3a4-48fb-95b0-16b087a3f4e6';
@@ -23,6 +23,21 @@ test('all consumer routes have editable content and the generated inventory matc
   }
   assert.equal(pageForPath('/wholesale/'),null);
   assert.equal(pageForPath('/api/admin/'),null);
+});
+
+test('catalogue additions keep editable product titles, photos and button labels under their permanent ID', () => {
+  const key = 'product:new-single-origin';
+  const product = {id:'new-single-origin',name:'Seasonal release',shortCopy:'Cocoa and dates.'};
+  const page = cataloguePageForKey(key, product);
+  assert.equal(pageForPath(page.path), key);
+  assert.equal(page.fields.find(field => field.id === 'product-title').default, product.name);
+  const revision = doc({[key]:{fields:{
+    'product-title':'Spring release', 'product-image':'media:'+uuid, 'product-image-alt':'New packaging', 'add-to-cart':'Add a bag',
+  }}});
+  assert.deepEqual(validateDocument(revision), revision);
+  assert.deepEqual(referencedMedia(revision), [uuid]);
+  assert.equal(cataloguePageForKey('product:../bad'), null);
+  assert.throws(() => validateDocument(doc({[key]:{fields:{price:'£0.01'}}})), TypeError);
 });
 
 test('validate linked custom page, structured stock widgets, section ordering, and selected media references',()=>{
