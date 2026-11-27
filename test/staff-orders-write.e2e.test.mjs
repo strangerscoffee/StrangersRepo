@@ -244,7 +244,7 @@ test("wide Staff and Admin desks share packing and only dispatch after confirmat
     assert.equal(await page.locator(`[data-act="wh-order"][data-id="${order.id}"]`).count(),0,"the ready order leaves the To pack queue but stays in the inspector");
     await desk.getByRole("button",{name:"Review dispatch"}).click();
     await page.locator("#wDispatchOrderForm").waitFor();
-    await page.locator("#wDispatchOrderForm").getByRole("button",{name:"Cancel",exact:true}).click();
+    await page.locator("#wDispatchOrderForm").getByRole("button",{name:"Keep as Ready",exact:true}).click();
     assert.equal((await read()).status,"Ready");
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
     assert.deepEqual(admin.errors,[]);
