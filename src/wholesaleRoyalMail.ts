@@ -27,7 +27,7 @@ interface Order {
   totalPence?: number;
   locationId?: string;
   locationSnapshot?: CustomerLocation;
-  customerSnapshot?: Pick<CustomerLocation, "address" | "postcode" | "contact">;
+  customerSnapshot?: Pick<CustomerLocation, "address" | "postcode" | "contact"> & { email?: string };
   lines?: Array<{ productId: string; pack: string; grind?: string; quantity: number; grams: number }>;
 }
 
@@ -438,7 +438,9 @@ export async function handleWholesaleRoyalMail(req: Request, env: Env, id: strin
   const recipient = staff ? savedRoyalMailRecipient(order) : checkedRoyalMailRecipient(object(body.recipient));
   if (!recipient) throw new ApiError(409, "royal_mail_address_review", savedAddressWarning);
   const address = { name: recipient.name, companyName: order.business.slice(0, 100), addressLine1: recipient.line1,
-    addressLine2: recipient.line2, city: recipient.city, county: recipient.county, postcode: recipient.postcode };
+    addressLine2: recipient.line2, city: recipient.city, county: recipient.county, postcode: recipient.postcode,
+    // The owner uses the business email saved with this order for carrier delivery updates.
+    emailAddress: order.customerSnapshot?.email || undefined };
 
   const eligibilityGuard = staff ? staffLabelEligibilityGuard(order) : { sql: "", args: [] };
   const accessGuard = staff && actor.role !== "admin"

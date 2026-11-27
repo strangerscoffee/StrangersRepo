@@ -498,7 +498,7 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     const customer = crypto.randomUUID(), snapshot = { ...location, contact: null };
     await db.prepare("INSERT INTO wholesale_preview(kind,id,data,version,updated_at) VALUES ('customer',?,?,1,?)")
       .bind(customer, JSON.stringify({ business, address: "Old primary", email: "receipts@example.test", locations: [location] }), Date.now()).run();
-    await seed(id, { customerId: customer, locationId, locationSnapshot: snapshot });
+    await seed(id, { customerId: customer, locationId, locationSnapshot: snapshot, customerSnapshot: { email: "original-order@example.test" } });
     const path = shipPath(id), locationPath = path + "/location";
     const reviewed = await (await call(path)).json();
     const original = reviewed.recipient;
@@ -525,12 +525,15 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     assert.equal(await read(id), null);
     const latestPolicy = await (await call(path)).json();
     let carrierRecipient;
-    interceptCreate = (reference, item) => { if (reference === id) carrierRecipient = item.recipient.address; };
+    interceptCreate = (reference, item) => { if (reference === id) carrierRecipient = item.recipient; };
     try {
       assert.equal((await call(path, "POST", { ...pinned, bookingVersion: latestPolicy.bookingVersion })).status, 201);
     } finally { interceptCreate = undefined; }
-    assert.deepEqual([carrierRecipient.addressLine1, carrierRecipient.city, carrierRecipient.county, carrierRecipient.postcode],
+    const carrierAddress = carrierRecipient.address;
+    assert.deepEqual([carrierAddress.addressLine1, carrierAddress.city, carrierAddress.county, carrierAddress.postcode],
       ["12 Dove Street", "Norwich", "Norfolk", "NR2 1DE"]);
+    assert.equal(carrierRecipient.emailAddress, "original-order@example.test");
+    assert.equal(carrierRecipient.phoneNumber, undefined);
     assert.deepEqual((await read(id)).destination, { address: "12 Dove Street, Norwich, Norfolk", postcode: "NR2 1DE" });
     const before = await (await call(locationPath)).json();
     assert.equal(before.address, address, "booking does not change the address book");
@@ -572,7 +575,8 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     await accountStatus("Active");
     await seed(billed, { paymentTerms: { id: "before-dispatch" } });
     await seed(racing, net30);
-    await seed(paid, { ...net30, locationSnapshot: { contact: "Shipping contact", address: "18 Example Lane, Unit 2\nNorwich, Norfolk NR1 5AB\nUnited Kingdom", postcode: "NR1 5AB" } });
+    await seed(paid, { ...net30, customerSnapshot: { email: "delivery@example.test", phone: "01603 000099" },
+      locationSnapshot: { contact: "Shipping contact", phone: "01603 000011", address: "18 Example Lane, Unit 2\nNorwich, Norfolk NR1 5AB\nUnited Kingdom", postcode: "NR1 5AB" } });
     await seed(collection, { ...net30, delivery: "Roastery collection" });
     await seed(incomplete, { ...net30, locationSnapshot: { address: "18 Example Lane, Norfolk", postcode: "NR1 5AB" } });
     await seed(thirdParty, net30);
@@ -646,6 +650,8 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     }
     assert.equal(sent.postageDetails.serviceCode, "TPS48");
     assert.equal(sent.label.includeLabelInResponse, true);
+    assert.equal(sent.recipient.emailAddress, "delivery@example.test");
+    assert.equal(sent.recipient.phoneNumber, undefined);
     assert.equal(sent.recipient.address.fullName, "Shipping contact");
     assert.equal(sent.recipient.address.addressLine1, "18 Example Lane");
     assert.equal(sent.recipient.address.city, "Norwich");
