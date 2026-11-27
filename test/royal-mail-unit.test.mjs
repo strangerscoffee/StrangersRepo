@@ -172,6 +172,13 @@ test("keeps Royal Mail's own reason for a refusal, without the recipient's detai
   error = await reason(() => Response.json({ errors: [{ errorCode: 2, errorMessage: 'Recipient phone number is required', fields: [{ fieldName: 'recipient.phoneNumber' }] }] }, { status: 400 }));
   outcome('royal_mail_rejected', false, 400)(error);
   assert.match(error.message, /Recipient phone number is required \(code 2, field recipient.phoneNumber\)/);
+  // Other reply shapes seen from Click & Drop: a plain message, or a validation map of fields to messages.
+  error = await reason(() => Response.json({ code: 'BadRequest', message: 'Service not available on 1 Example Street' }, { status: 400 }));
+  assert.match(error.message, /Royal Mail said: Service not available on … \(code BadRequest\)/);
+  error = await reason(() => Response.json({ title: 'One or more validation errors occurred.', errors: { 'items[0].postageDetails.serviceRegisterCode': ['Invalid service register code'] } }, { status: 400 }));
+  assert.match(error.message, /One or more validation errors occurred\.; Invalid service register code \(field items\[0\]\.postageDetails\.serviceRegisterCode\)/);
+  error = await reason(() => Response.json([{ errorCode: 5, errorMessage: 'Weight too high for Sample Company' }], { status: 400 }));
+  assert.match(error.message, /Weight too high for … \(code 5\)/);
   error = await reason(() => new Response('not json', { status: 400 }));
   assert.equal(error.message, 'Royal Mail rejected the shipment details. Check the address, parcel and service.');
 });
