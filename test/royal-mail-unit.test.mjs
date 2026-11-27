@@ -172,6 +172,13 @@ test("keeps Royal Mail's own reason for a refusal, without the recipient's detai
   error = await reason(() => Response.json({ errors: [{ errorCode: 2, errorMessage: 'Recipient phone number is required', fields: [{ fieldName: 'recipient.phoneNumber' }] }] }, { status: 400 }));
   outcome('royal_mail_rejected', false, 400)(error);
   assert.match(error.message, /Recipient phone number is required \(code 2, field recipient.phoneNumber\)/);
+  // Other reply shapes seen from Click & Drop: a plain message, or a validation map of fields to messages.
+  error = await reason(() => Response.json({ code: 'BadRequest', message: 'Service not available on 1 Example Street' }, { status: 400 }));
+  assert.match(error.message, /Royal Mail said: Service not available on … \(code BadRequest\)/);
+  error = await reason(() => Response.json({ title: 'One or more validation errors occurred.', errors: { 'items[0].postageDetails.serviceRegisterCode': ['Invalid service register code'] } }, { status: 400 }));
+  assert.match(error.message, /One or more validation errors occurred\.; Invalid service register code \(field items\[0\]\.postageDetails\.serviceRegisterCode\)/);
+  error = await reason(() => Response.json([{ errorCode: 5, errorMessage: 'Weight too high for Sample Company' }], { status: 400 }));
+  assert.match(error.message, /Weight too high for … \(code 5\)/);
   error = await reason(() => new Response('not json', { status: 400 }));
   outcome('royal_mail_invalid_response', true)(error);
 });
@@ -196,6 +203,54 @@ test("carrier diagnostics retain retry guards and never quote unrecognised error
       assert.equal(error.uncertain, true);
       return true;
     });
+  }
+});
+
+test("additional carrier validation formats preserve useful wording without quoting private values", async () => {
+  const rejection = body => createRoyalMailOrder(key, input, async () => Response.json(body, {status:422}));
+  for (const [textField, pathField] of [["detail", "propertyName"], ["title", "fieldName"], ["description", "field"]]) {
+    await assert.rejects(rejection([{[textField]:"Weight too high for some unrelated private customer", code:5, [pathField]:"packages[0].weightInGrams"}]), error => {
+      assert.equal(error.uncertain, false);
+      assert.match(error.message, /Weight too high for … \(code 5, field packages\[0\]\.weightInGrams\)/);
+      assert.doesNotMatch(error.message, /private customer/);
+      return true;
+    });
+  }
+  await assert.rejects(rejection({errors: [{errors: { "recipient.emailAddress": ["Email address is required", "other@example.test is the new contact"] }}],
+    code:"secret-client-value", detail:"1 eXaMpLe StReEt", fieldName:"private.name"}), error => {
+    assert.equal(error.uncertain, false);
+    assert.match(error.message, /Email address is required \(field recipient.emailAddress\)/);
+    assert.doesNotMatch(error.message, /@|secret-client-value|example street|private.name/i);
+    return true;
+  });
+});
+
+test("nested, batch and validation-map errors cannot hide duplicate, conflicting, or foreign booking evidence", async () => {
+  const message = {errorCode:3, errorMessage:"Invalid postcode"};
+  const envelope = error => ({successCount:0, errorsCount:1, failedOrders:[{order:{orderReference:input.reference},errors:[error]}]});
+  const unsafe = [
+    [message, {title:"201 Created"}],
+    {title:"Request acknowledged"},
+    {code:"OK", description:"Request received"},
+    {errors:[message, {description:"Created the order"}]},
+    {title:"One or more validation errors occurred.", errors:{orderReference:["Must be unique."]}},
+    {errors:[message, {detail:"Order WS-OTHER already received"}]},
+    {title:"Validation", errors:{postcode:[{message:"Invalid postcode",orderIdentifier:123}]}},
+    [message, {errors:[{message:"bad input",success:true}]}],
+    {...envelope(message), orderReference:"WS-OTHER"},
+    {...envelope(message), trackingNumber:"AB123456789GB"},
+    envelope({errors:[{message:"Order reference already used"}]}),
+    envelope({errors:{orderReference:["Duplicate order reference"]}}),
+    {errors:new Array(13).fill(message)},
+  ];
+  for (const status of [400, 422]) {
+    for (const body of unsafe) {
+      await assert.rejects(createRoyalMailOrder(key, input, async () => Response.json(body, {status})), error => {
+        assert.equal(error.uncertain,true);
+        assert.doesNotMatch(error.message,/WS-OTHER|AB123456789GB/);
+        return true;
+      });
+    }
   }
 });
 

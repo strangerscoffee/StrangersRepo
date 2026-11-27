@@ -174,7 +174,7 @@ function orderBody(input: RoyalMailOrderInput) {
   }] };
 }
 
-// Only recognised diagnostic phrases, known field names and numeric carrier codes may be stored on a shipment.
+// Only recognised diagnostic phrases, known field names and recognised carrier codes may be stored on a shipment.
 // Click & Drop can echo the entire submitted order and customer values in its errors.
 const bookingFields: Record<string, string> = {
   fullname: "Check the recipient name.", companyname: "Check the recipient company name.",
@@ -195,47 +195,94 @@ const bookingFields: Record<string, string> = {
 
 // Carrier error text can contain partial addresses, credentials or other customers' details, even when the
 // documented field value is omitted. Quote only recognised diagnostic wording and safe field paths.
-function carrierReason(error: Record<string, unknown>, configuredService?: string): string {
-  const message = typeof error.errorMessage === "string" ? error.errorMessage.trim() : "";
-  if (!message || message.length > 4096) return "";
-  let reason: string;
+function diagnosticText(error: Record<string, unknown>) {
+  return [error.errorMessage, error.message, error.detail, error.title, error.description, error.details]
+    .filter((value): value is string => typeof value === "string" && !!value.trim());
+}
+
+function diagnosticFields(error: Record<string, unknown>) {
+  const fields = Array.isArray(error.fields) ? error.fields.map(field => record(field)?.fieldName) : [];
+  return [...fields, error.field, error.fieldName, error.propertyName].filter((field): field is string => typeof field === "string" && !!field.trim());
+}
+
+function safeFieldPath(path: string) {
+  if (path.length > 80 || !/^(?:items\[0\]\.)?(?:(?:recipient(?:\.address)?|postageDetails|packages\[0\]|label)\.)?[a-z0-9]+$/i.test(path)) return false;
+  return Object.hasOwn(bookingFields, path.slice(path.lastIndexOf(".") + 1).toLowerCase());
+}
+
+function safeCode(value: unknown): string {
+  if (typeof value !== "string" && typeof value !== "number") return "";
+  const code = String(value);
+  return /^(?:\d{1,8}|BadRequest|ValidationError|ValidationFailed|Invalid(?:Postcode|ServiceCode|ServiceRegisterCode|ParcelWeight))$/.test(code) ? code : "";
+}
+
+function recognisedReason(message: string, configuredService?: string): string {
+  if (message.length > 4096) return "";
   const service = /^service code ([A-Z0-9]{1,10}) is not valid for (.+)$/i.exec(message);
   if (service && (service[1] === configuredService || ["NDB", "TPS24", "TPS48"].includes(service[1]))) {
-    reason = "Service code " + service[1] + " is not valid for " + (service[2].includes(",") ? "…, …" : "…");
-  } else if (/^(?:(?:recipient|delivery|sender) )?(?:phone number|telephone number|email address|postcode|post code|service code|service register code|shipping account name|parcel weight|parcel format) (?:is (?:required|missing|invalid|not valid|not available)|must be (?:provided|specified|valid))\.?$/i.test(message)) {
-    reason = message;
-  } else {
-    return "";
+    return "Service code " + service[1] + " is not valid for " + (service[2].includes(",") ? "…, …" : "…");
   }
-  const code = error.errorCode;
-  const parts = typeof code === "number" && Number.isSafeInteger(code) && /^\d{1,8}$/.test(String(code)) ? ["code " + code] : [];
-  const paths = new Set<string>();
-  for (const entry of Array.isArray(error.fields) ? error.fields : []) {
-    const path = record(entry)?.fieldName;
-    if (typeof path !== "string" || path.length > 80 ||
-        !/^(?:items\[0\]\.)?(?:(?:recipient(?:\.address)?|postageDetails|packages\[0\]|label)\.)?[a-z]+$/i.test(path)) continue;
-    const field = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
-    if (Object.hasOwn(bookingFields, field)) paths.add(path);
+  if (/^service (?:is )?not available on .+$/i.test(message)) return "Service not available on …";
+  if (/^weight too high for .+$/i.test(message)) return "Weight too high for …";
+  if (/^one or more validation errors occurred\.?$/i.test(message) ||
+      /^invalid (?:service register code|service code|shipping account name|postcode|parcel weight|parcel format)\.?$/i.test(message) ||
+      /^(?:(?:recipient|delivery|sender) )?(?:phone number|telephone number|email address|postcode|post code|service code|service register code|shipping account name|parcel weight|parcel format) (?:is (?:required|missing|invalid|not valid|not available)|must be (?:provided|specified|valid))\.?$/i.test(message)) {
+    return message;
   }
-  if (paths.size) parts.push("field " + [...paths].slice(0, 3).join(", "));
+  return "";
+}
+
+function carrierReason(error: Record<string, unknown>, configuredService?: string): string {
+  const reason = diagnosticText(error).map(message => recognisedReason(message.trim(), configuredService)).find(Boolean);
+  if (!reason) return "";
+  const code = safeCode(error.errorCode ?? error.code);
+  const parts = code ? ["code " + code] : [];
+  const paths = [...new Set(diagnosticFields(error).filter(safeFieldPath))].slice(0, 3);
+  if (paths.length) parts.push("field " + paths.join(", "));
   return reason + (parts.length ? " (" + parts.join(", ") + ")" : "");
 }
 
-function identifiableRejection(value: unknown) {
-  const item = record(value);
-  if (!item) return false;
-  return [item.message, item.errorMessage, item.code, item.errorCode].some(field =>
-    typeof field === "string" && field.trim().length > 0 || typeof field === "number" && Number.isSafeInteger(field)) ||
-    Array.isArray(item.fields) && item.fields.some(field => {
-      const name = record(field)?.fieldName;
-      return typeof name === "string" && !!name.trim();
-    });
-}
-
 function conflictingPurchaseEvidence(entry: Record<string, unknown>, reference: string | undefined) {
-  return ["order", "orders", "items", "orderIdentifier", "orderId", "createdOn", "trackingNumber", "label",
+  const status = typeof entry.status === "number" || typeof entry.status === "string" ? String(entry.status).toLowerCase() : "";
+  return entry.success === true || entry.isSuccess === true || ["200", "201", "202", "ok", "success", "accepted", "created"].includes(status) ||
+    (typeof entry.code === "string" && /^(?:OK|Success|Created|Accepted)$/i.test(entry.code)) ||
+    ["order", "orders", "items", "orderIdentifier", "orderId", "createdOn", "trackingNumber", "label",
     "createdOrders", "failedOrders", "successCount", "errorsCount"].some(field => Object.hasOwn(entry, field)) ||
     (Object.hasOwn(entry, "orderReference") && entry.orderReference !== reference);
+}
+
+// Separate recognising a refusal from displaying its wording. Every nested diagnostic must be accounted
+// for before enabling another purchase, even when an earlier entry already gives a useful explanation.
+function refusalEntries(value: unknown, reference: string | undefined): Record<string, unknown>[] | null {
+  const entries: Record<string, unknown>[] = [];
+  function collect(node: unknown, depth: number): boolean {
+    if (depth > 4 || entries.length >= 16) return false;
+    if (Array.isArray(node)) return node.length > 0 && node.length <= 12 && node.every(item => collect(item, depth + 1));
+    const entry: Record<string, unknown> | null = typeof node === "string" ? { message: node } : record(node);
+    if (!entry || conflictingPurchaseEvidence(entry, reference)) return false;
+    const messages = diagnosticText(entry);
+    if (messages.some(text => text.length > 4096 ||
+        [...text.matchAll(/\bWS-[A-Z0-9_-]+/gi)].some(match => match[0].toUpperCase() !== reference?.toUpperCase()))) return false;
+    // Bare success text is not a structured validation failure. Free text in a field map has independent field context.
+    if (typeof node === "string" && !recognisedReason(node.trim()) && !/\b(?:duplicate|already (?:exists|booked|created))\b/i.test(node)) return false;
+    const evidence = [entry.errorMessage, entry.message].some(text => typeof text === "string" && !!text.trim()) ||
+      messages.some(text => /\b(?:invalid|validation|error|errors|required|missing|rejected|refused|duplicate|too high|not available|bad request)\b/i.test(text)) ||
+      diagnosticFields(entry).some(safeFieldPath) ||
+      [entry.code, entry.errorCode].some(code => typeof code === "number" && Number.isSafeInteger(code) || typeof code === "string" && !!code.trim());
+    if (messages.length || evidence) entries.push(entry);
+    if (entry.errors === undefined) return evidence;
+    if (Array.isArray(entry.errors)) return collect(entry.errors, depth + 1);
+    const map = record(entry.errors);
+    if (!map) return false;
+    const fields = Object.entries(map);
+    if (!fields.length || fields.length > 12) return false;
+    return fields.every(([field, raw]) => {
+      const list = Array.isArray(raw) ? raw : [raw];
+      return safeFieldPath(field) && list.length > 0 && list.length <= 12 &&
+        list.every(message => typeof message === "string" && !!message.trim() && collect({ message, field }, depth + 1));
+    });
+  }
+  return collect(value, 0) && entries.length ? entries : null;
 }
 
 /** Only one explicitly failed order can explain the outcome of a one-order purchase. */
@@ -244,9 +291,20 @@ function exactRejection(result: Record<string, unknown>, reference: string | und
       (result.createdOrders !== undefined && !(Array.isArray(result.createdOrders) && !result.createdOrders.length)) ||
       !Array.isArray(result.failedOrders) || result.failedOrders.length !== 1) return null;
   const failure = record(result.failedOrders[0]);
-  const errors = failure?.errors;
-  return record(failure?.order)?.orderReference === reference && Array.isArray(errors) && errors.length &&
-    errors.length <= 12 && errors.every(error => identifiableRejection(error) && !conflictingPurchaseEvidence(error, reference) && !Object.hasOwn(error, "errors")) ? errors : null;
+  if (!failure || record(failure.order)?.orderReference !== reference || !Array.isArray(failure.errors)) return null;
+  // Validate envelope metadata separately from its expected echoed order and documented counts.
+  const { successCount, errorsCount, createdOrders, failedOrders, ...metadata } = result;
+  const { order, errors, ...failureMetadata } = failure;
+  if (Object.hasOwn(metadata, "errors") || conflictingPurchaseEvidence(metadata, reference) ||
+      conflictingPurchaseEvidence(failureMetadata, reference)) return null;
+  const entries = refusalEntries(errors, reference);
+  return entries && [failureMetadata, ...entries];
+}
+
+function messagesIndicateSuccess(error: Record<string, unknown>) {
+  return diagnosticText(error).some(text =>
+    /^(?:(?:20[012]|successfully) )?(?:accepted|created|booked|submitted|processed|success)(?:[.!]|$)/i.test(text.trim()) ||
+    /\b(?:accepted|created|booked|processed) (?:the |this |your )?(?:order|shipment|booking)\b/i.test(text));
 }
 
 function bookingRejection(errors: unknown[], status: number, serviceCode?: string): RoyalMailError {
@@ -257,24 +315,23 @@ function bookingRejection(errors: unknown[], status: number, serviceCode?: strin
     const error = record(raw);
     if (!error) continue;
     const code = error.errorCode ?? error.code;
-    if ((typeof code === "number" || typeof code === "string") && /^\d{1,8}$/.test(String(code))) codes.add(String(code));
-    const message = [error.errorMessage, error.message, error.details].filter(v => typeof v === "string").join(" ");
-    const fields = Array.isArray(error.fields) ? error.fields : [];
+    const trustedCode = safeCode(code);
+    if (trustedCode) codes.add(trustedCode);
+    const message = diagnosticText(error).join(" ");
+    const fields = diagnosticFields(error);
     if (message.length > 4096 || fields.length > 24) return invalidResponse(true);
     // Carriers use free text, symbolic codes and field paths to report duplicate references.
-    const issue = [message, typeof code === "string" ? code : "", ...fields.map(f => record(f)?.fieldName)]
+    const issue = [message, typeof code === "string" ? code : "", ...fields]
       .filter((v): v is string => typeof v === "string").join(" ")
       .replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").toLowerCase();
-    if (/\bduplicat(?:e|ed)\b|\b(?:order|booking|shipment) (?:was |is |has been |successfully )*(?:created|booked|accepted)\b/.test(issue) ||
+    if (messagesIndicateSuccess(error) || /\bduplicat(?:e|ed)\b|\b(?:order|booking|shipment) (?:was |is |has been |successfully )*(?:created|booked|accepted)\b/.test(issue) ||
         (/\b(?:order|reference|booking|shipment)\b/.test(issue) &&
          /\b(?:not unique|must be unique|already in use|already exists?|(?:already|previously) (?:been )?(?:created|used|submitted|processed|booked|taken|registered|assigned|received))\b/.test(issue))) {
       return new RoyalMailError("royal_mail_rejected", "Royal Mail may already have this booking. Checking the original order reference.", status, true);
     }
     const reason = carrierReason(error, serviceCode);
     if (reason) reasons.add(reason);
-    for (const entry of fields) {
-      const path = record(entry)?.fieldName;
-      if (typeof path !== "string") continue;
+    for (const path of fields) {
       const name = path.match(/[a-zA-Z][a-zA-Z0-9]*$/)?.[0].toLowerCase();
       if (name && Object.hasOwn(bookingFields,name)) guidance.add(bookingFields[name]);
     }
@@ -294,27 +351,22 @@ function bookingRejection(errors: unknown[], status: number, serviceCode?: strin
   }
   const instruction = [...guidance].slice(0, 3).join(" ") || "Check the order and configured service in Click & Drop.";
   const identifier = codes.size ? " Carrier code " + [...codes].slice(0, 3).join(", ") + "." : "";
-  const detail = reasons.size ? " Royal Mail said: " + [...reasons].slice(0, 3).join(". ") : "";
+  const detail = reasons.size ? " Royal Mail said: " + [...reasons].slice(0, 3).join("; ") : "";
   return new RoyalMailError("royal_mail_rejected", "Royal Mail rejected the label request. " + instruction + identifier + detail, status);
 }
 
 async function rejectedBooking(response: Response, reference?: string, serviceCode?: string) {
   try {
     const bytes = await readBytes(response, 32 * 1024, "Carrier rejection exceeds the diagnostic limit.");
-    const value = record(JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes)));
-    if (!value) return invalidResponse(true);
-    const envelope = ["failedOrders", "createdOrders", "successCount", "errorsCount"].some(field => Object.hasOwn(value, field));
-    if (envelope) {
-      const errors = exactRejection(value, reference);
-      return errors ? bookingRejection([value, ...errors], response.status, serviceCode) : invalidResponse(true);
+    const value: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes));
+    const result = record(value);
+    if (result && ["failedOrders", "createdOrders", "successCount", "errorsCount"].some(field => Object.hasOwn(result, field))) {
+      const errors = exactRejection(result, reference);
+      return errors ? bookingRejection([result, ...errors], response.status, serviceCode) : invalidResponse(true);
     }
-    // An HTTP status on its own cannot prove that this specific purchase failed.
-    const errors = value.errors;
-    if (errors !== undefined && (!Array.isArray(errors) || !errors.length || errors.length > 12 || !errors.every(identifiableRejection))) return invalidResponse(true);
-    const entries = [value, ...(Array.isArray(errors) ? errors : [])];
-    if (entries.some(entry => conflictingPurchaseEvidence(entry, reference)) || !entries.some(identifiableRejection) ||
-        (Array.isArray(errors) && errors.some(entry => Object.hasOwn(entry, "errors")))) return invalidResponse(true);
-    return bookingRejection(entries, response.status, serviceCode);
+    // HTTP status alone, a raw string body or an uncorrelated order cannot prove this purchase failed.
+    const entries = (result || Array.isArray(value)) && refusalEntries(value, reference);
+    return entries ? bookingRejection(entries, response.status, serviceCode) : invalidResponse(true);
   } catch {
     void response.body?.cancel().catch(() => {});
     return invalidResponse(true);
