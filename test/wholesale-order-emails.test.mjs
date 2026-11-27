@@ -204,8 +204,26 @@ test("when an order is marked dispatched the customer is told, once: shipped (wi
   assert.equal(await settle(1, 1500), 0);
 });
 
-test("older courier and case-variant delivery orders send shipped mail and never collection mail", async () => {
+test("staff-channel Royal Mail dispatch requires confirmed terms and sends shipped mail for legacy delivery labels", async () => {
   await customerEmails(true);
+  const link = "https://www.royalmail.com/track-your-item#/tracking-results/AB123456789GB";
+  const dispatch = (order) => call("PATCH", `/api/staff-orders/orders/${order.id}`,
+    { ifVersion: order.version, status: "Dispatched", trackingUrl: link });
+
+  const { order: unconfirmed } = await place();
+  assert.equal(await settle(1), 1);
+  take();
+  const held = await dispatch(await orderStatus(unconfirmed, "Ready"));
+  assert.equal(held.status, 409, held.text);
+  assert.equal(held.body.code, "royal_mail_payment_review");
+  assert.equal(srv.sql(`SELECT COUNT(*) AS n FROM wholesale_email_outbox WHERE event_key='dispatch:${unconfirmed.id}'`)[0].n, 0);
+  assert.equal(await settle(1, 1200), 0);
+
+  const customer = (await call("GET", "/api/admin/wholesale")).body.customers.find((row) => row.id === unconfirmed.customerId);
+  const approved = await call("PUT", `/api/admin/wholesale/customers/${customer.id}`,
+    { ...customer, ifVersion: customer.version, paymentTerms: "net-30" });
+  assert.equal(approved.status, 200, approved.text);
+
   for (const delivery of ["Courier", " delivery "]) {
     const { order } = await place();
     assert.equal(await settle(1), 1);
@@ -213,9 +231,7 @@ test("older courier and case-variant delivery orders send shipped mail and never
     srv.sql(`UPDATE wholesale_preview SET data=json_set(data,'$.delivery','${delivery}') WHERE kind='order' AND id='${order.id}'`);
     const ready = await orderStatus(order, "Ready");
     assert.equal(srv.sql(`SELECT COUNT(*) AS n FROM wholesale_email_outbox WHERE event_key='ready:${order.id}'`)[0].n, 0);
-    const link = "https://www.royalmail.com/track-your-item#/tracking-results/AB123456789GB";
-    const dispatched = await call("PATCH", `/api/staff-orders/orders/${order.id}`,
-      { ifVersion: ready.version, status: "Dispatched", trackingUrl: link });
+    const dispatched = await dispatch(ready);
     assert.equal(dispatched.status, 200, dispatched.text);
     assert.equal(await settle(1), 1);
     const [mail] = take();
@@ -224,6 +240,9 @@ test("older courier and case-variant delivery orders send shipped mail and never
     assert.ok(mail.text.includes(link));
     assert.doesNotMatch(mail.text, /COLLECTED|READY TO COLLECT/i);
   }
+  const restored = await call("PUT", `/api/admin/wholesale/customers/${customer.id}`,
+    { ...customer, ifVersion: approved.body.customer.version, paymentTerms: customer.paymentTerms.id });
+  assert.equal(restored.status, 200, restored.text);
   await customerEmails(false);
 });
 
