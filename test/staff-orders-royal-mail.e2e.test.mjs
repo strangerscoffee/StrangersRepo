@@ -384,6 +384,26 @@ async function adminDispatchPage(t, options, task, details) {
   return { page, action: page.locator(`[data-queue-order="${order.id}"] button`) };
 }
 
+test("staff and Admin open public-only Parcelforce tracking without offering an in-app scan", async t => {
+  const parcel = "PF123456789";
+  const url = "https://www.royalmail.com/track-your-item#/tracking-results/" + parcel;
+  const state = labelled({ ...eligible(), trackingEnabled: true });
+  Object.assign(state.shipment, { trackingNumber: parcel, trackingUrl: url });
+  const { dialog } = await staffPage(t, phone, route => route.fulfill({ json: state }));
+  await dialog.getByText("Follow this reference on Royal Mail Track & Trace.").waitFor();
+  assert.equal(await dialog.getByRole("link", { name: "Track with Royal Mail" }).getAttribute("href"), url);
+  await dialog.getByRole("button", { name: "Check shipment" }).waitFor();
+  assert.equal(await dialog.getByRole("button", { name: "Refresh tracking" }).count(), 0);
+
+  const { page, action } = await adminDispatchPage(t, desktop,
+    { stage: "print", stageLabel: "Print label", action: "shipping", actionLabel: "Print label" },
+    route => route.fulfill({ json: state }));
+  await action.click();
+  await page.getByText("Public tracking link", { exact: true }).waitFor();
+  assert.equal(await page.getByRole("link", { name: "Track on Royal Mail" }).getAttribute("href"), url);
+  await page.getByRole("button", { name: "Check shipment" }).waitFor();
+});
+
 for (const [name, options] of [["desktop", desktop], ["phone", phone]]) {
   test(`Admin dispatch queue opens settings and returns to a rejected booking on ${name}`, async t => {
     let attempts = 0;

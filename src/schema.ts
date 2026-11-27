@@ -621,6 +621,23 @@ const MIGRATIONS: Migration[] = [
       env.DB.prepare("CREATE INDEX IF NOT EXISTS wholesale_elsewhere_customer ON wholesale_invoiced_elsewhere(customer_id,environment)"),
     ]);
   } },
+  { id: 55, name: "Wholesale Royal Mail setup checks", run: async env => {
+    const shipments = "wholesale_royal_mail_shipments";
+    if (!(await columns(env, shipments)).has("booking_account_scope")) {
+      try { await env.DB.prepare("ALTER TABLE wholesale_royal_mail_shipments ADD COLUMN booking_account_scope TEXT").run(); }
+      catch (error) { if (!(await columns(env, shipments)).has("booking_account_scope")) throw error; }
+    }
+    await env.DB.batch([
+      env.DB.prepare(`CREATE INDEX IF NOT EXISTS wholesale_royal_mail_setup_evidence
+        ON wholesale_royal_mail_shipments(booking_connection, (tracking_number IS NULL), updated_at DESC, order_id)
+        WHERE provider_id > 0 AND review_required = 0 AND state IN ('labelled','dispatched')`),
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS wholesale_royal_mail_setup_checks (
+        id INTEGER PRIMARY KEY CHECK (id = 1), scope_key TEXT NOT NULL,
+        version INTEGER NOT NULL DEFAULT 0, scope TEXT, automated TEXT, manual TEXT NOT NULL DEFAULT '{}'
+      )`),
+      env.DB.prepare("INSERT OR IGNORE INTO wholesale_royal_mail_setup_checks (id, scope_key) VALUES (1, hex(randomblob(32)))"),
+    ]);
+  } },
 ];
 
 async function migrate(env: Env): Promise<void> {

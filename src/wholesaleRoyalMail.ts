@@ -1,9 +1,9 @@
 import { audit } from "./audit";
 import { isWholesaleDelivery } from "../public/wholesale/shipping.js";
 import { ApiError, type Env, invalid, json, readJson } from "./http";
-import { checkRoyalMailParcelService, createRoyalMailOrder, fetchRoyalMailLabel, fetchRoyalMailTracking, findRoyalMailOrder, RoyalMailError, royalMailTrackingNumber } from "./royalMail";
+import { checkRoyalMailParcelService, createRoyalMailOrder, fetchRoyalMailLabel, fetchRoyalMailTracking, findRoyalMailOrder, RoyalMailError, royalMailTrackingNumber, royalMailTrackingV2Number } from "./royalMail";
 import { loadRoyalMailConnections, readRoyalMailPolicy } from "./royalMailAppSettings";
-import { bookingConnection, bookingRecovery, checkUnconfirmedBooking, REFRESH_INTERVAL } from "./royalMailRecovery";
+import { bookingAccountScope, bookingConnection, bookingRecovery, checkUnconfirmedBooking, REFRESH_INTERVAL } from "./royalMailRecovery";
 import { requireStaffOrders } from "./staffOrdersAccess";
 import { staffLabelEligibility, staffLabelEligibilityGuard } from "./wholesale/staffLabelEligibility";
 import type { User } from "./auth";
@@ -99,18 +99,16 @@ export async function shippingFingerprint(order: Pick<Order, "locationSnapshot" 
   return btoa(String.fromCharCode(...new Uint8Array(digest)));
 }
 
-async function orderChanged(row: Shipment, order: ShippingOrder) {
+export async function royalMailOrderChanged(row: Pick<Shipment, "shipping_fingerprint" | "order_version">, order: ShippingOrder) {
   if (!canUseShipment(order)) return true;
   return row.shipping_fingerprint ? await shippingFingerprint(order) !== row.shipping_fingerprint : row.order_version !== order.version;
 }
 
-function trackingLink(number: string | null) {
-  return number ? `https://www.royalmail.com/track-your-item#/tracking-results/${encodeURIComponent(number)}` : null;
-}
+const { royalMailTrackingUrl: trackingLink, numberFromRoyalMailLink, isRoyalMailTrackingHost } = globalThis.SCWholesalePreparation;
 
 async function shipmentView(row: Shipment | null, order: ShippingOrder) {
   if (!row) return null;
-  const changed = await orderChanged(row, order);
+  const changed = await royalMailOrderChanged(row, order);
   const reviewRequired = !!row.review_required;
   return {
     state: row.state,
@@ -145,7 +143,7 @@ function handoverReview() {
 }
 
 function isRoyalMailLink(link: string) {
-  try { return /(?:^|\.)royalmail\.(?:com|net)$/.test(new URL(link).hostname.replace(/\.$/, "")); }
+  try { return isRoyalMailTrackingHost(new URL(link).hostname); }
   catch { return false; }
 }
 
@@ -174,10 +172,12 @@ export async function resolveWholesaleHandover(env: Env, order: ShippingOrder, l
     if (row?.state === "booking") throw handoverReview();
     return { trackingUrl: link, guard: exclude("state = 'booking'") };
   }
-  if (!row || row.state === "failed") return { trackingUrl: link, guard: combine(exclude("state <> 'failed'")), staffRoyalMail };
-  if (!row.provider_id || !labelReady(row) || row.review_required || await orderChanged(row, order)) throw handoverReview();
+  if (!row || row.state === "failed") {
+    return { trackingUrl: trackingLink(numberFromRoyalMailLink(link)) || link, guard: combine(exclude("state <> 'failed'")), staffRoyalMail };
+  }
+  if (!row.provider_id || !labelReady(row) || row.review_required || await royalMailOrderChanged(row, order)) throw handoverReview();
   const canonical = trackingLink(row.tracking_number);
-  if (link && link !== canonical) throw handoverReview();
+  if (link && (!canonical || numberFromRoyalMailLink(link) !== row.tracking_number)) throw handoverReview();
   const guard: ShippingGuard = {
     sql: ` AND EXISTS (SELECT 1 FROM wholesale_royal_mail_shipments WHERE order_id = ? AND operation = ?
       AND provider_id = ? AND tracking_number IS ? AND review_required = 0 AND state IN ('labelled','dispatched')
@@ -190,26 +190,26 @@ export async function resolveWholesaleHandover(env: Env, order: ShippingOrder, l
 }
 
 async function recordCarrier(env: Env, id: string, operation: string,
-  carrier: Awaited<ReturnType<typeof createRoyalMailOrder>>, requireReview = false, replaceTracking = false) {
+  carrier: Awaited<ReturnType<typeof createRoyalMailOrder>>, requireReview = false, replaceTracking = false, accountScope: string | null = null) {
   const result = await env.DB.prepare(`UPDATE wholesale_royal_mail_shipments SET state = CASE
     WHEN state = 'dispatched' OR (state = 'labelled' AND ? = 'created') THEN state ELSE ? END, provider_id = ?,
     label_downloaded_at = CASE WHEN ? IS NOT NULL AND tracking_number IS NOT ? THEN NULL ELSE label_downloaded_at END,
     carrier_status = CASE WHEN ? IS NOT NULL AND tracking_number IS NOT ? THEN NULL ELSE carrier_status END,
     carrier_event_at = CASE WHEN ? IS NOT NULL AND tracking_number IS NOT ? THEN NULL ELSE carrier_event_at END,
     review_required = MAX(review_required, ?), problem = NULL, recovery_due_at = NULL,
-    tracking_number = COALESCE(?,tracking_number), updated_at = ? WHERE order_id = ? AND operation = ?
+    booking_account_scope = COALESCE(?,booking_account_scope), tracking_number = COALESCE(?,tracking_number), updated_at = ? WHERE order_id = ? AND operation = ?
     AND (provider_id IS NULL OR provider_id = ?)
-    AND (tracking_number IS NULL OR ? IS NULL OR tracking_number = ? OR ? = 1)`)
+    AND (tracking_number IS NULL OR tracking_number = ? OR ? = 1)`)
     .bind(carrier.providerState, carrier.providerState, carrier.orderId,
       carrier.trackingNumber, carrier.trackingNumber,
       carrier.trackingNumber, carrier.trackingNumber, carrier.trackingNumber, carrier.trackingNumber,
-      Number(requireReview), carrier.trackingNumber, Date.now(), id, operation, carrier.orderId,
-      carrier.trackingNumber, carrier.trackingNumber, Number(replaceTracking)).run();
+      Number(requireReview), accountScope, carrier.trackingNumber, Date.now(), id, operation, carrier.orderId,
+      carrier.trackingNumber, Number(replaceTracking)).run();
   if (result.meta.changes) return true;
   await env.DB.prepare(`UPDATE wholesale_royal_mail_shipments SET review_required = 1, updated_at = ?
     WHERE order_id = ? AND operation = ? AND
-    (provider_id <> ? OR (tracking_number IS NOT NULL AND ? IS NOT NULL AND tracking_number <> ?))`)
-    .bind(Date.now(), id, operation, carrier.orderId, carrier.trackingNumber, carrier.trackingNumber).run();
+    (provider_id <> ? OR (tracking_number IS NOT NULL AND tracking_number IS NOT ?))`)
+    .bind(Date.now(), id, operation, carrier.orderId, carrier.trackingNumber).run();
   return false;
 }
 
@@ -264,6 +264,10 @@ export async function handleWholesaleRoyalMail(req: Request, env: Env, id: strin
     const eligibility = staff ? await staffLabelEligibility(env, latest) : null;
     const recipient = savedRoyalMailRecipient(latest);
     const view = await shipmentView(shipment, latest);
+    if (staff && view && (view.reviewRequired || view.orderChanged || (!eligibility?.eligible && latest.status === "Ready"))) {
+      view.trackingNumber = null;
+      view.trackingUrl = null;
+    }
     return json({ enabled: !!current.booking.key,
       bookingEnabled: latestPolicy.enabled === 1,
       bookingConfigured: current.bookingConfigured,
@@ -294,14 +298,14 @@ export async function handleWholesaleRoyalMail(req: Request, env: Env, id: strin
       throw new ApiError(409, "label_pending", "Complete the label in Click & Drop, then check the shipment before downloading it.");
     }
     const review = () => new ApiError(409, "label_needs_review", "Check the label in Click & Drop before using it for this order.");
-    if (existing.review_required || await orderChanged(existing, order)) throw review();
+    if (existing.review_required || await royalMailOrderChanged(existing, order)) throw review();
     if (staff) await checkStaffLabel(order);
     let pdf: Uint8Array;
     try {
       // Verify the pinned identifier in the active account before requesting private label bytes.
       const carrier = await findRoyalMailOrder(settings.key, id);
       if (!carrier || carrier.orderId !== existing.provider_id ||
-          existing.tracking_number && carrier.trackingNumber && carrier.trackingNumber !== existing.tracking_number) {
+          existing.tracking_number && carrier.trackingNumber !== existing.tracking_number) {
         await env.DB.prepare("UPDATE wholesale_royal_mail_shipments SET review_required = 1 WHERE order_id = ? AND operation = ?")
           .bind(id, existing.operation).run();
         throw review();
@@ -314,7 +318,7 @@ export async function handleWholesaleRoyalMail(req: Request, env: Env, id: strin
     }
     const [latest, shipment] = await Promise.all([get<Order>(env, "order", id), getShipment(env, id)]);
     if (!latest || !shipment || shipment.operation !== existing.operation || shipment.provider_id !== existing.provider_id ||
-        shipment.tracking_number !== existing.tracking_number || !labelReady(shipment) || shipment.review_required || await orderChanged(shipment, latest)) {
+        shipment.tracking_number !== existing.tracking_number || !labelReady(shipment) || shipment.review_required || await royalMailOrderChanged(shipment, latest)) {
       throw review();
     }
     if (staff) await checkStaffLabel(latest);
@@ -339,7 +343,7 @@ export async function handleWholesaleRoyalMail(req: Request, env: Env, id: strin
     if (version(body.ifVersion) !== order.version) throw new ApiError(409, "conflict", "Review the latest order before verifying the shipment.");
     const number = royalMailTrackingNumber(body.trackingNumber);
     if (body.confirmed !== true || !number) throw invalid("Confirm the label details and enter its Royal Mail tracking number.");
-    if (!existing?.review_required || !existing.provider_id || await orderChanged(existing, order)) throw handoverReview();
+    if (!existing?.review_required || !existing.provider_id || await royalMailOrderChanged(existing, order)) throw handoverReview();
     let carrier: Awaited<ReturnType<typeof findRoyalMailOrder>>;
     try { carrier = await findRoyalMailOrder(settings.key, id); }
     catch { throw new ApiError(503, "royal_mail_unavailable", "Royal Mail could not verify the shipment. Try again shortly."); }
@@ -382,9 +386,9 @@ export async function handleWholesaleRoyalMail(req: Request, env: Env, id: strin
           WHERE order_id = ? AND operation = ? AND provider_id = ?`).bind(checkedAt, id, existing.operation, existing.provider_id).run();
         return getView(200, "Royal Mail could not find the saved shipment. Check the original order in Click & Drop.");
       }
-      const number = carrier?.trackingNumber || existing.tracking_number;
+      const number = carrier.trackingNumber;
       let warning: string | undefined;
-      if (tracking && number) {
+      if (tracking && number && royalMailTrackingV2Number(number)) {
         try {
           const [snapshot] = await fetchRoyalMailTracking(tracking, [number]);
           if (snapshot?.status === "available" && (snapshot.lastEventName || snapshot.statusCategory)) {
@@ -452,7 +456,7 @@ export async function handleWholesaleRoyalMail(req: Request, env: Env, id: strin
     ) AND ${BOOKING_ALLOWED}${eligibilityGuard.sql}${accessGuard.sql} ON CONFLICT(order_id) DO UPDATE SET state=excluded.state, operation=excluded.operation,
       order_version=excluded.order_version, shipping_fingerprint=excluded.shipping_fingerprint,
       weight_grams=excluded.weight_grams, updated_at=excluded.updated_at, requested_at=0, checked_at=NULL, refresh_after=NULL, problem=NULL,
-      recovery_attempts=0, recovery_due_at=NULL, label_downloaded_at=NULL, booking_connection=excluded.booking_connection,
+      recovery_attempts=0, recovery_due_at=NULL, label_downloaded_at=NULL, booking_connection=excluded.booking_connection, booking_account_scope=NULL,
       destination_address=excluded.destination_address, destination_postcode=excluded.destination_postcode
     WHERE wholesale_royal_mail_shipments.state = 'failed' RETURNING operation`)
     .bind(id, operation, order.version, fingerprint, weight, Date.now(),
@@ -494,7 +498,9 @@ export async function handleWholesaleRoyalMail(req: Request, env: Env, id: strin
     outcome = "known";
     const latest = await get<Order>(env, "order", id);
     const latestChanged = !latest || !canUseShipment(latest) || await shippingFingerprint(latest) !== fingerprint;
-    await recordCarrier(env, id, operation, carrier, !!prior || latestChanged);
+    // Only a confirmed create with an explicitly named account proves which account owns this shipment.
+    const accountScope = !prior && shippingAccountName ? await bookingAccountScope(key, shippingAccountName) : null;
+    await recordCarrier(env, id, operation, carrier, !!prior || latestChanged, false, accountScope);
   } catch (error) {
     const state = outcome === "lookup" || (outcome === "requested" && error instanceof RoyalMailError && !error.uncertain) ? "failed" : "review";
     const settingsChanged = error instanceof ApiError && ["royal_mail_booking_paused", "royal_mail_booking_policy_changed"].includes(error.code);

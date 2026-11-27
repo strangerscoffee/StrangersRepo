@@ -26,6 +26,11 @@ export async function bookingConnection(key: string) {
   return btoa(String.fromCharCode(...new Uint8Array(digest)));
 }
 
+/** Bind evidence to the exact named shipping account without storing its name on the shipment. */
+export function bookingAccountScope(key: string, accountName: string) {
+  return bookingConnection(key + "\u0000" + accountName);
+}
+
 export function bookingRecovery(row: {
   state: string; provider_id: number | null; updated_at: number; checked_at: number | null;
   recovery_attempts: number; recovery_due_at: number | null;

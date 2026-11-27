@@ -270,6 +270,38 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     await setBookings(true);
   });
 
+  await t.test("Parcelforce references stay pinned through verification, PDF, handover and customer email", async () => {
+    const id = orderRef(99), parcel = "PF123456789";
+    const expectedLink = "https://www.royalmail.com/track-your-item#/tracking-results/" + parcel;
+    await seed(id);
+    assert.equal((await create(id)).status, 201);
+    records.set(id, { ...records.get(id), trackingNumber: parcel, printedOn: "2026-11-26T09:00:00Z" });
+    await refresh(id);
+    assert.equal((await read(id)).reviewRequired, true);
+    assert.equal((await call(shipPath(id) + "/label")).status, 409);
+    assert.equal((await call(shipPath(id) + "/verify", "POST", { ifVersion: 1, trackingNumber: parcel, confirmed: true })).status, 200);
+    await releaseRefresh(id);
+    const start = requests.length;
+    assert.equal((await refresh(id)).status, 200);
+    assert.equal(requests.length, start + 1, "exact Click & Drop lookup only");
+    assert.equal((await read(id)).trackingUrl, expectedLink);
+    assert.equal((await call(shipPath(id) + "/label")).status, 200);
+    const matched = records.get(id);
+    records.set(id, { ...matched, trackingNumber: null });
+    await releaseRefresh(id);
+    await refresh(id);
+    assert.equal((await read(id)).reviewRequired, true, "temporarily missing carrier reference must not release the pinned label");
+    assert.equal((await call(shipPath(id) + "/label")).status, 409);
+    records.set(id, matched);
+    assert.equal((await call(shipPath(id) + "/verify", "POST", { ifVersion: 1, trackingNumber: parcel, confirmed: true })).status, 200);
+    assert.equal((await dispatch(id, 1, "https://www.parcelforce.com/track-trace?trackNumber=wrong")).status, 409);
+    assert.equal((await dispatch(id, 1, "https://www.parcelforce.com/track-trace?trackNumber=" + parcel + "&next=https://example.test")).status, 409);
+    const result = await dispatch(id, 1, "http://www.parcelforce.com/portal/pw/track?trackNumber=" + parcel);
+    assert.equal((await result.json()).order.trackingUrl, expectedLink);
+    const email = await db.prepare("SELECT payload FROM wholesale_email_outbox WHERE order_id=?").bind(id).first();
+    assert.ok(JSON.parse(email.payload).mail.text.includes(expectedLink));
+  });
+
   await t.test("carrier conflicts require exact verification and cannot send stale tracking", async () => {
     const id = orderRef(2);
     await seed(id);
@@ -626,7 +658,10 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     assert.equal(await label.text(), pdf);
     assert.equal(posts(), beforePosts + 1, "repeat booking and label download do not buy again");
     await accountStatus("On hold");
-    assert.equal((await (await staff(paid)).json()).canDownloadLabel, false);
+    const heldShipment = await (await staff(paid)).json();
+    assert.equal(heldShipment.canDownloadLabel, false);
+    assert.equal(heldShipment.shipment.trackingNumber, null);
+    assert.equal(heldShipment.shipment.trackingUrl, null);
     assert.equal((await staff(paid, "GET", undefined, "/label")).status, 409);
     const handover = (id, trackingUrl = "") => call("/api/staff-orders/orders/" + id, "PATCH",
       { ifVersion: 1, status: "Dispatched", trackingUrl }, diary, staffCookie);
@@ -634,6 +669,7 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     assert.equal((await (await handover(thirdParty, "https://www.royalmail.com/track-your-item#/tracking-results/" + number)).json()).code,
       "royal_mail_account_on_hold");
     assert.equal((await (await handover(thirdParty, "https://tracking.royalmail.net./" + number)).json()).code, "royal_mail_account_on_hold");
+    assert.equal((await (await handover(thirdParty, "https://www.parcelforce.com/track-trace?trackNumber=123456789")).json()).code, "royal_mail_account_on_hold");
     assert.equal(await db.prepare("SELECT state FROM wholesale_email_outbox WHERE order_id=?").bind(paid).first(), null);
     assert.equal((await handover(thirdParty, "https://example.test/other-courier")).status, 200);
     await accountStatus("Active");

@@ -352,20 +352,7 @@
  function canViewShipping(row){
   return /^(?:delivery|courier)$/i.test(row?.delivery||'')&&row.status!=='Cancelled'&&/^WS-[A-F0-9]{32}$/.test(row.id);
  }
- function royalMailTrackingNumber(value){
-  const number=typeof value==='string'?value.trim().toUpperCase().replace(/[\s-]+/g,''):'';
-  return /^(?:[A-Z]{2}[0-9]{9}[A-Z]{2}|[0-9A-F]{21})$/.test(number)?number:'';
- }
- function royalMailLink(number){
-  return number?'https://www.royalmail.com/track-your-item#/tracking-results/'+number:'';
- }
- function numberFromRoyalMailLink(value){
-  try{
-   const url=new URL(value);
-   if(url.protocol!=='https:'||url.username||url.password||url.port||!['www.royalmail.com','royalmail.com'].includes(url.hostname)||!/^\/track-your-item\/?$/.test(url.pathname))return '';
-   return royalMailTrackingNumber(/^#\/tracking-results\/([A-Za-z0-9]+)$/.exec(url.hash)?.[1]);
-  }catch{return '';}
- }
+ const {royalMailTrackingNumber,royalMailTrackingV2Number,royalMailTrackingUrl:royalMailLink,numberFromRoyalMailLink,isRoyalMailTrackingHost}=SCWholesalePreparation;
  function shippingButton(row){
   return canViewShipping(row)?el('button',{type:'button',class:'btn sm soft','data-royal-mail':'',onclick:()=>openShipping(row.id)},'Royal Mail'):null;
  }
@@ -528,7 +515,7 @@
   const status=typeof shipment.carrierStatus==='string'?shipment.carrierStatus:'';
   const eventAt=typeof shipment.carrierEventAt==='string'?Date.parse(shipment.carrierEventAt):NaN;
   const hasScan=!!status&&Number.isFinite(eventAt);
-  const message=status||(result.trackingEnabled?'No parcel scan recorded yet.':'See parcel scans on the Royal Mail website.');
+  const message=status||(!royalMailTrackingV2Number(number)?'Follow this reference on Royal Mail Track & Trace.':result.trackingEnabled?'No parcel scan recorded yet.':'See parcel scans on the Royal Mail website.');
   return el('div',{class:'royal-mail-scan'},
    el('span',{class:'royal-mail-label'},hasScan?'Latest carrier scan':'Carrier tracking'),
    el(hasScan?'b':'p',{},message),
@@ -543,7 +530,7 @@
   const onHold=shippingOnHold(result);
   const number=labelNeedsReview||onHold?'':royalMailTrackingNumber(shipment?.trackingNumber);
   if(body.contains(document.activeElement)&&document.activeElement.dataset.royalMailAction)review.focusedAction=document.activeElement.dataset.royalMailAction;
-  const tracking=royalMailLink(number),pending=shipment?.state==='booking'||shipment?.state==='review'||shipment?.reviewRequired;
+  const tracking=['labelled','dispatched'].includes(shipment?.state)?royalMailLink(number):null,pending=shipment?.state==='booking'||shipment?.state==='review'||shipment?.reviewRequired;
   const stateLabels={booking:'Awaiting carrier confirmation',review:'Carrier confirmation pending',created:'Shipment booked',labelled:'Label ready',dispatched:'Marked dispatched in Royal Mail',failed:'Booking needs attention'};
   const recoveryHeadline=shipment?.recovery?.status==='checking'?'Checking with Royal Mail':shipment?.recovery?.status==='needs_admin'?'Needs attention':'';
   const shipmentHeadline=shipment?(Object.hasOwn(stateLabels,shipment.state)?stateLabels[shipment.state]:'Shipment linked'):
@@ -551,7 +538,7 @@
   const headline=labelNeedsReview?'Label needs review':onHold?'Label on hold':recoveryHeadline||shipmentHeadline;
   const labelReady=result?.canDownloadLabel??(shipment?.orderId&&!labelNeedsReview&&['labelled','dispatched'].includes(shipment.state));
   const canRefresh=result?.enabled&&shipment&&shipment.state!=='failed';
-  const refreshLabel=pending?'Check request':number&&result.trackingEnabled?'Refresh tracking':'Check shipment';
+  const refreshLabel=pending?'Check request':royalMailTrackingV2Number(number)&&result.trackingEnabled?'Refresh tracking':'Check shipment';
   const request=labelRequests.get(review.row.id),needsCheck=!!request&&!review.busy&&!stale;
   const guidance=stale||needsCheck||labelNeedsReview&&!onHold?'':shippingGuidance(review);
   const retry=!result&&review.error;
@@ -698,12 +685,11 @@
   }catch{return null;}
  }
  function isRoyalMailUrl(url){
-  const host=url?.hostname?.replace(/\.$/,'');
-  return ['royalmail.com','royalmail.net'].some(domain=>host===domain||host?.endsWith('.'+domain));
+  return isRoyalMailTrackingHost(url?.hostname);
  }
  function dispatchRoyalMail(review,tracking){
   const original=numberFromRoyalMailLink(tracking.value);
-  const input=el('input',{type:'text',id:'deskRoyalMailTracking',autocomplete:'off',autocapitalize:'characters',maxlength:'45',value:original,placeholder:'e.g. AB123456789GB','aria-describedby':'deskRoyalMailHint'});
+  const input=el('input',{type:'text',id:'deskRoyalMailTracking',autocomplete:'off',autocapitalize:'characters',maxlength:'45',value:original||'',placeholder:'e.g. AB123456789GB','aria-describedby':'deskRoyalMailHint'});
   const hint=el('small',{id:'deskRoyalMailHint',class:'field-hint',role:'status'},original?'Royal Mail tracking will be included with this dispatch.':'Enter a Royal Mail number to add the customer’s tracking link.');
   const use=el('button',{type:'button',class:'btn soft sm',hidden:true,onclick:()=>sync(true)},'Use Royal Mail link');
   const issue=el('p',{class:'dispatch-shipping-warning',role:'status',hidden:true});
@@ -749,7 +735,7 @@
    return !$('confirmDeskDispatch').disabled;
   }
   function sync(force=false){
-   const number=royalMailTrackingNumber(input.value),link=royalMailLink(number);
+   const number=royalMailTrackingNumber(input.value),link=royalMailLink(number)||'';
    const blocked=bookingBlocked();
    if(blocked&&!trackingEdited&&tracking.value===automaticLink)tracking.value=automaticLink='';
    else if(!blocked&&(force||(!trackingEdited&&(!tracking.value||tracking.value===automaticLink)))){

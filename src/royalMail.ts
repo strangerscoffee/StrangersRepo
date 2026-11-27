@@ -1,3 +1,4 @@
+import "../public/shared/wholesale-preparation.js";
 import { readBytes } from "./http";
 
 const CLICK_DROP = "https://api.parcel.royalmail.com/api/v1";
@@ -9,7 +10,7 @@ const PDF_LIMIT = 4 * 1024 * 1024;
 const MISSING_ORDER = Symbol("missing-order");
 const REFERENCE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$/;
 const UK_POSTCODE = /^(?:GIR0AA|[A-Z]{1,2}\d[\dA-Z]?\d[A-Z]{2})$/;
-const TRACKING_NUMBER = /^(?:[A-Z]{2}\d{9}[A-Z]{2}|[0-9A-F]{21})$/;
+export const { royalMailTrackingNumber, royalMailTrackingV2Number } = globalThis.SCWholesalePreparation;
 const PROVIDER_DATE = /^(20\d{2}-\d{2}-\d{2})T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/i;
 
 type RoyalMailCode =
@@ -353,12 +354,6 @@ function inlineLabel(value: unknown): boolean {
   }
 }
 
-export function royalMailTrackingNumber(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const number = value.trim().toUpperCase();
-  return TRACKING_NUMBER.test(number) ? number : null;
-}
-
 function publicOrder(value: unknown, reference: string, posting = false): RoyalMailOrder {
   const item = record(value);
   if (!item || item.orderReference !== reference || typeof item.orderIdentifier !== "number" ||
@@ -370,7 +365,8 @@ function publicOrder(value: unknown, reference: string, posting = false): RoyalM
   const packageItem = record(packages[0]);
   const orderTracking = royalMailTrackingNumber(item.trackingNumber);
   const packageTracking = royalMailTrackingNumber(packageItem?.trackingNumber);
-  if (orderTracking && packageTracking && orderTracking.length === packageTracking.length && orderTracking !== packageTracking) {
+  if (orderTracking && packageTracking && orderTracking !== packageTracking &&
+      (orderTracking.length === packageTracking.length || !royalMailTrackingV2Number(orderTracking) || !royalMailTrackingV2Number(packageTracking))) {
     throw invalidResponse(posting);
   }
   const labelled = dateValue(item.printedOn) || dateValue(item.manifestedOn) || (posting && inlineLabel(item.label));
@@ -433,7 +429,7 @@ function trackingText(value: unknown, maxLength: number): string | null {
 
 function trackingSummary(value: unknown): RoyalMailTrackingSummary {
   const item = record(value);
-  const trackingNumber = royalMailTrackingNumber(item?.mailPieceId);
+  const trackingNumber = royalMailTrackingV2Number(item?.mailPieceId);
   if (!trackingNumber || (item?.status !== "200" && item?.status !== "404")) throw invalidResponse();
   const summary = item.status === "200" ? record(item.summary) : null;
   const eventAt = summary?.lastEventDateTime;
@@ -459,7 +455,7 @@ export async function fetchRoyalMailTracking(
   }
   const numbers = new Set<string>();
   for (const reference of trackingNumbers) {
-    const number = royalMailTrackingNumber(reference);
+    const number = royalMailTrackingV2Number(reference);
     if (!number) invalidShipment("Check the Royal Mail tracking references.");
     numbers.add(number);
   }
@@ -500,6 +496,40 @@ export async function fetchRoyalMailTracking(
   return [...numbers].map(number => results.get(number)!);
 }
 
+/** Names must match exactly when passed to Click & Drop for booking. */
+export async function listRoyalMailShippingAccounts(key: string, fetcher = fetch): Promise<string[]> {
+  const accounts = await clickDrop(key, "/carriers", {}, fetcher);
+  if (!Array.isArray(accounts)) throw invalidResponse();
+  return accounts.map(account => {
+    const name = record(account)?.shippingAccountName;
+    if (typeof name !== "string" || !name.trim() || name.length > 50 || /[\u0000-\u001f\u007f]/.test(name)) throw invalidResponse();
+    return name;
+  });
+}
+
+export async function listRoyalMailParcelServices(
+  key: string, serviceCode: string, shippingAccountName: string | undefined,
+  postcode: string, weightGrams: number, fetcher = fetch,
+): Promise<{ accounts: string[]; matches: number }> {
+  const query = new URLSearchParams({ destinationCountryCode: "GBR", destinationPostcode: postcode, packagingFormat: "Parcel", packageWeight: String(weightGrams) });
+  if (shippingAccountName) query.set("shippingAccountName", shippingAccountName);
+  const groups = await clickDrop(key, "/services?" + query, {}, fetcher);
+  if (!Array.isArray(groups)) throw invalidResponse();
+  let matches = 0;
+  const accounts = groups.map(item => {
+    const group = record(item);
+    if (!group || typeof group.shippingAccountName !== "string" || !Array.isArray(group.services)) throw invalidResponse();
+    if (shippingAccountName && group.shippingAccountName !== shippingAccountName) throw invalidResponse();
+    for (const item of group.services) {
+      const entry = record(item);
+      if (!entry || typeof entry.serviceCode !== "string" || !entry.serviceCode.trim()) throw invalidResponse();
+      if (entry.serviceCode.toUpperCase() === serviceCode) matches++;
+    }
+    return group.shippingAccountName;
+  });
+  return { accounts, matches };
+}
+
 /** Click & Drop service discovery is read-only; it does not validate a register or OBA label entitlement. */
 export async function checkRoyalMailParcelService(
   key: string, service: { serviceCode: string; serviceRegisterCode?: string; shippingAccountName?: string },
@@ -507,31 +537,17 @@ export async function checkRoyalMailParcelService(
 ): Promise<{ bookingService: string; available: boolean | null; message: string }> {
   const { serviceCode, serviceRegisterCode, shippingAccountName } = service;
   const result = (available: boolean | null, message: string) => ({ bookingService: serviceCode, available, message });
-  const query = new URLSearchParams({ destinationCountryCode: "GBR", destinationPostcode: postcode, packagingFormat: "Parcel", packageWeight: String(weightGrams) });
-  if (shippingAccountName) query.set("shippingAccountName", shippingAccountName);
   const ambiguous = () => result(null, "This Click & Drop account has multiple shipping accounts. Set the shipping account name in Royal Mail settings and check again.");
   try {
-    const groups = await clickDrop(key, "/services?" + query, {}, fetcher);
-    if (!Array.isArray(groups)) throw invalidResponse();
-    let matches = 0;
-    for (const item of groups) {
-      const group = record(item);
-      if (!group || typeof group.shippingAccountName !== "string" || !Array.isArray(group.services)) throw invalidResponse();
-      if (shippingAccountName && group.shippingAccountName !== shippingAccountName) throw invalidResponse();
-      for (const item of group.services) {
-        const entry = record(item);
-        if (!entry || typeof entry.serviceCode !== "string" || !entry.serviceCode.trim()) throw invalidResponse();
-        if (entry.serviceCode.toUpperCase() === serviceCode) matches++;
-      }
-    }
+    const { accounts: serviceAccounts, matches } = await listRoyalMailParcelServices(key, serviceCode, shippingAccountName, postcode, weightGrams, fetcher);
     if (!matches) return result(false, `Royal Mail did not list ${serviceCode} for this postcode, packed weight and parcel format. Check the service and shipping account in Royal Mail settings.`);
     if (!shippingAccountName) {
-      if (groups.length > 1) return ambiguous();
+      if (serviceAccounts.length > 1) return ambiguous();
       // Filtered /services may omit other accounts. Order creation requires a name if multiple accounts are configured.
-      const accounts = await clickDrop(key, "/carriers", {}, fetcher);
-      if (!Array.isArray(accounts) || !accounts.length || accounts.some(account => typeof record(account)?.shippingAccountName !== "string")) throw invalidResponse();
+      const accounts = await listRoyalMailShippingAccounts(key, fetcher);
+      if (!accounts.length) throw invalidResponse();
       if (accounts.length > 1) return ambiguous();
-      if (accounts[0].shippingAccountName !== groups[0]?.shippingAccountName) throw invalidResponse();
+      if (accounts[0] !== serviceAccounts[0]) throw invalidResponse();
     }
     if (serviceRegisterCode) return result(null, `Royal Mail lists ${serviceCode} for this parcel. The service list does not confirm register ${serviceRegisterCode}. Check it in Click & Drop.`);
     if (matches > 1) return result(null, `Royal Mail lists several entries for ${serviceCode}. Check the account and service register in Click & Drop.`);

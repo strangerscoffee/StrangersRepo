@@ -9,7 +9,7 @@ const { outputFiles } = await build({
   bundle: true, write: false, format: 'esm', platform: 'browser',
 });
 const {
-  RoyalMailError, checkRoyalMailParcelService, createRoyalMailOrder, findRoyalMailOrder, fetchRoyalMailLabel, royalMailTrackingNumber, fetchRoyalMailTracking,
+  RoyalMailError, checkRoyalMailParcelService, createRoyalMailOrder, findRoyalMailOrder, fetchRoyalMailLabel, royalMailTrackingNumber, royalMailTrackingV2Number, fetchRoyalMailTracking,
 } = await import('data:text/javascript;base64,' + Buffer.from(outputFiles[0].contents).toString('base64'));
 
 const key = 'fixture-private-click-and-drop-key';
@@ -171,6 +171,25 @@ test('only a confirmed missing or exact unique lookup can be used for reconcilia
   assert.equal(royalMailTrackingNumber('ur041761424qi'), 'UR041761424QI');
   assert.equal(royalMailTrackingNumber('AB123456789GB_CON'), null);
   assert.equal(royalMailTrackingNumber('https://example.com'), null);
+});
+
+test('recognises Parcelforce public references without sending them to Tracking V2', async () => {
+  const references = ['123456789', 'pF123456789', 'P123456789012', 'PF123456789012', '1234567890123456', 'PF0123456789012345678'];
+  const credentials = { clientId: 'test-id', clientSecret: 'test-secret', acceptTerms: true };
+  for (const raw of references) {
+    assert.equal(royalMailTrackingNumber(raw), raw.toUpperCase());
+    assert.equal(royalMailTrackingV2Number(raw), null);
+    const response = [{ ...providerOrder, packages: [{ trackingNumber: raw }] }];
+    const order = await findRoyalMailOrder(key, input.reference, () => Response.json(response));
+    assert.equal(order.trackingNumber, raw.toUpperCase());
+    await assert.rejects(fetchRoyalMailTracking(credentials, [raw], () => assert.fail('public-only reference sent to V2')),
+      outcome('royal_mail_invalid_shipment', false));
+  }
+  for (const bad of ['notfound0/123', 'NOTFOUNDX', '1234567890', '123456789012345', '1234567890_CON', 'PF12345?6789', 'ORDER READY 2', 'PF1234567ß']) {
+    assert.equal(royalMailTrackingNumber(bad), null, bad);
+  }
+  const ambiguous = [{ ...providerOrder, trackingNumber: '123456789' }];
+  await assert.rejects(findRoyalMailOrder(key, input.reference, () => Response.json(ambiguous)), outcome('royal_mail_invalid_response', false));
 });
 
 test('retrieves a bounded, recognisable PDF by ID without sending another shipment', async () => {

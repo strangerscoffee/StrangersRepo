@@ -7,6 +7,7 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
   const printUI = install(window.WholesalePrint, { api, html, raw, svg, put, openSheet, closeSheet, toast });
   const insightsUI = install(window.WholesaleInsights, { api, html, raw, svg, put, openSheet, closeSheet, reload, toast });
   const tabsUI = install(window.WholesaleTabs, { api, html, raw, svg, put, openSheet, closeSheet, reload, toast });
+  const setupChecks = install(window.WholesaleRoyalMailChecks, { api, html, raw, svg, put, openSheet, closeSheet });
   const unavailable = (feature, inSheet = false) => html`<div class="group glass" role="alert"><div class="item has-action"><span class="tx">${feature} couldn’t start.</span><button class="btn soft" type="button" ${raw(inSheet ? 'data-sheet="reload-admin"' : 'data-act="reload-admin"')}>Reload Admin</button></div></div>`;
   // Picking orders to print: while on, tapping an order ticks it instead of opening it.
   let picking = false; const picked = new Set();
@@ -51,7 +52,7 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
   });
   let orderPages = 1, customerPages = 1, loadingMore = false;
   let royalMailConfig = null, royalMailBusy = false, royalMailNeedsReload = false, royalMailIssue = "", royalMailFeedback = "", royalMailGeneration = 0;
-  let dispatchQueue = null, dispatchHost = null, dispatchStage = "all", shippingSettingsOpen = false;
+  let dispatchQueue = null, dispatchHost = null, dispatchStage = "all", shippingView = "queue";
   const sectionGroups = [
     ["Order management", [["orders", "Orders", "doc"], ["customers", "Customers", "people"], ["tabs", "Tabs", "db"], ["royal-mail", "Royal Mail", "tune"]]],
     ["Catalogue and reporting", [["catalogue", "Coffee catalogue", "coffee"], ["custom", "Custom coffees", "pen"], ["invoices", "Invoicing", "doc"], ["insights", "Insights", "pulse"]]],
@@ -78,8 +79,11 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
     }, opener);
   }
   function syncNavigation(desktop, active = true) {
-    if (!active) { releaseDispatchQueue(); return; }
-    const queueHost = tab === "royal-mail" && !shippingSettingsOpen ? $("#wDispatchQueue") : null;
+    if (!active) { releaseDispatchQueue(); setupChecks?.unmount(); return; }
+    const checksHost = tab === "royal-mail" && shippingView === "checks" ? $("#wRoyalMailChecks") : null;
+    if (checksHost) setupChecks?.mount(checksHost);
+    else setupChecks?.unmount();
+    const queueHost = tab === "royal-mail" && shippingView === "queue" ? $("#wDispatchQueue") : null;
     if (dispatchHost !== queueHost) {
       releaseDispatchQueue();
       if (queueHost && window.SCDispatchQueue) {
@@ -111,19 +115,19 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
       </div>`);
   }
   function workspaceState() {
-    return { tab, status, approval, query, orderQueue, orderPages, customerPages, previewOrder, packingOrder, hideOrderPreview, dispatchScope, orderSort, sortChosen, shippingSettingsOpen, dispatchStage: dispatchQueue?.stage ?? dispatchStage, invoices: invoiceUI?.state(), insights: insightsUI?.state() };
+    return { tab, status, approval, query, orderQueue, orderPages, customerPages, previewOrder, packingOrder, hideOrderPreview, dispatchScope, orderSort, sortChosen, shippingView, dispatchStage: dispatchQueue?.stage ?? dispatchStage, invoices: invoiceUI?.state(), insights: insightsUI?.state() };
   }
   function restoreWorkspace(saved) {
     if (!saved || !sections.some(([id]) => id === saved.tab)) return;
     clearTimeout(timer);
     ({ tab, status, approval, query, orderQueue, orderPages, customerPages, previewOrder, packingOrder, hideOrderPreview, dispatchScope, orderSort, sortChosen = false } = saved);
-    releaseDispatchQueue(); shippingSettingsOpen = saved.shippingSettingsOpen === true; dispatchStage = saved.dispatchStage || "all";
+    releaseDispatchQueue(); shippingView = ["settings", "checks"].includes(saved.shippingView) ? saved.shippingView : saved.shippingSettingsOpen ? "settings" : "queue"; dispatchStage = saved.dispatchStage || "all";
     invoiceUI?.restore(saved.invoices); insightsUI?.restore(saved.insights);
   }
 
   function selectSection(id, { pending = false, queue = "", resetStatus = false } = {}) {
     if (!sections.some(([value]) => value === id)) return false;
-    if (tab !== id) { releaseDispatchQueue(); shippingSettingsOpen = false; dispatchStage = "all"; }
+    if (tab !== id) { releaseDispatchQueue(); shippingView = "queue"; dispatchStage = "all"; }
     clearTimeout(timer); tab = id; query = ""; previewOrder = packingOrder = ""; dispatchScope = "all"; invoiceUI?.resetList(); approval = pending && id === "customers" ? "pending" : "all"; orderPages = customerPages = 1;
     orderQueue = id === "orders" && ["prepare", "ready", "due-prepare", "due-ready"].includes(queue) ? queue : "";
     if (orderQueue || resetStatus) status = "all";
@@ -226,13 +230,13 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
     }
     if (section === "custom") snapshot.customerNames = (await api("GET", "/api/admin/wholesale/customers/names")).customers;
     if (section === "customers") snapshot.invites = (await api("GET", "/api/admin/wholesale/customers/invites")).invites;
-    if (section === "royal-mail" && shippingSettingsOpen && !royalMailBusy) {
+    if (section === "royal-mail" && shippingView === "settings" && !royalMailBusy) {
       try { snapshot.royalMail = checkedRoyalMailConfig(await api("GET", "/api/admin/wholesale/royal-mail")); }
       catch (error) { snapshot.royalMailIssue = error.message; }
     }
     if (current !== sequence) return html``;
     data = snapshot;
-    if (section === "royal-mail" && shippingSettingsOpen && !royalMailBusy && settingsGeneration === royalMailGeneration) {
+    if (section === "royal-mail" && shippingView === "settings" && !royalMailBusy && settingsGeneration === royalMailGeneration) {
       if (snapshot.royalMail?.version !== royalMailConfig?.version) royalMailFeedback = "";
       royalMailConfig = snapshot.royalMail || null; royalMailIssue = snapshot.royalMailIssue || ""; royalMailNeedsReload = !!royalMailIssue;
     }
@@ -242,7 +246,7 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
       : section === "invoices" ? (invoiceUI ? await invoiceUI.view() : unavailable("Invoicing"))
       : section === "insights" ? (insightsUI ? await insightsUI.view() : unavailable("Insights"))
       : section === "tabs" ? (tabsUI ? await tabsUI.view() : unavailable("Customer tabs"))
-      : section === "royal-mail" ? (shippingSettingsOpen ? royalMailSettings() : window.SCDispatchQueue ? html`<div id="wDispatchQueue"></div>` : unavailable("Dispatch queue"))
+      : section === "royal-mail" ? shippingPanel()
       : catalogue();
     if (current !== sequence) return html``;
     return workspace(section, content);
@@ -255,17 +259,18 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
       orders: "Review packing, postage and dispatch.",
       customers: "Manage ordering access, terms and saved delivery locations.",
       tabs: "Review accumulated bags and clear customer tabs.",
-      "royal-mail": shippingSettingsOpen ? "Manage postage bookings and tracking." : "Prepare labels, review exceptions and confirm handover.",
+      "royal-mail": shippingView === "checks" ? "Verify the carrier connection and record dispatch checks." : shippingView === "settings" ? "Manage postage bookings and tracking." : "Prepare labels, review exceptions and confirm handover.",
       catalogue: "Manage coffees, bag sizes and availability.",
       custom: "Manage coffees reserved for selected wholesale customers.",
       insights: "Review wholesale sales and plan upcoming roasts.",
     };
     const heading = section === "orders" ? "Wholesale orders" : sections.find(([id]) => id === section)[1];
     const action = sensitive ? privacyToggle() : section === "orders" ? html`<button class="btn soft w-royal-mail-link" type="button" data-act="wh-tab" data-id="royal-mail">Royal Mail</button>`
-      : section === "royal-mail" ? html`<button class="btn soft w-royal-mail-link" type="button" data-act="wh-royal-mail-view" data-id="${shippingSettingsOpen ? "queue" : "settings"}">${svg(shippingSettingsOpen ? "grid" : "tune")}${shippingSettingsOpen ? "Dispatch queue" : "Shipping settings"}</button>` : undefined;
+      : undefined;
+    const shippingNav = section === "royal-mail" ? html`<nav class="w-rm-nav" aria-label="Royal Mail workspace">${[["queue", "Dispatch queue"], ["settings", "Shipping settings"], ["checks", "Setup checks"]].map(([id, label]) => html`<button type="button" data-act="wh-royal-mail-view" data-id="${id}" aria-current="${shippingView === id ? "page" : "false"}">${label}</button>`)}</nav>` : "";
     return html`<div class="w-workspace w-operations${section === "invoices" ? " w-invoicing" : ""}">${head(heading, captions[section], action)}
       <div id="wSectionsHost" class="w-sections-host" hidden></div>
-      <div class="w-content${sensitive ? " w-sensitive" : ""}">${content}</div></div>`;
+      <div class="w-content${sensitive ? " w-sensitive" : ""}">${shippingNav}${content}</div></div>`;
   }
 
   function releaseDispatchQueue() {
@@ -275,12 +280,12 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
     }
     dispatchQueue = dispatchHost = null;
   }
-  async function showShippingSettings(open) {
-    if (tab !== "royal-mail" || royalMailBusy) return;
+  async function showShippingView(view) {
+    if (tab !== "royal-mail" || royalMailBusy || shippingView === view || !["queue", "settings", "checks"].includes(view)) return;
     releaseDispatchQueue();
-    shippingSettingsOpen = open;
+    shippingView = view;
     await reload();
-    $('[data-act="wh-royal-mail-view"]')?.focus({ preventScroll: true });
+    $('[data-act="wh-royal-mail-view"][aria-current="page"]')?.focus({ preventScroll: true });
   }
   async function returnToDispatchQueue(id) {
     closeSheet();
@@ -292,7 +297,7 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
     target?.focus({ preventScroll: true });
   }
   async function openDispatchTask(entry) {
-    if (entry.action === "settings") return showShippingSettings(true);
+    if (entry.action === "settings") return showShippingView("settings");
     const host = dispatchHost, session = packingSession;
     const back = () => returnToDispatchQueue(entry.id);
     if (entry.action === "account") {
@@ -312,7 +317,7 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
       if (packingSession !== session || !host.isConnected || host !== dispatchHost) return;
       const shipment = shipping.shipment;
       if (shipping.orderVersion === order.version && shipment?.orderId && shipment.labelDownloadedAt > 0 && !shipment.orderChanged && !shipment.reviewRequired && ["labelled", "dispatched"].includes(shipment.state)) {
-        return dispatchOrder(order, shipment.trackingUrl || "", back, shipment);
+        return dispatchOrder(order, bookedTrackingUrl(shipment) || "", back, shipment);
       }
       await dispatchQueue.refresh();
       toast("The shipment has changed. Review its latest queue action.");
@@ -333,6 +338,11 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
       !["admin", "worker", null].includes(setup.bookingSource) || !["admin", "worker", null].includes(setup.trackingSource) ||
       !(setup.serviceRegisterCode === null || typeof setup.serviceRegisterCode === "string") || !(setup.shippingAccountName === null || typeof setup.shippingAccountName === "string"))) throw new Error("Royal Mail credential setup could not be confirmed. Reload settings before changing it.");
     return value;
+  }
+  function shippingPanel() {
+    if (shippingView === "checks") return setupChecks ? html`<div id="wRoyalMailChecks"></div>` : unavailable("Royal Mail setup checks");
+    if (shippingView === "settings") return royalMailSettings();
+    return window.SCDispatchQueue ? html`<div id="wDispatchQueue"></div>` : unavailable("Dispatch queue");
   }
   function royalMailSettings() {
     return html`<section id="wRoyalMailSettings" class="w-rm-settings" aria-label="Royal Mail setup" aria-busy="${String(royalMailBusy)}">${royalMailSettingsContent()}</section>`;
@@ -856,6 +866,11 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
       }
     }
   }
+  function bookedTrackingUrl(shipment) {
+    if (!shipment || shipment.orderChanged || shipment.reviewRequired || !["labelled", "dispatched"].includes(shipment.state)) return null;
+    const canonical = preparation.royalMailTrackingUrl(shipment.trackingNumber);
+    return canonical && canonical === shipment.trackingUrl ? canonical : null;
+  }
   function validTrackingUrl(value) {
     if (!value) return true;
     if (value.length > 2000 || !/^https?:\/\//i.test(value) || /[\u0000-\u001f\u007f]|%(?:0[0-9a-f]|1[0-9a-f]|7f)/i.test(value)) return false;
@@ -913,8 +928,8 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
           catch { warning = "Could not reload this order. Your draft keeps its earlier version; reload orders before saving or dispatching."; }
         }
         if (session !== packingSession || !form.isConnected) return;
-        const tracking = shipping?.orderVersion === latest.version && !shipping.shipment?.orderChanged && !shipping.shipment?.reviewRequired ? shipping.shipment?.trackingUrl : null;
-        cleanup(); returnToOrder(latest, tracking && validTrackingUrl(tracking) ? tracking : null);
+        const tracking = shipping?.orderVersion === latest.version ? bookedTrackingUrl(shipping.shipment) : null;
+        cleanup(); returnToOrder(latest, tracking);
         if (warning) toast(warning);
       });
     };
@@ -926,7 +941,9 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
       const recipient = recipientForLabel();
       const streetLines = [recipient.line1, recipient.line2, recipient.city, recipient.county, recipient.postcode].filter(Boolean);
       const canVerify = shipment?.reviewRequired && !shipment.orderChanged && !stale && shipment.orderId;
-      const refreshText = shipment?.orderId && safeShipment ? labelReady && shipping?.trackingEnabled !== false ? "Refresh tracking" : "Check shipment" : "Check label request";
+      const publicLinkOnly = !!shipment?.trackingNumber && !preparation.royalMailTrackingV2Number(shipment.trackingNumber);
+      const trackingUrl = bookedTrackingUrl(shipment);
+      const refreshText = shipment?.orderId && safeShipment ? labelReady && !publicLinkOnly && shipping?.trackingEnabled !== false ? "Refresh tracking" : "Check shipment" : "Check label request";
       const needsLabelReview = recorded && !safeShipment;
       const recovery = !stale ? shipment?.recovery : null;
       const recoveryStatus = recovery?.status === "checking" ? "Checking with Royal Mail" : recovery?.status === "needs_admin" ? "Booking needs admin review" : "";
@@ -938,7 +955,7 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
         <div id="wShippingState" class="w-shipping-status" role="status"><span class="pill ${tone}">${shipping ? status : "Checking Royal Mail shipping…"}</span><span>${uncertain ? "Check the original request before continuing." : recovery?.status === "needs_admin" ? "Check the original booking in Click & Drop." : recoveryStatus ? "An automatic lookup is scheduled." : failed ? "Review the parcel and the booking service before requesting postage again." : recorded ? "Confirm dispatch separately when the parcel leaves." : reviewing ? "Check this parcel summary before requesting postage." : "Review the saved address and enter the sealed parcel weight."}</span>${shipment?.requestedAt ? html`<small>Requested ${carrierDate(shipment.requestedAt)}</small>` : ""}${shipment?.checkedAt ? html`<small>Last checked ${carrierDate(shipment.checkedAt)}</small>` : ""}</div>
         ${shipping && (shipping.enabled === false || shipping.bookingConfigured === false) ? html`<p class="w-shipping-notice">New Royal Mail booking setup is incomplete. Check Wholesale → Royal Mail. You can still add a tracking link and dispatch the order as usual.</p>` : shipping?.bookingEnabled === false ? html`<p class="w-shipping-notice">New Royal Mail bookings are paused in Wholesale → Royal Mail. Existing shipments, label downloads and tracking remain available.</p>` : shipping?.enabled && !shipping.canCreate && !recorded ? html`<p class="w-shipping-notice">Pack the order and mark it Ready before requesting postage.</p>` : ""}
         ${shipping?.trackingWarning ? html`<p class="w-shipping-notice" role="status">${shipping.trackingWarning}</p>` : ""}
-        ${recorded && shipping?.trackingEnabled === false ? html`<p class="w-shipping-notice">Carrier scans are not connected. You can check the label request and follow the tracking link on Royal Mail.</p>` : ""}
+        ${recorded && !publicLinkOnly && shipping?.trackingEnabled === false ? html`<p class="w-shipping-notice">Carrier scans are not connected. You can check the label request and follow the tracking link on Royal Mail.</p>` : ""}
         ${shipment?.problem && !uncertain && shipment.problem !== error ? html`<p class="w-shipping-notice" role="status">${shipment.problem}</p>` : ""}
         ${failed && !heavy && shipping?.bookingService && !stale && !uncertain ? html`<section class="w-shipping-review" aria-label="Check parcel service"><div class="kv"><span>Configured service</span><strong>${shipping.bookingService}</strong></div><button class="btn soft" type="button" data-sheet="shipping-service-check">Check service for this parcel</button><p class="hint">Checks the service for this postcode and packed weight without buying postage.</p><p role="status" id="wServiceAdvice" ${serviceAdvice ? "" : raw("hidden")}>${serviceAdvice}</p><p class="hint">To change the booking service, open Shipping settings in Royal Mail and edit the Click &amp; Drop connection.</p></section>` : ""}
         ${uncertain && !recoveryStatus ? html`<p class="w-shipping-notice">The label request could not be confirmed. Check the existing request before trying anything else.</p>` : ""}
@@ -948,10 +965,10 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
         ${stale ? html`<p class="w-shipping-notice">This order changed since you opened it. Return to the latest order before requesting a label or confirming dispatch.</p>` : ""}
         ${recorded ? html`
           ${shipment.destination ? html`<section class="w-shipping-review"><h3>Booked delivery address</h3><p class="w-address">${[shipment.destination.address, shipment.destination.postcode].join("\n")}</p></section>` : ""}
-          <section class="w-shipping-scan" aria-label="Latest Royal Mail scan"><h3>Latest Royal Mail scan</h3><strong>${shipment.carrierStatus || (shipping?.trackingEnabled === false ? "Carrier scans not connected" : "No carrier scan yet")}</strong><p>${shipment.carrierEventAt ? carrierDate(shipment.carrierEventAt) : shipping?.trackingEnabled === false ? "Use the Royal Mail tracking page for updates." : "Tracking updates appear after Royal Mail scans the parcel."}</p></section>
+          <section class="w-shipping-scan" aria-label="Latest Royal Mail scan"><h3>Latest Royal Mail scan</h3><strong>${shipment.carrierStatus || (publicLinkOnly ? "Public tracking link" : shipping?.trackingEnabled === false ? "Carrier scans not connected" : "No carrier scan yet")}</strong><p>${shipment.carrierEventAt ? carrierDate(shipment.carrierEventAt) : publicLinkOnly || shipping?.trackingEnabled === false ? "Use the Royal Mail tracking page for updates." : "Tracking updates appear after Royal Mail scans the parcel."}</p></section>
           ${shipment.trackingNumber ? html`<div class="w-shipping-tracking"><span><b>Tracking number</b><code>${shipment.trackingNumber}</code></span>${safeShipment ? html`<button class="btn sm soft" type="button" data-sheet="shipping-copy" aria-label="Copy tracking number">${svg("copy")}Copy</button>` : ""}</div>` : ""}
-          ${safeShipment ? html`<div class="w-shipping-tools">${shipment.orderId && labelReady ? html`<button type="button" class="btn w-shipping-label" data-sheet="shipping-label">${svg("dl")}Download label PDF</button>` : ""}${shipment.trackingUrl && validTrackingUrl(shipment.trackingUrl) ? html`<a class="btn soft" href="${shipment.trackingUrl}" target="_blank" rel="noopener noreferrer">Track on Royal Mail</a>` : ""}</div>` : ""}
-          ${recoveryStatus ? "" : html`<section class="w-shipping-next"><h3>Next step</h3><b>${stale ? "Return to the latest order" : !safeShipment ? "Review the shipment in Click & Drop" : row.status === "Dispatched" ? "Dispatch is recorded" : shipment.orderId && !labelReady ? "Finish postage in Click & Drop" : shipment.orderId ? "Print, attach, then dispatch" : "Check the label request"}</b><p>${stale ? "The order has changed. Return to the order to review its latest status before continuing." : !safeShipment ? "Verify the destination and parcel details before using this shipment. Label download and automatic tracking reuse are paused." : row.status === "Dispatched" ? "Follow the parcel using its tracking number. Refresh tracking to check for a newer carrier scan." : shipment.orderId && !labelReady ? "Finish postage and generate the label in Click & Drop, then use Check shipment. This order stays Ready until you confirm dispatch." : shipment.orderId ? "Attach the label to your sealed parcel. Return to the order and confirm dispatch when it leaves the roastery." : "Use Check label request to recover the existing request. A new postage request will not be sent."}</p></section>`}
+          ${safeShipment ? html`<div class="w-shipping-tools">${shipment.orderId && labelReady ? html`<button type="button" class="btn w-shipping-label" data-sheet="shipping-label">${svg("dl")}Download label PDF</button>` : ""}${trackingUrl ? html`<a class="btn soft" href="${trackingUrl}" target="_blank" rel="noopener noreferrer">Track on Royal Mail</a>` : ""}</div>` : ""}
+          ${recoveryStatus ? "" : html`<section class="w-shipping-next"><h3>Next step</h3><b>${stale ? "Return to the latest order" : !safeShipment ? "Review the shipment in Click & Drop" : row.status === "Dispatched" ? "Dispatch is recorded" : shipment.orderId && !labelReady ? "Finish postage in Click & Drop" : shipment.orderId ? "Print, attach, then dispatch" : "Check the label request"}</b><p>${stale ? "The order has changed. Return to the order to review its latest status before continuing." : !safeShipment ? "Verify the destination and parcel details before using this shipment. Label download and automatic tracking reuse are paused." : row.status === "Dispatched" ? (publicLinkOnly ? "Follow the parcel on Royal Mail Track & Trace." : "Follow the parcel using its tracking number. Refresh tracking to check for a newer carrier scan.") : shipment.orderId && !labelReady ? "Finish postage and generate the label in Click & Drop, then use Check shipment. This order stays Ready until you confirm dispatch." : shipment.orderId ? "Attach the label to your sealed parcel. Return to the order and confirm dispatch when it leaves the roastery." : "Use Check label request to recover the existing request. A new postage request will not be sent."}</p></section>`}
           ${shipment.orderId ? html`<p class="w-id">Royal Mail order ${shipment.orderId}${shipment.weightGrams ? " · Packed weight " + weight(shipment.weightGrams) : ""}</p>` : ""}
           ${!recoveryStatus && (!shipment.orderId || !safeShipment || !labelReady) ? html`<section class="w-shipping-recovery"><h3>Find this request in Click &amp; Drop</h3><p>Search using the full order reference below. Compare the recipient, address and parcel weight with this order. Keep the existing request while its outcome is checked.</p><code>${row.id}</code></section>` : ""}
           ${canVerify ? html`<section class="w-shipping-verify"><h3>Verify the existing shipment</h3><p>After checking Click &amp; Drop, enter the tracking number from the matching label.</p>${field("Tracking number on the checked label", html`<input id="wShippingVerifyTracking" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="30">`)}<label class="w-shipping-confirm"><input id="wShippingVerifyConfirmed" type="checkbox"><span>I checked the label recipient, address and parcel weight against this order.</span></label><button type="button" class="btn" data-sheet="shipping-verify">Verify existing shipment</button></section>` : ""}` : reviewing ? html`
@@ -1009,8 +1026,8 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
         }
         if (action === "shipping-verify") {
           if (!canVerify) return;
-          const trackingNumber = form.querySelector("#wShippingVerifyTracking").value.trim().toUpperCase().replace(/[\s-]+/g, "");
-          if (!form.querySelector("#wShippingVerifyConfirmed").checked || !/^(?:[A-Z]{2}\d{9}[A-Z]{2}|[0-9A-F]{21})$/.test(trackingNumber)) {
+          const trackingNumber = preparation.royalMailTrackingNumber(form.querySelector("#wShippingVerifyTracking").value);
+          if (!form.querySelector("#wShippingVerifyConfirmed").checked || !trackingNumber) {
             form.querySelector("#wErr").textContent = "Check the recipient, address and parcel weight in Click & Drop, then enter the matching tracking number and tick the confirmation."; return;
           }
           await saveForm(form, async () => {
@@ -1944,7 +1961,7 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
     drawPhotos();
   }
   return {
-    clear() { releaseDispatchQueue(); dispatchStage = "all"; shippingSettingsOpen = false; invoiceUI?.clear(); insightsUI?.clear(); sequence++; emailHealthToken++; packingSession++; royalMailGeneration++; royalMailConfig = null; royalMailBusy = royalMailNeedsReload = false; royalMailIssue = royalMailFeedback = ""; data = null; previewOrder = packingOrder = ""; hideOrderPreview = false; quickBusy.clear(); orderErrors.clear(); emailDraft = null; batch = null; picked.clear(); picking = false; clearTimeout(timer); },
+    clear() { setupChecks?.unmount(); releaseDispatchQueue(); dispatchStage = "all"; shippingView = "queue"; invoiceUI?.clear(); insightsUI?.clear(); sequence++; emailHealthToken++; packingSession++; royalMailGeneration++; royalMailConfig = null; royalMailBusy = royalMailNeedsReload = false; royalMailIssue = royalMailFeedback = ""; data = null; previewOrder = packingOrder = ""; hideOrderPreview = false; quickBusy.clear(); orderErrors.clear(); emailDraft = null; batch = null; picked.clear(); picking = false; clearTimeout(timer); },
     view,
     navigation,
     syncNavigation,
@@ -1958,7 +1975,7 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
     searchBillingAccounts: invoiceUI?.accountsSearch,
     invoicingChange: invoiceUI?.workspaceChange,
     async act(name, id) {
-      if (name === "wh-royal-mail-view") { await showShippingSettings(id === "settings"); return; }
+      if (name === "wh-royal-mail-view") { await showShippingView(id); return; }
       if (name === "wh-royal-mail-credentials") { await openRoyalMailCredentials(id); return; }
       if (name === "wh-royal-mail-toggle" || name === "wh-royal-mail-reload") { await changeRoyalMailSettings(name === "wh-royal-mail-reload"); return; }
       if (name.startsWith("wh-invoice-")) { await invoiceUI?.act(name, id); return; }

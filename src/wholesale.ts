@@ -31,6 +31,7 @@ import { handleBillingAccounts } from "./invoicing/accounts";
 import { handleBatches } from "./invoicing/batches";
 import { handleReconciliation } from "./invoicing/reconciliation";
 import { handleQuickBooksMatches } from "./invoicing/quickbooksMatches";
+import { handleRoyalMailSetupChecks } from "./royalMailSetupChecks";
 import { handleRoyalMailSettings } from "./royalMailAppSettings";
 import { dispatchQueue } from "./wholesale/dispatchQueue";
 import { handleWholesaleRoyalMail, requireStaffLabelEligibility, resolveWholesaleHandover, ROYAL_MAIL_ORDER_ROUTE } from "./wholesaleRoyalMail";
@@ -508,6 +509,7 @@ export async function handleWholesaleAdmin(req: Request, env: Env, route: string
   const quickbooks = await handleQuickBooks(req, env, route, user, ctx); if (quickbooks) return quickbooks;
   if (user.role !== "admin") throw denied();
   if (route === "dispatch-queue") return dispatchQueue(req, env, "admin");
+  if (route === "royal-mail/checks") return handleRoyalMailSetupChecks(req, env, user.name);
   if (route === "royal-mail" || route === "royal-mail/credentials") {
     return handleRoyalMailSettings(req, env, user.name, route === "royal-mail/credentials");
   }
