@@ -1,5 +1,13 @@
 import { orderImagePath } from './account-store.js';
 
+export function storefrontProducts(rows) {
+  return rows.map(product => ({
+    ...product,
+    category: product.category === 'coffee' ? undefined : product.category,
+    image: orderImagePath(product.image) || '/consumer-preview/assets/mark.svg',
+  }));
+}
+
 // The live catalogue replaces the entire range in one pass. A removed item must
 // disappear even if the browser has its original product bundled or saved.
 export function createAvailability(products) {
@@ -8,11 +16,7 @@ export function createAvailability(products) {
   let revision = 0;
 
   function setProducts(rows) {
-    const next = rows.map(product => ({
-      ...product,
-      category: product.category === 'coffee' ? undefined : product.category,
-      image: orderImagePath(product.image) || '/consumer-preview/assets/mark.svg',
-    }));
+    const next = storefrontProducts(rows);
     products.splice(0, products.length, ...next);
     revision++;
     known = true;

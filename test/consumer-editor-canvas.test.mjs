@@ -11,11 +11,14 @@ describe('consumer editor sample canvases', () => {
   let worker;
   before(async () => {
     const bundled = await build({ stdin: { resolveDir: root, contents: `
+      import { products } from './public/consumer-preview/assets/products.js';
       import { applyEditorPreviewSurfaces } from './src/consumerEditorSurfaces.js';
       export default { async fetch(req) {
         const { searchParams } = new URL(req.url);
         const html = new Response(await req.text(), {headers:{'content-type':'text/html'}});
-        return applyEditorPreviewSurfaces(new HTMLRewriter(), searchParams.get('page'), searchParams.get('state')).transform(html);
+        const catalogue = searchParams.get('state') === 'catalogue-addition'
+          ? [{...products[0],id:'seasonal-lot',name:'Seasonal lot',category:'coffee',available:true,image:'/assets/roastery.webp'}] : null;
+        return applyEditorPreviewSurfaces(new HTMLRewriter(), searchParams.get('page'), searchParams.get('state'), catalogue).transform(html);
       }};
     ` }, bundle: true, write: false, format: 'esm' });
     worker = new Miniflare({
@@ -39,6 +42,18 @@ describe('consumer editor sample canvases', () => {
     assert.equal(result.status, 200);
     return result.text();
   }
+
+  test('the shop, homepage and product canvas show current catalogue additions under the same ID', async () => {
+    for (const [scope,template] of [['home',''],['shop','coffee'],['product:seasonal-lot','product']]) {
+      const output = await render(scope,template,'catalogue-addition');
+      assert.match(output, /Seasonal lot/);
+      assert.match(output, /src="\/consumer-preview\/assets\/roastery.webp"/);
+      if (scope !== 'product:seasonal-lot') {
+        assert.match(output, /data-catalogue-id="seasonal-lot"/);
+        assert.match(output, /href="\/coffee\/p\/seasonal-lot\/"/);
+      } else assert.match(output, /<h1>Seasonal lot<\/h1>/);
+    }
+  });
 
   test('every product and voucher uses its own actual product page', async () => {
     for (const {id, name} of Object.values(productRoutes)) {

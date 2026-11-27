@@ -1,6 +1,6 @@
 import { originalProduct, products } from './products.js';
 import { productFromPath, productPath } from './product-paths.js';
-import { productContent } from './product-content.js';
+import { brewGuidance, productContent } from './product-content.js';
 import { escapeHtml as html } from './html.js';
 import { money } from './store.js';
 import { grindLabel, sizeNames } from './checkout.js';
@@ -20,12 +20,6 @@ const voucherPages = {
     image: assets + 'online-gift-card.webp',
   },
 };
-const brewGuidance = {
-  Chocolatey: ['Try it as a pour-over', 'Start with a medium grind and bring out the sweeter chocolate and nut flavours with a longer, steady pour.', 'brew-v60.webp', 'V60 coffee brewing'],
-  Fruity: ['Bring out the brighter notes', 'A medium-ground filter brew lets the fruit flavours come through. Adjust your grind a little at a time to find your balance.', 'brew-v60.webp', 'V60 coffee brewing'],
-  Decaf: ['Make a slower brew', 'Start with a coarse grind for a cafetière and follow the brew guide for a balanced cup.', 'brew-french-press.webp', 'Coffee brewing in a cafetière'],
-};
-
 function sizeLabel(size) {
   return sizeNames[size] ?? size;
 }
@@ -45,8 +39,8 @@ function galleryMarkup(photos, name, caption) {
   </div>`;
 }
 
-function productPhotos(product, details) {
-  const constituents = products.filter(item => product.contents?.includes(item.id));
+function productPhotos(product, details, catalogue) {
+  const constituents = catalogue.filter(item => product.contents?.includes(item.id));
   const relatedPhotos = constituents.map(item => ({ src: item.image, label: item.name }));
   return [{ src: product.image, label: product.category === 'flight' ? 'Strangers Coffee Roastery' : product.name },
     ...(details.photos ?? []).map((photo, index) => ({ ...photo, label: `${product.name} · ${photo.label} ${index + 1}` })),
@@ -88,9 +82,9 @@ function productOptions(product, initialGrind) {
   </form>`;
 }
 
-function productStory(product, details) {
+function productStory(product, details, catalogue) {
   if (product.category === 'flight') {
-    const coffees = (product.contents ?? []).map(id => products.find(item => item.id === id)).filter(Boolean);
+    const coffees = (product.contents ?? []).map(id => catalogue.find(item => item.id === id)).filter(Boolean);
     return `<section class="retail-product-section">
       <h2>In the flight</h2>
       <div class="retail-product-related">${coffees.map(relatedMarkup).join('')}</div>
@@ -118,14 +112,14 @@ function productStory(product, details) {
 }
 
 function relatedMarkup(product) {
-  return `<a class="retail-related-card" href="${productPath(product)}">
+  return `<a class="retail-related-card" data-catalogue-id="${html(product.id)}" href="${productPath(product)}">
     <img src="${html(product.image)}" alt="" width="420" height="298" loading="lazy">
     <span><strong>${html(product.name)}</strong><span>${html(product.shortCopy)}</span></span>
   </a>`;
 }
 
-function relatedProducts(product) {
-  const coffees = products.filter(item => !item.category && item.available !== false && item.id !== product.id);
+function relatedProducts(product, catalogue) {
+  const coffees = catalogue.filter(item => !item.category && item.available !== false && item.id !== product.id);
   const sameProfile = coffees.filter(item => item.profile === product.profile);
   const differentProfile = coffees.filter(item => item.profile !== product.profile);
   return [...sameProfile, ...differentProfile].slice(0, 3);
@@ -148,10 +142,10 @@ function voucherMarkup(id, voucher) {
     </div>`;
 }
 
-export function productPageView(id, suggestedGrind, stockKnown) {
+export function productPageView(id, suggestedGrind, stockKnown, catalogue = products) {
   const voucher = Object.hasOwn(voucherPages, id) ? voucherPages[id] : null;
   if (voucher) return { markup: voucherMarkup(id, voucher), description: voucher.description, purchasable: false };
-  const product = products.find(item => item.id === id);
+  const product = catalogue.find(item => item.id === id);
   if (!product) return null;
   // Retain the roastery's original long-form copy until the corresponding
   // catalogue field is changed. An intentionally cleared field also takes effect.
@@ -163,13 +157,13 @@ export function productPageView(id, suggestedGrind, stockKnown) {
   if (!matching('shortCopy') || JSON.stringify(original?.notes) !== JSON.stringify(product.notes)) {
     details.description = product.shortCopy;
   }
-  const photos = productPhotos(product, details);
+  const photos = productPhotos(product, details, catalogue);
   const gift = product.category === 'accessory' || product.category === 'flight';
   const origin = gift ? (product.category === 'flight' ? 'Coffee tasting flight' : 'Gifts & accessories')
     : [product.country, product.process].filter(Boolean).join(' · ');
   const intro = details.description || product.shortCopy || (product.notes.length ? `Tasting notes of ${product.notes.join(', ')}.` : '');
   const initialGrind = product.grinds.includes(suggestedGrind) ? suggestedGrind : product.grinds[0];
-  const related = relatedProducts(product);
+  const related = relatedProducts(product, catalogue);
   const markup = `${breadcrumb(product.name, gift)}
     <article class="retail-product-intro">
       ${galleryMarkup(photos, product.name, product.region || product.country || 'Strangers Coffee')}
@@ -181,7 +175,7 @@ export function productPageView(id, suggestedGrind, stockKnown) {
         <p class="retail-product-delivery"><a href="/shipping/">UK delivery and returns</a><span aria-hidden="true">·</span><a href="/location/">Norwich collection</a></p>
       </div>
     </article>
-    ${productStory(product, details)}
+    ${productStory(product, details, catalogue)}
     ${related.length ? `<section class="retail-product-section"><h2>You might also like</h2><div class="retail-product-related">${related.map(relatedMarkup).join('')}</div></section>` : ''}`;
 
   return { markup, description: intro, photos, product, purchasable: stockKnown && product.available !== false };

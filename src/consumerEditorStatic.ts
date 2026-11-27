@@ -1,3 +1,4 @@
+import { formattedText, type InlinePart } from "../public/consumer-preview/assets/editor-text.js";
 import { PAGES, type ConsumerEditorPage, type ConsumerEditorWidget } from "../public/consumer-preview/assets/editor-model.js";
 
 // These routes are built from editorial HTML. Pages whose content comes from a transaction or a
@@ -6,6 +7,14 @@ const editorialScopes = new Set(["shared", "home", "shop", "locations", "about",
 
 function escape(value: string | undefined) {
   return (value || "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+}
+
+function inlineMarkup(parts: InlinePart[]): string {
+  return parts.map(part => {
+    if (typeof part === "string") return escape(part);
+    const [tag, ...children] = part;
+    return tag === "br" ? "<br>" : "<" + tag + ">" + inlineMarkup(children) + "</" + tag + ">";
+  }).join("");
 }
 
 // Asset references have already passed the editor model. Keeping this conversion here also
@@ -28,7 +37,10 @@ export function applyStaticConsumerFields(html: HTMLRewriter, scope: string, pag
       ? [".desktop-nav",".mobile-links"].map(parent => field.selector.replace(parents,parent)).join(", ")
       : field.selector;
     html.on(selector, { element(e) {
-      if (field.kind === "text") e.setInnerContent(value);
+      if (field.kind === "text") {
+        if (field.inline) e.setInnerContent(inlineMarkup(formattedText(field.inline, value)), {html:true});
+        else e.setInnerContent(value);
+      }
       else if (field.kind === "link") e.setAttribute("href", value);
       else if (field.kind === "alt") e.setAttribute("alt", value);
       else if (field.kind === "image") {

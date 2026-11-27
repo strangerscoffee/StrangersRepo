@@ -9,23 +9,23 @@ const highlights = new Map([
   ['anserma', 'Anserma'],
 ]);
 
-export function showHighlights(products) {
-  const shelf = document.querySelector('#home-roasting-grid');
+export function highlightsMarkup(products) {
   const available = products.filter(product => !product.category && product.available !== false);
   const byId = new Map(available.map(product => [product.id, product]));
   const chosen = [...highlights.keys()].map(id => byId.get(id)).filter(Boolean);
   chosen.push(...available.filter(product => !highlights.has(product.id)).slice(0, 3 - chosen.length));
-  if (!chosen.length) {
-    shelf.replaceChildren();
-    document.querySelector('#home-roasting-intro').textContent = 'Explore the full coffee range online.';
-    return;
-  }
-  shelf.innerHTML = chosen.map(product => `<article class="home-coffee">
+  return chosen.map(product => `<article class="home-coffee" data-catalogue-id="${html(product.id)}">
     <figure><a tabindex="-1" aria-hidden="true" href="${html(productPath(product))}"><img src="${html(product.image)}" width="580" height="410" alt="" loading="lazy" decoding="async"></a></figure>
     <div class="home-coffee-copy"><p class="eyebrow">${[product.country, product.process].filter(Boolean).map(html).join(' · ')}</p>
     <h3>${html(product.name === originalProduct(product.id)?.name ? highlights.get(product.id) ?? product.name : product.name)}</h3><p>${html(product.notes.join(', '))}</p>
     <div class="home-coffee-actions"><strong>From ${money(Math.min(...Object.values(product.prices)))}</strong><a class="button outline" href="${html(productPath(product))}" aria-label="View ${html(product.name)}">View coffee</a></div>
     </div></article>`).join('');
+}
+
+export function showHighlights(products) {
+  const markup = highlightsMarkup(products);
+  document.querySelector('#home-roasting-grid').innerHTML = markup;
+  if (!markup) document.querySelector('#home-roasting-intro').textContent = 'Explore the full coffee range online.';
 }
 
 function validPost(post) {
