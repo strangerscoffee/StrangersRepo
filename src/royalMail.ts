@@ -255,8 +255,12 @@ async function clickDrop(
     if (posting && !label && (response.status === 400 || response.status === 422)) {
       let reasons = "";
       try {
-        const bytes = await readBytes(response, JSON_LIMIT, "Royal Mail response exceeded its limit.");
-        reasons = providerReasons(JSON.parse(new TextDecoder().decode(bytes)), redact);
+        const text = new TextDecoder().decode(await readBytes(response, JSON_LIMIT, "Royal Mail response exceeded its limit."));
+        try { reasons = providerReasons(JSON.parse(text), redact); }
+        // Not JSON (the owner's test, 27 Nov 2026: still no reason): keep a short plain-text copy, markup removed,
+        // with the recipient's details blanked out like any other reason.
+        catch { reasons = providerReasons(text.replace(/<[^>]*>/g, " "), redact); }
+        if (!reasons) reasons = `HTTP ${response.status}${text.trim() ? "" : ", empty reply"}`;
       } catch { void response.body?.cancel().catch(() => {}); }
       throw rejected(reasons, response.status);
     }

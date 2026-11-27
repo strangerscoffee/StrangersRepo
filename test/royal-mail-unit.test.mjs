@@ -179,8 +179,10 @@ test("keeps Royal Mail's own reason for a refusal, without the recipient's detai
   assert.match(error.message, /One or more validation errors occurred\.; Invalid service register code \(field items\[0\]\.postageDetails\.serviceRegisterCode\)/);
   error = await reason(() => Response.json([{ errorCode: 5, errorMessage: 'Weight too high for Sample Company' }], { status: 400 }));
   assert.match(error.message, /Weight too high for … \(code 5\)/);
-  error = await reason(() => new Response('not json', { status: 400 }));
-  assert.equal(error.message, 'Royal Mail rejected the shipment details. Check the address, parcel and service.');
+  error = await reason(() => new Response('<html><body>Bad Request: Sample Person at NR2 1DE</body></html>', { status: 400 }));
+  assert.match(error.message, /Royal Mail said: Bad Request: … at …/);
+  error = await reason(() => new Response('', { status: 400 }));
+  assert.match(error.message, /Royal Mail said: HTTP 400, empty reply/);
 });
 
 test('only a confirmed missing or exact unique lookup can be used for reconciliation', async () => {
