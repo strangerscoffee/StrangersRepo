@@ -120,7 +120,7 @@ async function shipmentChecks(key: string, row: Shipment, credentials: Connectio
   }
   const trackingNumber = royalMailTrackingV2Number(row.tracking_number);
   if (credentials && row.tracking_number && !trackingNumber) {
-    tracking = check("tracking", "unverified", "The linked tracking reference is outside the formats accepted by Tracking API V2. Use public carrier tracking for this parcel.");
+    tracking = check("tracking", "unverified", "Use public carrier tracking for this reference. To check in-app tracking, use a linked shipment with a supported Royal Mail barcode.");
   }
   return Promise.all([
     existingLabel(key, carrier.orderId, fetcher),
