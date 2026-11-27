@@ -83,7 +83,7 @@ test("staff journey on the real page", async () => {
 
   await page.goto(srv.base + "/");
   await page.locator("#avatarBtn", { hasText: "SP" }).waitFor();
-  assert.deepEqual(await accountMenu(page), ["Switch person", "Change password", "Admin", "Sign out"]);
+  assert.deepEqual(await accountMenu(page), ["Switch person", "Change password", "Passkeys", "Admin", "Sign out"]);
 
   // Dialogs fit a short mobile viewport, keep keyboard focus inside, and return it on dismissal.
   await page.setViewportSize({ width: 320, height: 280 });
@@ -518,7 +518,7 @@ test("staff journey on the real page", async () => {
 
   // Staff: no admin link, no manager sections, and the server refuses manager changes.
   await page.locator("#avatarBtn", { hasText: "AB" }).waitFor();
-  assert.deepEqual(await accountMenu(page), ["Switch person", "Set a quick PIN", "Change password", "Sign out"]);
+  assert.deepEqual(await accountMenu(page), ["Switch person", "Set a quick PIN", "Change password", "Passkeys", "Sign out"]);
   await page.locator("#tabbar .tab", { hasText: "Records" }).click();
   assert.deepEqual(await page.locator("#recordsHub .lrow b").allTextContents(), ["Extra checks", "Cleaning", "Prove it", "Allergens", "Temperature log", "4-weekly review", "Deliveries", "Maintenance", "Staff training"]);
 
@@ -633,7 +633,7 @@ test("staff journey on the real page", async () => {
   for (const t of ["Food safety records", "Daily diary", "Corrective actions", "Your training", "Allergen matrix"])
     assert.ok(inPdf.includes(Buffer.from(t, "latin1").toString("hex")), "PDF has " + t);
   await page.locator("#tabbar .tab", { hasText: "More" }).click();
-  assert.deepEqual(await page.locator("#moreHub .lrow b").allTextContents(), ["Last 4 weeks", "EHO inspection mode", "Fire safety log", "Accident book", "Last EHO inspection report", "HACCP & risk", "Suppliers", "Contacts", "Onboarding", "Report sickness", "Switch person", "Set a quick PIN", "Change password", "Sign out"]);
+  assert.deepEqual(await page.locator("#moreHub .lrow b").allTextContents(), ["Last 4 weeks", "EHO inspection mode", "Fire safety log", "Accident book", "Last EHO inspection report", "HACCP & risk", "Suppliers", "Contacts", "Onboarding", "Report sickness", "Switch person", "Set a quick PIN", "Change password", "Passkeys", "Sign out"]);
   await page.getByRole("navigation", {name:"Staff workspaces"}).getByRole("link", {name:"Rota",exact:true}).waitFor();
   assert.equal(await page.locator("#moreHub .label", { hasText: "Admin" }).count(), 0, "staff don't see Setup");
   assert.match(await page.locator("#moreHub .lrow", { hasText: "Report sickness" }).getAttribute("href"), /#sick$/, "More links to the rota's sickness form");
