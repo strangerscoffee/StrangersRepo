@@ -112,6 +112,8 @@ Managers and admins with an address can receive a summary every Monday at 07:30 
 
 ## Royal Mail for wholesale dispatch
 
+The packed weight starts on an estimate: the coffee, about 15 g overfill and the empty bag (18 g for 250 g, 40 g for 1 kg) for each bag, plus about 500 g for the box, paper and tape. Weigh the sealed parcel and change it if needed. The figures are in `parcelEstimate` (`public/shared/wholesale-preparation.js`).
+
 **Admin → Wholesale → Royal Mail** shows which carrier settings are configured and controls new bookings. Bookings start off. Once the Click & Drop key and service are configured, an admin can turn them on. Switching off stops new requests before they are sent. Existing labels, tracking and manual dispatch stay available, and requests already sent to Royal Mail can finish.
 
 In **Admin → Wholesale → Order details**, the **Royal Mail shipping** panel prepares postage for one packed parcel within Great Britain. Review the recipient, delivery address and sealed parcel weight before booking. The packing desk shows label readiness and the latest carrier scan. **Mark dispatched** confirms physical handover and uses the verified Royal Mail tracking link and label address in the dispatch email when available. Existing invoicing rules apply at handover.

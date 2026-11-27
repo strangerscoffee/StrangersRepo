@@ -87,6 +87,9 @@ for (const [device, options] of [["desktop packing desk", desktop], ["phone orde
       return route.fulfill({ json: state });
     });
     const grams = dialog.getByRole("spinbutton", { name: "Packed parcel weight (grams)" });
+    // Pre-filled estimate: 1 kg of coffee, 15 g overfill, a 40 g bag and about 500 g of box and packing (the owner's figures).
+    assert.equal(await grams.inputValue(), "1555");
+    assert.match(await dialog.innerText(), /Filled in with an estimate/);
     await grams.fill("950");
     await dialog.getByRole("button", { name: "Review label request" }).click();
     assert.equal(await dialog.getByRole("button", { name: "Request Royal Mail label" }).count(), 0);
@@ -203,3 +206,27 @@ test("dispatch review warns on a held Royal Mail label and accepts another couri
   await tracking.fill("https://parcel.example.test/tracking/sample");
   assert.equal(await confirm.isEnabled(), true);
 });
+
+// The owner's request, 27 Nov 2026: Admin's Royal Mail shipping also starts on the estimate, which can be changed.
+for (const [name, options] of [["phone", phone], ["ipad", { viewport: { width: 820, height: 1180 }, isMobile: true, hasTouch: true }]]) for (const colorScheme of ["light", "dark"]) {
+  test(`Admin Royal Mail shipping starts on an estimated parcel weight (${name}, ${colorScheme})`, async (t) => {
+    const context = await browser.newContext({ ...options, colorScheme });
+    t.after(() => context.close());
+    const [cookieName, value] = adminCookie.split("=");
+    await context.addCookies([{ name: cookieName, value, url: server.base }]);
+    const page = await context.newPage();
+    const errors = []; page.on("pageerror", (e) => errors.push(e.message));
+    await page.route("**/api/admin/wholesale/orders/" + order.id + "/shipping**", (route) => route.fulfill({ json: eligible() }));
+    await page.goto(server.base + "/admin#wholesale");
+    await page.locator(`[data-act="wh-order"][data-id="${order.id}"]`).locator("visible=true").first().click();
+    await page.getByRole("button", { name: "Royal Mail shipping" }).locator("visible=true").first().click();
+    const weightBox = page.locator('input[name="weightGrams"]');
+    await weightBox.waitFor();
+    assert.equal(await weightBox.inputValue(), "1555");
+    assert.match(await page.locator("#sheet").innerText(), /Filled in with an estimate/);
+    await weightBox.fill("1620");
+    assert.equal(await weightBox.inputValue(), "1620");
+    assert.deepEqual(errors, []);
+    await page.screenshot({ path: `${process.env.SHOT_DIR || "/tmp"}/royal-mail-weight-${name}-${colorScheme}.png` });
+  });
+}
