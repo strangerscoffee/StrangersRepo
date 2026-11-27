@@ -57,8 +57,9 @@ export function applyStaticConsumerFields(html: HTMLRewriter, scope: string, pag
   for (const section of PAGES[scope].sections) {
     const hidden = !section.locked && page.hidden?.includes(section.id);
     const layout = page.sectionLayouts?.[section.id];
-    if (!hidden && !layout) continue;
+    if (!hidden && !layout && !page.sectionStyles?.[section.id] && !page.mobile?.sectionStyles?.[section.id]) continue;
     html.on(section.selector, { element(e) {
+      e.setAttribute("data-consumer-layout-id", section.id);
       if (hidden) e.setAttribute("data-consumer-section-hidden", "");
       if (layout) e.setAttribute("data-consumer-section-layout", layout);
     } });
@@ -67,7 +68,7 @@ export function applyStaticConsumerFields(html: HTMLRewriter, scope: string, pag
 function editorialWidget(widget: ConsumerEditorWidget) {
   const opening = '<article class="consumer-widget consumer-widget-' + escape(widget.type) +
     '" data-consumer-rendered-widget="' + escape(widget.id) + '" data-consumer-widget="' + escape(widget.id) +
-    '" data-widget-layout="' + escape(widget.layout || "stack") + '">';
+    '" data-consumer-layout-id="' + escape(widget.id) + '" data-widget-layout="' + escape(widget.layout || "stack") + '">';
   if (widget.type === "divider") return opening + "<hr></article>";
   const src = publicPhoto(widget.image);
   const photo = src ? '<img loading="lazy" src="' + escape(src) + '" alt="' + escape(widget.alt) + '">' : "";

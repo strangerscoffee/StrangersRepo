@@ -1,12 +1,16 @@
 import {
-  COFFEE_CHOICES, THEMES, LAYOUTS, WIDGET_TYPES, ASSETS, TEMPLATES, emptyDocument, imageUrl, referencedMedia, safeLink, validateDocument,
+  cataloguePageForKey, COFFEE_CHOICES, THEMES, LAYOUTS, WIDGET_TYPES, ASSETS, TEMPLATES, emptyDocument, imageUrl, referencedMedia, safeLink, validateDocument,
 } from '/api/admin/consumer/editor/assets/editor-model.js';
-import { availability } from '/api/admin/consumer/editor/assets/products.js';
+import { availability, products } from '/api/admin/consumer/editor/assets/products.js';
+import { hasPageSeo, seoInspector } from './consumer-editor-seo.js';
 import { mountEditorCanvas } from '/api/admin/consumer/editor/assets/editor-render.js';
 
 import { editorPages, mountEditorPages } from './consumer-editor-pages.js';
 import { buildPublishReview, renderPublishReview } from './consumer-editor-review.js';
 import { mountDirectEditor } from './consumer-editor-direct.js';
+import { defaultWidget, editorialCopy, movedSections, renderLayoutTools } from './consumer-editor-layout-tools.js';
+import { orderedSections, effectiveStyle, SECTION_STYLES } from '/api/admin/consumer/editor/assets/editor-layout.js';
+import { responsiveFields } from './consumer-editor-responsive.js';
 
 const previewStates = {
   finder: [['brew','Brew method'], ['taste','Taste'], ['match','Coffee match']],
@@ -16,10 +20,9 @@ const previewStates = {
 };
 const endpoint = '/api/admin/consumer/editor';
 const uploadLimit = 1536 * 1024;
-const tabs = { content: 'Content', design: 'Design', media: 'Photos', history: 'Versions' };
+const tabs = { content: 'Content', design: 'Design', seo: 'SEO', media: 'Photos', history: 'Versions' };
 const sizes = { desktop: 1180, mobile: 390 };
 const textLimit = 16000;
-const arrangements = [['stack', 'Stacked'], ['split', 'Image left'], ['reverse', 'Image right']];
 const clone = value => JSON.parse(JSON.stringify(value));
 const snapshot = JSON.stringify;
 const date = value => new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Europe/London' }).format(new Date(value));
@@ -121,27 +124,33 @@ async function preparePhoto(file) {
   finally { URL.revokeObjectURL(url); }
 }
 
-export function mountConsumerEditor(host, { api, confirmSheet }) {
+export function mountConsumerEditor(host, { api, confirmSheet, seoProduct }) {
   let active = true, serial = 0, canvas, canvasRequest, resizeObserver;
-  let state, draft, saved = '', scope = 'home', pick = { scope: 'home' }, tab = 'content';
+  const initialProduct = seoProduct && cataloguePageForKey('product:' + seoProduct.id, seoProduct);
+  let state, draft, saved = '', scope = initialProduct ? 'product:' + seoProduct.id : 'home', pick = {scope}, tab = initialProduct ? 'seo' : 'content';
+  let seoSection = 'search';
   let busy = false, conflict = false, notice = '', problem = false, device = matchMedia('(max-width: 740px)').matches ? 'mobile' : 'desktop';
+  let editSize = device === 'mobile' ? 'mobile' : 'all', layoutScopeControl;
+  const mobileLayout = () => editSize === 'mobile';
   let viewState = '', outlineOpen = false, expanded = false, expandButton, previewGeneration = 0, lastField = '', previewReady = false;
   let coffees = COFFEE_CHOICES, catalogueUnavailable = false;
   let direct, directSession, picker, pickerToggle;
   const undo = [], redo = [], usable = new AbortController();
   const isDirty = () => Boolean(draft && snapshot(draft) !== saved);
   const shelf = () => draft.pages[pick.scope] || {};
-  const pages = () => editorPages(draft);
+  const pages = () => {
+    const definitions = editorPages(draft);
+    if (initialProduct) definitions['product:' + seoProduct.id] ||= initialProduct;
+    return definitions;
+  };
   const details = () => pages()[pick.scope];
   const pageForEdit = () => draft.pages[pick.scope] ||= {};
   const selectedWidget = () => (shelf().widgets || []).find(item => item.id === pick.widget);
   const nativeField = () => details().fields.find(item => item.id === pick.field);
   const nativeSection = () => details().sections.find(item => item.id === pick.section);
-  const lines = () => {
-    const page = shelf(), inventory = details();
-    const all = [...inventory.sections.map(item => item.id), ...(page.widgets || []).map(item => item.id)];
-    return [...new Set([...(page.sections || []), ...all])].filter(id => all.includes(id));
-  };
+  const productTemplate = (key = pick.scope) => key.startsWith('product:') ? draft.pages.product || {} : {};
+  const lines = (mobile = mobileLayout()) => orderedSections(details(),shelf(),productTemplate(),mobile);
+  const widgetFor = (id,key = pick.scope) => draft.pages[key]?.widgets?.find(item=>item.id===id) || productTemplate(key).widgets?.find(item=>item.id===id);
   let bar, pageSelect, pageTools, statePicker, status, messages, saveButton, publishButton, undoButton, redoButton, canvasArea, stage, frame, frameMessage, inspector, inspectorBody, tabGroup, deviceGroup, actions;
 
   function setNotice(text = '', error = false) {
@@ -160,6 +169,7 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
     undoButton.disabled = busy || !undo.length;
     redoButton.disabled = busy || !redo.length;
     pageSelect.disabled = busy;
+    layoutScopeControl.disabled = busy;
     pageTools.inert = busy;
     inspector.inert = busy;
     canvasArea.inert = busy;
@@ -186,7 +196,7 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
     remember(options.key);
     callback();
     if (!conflict) { notice = ''; problem = false; }
-    canvas?.update(draft);
+    if (options.canvas !== false) canvas?.update(draft);
     if (options.panel !== false) renderInspector();
     renderStatus();
   }
@@ -197,7 +207,7 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
     draft = JSON.parse(from.pop());
     ensureScope();
     lastField = '';
-    if (pick.widget && !selectedWidget()) pick = { scope: pick.scope };
+    if (pick.widget && !widgetFor(pick.widget)) pick = { scope: pick.scope };
     notice = '';
     canvas?.update(draft);
     renderInspector();
@@ -211,7 +221,7 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
     if (!preserveUndo) undo.length = redo.length = 0;
     lastField = '';
     conflict = false;
-    if (pick.widget && !selectedWidget()) pick = { scope: pick.scope };
+    if (pick.widget && !widgetFor(pick.widget)) pick = { scope: pick.scope };
     canvas?.update(draft);
   }
   async function operation(task) {
@@ -249,6 +259,7 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
       const changes = buildPublishReview(live.document, reviewed, {
         pages: {...editorPages(live.document), ...editorPages(reviewed)},
         themes: THEMES, layouts: LAYOUTS, widgetTypes: WIDGET_TYPES, coffees, media: state.media,
+        layoutTools: {orderedSections, effectiveStyle, SECTION_STYLES},
       });
       const approved = await confirmSheet({
         title: 'Publish storefront changes?',
@@ -322,11 +333,14 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
     expandButton.setAttribute('aria-expanded',String(value));
     fitPreview();
   }
-  function chooseDevice(value) {
-    if (busy || !finishDirect()) return;
+  function chooseDevice(value, layoutSize = value === 'mobile' ? 'mobile' : 'all') {
+    if (busy || !finishDirect()) { layoutScopeControl.value = editSize; return; }
     device = value;
+    editSize = layoutSize;
+    layoutScopeControl.value = editSize;
     for (const control of deviceGroup.children) control.setAttribute('aria-pressed', String(control.dataset.device === value));
     fitPreview();
+    if (state && inspectorBody) renderInspector();
   }
   function refreshPageControls() {
     if (!pageSelect || !pageTools) return;
@@ -371,7 +385,7 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
     refreshPageControls();
     pageSelect.value = value;
     pick = { scope };
-    tab = 'content';
+    if (tab !== 'seo' || !hasPageSeo(scope)) tab = 'content';
     lastField = '';
     renderInspector();
     loadCanvas();
@@ -452,20 +466,12 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
     if (selection.section && !selection.field) {
       const section = pages()[source].sections.find(item => item.id === selection.section);
       if (!section || section.locked) return [];
-      return [{id:'width', kind:'choice', label:'Section width', choices:Object.entries(LAYOUTS),
-        ...pageSetting(source, 'sectionLayouts', section.id, 'standard')}];
+      return layoutProperties(source,section.id,hit.node);
     }
     if (selection.widget) {
-      const widget = draft.pages[source]?.widgets?.find(item => item.id === selection.widget);
+      const widget = selection.part ? draft.pages[source]?.widgets?.find(item => item.id === selection.widget) : widgetFor(selection.widget,source);
       if (!widget || widget.type === 'divider') return [];
-      if (!selection.part) {
-        const present = Object.hasOwn(widget, 'layout');
-        return [{id:'layout', kind:'choice', label:'Widget arrangement', choices:arrangements, value:widget.layout ?? 'stack',
-          set:(value, original) => {
-            if (original && !present) delete widget.layout;
-            else widget.layout = value;
-          }}];
-      }
+      if (!selection.part) return layoutProperties(source,widget.id,hit.node,widget);
       const parts = {heading:['text','Heading text',240], body:['text','Body text',8000], label:['text','Button label',160],
         href:['link','Link destination',2048], image:['image','Photo'], alt:['alt','Alternative text',500]};
       if (!Object.hasOwn(parts, selection.part)) return [];
@@ -528,7 +534,7 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
         return [String(index), 'Section · ' + section.label];
       }
       if (selection.widget && !selection.part) {
-        const widget = draft.pages[selection.scope]?.widgets?.find(item => item.id === selection.widget);
+        const widget = widgetFor(selection.widget,selection.scope);
         return [String(index), 'Widget · ' + (widget?.heading || WIDGET_TYPES[widget?.type] || 'Layout')];
       }
       const text = selection.part === 'image' || field?.kind === 'image'
@@ -564,7 +570,8 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
     renderInspector();
     canvas.select(selection, {scroll:false, node:hit.node});
     const fields = directFields(selection, hit);
-    if (!fields.length) return;
+    const tools = structureTools(selection, hit);
+    if (!fields.length && !tools) return;
 
     const edits = new Map();
     const start = snapshot(draft), oldUndo = undo.slice(), oldRedo = redo.slice();
@@ -588,7 +595,11 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
     }
     const hasPhoto = fields.some(item => item.kind === 'image');
     const hasLink = fields.some(item => item.kind === 'link');
-    let label = selection.pageTitle ? 'Page title' : hasPhoto ? 'Photo' : hasLink || hit.node.closest('a,button') ? 'Button' : fields[0].label;
+    let label = selection.pageTitle ? 'Page title' : hasPhoto ? 'Photo' : hasLink || hit.node.closest('a,button') ? 'Button' : fields[0]?.label || 'Widget';
+    if (fields.some(item => item.sectionStyle)) {
+      const section = pages()[selection.scope].sections.find(item => item.id === selection.section);
+      label = (section?.label || 'Widget layout') + ' · ' + (mobileLayout() ? 'Mobile only' : 'All sizes');
+    }
     if (selection.scope !== scope) label += ' · ' + pages()[selection.scope].label;
     let caretOffset;
     if (fields.length === 1 && fields[0].kind === 'text' && Number.isInteger(hit.caretOffset)) {
@@ -599,7 +610,7 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
       }
     }
     const opened = direct.open({
-      frame, label, fields, caretOffset, returnFocus, getTarget:() => canvas?.getTarget(selection)?.node,
+      frame, label, fields, tools, caretOffset, returnFocus, getTarget:() => canvas?.getTarget(selection)?.node,
       inlineText:!hit.fields?.some(field => field.kind === 'text' && field.node !== hit.node),
       photos:hasPhoto ? [...state.media.map(item => photoChoice('media:' + item.id, item.name)),
         ...ASSETS.map(name => photoChoice('asset:' + name, name.replace(/\.[^.]+$/, '').replaceAll('-', ' ')))] : [],
@@ -682,12 +693,89 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
   function lockedSection(id) {
     return Boolean(details().sections.find(item=>item.id===id)?.locked);
   }
-  function reorder(id, target) {
-    const rows = lines(), from = rows.indexOf(id), to = rows.indexOf(target);
-    if (from < 0 || to < 0 || from === to || rows.slice(Math.min(from,to),Math.max(from,to)+1).some(lockedSection)) return;
-    rows.splice(from,1);
-    rows.splice(to,0,id);
-    change(() => { pageForEdit().sections = rows; });
+  function setOrder(page, rows, mobile) {
+    if (mobile) {
+      const inherited = {...page, mobile:{...page.mobile}};
+      delete inherited.mobile.sections;
+      if (snapshot(rows) === snapshot(orderedSections(details(),inherited,productTemplate(),true))) {
+        if (page.mobile) {
+          delete page.mobile.sections;
+          if (!Object.keys(page.mobile).length) delete page.mobile;
+        }
+        if (!Object.keys(page).length) delete draft.pages[pick.scope];
+      } else (page.mobile ||= {}).sections = rows;
+    } else page.sections = rows;
+  }
+  function reorder(id, target, after = lines().indexOf(id) < lines().indexOf(target)) {
+    const next = movedSections(lines(),id,target,after,lockedSection);
+    if (!next) return;
+    change(() => setOrder(pageForEdit(),next,mobileLayout()));
+  }
+  function resetMobileOrder() {
+    if (!mobileLayout() || !shelf().mobile?.sections || !finishDirect()) return;
+    change(() => {
+      const page = pageForEdit();
+      delete page.mobile.sections;
+      if (!Object.keys(page.mobile).length) delete page.mobile;
+      if (!Object.keys(page).length) delete draft.pages[pick.scope];
+    });
+  }
+  function layerSelection(id) {
+    return {scope:pick.scope, [widgetFor(id) ? 'widget' : 'section']:id};
+  }
+  function revealStructure(selection) {
+    const hit = canvas?.getTarget(selection);
+    if (!hit) return;
+    const node = hit.node, box = node.getBoundingClientRect(), view = node.ownerDocument.defaultView;
+    if (box.top < 0 || box.top >= view.innerHeight) view.scrollBy({top:box.top-12,behavior:'instant'});
+    pickOnCanvas(selection,hit);
+  }
+  function structureTools(selection, hit) {
+    if (selection.field || selection.part || selection.pageTitle) return;
+    const id = selection.widget || selection.section;
+    if (!id || lockedSection(id) || !lines().includes(id)) return;
+    const currentScope = selection.scope;
+    const row = lines(), index = row.indexOf(id);
+    const locked = new Set(details().sections.filter(section => section.locked).map(section => section.id));
+    const canInsert = details().widgets !== false && (shelf().widgets?.length || 0) < 40;
+    const widget = widgetFor(id);
+    const copy = widget || (canInsert && editorialCopy(hit.node,ASSETS,value=>safeLink(value,draft.pages)));
+    const allowed = (target, after) => Boolean(movedSections(row,id,target,after,key=>locked.has(key)));
+    const drop = (target, after) => {
+      if (busy || !active || pick.scope !== currentScope || !allowed(target,after) || !finishDirect()) return;
+      reorder(id,target,after);
+      revealStructure(selection);
+    };
+    const groups = [
+      ['Widgets',Object.entries(WIDGET_TYPES).map(([key,label])=>['widget:'+key,label])],
+      ['Templates',Object.entries(TEMPLATES).map(([key,item])=>['template:'+key,item.label])],
+    ];
+    return (container,signal) => renderLayoutTools(container,{
+      frame, groups, mobile:mobileLayout(), widget:Boolean(widget),
+      canUp:index > 0 && allowed(row[index-1],false),
+      canDown:index + 1 < row.length && allowed(row[index+1],true),
+      targets:() => row.map(key=>({id:key,node:canvas.getTarget(layerSelection(key))?.node}))
+        .filter(entry=>entry.node?.getBoundingClientRect().height > 0),
+      canDrop:allowed, drop,
+      move:direction => drop(row[index+direction], direction>0),
+      resetOrder:mobileLayout() && shelf().mobile?.sections ? () => {
+        resetMobileOrder();
+        revealStructure(selection);
+      } : null,
+      duplicate:canInsert && copy ? () => {
+        if (!finishDirect()) return;
+        const created = insertWidgets([copy],id,{copyFrom:id});
+        if (created) revealStructure(created);
+      } : null,
+      insert:canInsert ? key => {
+        const [group, value] = key.split(':');
+        const entries = group === 'template' && Object.hasOwn(TEMPLATES,value) ? TEMPLATES[value].widgets :
+          group === 'widget' && Object.hasOwn(WIDGET_TYPES,value) ? [defaultWidget(value,WIDGET_TYPES)] : [];
+        if (!entries.length || !finishDirect()) return;
+        const created = insertWidgets(entries,id);
+        if (created) revealStructure(created);
+      } : null,
+    },signal);
   }
   function layerOutline(sequence) {
     const disclosure = element('details', {class:'ce-layers'});
@@ -697,11 +785,10 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
     const stack = element('ol', {class:'ce-layer-list', 'aria-label':'Section order'});
     let dragging = '';
     for (const [id,label] of sequence) {
-      const widget = (shelf().widgets || []).some(item => item.id===id);
       const locked = lockedSection(id);
       const row = element('li', {'data-layer':id});
       const handle = element('span', {class:'ce-grip','aria-hidden':'true', title:locked ? 'Fixed position' : 'Drag to reorder'}, locked ? '·' : '⠿');
-      const focus = element('button', {type:'button', onclick:()=>selectItem({scope:pick.scope,[widget?'widget':'section']:id}), 'aria-label':'Edit '+label}, label);
+      const focus = element('button', {type:'button', onclick:()=>selectItem(layerSelection(id)), 'aria-label':'Edit '+label}, label);
       row.draggable = !locked;
       row.append(handle,focus);
       row.addEventListener('dragstart', event => {
@@ -729,6 +816,9 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
       stack.append(row);
     }
     disclosure.append(stack);
+    if (mobileLayout() && shelf().mobile?.sections) {
+      disclosure.append(button('Use inherited order',resetMobileOrder,'sm soft'));
+    }
     return disclosure;
   }
   function orderSection(id, direction) {
@@ -764,6 +854,19 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
     }
     return box;
   }
+  function layoutProperties(source,id,node,widget) {
+    return responsiveFields({pages:draft.pages, scope:source, id, node, widget, mobile:mobileLayout()});
+  }
+  function layoutInspector(id,widget) {
+    const source = pick.scope;
+    const node = canvas?.getTarget({scope:source, [widget ? 'widget' : 'section']:id})?.node;
+    const box = element('fieldset', {class:'ce-layout-inspector'},
+      element('legend',{},mobileLayout() ? 'Mobile layout' : 'Layout for all sizes'));
+    for (const item of layoutProperties(source,id,node,widget)) {
+      box.append(field(item.label, select(item.choices,item.value,value => change(() => item.set(value,value === item.value)))));
+    }
+    return box;
+  }
   function widgetControls(widget) {
     const update = (key, val, rerender = false) => change(() => { selectedWidget()[key] = val; }, { key: widget.id + ':' + key, panel: rerender });
     const box = group(title(WIDGET_TYPES[widget.type] || 'Widget'), positionControls(widget.id));
@@ -771,18 +874,32 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
     if (widget.type !== 'divider') {
       box.append(textControl('Heading', widget.heading, value => update('heading', value), { max: 240 }));
       box.append(textControl('Text', widget.body, value => update('body', value), { multiline: true, max: 8000 }));
-      box.append(field('Arrangement', select(arrangements, widget.layout || 'stack', value => update('layout', value, true))));
+      box.append(layoutInspector(widget.id,widget));
       box.append(picture(widget.image, value => update('image', value, true)));
       box.append(textControl('Photo description', widget.alt, value => update('alt', value), { max: 500 }));
       box.append(textControl('Button text', widget.label, value => update('label', value), { max: 160 }));
       box.append(textControl('Button destination', widget.href, value => update('href', value), { max: 2048 }));
     }
     box.append(button('Remove widget', async () => {
-      if (!await confirmSheet({ title: 'Remove this widget?', text: 'The change will be part of your draft.', confirm: 'Remove widget', danger: true }) || !active) return;
+      if (!await confirmSheet({ title: 'Remove this widget?', text: 'This removes the widget from every screen size in your draft.', confirm: 'Remove widget', danger: true }) || !active) return;
       change(() => {
         const entry = pageForEdit();
         entry.widgets = entry.widgets.filter(item => item.id !== widget.id);
-        if (entry.sections) entry.sections = entry.sections.filter(id => id !== widget.id);
+        const affected = [entry];
+        if (pick.scope === 'product') {
+          for (const [key, page] of Object.entries(draft.pages)) {
+            if (key.startsWith('product:') && !page.widgets?.some(item => item.id === widget.id)) affected.push(page);
+          }
+        }
+        for (const page of affected) for (const settings of [page,page.mobile]) {
+          if (!settings) continue;
+          if (settings.sections) settings.sections = settings.sections.filter(id => id !== widget.id);
+          if (settings.sectionStyles) {
+            delete settings.sectionStyles[widget.id];
+            if (!Object.keys(settings.sectionStyles).length) delete settings.sectionStyles;
+          }
+          if (settings === page.mobile && !Object.keys(settings).length) delete page.mobile;
+        }
         pick = { scope: pick.scope };
       });
     }, 'soft sm'));
@@ -792,7 +909,7 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
     const inventory = details(), current = shelf(), wrapper = group();
     const sequence = lines().map(id => {
       const section = inventory.sections.find(item => item.id === id);
-      const widget = (current.widgets || []).find(item => item.id === id);
+      const widget = widgetFor(id);
       return [id, (widget ? widget.heading || WIDGET_TYPES[widget.type] : section.label) + ((current.hidden || []).includes(id) ? ' · hidden' : '')];
     });
     const visibleFields = pick.section && !pick.field ? inventory.fields.filter(item => !item.section || item.section === pick.section) : inventory.fields;
@@ -801,8 +918,7 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
     if (pick.scope !== scope) wrapper.append(help('Editing ' + inventory.label + ' on ' + pages()[scope].label + '.'),
       button('Return to page content', () => selectItem({scope}), 'soft sm'));
     if (sequence.length) wrapper.append(layerOutline(sequence), field('Section or widget', select([['', 'Choose a section'], ...sequence], pick.section || pick.widget || '', id => {
-      const widget = (shelf().widgets || []).some(item => item.id === id);
-      selectItem(id ? { scope: pick.scope, [widget ? 'widget' : 'section']: id } : { scope: pick.scope });
+      selectItem(id ? layerSelection(id) : { scope: pick.scope });
     })));
     if (fieldList.length) {
       const choices = select([['', 'Choose text or a photo'], ...fieldList], pick.field || '', id => {
@@ -824,18 +940,22 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
     }
     const descriptor = nativeField(), section = nativeSection(), widget = selectedWidget();
     if (widget) wrapper.append(widgetControls(widget));
+    else if (pick.widget && widgetFor(pick.widget)) {
+      const inherited = widgetFor(pick.widget);
+      wrapper.append(title(inherited.heading || WIDGET_TYPES[inherited.type]),
+        help('This product inherits the widget’s content from the product template. Layout changes here apply to this product.'),
+        positionControls(inherited.id));
+      if (inherited.type !== 'divider') wrapper.append(layoutInspector(inherited.id,inherited));
+    }
     else if (descriptor) wrapper.append(editNative(descriptor));
     else if (section) {
       wrapper.append(title(section.label));
-      if (!section.locked) wrapper.append(field('Section width', select(Object.entries(LAYOUTS), pageSetting(pick.scope, 'sectionLayouts', section.id, 'standard').value, value => change(() => {
-        const entry = pageForEdit();
-        entry.sectionLayouts ||= {};
-        entry.sectionLayouts[section.id] = value;
-      }))));
+      if (!section.locked) wrapper.append(layoutInspector(section.id));
       if (section.locked) wrapper.append(help('This section contains essential storefront controls.'));
       else {
         const hidden = (current.hidden || []).includes(section.id);
-        wrapper.append(positionControls(section.id), button(hidden ? 'Show section' : 'Hide section', () => change(() => {
+        const visibility = (hidden ? 'Show' : 'Hide') + (mobileLayout() ? ' on all sizes' : ' section');
+        wrapper.append(positionControls(section.id), button(visibility, () => change(() => {
           const entry = pageForEdit();
           entry.hidden = hidden ? (entry.hidden || []).filter(id => id !== section.id) : [...(entry.hidden || []), section.id];
         }), 'soft sm'));
@@ -844,19 +964,42 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
     return wrapper;
   }
 
-  function insertWidgets(entries) {
+  function insertWidgets(entries, after = pick.widget || pick.section, {copyFrom} = {}) {
+    if (!entries.length || details().widgets === false || !finishDirect()) return;
+    if ((shelf().widgets?.length || 0) + entries.length > 40) {
+      setNotice('A page can contain up to 40 widgets.',true);
+      return;
+    }
     const newWidgets = entries.map(item => ({ ...clone(item), id: widgetId() }));
-    const position = lines(), after = pick.widget || pick.section;
-    const index = after && position.includes(after) ? position.indexOf(after) + 1 : position.length;
-    position.splice(index, 0, ...newWidgets.map(item => item.id));
+    function position(mobile) {
+      const order = lines(mobile);
+      const at = order.indexOf(after);
+      order.splice(at < 0 ? order.length : at+1,0,...newWidgets.map(item=>item.id));
+      return order;
+    }
+    const shared = position(false), mobile = position(true);
+    const hadMobileOrder = Boolean(shelf().mobile?.sections || productTemplate().mobile?.sections);
     change(() => {
       const entry = pageForEdit();
       entry.widgets = [...(entry.widgets || []), ...newWidgets];
-      entry.sections = position;
+      setOrder(entry,shared,false);
+      if (hadMobileOrder) setOrder(entry,mobile,true);
+      if (copyFrom) {
+        const id = newWidgets[0].id, template = productTemplate();
+        const base = effectiveStyle(entry,template,copyFrom);
+        if (base.arrangement) {
+          newWidgets[0].layout = base.arrangement === 'text-first' ? 'stack' : base.arrangement;
+          delete base.arrangement;
+        }
+        if (Object.keys(base).length) (entry.sectionStyles ||= {})[id] = base;
+        const small = {...template.mobile?.sectionStyles?.[copyFrom],...entry.mobile?.sectionStyles?.[copyFrom]};
+        if (Object.keys(small).length) ((entry.mobile ||= {}).sectionStyles ||= {})[id] = small;
+      }
       pick = { scope: pick.scope, widget: newWidgets[0].id };
       tab = 'content';
     });
     canvas?.select(pick);
+    return pick;
   }
   function design() {
     const current = shelf();
@@ -866,32 +1009,13 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
         if (value) pageForEdit().theme = value;
         else delete pageForEdit().theme;
       }))),
-      field('Page width', select(Object.entries(LAYOUTS), current.layout || 'standard', value => change(() => { pageForEdit().layout = value; }))),
+      field('Page width (all sizes)', select(Object.entries(LAYOUTS), current.layout || 'standard', value => change(() => { pageForEdit().layout = value; }))),
     );
-    if (!['shared','finder','cart'].includes(pick.scope)) {
-      const meta = current.meta || {};
-      const update = (key,value) => change(() => {
-        const entry = pageForEdit();
-        entry.meta ||= {};
-        if (value.trim()) entry.meta[key] = value;
-        else delete entry.meta[key];
-        if (!Object.keys(entry.meta).length) delete entry.meta;
-      }, {key:'meta:'+pick.scope+':'+key,panel:false});
-      controls.append(element('details', {class:'ce-meta'}, element('summary',{},'Page title and description'), group(
-        help('Set the browser title and search description. Leave a field empty to use the original.'),
-        textControl('Page title',meta.title,v=>update('title',v),{max:150}),
-        textControl('Page description',meta.description,v=>update('description',v),{max:320,multiline:true}))));
-    }
     if (details().widgets !== false) {
       let widgetType = Object.keys(WIDGET_TYPES)[0], templateId = Object.keys(TEMPLATES)[0];
       controls.append(title('Add to this page'),
         field('Widget', select(Object.entries(WIDGET_TYPES), widgetType, value => { widgetType = value; })),
-        button('Add widget', () => {
-          const defaults = { type: widgetType };
-          if (!['image', 'divider'].includes(widgetType)) defaults.heading = WIDGET_TYPES[widgetType];
-          if (['hero', 'image', 'cards'].includes(widgetType)) { defaults.image = 'asset:roastery.webp'; defaults.alt = 'Strangers Coffee roastery'; }
-          insertWidgets([defaults]);
-        }, 'soft sm'),
+        button('Add widget', () => insertWidgets([defaultWidget(widgetType,WIDGET_TYPES)]), 'soft sm'),
         field('Template', select(Object.entries(TEMPLATES).map(([id, value]) => [id, value.label]), templateId, value => { templateId = value; })),
         button('Insert template', () => insertWidgets(TEMPLATES[templateId].widgets), 'soft sm'));
     }
@@ -991,6 +1115,33 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
     controls.append(list);
     return controls;
   }
+  function seo() {
+    const id = scope.startsWith('product:') ? scope.slice(8) : '';
+    const currentProduct = id === seoProduct?.id && !availability.known ? seoProduct : products.find(item => item.id === id);
+    return seoInspector({
+      scope, pages:draft.pages, product:scope === 'product' ? products.find(item => item.id === 'bom-jesus') || products[0] : currentProduct,
+      section:seoSection, selectSection(key) {
+        seoSection = key;
+        renderInspector();
+        inspectorBody.querySelector('[data-seo-tab="' + key + '"]')?.focus({preventScroll:true});
+      },
+      photos:[...state.media.map(item => ['media:' + item.id, item.name]),
+        ...ASSETS.filter(name => /\.(?:webp|png|jpe?g)$/i.test(name)).map(name => ['asset:' + name, name.replace(/\.[^.]+$/, '').replaceAll('-', ' ')])],
+      finishField() { lastField = ''; },
+      change(key, value, groupTyping) {
+        const meta = draft.pages[scope]?.meta;
+        if ((meta?.[key] || '') === value) return;
+        change(() => {
+          if (value) ((draft.pages[scope] ||= {}).meta ||= {})[key] = value;
+          else {
+            delete meta[key];
+            if (!Object.keys(meta).length) delete draft.pages[scope].meta;
+            if (!Object.keys(draft.pages[scope]).length && !Object.hasOwn(state.draft?.pages || {},scope)) delete draft.pages[scope];
+          }
+        }, {key:groupTyping ? 'meta:' + scope + ':' + key : undefined, panel:false, canvas:false});
+      },
+    });
+  }
   function chooseTab(value) {
     if (!Object.hasOwn(tabs, value) || !finishDirect()) return;
     lastField = '';
@@ -999,8 +1150,11 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
   }
   function renderInspector() {
     if (!active || !state) return;
-    for (const btn of tabGroup.children) btn.setAttribute('aria-pressed', String(btn.dataset.tab === tab));
-    inspectorBody.replaceChildren(({ content: contents, design, media: library, history })[tab]());
+    for (const btn of tabGroup.children) {
+      btn.setAttribute('aria-pressed', String(btn.dataset.tab === tab));
+      if (btn.dataset.tab === 'seo') btn.hidden = !hasPageSeo(scope);
+    }
+    inspectorBody.replaceChildren(({ content: contents, design, seo, media: library, history })[tab]());
   }
   function build() {
     host.replaceChildren();
@@ -1031,8 +1185,11 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
     canvasArea = element('div', { class: 'ce-viewport' }, frameMessage, stage);
     picker = element('div', {id:'ce-canvas-picker', class:'ce-canvas-picker', role:'group', 'aria-label':'Choose an element', hidden:''});
     pickerToggle = button('Choose an element', showPicker, 'soft sm', {'aria-controls':'ce-canvas-picker', 'aria-expanded':'false', disabled:true});
+    layoutScopeControl = select([['all','All sizes'], ['mobile','Mobile only']], editSize,
+      value => chooseDevice(value === 'mobile' ? 'mobile' : device,value), {'aria-label':'Apply layout to'});
+    const layoutScope = element('label', {class:'ce-layout-scope'}, element('span',{},'Apply layout to'), layoutScopeControl);
     const hint = element('div', {class:'ce-canvas-hint'},
-      element('span', {id:'ce-canvas-hint'}, 'Select text, a button or a photo to edit it here.'), pickerToggle);
+      element('span', {id:'ce-canvas-hint'}, 'Select text, a button or a photo to edit it here.'), pickerToggle, layoutScope);
     const canvasPanel = element('section', { class: 'glass group ce-canvas', 'aria-label': 'Page preview' }, canvasHeading, hint, picker, canvasArea);
     tabGroup = element('div', { class: 'seg ce-tabs ce-inspector-tabs', role: 'group', 'aria-label': 'Editor tools' });
     for (const [id, text] of Object.entries(tabs)) tabGroup.append(element('button', { type: 'button', 'data-tab': id, onclick: () => chooseTab(id) }, text));
@@ -1050,8 +1207,7 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
     }
     window.addEventListener('resize', fitPreview, { signal: usable.signal });
     refreshPageControls();
-    chooseDevice(device);
-    renderInspector();
+    chooseDevice(device,editSize);
     renderStatus();
     loadCanvas();
   }
@@ -1072,7 +1228,7 @@ export function mountConsumerEditor(host, { api, confirmSheet }) {
         pageSelect.replaceChildren(...listOfPages(pages()).children);
         pageSelect.value = scope;
         canvas?.update(draft);
-        if (selectedWidget()?.type === 'coffee-shelf') renderInspector();
+        if (selectedWidget()?.type === 'coffee-shelf' || (tab === 'seo' && !inspectorBody.contains(document.activeElement))) renderInspector();
       }).catch(() => {
         if (!active || token !== serial) return;
         catalogueUnavailable = true;

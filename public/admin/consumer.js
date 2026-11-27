@@ -679,15 +679,16 @@ window.AdminConsumer = ({ api, html, raw, svg, put, head, toast, confirmSheet, o
         <div id="${editor ? "consumerEditor" : "consumerProducts"}"><p role="status">Loading ${editor ? "site editor" : "products"}…</p></div>
       </div>`;
     },
-    async mountTool(tool) {
+    async mountTool(tool, seoProduct) {
       const host = find(tool === "editor" ? "consumerEditor" : "consumerProducts");
       if (tool === "products") {
         const {mountConsumerProducts} = await import("./consumer-products.js");
-        if (host.isConnected) return mountConsumerProducts(host, {api, confirmSheet, toast});
+        if (host.isConnected) return mountConsumerProducts(host, {api, confirmSheet, toast,
+          editSeo: product => openSection("editor", product)});
         return;
       }
       const {mountConsumerEditor} = await import("./consumer-editor.js");
-      if (host.isConnected) return mountConsumerEditor(host, {api, confirmSheet, toast});
+      if (host.isConnected) return mountConsumerEditor(host, {api, confirmSheet, toast, seoProduct});
     },
     clear() {
       generation++;

@@ -1,0 +1,24 @@
+.consumer-editor .ce-inspector-tabs { display:flex; align-items:stretch; flex-wrap:nowrap; overflow-x:auto; scrollbar-width:thin; }
+.consumer-editor .ce-inspector-tabs button { flex:1 0 auto; font-size:.81rem; line-height:1.2; min-height:44px; min-width:0; padding-inline:5px; white-space:nowrap; }
+.ce-seo { display:grid; gap:14px; min-width:0; }
+.ce-seo-tabs { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); }
+.ce-seo-tabs button { min-width:0; min-height:40px; overflow-wrap:anywhere; }
+.ce-seo-tabs button[aria-pressed=true] { background:var(--surface); color:var(--accent); box-shadow:0 1px 3px var(--line); }
+.ce-seo-search-card,.ce-seo-social-card { min-width:0; border:1px solid var(--line); border-radius:var(--r); overflow:hidden; background:var(--surface); }
+.ce-seo-snippet { display:grid; gap:5px; padding:13px; min-width:0; overflow-wrap:anywhere; }
+.ce-seo-url { color:var(--muted); font-size:.73rem; line-height:1.35; }
+.ce-seo-snippet strong { font-size:1rem; line-height:1.3; }
+.ce-seo-search-card strong { color:var(--accent); }
+.ce-seo-snippet p { margin:0; color:var(--fg); line-height:1.45; font-size:.85rem; }
+.ce-seo-snippet strong,.ce-seo-snippet p { display:-webkit-box; -webkit-box-orient:vertical; overflow:hidden; }
+.ce-seo-snippet strong,.ce-seo-social-card p { -webkit-line-clamp:2; }
+.ce-seo-search-card p { -webkit-line-clamp:3; }
+.ce-seo-social-card img { display:block; width:100%; aspect-ratio:1.91; object-fit:cover; }
+.ce-seo-field { min-width:0; }
+.ce-seo-field-foot { display:flex; align-items:center; justify-content:space-between; gap:6px; flex-wrap:wrap; }
+.ce-seo-field-foot small { color:var(--muted); font-size:.75rem; }
+.ce-seo-field-foot small:not(:empty) { padding-block:5px; }
+.ce-seo-reset { margin-inline-start:auto; padding:6px 2px; border:0; background:transparent; color:var(--accent); font:inherit; font-size:.8rem; cursor:pointer; }
+.ce-seo-error { margin:4px 0 0; color:var(--bad); font-size:.83rem; }
+.ce-seo-notice { margin:0; padding:10px 12px; color:var(--fg); background:var(--tint); border-radius:var(--r); font-size:.87rem; line-height:1.45; }
+@media (pointer:coarse) { .ce-seo-reset,.ce-seo-tabs button { min-height:44px; } }

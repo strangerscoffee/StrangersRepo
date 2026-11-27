@@ -11,14 +11,9 @@ const equal = (a, b) => Array.isArray(a) && Array.isArray(b)
 function effectiveWidgets(page, template) {
   return new Map([...(template.widgets || []), ...(page.widgets || [])].map(widget => [widget.id, widget]));
 }
-function sectionOrder(order, definition, widgets) {
-  const available = new Set([...definition.sections.map(section => section.id), ...widgets.keys()]);
-  return [...new Set([...(order || []), ...available])].filter(id => available.has(id));
-}
-
 // Compare the stored settings independently of object insertion order. Only visited fields and
 // pages are involved, so one template change is reviewed once, under its template.
-export function buildPublishReview(live, draft, {pages, themes, layouts, widgetTypes, coffees, media}) {
+export function buildPublishReview(live, draft, {pages, themes, layouts, widgetTypes, coffees, media, layoutTools}) {
   const groups = [];
   const uploadNames = new Map(media.map(item => [item.id, item.name]));
   const coffeeNames = new Map(coffees.map(item => [item.id, item.name]));
@@ -46,10 +41,10 @@ export function buildPublishReview(live, draft, {pages, themes, layouts, widgetT
       }
       add(label, before, after);
     };
-    const photo = (label, a, b, inheritedA, inheritedB) => {
+    const photo = (label, a, b, inheritedA, inheritedB, fallback = 'No photo') => {
       if (a === b) return;
       const beforeImage = a ?? inheritedA ?? '', afterImage = b ?? inheritedB ?? '';
-      add(label, photoName(beforeImage), photoName(afterImage), {beforeImage, afterImage});
+      add(label, beforeImage ? photoName(beforeImage) : fallback, afterImage ? photoName(afterImage) : fallback, {beforeImage, afterImage});
     };
     if (scope.startsWith('custom:')) {
       if (!live.pages[scope] || !draft.pages[scope]) {
@@ -61,9 +56,15 @@ export function buildPublishReview(live, draft, {pages, themes, layouts, widgetT
     setting('Page theme', old.theme, next.theme, value => themes[value],
       'Inherited · ' + themes[priorTemplate.theme || live.theme], 'Inherited · ' + themes[nextTemplate.theme || draft.theme]);
     setting('Page width', old.layout, next.layout, value => layouts[value], layouts[priorTemplate.layout || 'standard'], layouts[nextTemplate.layout || 'standard']);
-    for (const [key, label] of [['title', 'Browser title'], ['description', 'Search description']]) {
-      setting(label, old.meta?.[key], next.meta?.[key], undefined, priorTemplate.meta?.[key] || 'Original page ' + key, nextTemplate.meta?.[key] || 'Original page ' + key);
+    for (const [key, label] of [['title','Browser title'], ['description','Search description'], ['socialTitle','Sharing title'],
+      ['socialDescription','Sharing description'], ['socialImageAlt','Sharing image description'], ['canonical','Canonical address']]) {
+      setting(label, old.meta?.[key], next.meta?.[key], undefined, priorTemplate.meta?.[key] || 'Automatic', nextTemplate.meta?.[key] || 'Automatic');
     }
+    photo('Sharing image', old.meta?.socialImage, next.meta?.socialImage, priorTemplate.meta?.socialImage, nextTemplate.meta?.socialImage, 'Automatic page image');
+    const indexing = value => value === 'noindex' ? 'Exclude from search' : 'Allow indexing';
+    setting('Search visibility at launch', old.meta?.robots, next.meta?.robots, indexing,
+      priorTemplate.meta?.robots ? indexing(priorTemplate.meta.robots) : 'Automatic',
+      nextTemplate.meta?.robots ? indexing(nextTemplate.meta.robots) : 'Automatic');
     for (const field of definition.fields) {
       const a = old.fields?.[field.id], b = next.fields?.[field.id];
       const defaultA = priorTemplate.fields?.[field.id] ?? field.default ?? '', defaultB = nextTemplate.fields?.[field.id] ?? field.default ?? '';
@@ -85,7 +86,7 @@ export function buildPublishReview(live, draft, {pages, themes, layouts, widgetT
       const name = widgetName(widget), ids = namedIds.get(name);
       return ids.size > 1 ? name + ' (' + ([...ids].indexOf(widget.id) + 1) + ')' : name;
     };
-    const sectionName = (id, widgets) => sectionNames.get(id) || identifyWidget(widgets.get(id));
+    const sectionName = (id, widgets) => sectionNames.get(id) || (widgets.has(id) ? identifyWidget(widgets.get(id)) : id);
     for (const {id, label} of definition.sections) {
       if (!equal(old.hidden, next.hidden)) {
         const hiddenA = (old.hidden ?? priorTemplate.hidden ?? []).includes(id);
@@ -95,11 +96,44 @@ export function buildPublishReview(live, draft, {pages, themes, layouts, widgetT
       setting(label + ' · Width', old.sectionLayouts?.[id], next.sectionLayouts?.[id], value => layouts[value],
         layouts[priorTemplate.sectionLayouts?.[id] || 'standard'], layouts[nextTemplate.sectionLayouts?.[id] || 'standard']);
     }
-    const oldOrder = sectionOrder(old.sections ?? priorTemplate.sections, definition, oldWidgets);
-    const newOrder = sectionOrder(next.sections ?? nextTemplate.sections, definition, newWidgets);
+    const oldOrder = layoutTools.orderedSections(definition, old, priorTemplate);
+    const newOrder = layoutTools.orderedSections(definition, next, nextTemplate);
     if ((!equal(old.sections, next.sections) || ownWidgetIds.size) && !equal(oldOrder, newOrder)) {
       add('Section order', numbered(oldOrder.map(id => sectionName(id, oldWidgets))) || 'No sections',
         numbered(newOrder.map(id => sectionName(id, newWidgets))) || 'No sections');
+    }
+    if (!equal(old.mobile?.sections, next.mobile?.sections)) {
+      const mobileOrderLabel = (page, template, widgets) => {
+        const order = layoutTools.orderedSections(definition, page, template, true);
+        const inherited = !page.mobile?.sections ? (template.mobile?.sections ? 'Use product template' : 'Use all sizes') : '';
+        return [inherited, numbered(order.map(id => sectionName(id, widgets)))].filter(Boolean).join('\n') || 'No sections';
+      };
+      add('Mobile only · Section order', mobileOrderLabel(old, priorTemplate, oldWidgets), mobileOrderLabel(next, nextTemplate, newWidgets));
+    }
+    for (const mobile of [false, true]) {
+      const beforeStyles = (mobile ? old.mobile : old)?.sectionStyles;
+      const afterStyles = (mobile ? next.mobile : next)?.sectionStyles;
+      const labels = {width:'Width', spacing:'Spacing', align:'Alignment', crop:'Photo crop', stack:'Photo and text order', arrangement:'Widget arrangement'};
+      for (const id of keys(beforeStyles, afterStyles)) {
+        const before = layoutTools.effectiveStyle(old, priorTemplate, id, mobile);
+        const after = layoutTools.effectiveStyle(next, nextTemplate, id, mobile);
+        const whom = sectionName(id, newWidgets.has(id) ? newWidgets : oldWidgets);
+        for (const property of keys(beforeStyles?.[id], afterStyles?.[id])) {
+          const choices = layoutTools.SECTION_STYLES[property];
+          const format = value => choices[value];
+          const fallback = (style, widgets) => {
+            if (style[property] != null) return format(style[property]);
+            if (property === 'arrangement' && widgets.has(id)) {
+              const arrangement = style.stack === 'text-first' ? 'text-first' : widgets.get(id).layout || 'stack';
+              return format(arrangement);
+            }
+            return mobile ? 'Use all sizes' : 'Storefront default';
+          };
+          const label = [mobile ? 'Mobile only' : 'All sizes', whom, labels[property]].join(' · ');
+          setting(label, beforeStyles?.[id]?.[property], afterStyles?.[id]?.[property], format,
+            fallback(before, oldWidgets), fallback(after, newWidgets));
+        }
+      }
     }
     for (const id of ownWidgetIds) {
       const a = oldWidgets.get(id), b = newWidgets.get(id);

@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { build } from "esbuild";
 import { Miniflare, Response as WorkerResponse } from "miniflare";
 import { ROOT, SETUP_CODE } from "./harness.mjs";
@@ -91,4 +92,26 @@ export async function openLocalBrowser(fixture, browser, viewport, signedIn = fa
     await route.fulfill({status: response.status, headers, body: Buffer.from(await response.arrayBuffer())});
   });
   return context;
+}
+
+// Hit the visible container through the scaled iframe without clicking an editable child.
+export async function clickBackground(page, container, {touch = false} = {}) {
+  await container.scrollIntoViewIfNeeded();
+  const point = await container.evaluate(node => {
+    const doc = node.ownerDocument, frame = doc.defaultView.frameElement;
+    const rect = node.getBoundingClientRect(), bounds = frame.getBoundingClientRect();
+    const scaleX = bounds.width/frame.offsetWidth, scaleY = bounds.height/frame.offsetHeight;
+    const maxX = Math.min(rect.right,frame.clientWidth) - 2, maxY = Math.min(rect.bottom,frame.clientHeight) - 2;
+    for (let y = Math.max(rect.top,0)+2; y < maxY; y += 6) {
+      for (let x = Math.max(rect.left,0)+2; x < maxX; x += 6) {
+        const hostX = bounds.left+x*scaleX, hostY = bounds.top+y*scaleY;
+        if (doc.elementFromPoint(x,y)?.closest('[data-consumer-editable]') === node &&
+            frame.ownerDocument.elementFromPoint(hostX,hostY) === frame) return {x:hostX,y:hostY};
+      }
+    }
+    return null;
+  });
+  assert.ok(point,'the rendered container has clickable background');
+  if (touch) await page.touchscreen.tap(point.x,point.y);
+  else await page.mouse.click(point.x,point.y);
 }

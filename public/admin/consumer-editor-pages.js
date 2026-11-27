@@ -1,4 +1,4 @@
-import { PAGES, cataloguePageForKey, customPageForKey } from "/api/admin/consumer/editor/assets/editor-model.js";
+import { PAGES, cataloguePageForKey, customPageForKey, canonicalPath } from "/api/admin/consumer/editor/assets/editor-model.js";
 
 import { products } from "/api/admin/consumer/editor/assets/products.js";
 
@@ -36,6 +36,9 @@ function linksTo(doc, key) {
   const path = "/pages/" + key.slice(7) + "/";
   return Object.entries(doc.pages).filter(([other, page]) => {
     if (other === key) return false;
+    if (page.meta?.canonical) {
+      try { if (canonicalPath(page.meta.canonical, doc.pages) === path) return true; } catch { /* An unfinished canonical is validated when saving. */ }
+    }
     const fields = Object.values(page.fields || {});
     const targets = (page.widgets || []).map(widget => widget.href);
     return [...fields, ...targets].some(value => typeof value === "string" && value.split(/[?#]/, 1)[0].replace(/\/?$/, "/") === path);

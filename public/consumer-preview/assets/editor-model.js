@@ -1,3 +1,4 @@
+import {SECTION_STYLES, orderedSections, crossesLockedSection} from './editor-layout.js';
 import { assetFiles, staticPages } from './editor-inventory.js';
 import { productPath, productRoutes } from './product-paths.js';
 import { brewGuidance, productContent } from './product-content.js';
@@ -189,7 +190,7 @@ const productSections = [
   { id: 'crumb', label: 'Breadcrumbs', selector: '.retail-product-crumb' },
   { id: 'intro', label: 'Photographs and purchase options', selector: '.retail-product-intro', locked: true },
   { id: 'producer', label: 'Producer and brew guide', selector: '#producer' },
-  { id: 'related', label: 'Related coffees', selector: '.retail-product-section:not(:has(~ .retail-product-section))' },
+  { id: 'related', label: 'Related coffees', selector: '[data-product-related-section]' },
 ];
 function brewFields(profile) {
   const [title, copy, image, alt] = brewGuidance[profile] || brewGuidance.Chocolatey;
@@ -205,7 +206,7 @@ const defaultProductFields = [
   field('add-to-cart', 'Add to cart button', '.retail-product-purchase button[type="submit"]', 'Add to cart'),
   field('quantity-label', 'Quantity label', 'label[for="retail-product-quantity"]', 'Quantity'),
   field('grind-label', 'Grind label', 'label[for="retail-product-grind"]', 'Grind'),
-  field('related-title', 'Related coffees heading', '.retail-product-section:not(:has(~ .retail-product-section)) h2', 'You might also like'),
+  field('related-title', 'Related coffees heading', '[data-product-related-section] h2', 'You might also like'),
   field('producer-label', 'Producer label', '.retail-product-origin .eyebrow', 'From the producer'),
   field('producer-title', 'Producer title', '.retail-product-origin h2', 'Meet the coffee'),
   field('brew-label', 'Brew guide label', '.retail-product-brew .eyebrow', 'Brew at home'),
@@ -297,7 +298,7 @@ for (const [slug, {id, name}] of Object.entries(productRoutes)) {
   const sections = productSections.filter(section =>
     section.id === 'producer' ? isCoffee : section.id === 'related' ? Boolean(product) : true);
   if (product?.category === 'flight') {
-    const selector = '.retail-product-section:has(~ .retail-product-section)';
+    const selector = '[data-product-flight-section]';
     sections.splice(2,0,{id:'contents',label:'In the flight',selector});
     fields.push(field('flight-heading','Flight contents heading',selector+' h2','In the flight'));
   }
@@ -399,6 +400,21 @@ export function safeLink(value, pages) {
   if (!value.startsWith('https://')) invalid('Choose an HTTPS or storefront link.');
   return value;
 }
+// Canonicals point to a consumer page. Strip campaign parameters from automatic
+// canonicals and reject them in manual entries, as well as private destinations.
+export function canonicalPath(value, pages = {}) {
+  if (value === '') return '';
+  const origin = 'https://preview.staffstrangerscoffee.com';
+  const problem = () => invalid('Use a public storefront page path without a query or fragment.');
+  if (typeof value !== 'string' || value.length > 2048 || /[\s\\?#%]/.test(value) ||
+      !/^(?:\/(?!\/)|https:\/\/)/.test(value) || /(?:^|\/)\.{1,2}(?:\/|$)/.test(value)) problem();
+  let url;
+  try { url = new URL(value, origin); } catch { problem(); }
+  if (url.origin !== origin || url.username || url.password) problem();
+  const key = pageForPath(url.pathname);
+  if (!key || ['checkout','account'].includes(key) || key.startsWith('custom:') && !Object.hasOwn(pages,key)) problem();
+  return (PAGES[key] || cataloguePageForKey(key) || customPageForKey(key)).path;
+}
 function imageValue(value) {
   if (value === '' || imageUrl(value)) return value;
   invalid('Choose a photograph from the media library.');
@@ -429,6 +445,34 @@ function normalizeWidget(raw, pages) {
   if (Object.hasOwn(w,'href')) out.href=safeLink(w.href,pages);
   return out;
 }
+function sectionStyleMap(value, ids, locked, templateWidgets) {
+  const result = {};
+  for (const [id,rawStyle] of Object.entries(record(value,'section styles'))) {
+    if (!ids.has(id) || locked.has(id)) invalid('Choose an editable section.');
+    const style = record(rawStyle,'section style');
+    allowedKeys(style,Object.keys(SECTION_STYLES),'section style');
+    result[id] = {};
+    for (const [property,preset] of Object.entries(style)) {
+      if (property === 'arrangement' && !templateWidgets?.has(id)) invalid('Choose an inherited product widget for this arrangement.');
+      result[id][property] = choice(preset,SECTION_STYLES[property],property);
+    }
+  }
+  return result;
+}
+
+export function validateLayoutChanges(previous, next) {
+  for (const [key,page] of Object.entries(next.pages)) {
+    const def = PAGES[key] || cataloguePageForKey(key,null) || customPageForKey(key);
+    if (!def?.sections.some(section => section.locked)) continue;
+    const old = previous.pages[key] || {};
+    const oldTemplate = key.startsWith('product:') ? previous.pages.product : undefined;
+    const template = key.startsWith('product:') ? next.pages.product : undefined;
+    if (crossesLockedSection(orderedSections(def,old,oldTemplate),orderedSections(def,page,template),def)) {
+      invalid('Keep storefront controls in their fixed position.');
+    }
+  }
+}
+
 export function validateDocument(raw) {
   const doc=record(raw,'storefront document');
   allowedKeys(doc,['schema','theme','pages'],'document');
@@ -441,7 +485,7 @@ export function validateDocument(raw) {
     const def=Object.hasOwn(PAGES,key)?PAGES[key]:custom || cataloguePageForKey(key, null);
     if (!def) invalid('Unknown storefront page.');
     const page=record(rawPage,'page settings');
-    const pageKeys=['theme','layout','sectionLayouts','fields','sections','hidden','widgets'];
+    const pageKeys=['theme','layout','sectionLayouts','sectionStyles','mobile','fields','sections','hidden','widgets'];
     if (custom) pageKeys.push('title','inNavigation');
     if (!['finder','cart','shared'].includes(key)) pageKeys.push('meta');
     allowedKeys(page,pageKeys,def.label);
@@ -456,9 +500,25 @@ export function validateDocument(raw) {
     }
     if (Object.hasOwn(page,'meta')) {
       const meta=record(page.meta,'page metadata');
-      allowedKeys(meta,['title','description'],'page metadata');
+      const privatePage = ['account','checkout'].includes(key);
+      const textFields = {title:150, description:320};
+      if (!privatePage) Object.assign(textFields, {socialTitle:150, socialDescription:320, socialImageAlt:500});
+      const supported = Object.keys(textFields);
+      if (!privatePage) supported.push('socialImage','robots');
+      if (!privatePage && key !== 'product') supported.push('canonical');
+      allowedKeys(meta,supported,'page metadata');
       out.meta={};
-      for (const [property,cap] of [['title',150],['description',320]]) {
+      if (Object.hasOwn(meta,'canonical')) {
+        const path = canonicalPath(meta.canonical, pages);
+        if (path) out.meta.canonical = path;
+      }
+      if (Object.hasOwn(meta,'robots')) out.meta.robots = choice(meta.robots,{index:true,noindex:true},'search visibility');
+      if (Object.hasOwn(meta,'socialImage')) {
+        const value = imageValue(meta.socialImage);
+        if (value.startsWith('asset:') && !value.endsWith('.webp')) invalid('Choose a share photograph.');
+        if (value) out.meta.socialImage = value;
+      }
+      for (const [property,cap] of Object.entries(textFields)) {
         if (!Object.hasOwn(meta,property)) continue;
         const value=textValue(meta[property],cap,'page '+property).trim();
         if (!value) invalid('Enter a '+property+' or clear its override.');
@@ -485,7 +545,30 @@ export function validateDocument(raw) {
         ids.add(w.id); return w;
       });
     }
+    const template = key.startsWith('product:') ? pages.product || {} : {};
+    if (Array.isArray(template.widgets)) for (const widget of template.widgets) {
+      if (typeof widget?.id === 'string') ids.add(widget.id);
+    }
     if (Object.hasOwn(page,'sections')) out.sections=uniqueList(page.sections,ids,'section order');
+    const locked = new Set(def.sections.filter(section => section.locked).map(section => section.id));
+    if (Object.hasOwn(page,'sectionStyles')) {
+      const templateWidgets = new Set(Array.isArray(template.widgets) ? template.widgets.filter(widget => widget?.type !== 'divider').map(widget=>widget?.id) : []);
+      out.sectionStyles=sectionStyleMap(page.sectionStyles,ids,locked,templateWidgets);
+    }
+    if (Object.hasOwn(page,'mobile')) {
+      const mobile = record(page.mobile,'mobile layout');
+      allowedKeys(mobile,['sections','sectionStyles'],'mobile layout');
+      out.mobile = {};
+      if (Object.hasOwn(mobile,'sectionStyles')) out.mobile.sectionStyles=sectionStyleMap(mobile.sectionStyles,ids,locked);
+      if (Object.hasOwn(mobile,'sections')) {
+        out.mobile.sections=uniqueList(mobile.sections,ids,'mobile section order');
+        // Accounts with historical desktop layouts keep their current lock bands.
+        // Compare the requested subsequence with its boundary-respecting expansion.
+        const requested = new Set(out.mobile.sections);
+        const order = orderedSections(def,out,template,true).filter(id => requested.has(id));
+        if (order.some((id,i) => id !== out.mobile.sections[i])) invalid('Keep storefront controls in their fixed mobile position.');
+      }
+    }
     if (Object.hasOwn(page,'hidden')) out.hidden=uniqueList(page.hidden,new Set(def.sections.filter(s=>!s.locked).map(s=>s.id)),'hidden sections');
     if (Object.hasOwn(page,'fields')) {
       const fields=record(page.fields,'content fields');
@@ -511,6 +594,7 @@ export function referencedMedia(doc) {
   for (const [key,page] of Object.entries(doc.pages)) {
     const def=PAGES[key] || cataloguePageForKey(key);
     for (const field of def?.fields || []) if (field.kind==='image') collect(page.fields?.[field.id]);
+    collect(page.meta?.socialImage);
     for (const widget of page.widgets || []) collect(widget.image);
   }
   return [...ids];

@@ -63,6 +63,15 @@
   outline-offset: 2px;
 }
 .ce-direct-body { display: grid; gap: 11px; margin-top: 10px; }
+.ce-layout-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+.ce-layout-toolbar .ce-direct-button { font-size: .78rem; padding-inline: 8px; }
+.ce-layout-handle { cursor: grab; touch-action: none; }
+.ce-layout-dragging { opacity: 0; pointer-events: none; }
+.ce-layout-drop-marker { position: fixed; z-index: 42; height: 3px; border-radius: 3px; background: var(--accent); box-shadow: 0 0 0 1px var(--surface); pointer-events: none; }
+.ce-layout-insert { display: flex; align-items: center; gap: 6px; }
+.ce-layout-insert select { min-width: 0; }
+.ce-layout-note { margin: 0; color: var(--muted); font-size: .8rem; line-height: 1.4; }
+@media (pointer: coarse) { .ce-layout-handle { display: none; } }
 .ce-direct-field, .ce-direct-photo, .ce-direct-library { display: grid; min-width: 0; gap: 5px; }
 .ce-direct-field > span { font-size: .78rem; font-weight: 650; color: var(--muted); }
 .ce-direct-input {
@@ -80,6 +89,11 @@
   line-height: 1.35;
 }
 textarea.ce-direct-input { resize: vertical; }
+.ce-direct-style-controls { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 9px; }
+.ce-direct:has(.ce-direct-style-controls) .ce-direct-panel { width: min(400px,calc(100% - 16px)); }
+.ce-direct-style-controls > :last-child:nth-child(odd) { grid-column: 1 / -1; }
+.ce-direct-style-controls select { min-width: 0; text-overflow: ellipsis; }
+@media (max-width: 339px) { .ce-direct-style-controls { grid-template-columns: minmax(0,1fr); } }
 .ce-direct-input[aria-invalid="true"], .ce-direct-inline[aria-invalid="true"] { outline: 2px solid var(--bad, #bf433f); }
 .ce-direct-error, .ce-direct-empty {
   margin: 8px 0 0;

@@ -23,9 +23,9 @@ html[data-consumer-theme] {background-color:var(--paper);color:var(--ink)}
 [data-consumer-theme="espresso"] :is(.home-coffee,.shop-gift,.retail-product-option,.account-access,.article-copy,.retail-checkout-summary,.panel,.finder-content) {background-color:var(--base);color:var(--ink)}
 [data-consumer-theme="espresso"] :is(input,select,textarea,.finder-option,.retail-product-sizes label,.button.outline) {background-color:var(--base);color:var(--ink)}
 html[data-consumer-layout="compact"] main :where(.container),html[data-consumer-layout="compact"] main.container,
-[data-consumer-section-layout="compact"] {max-width:62rem;margin-inline:auto}
+[data-consumer-section-layout="compact"]:not([data-consumer-layout-id]) {max-width:62rem;margin-inline:auto}
 html[data-consumer-layout="wide"] main :where(.container),html[data-consumer-layout="wide"] main.container,
-[data-consumer-section-layout="wide"] {max-width:110rem;width:calc(100% - 2 * var(--gap));margin-inline:auto}
+[data-consumer-section-layout="wide"]:not([data-consumer-layout-id]) {max-width:110rem;width:calc(100% - 2 * var(--gap));margin-inline:auto}
 [data-consumer-section-hidden],[data-consumer-image-hidden]{display:none!important}
 .consumer-widget, .consumer-page-title {max-width:min(100% - 2 * var(--gap), 84rem);margin:clamp(24px,5vw,72px) auto}
 .consumer-page-title {font-size:clamp(2.5rem,6vw,6rem);overflow-wrap:anywhere}

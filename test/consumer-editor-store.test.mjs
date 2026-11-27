@@ -121,3 +121,22 @@ test("the photo library checks the actual raster format and supports removing un
   assert.equal((await api("/media/" + media.id)).status, 404);
   assert.equal((await fixture.request(retail, "/consumer-media/" + media.id)).status, 404);
 });
+
+test("an uploaded photo used only for social sharing follows the page's publication", async () => {
+  const {media} = await expect(api("/media","POST",{name:"Share card.png",type:"image/png",data:png}),201);
+  const path = "/consumer-media/" + media.id;
+  const initial = await expect(api(""));
+  const draft = structuredClone(initial.draft);
+  draft.pages.about = {meta:{socialImage:"media:" + media.id,socialImageAlt:"Strangers Coffee"}};
+  const saved = await expect(api("","PUT",{revision:initial.revision,document:draft}));
+  assert.equal((await fixture.request(retail,path,"HEAD")).status,404);
+  assert.equal((await api("/media/" + media.id,"DELETE")).status,409);
+  const published = await expect(api("/publish","POST",{revision:saved.revision}));
+  assert.equal((await fixture.request(retail,path,"HEAD")).status,200);
+  const page = await fixture.request(retail,"/about/").then(r => r.text());
+  assert.ok(page.includes('<meta property="og:image" content="' + retail + path + '">'));
+  const removed = await expect(api("","PUT",{revision:published.revision,document:initial.draft}));
+  await expect(api("/publish","POST",{revision:removed.revision}));
+  assert.equal((await fixture.request(retail,path,"HEAD")).status,404);
+  assert.equal((await api("/media/" + media.id,"DELETE")).status,409,'retained published version still protects its photo');
+});

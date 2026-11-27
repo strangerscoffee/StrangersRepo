@@ -83,7 +83,7 @@ async function uploadPhoto(api, blob) {
   return image;
 }
 
-export function mountConsumerProducts(host, { api, confirmSheet }) {
+export function mountConsumerProducts(host, { api, confirmSheet, editSeo }) {
   host.classList.add('consumer-products');
   let products = [], artwork = [], search = '', status = 'active', listScroll = 0, active = true, busy = false;
   let form, original = '', fileUrl = '', photoSequence = 0, photoBusy = false, pendingPhoto, uploadedPhoto;
@@ -283,7 +283,8 @@ export function mountConsumerProducts(host, { api, confirmSheet }) {
     const details = panel('Product details', field('Product name', name),
       creating ? field('Product URL', slug) : node('div', { class: 'cp-storefront' },
         node('span', { class: 'cp-location' }, productPath(item)),
-        node('a', { class: 'link', href: 'https://preview.staffstrangerscoffee.com' + productPath(item), target: '_blank', rel: 'noopener noreferrer' }, 'View in shop')),
+        node('a', { class: 'link', href: 'https://preview.staffstrangerscoffee.com' + productPath(item), target: '_blank', rel: 'noopener noreferrer' }, 'View in shop'),
+        !archived && editSeo ? btn('Edit SEO', () => editSeo(product), 'soft sm') : null),
       field('Product type', type), field('Short description', shortCopy), field('Product story', story));
     if (product && !archived) {
       publishedPages ||= api('GET', '/api/admin/consumer/editor/published').then(data => data.document?.pages).catch(() => null);

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {mkdir} from 'node:fs/promises';
 import {before, after, test} from 'node:test';
 import {chromium} from 'playwright';
-import {admin, retail, editorPath, openLocalBrowser, startEditorFixture} from './editor-integration-fixture.mjs';
+import {admin, retail, editorPath, clickBackground, openLocalBrowser, startEditorFixture} from './editor-integration-fixture.mjs';
 import {emptyDocument} from '../public/consumer-preview/assets/editor-model.js';
 
 let fixture, browser;
@@ -52,27 +52,6 @@ async function screenshot(page, name) {
 }
 
 const fieldValue = field => field.evaluate(control => control.value ?? control.textContent);
-
-async function clickBackground(page, container, {touch = false} = {}) {
-  await container.scrollIntoViewIfNeeded();
-  const point = await container.evaluate(node => {
-    const doc = node.ownerDocument, frame = doc.defaultView.frameElement;
-    const rect = node.getBoundingClientRect(), bounds = frame.getBoundingClientRect();
-    const scaleX = bounds.width/frame.offsetWidth, scaleY = bounds.height/frame.offsetHeight;
-    const maxX = Math.min(rect.right,frame.clientWidth) - 2, maxY = Math.min(rect.bottom,frame.clientHeight) - 2;
-    for (let y = Math.max(rect.top,0)+2; y < maxY; y += 6) {
-      for (let x = Math.max(rect.left,0)+2; x < maxX; x += 6) {
-        const hostX = bounds.left+x*scaleX, hostY = bounds.top+y*scaleY;
-        if (doc.elementFromPoint(x,y)?.closest('[data-consumer-editable]') === node &&
-            frame.ownerDocument.elementFromPoint(hostX,hostY) === frame) return {x:hostX,y:hostY};
-      }
-    }
-    return null;
-  });
-  assert.ok(point,'the rendered container has clickable background');
-  if (touch) await page.touchscreen.tap(point.x,point.y);
-  else await page.mouse.click(point.x,point.y);
-}
 
 test('clicking the storefront text, nested controls and photo opens the matching editor and respects publication', {timeout:90000}, async () => {
   await setLiveDesign(emptyDocument());
@@ -212,10 +191,14 @@ test('a phone tap edits the custom page title and exact widget part within the v
     assert.equal(await choices.inputValue(),'custom:roastery-weekends');
 
     const card = canvas.locator('[data-consumer-widget="w-weekend"]');
+    await page.getByRole('combobox',{name:'Apply layout to'}).selectOption('all');
     await clickBackground(page,card,{touch:true});
     const arrangement = panel.getByRole('combobox',{name:'Widget arrangement',exact:true});
+    await arrangement.selectOption('text-first');
+    assert.equal(await card.locator(':scope > img').evaluate(photo => getComputedStyle(photo).order),'1');
     await arrangement.selectOption('reverse');
     assert.equal(await card.getAttribute('data-widget-layout'),'reverse');
+    assert.equal(await card.locator(':scope > img').evaluate(photo => getComputedStyle(photo).order),'0');
     await panel.locator('[data-direct-action=cancel]').tap();
     assert.equal(await card.getAttribute('data-widget-layout'),'stack');
     await card.locator('h2').tap();

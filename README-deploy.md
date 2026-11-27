@@ -18,6 +18,10 @@ Release the separate consumer order service with migrations `0008_retail_catalog
 
 Use **Done** to finish editing an element or **Escape** to cancel that edit. **Save draft** saves your work. **Publish** shows a comparison with the live design before applying it to `preview.staffstrangerscoffee.com`. **Versions** restores a previous publication to the draft for review and republication.
 
+**Page layout.** Select the background of a section or widget to move it, insert a widget or template beside it, or duplicate an eligible widget. Desktop editors can drag to a highlighted gap. Set **Apply layout to** to **Mobile only** to change phone order, spacing, alignment or photo treatment independently. Mobile overrides apply at viewport widths up to 760 CSS pixels. Clear an override to inherit the shared layout again. Adding a widget adds its content to both sizes.
+
+**Consumer SEO.** Select a page or a product in the Site editor and open **SEO**. A saved product also has an **Edit SEO** button in **Consumer (Preview) → Products**. Search and sharing previews use the same defaults as the storefront. Use `{product}` in product-template text to insert each coffee’s name. An individual product can override the template. Publish a draft to change the HTML title, description, canonical address or sharing card. Product pages include structured product details. The preview domain continues to send `noindex, nofollow` even when a page is marked for indexing at launch.
+
 Storefront drafts, published designs and uploaded photos live in the Worker’s dedicated SQLite-backed `CONSUMER_EDITOR` Durable Object. The normal Wrangler release applies the additional object migration. The Worker serves a photo publicly only while the published design references it. Removing a photo from a page takes effect when that draft is published. The media library keeps files used by the current draft or a retained version, so restoring any of the last 20 publications brings its photos back. Canvas previews of accounts and orders use sample records. The retail service continues to own product availability, order totals, authentication and fulfilment.
 
 

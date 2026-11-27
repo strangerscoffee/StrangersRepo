@@ -1,6 +1,6 @@
 import { originalProduct, products } from './products.js';
 import { productFromPath, productPath } from './product-paths.js';
-import { brewGuidance, productContent } from './product-content.js';
+import { brewGuidance, productContent, productDescription } from './product-content.js';
 import { escapeHtml as html } from './html.js';
 import { money } from './store.js';
 import { grindLabel, sizeNames } from './checkout.js';
@@ -85,7 +85,7 @@ function productOptions(product, initialGrind) {
 function productStory(product, details, catalogue) {
   if (product.category === 'flight') {
     const coffees = (product.contents ?? []).map(id => catalogue.find(item => item.id === id)).filter(Boolean);
-    return `<section class="retail-product-section">
+    return `<section class="retail-product-section" data-product-flight-section>
       <h2>In the flight</h2>
       <div class="retail-product-related">${coffees.map(relatedMarkup).join('')}</div>
     </section>`;
@@ -154,14 +154,11 @@ export function productPageView(id, suggestedGrind, stockKnown, catalogue = prod
   const details = Object.hasOwn(productContent, product.id) ? { ...productContent[product.id] } : {};
   if (!matching('story')) delete details.story;
   if (!matching('region') || !matching('process')) delete details.provenance;
-  if (!matching('shortCopy') || JSON.stringify(original?.notes) !== JSON.stringify(product.notes)) {
-    details.description = product.shortCopy;
-  }
   const photos = productPhotos(product, details, catalogue);
   const gift = product.category === 'accessory' || product.category === 'flight';
   const origin = gift ? (product.category === 'flight' ? 'Coffee tasting flight' : 'Gifts & accessories')
     : [product.country, product.process].filter(Boolean).join(' · ');
-  const intro = details.description || product.shortCopy || (product.notes.length ? `Tasting notes of ${product.notes.join(', ')}.` : '');
+  const intro = productDescription(product);
   const initialGrind = product.grinds.includes(suggestedGrind) ? suggestedGrind : product.grinds[0];
   const related = relatedProducts(product, catalogue);
   const markup = `${breadcrumb(product.name, gift)}
@@ -176,7 +173,7 @@ export function productPageView(id, suggestedGrind, stockKnown, catalogue = prod
       </div>
     </article>
     ${productStory(product, details, catalogue)}
-    ${related.length ? `<section class="retail-product-section"><h2>You might also like</h2><div class="retail-product-related">${related.map(relatedMarkup).join('')}</div></section>` : ''}`;
+    ${related.length ? `<section class="retail-product-section" data-product-related-section><h2>You might also like</h2><div class="retail-product-related">${related.map(relatedMarkup).join('')}</div></section>` : ''}`;
 
   return { markup, description: intro, photos, product, purchasable: stockKnown && product.available !== false };
 }
@@ -190,8 +187,11 @@ export function setupProductPage(page, { store, onAdd, stockKnown }) {
     page.innerHTML = '<h1>Coffee not found</h1><p>This coffee may have rotated out of the range.</p><a href="/coffee/">Shop our current coffees</a>';
     return;
   }
-  document.title = `${view.product?.name ?? route.name} | Strangers Coffee`;
-  document.querySelector('meta[name="description"]')?.setAttribute('content', view.description);
+  // The branded Worker renders both search and sharing metadata before hydration.
+  if (!document.head.hasAttribute('data-consumer-seo')) {
+    document.title = `${view.product?.name ?? route.name} | Strangers Coffee`;
+    document.querySelector('meta[name="description"]')?.setAttribute('content', view.description);
+  }
   document.body.classList.toggle('has-retail-purchase', view.purchasable);
   page.innerHTML = view.markup;
   const { photos, product } = view;
