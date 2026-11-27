@@ -1,12 +1,13 @@
 // Follow the same public controls on mobile and desktop.
 export async function openWholesaleAccountMenu(page) {
+  // The catalogue must finish before the account trigger can open its popover.
+  await page.locator('#catalogue-status[hidden]').waitFor({ state: 'attached' });
   const basket = page.locator('#basket-dialog[open]');
   if (await basket.count()) await basket.locator('[data-close]').click();
-  const trigger = page.locator('#account-toggle');
-  if (await trigger.isVisible() && !await page.locator('#wholesale-account').evaluate(node => node.matches(':popover-open'))) {
-    await trigger.click();
-    await page.locator('#wholesale-account:popover-open').waitFor();
+  if (!await page.locator('#wholesale-account').evaluate(node => node.matches(':popover-open'))) {
+    await page.locator('#account-toggle').click();
   }
+  await page.locator('#wholesale-account:popover-open').waitFor();
 }
 
 export async function openWholesaleAccount(page) {

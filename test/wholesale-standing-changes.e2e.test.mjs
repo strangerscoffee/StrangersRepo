@@ -105,34 +105,52 @@ for (const [name, viewport, isMobile] of [["phone", { width: 390, height: 844 },
   });
 }
 
-test("standing bags can be reduced with an empty catalogue, and history uses the saved delivery exception", async () => {
-  const id = await standing();
-  srv.sql(`UPDATE wholesale_preview SET data=json_set(data,'$.delivery','Courier','$.freeDelivery',json('true'),'$.locationSnapshot.address','11 Historic Street','$.locationSnapshot.postcode','NR2 1AA') WHERE kind='order' AND id='${id}'`);
-  const { ctx, p, errors } = await page(A, { width: 1180, height: 820 }, false, "light");
-  try {
-    await p.route("**/api/wholesale/catalogue", async (route) => {
-      const response = await route.fetch();
-      await route.fulfill({ response, json: { ...await response.json(), products: [] } });
-    });
-    await p.goto(srv.base + "/wholesale/");
-    await p.locator("#catalogue-status").waitFor({ state: "hidden" });
-    await openWholesaleOrders(p);
-    const card = p.locator(`[data-history-order="${id}"]`);
-    await card.locator("summary").click();
-    assert.match(await card.locator(".history-lines").innerText(), /Delivery\s+Free delivery for this account/);
-    assert.match(await card.locator(".history-details").innerText(), /Delivery address at order\s+11 Historic Street\s+NR2 1AA/);
-    await p.locator(`[data-standing-change="${id}"]`).click();
-    await p.locator("#standing-add-unavailable").waitFor();
-    assert.equal(await p.locator("#standing-add").isDisabled(), true);
-    assert.equal(await p.locator('[data-standing-line="0"]').getAttribute("max"), "6");
-    await p.locator('[data-standing-line="0"]').fill("4");
-    await p.locator("#standing-save").click();
-    await p.locator("#standing-dialog").waitFor({ state: "hidden" });
-    await card.locator(".history-amended").waitFor();
-    const saved = (await call("GET", "/api/admin/wholesale")).body.orders.find((o) => o.id === id);
-    assert.equal(saved.lines[0].quantity, 4);
-    assert.deepEqual(errors, []);
-  } finally {
-    await ctx.close();
-  }
-});
+for (const [name, viewport, isMobile] of [
+  ["phone", { width: 390, height: 844 }, true],
+  ["desktop", { width: 1180, height: 820 }, false],
+]) {
+  for (const empty of [true, false]) test(`standing bags can be reduced with ${empty ? "an empty catalogue" : "all coffee out of stock"}, and history uses the saved delivery exception (${name})`, async () => {
+    const id = await standing();
+    srv.sql(`UPDATE wholesale_preview SET data=json_set(data,'$.delivery','Courier','$.freeDelivery',json('true'),'$.locationSnapshot.address','11 Historic Street','$.locationSnapshot.postcode','NR2 1AA') WHERE kind='order' AND id='${id}'`);
+    const { ctx, p, errors } = await page(A, viewport, isMobile, "light");
+    const { promise: sessionGate, resolve: releaseSession } = Promise.withResolvers();
+    try {
+      await p.route("**/api/wholesale/session", async (route) => {
+        await sessionGate;
+        await route.continue();
+      }, { times: 1 });
+      await p.route("**/api/wholesale/catalogue", async (route) => {
+        const response = await route.fetch();
+        const catalogue = await response.json();
+        const products = empty ? [] : catalogue.products.map((product) => ({ ...product, inStock: false }));
+        await route.fulfill({ response, json: { ...catalogue, products } });
+      });
+      await p.goto(srv.base + "/wholesale/");
+      await p.locator("#sc-session-shield[open]").waitFor();
+      const catalogueStatus = p.locator("#catalogue-status");
+      assert.equal(await catalogueStatus.isHidden(), true);
+      assert.equal(await catalogueStatus.getAttribute("hidden"), null, "the shield hides the still-loading catalogue");
+      releaseSession();
+      await (empty ? p.locator("#no-results") : p.locator('.product-stock.out').first()).waitFor();
+      await openWholesaleOrders(p);
+      const card = p.locator(`[data-history-order="${id}"]`);
+      await card.locator("summary").click();
+      assert.match(await card.locator(".history-lines").innerText(), /Delivery\s+Free delivery for this account/);
+      assert.match(await card.locator(".history-details").innerText(), /Delivery address at order\s+11 Historic Street\s+NR2 1AA/);
+      await p.locator(`[data-standing-change="${id}"]`).click();
+      await p.locator("#standing-add-unavailable").waitFor();
+      assert.equal(await p.locator("#standing-add").isDisabled(), true);
+      assert.equal(await p.locator('[data-standing-line="0"]').getAttribute("max"), "6");
+      await p.locator('[data-standing-line="0"]').fill("4");
+      await p.locator("#standing-save").click();
+      await p.locator("#standing-dialog").waitFor({ state: "hidden" });
+      await card.locator(".history-amended").waitFor();
+      const saved = (await call("GET", "/api/admin/wholesale")).body.orders.find((o) => o.id === id);
+      assert.equal(saved.lines[0].quantity, 4);
+      assert.deepEqual(errors, []);
+    } finally {
+      releaseSession();
+      await ctx.close();
+    }
+  });
+}
