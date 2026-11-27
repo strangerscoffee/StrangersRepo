@@ -66,7 +66,7 @@ test("signed out: only the sign-in page and the site's code are reachable, no pa
   assert.equal(r.body.code, "unauthenticated");
   assert.equal((await fetch(srv.base + "/_blob/" + "0".repeat(32))).status, 401);
   const me = await (await fetch(srv.base + "/api/auth/me")).json();
-  assert.deepEqual(me, { user: null, setupNeeded: false, quickSwitch: false, cookieDomain: "staffstrangerscoffee.com" });
+  assert.deepEqual(me, { user: null, setupNeeded: false, quickSwitch: false, passkeysAvailable: true, cookieDomain: "staffstrangerscoffee.com" });
 });
 
 test("the browser's default favicon loads signed out as an icon, without a sign-in redirect",async()=>{

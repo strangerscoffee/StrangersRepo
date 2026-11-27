@@ -5,7 +5,13 @@
   const $ = (s) => document.querySelector(s);
   const FORMS = ["signin", "newpw", "change", "setup", "recover"];
   const LOGOUT_KEY = "sc.logout.pending", SESSION_EVENT = "sc.session.event";
-  let cookieDomain = "", finishingLogout = null;
+  let cookieDomain = "", finishingLogout = null, managingPasskeys = false;
+  const passkeys = window.SCStaffPasskeys;
+  const passkeyButton = $("#passkeySignIn");
+  const passkeysPage = location.hash === "#passkeys";
+  function showPasskeySignIn(available) {
+    passkeyButton.hidden = $("#passkeySignInHint").hidden = !available || !passkeys?.supported("get");
+  }
   async function authRequest(url, init = {}) {
     const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 10000);
     try { const response = await fetch(url, { ...init, signal: controller.signal }); await response.clone().arrayBuffer(); return response; }
@@ -44,6 +50,7 @@
         if (!response.ok && !changed) throw new Error();
         clearPendingLogout();
         document.querySelectorAll("button[type=submit]").forEach((button) => { button.disabled = false; });
+        showPasskeySignIn(me.passkeysAvailable);
         show("signin"); $("#err").textContent = "Signed out. Sign in to continue."; quickSignIn();
         return true;
       } catch (_) { $("#err").textContent = "Sign out hasn't finished. Reconnect, then reload. The previous account won't resume here."; return false; }
@@ -61,11 +68,15 @@
     try {
       const u = new URL(n, location.origin);
       if (u.username || u.password) return "/";
-      if (u.origin === location.origin) return u.pathname + u.search + u.hash;
+      if (u.origin === location.origin) return u.href;
       if (u.protocol === "https:" && u.hostname.endsWith("." + location.hostname)) return u.href;
     } catch (e) {}
     return "/";
   })();
+  const signedIn = () => {
+    if (passkeysPage) location.reload();
+    else location.replace(next);
+  };
 
   function showPassword(button, visible) {
     const input = document.getElementById(button.getAttribute("aria-controls"));
@@ -77,6 +88,7 @@
 
   function show(id, focus) {
     $("#signinLoading").hidden = true;
+    $("#passkeys").hidden = true;
     const previous = $("form:not([hidden])");
     if (previous && previous.id !== id) {
       previous.querySelectorAll(".pw .show").forEach((button) => showPassword(button, false));
@@ -100,32 +112,31 @@
     const data = await res.json().catch(() => ({}));
     if (signal?.aborted) throw new Error("Couldn't finish checking the PIN.");
     if (!res.ok) throw new Error(data.message || "Something went wrong. Try again.");
-    if (data.user) notifySession();
+    if (data.user && (!window.SC || url === "/api/auth/passkeys/login/verify")) notifySession();
     return data;
   }
 
-  // Runs a form's submit handler with its button disabled and errors shown in its .err.
-  function onSubmit(id, fn) {
+  // Keep sign-in methods exclusive while an authenticator prompt or auth request is in progress.
+  function onSubmit(id, fn, trigger) {
     const form = $("#" + id);
-    form.addEventListener("submit", async (e) => {
+    (trigger || form).addEventListener(trigger ? "click" : "submit", async (e) => {
       e.preventDefault();
-      const err = $(`#${id} .err`), btn = $(`#${id} button[type=submit]`);
-      if (btn.disabled) return;
+      const err = $(`#${id} .err`), btn = trigger || $(`#${id} button[type=submit]`);
+      if (btn.disabled || pendingLogout() || form.getAttribute("aria-busy") === "true") return;
       const label = btn.textContent;
       err.textContent = "";
-      btn.disabled = true;
       btn.textContent = "Please wait…";
       form.setAttribute("aria-busy", "true");
-      const links = form.querySelectorAll("[data-go]");
-      links.forEach((button) => { button.disabled = true; });
+      const controls = form.querySelectorAll("[data-go], button[type=submit], #passkeySignIn");
+      controls.forEach((button) => { button.disabled = true; });
       if (id === "signin") $("#quick").inert = true;
       try { await fn(err); } catch (x) { err.textContent = x.message; }
       finally {
         form.removeAttribute("aria-busy");
         btn.textContent = label;
-        btn.disabled = !!pendingLogout();
-        links.forEach((button) => { button.disabled = false; });
+        controls.forEach((button) => { button.disabled = !!pendingLogout(); });
         if (id === "signin") $("#quick").inert = false;
+        if (trigger && document.activeElement === document.body) btn.focus();
       }
     });
   }
@@ -163,7 +174,7 @@
         show("newpw", "#np1");
         return;
       }
-      location.replace(next);
+      signedIn();
     } catch (x) {
       $("#password").value = "";
       $("#password").focus();
@@ -171,12 +182,30 @@
     }
   });
 
+  onSubmit("signin", async () => {
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    addEventListener("pagehide", abort, { once: true });
+    try {
+      const { challengeId, options } = await post("/api/auth/passkeys/login/options", {});
+      const credential = await passkeys.useCredential(options, "get", controller.signal);
+      if (controller.signal.aborted) return;
+      if (pendingLogout()) throw new Error("Finish signing out before signing in.");
+      await post("/api/auth/passkeys/login/verify", { challengeId, credential });
+      signedIn();
+    } catch (error) {
+      throw new Error(passkeys.message(error));
+    } finally {
+      removeEventListener("pagehide", abort);
+    }
+  }, passkeyButton);
+
   onSubmit("newpw", async (err) => {
     const a = val("#np1"), b = val("#np2");
     const bad = checkNew(a, b);
     if (bad) { err.textContent = bad; return; }
     await post("/api/auth/change", { ...pending, newPassword: a });
-    location.replace(next);
+    signedIn();
   });
 
   /* ---------- change password ---------- */
@@ -187,7 +216,7 @@
     const bad = checkNew(a, b);
     if (bad) { err.textContent = bad; return; }
     await post("/api/auth/change", { username, password, newPassword: a });
-    location.replace(next);
+    signedIn();
   });
 
   /* ---------- first admin ---------- */
@@ -244,7 +273,7 @@
         onPin: async (pin, signal) => {
           try { await post("/api/auth/switch", { id: p.id, pin }, signal); } catch (e) { return e.message; }
           if (signal.aborted) return "Couldn't finish checking the PIN.";
-          location.replace(next);
+          signedIn();
           return null;
         },
       }));
@@ -258,18 +287,27 @@
 
   const hadPendingLogout = !!pendingLogout();
   if (hadPendingLogout) finishPendingLogout();
-  else authRequest("/api/auth/me").then((r) => r.json()).then(({ user, setupNeeded, cookieDomain: domain }) => {
-    rememberDomain(domain);
+  else authRequest("/api/auth/me").then((r) => r.json()).then((me) => {
+    const { user, setupNeeded } = me;
+    rememberDomain(me.cookieDomain);
     if (pendingLogout()) { finishPendingLogout(); return; }
     if (user && location.hash === "#change") { show("change"); return; } // from the diary's account menu
+    if (user && passkeysPage && passkeys && window.SC) {
+      managingPasskeys = true;
+      $("#signinLoading").hidden = true;
+      return passkeys.setup(me, next, pendingLogout);
+    }
     if (user) { location.replace(next); return; }
     show(setupNeeded ? "setup" : "signin");
+    showPasskeySignIn(me.passkeysAvailable);
     if (!setupNeeded) quickSignIn();
   }).catch(() => {
     show("signin");
     $("#err").textContent = "Couldn't reach the site. Check your connection and reload.";
   });
-  addEventListener("online", () => { if (pendingLogout()) finishPendingLogout(); });
-  addEventListener("focus", () => { if (pendingLogout()) finishPendingLogout(); });
-  addEventListener("storage", (event) => { if (event.key === LOGOUT_KEY && pendingLogout()) finishPendingLogout(); });
+  addEventListener("online", () => { if (!managingPasskeys && pendingLogout()) finishPendingLogout(); });
+  addEventListener("focus", () => { if (!managingPasskeys && pendingLogout()) finishPendingLogout(); });
+  addEventListener("storage", (event) => {
+    if (!managingPasskeys && event.key === LOGOUT_KEY && pendingLogout()) finishPendingLogout();
+  });
 })();

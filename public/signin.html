@@ -38,6 +38,8 @@
   .pw .show{position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:0;font:inherit;font-size:14px;
     font-weight:600;color:var(--accent);cursor:pointer;padding:8px 10px;min-height:44px;border-radius:10px}
   .btn{border:0;cursor:pointer;font:inherit;font-weight:600;color:var(--accent-ink);background:var(--accent);min-height:48px;font-size:17px}
+  .btn.secondary{color:var(--accent);background:var(--tint)}
+  .btn:disabled{opacity:.65;cursor:default}
   .note{color:var(--muted);font-size:14px}
   #signinLoading{text-align:center}
   .err{color:var(--bad);background:var(--bad-bg);border-radius:var(--r);padding:9px 12px;font-size:14px;font-weight:600}
@@ -54,6 +56,13 @@
   .person span:last-child{font-size:13px;font-weight:600;text-align:center;line-height:1.2;overflow-wrap:anywhere;max-width:100%}
   .person:active{transform:scale(.95)}
   .or{margin:0;color:var(--muted);font-size:13px;text-align:center;border-top:1px solid var(--line);padding-top:12px}
+  #passkeys,#passkeyActions{display:grid;gap:16px}
+  #passkeyList{display:grid;gap:8px;margin:0;padding:0;list-style:none}
+  #passkeyList li{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:4px 16px;padding-block:8px;border-bottom:1px solid var(--line)}
+  #passkeyList li div{display:grid;gap:4px;overflow-wrap:anywhere;min-width:0}
+  #passkeyAddForm,#passkeyRemoveForm{border-top:1px solid var(--line);padding-top:16px}
+  #passkeysBack{justify-self:start;display:flex;align-items:center}
+  #passkeysStatus:empty{display:none}
   @media (prefers-reduced-motion:no-preference){
     :is(form,.quick):not([hidden]){animation:signin-reveal var(--motion-content,200ms) var(--motion-spring,var(--motion-ease))}
     @keyframes signin-reveal{from{opacity:.35;translate:0 5px}to{opacity:1;translate:0 0}}
@@ -73,7 +82,7 @@
     <div class="quick" id="quick" hidden>
       <h2>Who's recording?</h2>
       <div class="people" id="quickPeople"></div>
-      <p class="or">or sign in with your password</p>
+      <p class="or">or use another sign-in method</p>
     </div>
 
     <!-- Sign in -->
@@ -89,12 +98,50 @@
       </div>
       <p class="err" id="err" role="alert"></p>
       <button class="btn" type="submit">Sign in</button>
+      <button class="btn secondary" id="passkeySignIn" type="button" aria-describedby="passkeySignInHint" hidden>Sign in with a passkey</button>
+      <p class="note" id="passkeySignInHint" hidden>On a shared device, choose your own phone or security key.</p>
       <div class="links">
         <button type="button" class="linkbtn" data-go="change">Change password</button>
         <button type="button" class="linkbtn" data-go="recover">Admin? Forgotten password</button>
       </div>
       <p class="note">Forgotten your password? Ask an admin to reset it.</p>
     </form>
+
+    <section id="passkeys" aria-labelledby="passkeysTitle" hidden>
+      <h2 id="passkeysTitle" tabindex="-1">Passkeys</h2>
+      <p class="note" id="passkeysAccount"></p>
+      <p class="note">Use your own phone or security key on a shared device. Save passkeys to a personal device or account, and keep your password for when you need it.</p>
+      <p class="err" id="passkeysError" role="alert"></p>
+      <p class="note" id="passkeysStatus" role="status"></p>
+      <div id="passkeyActions" hidden>
+        <ul id="passkeyList" aria-label="Your passkeys"></ul>
+        <p class="note" id="passkeyEmpty" hidden>You haven't added any passkeys yet.</p>
+        <p class="note" id="passkeyUnsupported" hidden>This browser can't create a passkey. You can still remove a passkey or sign in with your password.</p>
+        <form id="passkeyAddForm" hidden>
+          <h2>Add a passkey</h2>
+          <div class="field">
+            <label for="passkeyName">Passkey name (optional)</label>
+            <input id="passkeyName" type="text" maxlength="60" placeholder="e.g. My phone">
+          </div>
+          <div class="field">
+            <label for="passkeyPassword">Current password</label>
+            <input id="passkeyPassword" type="password" autocomplete="current-password" maxlength="128" required>
+          </div>
+          <button class="btn" id="passkeyAdd" type="submit">Add passkey</button>
+        </form>
+        <form id="passkeyRemoveForm" aria-labelledby="passkeyRemoveTitle" hidden>
+          <h2 id="passkeyRemoveTitle">Remove passkey</h2>
+          <p class="note" id="passkeyRemoveName"></p>
+          <div class="field">
+            <label for="passkeyRemovePassword">Current password</label>
+            <input id="passkeyRemovePassword" type="password" autocomplete="current-password" maxlength="128" aria-describedby="passkeyRemoveName" required>
+          </div>
+          <button class="btn" id="passkeyRemoveConfirm" type="submit">Remove passkey</button>
+          <button class="linkbtn" id="passkeyRemoveCancel" type="button">Cancel</button>
+        </form>
+      </div>
+      <a class="linkbtn" id="passkeysBack" href="/">Back to workspace</a>
+    </section>
 
     <!-- First sign-in with a temporary password -->
     <form id="newpw" hidden novalidate>
@@ -200,6 +247,8 @@
   </section>
 </main>
 <script src="/pinpad.js"></script>
+<script src="/shared/core.js"></script>
+<script src="/shared/passkeys.js"></script>
 <script src="/signin.js"></script>
 </body>
 </html>

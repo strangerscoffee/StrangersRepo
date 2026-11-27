@@ -153,6 +153,7 @@ function accountItems(){
   return[...(S.quickSwitch?[["Switch person","staff","teal",openPeopleSheet]]:[]),
     ...(S.role&&S.role!=="admin"?[[S.quickPin?"Change quick PIN":"Set a quick PIN","key","indigo",setQuickPin]]:[]),
     ["Change password","key","grey",()=>{location.href="/signin#change"}],
+    ["Passkeys","key","grey",()=>{location.href="/signin#passkeys"}],
     ...(S.role==="admin"?[["Admin","shield","blue",()=>{location.href="/admin"}]]:[]),
     ["Sign out","out","red",signOut,true]];
 }

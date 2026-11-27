@@ -53,7 +53,13 @@ Day-to-day business work stays in the diary. Managers use business Setup and sit
 
 ## Accounts
 
-Everyone signs in with a **username and password**. Signed out, only the sign-in page is visible. Three roles:
+Staff, managers and admins can sign in with a **username and password** or a **passkey** they have added to their account.
+
+To add a passkey, sign in, open the account menu in the Diary, Rota or Admin workspace and choose **Passkeys**. Enter your current password, choose **Add passkey**, then follow your device’s prompt. On a shared work device, use your own phone or security key. At your next Staff Login, choose **Sign in with a passkey**. Starting from Admin returns you to Admin with your existing permissions.
+
+If you lose access to a passkey, sign in with your password and remove it from **Passkeys**. Your device or password manager handles biometrics and device PINs. Strangers stores the public credential used to verify sign-in.
+
+Access depends on the account’s role.
 
 - **Staff**: complete diary records and their own training, read shared business information and access their own employee records and published shifts. They do not see Setup or other employees’ private records.
 - **Managers**: also maintain business EHO, HACCP & risk, suppliers, approved shared contacts/onboarding, Setup and site opening settings. They have the same admin-or-self restrictions as staff for private employee information.

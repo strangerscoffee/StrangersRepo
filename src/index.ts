@@ -18,6 +18,7 @@ import { handleStaffOrders } from "./staffOrders";
 import { requireStaffOrders } from "./staffOrdersAccess";
 import { handleAdminView } from "./adminView";
 import { handleAuth, SessionUnavailableError } from "./auth";
+import { handlePasskeyAuth, passkeysAvailable } from "./passkeys";
 import { handleBackups, makeBackup } from "./backup";
 import { deleteAsset, serveBlob, uploadAsset } from "./assets";
 import { WRITE_OPS, handleDb } from "./docs";
@@ -240,6 +241,10 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
     req = new Request(target, req); url = target;
   }
   const p = url.pathname;
+  const passkeyRoute = p === "/api/auth/passkeys" || p.startsWith("/api/auth/passkeys/");
+  const passkeyLogin = p === "/api/auth/passkeys/login/options" || p === "/api/auth/passkeys/login/verify";
+  const staffPasskeys = (passkeyRoute || p === "/api/auth/me") && app === "diary" && passkeysAvailable(url, env);
+  if (passkeyRoute && !staffPasskeys) throw new ApiError(404, "not_found", "Not available on this address.");
   // Assets and auth routes have a single public entry point on the retail hostname.
   // Match encoded paths too so they cannot fall through to the general Assets binding.
   let assetPath = p;
@@ -323,7 +328,7 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
   // A page/queued write belongs to the identity that opened it. Shared cookies may change in another tab
   // between its session check and this request; reject before reading any private data or returning a CAS body.
   const expectedId = req.headers.get("x-expected-user-id"), expectedRole = req.headers.get("x-expected-user-role");
-  const identityBound = /^\/api\/(?:db\/|admin\/|rota\/|staff-orders\/|assets(?:\/|$))/.test(p) || p === "/api/auth/logout" || p === "/api/auth/pin" || p === "/api/auth/notifications/seen";
+  const identityBound = /^\/api\/(?:db\/|admin\/|rota\/|staff-orders\/|assets(?:\/|$))/.test(p) || p === "/api/auth/logout" || p === "/api/auth/pin" || p === "/api/auth/notifications/seen" || (passkeyRoute && !passkeyLogin);
   if (identityBound && (expectedId || expectedRole) && (caller.kind !== "user" || (expectedId && caller.user.id !== expectedId) || (expectedRole && caller.user.role !== expectedRole))) {
     throw new ApiError(409, "session_changed", "The signed-in account changed. Reload to continue.");
   }
@@ -353,7 +358,12 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
     return json({ code });
   }
 
-  if (p.startsWith("/api/auth/")) return handleAuth(req, env, p.slice("/api/auth/".length), caller.kind === "user" ? caller : null);
+  if (passkeyRoute) {
+    const session = caller.kind === "user" ? caller : null;
+    if (!isGet) await limitWrites(req, env, ctx, passkeyLogin ? undefined : session?.user.id);
+    return handlePasskeyAuth(req, env, p, req.headers.get("cf-connecting-ip") || "local", session);
+  }
+  if (p.startsWith("/api/auth/")) return handleAuth(req, env, p.slice("/api/auth/".length), caller.kind === "user" ? caller : null, staffPasskeys);
 
   // Wholesale cookies have their own namespace and are never accepted by any staff route.
   const wholesaleScope = app === "preview" || (app === "diary" && (p.startsWith("/api/wholesale/") || WHOLESALE_PAGES.has(p) || OLD_WHOLESALE_DASHBOARD.has(p) || (p.startsWith("/wholesale/") && isPreviewFile(p))));

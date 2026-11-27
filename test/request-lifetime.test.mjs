@@ -7,7 +7,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {timingSafeEqual} from 'node:crypto';
 const {build}=createRequire(import.meta.url)('esbuild');
 async function load(entry){
- const result=await build({entryPoints:[fileURLToPath(new URL(entry,import.meta.url))],bundle:true,write:false,format:'esm',platform:'neutral',target:'es2022',logLevel:'silent',
+ const result=await build({entryPoints:[fileURLToPath(new URL(entry,import.meta.url))],bundle:true,write:false,format:'esm',platform:'browser',target:'es2022',logLevel:'silent',
   plugins:[{name:'cloudflare-worker-stub',setup(plugin){
    plugin.onResolve({filter:/^cloudflare:workers$/},()=>({path:'workers',namespace:'test'}));
    plugin.onLoad({filter:/.*/,namespace:'test'},()=>({contents:'export class DurableObject {}'}));
@@ -63,7 +63,11 @@ function sqliteBinding(t, beforeStatement=()=>{}) {
    bind(...values){return statement(sql,values);},
    async first(){await beforeStatement(sql);return sqlite.prepare(sql).get(...args)??null;},
    async all(){await beforeStatement(sql);return {results:sqlite.prepare(sql).all(...args)};},
-   async run(){await beforeStatement(sql);return {meta:sqlite.prepare(sql).run(...args)};},
+   async run(){
+    await beforeStatement(sql);
+    const prepared=sqlite.prepare(sql);
+    return /\bRETURNING\b/i.test(sql)?{results:prepared.all(...args)}:{meta:prepared.run(...args)};
+   },
   };
  }
  const DB={prepare:statement,async batch(statements){
@@ -105,6 +109,9 @@ test('password change and recovery reject a stale credential or account and issu
  });
  const original=await setupAccount(env);
  assert.equal(original.status,200);
+ sqlite.exec(`INSERT INTO staff_passkeys
+   (id,user_id,rp_id,credential_id,public_key,counter,transports,device_type,backed_up,name,created_at)
+   SELECT 'old-passkey',id,'staff.example','credential','public-key',0,'[]','singleDevice',0,'Personal device',0 FROM users`);
  const reset=await auth.hashPassword('newer-temporary-password');
  race=()=>sqlite.prepare('UPDATE users SET pin_hash=?, pin_salt=?, must_change=1, session_ver=session_ver+1 WHERE username=?')
   .run(reset.hash,reset.salt,'admin');
@@ -119,6 +126,7 @@ test('password change and recovery reject a stale credential or account and issu
  }),env,'recover',null);
  await assert.rejects(recover(),{status:409,code:'conflict'});
  assert.equal(sqlite.prepare('SELECT pin_hash FROM users').get().pin_hash,reset.hash);
+ assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM staff_passkeys').get().n,1);
 
  sqlite.exec("UPDATE users SET role='admin'");
  race=undefined;
@@ -126,6 +134,7 @@ test('password change and recovery reject a stale credential or account and issu
  const current=await auth.sessionUser(request('/api/auth/me',undefined,cookieOf(recovered)),env);
  assert.equal(current?.role,'admin');
  assert.equal(await auth.sessionUser(request('/api/auth/me',undefined,cookieOf(original)),env),null);
+ assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM staff_passkeys').get().n,0);
 });
 
 test('concurrent recovery guesses reserve the last shared IP attempt before comparison',async t=>{

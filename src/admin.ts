@@ -163,7 +163,15 @@ export async function handleAdmin(req: Request, env: Env, route: string, admin: 
     }
     if (!sets.length && !summaryChanged) throw invalid("Nothing to change.");
     sets.push(`updated_at = ${SQL_NOW_MS}`);
-    await env.DB.prepare(`UPDATE users SET ${sets.join(", ")} WHERE id = ?`).bind(...args, row.id).run();
+    const update = env.DB.prepare(`UPDATE users SET ${sets.join(", ")} WHERE id = ?`).bind(...args, row.id);
+    // Invalidate pending enrollments on role edits, resets and deactivation. A reset or deactivation also revokes saved passkeys.
+    const revokePasskeys = body.password !== undefined || active === false;
+    const roleChanged = body.role !== undefined && body.role !== row.role;
+    if (revokePasskeys || body.role !== undefined) {
+      const updates = [update, env.DB.prepare("DELETE FROM staff_passkey_challenges WHERE user_id = ?").bind(row.id)];
+      if (revokePasskeys) updates.push(env.DB.prepare("DELETE FROM staff_passkeys WHERE user_id = ?").bind(row.id));
+      await env.DB.batch(updates);
+    } else await update.run();
     // Someone switched off can't pick up or cover shifts: their waiting rota requests end with the account.
     if (active === false && row.active) {
       await env.DB.prepare("UPDATE rota_requests SET status = 'cancelled', decided_by = ?, decided_at = ? WHERE status IN ('open', 'accepted') AND (from_user = ? OR taker = ? OR to_user = ?)")
@@ -174,7 +182,7 @@ export async function handleAdmin(req: Request, env: Env, route: string, admin: 
     const events: [string, string][] = [];
     if (body.name !== undefined && newName !== row.name) events.push(["renamed", `${admin.name} renamed ${row.name} to ${newName}`]);
     if (body.username !== undefined && checkUsername(body.username) !== row.username) events.push(["username_changed", `${admin.name} changed ${newName}'s username`]);
-    if (body.role !== undefined && body.role !== row.role) events.push(["role_changed", `${admin.name} made ${newName} ${body.role === "staff" ? "staff" : `a${body.role === "admin" ? "n" : ""} ${body.role}`}`]);
+    if (roleChanged) events.push(["role_changed", `${admin.name} made ${newName} ${body.role === "staff" ? "staff" : `a${body.role === "admin" ? "n" : ""} ${body.role}`}`]);
     if (active !== undefined && active !== !!row.active) events.push(["active_changed", `${admin.name} switched ${newName}'s account ${active ? "back on" : "off"}`]);
     if (body.password !== undefined) events.push(["password_reset", `${admin.name} gave ${newName} a temporary password`]);
     if (body.unlock) events.push(["unlocked", `${admin.name} unlocked ${newName}`]);

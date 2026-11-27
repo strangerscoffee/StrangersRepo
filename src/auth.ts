@@ -1,4 +1,4 @@
-// Accounts: sign in with username + password, signed session cookies, first-admin setup and recovery.
+// Staff accounts, signed session cookies, first-admin setup and recovery.
 import { audit } from "./audit";
 import { appLinks } from "./hosts";
 import { ApiError, Env, SQL_NOW_MS, invalid, json, readJson, safeEqual } from "./http";
@@ -354,6 +354,10 @@ async function verifyLogin(env: Env, ip: string, username: unknown, password: un
     await audit(env, "signin_failed", null, row ? `Sign-in to ${row.name}'s switched-off account` : "Sign-in with a username that doesn't exist");
     throw wrong;
   }
+  return verifyAccountPassword(env, ip, window, row, pw);
+}
+
+async function verifyAccountPassword(env: Env, ip: string, window: number, row: UserRow, pw: string): Promise<UserRow> {
   const now = Date.now();
   const failed = await takeAccountAttempt(env, row, now, "passwords");
   if (!(await passwordMatches(pw, row))) {
@@ -374,22 +378,49 @@ async function verifyLogin(env: Env, ip: string, username: unknown, password: un
   return row;
 }
 
+/** Confirm the password for the account in this session before managing passkeys. */
+export async function reauthenticateStaffPassword(req: Request, env: Env, session: StaffSession, ip: string, password: unknown): Promise<UserRow> {
+  const changed = new ApiError(409, "session_changed", "The signed-in account changed. Reload to continue.");
+  const row = await env.DB.prepare(
+    "SELECT * FROM users WHERE id = ? AND active = 1 AND must_change = 0 AND session_ver = ? AND role = ?",
+  ).bind(session.user.id, session.sessionVersion, session.user.role).first<UserRow>();
+  if (!row) throw changed;
+  const window = await takeIpAttempt(env, ip, "Too many wrong attempts from this connection. Wait 15 minutes.");
+  await verifyAccountPassword(env, ip, window, row, typeof password === "string" ? password : "");
+  const current = await staffSessionForWrite(req, env);
+  if (current?.user.id !== row.id || current.user.role !== row.role || current.sessionVersion !== row.session_ver || current.sid !== session.sid) throw changed;
+  return row;
+}
+
+/** Passkeys use the ordinary staff session. Quick PIN device trust remains password-based. */
+export async function completePasskeySignIn(req: Request, env: Env, user: Pick<UserRow, "id" | "name" | "role" | "username" | "session_ver">): Promise<Response> {
+  return json({ user: publicUser(user) }, 200, await sessionCookie(req, env, user));
+}
+
 /** Replace only the credential and eligible account state this request verified. */
-async function replacePassword(req: Request, env: Env, row: UserRow, password: string): Promise<Response> {
+async function replacePassword(req: Request, env: Env, row: UserRow, password: string, revokePasskeys = false): Promise<Response> {
   const { hash, salt } = await hashPassword(password);
-  const saved = await env.DB.prepare(
+  const replace = env.DB.prepare(
     `UPDATE users SET pin_hash = ?, pin_salt = ?, must_change = 0, failed = 0, locked_until = 0,
        session_ver = session_ver + 1, updated_at = ${SQL_NOW_MS}, last_login_at = ${SQL_NOW_MS}
      WHERE id = ? AND active = 1 AND role = ? AND username = ? AND session_ver = ?
        AND pin_hash = ? AND pin_salt = ? AND must_change = ?
      RETURNING id, name, role, username, session_ver`,
-  ).bind(hash, salt, row.id, row.role, row.username, row.session_ver, row.pin_hash, row.pin_salt, row.must_change)
-    .first<Pick<UserRow, "id" | "name" | "role" | "username" | "session_ver">>();
+  ).bind(hash, salt, row.id, row.role, row.username, row.session_ver, row.pin_hash, row.pin_salt, row.must_change);
+  type Saved = Pick<UserRow, "id" | "name" | "role" | "username" | "session_ver">;
+  // Match the newly generated salt so a concurrent replacement that defeated the update keeps its credentials.
+  const saved = revokePasskeys ? (await env.DB.batch<Saved>([
+    replace,
+    env.DB.prepare("DELETE FROM staff_passkeys WHERE user_id = ? AND EXISTS (SELECT 1 FROM users WHERE id = ? AND pin_salt = ?)")
+      .bind(row.id, row.id, salt),
+    env.DB.prepare("DELETE FROM staff_passkey_challenges WHERE user_id = ? AND EXISTS (SELECT 1 FROM users WHERE id = ? AND pin_salt = ?)")
+      .bind(row.id, row.id, salt),
+  ]))[0].results[0] : await replace.first<Saved>();
   if (!saved) throw new ApiError(409, "conflict", "This account changed while you were choosing a password. Start again.");
   return json({ user: publicUser(saved) }, 200, await signedIn(req, env, saved));
 }
 
-export async function handleAuth(req: Request, env: Env, route: string, session: StaffSession | null): Promise<Response> {
+export async function handleAuth(req: Request, env: Env, route: string, session: StaffSession | null, passkeysAvailable = false): Promise<Response> {
   const ip = req.headers.get("cf-connecting-ip") || "local";
   const current = session?.user ?? null;
 
@@ -404,6 +435,7 @@ export async function handleAuth(req: Request, env: Env, route: string, session:
       user: current ? { ...publicUser(current), quickPin: !!quick?.has, notifSeen: quick?.notif_seen ?? 0 } : null,
       ...(current ? { links: appLinks(new URL(req.url), env.ROTA_HOST, env.ADMIN_HOST, env.PREVIEW_HOST, env.LEGACY_PREVIEW_HOST), capabilities: {staffOrders: current.role==="admin"||quick?.staff_orders===1} } : {}),
       setupNeeded: (await userCount(env)) === 0,
+      passkeysAvailable,
       quickSwitch: await trustedDevice(req, env), // this device can switch person with a quick PIN
       ...(cookieDomain(req, env) ? { cookieDomain: cookieDomain(req, env) } : {}), // non-secret pending sign-out across apps
     }); // Reads must never restore a previous identity through a delayed Set-Cookie response.
@@ -448,7 +480,7 @@ export async function handleAuth(req: Request, env: Env, route: string, session:
       ? await env.DB.prepare("SELECT * FROM users WHERE username = ? AND role = 'admin' AND active = 1").bind(username).first<UserRow>()
       : null;
     if (!row) throw new ApiError(404, "not_admin", "There's no active admin with that username.");
-    return replacePassword(req, env, row, checkPassword(body.password));
+    return replacePassword(req, env, row, checkPassword(body.password), true);
   }
 
   // Sign in. A temporary password (set by an admin, or carried over from a PIN) signs nobody in: the

@@ -412,6 +412,12 @@
       ...(a.quickSwitch ? [["Switch person", "staff", openPeopleSheet]] : []),
       ...(R.me?.user?.role !== "admin" ? [[a.user?.quickPin ? "Change quick PIN" : "Set a quick PIN", "key", setQuickPin]] : []),
       ["Change password", "key", () => { location.href = "/signin#change"; }],
+      ["Passkeys", "key", () => {
+        const target = new URL("/signin", new URL(R.links.diary, location.origin));
+        target.searchParams.set("next", location.href);
+        target.hash = "passkeys";
+        location.href = target.href;
+      }],
       ...(isAdmin() ? [["Admin", "setup", () => { location.href = R.links.admin || "/admin"; }]] : []),
       ["Sign out", "out", signOut, true],
     ];

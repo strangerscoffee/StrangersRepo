@@ -966,11 +966,15 @@
 
   function accountMenu(event) {
     if (!S.me) return;
+    const passkeysUrl = new URL("/signin", new URL(S.links.diary, location.origin));
+    passkeysUrl.searchParams.set("next", location.href);
+    passkeysUrl.hash = "passkeys";
     openSheet(html`<header class="account-sheet-header"><h2 id="sheetTitle">${S.me.name}</h2><button class="btn soft" type="button" data-sheet="close" aria-label="Close account menu">${svg("x")}</button></header>
       <div class="menu">
         <a href="${S.links.diary}">${svg("cal")}Kitchen Diary</a>
         <a href="${S.links.rota}">${svg("clock")}Rota</a>
         <a href="/signin#change">${svg("key")}Change password</a>
+        <a href="${passkeysUrl.href}">${svg("key")}Passkeys</a>
         <button type="button" class="danger" data-sheet="logout">${svg("out")}Sign out</button>
       </div>`, (a) => { if (a === "logout") act("logout"); }, event.currentTarget);
   }

@@ -76,6 +76,12 @@ The admin section is served by the same Worker on its own hostname: the var `ADM
 
 Locally there's no second hostname: `npm run dev` passes `--var ADMIN_HOST:` (empty), so the section is at `http://localhost:8787/admin`, and the tests do the same (`test/harness.mjs`). `test/admin.test.mjs` starts a server with `ADMIN_HOST` set to test the address itself.
 
+## Staff and Admin passkeys
+
+The existing HTTPS staff sign-in origin (`staffstrangerscoffee.com`, configured by `COOKIE_DOMAIN`) handles WebAuthn. Admin and Rota send people there and return them to the workspace they opened. A passkey issues the usual role-checked staff session. Password sign-in is still available, and the existing trusted-device rules govern quick PIN switching.
+
+Migration 53 adds the credential and short-lived challenge tables in D1. Existing staff can enrol from their account menu after signing in. The local passkey tests use a virtual authenticator on `localhost` with `STAFF_PASSKEYS_LOCAL=1` in their isolated Worker configuration.
+
 ## Live updates
 
 Open pages are told the moment something changes through one Cloudflare Durable Object (`LiveHub`, `src/live.ts`, declared in `wrangler.jsonc`). Cloudflare creates it on the first deploy; nothing to set up. It's within the Workers Free plan (Durable Objects: 100,000 requests a day; each open page and each change is one), and it saves far more Worker requests than it uses, since idle pages no longer ask every few seconds. If it's ever unavailable, pages quietly go back to asking every few seconds.
@@ -153,7 +159,7 @@ In the Worker: **Settings → Variables and Secrets**, edit `SETUP_CODE`. It tak
 
 ## Back up
 
-The website backs up nightly at 03:17 UTC into KV, keeping the last 30 copies. Only admins can create, list or download backups in **Backups & exports**. Each JSON contains documents, account metadata without credentials, all rota tables and wholesale records. Documents retain their `seq` and `employee_privacy_version`, and top-level `documentSequence` records `meta.seq`. Backups contain private employee information and must remain admin-controlled.
+The website backs up nightly at 03:17 UTC into KV, keeping the last 30 copies. Only admins can create, list or download backups in **Backups & exports**. Each JSON contains documents, account metadata, all rota tables and wholesale records. Staff passwords, PINs, sessions, passkey credentials and pending challenges stay out of the export. Issue new staff passwords and have staff enroll their passkeys again after restoring staff accounts from JSON. Documents retain their `seq` and `employee_privacy_version`, and top-level `documentSequence` records `meta.seq`. Backups contain private employee information and must remain admin-controlled.
 
 When restoring JSON, restore each document’s path/data, `seq` and `employee_privacy_version` together, and restore `meta.seq` from `documentSequence` without setting it below the restored row sequences. Preserve stable account IDs so `ownerUserId` still identifies the same employee. A protected row is verified only when `employee_privacy_version === seq`; missing/unknown old metadata must remain unverified and admin-only until reviewed. Do not copy a marker onto changed JSON or infer ownership from names. Restore through the validated API for reviewed records, or use a controlled database restore that preserves this complete metadata. For a full database copy from a terminal:
 
@@ -162,6 +168,8 @@ npx wrangler d1 export kitchen-diary --remote --output backup-$(date +%F).sql
 ```
 
 Keep backups private: they contain the whole diary, including staff names. D1 also keeps point-in-time history (7 days on the free plan, 30 on paid): `npx wrangler d1 time-travel restore kitchen-diary --timestamp=<ISO time>`. Allergen PDFs and uploaded catalogue photos live in KV and aren't in the JSON or SQL export; keep the originals. Wholesale catalogue records include image references, not image bytes. After restoring to an empty KV namespace, reupload missing photos in Admin → Wholesale → Coffee catalogue. Bundled source photos remain in the repository.
+
+A raw D1 restore can bring back passkeys revoked since the snapshot. Before resuming staff traffic, clear `staff_passkey_challenges` and `staff_passkeys` when present, review staff account status against changes since the snapshot, and ask staff to enroll again.
 
 ## Run it locally (for code changes)
 
@@ -187,7 +195,7 @@ Writes are limited to 600 per IP address per 15 minutes (`WRITE_LIMIT_PER_15_MIN
 
 - **Adding people.** Account menu → **Admin** → **Add person**: their name (as it should appear on records), a username (suggested from the name), their role, and a temporary password, or leave it blank to have one created. Give them the username and temporary password in person; they choose their own password when they first sign in. If they've recorded entries under a name before, use exactly that name to keep their history together.
 - **Changing a password.** Anyone can: account menu → **Change password**.
-- **Forgotten password.** In Admin → People, open the person and set or create a temporary password. That signs them out everywhere and clears their quick PIN.
+- **Forgotten password.** In Admin → People, open the person and set or create a temporary password. That signs them out everywhere and clears their quick PIN and registered passkeys. Switching off a staff account also removes its registered passkeys.
 - **Quick PINs.** Staff and managers set their own (account menu → Set a quick PIN; 4 digits, not repeated or running digits). Switching with a PIN only works on a device someone has signed in on with a password in the last 180 days; elsewhere the list of names is empty. Wrong PINs count towards the same 5-tries lock as passwords. The Admin page shows who has one.
 - **Locked out.** Five wrong passwords lock an account for 10 minutes (and each IP is limited to 30 failed attempts per 15 minutes). An admin can **Unlock** it straight away.
 - **Someone leaves.** In Admin → People, open them → **Switch off**. They can't sign in, and their records stay.

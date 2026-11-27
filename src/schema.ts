@@ -566,6 +566,42 @@ const MIGRATIONS: Migration[] = [
       catch (error) { if (!(await columns(env, table)).has(column)) throw error; }
     }
   } },
+  { id: 53, name: "Staff WebAuthn credentials and challenges", run: async env => {
+    await env.DB.batch([
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS staff_passkeys (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        rp_id TEXT NOT NULL,
+        credential_id TEXT NOT NULL,
+        public_key TEXT NOT NULL,
+        counter INTEGER NOT NULL,
+        transports TEXT NOT NULL,
+        device_type TEXT NOT NULL,
+        backed_up INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        last_used_at INTEGER,
+        UNIQUE (rp_id, credential_id)
+      )`),
+      env.DB.prepare("CREATE INDEX IF NOT EXISTS staff_passkeys_owner ON staff_passkeys(user_id, rp_id)"),
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS staff_passkey_challenges (
+        id TEXT PRIMARY KEY,
+        purpose TEXT NOT NULL CHECK (purpose IN ('login','register')),
+        challenge TEXT NOT NULL,
+        origin TEXT NOT NULL,
+        rp_id TEXT NOT NULL,
+        expires_at INTEGER NOT NULL,
+        browser_token TEXT,
+        user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+        session_id TEXT,
+        session_ver INTEGER,
+        session_role TEXT,
+        name TEXT
+      )`),
+      env.DB.prepare("CREATE INDEX IF NOT EXISTS staff_passkey_challenges_expiry ON staff_passkey_challenges(expires_at)"),
+      env.DB.prepare("CREATE INDEX IF NOT EXISTS staff_passkey_challenges_owner ON staff_passkey_challenges(user_id)"),
+    ]);
+  } },
 ];
 
 async function migrate(env: Env): Promise<void> {

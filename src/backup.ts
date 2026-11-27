@@ -1,7 +1,7 @@
 // Daily backups of the diary, kept in the KV namespace (FILES) next to the allergen PDFs.
 // A scheduled run (wrangler.jsonc "triggers") makes one a day; admins can also make one from the Admin page
-// and download any of them. Each backup is every diary document plus the list of accounts (names, usernames
-// and roles; never password hashes), as gzipped JSON.
+// and download any of them. Each backup includes diary documents and account details as gzipped JSON.
+// Staff authentication material (password hashes, PINs, passkeys and pending challenges) stays out of exports.
 import { audit } from "./audit";
 import { ApiError, Env, json } from "./http";
 
@@ -93,6 +93,7 @@ export async function makeBackup(env: Env, by: string): Promise<BackupInfo> {
     documentSequence: ((rows("documentSequence")[0] || null))?.v || 0,
     docs: docs.map((d) => ({ path: d.path, data: JSON.parse(d.data), seq: d.seq, employee_privacy_version: d.employee_privacy_version, updatedAt: d.updated_at, updatedBy: d.updated_by })),
     users,
+    staffAuthenticationRestorePolicy: "Reissue staff passwords and enroll passkeys again after restoring staff accounts from this export.",
     rota,
     wholesalePreview: rows("wholesalePreview"),
     wholesaleAccounts: rows("wholesaleAccounts"),

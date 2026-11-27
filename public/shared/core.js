@@ -25,7 +25,8 @@
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : (input && input.url) || "";
     const own = !!url && new URL(url, location.origin).origin === location.origin;
     const path = own ? new URL(url, location.origin).pathname : "";
-    const protectedCall = /^\/api\/(?:db\/|admin\/|rota\/|staff-orders\/|wholesale\/|assets(?:\/|$))/.test(path) || /^\/api\/auth\/(?:pin|notifications\/seen)$/.test(path);
+    const protectedCall = /^\/api\/(?:db\/|admin\/|rota\/|staff-orders\/|wholesale\/|assets(?:\/|$))/.test(path) ||
+      /^\/api\/auth\/(?:pin|notifications\/seen)$/.test(path) || /^\/api\/auth\/passkeys(?:$|\/(?!login\/))/.test(path);
     if (protectedCall && sessionIdentity) {
       if (!(await ensureSession())) throw sessionError();
       init = Object.assign({}, init);
