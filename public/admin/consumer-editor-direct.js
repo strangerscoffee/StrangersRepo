@@ -127,7 +127,7 @@ export function mountDirectEditor(host) {
     return true;
   }
   function open(model) {
-    if (!close() || !model.fields.length || !model.frame?.contentDocument) return false;
+    if (!close() || (!model.fields.length && !model.tools) || !model.frame?.contentDocument) return false;
     const original = model.getTarget();
     if (!original?.isConnected) return false;
     const root = make('section','ce-direct');
@@ -319,6 +319,7 @@ export function mountDirectEditor(host) {
       gallery.append(search,tools,grid); photoBox.append(row,gallery); body.append(photoBox);
       return replace;
     }
+    let styleControls;
     function choiceInput(field) {
       const select = make('select','ce-direct-input');
       select.dataset.directKind = 'choice';
@@ -331,9 +332,16 @@ export function mountDirectEditor(host) {
       select.addEventListener('change',()=>write(s,field,select.value,select));
       const label = make('label','ce-direct-field');
       label.append(make('span','',field.label),select);
-      body.append(label);
+      if (field.sectionStyle) {
+        if (!styleControls) {
+          styleControls = make('div','ce-direct-style-controls');
+          body.append(styleControls);
+        }
+        styleControls.append(label);
+      } else body.append(label);
       return select;
     }
+    const toolbarFocus = model.tools?.(body,s.listeners.signal);
     for (const field of model.fields) {
       let control;
       if (field.kind === 'image') control = photoInput(field);
@@ -418,6 +426,7 @@ export function mountDirectEditor(host) {
       if (standaloneText && above >= panelHeight) y = targetTop - panelHeight - 6;
       else if (below >= panelHeight) y = targetBottom + 6;
       else if (above >= panelHeight) y = targetTop - panelHeight - 6;
+      else if (styleControls && width <= 720) y = bottom - panelHeight;
       else y = clamp(standaloneText ? targetBottom + 6 : targetTop + 8,top,bottom-panelHeight);
       panel.style.left = clamp(axVisible,left,right-panelWidth) + 'px';
       panel.style.top = clamp(y,top,bottom-panelHeight) + 'px';
@@ -441,6 +450,7 @@ export function mountDirectEditor(host) {
       if (!root.contains(event.target)) close({restoreFocus:false});
     },{...options,capture:true});
     layout();
+    firstControl ||= toolbarFocus || done;
     firstControl.focus({preventScroll:true});
     if (inlineInput) {
       const length = (inlineInput.value ?? inlineInput.textContent).length;

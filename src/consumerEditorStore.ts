@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { emptyDocument, referencedMedia, validateDocument } from "../public/consumer-preview/assets/editor-model.js";
+import { emptyDocument, referencedMedia, validateDocument, validateLayoutChanges } from "../public/consumer-preview/assets/editor-model.js";
 import { ApiError, type Env, errorResponse, invalid, json, readJson } from "./http";
 import { editorMediaPath } from "./consumerEditorClient";
 import { MAX_PHOTO_BYTES, readEditorPhoto } from "./consumerEditorPhoto";
@@ -62,7 +62,10 @@ export class ConsumerEditorStore extends DurableObject<Env> {
     if (body.revision !== revision) throw new ApiError(409, "editor_conflict", "Another admin has changed the storefront. Reload before saving.");
     if (path === "/") {
       let document: EditorDocument;
-      try { document = validateDocument(body.document); }
+      try {
+        document = validateDocument(body.document);
+        validateLayoutChanges(JSON.parse(draft), document);
+      }
       catch (error) { throw invalid(error instanceof TypeError ? error.message : "Check the storefront document."); }
       const value = JSON.stringify(document);
       if (value !== draft) {

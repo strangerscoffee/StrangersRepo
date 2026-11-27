@@ -1,3 +1,4 @@
+import { sectionStylesheet } from "../public/consumer-preview/assets/editor-layout.js";
 import { type Env, ApiError, json, readBytes } from "./http";
 import { cleanEmail } from "./email/address";
 import { sendRetailAccountMail } from "./retailAccountMail";
@@ -7,6 +8,7 @@ import { readConsumerCatalogue, retailCatalogueResponse, retailProductPhoto } fr
 import { noStore, staticFile, withFingerprints } from "./siteAssets";
 import { applyStaticConsumerFields, customConsumerContent, applyConsumerFooterLinks } from "./consumerEditorStatic";
 import { applyConsumerPageMetadata } from "./consumerEditorMetadata";
+import { resolvePageSeo } from "../public/consumer-preview/assets/editor-seo.js";
 import { readPublishedConsumerEditor, readPublishedConsumerMedia } from "./consumerEditorClient";
 import { PAGES as EDITOR_PAGES, cataloguePageForKey, customPageForKey, pageForPath, type ConsumerEditorPage } from "../public/consumer-preview/assets/editor-model.js";
 import { productFromPath, productPath, type ProductRoute } from "../public/consumer-preview/assets/product-paths.js";
@@ -272,7 +274,8 @@ async function retailPage(req: Request, env: Env, url: URL, page = url.pathname,
     const fields = builtIn?.fields.filter(f => Object.hasOwn(config.fields ?? {}, f.id)
       || Object.hasOwn(generic?.fields ?? {}, f.id)).map(({id,kind,selector,inline}) => ({id,kind,selector,inline})) ?? [];
     const needsSections = (item?: ConsumerEditorPage) => item && (item.sections?.length || item.widgets?.length ||
-      item.hidden?.length || Object.keys(item.sectionLayouts ?? {}).length);
+      item.hidden?.length || Object.keys(item.sectionLayouts ?? {}).length || Object.keys(item.sectionStyles ?? {}).length ||
+      item.mobile?.sections?.length || Object.keys(item.mobile?.sectionStyles ?? {}).length);
     const sections = needsSections(config) || needsSections(generic)
       ? (builtIn?.sections ?? []).map(({id,selector,locked}) => ({id,selector,locked})) : [];
     return {root:meta.root, fields, sections};
@@ -281,7 +284,7 @@ async function retailPage(req: Request, env: Env, url: URL, page = url.pathname,
     [key, definition(key, pages[key] ?? {}, key === scope && product ? pages.product : undefined)]));
   const design = release && (release.document.theme !== "heritage" || Object.keys(selectedPages).length || navigation.length || Object.keys(productFields).length)
     ? {schema:1, theme:release.document.theme, pages:selectedPages, navigation, productFields, scope, definitions} : null;
-  if (response.body && (url.pathname === "/" || page === "/coffee/" || product || design || proof(cookie(req, SESSION_COOKIE)))) {
+  if (response.body) {
     const html = new HTMLRewriter();
     if (page === "/coffee/") html.on("[data-catalogue-gifts] [data-catalogue-id]", {element(element) { element.remove(); }});
     if (url.pathname === "/") html.on("#home-roasting-grid", {element(element) {
@@ -289,10 +292,7 @@ async function retailPage(req: Request, env: Env, url: URL, page = url.pathname,
       element.setInnerContent("");
     }});
     if (custom) {
-      const title = pages[scope].title ?? custom;
-      html.on("title", { element(e) { e.setInnerContent(title + " | Strangers Coffee"); } })
-        .on('meta[name="description"]', { element(e) { e.setAttribute("content", title); } })
-        .on("main", { element(e) {
+      html.on("main", { element(e) {
           e.setAttribute("class", "consumer-custom-page");
           e.setInnerContent(customConsumerContent(pages[scope]), {html:true});
         } });
@@ -301,11 +301,13 @@ async function retailPage(req: Request, env: Env, url: URL, page = url.pathname,
       applyStaticConsumerFields(html, "shared", selectedPages.shared);
       applyStaticConsumerFields(html, scope, selectedPages[scope]);
       applyConsumerFooterLinks(html, navigation);
+      const sectionCss = sectionStylesheet(selectedPages[scope], product ? pages.product : undefined);
       const encoded = JSON.stringify(design).replace(/</g, "\\u003c");
       const theme = selectedPages[scope]?.theme ?? (product ? selectedPages.product?.theme : undefined) ?? design.theme;
       html.on("html", { element(e) { e.setAttribute("data-consumer-theme", theme); } })
         .on("head", { element(e) {
           e.append('<link rel="stylesheet" href="/consumer-preview/assets/editor-render.css">' +
+            (sectionCss ? '<style id="consumer-section-styles">' + sectionCss + '</style>' : '') +
             '<script type="application/json" id="consumer-design">' + encoded + '</script>' +
             '<script type="module" src="/consumer-preview/assets/editor-presentation.js"></script>', {html: true});
         } });
@@ -313,12 +315,11 @@ async function retailPage(req: Request, env: Env, url: URL, page = url.pathname,
     if (proof(cookie(req, SESSION_COOKIE))) html.on("body", {
       element(element) { element.setAttribute("data-retail-signed-in", ""); },
     });
-    if (product) html.on("title", { element(element) { element.setInnerContent(product.name + " | Strangers Coffee"); } });
     if (catalogue) html.on("head", { element(element) {
       const data = JSON.stringify({products: catalogue}).replace(/</g, "\\u003c");
       element.append('<script type="application/json" id="retail-catalogue">' + data + '</script>', {html:true});
     } });
-    applyConsumerPageMetadata(html, {...(product ? selectedPages.product?.meta : {}), ...selectedPages[scope]?.meta});
+    applyConsumerPageMetadata(html, resolvePageSeo(scope, {pages, product, origin:url.origin}));
     response = html.transform(response);
   }
   return withFingerprints(response, env, url);

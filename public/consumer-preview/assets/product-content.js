@@ -1,3 +1,5 @@
+import { originalProduct } from './products.js';
+
 // Producer notes and photographs from the existing Strangers Coffee catalogue.
 export const productContent = {
   "christmas-blend": {
@@ -567,3 +569,14 @@ export const brewGuidance = {
   Fruity: ['Bring out the brighter notes', 'A medium-ground filter brew lets the fruit flavours come through. Adjust your grind a little at a time to find your balance.', 'brew-v60.webp', 'V60 coffee brewing'],
   Decaf: ['Make a slower brew', 'Start with a coarse grind for a cafetière and follow the brew guide for a balanced cup.', 'brew-french-press.webp', 'Coffee brewing in a cafetière'],
 };
+
+// A new catalogue description or tasting note supersedes the original editorial copy.
+export function productDescription(product) {
+  const original = originalProduct(product.id);
+  const notes = Array.isArray(product.notes) ? product.notes : [];
+  if (original && (original.shortCopy || '') === (product.shortCopy || '') &&
+      JSON.stringify(original.notes) === JSON.stringify(notes) && productContent[product.id]?.description) {
+    return productContent[product.id].description;
+  }
+  return product.shortCopy || (notes.length ? 'Tasting notes of ' + notes.join(', ') + '.' : '');
+}

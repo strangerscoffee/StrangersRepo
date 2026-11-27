@@ -47,6 +47,33 @@ describe("consumer product management through both local Workers", {
     assert.equal((await fixture.request(wholesale, endpoint, "POST", {name:"Example"}, fixture.cookie)).status, 404);
     assert.equal((await fixture.request(admin, endpoint, "POST", {name:"Example"}, fixture.cookie, {origin:retail})).status, 403);
   });
+  test("a saved product opens its own SEO settings through the unsaved changes guard", {timeout:60000}, async () => {
+    const id = "dove-street-filter";
+    const name = "Dove Street Filter";
+    const list = await fixture.request(admin, endpoint, "GET", undefined, fixture.cookie).then(response => response.json());
+    const image = list.products.find(item => item.id === "bom-jesus").image;
+    const made = await fixture.request(admin, endpoint, "POST", {id, name, image, category:"coffee", available:true,
+      notes:["Cocoa"], prices:{"250g":1400}, grinds:["Whole bean"]}, fixture.cookie);
+    assert.ok(made.ok, await made.text());
+    const context = await openLocalBrowser(fixture, browser, {width:1150,height:850}, true);
+    try {
+      const page = await context.newPage();
+      page.setDefaultTimeout(10000);
+      await page.goto(admin + "/#consumer/products");
+      await page.getByRole("button", {name:"Edit " + name, exact:true}).click();
+      await page.getByLabel("Product name", {exact:true}).fill("Unsaved product name");
+      const shortcut = page.getByRole("button", {name:"Edit SEO", exact:true});
+      await shortcut.click();
+      await page.locator("#sheet").getByRole("button", {name:"Cancel", exact:true}).click();
+      assert.equal(await page.getByLabel("Product name", {exact:true}).inputValue(), "Unsaved product name");
+      await shortcut.click();
+      await page.locator("#sheet").getByRole("button", {name:"Discard changes", exact:true}).click();
+      await page.locator('#consumerEditor [data-tab="seo"][aria-pressed="true"]').waitFor();
+      assert.equal(await page.getByLabel("Storefront page or surface").inputValue(), "product:" + id);
+      const saved = await fixture.request(admin, endpoint, "GET", undefined, fixture.cookie).then(response => response.json());
+      assert.equal(saved.products.find(item => item.id === id).name, name);
+    } finally { await context.close(); }
+  });
   test("the site editor can merchandise a new coffee with live price, photo and product template", {timeout:60000}, async () => {
     const modify = async (path, method, body) => {
       const response = await fixture.request(admin, path, method, body, fixture.cookie);
@@ -62,8 +89,8 @@ describe("consumer product management through both local Workers", {
     const editor = "/api/admin/consumer/editor", key = "custom:roastery-seasonal";
     const initial = await modify(editor, "GET");
     const draft = structuredClone(initial.draft);
-    const description = "Brewed fresh in Norwich.";
-    draft.pages.product = {meta:{description}};
+    const description = "Brew " + name + " in Norwich.";
+    draft.pages.product = {meta:{title:"{product} | Norwich coffee", description:"Brew {product} in Norwich."}};
     draft.pages[key] = {title:"Seasonal favourites", sections:["w-our-coffees"],
       widgets:[{id:"w-our-coffees",type:"coffee-shelf",heading:"Seasonal coffees",items:["rocko"]}]};
     await modify(editor, "PUT", {revision:initial.revision,document:draft});
@@ -89,10 +116,19 @@ describe("consumer product management through both local Workers", {
       const photo = new URL(await card.locator("img").getAttribute("src"), retail);
       assert.equal(photo.pathname.split("/").at(-1), image.split("/").at(-1));
       assert.equal((await fixture.request(retail, photo.pathname)).status, 200);
+      const catalogueReads = [];
+      page.on("request", request => {
+        if (new URL(request.url()).pathname === "/api/retail/products") catalogueReads.push(request.url());
+      });
       await card.click();
       await page.getByRole("heading", {name, level:1}).waitFor();
       assert.equal(await page.locator('meta[name="description"]').getAttribute("content"), description);
 
+      assert.equal(await page.title(), name + " | Norwich coffee");
+      assert.equal(await page.locator('meta[property="og:url"]').getAttribute("content"), page.url());
+      assert.equal(await page.locator('meta[property="og:image"]').getAttribute("content"), photo.href);
+      assert.equal(await page.locator('script[type="application/ld+json"]').evaluate(el => JSON.parse(el.textContent).sku), id);
+      assert.deepEqual(catalogueReads, [], "the product and its metadata share the catalogue in its initial response");
       const amended = await modify(endpoint + "/" + id, "PATCH", {ifVersion:created.product.version, prices:{"250g":1995}});
       await page.goto(path);
       await card.getByText("From £19.95", {exact:true}).waitFor();

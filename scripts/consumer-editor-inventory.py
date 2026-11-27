@@ -151,7 +151,9 @@ def inventory():
             # Anchor selectors to a named native block so reordering never retargets an edit.
             walk(node,sel,id,fields,page)
         assert len({f['id'] for f in fields}) == len(fields), page
-        result[page] = dict(label=label,path='/'+(directory+'/' if directory else ''),root=root,sections=sections,fields=fields)
+        title = next(node.text() for node in tree.all if node.tag == 'title')
+        description = next(node.attrs['content'] for node in tree.all if node.tag == 'meta' and node.attrs.get('name') == 'description')
+        result[page] = dict(label=label,path='/'+(directory+'/' if directory else ''),root=root,seo=dict(title=title,description=description),sections=sections,fields=fields)
     return result
 
 if __name__ == '__main__':

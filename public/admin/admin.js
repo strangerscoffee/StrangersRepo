@@ -276,7 +276,7 @@
     closeSheet();
     await show(page, { fromHistory: true, scroll: saved?.scroll, consumerSection: page === "consumer" ? section || saved?.consumerSection : undefined });
   }
-  async function show(page, { keepScroll, fromHistory, scroll, focusContent, consumerSection } = {}) {
+  async function show(page, { keepScroll, fromHistory, scroll, focusContent, consumerSection, seoProduct } = {}) {
     const nextPage = PAGE_LABELS.has(page) ? page : "overview";
     const nextTool = nextPage === "consumer" && ["editor", "products"].includes(consumerSection) ? consumerSection : "";
     if (nextTool && consumerTool === nextTool && $("#consumerToolWorkspace")) return true;
@@ -318,7 +318,7 @@
         if (details) details.open = true;
       }
       if (nextTool && consumer) {
-        const mounted = await consumer.mountTool(nextTool);
+        const mounted = await consumer.mountTool(nextTool, seoProduct);
         if (my !== seq) { mounted?.destroy(); return; }
         toolSession = mounted;
         document.title = (nextTool === "editor" ? "Site editor" : "Products") + " · Strangers Coffee Admin";
@@ -368,9 +368,9 @@
   const sickness = install(window.AdminSickness, { api, html, raw, svg, put, head, openSheet, closeSheet, reload, toast, links: () => S.links || {} });
   VIEWS.sickness = sickness?.view || unavailable("sickness");
   const consumer = install(window.AdminConsumer, { api, html, raw, svg, put, head, openSheet, closeSheet, toast, confirmSheet,
-    openSection(id) {
+    openSection(id, seoProduct) {
       saveRoute();
-      return show("consumer", { consumerSection: id, focusContent: true });
+      return show("consumer", { consumerSection: id, focusContent: true, seoProduct });
     },
   });
   VIEWS.consumer = consumer?.view || unavailable("consumer");

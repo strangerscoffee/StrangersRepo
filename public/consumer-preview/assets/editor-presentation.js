@@ -1,3 +1,4 @@
+import {MOBILE_QUERY, orderedSections, sectionStylesheet} from './editor-layout.js';
 import {photo} from './editor-photo-url.js';
 import {formattedText, setFormattedText} from './editor-text.js';
 
@@ -76,6 +77,21 @@ export function presentation(doc, scope, initial, description, onPick, commerce)
   const preview = typeof onPick === 'function';
   const baseScope = ['shared','finder','cart'].includes(scope) ? 'home' : scope;
   let design = initial;
+  const mobileScreen = doc.defaultView?.matchMedia?.(MOBILE_QUERY);
+  let layoutStyle = doc.getElementById('consumer-section-styles');
+  let stylesDirty = true;
+  function refreshStyles(key) {
+    if (!stylesDirty) return;
+    stylesDirty = false;
+    const css = sectionStylesheet(design.pages[key], key.startsWith('product:') ? design.pages.product : undefined);
+    if (!css) { layoutStyle?.remove(); layoutStyle = null; return; }
+    if (!layoutStyle) {
+      layoutStyle = doc.createElement('style');
+      layoutStyle.id = 'consumer-section-styles';
+      doc.head.append(layoutStyle);
+    }
+    if (layoutStyle.textContent !== css) layoutStyle.textContent = css;
+  }
   let loadingCommerce = false;
   let picked;
   let targets = new Map();
@@ -203,6 +219,7 @@ export function presentation(doc, scope, initial, description, onPick, commerce)
       const node = root.querySelector(section.selector);
       if (!node || node.parentNode !== root) continue;
       natives.set(section.id, node);
+      node.dataset.consumerLayoutId = section.id;
       mark(node, key, {section:section.id});
       if (!section.locked && settings.hidden?.includes(section.id)) node.dataset.consumerSectionHidden = '';
       else node.removeAttribute('data-consumer-section-hidden');
@@ -210,7 +227,10 @@ export function presentation(doc, scope, initial, description, onPick, commerce)
       if (layout) node.dataset.consumerSectionLayout = layout;
       else node.removeAttribute('data-consumer-section-layout');
     }
-    if (!settings.sections?.length && !settings.widgets?.length && !anchors.size && !widgets.size) return;
+    const page = design.pages[key] || {};
+    const template = key.startsWith('product:') ? design.pages.product : undefined;
+    if (!settings.sections?.length && !page.mobile?.sections?.length && !template?.mobile?.sections?.length &&
+        !settings.widgets?.length && !anchors.size && !widgets.size) return;
     // A dynamic product render can replace the entire contents of its root at any time.
     for (const [id, anchor] of anchors) if (anchor.parentNode !== root || !natives.has(id)) {
       anchor.remove(); anchors.delete(id);
@@ -242,10 +262,14 @@ export function presentation(doc, scope, initial, description, onPick, commerce)
         entry = {signature, node};
         widgets.set(id, entry);
       }
+      entry.node.dataset.consumerLayoutId = id;
+      const arrangement = page.sectionStyles?.[id]?.arrangement;
+      entry.node.dataset.widgetLayout = arrangement === 'text-first' ? 'stack' : arrangement || item.layout || 'stack';
       if (preview) {
         const source = key.startsWith('product:') && !design.pages[key]?.widgets?.some(widget => widget.id === id)
           ? 'product' : key;
-        mark(entry.node, source, {widget:id});
+        // The shell arranges this page. Its inherited copy still belongs to the template.
+        mark(entry.node, key, {widget:id});
         const copy = entry.node.querySelector(':scope > .consumer-widget-copy');
         mark(copy?.querySelector('h2'), source, {widget:id,part:'heading'});
         mark(copy?.querySelector('p'), source, {widget:id,part:'body'});
@@ -253,7 +277,7 @@ export function presentation(doc, scope, initial, description, onPick, commerce)
         mark(entry.node.querySelector(':scope > img'), source, {widget:id,part:'image'});
       }
     }
-    const order = [...new Set([...(settings.sections || []), ...natives.keys(), ...widgets.keys()])];
+    const order = orderedSections(meta, page, template, Boolean(mobileScreen?.matches));
     const ordered = order.map(id => natives.get(id) || widgets.get(id)?.node).filter(Boolean);
     const slots = [...root.childNodes].filter(node => node.nodeType === 8 && [...anchors.values()].includes(node));
     // Place each entry after its slot, then any extras immediately before the tail marker.
@@ -314,20 +338,22 @@ export function presentation(doc, scope, initial, description, onPick, commerce)
   }
   function getTarget(selection = picked) { return hitAt(findTarget(selection)); }
   function targetList() {
-    const entries = [];
+    const entries = [], containers = [];
     if (!preview || dead) return entries;
     const openDialogs = doc.querySelectorAll('dialog[open]');
     const root = openDialogs[openDialogs.length - 1] || doc;
     for (const node of root.querySelectorAll('[data-consumer-editable]')) {
       const selection = selectionOf(node);
-      if (!selection || !(selection.field || selection.pageTitle || selection.part)) continue;
+      if (!selection) continue;
+      const container = !selection.field && !selection.pageTitle && !selection.part;
+      if (container && selection.section && description(selection.scope,design)?.sections.find(item => item.id === selection.section)?.locked) continue;
       const anchor = visibleAnchor(node);
       if (!anchor.getClientRects().length || anchor.closest('[hidden],[inert]')) continue;
       if (anchor.checkVisibility && !anchor.checkVisibility({checkOpacity:true,checkVisibilityCSS:true})) continue;
       if (targetFor(anchor) !== node) continue;
-      entries.push({selection,hit:hitAt(node)});
+      (container ? containers : entries).push({selection,hit:hitAt(node)});
     }
-    return entries;
+    return entries.concat(containers);
   }
   function paintSelection(scroll = false) {
     if (!preview) return;
@@ -350,9 +376,11 @@ export function presentation(doc, scope, initial, description, onPick, commerce)
       const specific = baseScope.startsWith('product:');
       const settings = specific ? productPresentation(design.pages.product, design.pages[baseScope]) : design.pages[baseScope] || {};
       const shared = design.pages.shared || {};
-      if (settings.meta?.title && doc.title !== settings.meta.title) doc.title = settings.meta.title;
-      const summary = doc.querySelector('meta[name="description"]');
-      if (settings.meta?.description && summary?.content !== settings.meta.description) summary?.setAttribute('content', settings.meta.description);
+      if (preview || !doc.head.hasAttribute('data-consumer-seo')) {
+        if (settings.meta?.title && doc.title !== settings.meta.title) doc.title = settings.meta.title;
+        const summary = doc.querySelector('meta[name="description"]');
+        if (settings.meta?.description && summary?.content !== settings.meta.description) summary?.setAttribute('content', settings.meta.description);
+      }
       doc.documentElement.dataset.consumerTheme = settings.theme || design.theme || 'heritage';
       for (const node of doc.querySelectorAll('.notice, .site-header, .site-footer')) {
         if (shared.theme) node.dataset.consumerTheme = shared.theme;
@@ -374,6 +402,7 @@ export function presentation(doc, scope, initial, description, onPick, commerce)
       }
       const desired = new Map();
       const meta = description(baseScope,design);
+      refreshStyles(baseScope);
       if (meta) setSections(baseScope,meta,settings);
       commerce?.applyLinkedProductFields(doc, design, {preview, desired, mark:preview ? mark : undefined});
       markFields('shared', shared, desired);
@@ -497,12 +526,13 @@ export function presentation(doc, scope, initial, description, onPick, commerce)
     doc.addEventListener('submit', prevent, true);
     doc.addEventListener('dragstart', prevent, true);
   }
+  mobileScreen?.addEventListener('change',schedule);
   doc.addEventListener('retail-catalogue-updated', schedule);
   const Observer = doc.defaultView?.MutationObserver;
   if (Observer) observer = new Observer(schedule);
   paint();
   return {
-    update(next) {design = next; paint();},
+    update(next) {design = next; stylesDirty = true; paint();},
     select(selection, {scroll = true, node} = {}) {
       picked = selection;
       if (selection && node?.ownerDocument === doc) {
@@ -514,6 +544,7 @@ export function presentation(doc, scope, initial, description, onPick, commerce)
     getTarget, targetList,
     destroy() {
       dead = true;
+      mobileScreen?.removeEventListener('change',schedule);
       doc.removeEventListener('retail-catalogue-updated',schedule);
       observer?.disconnect(); activeNodes.clear(); widgets.clear(); anchors.clear();
       for (const node of targets.keys()) unmark(node);

@@ -4,6 +4,8 @@ import {buildPublishReview} from '../public/admin/consumer-editor-review.js';
 import {PAGES, COFFEE_CHOICES, LAYOUTS, THEMES, WIDGET_TYPES, customPageForKey, emptyDocument, validateDocument}
   from '../public/consumer-preview/assets/editor-model.js';
 
+import * as layoutTools from '../public/consumer-preview/assets/editor-layout.js';
+
 const media = [{id:'2245a643-5577-42f7-aa48-c7149eb87d03', name:'Autumn roast.jpg'}];
 const data = (pages, theme = 'heritage') => validateDocument({...emptyDocument(), theme, pages});
 function review(a, b) {
@@ -11,7 +13,7 @@ function review(a, b) {
   for (const doc of [a,b]) for (const [id, page] of Object.entries(doc.pages)) {
     if (id.startsWith('custom:')) pages[id] = customPageForKey(id, page.title);
   }
-  return buildPublishReview(a, b, {pages, themes: THEMES, layouts: LAYOUTS, widgetTypes: WIDGET_TYPES, coffees: COFFEE_CHOICES, media});
+  return buildPublishReview(a, b, {pages, themes: THEMES, layouts: LAYOUTS, widgetTypes: WIDGET_TYPES, coffees: COFFEE_CHOICES, media, layoutTools});
 }
 
 test('review compares the published and local documents using field defaults, actual photo names and page labels', () => {
@@ -69,4 +71,27 @@ test('two identically named widgets can be distinguished when they exchange posi
   const b = data({'custom:tasting':{title:'Tasting', widgets, sections:['w-second','w-first']}});
   const [order] = review(a,b)[0].changes;
   assert.deepEqual(order, {label:'Section order',before:'1. Divider (1)\n2. Divider (2)',after:'1. Divider (2)\n2. Divider (1)'});
+});
+
+test('publication review labels mobile-only overrides and resolves restored shared settings', () => {
+  const old = data({home:{sectionStyles:{hero:{spacing:'airy'}},mobile:{
+    sectionStyles:{hero:{spacing:'tight'}}, sections:['hero','visit','featured','social']}}});
+  const next = data({home:{sectionStyles:{hero:{spacing:'airy'}}}});
+  const [home] = review(old,next);
+  const spacing = home.changes.find(change => change.label.startsWith('Mobile only · ') && change.label.endsWith(' · Spacing'));
+  assert.deepEqual([spacing.before,spacing.after],['Tight','Airy']);
+  const order = home.changes.find(change => change.label === 'Mobile only · Section order');
+  assert.match(order.after,/^Use all sizes\n/);
+  assert.notEqual(order.before.split('\n')[1], order.after.split('\n')[2]);
+  assert.equal(review(old,old).length,0);
+});
+
+test('clearing a single product layout override names its inherited widget arrangement', () => {
+  const product = {widgets:[{id:'w-story',type:'hero',heading:'At the roastery',image:'asset:roastery.webp',layout:'split'}]};
+  const old = data({product, 'product:bom-jesus':{sectionStyles:{'w-story':{arrangement:'reverse'}}}});
+  const next = data({product});
+  const [group] = review(old,next);
+  assert.equal(group.scope,'product:bom-jesus');
+  const change = group.changes.find(item => item.label.endsWith(' · Widget arrangement'));
+  assert.deepEqual([change.before,change.after],['Image right','Image left']);
 });
