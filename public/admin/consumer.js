@@ -1,9 +1,9 @@
 // The staff admin workspace for the separate consumer storefront.
-window.AdminConsumer = ({ api, html, raw, svg, put, head, toast, confirmSheet }) => {
+window.AdminConsumer = ({ api, html, raw, svg, put, head, toast, confirmSheet, openSection }) => {
   const endpoint = "/api/admin/consumer";
   const previewUrl = "https://preview.staffstrangerscoffee.com/";
   const tabs = [
-    ["overview", "Overview"], ["orders", "Orders"], ["customers", "Customers"], ["catalogue", "Catalogue"], ["support", "Support"],
+    ["overview", "Overview"], ["orders", "Orders"], ["customers", "Customers"], ["products", "Products"], ["support", "Support"], ["editor", "Site editor"],
   ];
   const statuses = [
     ["placed", "Placed", "acc"],
@@ -55,12 +55,13 @@ window.AdminConsumer = ({ api, html, raw, svg, put, head, toast, confirmSheet })
   const empty = (icon, label) => html`<div class="consumer-empty"><span class="ic acc">${svg(icon)}</span><p>${label}</p></div>`;
   const heading = (title, note) => html`<header class="consumer-panel-title"><h2>${title}</h2>${note ? html`<p>${note}</p>` : ""}</header>`;
 
-  function navigation() {
+  function navigation(active = section) {
+    const panelId = active === "editor" ? "consumerEditor" : active === "products" ? "consumerProducts" : "consumerPanel";
     return html`<div class="seg consumer-tabs" id="consumerTabs" role="group" aria-label="Consumer sections">
-      ${tabs.map(([id, label]) => html`<button type="button" data-act="consumer-tab" data-id="${id}" aria-controls="consumerPanel" aria-pressed="${String(section === id)}">${label}</button>`)}
+      ${tabs.map(([id, label]) => html`<button type="button" data-act="consumer-tab" data-id="${id}" aria-controls="${panelId}" aria-pressed="${String(active === id)}">${label}</button>`)}
     </div><label class="field consumer-section-picker"><span class="fl">Consumer section</span>
-      <select id="consumerSection" aria-controls="consumerPanel">
-        ${tabs.map(([id, label]) => html`<option value="${id}" ${section === id ? raw("selected") : ""}>${label}</option>`)}
+      <select id="consumerSection" aria-controls="${panelId}">
+        ${tabs.map(([id, label]) => html`<option value="${id}" ${active === id ? raw("selected") : ""}>${label}</option>`)}
       </select>
     </label>`;
   }
@@ -71,7 +72,7 @@ window.AdminConsumer = ({ api, html, raw, svg, put, head, toast, confirmSheet })
     const summaries = [
       ["orders", "bag", "Preview orders", orderCount ?? orders.length],
       ["customers", "people", "Recent profiles", customers.length],
-      ["catalogue", "coffee", "Available coffees", products.filter(product => product.available).length],
+      ["products", "coffee", "Available products", products.filter(product => product.available).length],
     ];
     return html`
       <div class="consumer-summary" aria-label="Preview summary">
@@ -171,24 +172,9 @@ window.AdminConsumer = ({ api, html, raw, svg, put, head, toast, confirmSheet })
     </ul>`;
   }
 
-  function catalogue() {
-    const rows = data.products.filter(product => matches(product.name));
-    if (!rows.length) return empty("coffee", data.products.length ? "No coffees match your search." : "No coffees in the preview catalogue yet.");
-    return html`<ul class="consumer-list" role="list">
-      ${rows.map(product => html`<li class="item consumer-product">
-        <span class="tx"><b>${product.name}</b><span>${product.available ? "Available in preview" : "Unavailable in preview"}</span></span>
-        <label class="consumer-toggle">
-          <input type="checkbox" role="switch" class="switch" id="consumer-product-${product.id}" data-consumer-product="${product.id}"
-            aria-label="Availability for ${product.name}" ${product.available ? raw("checked") : ""} ${writes.has(endpointFor("products", product.id)) || updating ? raw("disabled") : ""}>
-        </label>
-      </li>`)}
-    </ul>`;
-  }
-
-  const lists = { customers, catalogue, support };
+  const lists = { customers, support };
   const listOptions = {
     customers: ["Customers", "Profiles saved by preview customers", "Search consumer customers", "Search name or phone"],
-    catalogue: ["Catalogue", "Control availability in the preview shop", "Search consumer coffees", "Search coffees"],
     support: ["Support", "Messages and order enquiries from the preview", "Search consumer support", "Search messages or order references"],
   };
   function panel() {
@@ -209,13 +195,13 @@ window.AdminConsumer = ({ api, html, raw, svg, put, head, toast, confirmSheet })
 
   function workspace() {
     return html`
-      ${head("Consumer (Preview)", "Retail orders, shop availability and customer support.", html`<div class="consumer-actions">
+      ${head("Consumer (Preview)", "Retail orders, shop availability and storefront editing.", html`<div class="consumer-actions">
         <a class="btn soft" href="${storefront()}" target="_blank" rel="noopener">${svg("external")}Open storefront</a>
         ${data.connected ? html`<button class="btn soft consumer-refresh" id="consumerRefresh" type="button" data-act="consumer-refresh" ${updating || writes.size ? raw("disabled") : ""} aria-label="Refresh consumer preview data">
           ${svg("refresh")}<span>Refresh</span>
         </button>` : ""}
       </div>`)}
-      ${data.connected ? html`<div class="consumer-toolbar">${navigation()}</div>` : ""}
+      ${data.connected ? html`<div class="consumer-toolbar">${navigation()}</div>` : html`<div class="consumer-toolbar"><button class="btn soft" type="button" data-act="consumer-tab" data-id="products">Products</button><button class="btn soft" type="button" data-act="consumer-tab" data-id="editor">Site editor</button></div>`}
       <p class="consumer-message" id="consumerMessage" role="status" ${message ? "" : raw("hidden")}>${message}</p>
       <div id="consumerPanel" aria-busy="${String(updating)}">${panel()}</div>`;
   }
@@ -364,7 +350,15 @@ window.AdminConsumer = ({ api, html, raw, svg, put, head, toast, confirmSheet })
   }
 
   async function selectSection(id, opener) {
-    if (!tabs.some(([key]) => key === id) || id === section || !data?.connected) return;
+    if (!tabs.some(([key]) => key === id)) return;
+    if (["editor", "products"].includes(id) || find("consumerToolWorkspace")) {
+      if (!await openSection(id)) {
+        const picker = find("consumerSection");
+        if (picker) picker.value = find("consumerToolWorkspace")?.dataset.tool || section;
+      }
+      return;
+    }
+    if (id === section || !data?.connected) return;
     section = id;
     supportVersion++;
     supportPending = false;
@@ -472,6 +466,13 @@ window.AdminConsumer = ({ api, html, raw, svg, put, head, toast, confirmSheet })
     }
   }
 
+  function packedComponents(line) {
+    if (!Array.isArray(line.product?.contents)) return "";
+    const components = line.product.contents.filter(part => part?.name && Number.isSafeInteger(part.qty) && part.qty > 0)
+      .map(part => `${part.qty} × ${part.name}${part.weight ? ` (${part.weight})` : ""}`);
+    return components.length ? html`<small>Each pack contains ${components.join(" · ")}</small>` : "";
+  }
+
   function fulfilmentDetail(order) {
     const state = packing.get(order.reference), checked = packedWithChanges(order, state?.changes);
     const busy = updating || writes.has(order.reference) || blockedOrders.has(order.reference), saving = !!state?.running, canPack = ["placed", "preparing"].includes(order.status);
@@ -486,7 +487,7 @@ window.AdminConsumer = ({ api, html, raw, svg, put, head, toast, confirmSheet })
       <div class="consumer-detail-body">${order.contact ? html`<section class="consumer-contact"><h4>Saved customer details</h4><p>${[order.contact.email, order.contact.phone].filter(Boolean).join(" · ") || "No contact details recorded"}</p>${order.method === "delivery" ? html`<p>${[order.contact.address, order.contact.town, order.contact.postcode].filter(Boolean).join(", ")}</p>` : html`<p>${order.cafe?.address || ""}</p>`}</section>` : html`<p class="hint">Customer details were not recorded on this older preview order.</p>`}
       <section><div class="consumer-packing-heading"><h4>Pack order</h4><span id="consumerPackedCount" role="status">${checked.size} of ${order.lines.length} lines${saving ? " · Saving…" : ""}</span></div>
         ${order.lines.length ? html`<progress class="consumer-pack-progress" max="${order.lines.length}" value="${checked.size}" aria-label="Packing progress"></progress>` : ""}
-        <div class="consumer-packing-lines">${order.lines.map((line, index) => html`<label class="consumer-packing-line"><input id="consumerPack-${index}" type="checkbox" data-consumer-packed-line="${index}" data-reference="${order.reference}" ${checked.has(index) ? raw("checked") : ""} ${!canPack || busy ? raw("disabled") : ""}><span><b>${line.product?.name || line.name || "Coffee"}</b><small>${line.size} · ${line.grind}</small></span><strong>× ${line.qty}</strong></label>`)}</div>
+        <div class="consumer-packing-lines">${order.lines.map((line, index) => html`<label class="consumer-packing-line"><input id="consumerPack-${index}" type="checkbox" data-consumer-packed-line="${index}" data-reference="${order.reference}" ${checked.has(index) ? raw("checked") : ""} ${!canPack || busy ? raw("disabled") : ""}><span><b>${line.product?.name || line.name || "Coffee"}</b><small>${line.size} · ${line.grind}</small>${packedComponents(line)}</span><strong>× ${line.qty}</strong></label>`)}</div>
         ${canPack ? html`<div class="row consumer-detail-actions">${order.status === "placed" ? html`<button class="btn soft" type="button" data-act="consumer-status" data-id="preparing" ${busy || saving ? raw("disabled") : ""}>Start preparing</button>` : ""}<button class="btn" type="button" data-act="consumer-status" data-id="ready" ${!allPacked || busy || saving ? raw("disabled") : ""}>Mark packed</button></div>` : ""}</section>
       ${order.method === "delivery" && ["ready", "dispatched", "completed"].includes(order.status) ? html`<form id="consumerDispatchForm" data-reference="${order.reference}"><h4>${order.status === "ready" ? "Dispatch" : "Tracking details"}</h4><label class="field"><span class="fl">Royal Mail tracking number</span><input id="consumerTrackingNumber" name="tracking" maxlength="30" placeholder="e.g. AB123456789GB" autocomplete="off" spellcheck="false" value="${tracking}" ${busy ? raw("disabled") : ""} required></label><button class="btn" type="submit" ${busy || saving ? raw("disabled") : ""}>${order.status === "ready" ? "Save and dispatch" : "Save tracking"}</button>${order.tracking?.url ? html`<a class="btn soft" href="${order.tracking.url}" target="_blank" rel="noopener noreferrer">Track parcel</a>` : ""}</form>` : ""}
       ${order.status === "ready" && order.method === "collection" ? html`<section class="consumer-collection"><h4>Collection</h4><p>Ready to collect from ${order.cafe?.name || "the selected café"}.</p><button class="btn" type="button" data-act="consumer-status" data-id="completed" ${busy ? raw("disabled") : ""}>Mark collected</button></section>` : ""}
@@ -664,32 +665,30 @@ window.AdminConsumer = ({ api, html, raw, svg, put, head, toast, confirmSheet })
     finally { if (opener.isConnected) opener.disabled = false; }
   }
 
-  async function setAvailability(toggle) {
-    const product = data?.products.find(entry => entry.id === toggle.dataset.consumerProduct);
-    if (!product) return;
-    const available = toggle.checked;
-    toggle.checked = product.available;
-    const path = endpointFor("products", product.id);
-    if (available === product.available || writes.has(path) || updating) return;
-    toggle.disabled = true;
-    try {
-      const saved = await save(path, () => api("PATCH", path, { available }), () => { product.available = available; });
-      if (!saved) return;
-      const current = find(toggle.id);
-      if (current) {
-        current.checked = available;
-        current.closest("li").querySelector(".tx span").textContent = available ? "Available in preview" : "Unavailable in preview";
-      }
-      toast(available ? "Coffee made available." : "Coffee marked unavailable.");
-    } catch (err) { report(err.message); }
-    finally {
-      const current = find(toggle.id);
-      if (current) current.disabled = false;
-    }
-  }
-
   return {
     view,
+    currentSection: () => section,
+    setSection(id) {
+      if (tabs.some(([key]) => key === id && !["editor", "products"].includes(key))) section = id;
+    },
+    toolView(tool) {
+      const editor = tool === "editor";
+      return html`<div class="consumer-workspace" id="consumerToolWorkspace" data-tool="${tool}">
+        ${head(editor ? "Site editor" : "Products", "", html`<a class="btn soft consumer-open-storefront" href="${previewUrl}" target="_blank" rel="noopener" aria-label="Open storefront">${svg("external")}<span>Open storefront</span></a>`)}
+        <div class="consumer-toolbar">${navigation(tool)}</div>
+        <div id="${editor ? "consumerEditor" : "consumerProducts"}"><p role="status">Loading ${editor ? "site editor" : "products"}…</p></div>
+      </div>`;
+    },
+    async mountTool(tool) {
+      const host = find(tool === "editor" ? "consumerEditor" : "consumerProducts");
+      if (tool === "products") {
+        const {mountConsumerProducts} = await import("./consumer-products.js");
+        if (host.isConnected) return mountConsumerProducts(host, {api, confirmSheet, toast});
+        return;
+      }
+      const {mountConsumerEditor} = await import("./consumer-editor.js");
+      if (host.isConnected) return mountConsumerEditor(host, {api, confirmSheet, toast});
+    },
     clear() {
       generation++;
       data = null;
@@ -727,7 +726,6 @@ window.AdminConsumer = ({ api, html, raw, svg, put, head, toast, confirmSheet })
       orderFilter = value;
       void loadOrders();
     },
-    setAvailability,
     async act(name, id, opener) {
       if (name === "consumer-tab") await selectSection(id, opener);
       if (name === "consumer-refresh") await refresh(opener);

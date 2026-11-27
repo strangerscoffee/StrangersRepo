@@ -1,8 +1,7 @@
 import { authChangeKey } from './account.js';
 import { clearOrderAttempt, loadRetailOrder, orderReferencePattern, orderTokenPattern, pendingOrderAttempt, placeRetailOrder, prepareOrderAttempt, trackingPath } from './beta-orders.js';
-import { detailsForm, processingMarkup, progress, receiptMarkup, reviewDetails, summary } from './checkout.js';
+import { detailsStage, emptyCheckoutMarkup, priceAction, processingMarkup, progress, receiptMarkup, reviewStage, summary } from './checkout.js';
 import { escapeHtml as html } from './html.js';
-import { money } from './store.js';
 
 const draftKey = 'strangers-coffee-retail.checkout-return.v1';
 const contactFields = ['name', 'email', 'phone', 'address', 'town', 'postcode'];
@@ -23,12 +22,12 @@ function saveReturnDraft(draft) {
 }
 
 function lineSelections(lines) {
-  return lines.map(({ id, size, grind, qty }) => ({ id, size, grind, qty }));
+  return lines.map(({ id, size, grind, qty, unitPrice }) => ({ id, size, grind, qty, expectedUnitPrice: unitPrice }));
 }
 
 function sameSelection(first, second) {
   return first.length === second.length && first.every(line =>
-    second.some(other => line.id === other.id && line.size === other.size && line.grind === other.grind && line.qty === other.qty));
+    second.some(other => line.id === other.id && line.size === other.size && line.grind === other.grind && line.qty === other.qty && line.expectedUnitPrice === other.unitPrice));
 }
 
 function focusHeading(root) {
@@ -38,7 +37,11 @@ function focusHeading(root) {
   if (heading.getBoundingClientRect().top < 0) heading.scrollIntoView({ block: 'nearest' });
 }
 
-export function setupRetailCheckout(root, { cafes, store, cartChanged, getServerAccount, availability }) {
+export function setupRetailCheckout(root, { cafes, store, cartChanged, getServerAccount, availability, refreshCatalogue }) {
+  root.addEventListener('error', event => {
+    const image = event.target;
+    if (image.matches('img') && image.getAttribute('src') !== '/consumer-preview/assets/mark.svg') image.src = '/consumer-preview/assets/mark.svg';
+  }, true);
   const header = document.getElementById('retail-checkout-heading');
   const cafeById = new Map(cafes.map(cafe => [cafe.id, cafe]));
   const defaultCafe = cafeById.has('dove-street') ? 'dove-street' : cafes[0]?.id;
@@ -71,16 +74,6 @@ export function setupRetailCheckout(root, { cafes, store, cartChanged, getServer
     for (const name of contactFields) contact[name] = form.elements[name].value.trim();
     method = form.elements.method.value;
     cafe = form.elements.cafe.value;
-  }
-
-  function priceAction(kind, price, unready = false) {
-    const button = kind === 'details'
-      ? 'type="submit" form="retail-checkout-form"'
-      : 'type="button" data-place-retail-order';
-    return `<div class="retail-checkout-action">
-      <span class="retail-checkout-action-total"><small>Total</small><strong>${money(price.total)}</strong></span>
-      <button class="button" ${button}${unready ? ' disabled' : ''}>${kind === 'details' ? 'Review order' : 'Place test order'}</button>
-    </div>`;
   }
 
   function paintSummary(lines, pricing, kind, unready = false) {
@@ -161,24 +154,12 @@ export function setupRetailCheckout(root, { cafes, store, cartChanged, getServer
     header.textContent = 'Checkout';
     const lines = store.cart();
     if (!lines.length) {
-      root.innerHTML = `<div class="retail-checkout-message"><h2 tabindex="-1">Your cart is empty</h2>
-        <p>Choose a coffee to begin.</p><a class="button" href="/coffee/">Shop coffee</a></div>`;
+      root.innerHTML = emptyCheckoutMarkup;
+      if (failure || store.notice) root.querySelector('.retail-checkout-message p').textContent = failure || store.notice;
       if (focus) focusHeading(root);
       return;
     }
-    root.innerHTML = `${progress(0)}<section class="retail-checkout-stage" aria-labelledby="retail-checkout-stage-title">
-      <div class="retail-checkout-stage-head">
-        <div><h2 id="retail-checkout-stage-title" data-checkout-focus tabindex="-1">Delivery and contact</h2><p>Test checkout. Use sample details.</p></div>
-        <button type="button" class="text-button" data-checkout-sample>Fill sample details</button>
-      </div>
-      <p class="retail-checkout-error" role="alert"${failure ? '' : ' hidden'}>${html(failure)}</p>
-      <p class="retail-checkout-error" data-cart-message hidden>A coffee in your cart is unavailable. Remove it before continuing.</p>
-      <div class="retail-checkout-layout">
-        <div>${detailsForm({ cafes, method, cafe, contact, signedIn: auth !== 'guest' })}</div>
-        <div data-checkout-summary></div>
-      </div>
-      <button type="button" class="text-button retail-checkout-cart" data-bag>Back to cart</button>
-    </section>`;
+    root.innerHTML = detailsStage({ cafes, method, cafe, contact, signedIn: auth !== 'guest' }, failure || store.notice);
     updateProfileHint();
     updateDetails();
     if (focus) focusHeading(root);
@@ -206,10 +187,7 @@ export function setupRetailCheckout(root, { cafes, store, cartChanged, getServer
     phase = 'review';
     const { payload, lines, pricing } = reviewed;
     const selectCafe = payload.method === 'collection' ? cafeById.get(payload.cafe) : null;
-    root.innerHTML = `${progress(1)}<section class="retail-checkout-stage" aria-labelledby="retail-review-title">
-      <div class="retail-checkout-stage-head"><div><h2 id="retail-review-title" tabindex="-1" data-checkout-focus>Review your order</h2><p>Check your details before placing the test order.</p></div></div>
-      <div class="retail-checkout-layout">${reviewDetails({ contact: payload.contact, method: payload.method, cafe: selectCafe })}<div data-checkout-summary></div></div>
-    </section>`;
+    root.innerHTML = reviewStage({ contact: payload.contact, method: payload.method, cafe: selectCafe });
     paintSummary(lines, pricing, 'review');
     focusHeading(root);
   }
@@ -324,7 +302,9 @@ export function setupRetailCheckout(root, { cafes, store, cartChanged, getServer
       }
       if ([400, 409, 422].includes(error.status) && error.code !== 'idempotency_conflict') {
         clearOrderAttempt();
+        await refreshCatalogue();
         store.refresh();
+        cartChanged();
         renderDetails(true, error.message);
         return;
       }

@@ -1,6 +1,10 @@
 import { ApiError, Env, json, readJson, readBytes } from "./http";
 import { BRANDED_RETAIL_ORIGIN } from "./brandedRetail";
-import { retailServiceRequest } from "./retailService";
+import { PRODUCT_UPLOAD_LIMIT, retailServiceRequest } from "./retailService";
+import { productPhotoUpload, retailProductPhoto } from "./consumerCatalogue";
+
+import { handleConsumerEditorAdmin } from "./consumerEditorClient";
+import { handleConsumerEditorCanvas } from "./consumerEditorCanvas";
 
 const CONTROL_PATH = "/api/control/consumer";
 const MAX_OVERVIEW_BYTES = 2 * 1024 * 1024;
@@ -71,27 +75,56 @@ function orderUpdate(input: Record<string, unknown>): string {
 
 /** Signs requests that manage the separate test storefront. */
 export async function handleConsumerAdmin(req: Request, env: Env, route: string): Promise<Response> {
+  const editor = route === "editor" || route.startsWith("editor/");
+  const products = route === "products";
+  const product = /^products\/[a-z0-9][a-z0-9-]{0,99}$/.test(route);
+  const upload = route === "product-photos" && req.method === "POST";
+  const photo = /^product-photos\/([a-f0-9]{64})$/.exec(route)?.[1];
+  if (editor || products || product || upload || photo) {
+    const url = new URL(req.url);
+    if (env.ADMIN_HOST && url.hostname !== env.ADMIN_HOST) throw new ApiError(404, "not_found", "Consumer admin page not found.");
+    if (req.method !== "GET" && req.method !== "HEAD" && req.headers.get("origin") !== url.origin) {
+      throw new ApiError(403, "bad_origin", "Open the consumer dashboard on the admin site to make changes.");
+    }
+  }
+  if (photo && (req.method === "GET" || req.method === "HEAD")) return retailProductPhoto(env, photo, true, req.method);
+  if (editor) {
+    if ((req.method === "GET" || req.method === "HEAD") && (route === "editor/canvas" || route.startsWith("editor/assets/"))) {
+      return handleConsumerEditorCanvas(req, env, route);
+    }
+    return handleConsumerEditorAdmin(req, env, route.slice("editor".length) || "/");
+  }
   const queue = route === "orders";
-  const reading = (route === "" || queue || route === "support") && req.method === "GET";
+  const reading = (route === "" || queue || route === "support" || products) && req.method === "GET";
   const order = /^orders\/(SC-[A-F0-9]{8})$/.exec(route);
-  const product = /^products\/([a-z0-9][a-z0-9-]{0,99})$/.exec(route);
+  const editingProduct = products && req.method === "POST" || product && (req.method === "PATCH" || req.method === "DELETE");
   const updatingSettings = route === "settings" && req.method === "PUT";
   const support = /^support\/HELP-[A-F0-9]{8}$/.test(route);
-  const patching = (order || product || support) && req.method === "PATCH";
-  if (!reading && !updatingSettings && !patching) {
+  const patching = (order || support) && req.method === "PATCH";
+  if (!reading && !updatingSettings && !patching && !editingProduct && !upload) {
     throw new ApiError(404, "not_found", "Consumer preview action not found.");
   }
 
   let body: string | undefined;
   if (!reading) {
-    const input = await readJson(req, order ? 8192 : 2048);
-    if (order && input && typeof input === "object" && !Array.isArray(input)) {
+    if ((editingProduct || upload) && !/^application\/json(?:\s*;|$)/i.test(req.headers.get("content-type") || "")) {
+      throw new ApiError(415, "unsupported_media_type", "Send product changes as JSON.");
+    }
+    const limit = upload ? PRODUCT_UPLOAD_LIMIT : editingProduct ? 32 * 1024 : order ? 8192 : 2048;
+    const input = await readJson(req, limit);
+    if (!input || typeof input !== "object" || Array.isArray(input)) {
+      throw new ApiError(400, "invalid_argument", "Check the Consumer preview change and try again.");
+    }
+    if (order) {
       body = orderUpdate(input);
-    } else if (support && typeof input?.resolved === "boolean") {
+    } else if (support && typeof input.resolved === "boolean") {
       body = JSON.stringify({ resolved: input.resolved });
-    } else if (product && typeof input?.available === "boolean") {
-      body = JSON.stringify({ available: input.available });
-    } else if (updatingSettings && typeof input?.acceptOrders === "boolean") {
+    } else if (upload) {
+      body = productPhotoUpload(input);
+    } else if (editingProduct) {
+      // The separate consumer service validates the product schema, price variants and revision together.
+      body = JSON.stringify(input);
+    } else if (updatingSettings && typeof input.acceptOrders === "boolean") {
       body = JSON.stringify({ acceptOrders: input.acceptOrders });
     } else {
       throw new ApiError(400, "invalid_argument", "Check the Consumer preview change and try again.");
@@ -104,7 +137,7 @@ export async function handleConsumerAdmin(req: Request, env: Env, route: string)
     const response = await retailServiceRequest(env, destination, {
       method: req.method, body,
     });
-    if (response.ok || [400, 404, 409, 422].includes(response.status)) {
+    if (response.ok || [400, 404, 409, 413, 415, 422].includes(response.status)) {
       const bytes = await readBytes(response, MAX_OVERVIEW_BYTES, "The preview response was too large.");
       const result = JSON.parse(new TextDecoder().decode(bytes));
       if (response.ok && route === "") result.previewUrl = BRANDED_RETAIL_ORIGIN + "/";

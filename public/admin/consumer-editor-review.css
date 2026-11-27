@@ -1,0 +1,25 @@
+.ce-review { display: grid; gap: 8px; max-height: min(50vh, 32rem); max-height: min(50dvh, 32rem); overflow-y: auto; overscroll-behavior: contain; padding: 3px; min-width: 0; color: var(--fg); }
+.ce-review .ce-review-count { margin: 0 0 2px; color: var(--muted); font-size: .85rem; }
+.ce-review-group { min-width: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); }
+.ce-review-group > summary { padding: 11px 13px; cursor: pointer; min-height: 44px; font-weight: 650; overflow-wrap: anywhere; }
+.ce-review-group > summary::marker, .ce-review-long > summary::marker { color: var(--accent); }
+.ce-review-badge { display: inline-block; margin-inline-start: 7px; padding: 1px 7px; border-radius: 20px; color: var(--muted); background: var(--sunk); font-size: .77rem; vertical-align: .07em; }
+.ce-review-list { list-style: none; padding: 0; margin: 0; }
+.ce-review-list li { padding: 12px; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+.ce-review-label { display: block; font-size: .87rem; }
+.ce-review-list dl { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; margin: 7px 0 0; }
+.ce-review-list dl > div { min-width: 0; }
+.ce-review-list dt { color: var(--muted); font-size: .76rem; font-weight: 650; }
+.ce-review-list dd { margin: 3px 0 0; font-size: .9rem; line-height: 1.45; white-space: pre-wrap; }
+.ce-review-list dd img { display: block; max-width: 100%; width: 100px; height: 62px; object-fit: contain; margin-bottom: 5px; background: var(--sunk); border-radius: 6px; }
+.ce-review-long > summary { color: var(--accent); cursor: pointer; font-size: .82rem; padding-block: 6px; }
+.ce-review-long[open] > span { display: block; }
+.ce-review-group > button { margin: 0 12px 12px; min-height: 44px; }
+@media (max-width: 420px) {
+  .ce-review-list dl { grid-template-columns: 1fr; gap: 8px; }
+}
+@media (min-width: 320px) and (max-width: 420px) {
+  .ce-review-list dl:has(img) { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  #sheet .ce-review + .row [data-sheet=close] { flex: .8 1 84px; }
+  #sheet .ce-review + .row [data-sheet=ok] { flex: 1.2 1 148px; }
+}

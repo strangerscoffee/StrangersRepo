@@ -3,7 +3,7 @@ import { escapeHtml as html } from './html.js';
 import { money } from './store.js';
 import { tampingMarkup } from './checkout-motion.js';
 
-export const sizeNames = { '250g': '250 g', '500g': '500 g', '1kg': '1 kg', '300g': '3 × 100 g', one: 'One size' };
+export const sizeNames = { '250g': '250 g', '500g': '500 g', '1kg': '1 kg', '300g': '300 g', one: 'One size' };
 export const grindLabel = grind => grind === 'Whole bean' ? 'Beans' : grind === 'N/A' ? '' : grind;
 export const orderStatusLabels = {
   placed: 'Order placed', preparing: 'Preparing', ready: 'Ready', dispatched: 'Dispatched',
@@ -25,7 +25,7 @@ export function orderTotals({ subtotal, shipping, total }, method) {
 export function progress(step) {
   const names = ['Details', 'Review', 'Confirmation'];
   return `<ol class="retail-checkout-progress" aria-label="Checkout progress">
-    ${names.map((name, index) => `<li ${step === index ? 'aria-current="step"' : step > index ? 'class="is-complete"' : ''}><span>${index + 1}</span>${name}</li>`).join('')}
+    ${names.map((name, index) => `<li ${step === index ? 'aria-current="step"' : step > index ? 'class="is-complete"' : ''}><span class="retail-step-number">${index + 1}</span><span data-step-caption>${name}</span></li>`).join('')}
   </ol>`;
 }
 
@@ -45,7 +45,7 @@ export function summary(lines, pricing, method, action = '') {
     <div class="retail-checkout-summary-body" id="retail-checkout-summary-body">
       ${lineItems(lines)}
       ${orderTotals(pricing, method)}
-      <p class="retail-checkout-delivery-note">${method === 'collection' ? 'Collect from your chosen location once it’s ready' : 'Estimated delivery 2–3 working days from dispatch'}</p>
+      <p class="retail-checkout-delivery-note" data-method="${method}">${method === 'collection' ? 'Collect from your chosen location once it’s ready' : 'Estimated delivery 2–3 working days from dispatch'}</p>
     </div>
     ${action}
   </aside>`;
@@ -78,7 +78,7 @@ export function detailsForm({ cafes, method, cafe, contact, signedIn }) {
       <div class="retail-checkout-field-grid">
         ${field('name', 'Full name', contact.name, 'required maxlength="120" autocomplete="name"')}
         ${field('email', 'Email address', contact.email, 'required type="email" inputmode="email" maxlength="254" autocomplete="email" autocapitalize="none"')}
-        ${field('phone', 'Phone <small>Optional</small>', contact.phone, 'type="tel" inputmode="tel" maxlength="32" autocomplete="tel"', 'retail-checkout-span')}
+        ${field('phone', '<span>Phone</span> <small>Optional</small>', contact.phone, 'type="tel" inputmode="tel" maxlength="32" autocomplete="tel"', 'retail-checkout-span')}
       </div>
     </fieldset>
     <fieldset class="retail-checkout-card" id="retail-checkout-delivery"${collecting ? ' hidden disabled' : ''}>
@@ -103,11 +103,11 @@ export function reviewDetails({ contact, method, cafe }) {
   const destination = cafe ? [cafe.name, cafe.address] : [contact.address, contact.town, contact.postcode];
   return `<div class="retail-checkout-fields">
     <section class="retail-checkout-card retail-review-card">
-      <h2>${method === 'collection' ? 'Norwich collection' : 'UK delivery'}</h2>
+      <h2 data-review-method="${method}">${method === 'collection' ? 'Norwich collection' : 'UK delivery'}</h2>
       <address>${destination.map(html).join('<br>')}</address>
     </section>
     <section class="retail-checkout-card retail-review-card">
-      <h2>Contact details</h2>
+      <h2 data-contact-heading>Contact details</h2>
       <p>${html(contact.name)}<br>${html(contact.email)}${contact.phone ? '<br>' + html(contact.phone) : ''}</p>
     </section>
     <section class="retail-checkout-card retail-review-card retail-checkout-test">
@@ -154,21 +154,21 @@ export function receiptMarkup(order, { confirmed, trackingLink, guest }) {
     <section class="retail-checkout-receipt" aria-labelledby="retail-receipt-title">
       <div class="retail-checkout-receipt-head">
         ${confirmed ? '<span class="retail-checkout-receipt-mark" aria-hidden="true">✓</span>' : ''}
-        <h2 id="retail-receipt-title" tabindex="-1">${confirmed ? 'Your test order is confirmed.' : 'Order ' + html(reference)}</h2>
+        <h2 id="retail-receipt-title" tabindex="-1"${confirmed ? ' data-order-confirmed' : ''}>${confirmed ? 'Your test order is confirmed.' : 'Order ' + html(reference)}</h2>
         <p>No payment was taken and no coffee will be sent.</p>
         <span class="retail-checkout-reference">${html(reference)}</span>
       </div>
       <div class="retail-checkout-layout">
         <div class="retail-checkout-fields">
           <section class="retail-checkout-card retail-review-card">
-            <h2>Order updates</h2>
+            <h2 data-updates-heading>Order updates</h2>
             ${timeline(order)}
             ${carrier ? `<a class="button outline" href="${html(carrier)}" target="_blank" rel="noopener noreferrer">Track with Royal Mail</a>` : ''}
             <button type="button" class="text-button" data-checkout-refresh>Refresh order status</button>
             <p role="status" class="retail-checkout-feedback" data-track-feedback></p>
           </section>
-          <section class="retail-checkout-card retail-review-card"><h2>${cafe ? 'Collection location' : 'Delivery service'}</h2><p>${destination}</p></section>
-          ${order.contact ? `<section class="retail-checkout-card retail-review-card"><h2>Contact details</h2>
+          <section class="retail-checkout-card retail-review-card"><h2 data-receipt-method="${cafe ? 'collection' : 'delivery'}">${cafe ? 'Collection location' : 'Delivery service'}</h2><p>${destination}</p></section>
+          ${order.contact ? `<section class="retail-checkout-card retail-review-card"><h2 data-contact-heading>Contact details</h2>
             <p>${[order.contact.name, order.contact.email, order.contact.phone].filter(Boolean).map(html).join('<br>')}</p>
             ${method === 'delivery' ? `<address>${[order.contact.address, order.contact.town, order.contact.postcode].filter(Boolean).map(html).join('<br>')}</address>` : ''}
           </section>` : ''}
@@ -183,5 +183,41 @@ export function receiptMarkup(order, { confirmed, trackingLink, guest }) {
           : '<a class="button" href="/account/#orders">View My account</a>'}
         <a class="button outline" href="/coffee/">Continue shopping</a>
       </div>
+    </section>`;
+}
+
+export const emptyCheckoutMarkup = `<div class="retail-checkout-message"><h2 tabindex="-1">Your cart is empty</h2>
+        <p>Choose a coffee to begin.</p><a class="button" href="/coffee/">Shop coffee</a></div>`;
+
+export function priceAction(kind, price, unready = false) {
+  const button = kind === 'details'
+    ? 'type="submit" form="retail-checkout-form"'
+    : 'type="button" data-place-retail-order';
+  return `<div class="retail-checkout-action">
+    <span class="retail-checkout-action-total"><small>Total</small><strong>${money(price.total)}</strong></span>
+    <button class="button" ${button}${unready ? ' disabled' : ''}>${kind === 'details' ? 'Review order' : 'Place test order'}</button>
+  </div>`;
+}
+
+export function detailsStage(options, failure = '', summaryMarkup = '') {
+  return `${progress(0)}<section class="retail-checkout-stage" aria-labelledby="retail-checkout-stage-title">
+      <div class="retail-checkout-stage-head">
+        <div><h2 id="retail-checkout-stage-title" data-checkout-focus tabindex="-1">Delivery and contact</h2><p>Test checkout. Use sample details.</p></div>
+        <button type="button" class="text-button" data-checkout-sample>Fill sample details</button>
+      </div>
+      <p class="retail-checkout-error" role="alert"${failure ? '' : ' hidden'}>${html(failure)}</p>
+      <p class="retail-checkout-error" data-cart-message hidden>A coffee in your cart is unavailable. Remove it before continuing.</p>
+      <div class="retail-checkout-layout">
+        <div>${detailsForm(options)}</div>
+        <div data-checkout-summary>${summaryMarkup}</div>
+      </div>
+      <button type="button" class="text-button retail-checkout-cart" data-bag>Back to cart</button>
+    </section>`;
+}
+
+export function reviewStage(options, summaryMarkup = '') {
+  return `${progress(1)}<section class="retail-checkout-stage" aria-labelledby="retail-review-title">
+      <div class="retail-checkout-stage-head"><div><h2 id="retail-review-title" tabindex="-1" data-checkout-focus>Review your order</h2><p>Check your details before placing the test order.</p></div></div>
+      <div class="retail-checkout-layout">${reviewDetails(options)}<div data-checkout-summary>${summaryMarkup}</div></div>
     </section>`;
 }

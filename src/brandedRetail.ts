@@ -3,8 +3,13 @@ import { cleanEmail } from "./email/address";
 import { sendRetailAccountMail } from "./retailAccountMail";
 import { retailInstagram } from "./retailInstagram";
 import { retailServicePublicKey, retailServiceRequest } from "./retailService";
+import { readConsumerCatalogue, retailCatalogueResponse, retailProductPhoto } from "./consumerCatalogue";
 import { noStore, staticFile, withFingerprints } from "./siteAssets";
-import { productFromPath } from "../public/consumer-preview/assets/product-paths.js";
+import { applyStaticConsumerFields, customConsumerContent, applyConsumerFooterLinks } from "./consumerEditorStatic";
+import { applyConsumerPageMetadata } from "./consumerEditorMetadata";
+import { readPublishedConsumerEditor, readPublishedConsumerMedia } from "./consumerEditorClient";
+import { PAGES as EDITOR_PAGES, customPageForKey, pageForPath, type ConsumerEditorPage } from "../public/consumer-preview/assets/editor-model.js";
+import { productFromPath, productPath, type ProductRoute } from "../public/consumer-preview/assets/product-paths.js";
 
 export const BRANDED_RETAIL_ORIGIN = "https://preview.staffstrangerscoffee.com";
 const ACCOUNT_ORIGIN = "https://strangers-coffee-retail-demo.magicloom512.chatgpt.site";
@@ -227,9 +232,14 @@ async function retailWriteApi(req: Request, env: Env, path: string, maxBytes: nu
     "Checkout is temporarily unavailable. Try again to confirm this order." }, 503);
 }
 
-async function retailPage(req: Request, env: Env, url: URL, page = url.pathname, product?: string): Promise<Response> {
+async function retailPage(req: Request, env: Env, url: URL, page = url.pathname, product?: ProductRoute, catalogue?: ProductRoute[]): Promise<Response> {
   const path = "/consumer-preview" + page;
-  const asset = await env.ASSETS.fetch(new Request(new URL(path, url), { method: req.method }));
+  const custom = /^\/pages\/([a-z0-9-]+)\/$/.exec(url.pathname)?.[1];
+  // The released design is display data only. An unavailable editor must leave the shop usable.
+  const [asset, release] = await Promise.all([
+    env.ASSETS.fetch(new Request(new URL(path, url), { method: req.method })),
+    req.method === "HEAD" && !custom ? null : readPublishedConsumerEditor(env).catch(() => undefined),
+  ]);
   if (!asset.ok || !(asset.headers.get("content-type") || "").startsWith("text/html")) {
     await asset.body?.cancel();
     return new Response("The consumer storefront is temporarily unavailable.", { status: 503 });
@@ -238,12 +248,77 @@ async function retailPage(req: Request, env: Env, url: URL, page = url.pathname,
   if (page === "/account/" || page === "/checkout/") response.headers.set("referrer-policy", "no-referrer");
   // The marker makes checkout check the saved profile before taking an order. The account API
   // verifies the actual session before returning customer data or accepting any write.
-  if (response.body && (product || proof(cookie(req, SESSION_COOKIE)))) {
+  const scope = custom ? "custom:" + custom : product ? "product:" + product.id : pageForPath(url.pathname) ?? "home";
+  const pages = release?.document.pages ?? {};
+  if (custom && !Object.hasOwn(pages, scope)) {
+    await response.body?.cancel();
+    return new Response(null, {status:release === undefined ? 503 : 404, headers:{"cache-control":"no-store"}});
+  }
+  const relevant = ["shared", ...(product ? ["product"] : []), scope, "finder", "cart"];
+  const selectedPages = Object.fromEntries(relevant.filter(key => key && Object.hasOwn(pages, key))
+    .map(key => [key, pages[key]]));
+  const navigation = Object.entries(pages).filter(([id, page]) => id.startsWith("custom:") && page.inNavigation === true)
+    .map(([id, page]) => ({href:"/pages/" + id.slice(7) + "/", title:page.title}));
+  // Product cards can appear in the catalogue, homepage, cart, finder or a merchant's new shelf.
+  // Give the renderer only their published merchandising fields, not unrelated pages' editorial content.
+  const productFields = Object.fromEntries(Object.entries(pages).filter(([id]) => id.startsWith("product:"))
+    .map(([id, config]) => [id, {fields:Object.fromEntries(Object.entries(config.fields ?? {}).filter(([key]) =>
+      ["product-title","product-image","product-image-alt","product-description","note-1","note-2","note-3"].includes(key)))}] as const)
+    .filter(([, config]) => Object.keys(config.fields).length));
+  function definition(key: string, config: ConsumerEditorPage, generic?: ConsumerEditorPage) {
+    const builtIn = EDITOR_PAGES[key] ?? (key.startsWith("product:") ? EDITOR_PAGES.product : undefined);
+    const meta = builtIn ?? customPageForKey(key,config.title);
+    if (!meta) return null;
+    const fields = builtIn?.fields.filter(f => Object.hasOwn(config.fields ?? {}, f.id)
+      || Object.hasOwn(generic?.fields ?? {}, f.id)).map(({id,kind,selector}) => ({id,kind,selector})) ?? [];
+    const needsSections = (item?: ConsumerEditorPage) => item && (item.sections?.length || item.widgets?.length ||
+      item.hidden?.length || Object.keys(item.sectionLayouts ?? {}).length);
+    const sections = needsSections(config) || needsSections(generic)
+      ? (builtIn?.sections ?? []).map(({id,selector,locked}) => ({id,selector,locked})) : [];
+    return {root:meta.root, fields, sections};
+  }
+  const definitions = Object.fromEntries([...new Set(relevant)].map(key =>
+    [key, definition(key, pages[key] ?? {}, key === scope && product ? pages.product : undefined)]));
+  const design = release && (release.document.theme !== "heritage" || Object.keys(selectedPages).length || navigation.length || Object.keys(productFields).length)
+    ? {schema:1, theme:release.document.theme, pages:selectedPages, navigation, productFields, scope, definitions} : null;
+  if (response.body && (url.pathname === "/" || page === "/coffee/" || product || design || proof(cookie(req, SESSION_COOKIE)))) {
     const html = new HTMLRewriter();
+    if (page === "/coffee/") html.on("[data-catalogue-gifts] [data-catalogue-id]", {element(element) { element.remove(); }});
+    if (url.pathname === "/") html.on("#home-roasting-grid", {element(element) {
+      // Editorial samples belong to the admin canvas. Shopper highlights use the current range.
+      element.setInnerContent("");
+    }});
+    if (custom) {
+      const title = pages[scope].title ?? custom;
+      html.on("title", { element(e) { e.setInnerContent(title + " | Strangers Coffee"); } })
+        .on('meta[name="description"]', { element(e) { e.setAttribute("content", title); } })
+        .on("main", { element(e) {
+          e.setAttribute("class", "consumer-custom-page");
+          e.setInnerContent(customConsumerContent(pages[scope]), {html:true});
+        } });
+    }
+    if (design) {
+      applyStaticConsumerFields(html, "shared", selectedPages.shared);
+      applyStaticConsumerFields(html, scope, selectedPages[scope]);
+      applyConsumerFooterLinks(html, navigation);
+      const encoded = JSON.stringify(design).replace(/</g, "\\u003c");
+      const theme = selectedPages[scope]?.theme ?? (product ? selectedPages.product?.theme : undefined) ?? design.theme;
+      html.on("html", { element(e) { e.setAttribute("data-consumer-theme", theme); } })
+        .on("head", { element(e) {
+          e.append('<link rel="stylesheet" href="/consumer-preview/assets/editor-render.css">' +
+            '<script type="application/json" id="consumer-design">' + encoded + '</script>' +
+            '<script type="module" src="/consumer-preview/assets/editor-presentation.js"></script>', {html: true});
+        } });
+    }
     if (proof(cookie(req, SESSION_COOKIE))) html.on("body", {
       element(element) { element.setAttribute("data-retail-signed-in", ""); },
     });
-    if (product) html.on("title", { element(element) { element.setInnerContent(product + " | Strangers Coffee"); } });
+    if (product) html.on("title", { element(element) { element.setInnerContent(product.name + " | Strangers Coffee"); } });
+    if (catalogue) html.on("head", { element(element) {
+      const data = JSON.stringify({products: catalogue}).replace(/</g, "\\u003c");
+      element.append('<script type="application/json" id="retail-catalogue">' + data + '</script>', {html:true});
+    } });
+    applyConsumerPageMetadata(html, {...(product ? selectedPages.product?.meta : {}), ...selectedPages[scope]?.meta});
     response = html.transform(response);
   }
   return withFingerprints(response, env, url);
@@ -254,11 +329,16 @@ export async function handleBrandedRetail(req: Request, env: Env, url: URL, ctx?
   const path = url.pathname;
   const reading = req.method === "GET" || req.method === "HEAD";
 
+  const mediaId = /^\/consumer-media\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/.exec(path)?.[1];
+  if (mediaId) return reading ? readPublishedConsumerMedia(env, mediaId, req.method) : methodNotAllowed("GET, HEAD");
   if (path === "/api/account" || path === "/api/account/orders") return accountApi(req, path);
   const order = ORDER_ROUTE.exec(path);
   if (order) return retailWriteApi(req, env,
     "/consumer-orders-service/orders" + (order[1] ? "/" + order[1] : ""), order[1] ? 2048 : 24 * 1024);
   if (path === "/api/retail/support") return retailWriteApi(req, env, "/consumer-support-service/message", 12 * 1024);
+  if (path === "/api/retail/products") return req.method === "GET" ? retailCatalogueResponse(env) : methodNotAllowed("GET");
+  const productPhoto = /^\/consumer-product-media\/([a-f0-9]{64})$/.exec(path)?.[1];
+  if (productPhoto) return reading ? retailProductPhoto(env, productPhoto, false, req.method) : methodNotAllowed("GET, HEAD");
   if (path === "/signin") return reading ? redirect("/account/") : methodNotAllowed("GET, HEAD");
   if (path === "/consumer-auth/service-key") {
     return req.method === "GET" ? retailServicePublicKey(env).catch(unavailable) : methodNotAllowed("GET");
@@ -285,12 +365,24 @@ export async function handleBrandedRetail(req: Request, env: Env, url: URL, ctx?
     return new Response("Not found", { status: 404 });
   }
   if (!reading) return undefined;
+  if (path.startsWith("/pages/") && pageForPath(path)?.startsWith("custom:")) {
+    if (!path.endsWith("/")) return redirect(path + "/" + url.search, 308);
+    return retailPage(req, env, url, "/");
+  }
   if (PAGES.has(path)) return retailPage(req, env, url);
   if (PAGES.has(path + "/")) return redirect(path + "/" + url.search, 308);
-  const product = productFromPath(path);
-  if (product) {
+  if (/^\/coffee\/p\/[a-z0-9]+(?:-[a-z0-9]+)*\/?$/.test(path)) {
     if (!path.endsWith("/")) return redirect(path + "/" + url.search, 308);
-    return retailPage(req, env, url, "/product/", product.name);
+    const voucher = productFromPath(path);
+    if (voucher?.id === "online-gift-card" || voucher?.id === "in-store-gift-card") {
+      return retailPage(req, env, url, "/product/", voucher);
+    }
+    const catalogue = await readConsumerCatalogue(env);
+    if (!catalogue) return new Response("The product catalogue is temporarily unavailable. Please try again.", {
+      status: 503, headers: {"cache-control":"no-store","retry-after":"30"},
+    });
+    const product = catalogue.find(item => productPath(item) === path);
+    if (product) return retailPage(req, env, url, "/product/", product, catalogue);
   }
   return undefined;
 }

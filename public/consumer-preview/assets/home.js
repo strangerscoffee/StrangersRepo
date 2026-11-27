@@ -1,5 +1,6 @@
 import { escapeHtml as html } from './html.js';
 import { productPath } from './product-paths.js';
+import { originalProduct } from './products.js';
 import { money } from './store.js';
 
 const highlights = new Map([
@@ -8,9 +9,9 @@ const highlights = new Map([
   ['anserma', 'Anserma'],
 ]);
 
-function showHighlights(products) {
+export function showHighlights(products) {
   const shelf = document.querySelector('#home-roasting-grid');
-  const available = products.filter(product => product.available !== false && product.prices && '250g' in product.prices);
+  const available = products.filter(product => !product.category && product.available !== false);
   const byId = new Map(available.map(product => [product.id, product]));
   const chosen = [...highlights.keys()].map(id => byId.get(id)).filter(Boolean);
   chosen.push(...available.filter(product => !highlights.has(product.id)).slice(0, 3 - chosen.length));
@@ -22,8 +23,8 @@ function showHighlights(products) {
   shelf.innerHTML = chosen.map(product => `<article class="home-coffee">
     <figure><a tabindex="-1" aria-hidden="true" href="${html(productPath(product))}"><img src="${html(product.image)}" width="580" height="410" alt="" loading="lazy" decoding="async"></a></figure>
     <div class="home-coffee-copy"><p class="eyebrow">${[product.country, product.process].filter(Boolean).map(html).join(' · ')}</p>
-    <h3>${html(highlights.get(product.id) ?? product.name)}</h3><p>${html(product.notes.join(', '))}</p>
-    <div class="home-coffee-actions"><strong>From ${money(product.prices['250g'])}</strong><a class="button outline" href="${html(productPath(product))}" aria-label="View ${html(product.name)}">View coffee</a></div>
+    <h3>${html(product.name === originalProduct(product.id)?.name ? highlights.get(product.id) ?? product.name : product.name)}</h3><p>${html(product.notes.join(', '))}</p>
+    <div class="home-coffee-actions"><strong>From ${money(Math.min(...Object.values(product.prices)))}</strong><a class="button outline" href="${html(productPath(product))}" aria-label="View ${html(product.name)}">View coffee</a></div>
     </div></article>`).join('');
 }
 
@@ -65,8 +66,7 @@ async function refreshSocial(grid) {
   }
 }
 
-export function populateHome(products) {
-  showHighlights(products);
+export function populateHome() {
   const grid = document.querySelector('#home-social-posts');
   if (!grid || !('IntersectionObserver' in window)) return;
   const observer = new IntersectionObserver(entries => {

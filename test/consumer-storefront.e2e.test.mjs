@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { products } from '../public/consumer-preview/assets/products.js';
 import { createRequire } from 'node:module';
 import { after, before, test } from 'node:test';
 import { startServer } from './harness.mjs';
@@ -17,9 +18,9 @@ test('retail stock loads only when needed and cart edits preserve changes from a
   const context = await browser.newContext();
   try {
     let stockRequests = 0;
-    await context.route('**/consumer-auth/availability', route => {
+    await context.route('**/api/retail/products', route => {
       stockRequests++;
-      return route.fulfill(stockRequests === 1 ? { status: 503, json: {} } : { json: { unavailable: ['christmas-blend'] } });
+      return route.fulfill(stockRequests === 1 ? { status: 503, json: {} } : { json: { products: products.map(item => ({ ...item, available: item.id !== 'christmas-blend' })) } });
     });
     const page = await context.newPage(), other = await context.newPage();
     await page.goto(server.base + '/about/');
@@ -130,7 +131,7 @@ for (const [name, afterCheck] of [['sign-out', null], ['account switch', {
       if (hold) { started(); await held; }
       return route.fulfill(account ? { json: account } : { status: 401, json: {} });
     });
-    await context.route('**/consumer-auth/availability', route => route.fulfill({ json: { unavailable: [] } }));
+    await context.route('**/api/retail/products', route => route.fulfill({ json: { products } }));
     await context.route('**/api/retail/orders', route => {
       requests.push({ binding: route.request().headers()['x-retail-profile-session'], body: route.request().postDataJSON() });
       return route.fulfill({ status: 409, json: { error: 'checkout_session_changed' } });
@@ -193,7 +194,7 @@ test('signed receipt conceals private information on lifecycle restore and remov
       if (hold) { started(); await held; }
       return route.fulfill({ json: aliceCheckout });
     });
-    await context.route('**/consumer-auth/availability', route => route.fulfill({ json: { unavailable: [] } }));
+    await context.route('**/api/retail/products', route => route.fulfill({ json: { products } }));
     await context.route('**/api/retail/orders/*', route => {
       const binding = route.request().headers()['x-retail-profile-session'];
       const { token } = route.request().postDataJSON();
@@ -245,7 +246,7 @@ test('a placement response from the former account cannot fill the current check
     let account = aliceCheckout;
     const bob = { identity: { email: 'bob@example.test' }, profileSession: 'b'.repeat(64), profile: { name: 'Bob' } };
     await context.route('**/api/account', route => route.fulfill({ json: account }));
-    await context.route('**/consumer-auth/availability', route => route.fulfill({ json: { unavailable: [] } }));
+    await context.route('**/api/retail/products', route => route.fulfill({ json: { products } }));
     let started;
     const held = new Promise(resolve => { release = resolve; });
     const arrived = new Promise(resolve => { started = resolve; });
@@ -290,7 +291,7 @@ test('an older saved attempt can be checked in history or explicitly dismissed w
       }));
     }, cartKey);
     await context.route('**/api/account', route => route.fulfill({ json: aliceCheckout }));
-    await context.route('**/consumer-auth/availability', route => route.fulfill({ json: { unavailable: [] } }));
+    await context.route('**/api/retail/products', route => route.fulfill({ json: { products } }));
     let placements = 0;
     await context.route('**/api/retail/orders', route => { placements++; return route.abort(); });
     const page = await context.newPage();
@@ -316,7 +317,7 @@ test('a renewed session for the same checkout account retries the same order key
       }));
     }, { key, payload, email: aliceCheckout.identity.email });
     await context.route('**/api/account', route => route.fulfill({ json: aliceCheckout }));
-    await context.route('**/consumer-auth/availability', route => route.fulfill({ json: { unavailable: [] } }));
+    await context.route('**/api/retail/products', route => route.fulfill({ json: { products } }));
     let placement;
     await context.route('**/api/retail/orders', route => {
       placement = { binding: route.request().headers()['x-retail-profile-session'], body: route.request().postDataJSON() };
@@ -331,5 +332,31 @@ test('a renewed session for the same checkout account retries the same order key
     assert.deepEqual(placement, { binding: aliceCheckout.profileSession, body: { ...payload, idempotencyKey: key } });
   } finally {
     await context.close();
+  }
+});
+
+test('edited copy, accessory sizes and coffees without a 250 g bag use the current catalogue', async () => {
+  const { productPageView } = await import('../public/consumer-preview/assets/product-page.js');
+  const { finderVariant } = await import('../public/consumer-preview/assets/finder.js');
+  const { shelfProducts } = await import('../public/consumer-preview/assets/storefront-views.js');
+  const old = [...products];
+  try {
+    const original = old.find(item => item.id === 'bom-jesus');
+    const edited = { ...original, shortCopy: 'Fresh crop <new>', story: 'An amended producer story.',
+      prices: { '500g': 1795 }, region: 'New Region', available: true };
+    const accessory = { id: 'coffee-caddy', category: 'accessory', name: 'Coffee caddy', notes: [],
+      image: original.image, shortCopy: 'For beans', grinds: ['N/A'], prices: { '250g': 900, '500g': 1100 } };
+    products.splice(0, products.length, edited, accessory);
+    const {markup} = productPageView('bom-jesus', '', true);
+    assert.match(markup, /Fresh crop &lt;new&gt;/);
+    assert.match(markup, /An amended producer story/);
+    assert.match(markup, /New Region/);
+    assert.deepEqual(finderVariant(edited, 'Whole bean'), {size:'500g', grind:'Whole bean', price:1795});
+    assert.match(shelfProducts([edited], true), /From £17\.95/);
+    const choices = productPageView(accessory.id, '', true).markup;
+    assert.match(choices, /type="radio" name="size" value="250g"/);
+    assert.match(choices, /type="radio" name="size" value="500g"/);
+  } finally {
+    products.splice(0, products.length, ...old);
   }
 });

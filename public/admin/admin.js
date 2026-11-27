@@ -158,11 +158,12 @@
   }
 
   /** Asks before doing something that can't be undone. Resolves true when confirmed. */
-  function confirmSheet({ title, text, confirm, danger }) {
+  function confirmSheet({ title, text, confirm, danger, content }) {
     return new Promise((resolve) => {
       openSheet(html`<h2 id="sheetTitle">${title}</h2><p>${text}</p>
         <div class="row"><button class="btn soft" type="button" data-sheet="close">Cancel</button><button class="btn ${danger ? "solidbad" : ""}" type="button" data-sheet="ok">${confirm}</button></div>`,
       (act) => { if (act === "ok") { closeSheet(); resolve(true); } });
+      if (content) sheet.querySelector(".row").before(content);
       const obs = new MutationObserver(() => { if ($("#scrim").hidden) { obs.disconnect(); resolve(false); } });
       obs.observe($("#scrim"), { attributes: true, attributeFilter: ["hidden"] });
     });
@@ -243,14 +244,19 @@
     } catch (e) { /* keep the last count */ }
   }
 
-  let seq = 0, routeEntry = 0;
+  let seq = 0, routeEntry = 0, consumerTool = "", toolSession, leavingTool;
+  function closeConsumerTool() {
+    toolSession?.destroy();
+    toolSession = undefined;
+    consumerTool = "";
+  }
   const routeSnapshots = new Map();
-  const routeHash = () => S.page === "wholesale" ? "#wholesale/" + (wholesale?.currentSection() || parseRoute().section || "orders") : "#" + S.page;
+  const routeHash = () => consumerTool ? "#consumer/" + consumerTool : S.page === "wholesale" ? "#wholesale/" + (wholesale?.currentSection() || parseRoute().section || "orders") : "#" + S.page;
   function saveRoute() {
     if (!history.state?.adminEntry) return;
     routeSnapshots.set(history.state.adminEntry, {
       wholesale: wholesale?.workspaceState(), open: S.open, filter: S.filter, q: S.q,
-      feed: S.feed, fq: S.fq, from: S.activityFrom, to: S.activityTo, scroll: window.scrollY,
+      feed: S.feed, fq: S.fq, from: S.activityFrom, to: S.activityTo, scroll: window.scrollY, consumerSection: consumer?.currentSection(),
     });
     if (routeSnapshots.size > 60) routeSnapshots.delete(routeSnapshots.keys().next().value);
   }
@@ -268,10 +274,25 @@
     } else if (page === "wholesale") wholesale?.selectSection(section || "orders");
     if (page === "wholesale" && section && wholesale?.currentSection() !== section) wholesale?.selectSection(section);
     closeSheet();
-    await show(page, { fromHistory: true, scroll: saved?.scroll });
+    await show(page, { fromHistory: true, scroll: saved?.scroll, consumerSection: page === "consumer" ? section || saved?.consumerSection : undefined });
   }
-  async function show(page, { keepScroll, fromHistory, scroll, focusContent } = {}) {
+  async function show(page, { keepScroll, fromHistory, scroll, focusContent, consumerSection } = {}) {
     const nextPage = PAGE_LABELS.has(page) ? page : "overview";
+    const nextTool = nextPage === "consumer" && ["editor", "products"].includes(consumerSection) ? consumerSection : "";
+    if (nextTool && consumerTool === nextTool && $("#consumerToolWorkspace")) return true;
+    if (consumerTool && consumerTool !== nextTool) {
+      if (leavingTool) return false;
+      leavingTool = true;
+      try {
+        if (toolSession && !await toolSession.canLeave()) {
+          if (fromHistory) history.pushState({adminEntry: ++routeEntry}, "", routeHash());
+          return false;
+        }
+        closeConsumerTool();
+      } finally { leavingTool = false; }
+    }
+    consumerTool = nextTool;
+    if (consumerSection) consumer?.setSection(consumerSection);
     if (nextPage !== S.page) wholesaleExpanded = nextPage === "wholesale";
     S.page = nextPage;
     const hash = routeHash();
@@ -288,13 +309,19 @@
     if (!keepScroll) { main.replaceChildren(SC.skeleton({ label: "Loading " + S.page + "…", rows: 4 })); window.scrollTo(0, 0); }
     main.setAttribute("aria-busy", "true");
     try {
-      const view = await VIEWS[S.page]();
+      const view = nextTool && consumer ? consumer.toolView(nextTool) : await VIEWS[S.page]();
       if (my !== seq) return;
       const openDetails = keepScroll ? [...main.querySelectorAll("details[open][data-preserve-open]")].map(el => el.dataset.preserveOpen) : [];
       put(main, view);
       for (const id of openDetails) {
         const details = main.querySelector(`details[data-preserve-open="${CSS.escape(id)}"]`);
         if (details) details.open = true;
+      }
+      if (nextTool && consumer) {
+        const mounted = await consumer.mountTool(nextTool);
+        if (my !== seq) { mounted?.destroy(); return; }
+        toolSession = mounted;
+        document.title = (nextTool === "editor" ? "Site editor" : "Products") + " · Strangers Coffee Admin";
       }
       if (!keepScroll) SC.reveal(main);
       if (S.page === "wholesale") wholesale?.syncNavigation(desktopNav.matches);
@@ -306,6 +333,7 @@
       put(main, html`${head("Couldn't load this page", "")}<div class="group glass"><div class="item has-action"><span class="ic warn">${svg("warn")}</span><span class="tx"><span>${e.message}</span></span><span class="end"><button class="btn soft" type="button" data-act="${e.reloadAdmin ? "reload-admin" : "retry-page"}">${e.reloadAdmin ? "Reload Admin" : "Try again"}</button></span></div></div>`);
       if (focusContent && document.activeElement === document.body) main.focus({ preventScroll: true });
     } finally { if (my === seq) main.setAttribute("aria-busy", "false"); }
+    return true;
   }
   async function reload() {
     const page = S.page, previous = document.activeElement, main = $("#main");
@@ -318,7 +346,7 @@
       : "";
     const selection = previous?.matches('input[type="search"]') ?
       [previous.selectionStart, previous.selectionEnd, previous.selectionDirection] : null;
-    await show(page, { keepScroll: true });
+    await show(page, { keepScroll: true, consumerSection: consumerTool });
     if (key && S.page === page && !previous.isConnected && document.activeElement === document.body) {
       const target = main.querySelector(key);
       (target?.getClientRects().length ? target : main).focus({ preventScroll: true });
@@ -339,7 +367,12 @@
   VIEWS.wholesale = wholesale?.view || unavailable("wholesale");
   const sickness = install(window.AdminSickness, { api, html, raw, svg, put, head, openSheet, closeSheet, reload, toast, links: () => S.links || {} });
   VIEWS.sickness = sickness?.view || unavailable("sickness");
-  const consumer = install(window.AdminConsumer, { api, html, raw, svg, put, head, openSheet, closeSheet, toast, confirmSheet });
+  const consumer = install(window.AdminConsumer, { api, html, raw, svg, put, head, openSheet, closeSheet, toast, confirmSheet,
+    openSection(id) {
+      saveRoute();
+      return show("consumer", { consumerSection: id, focusContent: true });
+    },
+  });
   VIEWS.consumer = consumer?.view || unavailable("consumer");
   let cache = {};
 
@@ -1039,7 +1072,6 @@
   window.addEventListener("hashchange", routeChanged);
   document.addEventListener("change", event => {
     if (event.target.id === "consumerOrderFilter") { consumer?.filterOrders(event.target.value); return; }
-    if (event.target.matches("[data-consumer-product]")) { consumer?.setAvailability(event.target); return; }
     if (["iwView", "iwAccount", "iwClosePeriod", "iwBatchPeriod"].includes(event.target.id)) {
       wholesale?.invoicingChange?.(event.target).catch(error => toast(error.message));
       return;
@@ -1102,7 +1134,7 @@
   (async () => {
     try {
       const me = await SC.startSession({ clear: () => {
-        seq++; sickness?.clear(); wholesale?.clear(); consumer?.clear(); routeSnapshots.clear(); clearTimeout(routeTimer);
+        seq++; closeConsumerTool(); sickness?.clear(); wholesale?.clear(); consumer?.clear(); routeSnapshots.clear(); clearTimeout(routeTimer);
         cache = {}; S.me = null; S.open = null; S.q = ""; S.fq = ""; S.reports = {}; S.activityFrom = S.activityTo = ""; S.locked = 0; wholesaleExpanded = false;
         $("#workspaceContext").hidden = true;
         closeSheet(); for (const id of ["#main", "#sheet", "#sideNav", "#tabBar", "#whoName", "#whoInit"]) $(id)?.replaceChildren();
@@ -1122,7 +1154,7 @@
       if (quickbooksReview) { wholesale?.selectSection("invoices"); const clean = new URL(location.href); for (const key of ["quickbooks","qbEnvironment","quickbooksError"]) clean.searchParams.delete(key); history.replaceState(null,"",clean); }
       else if (route.page === "wholesale") wholesale?.selectSection(route.section || "orders");
       history.scrollRestoration = "manual";
-      await show(quickbooksReview ? "wholesale" : route.page, { fromHistory: true });
+      await show(quickbooksReview ? "wholesale" : route.page, { fromHistory: true, consumerSection: route.page === "consumer" ? route.section : undefined });
       if (quickbooksReview) await wholesale?.act("wh-invoice-quickbooks");
       refreshBadge();
     } catch (e) {

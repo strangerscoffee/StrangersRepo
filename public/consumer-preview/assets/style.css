@@ -83,6 +83,12 @@ ul{margin:0;padding:0;list-style:none}
 @media(hover:hover){
   .product:hover .product-image img{transform:scale(1.035)}
 }
+/* Product copy is entered by merchants and may contain long lot names or unbroken references. */
+.product-info, .detail-copy, .home-coffee-copy, .shop-gift-copy, .retail-product-copy,
+.retail-product-stories, .finder-best-copy, .finder-alternative, .cart-line > div {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
 .product-info{padding:clamp(13px,2vw,23px);display:flex;flex-direction:column;flex:1;gap:8px}
 .product-info h3{font-size:clamp(1.75rem,3vw,2.75rem);text-wrap:balance}
 .product-info .origin{font-size:.74rem;letter-spacing:.11em;text-transform:uppercase;font-weight:750;color:var(--soft)}

@@ -7,7 +7,6 @@ export const catalogueAdditions = [
     shortCopy: 'Three coffees · Three 100 g bags',
     story: 'Taste the rounded chocolate and hazelnut of Brazil Fazenda Bom Jesus, the blueberry and strawberry of Ethiopia Rocko Mountain and the cherry and chocolate of Colombia Anserma side by side.',
     prices: { '300g': 1650 },
-    shippingWeightGrams: 300,
     country: 'Brazil, Ethiopia and Colombia',
     image: '/consumer-preview/assets/roastery.webp',
     grinds: ['Whole bean'],

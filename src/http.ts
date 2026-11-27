@@ -3,6 +3,7 @@ import type { IntegrationSignal } from "./integrationSignals";
 export interface Env {
   DB: D1Database;
   LIVE?: DurableObjectNamespace; // live updates (src/live.ts)
+  CONSUMER_EDITOR?: DurableObjectNamespace; // Storefront content, revision history and photos only.
   FILES: KVNamespace;
   ASSETS: Fetcher;
   SCHEMA_DEPLOY_ONLY?: string;

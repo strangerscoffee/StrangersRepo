@@ -4,4 +4,4 @@ export interface ProductRoute {
 }
 export const productRoutes: Readonly<Record<string, ProductRoute>>;
 export function productPath(product: { id: string }): string;
-export function productFromPath(path: string): ProductRoute | null;
+export function productFromPath(path: string, catalogue?: readonly ProductRoute[]): ProductRoute | null;

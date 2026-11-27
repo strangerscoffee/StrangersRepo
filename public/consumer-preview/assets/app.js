@@ -1,18 +1,17 @@
+import { cartView, quantityMarkup, shelfProducts, giftProducts } from './storefront-views.js';
 import { products, cafes, availability } from './products.js';
 import { productPath } from './product-paths.js';
 import { getServerAccount, setupAccount } from './account.js';
 import { escapeHtml as html } from './html.js';
 import { availableTastingFlight, finderMarkup, finderVariant, tastingFlightId, updateFinderAnswers } from './finder.js';
-import { createStore, money, FREE_SHIPPING, CART_KEY } from './store.js';
-import { grindLabel, lineOptions, orderTotals, sizeNames } from './checkout.js';
+import { createStore, money, CART_KEY } from './store.js';
+import { grindLabel, sizeNames } from './checkout.js';
 
 const store = createStore(products);
 const retailCheckout = document.querySelector('#retail-checkout');
 const shelf = document.querySelector('#products');
-const coffees = document.querySelector('[data-full-catalogue]')
-  ? products.filter(product => !product.category)
-  : products.filter(product => Number.isInteger(product.shelfOrder)).sort((a, b) => a.shelfOrder - b.shelfOrder);
-const productById = new Map(products.map(product => [product.id, product]));
+const currentProduct = id => products.find(product => product.id === id);
+const home = document.querySelector('.retail-home');
 const cafeById = new Map(cafes.map(cafe => [cafe.id, cafe]));
 const dialog = document.querySelector('#dialog');
 const title = document.querySelector('#dialog-title');
@@ -45,6 +44,8 @@ function bagCount() {
 function renderShelf() {
   tasteFilter.value = filter;
   const query = search.value.trim().toLocaleLowerCase('en-GB');
+  const coffees = document.querySelector('[data-full-catalogue]') ? products.filter(product => !product.category)
+    : products.filter(product => Number.isInteger(product.shelfOrder)).sort((a, b) => a.shelfOrder - b.shelfOrder);
   const shown = coffees.filter(product =>
     (filter === 'All' || product.profile === filter) &&
     [product.name, product.country, product.region, ...product.notes].join(' ').toLocaleLowerCase('en-GB').includes(query),
@@ -56,12 +57,7 @@ function renderShelf() {
   if (!shown.length) {
     grid.replaceChildren(document.querySelector('#empty-shelf').content.cloneNode(true));
   } else {
-    grid.innerHTML = shown.map(product => `<article class="product">
-      <div class="product-image"><img src="${product.image}" width="580" height="410" alt="" loading="lazy">
-      ${!availability.known || product.available === false ? '' : `<button class="product-quick-view" type="button" data-product="${product.id}" aria-label="Quick view ${html(product.name)}">Quick view</button>`}</div>
-      <div class="product-info"><p class="origin">${product.country} · ${product.profile}</p><h3>${product.name}</h3><p class="notes">${product.shortCopy}</p>
-      <div class="product-actions"><span>${product.available === false ? 'Unavailable' : `From ${money(product.prices['250g'])}`}</span><a class="button outline product-open" href="${productPath(product)}" aria-label="View ${html(product.name)}"><span class="product-open-full">View coffee</span><span class="product-open-short">View</span></a></div></div>
-    </article>`).join('');
+    grid.innerHTML = shelfProducts(shown, availability.known);
   }
   document.querySelector('#shelf-status').textContent = `${shown.length} ${shown.length === 1 ? 'coffee' : 'coffees'}`;
 }
@@ -142,13 +138,6 @@ function closePanel() {
   }
 }
 
-function quantityMarkup(qty, label, key) {
-  const line = key === undefined ? '' : ` data-line="${html(key)}"`;
-  return `<div class="qty" role="group" aria-label="Quantity for ${label}">
-    <button type="button" data-qty="-1"${line} aria-label="Decrease quantity for ${label}" ${qty === 1 ? 'disabled' : ''}>−</button>
-    <output aria-live="polite">${qty}</output><button type="button" data-qty="1"${line} aria-label="Increase quantity for ${label}" ${qty === 99 ? 'disabled' : ''}>+</button></div>`;
-}
-
 function resizeQty(group, qty) {
   group.querySelector('output').value = qty;
   const decrease = group.querySelector('[data-qty="-1"]');
@@ -165,29 +154,30 @@ function showProduct(id, opener, { grind: suggestedGrind = 'Whole bean', fromFin
     void checkDrawerStock(opener, () => showProduct(id, undefined, { grind: suggestedGrind, fromFinder }));
     return;
   }
-  const product = productById.get(id);
+  const product = currentProduct(id);
   if (!product) return;
   productQty = 1;
-  const details = [product.region, product.process].filter(Boolean);
+  const details = [product.region, product.process].filter(Boolean).map(html);
+  const firstSize = Object.keys(product.prices)[0];
   showPanel('product', product.name, `<div class="product-detail">
-    <div class="detail-media"><img src="${product.image}" width="580" height="580" alt="${product.name} packaging artwork"></div>
-    <div class="detail-copy">${fromFinder ? '<button class="text-button finder-product-back" type="button" data-finder-back="match">Back to my match</button>' : ''}<p class="eyebrow">${product.country} · ${product.profile}</p>
-    <p class="detail-notes">${product.shortCopy}</p>
-    <p class="detail-story">${product.story ? `${product.story} ` : ''}<a href="${productPath(product)}${fromFinder ? `?grind=${encodeURIComponent(suggestedGrind)}` : ''}">View the coffee</a></p>
+    <div class="detail-media"><img src="${html(product.image)}" width="580" height="580" alt="${html(product.name)} packaging artwork"></div>
+    <div class="detail-copy">${fromFinder ? '<button class="text-button finder-product-back" type="button" data-finder-back="match">Back to my match</button>' : ''}<p class="eyebrow">${[product.country, product.profile].filter(Boolean).map(html).join(' · ')}</p>
+    <p class="detail-notes">${html(product.shortCopy)}</p>
+    <p class="detail-story">${product.story ? `${html(product.story)} ` : ''}<a href="${productPath(product)}${fromFinder ? `?grind=${encodeURIComponent(suggestedGrind)}` : ''}">View the coffee</a></p>
     ${details.length ? `<p class="detail-origin">${details.join(' · ')}</p>` : ''}
     ${product.available === false ? '<p class="detail-origin">This coffee is currently unavailable.</p>' : ''}
-    <form class="detail-form" id="product-form" data-id="${id}"${product.available === false ? ' hidden' : ''}>
+    <form class="detail-form" id="product-form" data-id="${html(id)}"${product.available === false ? ' hidden' : ''}>
       <fieldset><legend>Weight</legend><div class="choices">${Object.entries(product.prices).map(([size]) =>
-        `<label class="choice"><input type="radio" name="size" value="${size}" ${size === '250g' ? 'checked' : ''}>${sizeNames[size]}</label>`).join('')}</div></fieldset>
+        `<label class="choice"><input type="radio" name="size" value="${html(size)}" ${size === firstSize ? 'checked' : ''}>${html(sizeNames[size] ?? size)}</label>`).join('')}</div></fieldset>
       <div class="field"><label for="grind">Grind</label><select id="grind" name="grind">${product.grinds.map(grind =>
-        `<option value="${grind}" ${grind === suggestedGrind ? 'selected' : ''}>${grindLabel(grind)}</option>`).join('')}</select></div>
-      <div class="form-submit">${quantityMarkup(productQty, product.name)}<button class="button" id="add-to-bag" type="submit">Add to cart · ${money(product.prices['250g'])}</button></div>
+        `<option value="${html(grind)}" ${grind === suggestedGrind ? 'selected' : ''}>${html(grindLabel(grind))}</option>`).join('')}</select></div>
+      <div class="form-submit">${quantityMarkup(productQty, product.name)}<button class="button" id="add-to-bag" type="submit">Add to cart · ${money(product.prices[firstSize])}</button></div>
       <p class="form-error" id="product-error" role="alert" hidden>You can add up to 99 bags of each size and grind.</p>
     </form></div></div>`, opener);
 }
 
 function updateProductPrice(form) {
-  const product = productById.get(form.dataset.id);
+  const product = currentProduct(form.dataset.id);
   document.querySelector('#add-to-bag').textContent = `Add to cart · ${money(product.prices[form.elements.size.value] * productQty)}`;
   document.querySelector('#product-error').hidden = true;
 }
@@ -208,9 +198,18 @@ async function checkDrawerStock(opener, onSuccess) {
 
 function refreshStockView() {
   stockNotice?.remove();
-  if (shelf) renderShelf();
+  store.refresh(true);
+  if (shelf) {
+    renderShelf();
+    const gifts = document.querySelector('[data-catalogue-gifts]');
+    if (gifts) {
+      gifts.querySelectorAll('[data-catalogue-id]').forEach(card => card.remove());
+      gifts.insertAdjacentHTML('beforeend', giftProducts(products.filter(item => item.category)));
+    }
+  }
+  if (home) void import('./home.js').then(({ showHighlights }) => showHighlights(products));
   renderProductPage?.();
-  refreshCheckoutCart?.();
+  syncCart();
 }
 
 function showFinder(opener) {
@@ -226,7 +225,7 @@ function moveFinder(step) {
 }
 
 function addFinderCoffee(id, control) {
-  const product = productById.get(id);
+  const product = currentProduct(id);
   const variant = finderVariant(product, finder.brew);
   const available = id !== tastingFlightId || availableTastingFlight(products);
   if (variant && available && store.add(id, variant.size, variant.grind)) {
@@ -241,38 +240,19 @@ function addFinderCoffee(id, control) {
   }
 }
 
-function bagMarkup(message) {
-  const cart = store.cart();
-  if (!cart.length) {
-    return `<div class="empty-bag"><h3>Your cart is empty.</h3><p>Start with one of the coffees on the shelf.</p>
-      <div class="drawer-actions"><button type="button" class="button" data-keep-shopping>Browse coffee</button></div></div>`;
-  }
-  const { subtotal, shipping } = store.totals('delivery');
-  const remaining = Math.max(0, FREE_SHIPPING - subtotal);
-  const progress = shipping
-    ? remaining ? `Spend over ${money(remaining)} more for free UK delivery.` : 'Add another coffee for free UK delivery.'
-    : 'You’ve unlocked free UK delivery.';
-  return `<div class="drawer-content">
-    ${message ? `<p role="status" class="checkout-note">${html(message)}</p>` : ''}
-    <div class="shipping-progress" aria-live="polite"><span>${progress}</span><progress aria-label="Progress towards free UK delivery" max="${FREE_SHIPPING + 1}" value="${Math.min(subtotal, FREE_SHIPPING + 1)}"></progress></div>
-    <ul>${cart.map(line => `<li class="cart-line"><img src="${line.product.image}" alt="" width="64" height="64">
-      <div><h3>${line.product.name}</h3><p>${html(lineOptions(line))}</p>
-      <div class="cart-controls">${quantityMarkup(line.qty, [line.product.name, lineOptions(line)].join(', '), line.key)}<button type="button" class="remove" data-remove="${html(line.key)}" aria-label="Remove ${line.product.name}, ${lineOptions(line)}">Remove</button><span class="line-price">${money(line.unitPrice * line.qty)}</span></div></div></li>`).join('')}</ul>
-    <div aria-live="polite">${orderTotals(store.totals('delivery'), 'delivery')}</div>
-    <div class="drawer-actions">${retailCheckout ? '<button class="button" type="button" data-checkout data-return-checkout>Resume checkout</button>' : '<a class="button" href="/checkout/" data-checkout>Checkout</a>'}
-      <button class="button outline" type="button" data-keep-shopping>Keep shopping</button></div>
-  </div>`;
-}
-
 function showBag(opener, message) {
+  if (!availability.known) {
+    void checkDrawerStock(opener, () => showBag(undefined, message));
+    return;
+  }
   store.refresh();
   bagCount();
-  showPanel('bag', 'Your cart', bagMarkup(message), opener);
+  showPanel('bag', 'Your cart', cartView(store, Boolean(retailCheckout), message), opener);
 }
 
 function updateBag(focusSelector) {
   const offset = body.scrollTop;
-  body.innerHTML = bagMarkup();
+  body.innerHTML = cartView(store, Boolean(retailCheckout));
   body.scrollTop = offset;
   if (focusSelector === undefined) return;
   const nextFocus = (focusSelector && body.querySelector(focusSelector + ':not(:disabled)')) ?? body.querySelector('[data-checkout],[data-keep-shopping]') ?? closeButton;
@@ -393,8 +373,8 @@ body.addEventListener('submit', event => {
     moveFinder(form.dataset.step === 'brew' ? 'taste' : 'match');
   }
   if (form.id === 'product-form') {
-    const product = productById.get(form.dataset.id);
-    if (store.add(product.id, form.elements.size.value, form.elements.grind.value, productQty)) {
+    const product = currentProduct(form.dataset.id);
+    if (product && availability.known && store.add(product.id, form.elements.size.value, form.elements.grind.value, productQty)) {
       bagCount();
       showBag(undefined, `${product.name} added to your cart.`);
     } else {
@@ -404,7 +384,6 @@ body.addEventListener('submit', event => {
 });
 
 bagCount();
-if (shelf) renderShelf();
 const productPage = document.querySelector('[data-retail-product]');
 if (productPage) {
   void import('./product-page.js').then(({ setupProductPage }) => {
@@ -419,35 +398,46 @@ if (productPage) {
     renderProductPage();
   });
 }
-if (shelf || productPage || retailCheckout) {
-  stockNotice = document.createElement('p');
-  stockNotice.className = 'container checkout-note';
-  stockNotice.setAttribute('role', 'status');
-  (shelf || productPage || retailCheckout).before(stockNotice);
-  async function checkStock() {
+const stockSurface = shelf || productPage || retailCheckout || home && document.querySelector('#home-roasting-grid');
+async function checkStock(force = false) {
+  if (stockSurface) {
+    stockNotice?.remove();
+    stockNotice = document.createElement('p');
+    stockNotice.className = 'container checkout-note';
+    stockNotice.setAttribute('role', 'status');
+    stockSurface.before(stockNotice);
     stockNotice.replaceChildren('Checking coffee availability…');
-    if (await availability.refresh()) {
-      refreshStockView();
-    } else {
+  }
+  if (await availability.refresh(force)) {
+    refreshStockView();
+    return true;
+  } else {
+    renderProductPage?.();
+    shelf?.replaceChildren();
+    document.querySelectorAll('[data-catalogue-gifts] [data-catalogue-id]').forEach(card => card.remove());
+    if (home) document.querySelector('#home-roasting-grid')?.replaceChildren();
+    refreshCheckoutCart?.();
+    if (stockNotice) {
       const retry = document.createElement('button');
       retry.type = 'button';
       retry.className = 'text-button';
       retry.textContent = 'Try again';
-      retry.addEventListener('click', checkStock);
+      retry.addEventListener('click', () => void checkStock());
       stockNotice.replaceChildren('We couldn’t check coffee availability. ', retry);
     }
   }
-  void checkStock();
+  return false;
 }
-if (document.querySelector('.retail-home')) {
-  void import('./home.js').then(({ populateHome }) => populateHome(products));
+if (stockSurface) void checkStock();
+if (home) {
+  void import('./home.js').then(({ populateHome }) => populateHome());
 }
 if (document.querySelector('#cafe-detail')) renderCafes();
 const accountPage = document.querySelector('#account-page');
 const refreshAccount = accountPage ? setupAccount(accountPage, reorderAccountOrder) : null;
 if (retailCheckout) {
   void import('./checkout-page.js').then(({ setupRetailCheckout }) => {
-    refreshCheckoutCart = setupRetailCheckout(retailCheckout, { cafes, store, cartChanged: bagCount, getServerAccount, availability });
+    refreshCheckoutCart = setupRetailCheckout(retailCheckout, { cafes, store, cartChanged: bagCount, getServerAccount, availability, refreshCatalogue: () => checkStock(true) });
   }).catch(() => {
     retailCheckout.innerHTML = '<p role="alert">Checkout couldn’t load. <a href="/checkout/">Try again</a>.</p>';
   });
@@ -469,7 +459,8 @@ window.addEventListener('storage', event => {
 window.addEventListener('pageshow', event => {
   if (event.persisted) {
     refreshAccount?.();
-    syncCart();
+    if (availability.known && (stockSurface || dialog.open)) void checkStock(true);
+    else syncCart();
   }
 });
 

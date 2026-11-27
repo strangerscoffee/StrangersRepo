@@ -7,11 +7,12 @@ const KEY_NAME = "retail_service_v1";
 const SERVICE_VERSION = "STRANGERS-RETAIL-SERVICE-V1";
 const MAX_BODY_BYTES = 32 * 1024;
 const ACCOUNT_API = /^\/api\/account(?:\/orders)?$/;
-const ADMIN_API = /^\/api\/control\/consumer(?:\/settings|\/orders(?:\/SC-[A-F0-9]{8})?|\/products\/[a-z0-9][a-z0-9-]{0,99}|\/support(?:\/HELP-[A-F0-9]{8})?)?$/;
+const ADMIN_API = /^\/api\/control\/consumer(?:\/settings|\/orders(?:\/SC-[A-F0-9]{8})?|\/products(?:\/[a-z0-9][a-z0-9-]{0,99})?|\/product-photos(?:\/[a-f0-9]{64})?|\/support(?:\/HELP-[A-F0-9]{8})?)?$/;
 const AUTH_API = /^\/consumer-auth-service\/(?:register|setup|login|forgot|reset|logout)$/;
 const ORDER_API = /^\/consumer-orders-service\/orders(?:\/SC-[A-F0-9]{8})?$/;
 const SUPPORT_API = /^\/consumer-support-service\/message$/;
-const BRIDGE_API = /^\/consumer-bridge\/(?:exchange|revoke|session|availability)$/;
+const BRIDGE_API = /^\/consumer-bridge\/(?:exchange|revoke|session|availability|catalogue|product-photos\/[a-f0-9]{64})$/;
+export const PRODUCT_UPLOAD_LIMIT = 310 * 1024;
 const ENCODED_SECRET = /^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/;
 const encoder = new TextEncoder();
 
@@ -95,7 +96,8 @@ function retailServiceUrl(path: string): URL {
 export async function retailServiceRequest(env: Env, path: string, { method, body, client, session }: RequestOptions): Promise<Response> {
   const url = retailServiceUrl(path);
   const content = encoder.encode(body ?? "");
-  if (content.byteLength > MAX_BODY_BYTES || session && !ENCODED_SECRET.test(session)) {
+  const limit = method === "POST" && path === "/api/control/consumer/product-photos" ? PRODUCT_UPLOAD_LIMIT : MAX_BODY_BYTES;
+  if (content.byteLength > limit || session && !ENCODED_SECRET.test(session)) {
     throw new Error("Invalid retail service request.");
   }
   const ip = client && /^[0-9a-f:.]{3,45}$/i.test(client) ? client.toLowerCase() : "unavailable";

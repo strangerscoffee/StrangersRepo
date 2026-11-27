@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { products } from '../public/consumer-preview/assets/products.js';
 import { execFileSync } from 'node:child_process';
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -76,7 +77,7 @@ test('versioned assets keep the previous release and keep the retail host bounda
     const page = await browser.newPage({ viewport: { width: 393, height: 852 } });
     const errors = [];
     page.on('pageerror', error => errors.push(String(error)));
-    await page.route('**/consumer-auth/availability', route => route.fulfill({ json: { unavailable: [] } }));
+    await page.route('**/api/retail/products', route => route.fulfill({ json: { products } }));
     await page.goto(server.base + '/');
     await page.getByRole('heading', { name: /Speciality coffee/ }).waitFor();
     await page.getByRole('button', { name: 'Menu' }).click();

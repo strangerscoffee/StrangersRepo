@@ -1,7 +1,7 @@
 import { orderImagePath } from './account-store.js';
 import { grindLabel, sizeNames } from './checkout.js';
 import { escapeHtml as html } from './html.js';
-import { products } from './products.js';
+import { availability, products } from './products.js';
 import { money } from './store.js';
 
 const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium', timeZone: 'Europe/London' });
@@ -13,7 +13,7 @@ const orderReference = /^SC-[A-F0-9]{8}$/;
 const statusLabels = {
   placed: 'Confirmed', preparing: 'Preparing', ready: 'Ready', dispatched: 'On its way', completed: 'Completed', cancelled: 'Cancelled',
 };
-const productsById = new Map(products.map(product => [product.id, product]));
+const currentProduct = id => products.find(product => product.id === id);
 
 function dateMarkup(value) {
   if (!value) return '';
@@ -76,18 +76,18 @@ function lineVariantLabel(line) {
 }
 
 function reorderOptions(lines) {
-  const unavailable = lines.filter(line => !hasVariant(productsById.get(line.id), line));
+  const unavailable = lines.filter(line => !hasVariant(currentProduct(line.id), line));
   return {
     available: lines.length - unavailable.length,
     unavailable: unavailable.map(line => {
-      const profile = productsById.get(line.id)?.profile ?? line.product.profile;
+      const profile = currentProduct(line.id)?.profile ?? line.product.profile;
       const similar = profile && products.find(product => product.id !== line.id && product.profile === profile && hasVariant(product, line));
       return { line, similar };
     }),
   };
 }
 
-function orderMarkup(order, { latest, open }) {
+export function orderMarkup(order, { latest, open }) {
   const { reference, createdAt, method, cafe, pricing, lines } = order;
   const label = method === 'collection' ? 'Collection' : 'UK delivery';
   const status = orderStatus(order);
@@ -182,7 +182,7 @@ export function getServerAccount() {
 
 
 const passwordMin = 12;
-const authModes = {
+export const authModes = {
   login: {
     heading: 'Sign in to My account',
     copy: 'Use your email and password to view orders and saved details.',
@@ -219,9 +219,9 @@ const authModes = {
     links: ['forgot', 'login'],
   },
 };
-const modeLabels = { login: 'Back to sign in', register: 'Create an account', forgot: 'Forgot password?' };
+export const modeLabels = { login: 'Back to sign in', register: 'Create an account', forgot: 'Forgot password?' };
 
-function authField(name, mode) {
+export function authField(name, mode) {
   if (name === 'email') {
     return '<div class="field"><label for="account-auth-email">Email address</label><input id="account-auth-email" name="email" type="email" inputmode="email" autocomplete="username" autocapitalize="none" maxlength="254" required></div>';
   }
@@ -364,6 +364,7 @@ export function setupAccount(root, reorder) {
     authStatus.textContent = '';
     authStatus.classList.remove('account-save-error');
     authForm.hidden = missingToken;
+    authForm.dataset.authMode = mode;
     authForm.action = '/consumer-auth/' + mode;
     authFields.innerHTML = missingToken ? '' : config.fields.map(name => authField(name, mode)).join('');
     authFields.disabled = false;
@@ -501,7 +502,11 @@ export function setupAccount(root, reorder) {
       }
       currentSession = account.profileSession;
       currentOrders = account.orders;
-      showDashboard(account.profile.name || account.identity.name || '');
+      const greeting = account.profile.name || account.identity.name || '';
+      showDashboard(greeting);
+      if (currentOrders.length && !availability.known) void availability.refresh().then(ok => {
+        if (ok && sequence === loadSequence && accountVisible) showDashboard(greeting);
+      });
     } catch (error) {
       if (sequence !== loadSequence) return;
       showAccess();
@@ -622,7 +627,7 @@ export function setupAccount(root, reorder) {
   orderHistory.addEventListener('error', event => {
     const image = event.target;
     if (!image.matches('img[data-product-image]') || image.getAttribute('src') === fallbackImage) return;
-    const current = orderImagePath(productsById.get(image.dataset.productImage)?.image);
+    const current = orderImagePath(currentProduct(image.dataset.productImage)?.image);
     image.src = current && image.getAttribute('src') !== current ? current : fallbackImage;
   }, true);
 
@@ -633,7 +638,7 @@ export function setupAccount(root, reorder) {
     const order = currentOrders.find(record => record.reference === (receipt ?? button.dataset.accountReorder));
     if (!order) return;
     if (receipt) return downloadReceipt(order);
-    const lines = order.lines.filter(line => hasVariant(productsById.get(line.id), line));
+    const lines = order.lines.filter(line => hasVariant(currentProduct(line.id), line));
     const added = reorder({ ...order, lines }, button);
     button.closest('.account-order-body').querySelector('.account-notice').textContent =
       added === 0 ? 'These coffees or quantities are unavailable to add to your cart.' : '';

@@ -10,6 +10,15 @@ The branded consumer storefront is maintained in `public/consumer-preview/`. The
 
 Consumer checkout records test payments and fulfilment. A real payment gateway, order email sender and carrier integration require dedicated retail configuration. Staff can review test orders, pack them, record tracking and reply to preview support messages in **Admin → Consumer (Preview)**.
 
+**Consumer products.** Open **Admin → Consumer (Preview) → Products** or `#consumer/products`. Saving a product updates the retail catalogue and checkout together. Removing one archives it. The **Removed** filter lets an admin restore it, and orders retain the name, options and price recorded at purchase. Product changes are independent of the site editor’s draft and publish workflow.
+
+Release the separate consumer order service with migrations `0008_retail_catalogue` and `0009_retail_product_photos` before releasing the dashboard and storefront Worker. Existing bundled products and stock settings are read in place. The migrations belong to the consumer service database.
+
+**Consumer site editor.** Open **Admin → Consumer (Preview) → Site editor** or use `#consumer/editor` on the admin dashboard. Select a page or a shopper flow, click an element in the phone or desktop preview, then save the draft. **Publish** shows a comparison with the live design, then applies the reviewed version to `preview.staffstrangerscoffee.com`. **Versions** restores a previous publication to the draft for review and republication.
+
+Storefront drafts, published designs and uploaded photos live in the Worker’s dedicated SQLite-backed `CONSUMER_EDITOR` Durable Object. The normal Wrangler release applies the additional object migration. The Worker serves a photo publicly only while the published design references it. Removing a photo from a page takes effect when that draft is published. The media library keeps files used by the current draft or a retained version, so restoring any of the last 20 publications brings its photos back. Canvas previews of accounts and orders use sample records. The retail service continues to own product availability, order totals, authentication and fulfilment.
+
+
 The site is one Cloudflare Worker serving the diary's pages and the API they talk to. It runs at **https://staffstrangerscoffee.com**, and the staff rota, from the same Worker, at **https://rota.staffstrangerscoffee.com**. **Every push to `main` redeploys it automatically** (Cloudflare Workers Builds).
 
 | Path | What it is |

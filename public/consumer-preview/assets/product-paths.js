@@ -80,11 +80,13 @@ export const productRoutes = Object.freeze({
 const slugById = new Map(Object.entries(productRoutes).map(([slug, { id }]) => [id, slug]));
 
 export function productPath(product) {
-  const slug = slugById.get(product.id);
+  const slug = slugById.get(product.id) ?? (/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(product.id) ? product.id : '');
   return slug ? `/coffee/p/${slug}/` : '/coffee/';
 }
 
-export function productFromPath(path) {
+export function productFromPath(path, catalogue = []) {
   const slug = /^\/coffee\/p\/([a-z0-9-]+)\/?$/.exec(path)?.[1];
-  return slug && Object.hasOwn(productRoutes, slug) ? productRoutes[slug] : null;
+  if (!slug) return null;
+  const baseline = Object.hasOwn(productRoutes, slug) ? productRoutes[slug] : null;
+  return catalogue.find(item => item.id === (baseline?.id ?? slug)) ?? baseline;
 }

@@ -1,27 +1,45 @@
+import { orderImagePath } from './account-store.js';
+
+// The live catalogue replaces the entire range in one pass. A removed item must
+// disappear even if the browser has its original product bundled or saved.
 export function createAvailability(products) {
-  const initiallyUnavailable = new Set(products.filter(product => product.available === false).map(product => product.id));
   let pending;
   let known = false;
+  let revision = 0;
 
-  function refresh() {
-    if (known) return Promise.resolve(true);
+  function setProducts(rows) {
+    const next = rows.map(product => ({
+      ...product,
+      category: product.category === 'coffee' ? undefined : product.category,
+      image: orderImagePath(product.image) || '/consumer-preview/assets/mark.svg',
+    }));
+    products.splice(0, products.length, ...next);
+    revision++;
+    known = true;
+    globalThis.document?.dispatchEvent(new Event('retail-catalogue-updated'));
+  }
+
+  function refresh(force = false) {
     if (pending) return pending;
+    if (known && !force) return Promise.resolve(true);
+    known = false;
     pending = Promise.resolve().then(async () => {
       try {
-        const response = await fetch('/consumer-auth/availability', {
-          headers: { accept: 'application/json' },
-          cache: 'no-store',
-          redirect: 'error',
-          signal: AbortSignal.timeout(1250),
-        });
-        if (!response.ok) return false;
-        const data = await response.json();
-        if (!Array.isArray(data?.unavailable) || !data.unavailable.every(id => typeof id === 'string')) return false;
-        const unavailable = new Set([...initiallyUnavailable, ...data.unavailable]);
-        for (const product of products) {
-          product.available = !unavailable.has(product.id) && !product.contents?.some(id => unavailable.has(id));
+        const seed = globalThis.document?.getElementById('retail-catalogue');
+        let data;
+        if (seed && !force) {
+          seed.remove();
+          data = JSON.parse(seed.textContent);
+        } else {
+          const response = await fetch('/api/retail/products', {
+            headers: { accept: 'application/json' }, cache: 'no-store', credentials: 'omit',
+            redirect: 'error', signal: AbortSignal.timeout(8000),
+          });
+          if (!response.ok) return false;
+          data = await response.json();
         }
-        known = true;
+        if (!Array.isArray(data?.products)) return false;
+        setProducts(data.products);
         return true;
       } catch {
         return false;
@@ -32,5 +50,5 @@ export function createAvailability(products) {
     return pending;
   }
 
-  return { refresh, get known() { return known; } };
+  return { refresh, setProducts, get known() { return known; }, get revision() { return revision; } };
 }

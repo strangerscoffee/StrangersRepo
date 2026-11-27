@@ -46,6 +46,7 @@ import { isRetailShopPath } from "./retailPreview";
 import { BRANDED_RETAIL_ORIGIN, handleBrandedRetail } from "./brandedRetail";
 import { noStore, pageRequest, staticFile, withFingerprints } from "./siteAssets";
 export { LiveHub } from "./live";
+export { ConsumerEditorStore } from "./consumerEditorStore";
 
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -249,7 +250,7 @@ async function route(req: Request, env: Env, ctx: ExecutionContext, url: URL): P
   // Match encoded paths too so they cannot fall through to the general Assets binding.
   let assetPath = p;
   try { assetPath = decodeURIComponent(p); } catch { /* An invalid path cannot name an asset. */ }
-  if (/^\/(?:consumer-preview|consumer-auth|consumer-social|signin-with-chatgpt|signout-with-chatgpt|api\/(?:account|retail))(?:\/|$)/.test(assetPath) ||
+  if (/^\/(?:consumer-preview|consumer-auth|consumer-social|consumer-media|consumer-product-media|signin-with-chatgpt|signout-with-chatgpt|api\/(?:account|retail))(?:\/|$)/.test(assetPath) ||
       /^\/_releases\/[a-f0-9]{20}\/consumer-preview(?:\/|$)/.test(assetPath)) {
     return new Response("Not found", { status: 404 });
   }

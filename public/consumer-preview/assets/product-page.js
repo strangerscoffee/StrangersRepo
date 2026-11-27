@@ -1,4 +1,4 @@
-import { products } from './products.js';
+import { originalProduct, products } from './products.js';
 import { productFromPath, productPath } from './product-paths.js';
 import { productContent } from './product-content.js';
 import { escapeHtml as html } from './html.js';
@@ -26,8 +26,7 @@ const brewGuidance = {
   Decaf: ['Make a slower brew', 'Start with a coarse grind for a cafetière and follow the brew guide for a balanced cup.', 'brew-french-press.webp', 'Coffee brewing in a cafetière'],
 };
 
-function sizeLabel(product, size) {
-  if (product.category === 'flight') return '3 × 100 g';
+function sizeLabel(size) {
   return sizeNames[size] ?? size;
 }
 
@@ -35,7 +34,7 @@ function galleryMarkup(photos, name, caption) {
   const first = photos[0];
   return `<div class="retail-product-gallery">
     <figure class="retail-product-figure">
-      <img src="${html(first.src)}" width="722" height="511" alt="${html(first.label)}" fetchpriority="high" data-gallery-main>
+      <img src="${html(first.src)}" width="722" height="511" alt="${html(first.label)}" fetchpriority="high" data-gallery-main data-gallery-current="0">
       <figcaption><span>${html(name)}</span><span data-gallery-caption>${html(caption)}</span></figcaption>
     </figure>
     ${photos.length > 1 ? `<div class="retail-product-thumbs" role="group" aria-label="Product photographs">
@@ -66,17 +65,17 @@ function productOptions(product, initialGrind) {
   const accessory = product.category === 'accessory';
   const firstSize = sizes[0];
   return `<form class="retail-product-form" id="retail-product-options">
-    ${accessory ? `<input type="hidden" name="size" value="${html(firstSize)}">` : `
+    ${accessory && sizes.length === 1 ? `<input type="hidden" name="size" value="${html(firstSize)}">` : `
       <fieldset>
-        <legend>${product.category === 'flight' ? 'Pack size' : 'Bag size'}</legend>
+        <legend>${product.category === 'flight' ? 'Pack size' : accessory ? 'Size' : 'Bag size'}</legend>
         <div class="retail-product-sizes">
-          ${sizes.map((size, index) => `<label><input type="radio" name="size" value="${html(size)}"${index === 0 ? ' checked' : ''}><span><b>${html(sizeLabel(product, size))}</b><small>${money(product.prices[size])}</small></span></label>`).join('')}
+          ${sizes.map((size, index) => `<label><input type="radio" name="size" value="${html(size)}"${index === 0 ? ' checked' : ''}><span><b>${html(sizeLabel(size))}</b><small>${money(product.prices[size])}</small></span></label>`).join('')}
         </div>
       </fieldset>`}
     <div class="retail-product-fields">
       ${product.grinds.length > 1 ? `<div class="field"><label for="retail-product-grind">Grind</label><select name="grind" id="retail-product-grind">
         ${product.grinds.map(grind => `<option value="${html(grind)}"${grind === initialGrind ? ' selected' : ''}>${html(grindLabel(grind))}</option>`).join('')}
-      </select></div>` : `<input type="hidden" name="grind" value="${html(initialGrind)}">${product.category === 'flight' ? '<p class="retail-product-fixed-grind">Whole bean</p>' : ''}`}
+      </select></div>` : `<input type="hidden" name="grind" value="${html(initialGrind)}">${product.category === 'flight' ? `<p class="retail-product-fixed-grind">${html(grindLabel(initialGrind))}</p>` : ''}`}
       <div class="field retail-product-quantity"><label for="retail-product-quantity">Quantity</label>
         <input type="number" inputmode="numeric" min="1" max="99" step="1" required name="quantity" id="retail-product-quantity" value="1">
       </div>
@@ -149,35 +148,29 @@ function voucherMarkup(id, voucher) {
     </div>`;
 }
 
-export function setupProductPage(page, { store, onAdd, stockKnown }) {
-  const route = productFromPath(location.pathname);
-  const product = products.find(item => item.id === route?.id);
-  const voucher = route && Object.hasOwn(voucherPages, route.id) ? voucherPages[route.id] : null;
-  page.removeAttribute('aria-busy');
-  if (!product && !voucher) {
-    page.innerHTML = '<h1>Coffee not found</h1><p>This coffee may have rotated out of the range.</p><a href="/coffee/">Shop our current coffees</a>';
-    return;
+export function productPageView(id, suggestedGrind, stockKnown) {
+  const voucher = Object.hasOwn(voucherPages, id) ? voucherPages[id] : null;
+  if (voucher) return { markup: voucherMarkup(id, voucher), description: voucher.description, purchasable: false };
+  const product = products.find(item => item.id === id);
+  if (!product) return null;
+  // Retain the roastery's original long-form copy until the corresponding
+  // catalogue field is changed. An intentionally cleared field also takes effect.
+  const original = originalProduct(product.id);
+  const matching = key => (original?.[key] ?? '') === (product[key] ?? '');
+  const details = Object.hasOwn(productContent, product.id) ? { ...productContent[product.id] } : {};
+  if (!matching('story')) delete details.story;
+  if (!matching('region') || !matching('process')) delete details.provenance;
+  if (!matching('shortCopy') || JSON.stringify(original?.notes) !== JSON.stringify(product.notes)) {
+    details.description = product.shortCopy;
   }
-  document.title = `${route.name} | Strangers Coffee`;
-  const description = document.querySelector('meta[name="description"]');
-  if (voucher) {
-    description?.setAttribute('content', voucher.description);
-    page.innerHTML = voucherMarkup(route.id, voucher);
-    return;
-  }
-
-  const details = Object.hasOwn(productContent, product.id) ? productContent[product.id] : {};
   const photos = productPhotos(product, details);
   const gift = product.category === 'accessory' || product.category === 'flight';
   const origin = gift ? (product.category === 'flight' ? 'Coffee tasting flight' : 'Gifts & accessories')
     : [product.country, product.process].filter(Boolean).join(' · ');
-  const intro = details.description || (product.notes.length ? `Tasting notes of ${product.notes.join(', ')}.` : product.shortCopy);
-  const suggestedGrind = new URLSearchParams(location.search).get('grind');
+  const intro = details.description || product.shortCopy || (product.notes.length ? `Tasting notes of ${product.notes.join(', ')}.` : '');
   const initialGrind = product.grinds.includes(suggestedGrind) ? suggestedGrind : product.grinds[0];
   const related = relatedProducts(product);
-  description?.setAttribute('content', intro);
-  document.body.classList.toggle('has-retail-purchase', stockKnown && product.available !== false);
-  page.innerHTML = `${breadcrumb(product.name, gift)}
+  const markup = `${breadcrumb(product.name, gift)}
     <article class="retail-product-intro">
       ${galleryMarkup(photos, product.name, product.region || product.country || 'Strangers Coffee')}
       <div class="retail-product-copy">
@@ -191,6 +184,25 @@ export function setupProductPage(page, { store, onAdd, stockKnown }) {
     ${productStory(product, details)}
     ${related.length ? `<section class="retail-product-section"><h2>You might also like</h2><div class="retail-product-related">${related.map(relatedMarkup).join('')}</div></section>` : ''}`;
 
+  return { markup, description: intro, photos, product, purchasable: stockKnown && product.available !== false };
+}
+
+export function setupProductPage(page, { store, onAdd, stockKnown }) {
+  const route = productFromPath(location.pathname, products);
+  const view = productPageView(route?.id, new URLSearchParams(location.search).get('grind'), stockKnown);
+  if (!stockKnown && !view) return;
+  page.removeAttribute('aria-busy');
+  if (!view) {
+    page.innerHTML = '<h1>Coffee not found</h1><p>This coffee may have rotated out of the range.</p><a href="/coffee/">Shop our current coffees</a>';
+    return;
+  }
+  document.title = `${view.product?.name ?? route.name} | Strangers Coffee`;
+  document.querySelector('meta[name="description"]')?.setAttribute('content', view.description);
+  document.body.classList.toggle('has-retail-purchase', view.purchasable);
+  page.innerHTML = view.markup;
+  const { photos, product } = view;
+  if (!product) return;
+
   const mainPhoto = page.querySelector('[data-gallery-main]');
   const caption = page.querySelector('[data-gallery-caption]');
   const choices = page.querySelectorAll('[data-gallery-index]');
@@ -198,6 +210,7 @@ export function setupProductPage(page, { store, onAdd, stockKnown }) {
     const index = Number(button.dataset.galleryIndex);
     const photo = photos[index];
     choices.forEach(choice => choice.setAttribute('aria-pressed', String(choice === button)));
+    mainPhoto.dataset.galleryCurrent = String(index);
     mainPhoto.src = photo.src;
     mainPhoto.alt = photo.label;
     caption.textContent = index === 0 ? product.region || product.country || 'Strangers Coffee' : photo.label;

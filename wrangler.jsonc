@@ -25,8 +25,14 @@
 
   // Live updates (src/live.ts): one Durable Object that open pages keep a WebSocket to. SQLite-backed, as the Workers
   // Free plan requires; it stores nothing.
-  "durable_objects": { "bindings": [{ "name": "LIVE", "class_name": "LiveHub" }] },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["LiveHub"] }],
+  "durable_objects": { "bindings": [
+    { "name": "LIVE", "class_name": "LiveHub" },
+    { "name": "CONSUMER_EDITOR", "class_name": "ConsumerEditorStore" }
+  ] },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["LiveHub"] },
+    { "tag": "consumer-editor-v1", "new_sqlite_classes": ["ConsumerEditorStore"] }
+  ],
 
   "vars": {
     // Write requests (saves, deletes, uploads) allowed per IP address per 15 minutes.

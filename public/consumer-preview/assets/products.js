@@ -458,4 +458,6 @@ export const cafes = [
 ];
 
 export const products = [...catalogue, ...catalogueAdditions];
+const originalProducts = new Map(products.map(item => [item.id, item]));
+export const originalProduct = id => originalProducts.get(id);
 export const availability = createAvailability(products);

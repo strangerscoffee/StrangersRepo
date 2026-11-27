@@ -3,7 +3,8 @@ import { createHash } from "node:crypto";
 import { after, before, describe, test } from "node:test";
 import { build } from "esbuild";
 import { Miniflare, Response as RuntimeResponse } from "miniflare";
-import { ROOT, startServer } from "./harness.mjs";
+import { ROOT } from "./harness.mjs";
+import { startEditorFixture } from "./editor-integration-fixture.mjs";
 
 const brandedHost = "preview.staffstrangerscoffee.com";
 const brandedOrigin = `https://${brandedHost}`;
@@ -17,10 +18,6 @@ const hosts = {
   LEGACY_PREVIEW_HOST: brandedHost,
   ADMIN_HOST: "admin.staffstrangerscoffee.com",
 };
-
-function request(base, path, init = {}) {
-  return fetch(base + path, { redirect: "manual", ...init });
-}
 
 function cookieFrom(response, name) {
   const cookie = response.headers.getSetCookie().find(value => value.startsWith(`${name}=`));
@@ -37,18 +34,11 @@ function assertHostOnlyCookie(cookie) {
 }
 
 describe("branded retail routes on the Worker", () => {
-  let branded;
-  let wholesale;
-  let diary;
-
-  before(async () => {
-    branded = await startServer({ host: brandedHost, vars: hosts });
-    wholesale = await startServer({ host: wholesaleHost, vars: hosts });
-    diary = await startServer({ host: "staffstrangerscoffee.com", vars: hosts });
-  });
-  after(async () => {
-    await Promise.all([branded?.stop(), wholesale?.stop(), diary?.stop()]);
-  });
+  let fixture;
+  const branded = {base: brandedOrigin}, wholesale = {base: "https://" + wholesaleHost}, diary = {base:"https://staffstrangerscoffee.com"};
+  const request = (base, path, init = {}) => fixture.runtime.dispatchFetch(base + path, {redirect:"manual", ...init});
+  before(async () => { fixture = await startEditorFixture(); });
+  after(async () => { await fixture?.stop(); });
 
   test("the branded hostname serves the new retail pages and their same-origin assets", async () => {
     let appPath;

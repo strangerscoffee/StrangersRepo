@@ -48,7 +48,7 @@
   font-size: .83rem;
 }
 
-.retail-checkout-progress li span {
+.retail-checkout-progress li .retail-step-number {
   flex: none;
   display: grid;
   place-items: center;
@@ -67,7 +67,7 @@
   font-weight: 690;
 }
 
-.retail-checkout-progress li[aria-current] span {
+.retail-checkout-progress li[aria-current] .retail-step-number {
   border-color: var(--forest);
   background: var(--forest);
   color: var(--acid);
@@ -553,7 +553,7 @@ fieldset.retail-checkout-card,
     font-size: .73rem;
   }
 
-  .retail-checkout-progress li span {
+  .retail-checkout-progress li .retail-step-number {
     width: 19px;
     height: 19px;
     font-size: .63rem;

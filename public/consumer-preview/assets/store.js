@@ -15,11 +15,11 @@ export function money(amountInPence) {
 }
 
 export function createStore(products, storage = browserStorage()) {
-  const catalogue = new Map(products.map(product => [product.id, product]));
   const lines = new Map();
+  let removalNotice = '';
 
   function variant(id, size, grind) {
-    const product = catalogue.get(id);
+    const product = products.find(item => item.id === id);
     if (!product || !Object.hasOwn(product.prices, size) || !product.grinds.includes(grind)) {
       return null;
     }
@@ -43,23 +43,30 @@ export function createStore(products, storage = browserStorage()) {
     }
   }
 
-  function refresh() {
-    if (!storage) return;
+  function refresh(prune = false) {
     let saved;
     try {
-      saved = JSON.parse(storage.getItem(CART_KEY) ?? '[]');
+      saved = storage ? JSON.parse(storage.getItem(CART_KEY) ?? '[]') : cart();
     } catch {
       return;
     }
     if (!Array.isArray(saved)) return;
 
+    let removed = false;
     lines.clear();
     for (const selection of saved) {
       if (!selection || !validQuantity(selection.qty)) continue;
       const line = variant(selection.id, selection.size, selection.grind);
-      if (!line) continue;
+      if (!line) {
+        removed = true;
+        continue;
+      }
       const existing = lines.get(line.key)?.qty ?? 0;
       lines.set(line.key, { ...line, qty: Math.min(existing + selection.qty, MAX_QUANTITY) });
+    }
+    if (prune && removed) {
+      removalNotice = 'An item or option in your cart is no longer sold and has been removed.';
+      persist();
     }
   }
 
@@ -102,7 +109,10 @@ export function createStore(products, storage = browserStorage()) {
     for (const { id, size, grind, qty } of purchased) {
       if (!validQuantity(qty)) continue;
       const line = lines.get(JSON.stringify([id, size, grind]));
-      if (!line) continue;
+      if (!line) {
+        removed = true;
+        continue;
+      }
       if (line.qty > qty) line.qty -= qty;
       else lines.delete(line.key);
     }
@@ -117,7 +127,8 @@ export function createStore(products, storage = browserStorage()) {
       subtotal += qty * unitPrice;
       count += qty;
       const customWeight = product.shippingWeightGrams;
-      const weight = Number.isSafeInteger(customWeight) && customWeight > 0 ? customWeight : BAG_GRAMS[size] ?? 500;
+      const defaultWeight = BAG_GRAMS[size] ?? (product.category === 'accessory' ? 150 : 500);
+      const weight = Number.isSafeInteger(customWeight) && customWeight > 0 ? customWeight : defaultWeight;
       grams += qty * weight;
     }
 
@@ -129,7 +140,7 @@ export function createStore(products, storage = browserStorage()) {
   }
 
   refresh();
-  return { cart, add, adjustQty, remove, clear, totals, refresh, consume };
+  return { cart, add, adjustQty, remove, clear, totals, refresh, consume, get notice() { return removalNotice; } };
 }
 
 function browserStorage() {
