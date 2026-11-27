@@ -1,3 +1,4 @@
+import "../../public/shared/wholesale-preparation.js";
 import { type Env, invalid, json } from "../http";
 import { loadRoyalMailConnections, readRoyalMailPolicy } from "../royalMailAppSettings";
 import { savedRoyalMailRecipient } from "../royalMailDestination";
@@ -54,7 +55,8 @@ function candidates(env: Env, after: string, clock: (string | number)[]) {
         'locationId',json_extract(b.data,'$.locationId'),'delivery',json_extract(b.data,'$.delivery'),
         'grams',json_extract(b.data,'$.grams'),'locationSnapshot',json_extract(b.data,'$.locationSnapshot'),
         'customerSnapshot',json_extract(b.data,'$.customerSnapshot'),
-        'lines',CASE WHEN s.shipping_fingerprint IS NOT NULL AND s.order_version<>b.version THEN json_extract(b.data,'$.lines') END) AS destination,
+        'lines',CASE WHEN s.state IS NULL OR s.state='failed' OR (s.shipping_fingerprint IS NOT NULL AND s.order_version<>b.version)
+          THEN json_extract(b.data,'$.lines') END) AS destination,
       s.state,s.requested_at,s.provider_id,s.review_required,s.label_downloaded_at,s.recovery_due_at,s.order_version,s.shipping_fingerprint
     FROM batch b JOIN eligibility e ON e.order_id=b.id
     LEFT JOIN wholesale_royal_mail_shipments s ON s.order_id=b.id
@@ -87,7 +89,10 @@ async function nextAction(
   }
   if (row.state === "failed" && row.requested_at) return attention("Royal Mail declined this booking. Review the parcel details before retrying.");
   if (!savedRoyalMailRecipient(order)) return attention("The saved delivery address needs review.", "shipping", "Review address");
-  if (!Number.isSafeInteger(order.grams) || order.grams > 30_000) return attention("The order needs a parcel weight review before postage can be booked.");
+  if (!Number.isSafeInteger(order.grams)) return attention("The order needs a parcel weight review before postage can be booked.");
+  if (globalThis.SCWholesalePreparation.tooHeavyForOneParcel(order)) {
+    return attention("The estimated packed weight exceeds 30 kg. Split the order into boxes in Click & Drop.", "shipping", "Review parcel");
+  }
   if (!booking.configured || !booking.enabled) return attention(booking.configured ? "New Royal Mail bookings are paused." : "Royal Mail booking setup is incomplete.", "settings", "Review settings");
   return { stage: "weigh", action: "shipping", actionLabel: "Review parcel", reason: row.state === "failed" ? "The last booking failed. Review the parcel before trying again." : "Confirm the sealed parcel weight and destination." };
 }

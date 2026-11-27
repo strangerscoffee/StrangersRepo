@@ -112,6 +112,15 @@ test("Staff and Admin dispatch queue share accurate role-limited stages, paging 
   assert.match((await queue("admin","?stage=attention")).orders.find(o=>o.id===id(2)).reason,/order changed/i);
   await query("UPDATE wholesale_preview SET data=?,version=1 WHERE id=?",JSON.stringify(base),id(2)).run();
 
+  // Coffee below 30 kg can exceed the one-parcel limit once the bags, overfill and box are added.
+  const kilos=quantity=>({grams:quantity*1000,lines:[{productId:"beans",pack:"kilo",grams:1000,quantity}]});
+  await db.batch([seed(280,kilos(28)),seed(270,kilos(27)),seed(290,{grams:29500}),seed(291,{grams:29501}),
+    seed(292,kilos(28)),shipment(292,"labelled",292,123)]);
+  const attention=await queue("admin","?stage=attention");
+  for(const n of [280,291]) assert.match(attention.orders.find(o=>o.id===id(n)).reason,/exceeds 30 kg.*Click & Drop/);
+  assert.equal(attention.orders.some(o=>o.id===id(270)||o.id===id(290)),false);
+  assert.equal((await queue("staff","?stage=handover")).orders.some(o=>o.id===id(292)),true);
+
   // A previously loaded handover row loses its authority when payment eligibility, label or delivery changes.
   const confirm=(n,space,extra={})=>req(space,space,"orders/"+id(n),"PATCH",{ifVersion:1,status:"Dispatched",customerId:"account",queueHandover:true,...extra});
   const noDownload=await confirm(2,"admin");
