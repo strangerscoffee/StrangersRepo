@@ -69,5 +69,17 @@
   }
   const coffeeStyle = (item, products) => `--w-coffee:${coffeeFill(coffeeColour(item, products))}`;
 
-window.SCWholesalePreparation=Object.freeze({grindFor,decafLine,coffeeColour,coffeeFill,coffeeStyle,packagingColours:Object.freeze(packaging.map(e=>Object.freeze({...e}))),iconPaths:Object.freeze({"grind-beans": "<path d=\"M18 4c-4-3-11 1-13 6s0 10 4 11 10-3 12-8 1-7-3-9Z\"/><path d=\"M17 5c-6 3-2 8-10 14\"/>", "grind-fine": "<path d=\"M5 4h14v5H5zM7 9v4h10V9M9 13v3h6v-3M5 21h14M10 18v3M14 18v3\"/>", "grind-medium": "<path d=\"m3 4 9 12 9-12H3ZM12 16v4M8 21h8M7 4l5 8 5-8\"/>", "grind-coarse": "<path d=\"M6 8h11v11H6zM4 21h15M4 4h15M11 2v6M17 10h2a3 3 0 0 1 0 6h-2\"/>"})});
+// Estimated packed parcel weight for a Royal Mail label (the owner's figures, 27 Nov 2026): the coffee, 10–15 g overfill
+// in each bag (15 g used, so postage isn't under-declared), each empty bag (250 g bag about 18 g, 1 kg bag about 40 g)
+// and about 500 g for the double-walled box, paper and tape. A starting value
+// only: staff weigh the sealed parcel and change it, and the server still checks it covers the coffee and is under 30 kg.
+const BAG_GRAMS=Object.freeze({quarter:18,kilo:40}),OVERFILL_GRAMS=15,BOX_GRAMS=500;
+function parcelEstimate(row){
+  const lines=Array.isArray(row?.lines)?row.lines:[];
+  const coffee=lines.reduce((sum,l)=>sum+(Number(l.grams)||0)*(Number(l.quantity)||0),0)||Number(row?.grams)||0;
+  if(!coffee)return 0;
+  const bags=lines.reduce((sum,l)=>sum+((BAG_GRAMS[l.pack]??(Number(l.grams)>=1000?40:18))+OVERFILL_GRAMS)*(Number(l.quantity)||0),0);
+  return Math.min(30000,Math.max(Number(row?.grams)||0,Math.round(coffee+bags+BOX_GRAMS)));
+}
+window.SCWholesalePreparation=Object.freeze({grindFor,parcelEstimate,decafLine,coffeeColour,coffeeFill,coffeeStyle,packagingColours:Object.freeze(packaging.map(e=>Object.freeze({...e}))),iconPaths:Object.freeze({"grind-beans": "<path d=\"M18 4c-4-3-11 1-13 6s0 10 4 11 10-3 12-8 1-7-3-9Z\"/><path d=\"M17 5c-6 3-2 8-10 14\"/>", "grind-fine": "<path d=\"M5 4h14v5H5zM7 9v4h10V9M9 13v3h6v-3M5 21h14M10 18v3M14 18v3\"/>", "grind-medium": "<path d=\"m3 4 9 12 9-12H3ZM12 16v4M8 21h8M7 4l5 8 5-8\"/>", "grind-coarse": "<path d=\"M6 8h11v11H6zM4 21h15M4 4h15M11 2v6M17 10h2a3 3 0 0 1 0 6h-2\"/>"})});
 })();

@@ -808,7 +808,8 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
     const path = `/api/admin/wholesale/orders/${row.id}/shipping`, session = packingSession;
     let shipping = null, uncertain = false, changed = false, needsReload = false, reviewing = false, reviewReadyAt = 0, cleanup = () => {};
     const snapshot = row.locationSnapshot || row.customerSnapshot || {};
-    let draft = { name: snapshot.contact || row.business || "", ...royalMailAddress(snapshot), weightGrams: "" };
+    const estimate = preparation.parcelEstimate(row);
+    let draft = { name: snapshot.contact || row.business || "", ...royalMailAddress(snapshot), weightGrams: estimate ? String(estimate) : "" };
     const stateText = (shipment) => ({ booking: "Label request pending", review: "Check label request", failed: "Label request needs attention", created: "Postage request recorded", labelled: "Label ready", dispatched: "Royal Mail shipment dispatched" }[shipment?.state] || (shipment ? "Royal Mail shipment recorded" : "Review parcel details"));
     const carrierDate = (value) => {
       const at = new Date(value);
@@ -875,7 +876,7 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
           ${field("Town or city", html`<input name="city" maxlength="100" autocomplete="shipping address-level2" required value="${draft.city}">`)}
           ${field("UK postcode", html`<input name="postcode" maxlength="12" autocomplete="shipping postal-code" required value="${draft.postcode}">`)}
           ${field("Packed weight (grams)", html`<input name="weightGrams" type="number" inputmode="numeric" min="${Math.max(1,row.grams)}" max="30000" step="1" required value="${draft.weightGrams}">`)}
-          <p class="hint">Include the box and packaging. Coffee alone: ${weight(row.grams)}.</p></fieldset>`}
+          <p class="hint">${estimate ? "Filled in with an estimate: the coffee with a little overfill, its bags and about 500 g of box and packing. Weigh the sealed parcel and change it if needed. " : "Include the box and packaging. "}Coffee alone: ${weight(row.grams)}.</p></fieldset>`}
         </div><footer class="w-editor-footer"><p id="wErr" class="err" role="alert">${error}</p><div class="row w-actions"><button type="button" class="btn soft" data-sheet="shipping-back">Back to order</button>${recorded || uncertain || !shipping ? html`<button type="button" class="btn soft" data-sheet="shipping-refresh">${refreshText}</button>` : stale ? html`<button type="button" class="btn" data-sheet="shipping-back">Reload latest order</button>` : shipping.canCreate ? html`<button type="submit" class="btn" ${reviewing && performance.now() < reviewReadyAt ? raw("disabled") : ""}>${reviewing ? "Request Royal Mail label" : "Review label request"}</button>` : ""}</div></footer></form>`, async (action, element) => {
         const form = element.closest("form");
         if (!form || form.dataset.whBusy) return;

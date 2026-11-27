@@ -6,7 +6,7 @@
 // Private views are cleared or hidden when the session can't be verified.
 (()=>{
  'use strict';
- const {el,svgi}=SC,{grindFor,decafLine,iconPaths,coffeeStyle}=SCWholesalePreparation,packing=SCWholesalePacking;
+ const {el,svgi}=SC,{grindFor,decafLine,iconPaths,coffeeStyle,parcelEstimate}=SCWholesalePreparation,packing=SCWholesalePacking;
  const $=id=>document.getElementById(id);
  const wideDesk=matchMedia('(min-width: 1240px)');
  const packProblems=new Map(),shippingSummaries=new Map(),labelRequests=new Map();
@@ -435,7 +435,8 @@
  }
  function openShipping(id){
   const row=findOrder(id);if(!canViewShipping(row))return;
-  const review=shippingReview={row,owner:orderingIdentity,result:null,busy:null,error:'',feedback:'',weight:'',confirming:false};
+  const estimate=parcelEstimate(row);
+  const review=shippingReview={row,owner:orderingIdentity,result:null,busy:null,error:'',feedback:'',weight:estimate?String(estimate):'',estimated:!!estimate,confirming:false};
   renderShipping(review);
   openDialog($('shippingDialog'));
   void readShipping(review);
@@ -488,7 +489,7 @@
   }},el('h3',{id:'royalMailBookingTitle',tabindex:'-1'},review.confirming?'Confirm label request':'Prepare a label'),summary,
   review.confirming?el('p',{class:'hint'},'Requesting this label books postage. Confirm dispatch separately after handover.'):
    el('label',{class:'field',for:'royalMailWeight'},el('span',{},'Packed parcel weight (grams)'),input,
-    el('small',{id:'royalMailWeightHint'},`Weigh the sealed parcel including packaging. The coffee weighs ${weight(review.row.grams)}. One parcel, up to 30 kg.`)),
+    el('small',{id:'royalMailWeightHint'},`${review.estimated?'Filled in with an estimate: the coffee with a little overfill, its bags and about 500 g of box and packing. ':''}Weigh the sealed parcel and change it if needed. The coffee weighs ${weight(review.row.grams)}. One parcel, up to 30 kg.`)),
   el('div',{class:'royal-mail-actions'},review.confirming?action('edit','Edit weight',()=>{
    review.confirming=false;review.error='';renderShipping(review);$('royalMailWeight').focus({preventScroll:true});
   }):null,review.confirming?submit('create','Request Royal Mail label'):submit('review','Review label request')));
