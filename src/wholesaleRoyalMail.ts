@@ -24,7 +24,7 @@ interface Order {
   totalPence?: number;
   locationId?: string;
   locationSnapshot?: CustomerLocation;
-  customerSnapshot?: Pick<CustomerLocation, "address" | "postcode" | "contact">;
+  customerSnapshot?: Pick<CustomerLocation, "address" | "postcode" | "contact" | "phone"> & { email?: string };
   lines?: Array<{ productId: string; pack: string; grind?: string; quantity: number; grams: number }>;
 }
 
@@ -437,7 +437,10 @@ export async function handleWholesaleRoyalMail(req: Request, env: Env, id: strin
   const address = { name: field(recipient.name, "recipient name", 100), companyName: order.business.slice(0, 100),
     addressLine1: field(recipient.line1, "address line 1", 100), addressLine2: field(recipient.line2, "address line 2", 100, false),
     city: field(recipient.city, "town or city", 100), postcode: postcodeFor(recipient.postcode),
-    ...(staff && recipient.county ? { county: recipient.county } : {}) };
+    ...(staff && recipient.county ? { county: recipient.county } : {}),
+    // Delivery updates (the owner's report, 27 Nov 2026): tracked services were refused with no phone or email.
+    phoneNumber: order.locationSnapshot?.phone || order.customerSnapshot?.phone || undefined,
+    emailAddress: order.customerSnapshot?.email || undefined };
 
   const eligibilityGuard = staff ? staffLabelEligibilityGuard(order) : { sql: "", args: [] };
   const accessGuard = staff && actor.role !== "admin"
