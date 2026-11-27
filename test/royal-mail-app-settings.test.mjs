@@ -328,7 +328,7 @@ test("Royal Mail credential settings protect booking and tracking secrets", asyn
     assert.equal(downloaded.royalMailSettings.version, (await settings()).version);
     const text = JSON.stringify(downloaded);
     const row = await policy();
-    assert.doesNotMatch(text, /booking_config|tracking_config/);
+    assert.doesNotMatch(text, /booking_config|tracking_config|booking_connection/);
     assert.equal(text.includes(row.booking_config), false);
     assert.equal(text.includes(row.tracking_config), false);
     for (const encrypted of [row.booking_config, row.tracking_config]) {

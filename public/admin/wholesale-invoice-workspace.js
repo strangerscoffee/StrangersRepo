@@ -106,10 +106,10 @@ window.WholesaleInvoiceWorkspace = function ({ api, html, raw, svg, title, foote
         ${accountContent(account)}` : "", "iw-accounts")}`;
   }
 
-  async function openAccount(id, back) {
+  async function openAccount(id, back, stillOpen = () => true) {
     const opened = ++accountSheetRequest, route = location.hash, view = active;
     const account = await api("GET", accountEndpoint(id));
-    if (opened !== accountSheetRequest || route !== location.hash || view !== active) return;
+    if (opened !== accountSheetRequest || route !== location.hash || view !== active || !stillOpen()) return;
     const reopen = () => openAccount(id, back);
     show(html`<div class="wi-sheet wi-workflow w-sensitive">${title("Billing account", account.business)}<div class="wi-body">${accountContent(account, true)}</div>${footer(null, "Back")}</div>`,
       async (name, element, form) => {

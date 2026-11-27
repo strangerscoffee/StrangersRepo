@@ -224,7 +224,19 @@ for (const [name, options] of [["phone", phone], ["ipad", { viewport: { width: 8
     await context.addCookies([{ name: cookieName, value, url: server.base }]);
     const page = await context.newPage();
     const errors = []; page.on("pageerror", (e) => errors.push(e.message));
-    await page.route("**/api/admin/wholesale/orders/" + order.id + "/shipping**", (route) => route.fulfill({ json: eligible() }));
+    let addressSaves = 0, postageRequests = 0;
+    await page.route("**/api/admin/wholesale/orders/" + order.id + "/shipping**", (route) => {
+      if (new URL(route.request().url()).pathname.endsWith("/location")) {
+        if (route.request().method() === "PUT") {
+          addressSaves++;
+          assert.equal(route.request().postDataJSON().recipient.line1, "12 Example Road");
+        }
+        return route.fulfill({ json: { customerId: order.customerId, locationId: "primary", version: 1,
+          name: "Example Café", address: "10 Example Road", postcode: "NR1 1AA" } });
+      }
+      if (route.request().method() === "POST") postageRequests++;
+      return route.fulfill({ json: eligible() });
+    });
     await page.goto(server.base + "/admin#wholesale");
     await page.locator(`[data-act="wh-order"][data-id="${order.id}"]`).locator("visible=true").first().click();
     await page.getByRole("button", { name: "Royal Mail shipping" }).locator("visible=true").first().click();
@@ -232,10 +244,29 @@ for (const [name, options] of [["phone", phone], ["ipad", { viewport: { width: 8
     await weightBox.waitFor();
     assert.equal(await weightBox.inputValue(), "1555");
     assert.match(await page.locator("#sheet").innerText(), /Filled in with an estimate/);
+    assert.equal(await page.getByLabel("Town or city").inputValue(), "Norwich");
+    assert.equal(await page.getByLabel("County (optional)").inputValue(), "Norfolk");
     await weightBox.fill("1620");
     assert.equal(await weightBox.inputValue(), "1620");
     assert.deepEqual(errors, []);
     await page.screenshot({ path: `${process.env.SHOT_DIR || "/tmp"}/royal-mail-weight-${name}-${colorScheme}.png` });
+    if (name === "phone" && colorScheme === "light") {
+      await page.getByLabel("Address line 1").fill("12 Example Road");
+      await page.getByRole("button", { name: "Review label request" }).click();
+      assert.match(await page.getByRole("region", { name: "Parcel review" }).innerText(), /12 Example Road\nNorwich\nNorfolk\nNR1 1AA/);
+      const future = page.getByRole("button", { name: "Update saved location for future orders" });
+      await future.click();
+      await page.getByRole("button", { name: "Keep current address" }).waitFor();
+      assert.equal(await page.getByRole("button", { name: "Request Royal Mail label" }).count(), 0);
+      await page.getByRole("button", { name: "Keep current address" }).click();
+      assert.equal(addressSaves, 0);
+      await future.click();
+      await page.getByRole("button", { name: "Save delivery address" }).click();
+      await page.getByText("Delivery address saved for future orders.").waitFor();
+      await page.getByRole("button", { name: "Request Royal Mail label" }).waitFor();
+      assert.equal(addressSaves, 1);
+      assert.equal(postageRequests, 0);
+    }
   });
 }
 
@@ -268,4 +299,224 @@ test("an order over 30 kg packed says to book and split it in Click & Drop", asy
   assert.notEqual(await ap.locator("#wShippingFields").getAttribute("disabled"), null);
   assert.ok(await ap.locator('input[name="weightGrams"]').isDisabled());
   await ap.screenshot({ path: `${process.env.SHOT_DIR || "/tmp"}/royal-mail-over-30kg-ipad-dark.png` });
+});
+
+for (const [device, options] of [["desktop", desktop], ["phone", phone]]) {
+  test("the staff dispatch queue opens a parcel, returns to the queue and rechecks a handover on " + device, async (t) => {
+    const context = await browser.newContext(options);
+    t.after(() => context.close());
+    const [name, value] = staffCookie.split("=");
+    await context.addCookies([{ name, value, url: server.base }]);
+    const page = await context.newPage();
+    const errors = [];
+    page.on("pageerror", error => errors.push(error.message));
+    let stage = "weigh", state = eligible(), attemptedHandover;
+    await page.route("**/api/staff-orders/dispatch-queue?**", route => {
+      const row = {
+        id: order.id, version: order.version, business: order.business, stage,
+        stageLabel: stage === "weigh" ? "Weigh" : "Awaiting handover",
+        action: stage === "weigh" ? "shipping" : "handover",
+        actionLabel: stage === "weigh" ? "Weigh parcel" : "Review handover",
+      };
+      return route.fulfill({ json: { orders: stage ? [row] : [], nextCursor: null,
+        counts: { weigh: Number(stage === "weigh"), handover: Number(stage === "handover"), print: 0, checking: 0, attention: 0 } } });
+    });
+    await page.route("**/api/staff-orders/orders/" + order.id + "/shipping", route => route.fulfill({ json: state }));
+    await page.route("**/api/staff-orders/orders/" + order.id, route => {
+      attemptedHandover = route.request().postDataJSON();
+      stage = "";
+      return route.fulfill({ json: { order: { ...order, status: "Dispatched", version: order.version + 1 } } });
+    });
+    await page.goto(server.base + "/orders");
+    await page.getByRole("button", { name: "Dispatch", exact: true }).click();
+    const queue = page.getByRole("region", { name: "Dispatch queue" });
+    const action = queue.locator('[data-queue-order="' + order.id + '"] button');
+    await action.click();
+    const shipping = page.getByRole("dialog", { name: "Royal Mail" });
+    await shipping.getByRole("spinbutton", { name: "Packed parcel weight (grams)" }).waitFor();
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    stage = "handover";
+    state = labelled(state);
+    state.shipment.destination = { address: "22 Verified Street, Norwich", postcode: "NR2 2AA" };
+    state.shipment.labelDownloadedAt = Date.now();
+    await shipping.getByRole("button", { name: "Done" }).click();
+    await queue.getByRole("button", { name: "Review handover" }).click();
+    const handover = page.getByRole("dialog", { name: "Confirm dispatch" });
+    await handover.getByText(/22 Verified Street/).waitFor();
+    assert.equal(await handover.getByLabel("Tracking link (optional)").isVisible(), false);
+    await handover.getByRole("button", { name: "Cancel", exact: true }).click();
+    await queue.getByRole("button", { name: "Review handover" }).waitFor();
+    if (!options.isMobile) await page.waitForFunction(() => !!document.activeElement?.closest("[data-queue-order]"));
+    assert.equal(attemptedHandover, undefined);
+    state = financeBlock(state);
+    await action.click();
+    await handover.getByText(/account has an overdue balance/).waitFor();
+    assert.equal(await handover.getByRole("button", { name: "Mark dispatched" }).isDisabled(), true);
+    await handover.getByRole("button", { name: "Cancel", exact: true }).click();
+    state = { ...state, eligibility: { eligible: true } };
+    await action.click();
+    await handover.getByRole("button", { name: "Mark dispatched" }).click();
+    await queue.getByText("No parcels are waiting for dispatch.").waitFor();
+    assert.equal(attemptedHandover.queueHandover, true);
+    assert.equal(attemptedHandover.trackingUrl, "https://www.royalmail.com/track-your-item#/tracking-results/AB123456789GB");
+    assert.deepEqual(errors, []);
+  });
+}
+
+async function adminDispatchPage(t, options, task, details) {
+  const context = await browser.newContext(options);
+  t.after(() => context.close());
+  const [name, value] = adminCookie.split("=");
+  await context.addCookies([{ name, value, url: server.base }]);
+  const page = await context.newPage();
+  const errors = [];
+  page.on("pageerror", error => errors.push(error.message));
+  t.after(() => assert.deepEqual(errors, []));
+  await page.route("**/api/admin/wholesale/dispatch-queue?**", route => {
+    const stage = new URL(route.request().url()).searchParams.get("stage");
+    const row = { id: order.id, version: order.version, business: order.business, customerId: order.customerId,
+      dispatchDate: null, reference: "Test parcel", reason: null, ...task };
+    return route.fulfill({ json: { orders: stage === "all" || stage === row.stage ? [row] : [], nextCursor: null,
+      counts: { weigh: 0, print: 0, handover: 0, checking: 0, attention: 0, [row.stage]: 1 } } });
+  });
+  await page.route("**/api/admin/wholesale/orders/" + order.id + "/shipping", details);
+  await page.goto(server.base + "/admin#wholesale/royal-mail");
+  return { page, action: page.locator(`[data-queue-order="${order.id}"] button`) };
+}
+
+for (const [name, options] of [["desktop", desktop], ["phone", phone]]) {
+  test(`Admin dispatch queue opens settings and returns to a rejected booking on ${name}`, async t => {
+    let attempts = 0;
+    const { page, action } = await adminDispatchPage(t, options,
+      { stage: "weigh", stageLabel: "Weigh", action: "shipping", actionLabel: "Weigh parcel" },
+      route => {
+        const result = eligible();
+        if (route.request().method() === "POST") {
+          attempts++;
+          result.shipment = { state: "failed", requestedAt: Date.now(), problem: "Check the service code configured for this account." };
+        }
+        return route.fulfill({ json: result });
+      });
+    let serviceChecks = 0;
+    await page.route("**/api/admin/wholesale/orders/" + order.id + "/shipping/service-check", route => {
+      const body = route.request().postDataJSON();
+      assert.deepEqual(body, { ifVersion: order.version, bookingVersion: 2, postcode: "NR1 1AA", weightGrams: 1650 });
+      serviceChecks++;
+      return route.fulfill({ json: { bookingService: "TPS48", available: false, message: "This service is unavailable for this parcel." } });
+    });
+    await page.getByRole("button", { name: "Shipping settings", exact: true }).click();
+    await page.getByRole("switch", { name: "New Royal Mail bookings" }).waitFor();
+    await page.getByRole("button", { name: "Dispatch queue", exact: true }).click();
+    await action.click();
+    await page.getByRole("button", { name: "Review label request" }).click();
+    await page.getByText("TPS48", { exact: true }).waitFor();
+    await page.getByRole("button", { name: "Request Royal Mail label" }).click();
+    await page.getByText("Label request rejected", { exact: true }).waitFor();
+    assert.equal(await page.getByText("Ready to request a label", { exact: true }).count(), 0);
+    assert.equal(await page.getByRole("button", { name: "Request Royal Mail label" }).count(), 0);
+    assert.equal(attempts, 1);
+    assert.equal(serviceChecks, 0);
+    await page.locator('input[name="weightGrams"]').fill("1650");
+    await page.getByRole("button", { name: "Check service for this parcel" }).click();
+    await page.getByText("TPS48 · 1,650 g · NR1 1AA. This service is unavailable for this parcel.").waitFor();
+    assert.equal(serviceChecks, 1);
+    await page.locator('input[name="postcode"]').fill("NR3 1AA");
+    assert.equal(await page.locator("#wServiceAdvice").isVisible(), false);
+    assert.equal(attempts, 1);
+    await page.getByRole("button", { name: "Back to dispatch queue" }).click();
+    await action.waitFor();
+    await page.waitForFunction(() => document.activeElement?.closest("[data-queue-order]"));
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  });
+}
+
+test("Admin dispatch queue hands over the reviewed label with its booked address and payment safeguards", async t => {
+  const tracking = "https://www.royalmail.com/track-your-item#/tracking-results/AB123456789GB";
+  const { page, action } = await adminDispatchPage(t, desktop,
+    { stage: "handover", stageLabel: "Awaiting handover", action: "handover", actionLabel: "Confirm handover" },
+    route => {
+      const result = labelled(eligible());
+      Object.assign(result.shipment, { labelDownloadedAt: Date.now(), trackingUrl: tracking, destination: { address: "30 New Lane, Norwich", postcode: "NR3 1AA" } });
+      return route.fulfill({ json: result });
+    });
+  let saves = 0;
+  await page.route("**/api/admin/wholesale/orders/" + order.id, route => {
+    assert.equal(route.request().method(), "PATCH");
+    const payload = route.request().postDataJSON();
+    assert.equal(payload.queueHandover, true);
+    assert.equal(payload.trackingUrl, tracking);
+    saves++;
+    return route.fulfill({ json: { order: { ...order, status: "Dispatched", version: order.version + 1 } } });
+  });
+  await action.click();
+  await page.getByText("30 New Lane, Norwich, NR3 1AA", { exact: true }).waitFor();
+  assert.equal(await page.locator("#wDispatchTracking").count(), 0);
+  assert.equal(saves, 0);
+  await page.getByRole("button", { name: "Confirm dispatch", exact: true }).click();
+  await page.locator("#wDispatchOrderForm").waitFor({ state: "detached" });
+  assert.equal(saves, 1);
+});
+
+test("a staff dispatch deep link opens the real queue and discards its rows when access is lost", async (t) => {
+  const context = await browser.newContext(phone);
+  t.after(() => context.close());
+  const [name, value] = staffCookie.split("=");
+  await context.addCookies([{ name, value, url: server.base }]);
+  const page = await context.newPage();
+  await page.goto(server.base + "/orders#dispatch");
+  const queue = page.getByRole("region", { name: "Dispatch queue" });
+  await queue.locator('[data-queue-order="' + order.id + '"]').waitFor();
+  assert.equal(await page.getByRole("button", { name: "Dispatch", exact: true }).getAttribute("aria-pressed"), "true");
+  await page.route("**/api/staff-orders/dispatch-queue?**", route => route.fulfill({ status: 403, json: { code: "permission_denied" } }));
+  await queue.getByRole("button", { name: "Refresh" }).click();
+  await page.getByText("You no longer have access to wholesale orders.").waitFor();
+  assert.equal(await page.locator("[data-queue-order]").count(), 0);
+});
+
+test("a lost label response is recovered in the staff dialog without a second purchase", async (t) => {
+  let state = eligible(), purchases = 0, reads = 0;
+  const { dialog } = await staffPage(t, phone, async route => {
+    if (route.request().method() === "POST") {
+      purchases++;
+      state = labelled(state);
+      return route.abort();
+    }
+    reads++;
+    return route.fulfill({ json: state });
+  });
+  await dialog.getByRole("button", { name: "Review label request" }).click();
+  await dialog.getByRole("button", { name: "Request Royal Mail label" }).click();
+  await dialog.getByRole("button", { name: "Download label PDF" }).waitFor({ timeout: 20000 });
+  assert.equal(purchases, 1);
+  assert.ok(reads >= 2);
+});
+
+test("Admin can investigate an uncertain booking from the queue without generating postage", async t => {
+  let checks = 0;
+  const { page, action } = await adminDispatchPage(t, phone,
+    { stage: "attention", stageLabel: "Needs attention", action: "shipping", actionLabel: "Review booking" }, route => {
+      const lookup = route.request().method() === "GET";
+      if (lookup) checks++;
+      assert.equal(lookup, true);
+      return route.fulfill({ json: { ...eligible(), canCreate: false, shipment: { state: "review", requestedAt: Date.now(),
+        recovery: { status: "needs_admin", attempts: 4, lastCheckedAt: Date.now(), nextCheckAt: null } } } });
+    });
+  await action.click();
+  const recovery = page.locator('#sheet [aria-label="Booking recovery"]');
+  await recovery.getByText(order.id, { exact: true }).waitFor();
+  await page.getByText("Booking needs admin review", { exact: true }).waitFor();
+  assert.equal(await page.getByRole("button", { name: "Request Royal Mail label" }).count(), 0);
+  assert.equal(checks, 1);
+  await page.getByRole("button", { name: "Back to dispatch queue" }).click();
+  await action.waitFor();
+});
+
+test("Admin can open a held order’s billing account and return to the queue", async t => {
+  const { page, action } = await adminDispatchPage(t, desktop,
+    { stage: "attention", stageLabel: "Needs attention", action: "account", actionLabel: "Review billing account" }, route => route.abort());
+  await action.click();
+  await page.getByRole("heading", { name: "Billing account", exact: true }).waitFor();
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(() => document.activeElement?.closest("[data-queue-order]"));
+  assert.equal(await action.isVisible(), true);
 });

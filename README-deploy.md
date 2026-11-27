@@ -122,6 +122,14 @@ An order over 30 kg packed is booked in Click & Drop by hand: create the order t
 
 **Admin → Wholesale → Royal Mail** shows which carrier settings are configured and controls new bookings. Bookings start off. Once the Click & Drop key and service are configured, an admin can turn them on. Switching off stops new requests before they are sent. Existing labels, tracking and manual dispatch stay available, and requests already sent to Royal Mail can finish.
 
+Open **Staff → Wholesale → Dispatch** or **Admin → Wholesale → Royal Mail** for the shared dispatch queue. It lists packed delivery orders by dispatch date. Use its stage filter to weigh a parcel, open a label, review handover, or resolve a hold. Downloading the confirmed PDF moves the parcel into **Awaiting handover**. Staff confirm the physical handover separately before the order advances and its existing dispatch notification goes out. **Shipping settings** in Admin contains the booking switch and carrier credentials.
+
+Both screens use the structured delivery destination from the order snapshot. An admin can correct it for this parcel and, in a separate address-book action, choose to update the customer's delivery location for future orders. Existing orders keep their original snapshot.
+
+On a rejected label, Admin can choose **Check service for this parcel** to check the configured service against the current postcode and sealed weight without buying postage. Click & Drop may require the shipping account name when several accounts are connected. It does not confirm service-register eligibility through the service list. For new rejections the parcel view identifies the affected fields and Royal Mail error code when supplied. Older stored generic messages contain no field diagnostics.
+
+An uncertain booking stays in **Checking with Royal Mail**. The five-minute job looks up the original reference in Click & Drop with increasing delays, up to four automatic attempts. Confirmed bookings return to the queue. Unresolved requests move to **Needs attention**, where Admin can verify the reference and recheck it. Recovery never submits another postage request.
+
 In **Admin → Wholesale → Order details**, the **Royal Mail shipping** panel prepares postage for one packed parcel within Great Britain. Review the recipient, delivery address and sealed parcel weight before booking. The packing desk shows label readiness and the latest carrier scan. **Mark dispatched** confirms physical handover and uses the verified Royal Mail tracking link and label address in the dispatch email when available. Existing invoicing rules apply at handover.
 
 Employees with **Wholesale orders access** can also request a label from the staff packing desk. The staff flow uses the delivery address saved on the order and the service enabled by Admin. It checks the account before booking, downloading the PDF and confirming a Royal Mail handover. Staff see a short reason for a hold. Admin manages the underlying invoices, credentials, address corrections and shipment verification.
@@ -132,6 +140,8 @@ An account on hold or with an overdue balance needs review even if this order is
 - In **Carrier tracking**, enter credentials for a Royal Mail Tracking V2 app and confirm the account holder's acceptance of the Tracking API terms. Staff can then refresh an attached shipment to fetch its latest event. [Tracking API](https://developer.royalmail.net/product/175625/api/76888)
 - Admin credential entry derives a separate Royal Mail encryption key from the existing Worker secret `QUICKBOOKS_TOKEN_KEY`. Existing Royal Mail Worker settings are used for each connection until an admin saves credentials for it. Saved secrets are write-only and excluded from JSON backups. Replacing the hosting key means re-entering credentials encrypted with the previous key for both integrations.
 - Use **Check label request** after an unconfirmed booking. If a recorded shipment needs verification, compare the reference, destination and parcel details in Click & Drop before entering its tracking number and verifying the existing shipment. Use Click & Drop to finish, cancel or reset postage. The dispatch form also accepts a link from a different courier for a parcel sent separately.
+
+A purchase can be retried after Click & Drop returns a structured rejection or a single failed order matching the submitted reference. A duplicate-reference response, conflicting counts, a response naming a different order, or an unreadable response leaves the purchase unconfirmed. Recovery looks up the original reference before any further postage decision.
 
 ## New wholesale orders in Slack
 

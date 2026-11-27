@@ -17,6 +17,7 @@ import {audit} from "./audit";
 import {clearTab,listTabs,setOnTab} from "./wholesaleTabs";
 import {amendLines,skipRun} from "./wholesaleStanding";
 import {requireStaffOrders} from "./staffOrdersAccess";
+import {dispatchQueue} from "./wholesale/dispatchQueue";
 import {handleWholesaleRoyalMail,ROYAL_MAIL_ORDER_ROUTE} from "./wholesaleRoyalMail";
 import {LIVE_ACCOUNTING_JOIN,UNCONFIRMED_BALANCE_SQL,PAYMENT_DUE_SQL,OUTSTANDING_BALANCE_SQL} from "./quickbooks/observations";
 
@@ -65,6 +66,11 @@ async function customers(req:Request,env:Env){
 }
 export async function handleStaffOrders(req:Request,env:Env,route:string,user:User,links:{preview?:string;diary?:string}={},ctx?:ExecutionContext):Promise<Response>{
   await requireStaffOrders(env,user);
+  if(route==="dispatch-queue"){
+    const response=await dispatchQueue(req,env,"staff");
+    await requireStaffOrders(env,user);
+    return response;
+  }
   const shipping=ROYAL_MAIL_ORDER_ROUTE.exec(route);
   if(shipping){
     const response=await handleWholesaleRoyalMail(req,env,shipping[1],shipping[2],user,"staff");
@@ -100,7 +106,7 @@ export async function handleStaffOrders(req:Request,env:Env,route:string,user:Us
   if(orderMatch){
     if(req.method!=="PATCH")return json({code:"method_not_allowed",message:"Use PATCH to change an order."},405,{Allow:"PATCH"});
     const body=object(await readJson(req,8192));
-    const updated=await updateOrderStatus(env,orderMatch[1],{ifVersion:body.ifVersion,status:body.status,note:body.note,trackingUrl:body.trackingUrl,requirePacked:body.requirePacked},user.name,{customerOnly:true,staffHandover:true,notify:{ctx,ordersUrl:customerOrdersUrl(env,links,req)}});
+    const updated=await updateOrderStatus(env,orderMatch[1],{ifVersion:body.ifVersion,status:body.status,note:body.note,trackingUrl:body.trackingUrl,requirePacked:body.requirePacked,queueHandover:body.queueHandover},user.name,{customerOnly:true,staffHandover:true,notify:{ctx,ordersUrl:customerOrdersUrl(env,links,req)}});
     await requireStaffOrders(env,user);
     return json({order:staffView(updated)});
   }

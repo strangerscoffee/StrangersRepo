@@ -20,6 +20,7 @@
 <link rel="stylesheet" href="/admin/overview.css">
 <link rel="stylesheet" href="/shared/wholesale-preparation.css">
 <link rel="stylesheet" href="/shared/wholesale-packing.css">
+<link rel="stylesheet" href="/shared/dispatch-queue.css">
 <link rel="stylesheet" href="/admin/wholesale-print.css">
 <link rel="stylesheet" href="/admin/wholesale-insights.css">
 <link rel="stylesheet" href="/admin/wholesale-tabs.css">
@@ -79,7 +80,8 @@
 <script type="application/x-sc-script" data-sc-module="WholesaleTabs" src="/admin/wholesale-tabs.js"></script>
 <script type="application/x-sc-script" data-sc-module="AdminSickness" src="/admin/sickness.js"></script>
 <script type="application/x-sc-script" data-sc-module="AdminConsumer" src="/admin/consumer.js"></script>
-<script type="application/x-sc-script" data-sc-module="WholesaleAdmin" src="/admin/wholesale.js"></script>
+<script type="application/x-sc-script" data-sc-module="SCDispatchQueue" data-sc-needs="SC" src="/shared/dispatch-queue.js"></script>
+<script type="application/x-sc-script" data-sc-module="WholesaleAdmin" data-sc-needs="SCDispatchQueue" src="/admin/wholesale.js"></script>
 <script type="application/x-sc-script" data-sc-module="AdminOverview" src="/admin/overview.js"></script>
 <script type="application/x-sc-script" data-sc-module="SCAdminStarted" data-sc-required src="/admin/admin.js"></script>
 <script src="/admin/boot.js"></script>

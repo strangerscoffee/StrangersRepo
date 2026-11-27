@@ -160,6 +160,110 @@ function orderBody(input: RoyalMailOrderInput) {
   }] };
 }
 
+// Only our own guidance and numeric carrier codes can be stored on a shipment.
+// Click & Drop can echo the entire submitted order and customer values in its errors.
+const bookingFields: Record<string, string> = {
+  fullname: "Check the recipient name.", companyname: "Check the recipient company name.",
+  address: "Check the delivery address.", addressline1: "Check delivery address line 1.",
+  addressline2: "Check delivery address line 2.", addressline3: "Check delivery address line 3.",
+  city: "Check the delivery town or city.", postcode: "Check the delivery postcode.",
+  county: "Check the delivery county.", countrycode: "Check the destination country.",
+  servicecode: "Check that the configured service is available on this Royal Mail account for this parcel.",
+  serviceregistercode: "Check the service register code in Royal Mail settings.",
+  shippingaccountname: "Check the shipping account name in Royal Mail settings.",
+  packageformatidentifier: "Check that the service accepts this parcel format.",
+  weightingrams: "Check the sealed weight against the limit for the selected service.",
+  includelabelinresponse: "Check that this Royal Mail account supports label generation by API.",
+  subtotal: "Check the order subtotal.", total: "Check the order total.",
+  orderdate: "Check the order date.", orderreference: "Check the order reference in Click & Drop.",
+};
+
+function identifiableRejection(value: unknown) {
+  const item = record(value);
+  if (!item) return false;
+  return [item.message, item.errorMessage, item.code, item.errorCode].some(field =>
+    typeof field === "string" && field.trim().length > 0 || typeof field === "number" && Number.isSafeInteger(field)) ||
+    Array.isArray(item.fields) && item.fields.some(field => {
+      const name = record(field)?.fieldName;
+      return typeof name === "string" && !!name.trim();
+    });
+}
+
+/** Only one explicitly failed order can explain the outcome of a one-order purchase. */
+function exactRejection(result: Record<string, unknown>, reference: string | undefined) {
+  if (!reference || result.successCount !== 0 || result.errorsCount !== 1 ||
+      (result.createdOrders !== undefined && !(Array.isArray(result.createdOrders) && !result.createdOrders.length)) ||
+      !Array.isArray(result.failedOrders) || result.failedOrders.length !== 1) return null;
+  const failure = record(result.failedOrders[0]);
+  const errors = failure?.errors;
+  return record(failure?.order)?.orderReference === reference && Array.isArray(errors) && errors.length &&
+    errors.length <= 12 && errors.every(identifiableRejection) ? errors : null;
+}
+
+function bookingRejection(errors: unknown[], status: number): RoyalMailError {
+  const guidance = new Set<string>();
+  const codes = new Set<string>();
+  for (const raw of errors) {
+    const error = record(raw);
+    if (!error) continue;
+    const code = error.errorCode ?? error.code;
+    if ((typeof code === "number" || typeof code === "string") && /^\d{1,8}$/.test(String(code))) codes.add(String(code));
+    const message = [error.errorMessage, error.message, error.details].filter(v => typeof v === "string").join(" ");
+    const fields = Array.isArray(error.fields) ? error.fields : [];
+    if (message.length > 4096 || fields.length > 24) return invalidResponse(true);
+    // Carriers use free text, symbolic codes and field paths to report duplicate references.
+    const issue = [message, typeof code === "string" ? code : "", ...fields.map(f => record(f)?.fieldName)]
+      .filter((v): v is string => typeof v === "string").join(" ")
+      .replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").toLowerCase();
+    if (/\bduplicat(?:e|ed)\b|\b(?:order|booking|shipment) (?:was |is |has been |successfully )*(?:created|booked|accepted)\b/.test(issue) ||
+        (/\b(?:order|reference|booking|shipment)\b/.test(issue) &&
+         /\b(?:not unique|must be unique|already in use|already exists?|(?:already|previously) (?:been )?(?:created|used|submitted|processed|booked|taken|registered|assigned|received))\b/.test(issue))) {
+      return new RoyalMailError("royal_mail_rejected", "Royal Mail may already have this booking. Checking the original order reference.", status, true);
+    }
+    for (const entry of fields) {
+      const path = record(entry)?.fieldName;
+      if (typeof path !== "string") continue;
+      const name = path.match(/[a-zA-Z][a-zA-Z0-9]*$/)?.[0].toLowerCase();
+      if (name && Object.hasOwn(bookingFields,name)) guidance.add(bookingFields[name]);
+    }
+    // Some responses contain only a message. Report the area the carrier named,
+    // without exposing free text or inferring a specific corrected value.
+    if (!fields.length) {
+      if (/shipping account|shippingAccountName/i.test(message)) guidance.add(bookingFields.shippingaccountname);
+      if (/service register|serviceRegisterCode/i.test(message)) guidance.add(bookingFields.serviceregistercode);
+      else if (/service code|serviceCode|service (?:is )?(?:unavailable|not available|not valid)/i.test(message)) guidance.add(bookingFields.servicecode);
+      if (/post\s?code/i.test(message)) guidance.add(bookingFields.postcode);
+      if (/parcel weight|package weight|weightInGrams/i.test(message)) guidance.add(bookingFields.weightingrams);
+      if (/package format|packageFormatIdentifier/i.test(message)) guidance.add(bookingFields.packageformatidentifier);
+      if (/OBA (?:customers|accounts) only|Online Business Account/i.test(message)) guidance.add(bookingFields.includelabelinresponse);
+    }
+  }
+  const instruction = [...guidance].slice(0, 3).join(" ") || "Check the order and configured service in Click & Drop.";
+  const identifier = codes.size ? " Carrier code " + [...codes].slice(0, 3).join(", ") + "." : "";
+  return new RoyalMailError("royal_mail_rejected", "Royal Mail rejected the label request. " + instruction + identifier, status);
+}
+
+async function rejectedBooking(response: Response, reference?: string) {
+  try {
+    const bytes = await readBytes(response, 32 * 1024, "Carrier rejection exceeds the diagnostic limit.");
+    const value = record(JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes)));
+    if (!value) return invalidResponse(true);
+    const envelope = ["failedOrders", "createdOrders", "successCount", "errorsCount"].some(field => Object.hasOwn(value, field));
+    if (envelope) {
+      const errors = exactRejection(value, reference);
+      return errors ? bookingRejection([value, ...errors], response.status) : invalidResponse(true);
+    }
+    // An HTTP status on its own cannot prove that this specific purchase failed.
+    if (["order", "orders", "items", "orderIdentifier", "orderId", "createdOn", "trackingNumber", "label"].some(field => Object.hasOwn(value, field)) ||
+        (Object.hasOwn(value, "orderReference") && value.orderReference !== reference) ||
+        !identifiableRejection(value)) return invalidResponse(true);
+    return bookingRejection([value], response.status);
+  } catch {
+    void response.body?.cancel().catch(() => {});
+    return invalidResponse(true);
+  }
+}
+
 function responseError(status: number, posting: boolean, label = false): RoyalMailError {
   if (status === 401) return new RoyalMailError("royal_mail_auth", "Royal Mail did not accept the Click & Drop key.", status);
   if (status === 403) return new RoyalMailError("royal_mail_denied", label
@@ -178,7 +282,7 @@ function responseError(status: number, posting: boolean, label = false): RoyalMa
 async function clickDrop(
   key: string,
   path: string,
-  { body, label = false, missingOkay = false }: { body?: unknown; label?: boolean; missingOkay?: boolean },
+  { body, reference, label = false, missingOkay = false }: { body?: unknown; reference?: string; label?: boolean; missingOkay?: boolean },
   fetcher: typeof fetch,
 ): Promise<unknown> {
   const token = typeof key === "string" ? key.trim() : "";
@@ -196,8 +300,12 @@ async function clickDrop(
     throw new RoyalMailError("royal_mail_unavailable", "Royal Mail did not confirm this request.", undefined, posting);
   }
   if (!response.ok) {
+    if (posting && (response.status === 400 || response.status === 422)) throw await rejectedBooking(response, reference);
     void response.body?.cancel().catch(() => {});
     if (response.status === 404 && missingOkay) return MISSING_ORDER;
+    if (missingOkay && (response.status === 400 || response.status === 422)) {
+      throw new RoyalMailError("royal_mail_rejected", "Royal Mail rejected the order-reference lookup. Check the reference in Click & Drop.", response.status);
+    }
     throw responseError(response.status, posting, label);
   }
 
@@ -276,17 +384,11 @@ function publicOrder(value: unknown, reference: string, posting = false): RoyalM
 
 /** Create once. An uncertain result must be reconciled by reference by the caller. */
 export async function createRoyalMailOrder(key: string, input: RoyalMailOrderInput, fetcher = fetch): Promise<RoyalMailOrder> {
-  const result = record(await clickDrop(key, "/orders", { body: orderBody(input) }, fetcher));
-  const failures = result?.failedOrders;
-  if (result?.successCount === 0 && result.errorsCount === 1 &&
-      (result.createdOrders === undefined || (Array.isArray(result.createdOrders) && result.createdOrders.length === 0)) &&
-      Array.isArray(failures) && failures.length === 1) {
-    const failure = record(failures[0]);
-    if (record(failure?.order)?.orderReference === input.reference && Array.isArray(failure?.errors) && failure.errors.length > 0) {
-      throw new RoyalMailError("royal_mail_rejected", "Royal Mail rejected the shipment details. Check the address, parcel and service.", 400);
-    }
-  }
-  if (result?.successCount !== 1 || result.errorsCount !== 0 || !Array.isArray(result.createdOrders) || result.createdOrders.length !== 1) {
+  const result = record(await clickDrop(key, "/orders", { body: orderBody(input), reference: input.reference }, fetcher));
+  const failures = result && exactRejection(result, input.reference);
+  if (failures) throw bookingRejection([result, ...failures], 400);
+  if (result?.successCount !== 1 || result.errorsCount !== 0 ||
+      (result.failedOrders !== undefined && !(Array.isArray(result.failedOrders) && !result.failedOrders.length)) || !Array.isArray(result.createdOrders) || result.createdOrders.length !== 1) {
     throw invalidResponse(true);
   }
   return publicOrder(result.createdOrders[0], input.reference, true);
@@ -396,4 +498,49 @@ export async function fetchRoyalMailTracking(
     results.set(summary.trackingNumber, summary);
   }
   return [...numbers].map(number => results.get(number)!);
+}
+
+/** Click & Drop service discovery is read-only; it does not validate a register or OBA label entitlement. */
+export async function checkRoyalMailParcelService(
+  key: string, service: { serviceCode: string; serviceRegisterCode?: string; shippingAccountName?: string },
+  postcode: string, weightGrams: number, fetcher: typeof fetch = fetch,
+): Promise<{ bookingService: string; available: boolean | null; message: string }> {
+  const { serviceCode, serviceRegisterCode, shippingAccountName } = service;
+  const result = (available: boolean | null, message: string) => ({ bookingService: serviceCode, available, message });
+  const query = new URLSearchParams({ destinationCountryCode: "GBR", destinationPostcode: postcode, packagingFormat: "Parcel", packageWeight: String(weightGrams) });
+  if (shippingAccountName) query.set("shippingAccountName", shippingAccountName);
+  const ambiguous = () => result(null, "This Click & Drop account has multiple shipping accounts. Set the shipping account name in Royal Mail settings and check again.");
+  try {
+    const groups = await clickDrop(key, "/services?" + query, {}, fetcher);
+    if (!Array.isArray(groups)) throw invalidResponse();
+    let matches = 0;
+    for (const item of groups) {
+      const group = record(item);
+      if (!group || typeof group.shippingAccountName !== "string" || !Array.isArray(group.services)) throw invalidResponse();
+      if (shippingAccountName && group.shippingAccountName !== shippingAccountName) throw invalidResponse();
+      for (const item of group.services) {
+        const entry = record(item);
+        if (!entry || typeof entry.serviceCode !== "string" || !entry.serviceCode.trim()) throw invalidResponse();
+        if (entry.serviceCode.toUpperCase() === serviceCode) matches++;
+      }
+    }
+    if (!matches) return result(false, `Royal Mail did not list ${serviceCode} for this postcode, packed weight and parcel format. Check the service and shipping account in Royal Mail settings.`);
+    if (!shippingAccountName) {
+      if (groups.length > 1) return ambiguous();
+      // Filtered /services may omit other accounts. Order creation requires a name if multiple accounts are configured.
+      const accounts = await clickDrop(key, "/carriers", {}, fetcher);
+      if (!Array.isArray(accounts) || !accounts.length || accounts.some(account => typeof record(account)?.shippingAccountName !== "string")) throw invalidResponse();
+      if (accounts.length > 1) return ambiguous();
+      if (accounts[0].shippingAccountName !== groups[0]?.shippingAccountName) throw invalidResponse();
+    }
+    if (serviceRegisterCode) return result(null, `Royal Mail lists ${serviceCode} for this parcel. The service list does not confirm register ${serviceRegisterCode}. Check it in Click & Drop.`);
+    if (matches > 1) return result(null, `Royal Mail lists several entries for ${serviceCode}. Check the account and service register in Click & Drop.`);
+    return result(true, `Royal Mail lists ${serviceCode} for this postcode, packed weight and parcel format. Downloading a label through the API requires an Online Business Account.`);
+  } catch (error) {
+    if (!(error instanceof RoyalMailError)) throw error;
+    if (error.status === 401 || error.status === 403) return result(null, "Click & Drop did not authorise the service check. Check the connection and account permissions in Royal Mail settings.");
+    if (error.status === 400 || error.status === 422) return result(null, "Click & Drop could not check these parcel details. Check the postcode, weight and configured shipping account name.");
+    if (error.status === 429) return result(null, "Royal Mail’s request limit was reached. Try the service check again later.");
+    return result(null, "Royal Mail could not confirm service availability. Try the service check again later.");
+  }
 }

@@ -32,6 +32,7 @@ import { handleBatches } from "./invoicing/batches";
 import { handleReconciliation } from "./invoicing/reconciliation";
 import { handleQuickBooksMatches } from "./invoicing/quickbooksMatches";
 import { handleRoyalMailSettings } from "./royalMailAppSettings";
+import { dispatchQueue } from "./wholesale/dispatchQueue";
 import { handleWholesaleRoyalMail, requireStaffLabelEligibility, resolveWholesaleHandover, ROYAL_MAIL_ORDER_ROUTE } from "./wholesaleRoyalMail";
 
 type Pack = "quarter" | "half" | "kilo";
@@ -450,9 +451,13 @@ export async function updateOrderStatus(env: Env, id: string, body: Record<strin
   // A collection order marked Ready: the customer is told it's ready to collect from the Roastery (the owner's request,
   // 23 Nov 2026). Never for delivery orders; once per order ("ready:<id>"), however often it goes back and forth.
   const firstReady = body.status === "Ready" && order.status !== "Ready" && order.preview === false && !isWholesaleDelivery(order.delivery);
+  if (body.queueHandover === true && (order.status !== "Ready" || order.skipped || body.status !== "Dispatched" ||
+      order.preview !== false || !customerId || !isWholesaleDelivery(order.delivery))) {
+    throw new ApiError(409, "royal_mail_handover_review", "Reload the dispatch queue and review this parcel before handover.");
+  }
   const suppliedTracking = body.trackingUrl === undefined ? order.trackingUrl || "" : trackingUrl(body.trackingUrl);
   const handover = body.status === "Dispatched" && order.status !== "Dispatched" && order.preview === false &&
-    customerId && isWholesaleDelivery(order.delivery) ? await resolveWholesaleHandover(env, order, suppliedTracking, staffHandover) : null;
+    customerId && isWholesaleDelivery(order.delivery) ? await resolveWholesaleHandover(env, order, suppliedTracking, staffHandover, body.queueHandover === true) : null;
   const guard = handover?.guard;
   const data: Order = { ...current, ...(schedule || {}), status: body.status, customerId, note, trackingUrl: handover?.trackingUrl ?? suppliedTracking };
   if (data.status === "New" || data.status === "Cancelled") delete data.packedLines;
@@ -502,6 +507,7 @@ export async function updateOrderStatus(env: Env, id: string, body: Record<strin
 export async function handleWholesaleAdmin(req: Request, env: Env, route: string, user: User, links: Links, ctx?:ExecutionContext): Promise<Response> {
   const quickbooks = await handleQuickBooks(req, env, route, user, ctx); if (quickbooks) return quickbooks;
   if (user.role !== "admin") throw denied();
+  if (route === "dispatch-queue") return dispatchQueue(req, env, "admin");
   if (route === "royal-mail" || route === "royal-mail/credentials") {
     return handleRoyalMailSettings(req, env, user.name, route === "royal-mail/credentials");
   }
