@@ -42,6 +42,9 @@ export interface RoyalMailOrderInput {
     city: string;
     county?: string;
     postcode: string;
+    /** For delivery updates: tracked Parcelforce and Royal Mail services need a phone number or an email. */
+    phoneNumber?: string;
+    emailAddress?: string;
   };
   parcel: {
     weightInGrams: number;
@@ -109,6 +112,16 @@ function dateValue(value: unknown): value is string {
   return Number.isFinite(calendarDay.getTime()) && calendarDay.toISOString().startsWith(date + "T");
 }
 
+/** The recipient's phone number and email for Royal Mail's delivery updates, only when they look valid. */
+function contactFor(recipient: RoyalMailOrderInput["recipient"]) {
+  const phone = typeof recipient.phoneNumber === "string" ? recipient.phoneNumber.replace(/[^\d+ ]/g, "").replace(/\s+/g, " ").trim() : "";
+  const email = typeof recipient.emailAddress === "string" ? recipient.emailAddress.trim() : "";
+  return {
+    ...(/^\+?\d[\d ]{6,23}$/.test(phone) ? { phoneNumber: phone } : {}),
+    ...(email.length <= 254 && /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(email) ? { emailAddress: email } : {}),
+  };
+}
+
 function orderBody(input: RoyalMailOrderInput) {
   const { reference, orderDate, recipient, parcel, serviceCode, serviceRegisterCode, shippingAccountName } = input;
   const orderRef = orderReference(reference);
@@ -148,7 +161,7 @@ function orderBody(input: RoyalMailOrderInput) {
       county: addressPart(recipient.county, 100),
       postcode: postcode.slice(0, -3) + " " + postcode.slice(-3),
       countryCode: "GBR",
-    } },
+    }, ...contactFor(recipient) },
     packages: [{ weightInGrams, packageFormatIdentifier: format }],
     currencyCode: "GBP",
     subtotal: subtotalPence / 100,
@@ -160,6 +173,42 @@ function orderBody(input: RoyalMailOrderInput) {
   }] };
 }
 
+
+/** Royal Mail's own reasons for refusing an order (the owner's request, 27 Nov 2026: a refusal said only "check the
+ * address, parcel and service"). Only the documented errorCode, errorMessage and field names, never field values: any
+ * recipient detail sent is blanked out of the message, which is plain text and short. */
+export function providerReasons(value: unknown, sent: string[] = []): string {
+  const seen: string[] = [];
+  const hide = sent.filter(v => typeof v === "string" && v.trim().length >= 3).map(v => v.trim())
+    .flatMap(v => [v, v.replace(/\s+/g, "")]).sort((a, b) => b.length - a.length);
+  const clean = (text: unknown, max: number) => {
+    if (typeof text !== "string") return "";
+    let out = text.replace(/[\u0000-\u001f\u007f<>]/g, " ");
+    for (const v of hide) out = out.split(v).join("…").split(v.toLowerCase()).join("…").split(v.toUpperCase()).join("…");
+    return out.replace(/\s+/g, " ").trim().slice(0, max);
+  };
+  const add = (entry: unknown) => {
+    const e = record(entry);
+    if (!e) return;
+    const message = clean(e.errorMessage, 160);
+    const code = Number.isSafeInteger(e.errorCode) ? `code ${e.errorCode}` : "";
+    const fields = (Array.isArray(e.fields) ? e.fields : []).map(f => clean(record(f)?.fieldName, 60)).filter(Boolean);
+    const line = [message, [code, fields.length ? "field " + fields.join(", ") : ""].filter(Boolean).join(", ")].filter(Boolean)
+      .map((part, i) => i ? `(${part})` : part).join(" ");
+    if (line && !seen.includes(line)) seen.push(line);
+  };
+  const top = record(value);
+  for (const failure of Array.isArray(top?.failedOrders) ? top!.failedOrders as unknown[] : []) {
+    for (const entry of Array.isArray(record(failure)?.errors) ? record(failure)!.errors as unknown[] : []) add(entry);
+  }
+  for (const entry of Array.isArray(top?.errors) ? top!.errors as unknown[] : Array.isArray(value) ? value : []) add(entry);
+  if (!seen.length && top) add(top);
+  return seen.slice(0, 3).join("; ").slice(0, 400);
+}
+const REJECTED = "Royal Mail rejected the shipment details. Check the address, parcel and service.";
+const rejected = (reasons: string, status = 400): RoyalMailError =>
+  new RoyalMailError("royal_mail_rejected", reasons ? `${REJECTED} Royal Mail said: ${reasons}` : REJECTED, status);
+
 function responseError(status: number, posting: boolean, label = false): RoyalMailError {
   if (status === 401) return new RoyalMailError("royal_mail_auth", "Royal Mail did not accept the Click & Drop key.", status);
   if (status === 403) return new RoyalMailError("royal_mail_denied", label
@@ -169,16 +218,14 @@ function responseError(status: number, posting: boolean, label = false): RoyalMa
   if (label && status === 404) return new RoyalMailError("royal_mail_label_unavailable", "Royal Mail does not have a label ready for this order.", status);
   if (label && (status === 400 || status === 422)) return new RoyalMailError("royal_mail_label_unavailable",
     "Royal Mail could not generate this label. Check the order in Click & Drop.", status);
-  if (status === 400 || status === 422) {
-    return new RoyalMailError("royal_mail_rejected", "Royal Mail rejected the shipment details. Check the address, parcel and service.", status);
-  }
+  if (status === 400 || status === 422) return rejected("", status);
   return new RoyalMailError("royal_mail_unavailable", "Royal Mail did not confirm this request.", status, posting);
 }
 
 async function clickDrop(
   key: string,
   path: string,
-  { body, label = false, missingOkay = false }: { body?: unknown; label?: boolean; missingOkay?: boolean },
+  { body, label = false, missingOkay = false, redact = [] }: { body?: unknown; label?: boolean; missingOkay?: boolean; redact?: string[] },
   fetcher: typeof fetch,
 ): Promise<unknown> {
   const token = typeof key === "string" ? key.trim() : "";
@@ -196,6 +243,14 @@ async function clickDrop(
     throw new RoyalMailError("royal_mail_unavailable", "Royal Mail did not confirm this request.", undefined, posting);
   }
   if (!response.ok) {
+    if (posting && !label && (response.status === 400 || response.status === 422)) {
+      let reasons = "";
+      try {
+        const bytes = await readBytes(response, JSON_LIMIT, "Royal Mail response exceeded its limit.");
+        reasons = providerReasons(JSON.parse(new TextDecoder().decode(bytes)), redact);
+      } catch { void response.body?.cancel().catch(() => {}); }
+      throw rejected(reasons, response.status);
+    }
     void response.body?.cancel().catch(() => {});
     if (response.status === 404 && missingOkay) return MISSING_ORDER;
     throw responseError(response.status, posting, label);
@@ -275,15 +330,21 @@ function publicOrder(value: unknown, reference: string, posting = false): RoyalM
 }
 
 /** Create once. An uncertain result must be reconciled by reference by the caller. */
+const recipientValues = (input: RoyalMailOrderInput) => {
+  const values = Object.values(input.recipient ?? {}).filter((v): v is string => typeof v === "string");
+  const postcode = (input.recipient?.postcode || "").toUpperCase().replace(/\s+/g, "");
+  return postcode.length > 3 ? [...values, postcode.slice(0, -3) + " " + postcode.slice(-3)] : values;
+};
+
 export async function createRoyalMailOrder(key: string, input: RoyalMailOrderInput, fetcher = fetch): Promise<RoyalMailOrder> {
-  const result = record(await clickDrop(key, "/orders", { body: orderBody(input) }, fetcher));
+  const result = record(await clickDrop(key, "/orders", { body: orderBody(input), redact: recipientValues(input) }, fetcher));
   const failures = result?.failedOrders;
   if (result?.successCount === 0 && result.errorsCount === 1 &&
       (result.createdOrders === undefined || (Array.isArray(result.createdOrders) && result.createdOrders.length === 0)) &&
       Array.isArray(failures) && failures.length === 1) {
     const failure = record(failures[0]);
     if (record(failure?.order)?.orderReference === input.reference && Array.isArray(failure?.errors) && failure.errors.length > 0) {
-      throw new RoyalMailError("royal_mail_rejected", "Royal Mail rejected the shipment details. Check the address, parcel and service.", 400);
+      throw rejected(providerReasons(result, recipientValues(input)));
     }
   }
   if (result?.successCount !== 1 || result.errorsCount !== 0 || !Array.isArray(result.createdOrders) || result.createdOrders.length !== 1) {

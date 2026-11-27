@@ -92,6 +92,18 @@ test('sends one GB parcel with the documented contract and returns only safe ord
   assert.deepEqual(result, expected);
 });
 
+test("sends the recipient's phone and email for delivery updates, only when valid", async () => {
+  const sent = async (recipient) => {
+    let body;
+    await createRoyalMailOrder(key, { ...input, recipient: { ...input.recipient, ...recipient } }, async (url, init) => { body = JSON.parse(init.body); return success(); });
+    const { address, ...contact } = body.items[0].recipient;
+    return contact;
+  };
+  assert.deepEqual(await sent({ phoneNumber: '01603 (123) 456', emailAddress: ' orders@example.test ' }), { phoneNumber: '01603 123 456', emailAddress: 'orders@example.test' });
+  assert.deepEqual(await sent({ phoneNumber: '12', emailAddress: 'not an email' }), {});
+  assert.deepEqual(await sent({}), {});
+});
+
 test('recognises an inline OBA label without returning it in the order DTO', async () => {
   const label = Buffer.from(pdf).toString('base64');
   assert.deepEqual(await createRoyalMailOrder(key, input, async () => Response.json({
@@ -146,6 +158,22 @@ test('reports definitive rejections without echoing the API body', async () => {
     successCount: 0, errorsCount: 1, createdOrders: [],
     failedOrders: [{ order: { orderReference: input.reference }, errors: [{ message: 'Example Street' }] }],
   })), outcome('royal_mail_rejected', false, 400));
+});
+
+test("keeps Royal Mail's own reason for a refusal, without the recipient's details", async () => {
+  const reason = async (reply) => { try { await createRoyalMailOrder(key, input, async () => reply()); } catch (error) { return error; } };
+  let error = await reason(() => Response.json({
+    successCount: 0, errorsCount: 1, createdOrders: [],
+    failedOrders: [{ order: { orderReference: input.reference }, errors: [{ errorCode: 61, errorMessage: 'Service code NDB is not valid for 1 Example Street, NR2 1DE', fields: [{ fieldName: 'postageDetails.serviceCode', value: 'NDB' }] }] }],
+  }));
+  outcome('royal_mail_rejected', false, 400)(error);
+  assert.match(error.message, /Royal Mail said: Service code NDB is not valid for …, … \(code 61, field postageDetails.serviceCode\)/);
+  assert.doesNotMatch(error.message, /NR2 1DE|NR21DE/);
+  error = await reason(() => Response.json({ errors: [{ errorCode: 2, errorMessage: 'Recipient phone number is required', fields: [{ fieldName: 'recipient.phoneNumber' }] }] }, { status: 400 }));
+  outcome('royal_mail_rejected', false, 400)(error);
+  assert.match(error.message, /Recipient phone number is required \(code 2, field recipient.phoneNumber\)/);
+  error = await reason(() => new Response('not json', { status: 400 }));
+  assert.equal(error.message, 'Royal Mail rejected the shipment details. Check the address, parcel and service.');
 });
 
 test('only a confirmed missing or exact unique lookup can be used for reconciliation', async () => {
