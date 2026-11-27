@@ -204,8 +204,8 @@ test("dispatch review warns on a held Royal Mail label and accepts another couri
   const { page, dialog } = await staffPage(t, desktop, async route => route.fulfill({ json: state }));
   await dialog.getByRole("button", { name: "Done" }).click();
   await page.locator("#packingDesk").getByRole("button", { name: "Review dispatch" }).click();
-  const dispatch = page.getByRole("dialog", { name: "Confirm dispatch" });
-  await dispatch.getByText(/account has an overdue balance/).waitFor();
+  const dispatch = page.getByRole("dialog", { name: "Ship this order" });
+  await dispatch.getByText(/account has an overdue balance/).first().waitFor();
   const confirm = dispatch.getByRole("button", { name: "Mark dispatched" });
   assert.equal(await confirm.isDisabled(), true);
   const tracking = dispatch.getByLabel("Tracking link (optional)");
@@ -471,10 +471,38 @@ test("Admin dispatch queue hands over the reviewed label with its booked address
   await action.click();
   await page.getByText("30 New Lane, Norwich, NR3 1AA", { exact: true }).waitFor();
   assert.equal(await page.locator("#wDispatchTracking").count(), 0);
+  await page.getByRole("button", { name: "View Royal Mail label" }).click();
+  await page.getByRole("button", { name: "Back to dispatch queue" }).click();
+  await action.click();
   assert.equal(saves, 0);
   await page.getByRole("button", { name: "Confirm dispatch", exact: true }).click();
   await page.locator("#wDispatchOrderForm").waitFor({ state: "detached" });
   assert.equal(saves, 1);
+});
+
+test("an admin can review postage and return to the order’s unsaved tracking link", async t => {
+  const context = await browser.newContext(phone);
+  t.after(() => context.close());
+  const [name, value] = adminCookie.split("=");
+  await context.addCookies([{ name, value, url: server.base }]);
+  const page = await context.newPage();
+  const writes = [];
+  page.on("request", req => {
+    if (new URL(req.url()).pathname.startsWith("/api/admin/wholesale/orders/" + order.id) && req.method() !== "GET") writes.push(req.method());
+  });
+  await page.route("**/api/admin/wholesale/orders/" + order.id + "/shipping", route => route.fulfill({ json: eligible() }));
+  await page.goto(server.base + "/admin#wholesale/orders");
+  await page.locator(`[data-act="wh-next"][data-id="${order.id}"]`).click();
+  const handover = page.locator("#wDispatchOrderForm");
+  const draft = "https://other-courier.example.test/track/12345";
+  await handover.getByLabel("Tracking link (optional)").fill(draft);
+  await handover.getByRole("button", { name: "Request Royal Mail label" }).click();
+  await page.getByRole("button", { name: "Back to dispatch", exact: true }).click();
+  assert.equal(await handover.getByLabel("Tracking link (optional)").inputValue(), draft);
+  await handover.getByRole("button", { name: "Keep as Ready" }).click();
+  await handover.waitFor({ state: "hidden" });
+  assert.deepEqual(writes, []);
+  assert.equal((await call("GET", "/api/wholesale/orders/" + order.id)).order.status, "Ready");
 });
 
 test("a staff dispatch deep link opens the real queue and discards its rows when access is lost", async (t) => {
@@ -540,3 +568,55 @@ test("Admin can open a held order’s billing account and return to the queue", 
   await page.waitForFunction(() => document.activeElement?.closest("[data-queue-order]"));
   assert.equal(await action.isVisible(), true);
 });
+
+// The owner's request, 27 Nov 2026: request the label from the order's dispatch step, then mark it dispatched or keep it
+// Ready and come back later, without leaving for a separate Royal Mail window.
+for (const [name, options] of [["phone", phone], ["ipad", { viewport: { width: 820, height: 1180 }, isMobile: true, hasTouch: true }], ["desktop", desktop]]) for (const colorScheme of ["light", "dark"]) {
+  test(`the dispatch step requests the Royal Mail label, then keeps the order Ready (${name}, ${colorScheme})`, async (t) => {
+    const context = await browser.newContext({ ...options, colorScheme });
+    t.after(() => context.close());
+    const [cookieName, value] = staffCookie.split("=");
+    await context.addCookies([{ name: cookieName, value, url: server.base }]);
+    const page = await context.newPage();
+    const errors = []; page.on("pageerror", (e) => errors.push(e.message));
+    let state = eligible(), posts = 0;
+    const booking = Promise.withResolvers();
+    await page.route("**/api/staff-orders/orders/" + order.id + "/shipping**", async (route) => {
+      if (route.request().method() === "POST") {
+        posts++;
+        assert.equal(route.request().postDataJSON().weightGrams, 1555);
+        await booking.promise;
+        state = labelled(state);
+      }
+      return route.fulfill({ json: state });
+    });
+    await page.goto(server.base + "/orders");
+    await page.locator('[data-order-id="' + order.id + '"]').click();
+    if (options.isMobile) await page.locator("#orderDialogAction").getByRole("button", { name: "Process dispatch" }).click();
+    await page.getByRole("button", { name: "Review dispatch" }).locator("visible=true").first().click();
+    const ship = page.getByRole("dialog", { name: "Ship this order" });
+    await ship.getByRole("heading", { name: "Royal Mail label" }).waitFor();
+    const grams = ship.getByRole("spinbutton", { name: "Packed parcel weight (grams)" });
+    assert.equal(await grams.inputValue(), "1555");
+    await ship.getByRole("button", { name: "Review label request" }).click();
+    const posted = page.waitForRequest(req => req.method() === "POST" && new URL(req.url()).pathname.endsWith("/shipping"));
+    try {
+      await ship.getByRole("button", { name: "Request Royal Mail label" }).click();
+      await posted;
+      assert.equal(await ship.getByRole("button", { name: "Mark dispatched" }).isDisabled(), true, "handover waits for the ongoing label request");
+    } finally {
+      booking.resolve();
+    }
+    await ship.getByRole("button", { name: "Download label PDF" }).waitFor();
+    assert.equal(posts, 1);
+    // The label's tracking goes straight into the dispatch below it.
+    await page.waitForFunction(() => /AB123456789GB/i.test(document.querySelector("#deskTracking")?.value || ""));
+    assert.equal(await ship.getByRole("button", { name: "Mark dispatched" }).isEnabled(), true);
+    assert.equal(await page.getByRole("dialog", { name: "Royal Mail" }).count(), 0, "no separate Royal Mail window");
+    await page.screenshot({ path: `${process.env.SHOT_DIR || "/tmp"}/ship-this-order-${name}-${colorScheme}.png` });
+    await ship.getByRole("button", { name: "Keep as Ready" }).click();
+    await ship.waitFor({ state: "hidden" });
+    assert.equal((await call("GET", "/api/wholesale/orders/" + order.id)).order.status, "Ready");
+    assert.deepEqual(errors, []);
+  });
+}

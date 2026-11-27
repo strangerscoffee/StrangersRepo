@@ -118,6 +118,8 @@ Managers and admins with an address can receive a summary every Monday at 07:30 
 
 The packed weight starts on an estimate: the coffee, about 15 g overfill and the empty bag (18 g for 250 g, 40 g for 1 kg) for each bag, plus about 500 g for the box, paper and tape. Weigh the sealed parcel and change it if needed. The figures are in `parcelEstimate` (`public/shared/wholesale-preparation.js`).
 
+From an order, **Review dispatch** opens **Ship this order**: request the Royal Mail label there (check the weight, Request label, Download label PDF), then **Mark dispatched** when the parcel leaves, or **Keep as Ready** to dispatch later. A label is optional; another courier's tracking link still works. In Admin, the dispatch sheet's **Request Royal Mail label** opens the label sheet and **Back to dispatch** returns with the tracking filled in.
+
 An order over 30 kg packed is booked in Click & Drop by hand: create the order there, split it into boxes of up to 30 kg to the same address under **Manage order**, print the labels, then paste a tracking link when marking it dispatched.
 
 **Admin → Wholesale → Royal Mail** shows which carrier settings are configured and controls new bookings. Bookings start off. Once the Click & Drop key and service are configured, an admin can turn them on. Switching off stops new requests before they are sent. Existing labels, tracking and manual dispatch stay available, and requests already sent to Royal Mail can finish.
