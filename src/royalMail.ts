@@ -179,30 +179,39 @@ function orderBody(input: RoyalMailOrderInput) {
  * recipient detail sent is blanked out of the message, which is plain text and short. */
 export function providerReasons(value: unknown, sent: string[] = []): string {
   const seen: string[] = [];
-  const hide = sent.filter(v => typeof v === "string" && v.trim().length >= 3).map(v => v.trim())
-    .flatMap(v => [v, v.replace(/\s+/g, "")]).sort((a, b) => b.length - a.length);
-  const clean = (text: unknown, max: number) => {
-    if (typeof text !== "string") return "";
-    let out = text.replace(/[\u0000-\u001f\u007f<>]/g, " ");
-    for (const v of hide) out = out.split(v).join("…").split(v.toLowerCase()).join("…").split(v.toUpperCase()).join("…");
-    return out.replace(/\s+/g, " ").trim().slice(0, max);
-  };
+  // Every word of what we sent about the recipient (3+ characters) is blanked out of Royal Mail's wording.
+  const words = [...new Set(sent.filter(v => typeof v === "string").flatMap(v => [v.trim(), v.replace(/\s+/g, ""), ...v.split(/[\s,]+/)])
+    .map(w => w.trim()).filter(w => w.length >= 3))].sort((a, b) => b.length - a.length);
+  const hide = (text: string) => words.reduce((out, w) => out.replace(new RegExp(w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), "…"), text);
+  const clean = (text: unknown, max: number) => typeof text === "string"
+    ? hide(text.replace(/[\u0000-\u001f\u007f<>]/g, " ")).replace(/\s+/g, " ").trim().slice(0, max) : "";
   const add = (entry: unknown) => {
     const e = record(entry);
+    if (typeof entry === "string") { const line = clean(entry, 160); if (line && !seen.includes(line)) seen.push(line); return; }
     if (!e) return;
-    const message = clean(e.errorMessage, 160);
-    const code = Number.isSafeInteger(e.errorCode) ? `code ${e.errorCode}` : "";
-    const fields = (Array.isArray(e.fields) ? e.fields : []).map(f => clean(record(f)?.fieldName, 60)).filter(Boolean);
+    const message = clean(e.errorMessage ?? e.message ?? e.detail ?? e.title ?? e.description, 160);
+    const codeValue = e.errorCode ?? e.code;
+    const code = Number.isSafeInteger(codeValue) || (typeof codeValue === "string" && /^[\w.-]{1,40}$/.test(codeValue)) ? `code ${codeValue}` : "";
+    const named = (Array.isArray(e.fields) ? e.fields.map(f => record(f)?.fieldName) : [])
+      .concat(typeof e.field === "string" ? [e.field] : typeof e.fieldName === "string" ? [e.fieldName] : typeof e.propertyName === "string" ? [e.propertyName] : []);
+    const fields = named.map(f => clean(f, 60)).filter(Boolean);
     const line = [message, [code, fields.length ? "field " + fields.join(", ") : ""].filter(Boolean).join(", ")].filter(Boolean)
       .map((part, i) => i ? `(${part})` : part).join(" ");
     if (line && !seen.includes(line)) seen.push(line);
+    for (const nested of Array.isArray(e.errors) ? e.errors : []) add(nested);
+    // ASP.NET-style validation replies: { errors: { "field": ["message", …] } }
+    const map = record(e.errors);
+    if (map) for (const [field, list] of Object.entries(map)) for (const m of Array.isArray(list) ? list : [list]) {
+      const text = clean(m, 140), name = clean(field, 60);
+      const entryLine = [text, name ? `(field ${name})` : ""].filter(Boolean).join(" ");
+      if (entryLine && !seen.includes(entryLine)) seen.push(entryLine);
+    }
   };
   const top = record(value);
   for (const failure of Array.isArray(top?.failedOrders) ? top!.failedOrders as unknown[] : []) {
     for (const entry of Array.isArray(record(failure)?.errors) ? record(failure)!.errors as unknown[] : []) add(entry);
   }
-  for (const entry of Array.isArray(top?.errors) ? top!.errors as unknown[] : Array.isArray(value) ? value : []) add(entry);
-  if (!seen.length && top) add(top);
+  if (!seen.length) { if (Array.isArray(value)) value.forEach(add); else add(value); }
   return seen.slice(0, 3).join("; ").slice(0, 400);
 }
 const REJECTED = "Royal Mail rejected the shipment details. Check the address, parcel and service.";
