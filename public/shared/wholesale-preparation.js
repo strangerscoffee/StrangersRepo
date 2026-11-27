@@ -74,12 +74,18 @@
 // and about 500 g for the double-walled box, paper and tape. A starting value
 // only: staff weigh the sealed parcel and change it, and the server still checks it covers the coffee and is under 30 kg.
 const BAG_GRAMS=Object.freeze({quarter:18,kilo:40}),OVERFILL_GRAMS=15,BOX_GRAMS=500;
-function parcelEstimate(row){
+// Royal Mail takes up to 30 kg in one parcel. A heavier order (by its estimate) is booked in Click & Drop by hand and
+// split into boxes there (Manage order), so the pages say how instead of offering a single label.
+const PARCEL_LIMIT_GRAMS=30000;
+const tooHeavyForOneParcel=row=>packedEstimate(row)>PARCEL_LIMIT_GRAMS;
+const OVER_LIMIT_STEPS='This order is over Royal Mail’s 30 kg limit for one parcel, so book it in Click & Drop instead: create the order there, use Manage order to split it into boxes of up to 30 kg to the same address, and print the labels. Then paste a tracking link when you mark it dispatched.';
+function parcelEstimate(row){return Math.min(PARCEL_LIMIT_GRAMS,packedEstimate(row));}
+function packedEstimate(row){
   const lines=Array.isArray(row?.lines)?row.lines:[];
   const coffee=lines.reduce((sum,l)=>sum+(Number(l.grams)||0)*(Number(l.quantity)||0),0)||Number(row?.grams)||0;
   if(!coffee)return 0;
   const bags=lines.reduce((sum,l)=>sum+((BAG_GRAMS[l.pack]??(Number(l.grams)>=1000?40:18))+OVERFILL_GRAMS)*(Number(l.quantity)||0),0);
-  return Math.min(30000,Math.max(Number(row?.grams)||0,Math.round(coffee+bags+BOX_GRAMS)));
+  return Math.max(Number(row?.grams)||0,Math.round(coffee+bags+BOX_GRAMS));
 }
-window.SCWholesalePreparation=Object.freeze({grindFor,parcelEstimate,decafLine,coffeeColour,coffeeFill,coffeeStyle,packagingColours:Object.freeze(packaging.map(e=>Object.freeze({...e}))),iconPaths:Object.freeze({"grind-beans": "<path d=\"M18 4c-4-3-11 1-13 6s0 10 4 11 10-3 12-8 1-7-3-9Z\"/><path d=\"M17 5c-6 3-2 8-10 14\"/>", "grind-fine": "<path d=\"M5 4h14v5H5zM7 9v4h10V9M9 13v3h6v-3M5 21h14M10 18v3M14 18v3\"/>", "grind-medium": "<path d=\"m3 4 9 12 9-12H3ZM12 16v4M8 21h8M7 4l5 8 5-8\"/>", "grind-coarse": "<path d=\"M6 8h11v11H6zM4 21h15M4 4h15M11 2v6M17 10h2a3 3 0 0 1 0 6h-2\"/>"})});
+window.SCWholesalePreparation=Object.freeze({grindFor,parcelEstimate,tooHeavyForOneParcel,OVER_LIMIT_STEPS,decafLine,coffeeColour,coffeeFill,coffeeStyle,packagingColours:Object.freeze(packaging.map(e=>Object.freeze({...e}))),iconPaths:Object.freeze({"grind-beans": "<path d=\"M18 4c-4-3-11 1-13 6s0 10 4 11 10-3 12-8 1-7-3-9Z\"/><path d=\"M17 5c-6 3-2 8-10 14\"/>", "grind-fine": "<path d=\"M5 4h14v5H5zM7 9v4h10V9M9 13v3h6v-3M5 21h14M10 18v3M14 18v3\"/>", "grind-medium": "<path d=\"m3 4 9 12 9-12H3ZM12 16v4M8 21h8M7 4l5 8 5-8\"/>", "grind-coarse": "<path d=\"M6 8h11v11H6zM4 21h15M4 4h15M11 2v6M17 10h2a3 3 0 0 1 0 6h-2\"/>"})});
 })();

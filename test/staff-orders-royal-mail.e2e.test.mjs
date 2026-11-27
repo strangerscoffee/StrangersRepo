@@ -7,7 +7,7 @@ const require = createRequire(import.meta.url);
 let chromium;
 try { ({ chromium } = require("playwright")); } catch { ({ chromium } = await import("playwright")); }
 
-let server, browser, adminCookie, staffCookie, order;
+let server, browser, adminCookie, staffCookie, order, heavy;
 async function call(method, path, body, cookie = adminCookie) {
   const response = await fetch(server.base + path, {
     method, headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) },
@@ -38,6 +38,14 @@ before(async () => {
   }, buyerCookie);
   ({ order } = await call("PATCH", "/api/admin/wholesale/orders/" + placed.order.id, {
     ifVersion: placed.order.version, customerId: customer.id, status: "Ready",
+  }));
+  // 29 kg of coffee: about 31.2 kg packed, so over Royal Mail's 30 kg limit for one parcel.
+  const big = await call("POST", "/api/wholesale/orders", {
+    requestId: crypto.randomUUID(), delivery: "Delivery", customerVersion: customer.version,
+    lines: [{ productId: "brazil", pack: "kilo", grind: "beans", quantity: 29, price: 1800 }],
+  }, buyerCookie);
+  ({ order: heavy } = await call("PATCH", "/api/admin/wholesale/orders/" + big.order.id, {
+    ifVersion: big.order.version, customerId: customer.id, status: "Ready",
   }));
 });
 after(async () => { await browser?.close(); await server?.stop(); });
@@ -230,3 +238,34 @@ for (const [name, options] of [["phone", phone], ["ipad", { viewport: { width: 8
     await page.screenshot({ path: `${process.env.SHOT_DIR || "/tmp"}/royal-mail-weight-${name}-${colorScheme}.png` });
   });
 }
+
+// The owner's note, 27 Nov 2026: orders over 30 kg are split into boxes under Manage order in Click & Drop.
+test("an order over 30 kg packed says to book and split it in Click & Drop", async (t) => {
+  const context = await browser.newContext(desktop);
+  t.after(() => context.close());
+  const [name, value] = staffCookie.split("=");
+  await context.addCookies([{ name, value, url: server.base }]);
+  const page = await context.newPage();
+  await page.route("**/api/staff-orders/orders/" + heavy.id + "/shipping**", (route) => route.fulfill({ json: { ...eligible(), orderVersion: heavy.version } }));
+  await page.goto(server.base + "/orders");
+  await page.locator('[data-order-id="' + heavy.id + '"]').click();
+  await page.locator("#packingDesk").getByRole("button", { name: "Royal Mail", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Royal Mail" });
+  await dialog.getByText(/Manage order to split it into boxes/).first().waitFor();
+  assert.equal(await dialog.getByRole("button", { name: "Review label request" }).count(), 0);
+
+  const admin = await browser.newContext({ viewport: { width: 820, height: 1180 }, isMobile: true, hasTouch: true, colorScheme: "dark" });
+  t.after(() => admin.close());
+  const [an, av] = adminCookie.split("=");
+  await admin.addCookies([{ name: an, value: av, url: server.base }]);
+  const ap = await admin.newPage();
+  await ap.route("**/api/admin/wholesale/orders/" + heavy.id + "/shipping**", (route) => route.fulfill({ json: { ...eligible(), orderVersion: heavy.version } }));
+  await ap.goto(server.base + "/admin#wholesale");
+  await ap.locator(`[data-act="wh-order"][data-id="${heavy.id}"]`).locator("visible=true").first().click();
+  await ap.getByRole("button", { name: "Royal Mail shipping" }).locator("visible=true").first().click();
+  await ap.getByText("Over 30 kg: book in Click & Drop").waitFor();
+  assert.equal(await ap.locator('#sheet button[type="submit"]').count(), 0);
+  assert.notEqual(await ap.locator("#wShippingFields").getAttribute("disabled"), null);
+  assert.ok(await ap.locator('input[name="weightGrams"]').isDisabled());
+  await ap.screenshot({ path: `${process.env.SHOT_DIR || "/tmp"}/royal-mail-over-30kg-ipad-dark.png` });
+});

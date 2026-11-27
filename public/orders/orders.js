@@ -6,7 +6,7 @@
 // Private views are cleared or hidden when the session can't be verified.
 (()=>{
  'use strict';
- const {el,svgi}=SC,{grindFor,decafLine,iconPaths,coffeeStyle,parcelEstimate}=SCWholesalePreparation,packing=SCWholesalePacking;
+ const {el,svgi}=SC,{grindFor,decafLine,iconPaths,coffeeStyle,parcelEstimate,tooHeavyForOneParcel,OVER_LIMIT_STEPS}=SCWholesalePreparation,packing=SCWholesalePacking;
  const $=id=>document.getElementById(id);
  const wideDesk=matchMedia('(min-width: 1240px)');
  const packProblems=new Map(),shippingSummaries=new Map(),labelRequests=new Map();
@@ -338,7 +338,7 @@
  // The carrier record is separate from the order. Only explicit dispatch uses the existing order save.
  const shippingPath=row=>'orders/'+encodeURIComponent(row.id)+'/shipping';
  const royalMailMaxWeight=30000;
- const overweightShipping='This order exceeds Royal Mail’s 30 kg limit for one parcel. Ask an admin to review shipping.';
+ const overweightShipping=OVER_LIMIT_STEPS;
  const isFinancialShippingError=code=>/^royal_mail_(?:account_on_hold|account_overdue|payment_required|payment_review)$/.test(code||'');
  function verifyShippingResult(result){
   if(!result||typeof result.enabled!=='boolean'||!Number.isSafeInteger(result.orderVersion)||
@@ -381,7 +381,7 @@
   if(!result?.enabled)return ['Royal Mail unavailable','Use a courier tracking link at dispatch.','notice'];
   if(shippingNeedsReview(shipment))return ['Royal Mail needs review','Check the shipment before handing over the parcel.','warning'];
   if(shippingOnHold(result))return ['Royal Mail label on hold',financialHold(result),'warning'];
-  if(shippingCanCreate(result))return row.grams>royalMailMaxWeight?['Label booking unavailable',overweightShipping,'warning']:
+  if(shippingCanCreate(result))return tooHeavyForOneParcel(row)?['Over 30 kg: book in Click & Drop',overweightShipping,'warning']:
    [shipment?'Royal Mail label request failed':'Ready for a Royal Mail label','Review the packed parcel and request a label.','notice'];
   const blocker=shippingBlocker(result);
   if(blocker)return ['Label booking unavailable',blocker,'warning'];
@@ -454,7 +454,7 @@
   if(!result.enabled)return 'Royal Mail is unavailable. You can add any courier’s tracking link when you confirm dispatch.';
   if(shippingOnHold(result))return financialHold(result);
   if(!shipment||shipment.state==='failed'){
-   if(shippingCanCreate(result))return row.grams>royalMailMaxWeight?overweightShipping:'';
+   if(shippingCanCreate(result))return tooHeavyForOneParcel(row)?overweightShipping:'';
    return shippingBlocker(result)||(row.status==='Ready'?'Ask an admin to review this order before requesting a label.':
     row.status==='Dispatched'?'Dispatch is already recorded.':'Pack this order and mark it Ready before requesting a label.');
   }
@@ -489,7 +489,7 @@
   }},el('h3',{id:'royalMailBookingTitle',tabindex:'-1'},review.confirming?'Confirm label request':'Prepare a label'),summary,
   review.confirming?el('p',{class:'hint'},'Requesting this label books postage. Confirm dispatch separately after handover.'):
    el('label',{class:'field',for:'royalMailWeight'},el('span',{},'Packed parcel weight (grams)'),input,
-    el('small',{id:'royalMailWeightHint'},`${review.estimated?'Filled in with an estimate: the coffee with a little overfill, its bags and about 500 g of box and packing. ':''}Weigh the sealed parcel and change it if needed. The coffee weighs ${weight(review.row.grams)}. One parcel, up to 30 kg.`)),
+    el('small',{id:'royalMailWeightHint'},`${review.estimated?'Filled in with an estimate: the coffee with a little overfill, its bags and about 500 g of box and packing. ':''}Weigh the sealed parcel and change it if needed. The coffee weighs ${weight(review.row.grams)}. One parcel, up to 30 kg; anything heavier is split into boxes in Click & Drop.`)),
   el('div',{class:'royal-mail-actions'},review.confirming?action('edit','Edit weight',()=>{
    review.confirming=false;review.error='';renderShipping(review);$('royalMailWeight').focus({preventScroll:true});
   }):null,review.confirming?submit('create','Request Royal Mail label'):submit('review','Review label request')));
@@ -542,7 +542,7 @@
   const guidance=stale||needsCheck||labelNeedsReview&&!onHold?'':shippingGuidance(review);
   const retry=!result&&review.error;
   const recheck=!canRefresh&&review.row.status==='Ready'&&!!shippingBlocker(result);
-  const canBook=!review.busy&&!request&&!stale&&review.row.grams<=royalMailMaxWeight&&shippingCanCreate(result);
+  const canBook=!review.busy&&!request&&!stale&&!tooHeavyForOneParcel(review.row)&&shippingCanCreate(result);
   body.replaceChildren(el('div',{class:'royal-mail-panel','aria-busy':String(Boolean(review.busy))},
    el('div',{class:'royal-mail-heading'},el('h3',{},business),orderMeta?el('p',{class:'desk-meta'},orderMeta):null),
    result?el('div',{class:'royal-mail-carrier'},
