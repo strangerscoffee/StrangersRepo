@@ -299,6 +299,10 @@ export async function handleWholesaleRoyalMail(req: Request, env: Env, id: strin
 
   const existing = await getShipment(env, id);
   if (action === "label") {
+    const previewValues = new URL(req.url).searchParams.getAll("preview");
+    const preview = previewValues.length > 0;
+    if (preview && (staff || actor.role !== "admin")) throw new ApiError(403, "permission_denied", "Preview shipping labels from Admin.");
+    if (preview && (previewValues.length !== 1 || previewValues[0] !== "1")) throw invalid("Choose a valid label preview.");
     if (!existing?.provider_id || !labelReady(existing)) {
       throw new ApiError(409, "label_pending", "Complete the label in Click & Drop, then check the shipment before downloading it.");
     }
@@ -331,17 +335,22 @@ export async function handleWholesaleRoyalMail(req: Request, env: Env, id: strin
     const access = staff && actor.role !== "admin" ? {
       sql: " AND EXISTS (SELECT 1 FROM staff_order_access WHERE user_id=? AND enabled=1)", args: [actor.id],
     } : { sql: "", args: [] };
-    const released = await env.DB.prepare(`UPDATE wholesale_royal_mail_shipments SET label_downloaded_at=COALESCE(label_downloaded_at,?)
-      WHERE order_id=? AND operation=? AND provider_id=? AND tracking_number IS ? AND review_required=0
+    const guard = `WHERE order_id=? AND operation=? AND provider_id=? AND tracking_number IS ? AND review_required=0
         AND state IN ('labelled','dispatched') AND EXISTS (
-          SELECT 1 FROM wholesale_preview WHERE kind='order' AND id=? AND version=?)${eligible.sql}${access.sql}`)
-      .bind(Date.now(), id, shipment.operation, shipment.provider_id, shipment.tracking_number, id, latest.version, ...eligible.args, ...access.args).run();
-    if (!released.meta.changes) {
+          SELECT 1 FROM wholesale_preview WHERE kind='order' AND id=? AND version=?)${eligible.sql}${access.sql}`;
+    const args = [id, shipment.operation, shipment.provider_id, shipment.tracking_number, id, latest.version, ...eligible.args, ...access.args];
+    // Opening the preview must not advance the parcel to Awaiting handover. Check the
+    // same release conditions in its last database read as a download does in its write.
+    const valid = preview
+      ? await env.DB.prepare(`SELECT 1 FROM wholesale_royal_mail_shipments ${guard}`).bind(...args).first()
+      : (await env.DB.prepare(`UPDATE wholesale_royal_mail_shipments SET label_downloaded_at=COALESCE(label_downloaded_at,?) ${guard}`)
+          .bind(Date.now(), ...args).run()).meta.changes;
+    if (!valid) {
       if (staff) await checkStaffLabel(latest);
       throw review();
     }
     return new Response(pdf, { headers: { "content-type": "application/pdf", "cache-control": "no-store",
-      "content-disposition": `attachment; filename="Royal-Mail-${id}.pdf"` } });
+      "content-disposition": `${preview ? "inline" : "attachment"}; filename="Royal-Mail-${id}.pdf"` } });
   }
   if (action === "verify") {
     const body = object(await readJson(req, 1024));
@@ -457,17 +466,18 @@ export async function handleWholesaleRoyalMail(req: Request, env: Env, id: strin
   const connection = await bookingConnection(key);
   const reserved = await env.DB.prepare(`INSERT INTO wholesale_royal_mail_shipments
       (order_id, state, operation, order_version, shipping_fingerprint, weight_grams, updated_at, requested_at,
-      destination_address, destination_postcode, booking_connection)
-    SELECT ?, 'booking', ?, ?, ?, ?, ?, 0, ?, ?, ? WHERE EXISTS (
+      destination_address, destination_postcode, booking_connection, label_order_created_at)
+    SELECT ?, 'booking', ?, ?, ?, ?, ?, 0, ?, ?, ?, ? WHERE EXISTS (
       SELECT 1 FROM wholesale_preview WHERE kind='order' AND id=? AND version=? AND json_extract(data,'$.status')='Ready'
     ) AND ${BOOKING_ALLOWED}${eligibilityGuard.sql}${accessGuard.sql} ON CONFLICT(order_id) DO UPDATE SET state=excluded.state, operation=excluded.operation,
       order_version=excluded.order_version, shipping_fingerprint=excluded.shipping_fingerprint,
       weight_grams=excluded.weight_grams, updated_at=excluded.updated_at, requested_at=0, checked_at=NULL, refresh_after=NULL, problem=NULL,
       recovery_attempts=0, recovery_due_at=NULL, label_downloaded_at=NULL, booking_connection=excluded.booking_connection, booking_account_scope=NULL,
+      service_code=NULL, label_order_created_at=excluded.label_order_created_at,
       destination_address=excluded.destination_address, destination_postcode=excluded.destination_postcode
     WHERE wholesale_royal_mail_shipments.state = 'failed' RETURNING operation`)
     .bind(id, operation, order.version, fingerprint, weight, Date.now(),
-      [address.addressLine1, address.addressLine2, address.city, address.county].filter(Boolean).join(", "), address.postcode, connection,
+      [address.addressLine1, address.addressLine2, address.city, address.county].filter(Boolean).join(", "), address.postcode, connection, order.createdAt || null,
       id, order.version, policy.version, ...eligibilityGuard.args, ...accessGuard.args).first();
   if (!reserved) {
     await checkStaffAccess();
@@ -485,11 +495,11 @@ export async function handleWholesaleRoyalMail(req: Request, env: Env, id: strin
     if (!prior) {
       // Commit the outbound marker before transmission. A process stopped before this point can release the reservation.
       const at = Date.now();
-      const sending = await env.DB.prepare(`UPDATE wholesale_royal_mail_shipments SET requested_at = ?, updated_at = ?
+      const sending = await env.DB.prepare(`UPDATE wholesale_royal_mail_shipments SET requested_at = ?, updated_at = ?, service_code = ?
         WHERE order_id = ? AND operation = ? AND state = 'booking' AND requested_at = 0
         AND EXISTS (SELECT 1 FROM wholesale_preview WHERE kind = 'order' AND id = ? AND version = ?)
         AND ${BOOKING_ALLOWED}${eligibilityGuard.sql}${accessGuard.sql}`)
-        .bind(at, at, id, operation, id, order.version, policy.version, ...eligibilityGuard.args, ...accessGuard.args).run();
+        .bind(at, at, serviceCode, id, operation, id, order.version, policy.version, ...eligibilityGuard.args, ...accessGuard.args).run();
       if (!sending.meta.changes) {
         await checkStaffAccess();
         checkBookingPolicy(await readRoyalMailPolicy(env), policy.version);

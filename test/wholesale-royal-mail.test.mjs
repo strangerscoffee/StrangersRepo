@@ -126,6 +126,8 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
   const setup = await call("/api/auth/setup", "POST", { code: setupCode, name: "Test Admin", username: "ship.admin", password: "Local test password 2026!" });
   assert.equal(setup.status, 200);
   assert.equal((await call(shipPath(orderRef(1)) + "/label")).status, 401);
+  const previewLabel = id => call(shipPath(id) + "/label?preview=1");
+  assert.equal((await previewLabel(orderRef(1))).status, 401);
   assert.equal((await call(settingsPath)).status, 401);
   cookie = setup.headers.getSetCookie().find(value => /^sfbb_session=[^;]/.test(value)).split(";")[0];
   const db = await worker.getD1Database("DB");
@@ -258,7 +260,26 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     assert.equal(booked.state, "labelled");
     assert.equal(booked.trackingNumber, number);
     assert.ok(booked.requestedAt > 0);
-    assert.equal(await (await call(shipPath(id) + "/label")).text(), pdf);
+    const history = await (await call(settingsPath + "/labels?search=" + id)).json();
+    assert.equal(history.labels[0].serviceCode, "TPS48");
+    assert.equal(history.labels[0].createdAt, booked.requestedAt);
+    const beforePreview = requests.length;
+    assert.equal((await call(shipPath(id) + "/label?preview=invalid")).status, 400);
+    assert.equal((await call(shipPath(id) + "/label?preview=1&preview=0")).status, 400);
+    assert.equal(requests.length, beforePreview);
+    const preview = await previewLabel(id);
+    assert.equal(preview.status, 200);
+    assert.equal(await preview.text(), pdf);
+    assert.equal(preview.headers.get("content-disposition"), `inline; filename="Royal-Mail-${id}.pdf"`);
+    assert.equal(preview.headers.get("content-type"), "application/pdf");
+    assert.equal(preview.headers.get("cache-control"), "no-store");
+    assert.equal((await read(id)).labelDownloadedAt, null, "a preview must not unlock handover");
+    assert.ok(requests.slice(beforePreview).every(request => request.method === "GET"));
+    const download = await call(shipPath(id) + "/label");
+    assert.equal(download.headers.get("content-disposition"), `attachment; filename="Royal-Mail-${id}.pdf"`);
+    assert.equal(await download.text(), pdf);
+    const firstDownload = (await read(id)).labelDownloadedAt;
+    assert.ok(firstDownload > 0);
     const before = requests.length;
     const replies = await Promise.all(Array.from({ length: 5 }, () => refresh(id)));
     assert.ok(replies.every(response => response.status === 200));
@@ -280,6 +301,8 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     assert.ok(email.mail.text.includes(booked.trackingUrl));
     assert.match(email.mail.text, /18 Example Lane, Norwich, NR1 5AB/);
     assert.doesNotMatch(email.mail.text, /16 Example Lane/);
+    assert.equal(await (await previewLabel(id)).text(), pdf, "an unchanged dispatched order keeps its original label");
+    assert.equal((await read(id)).labelDownloadedAt, firstDownload);
     assert.equal((await call(shipPath(id) + "/label")).status, 200);
     assert.equal((await settings()).enabled, false, "old labels, scans and dispatch work while paused");
     await setBookings(true);
@@ -358,12 +381,18 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     const id = orderRef(3);
     await seed(id);
     assert.equal((await create(id)).status, 201);
+    interceptLabel = () => db.prepare("UPDATE wholesale_royal_mail_shipments SET review_required=1 WHERE order_id=?").bind(id).run();
+    try { assert.equal((await previewLabel(id)).status, 409, "a review raised during fetch blocks the private preview bytes"); }
+    finally { interceptLabel = undefined; }
+    assert.equal((await read(id)).labelDownloadedAt, null);
+    await db.prepare("UPDATE wholesale_royal_mail_shipments SET review_required=0 WHERE order_id=?").bind(id).run();
     interceptLabel = () => amend(id, "$.status", "Cancelled");
     try { assert.equal((await call(shipPath(id) + "/label")).status, 409); }
     finally { interceptLabel = undefined; }
     await amend(id, "$.status", "Ready");
     await amend(id, "$.lines[0].grind", "filter");
     assert.equal((await read(id)).orderChanged, true);
+    assert.equal((await previewLabel(id)).status, 409);
     assert.equal((await call(shipPath(id) + "/label")).status, 409);
     assert.equal((await dispatch(id, 4)).status, 409);
     const unfinished = orderRef(4);
@@ -372,6 +401,7 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     assert.equal((await create(unfinished)).status, 201);
     assert.equal((await read(unfinished)).state, "created");
     const before = requests.length;
+    assert.equal((await previewLabel(unfinished)).status, 409);
     assert.equal((await call(shipPath(unfinished) + "/label")).status, 409);
     assert.equal(requests.length, before, "a staff label download cannot generate unconfirmed postage");
   });
@@ -498,6 +528,9 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     assert.equal(shipment.reviewRequired, true);
     assert.equal(shipment.requestedAt, null);
     assert.equal(posts(), before);
+    const [adopted] = (await (await call(settingsPath + "/labels?search=" + id)).json()).labels;
+    assert.equal(adopted.serviceCode, null, "An adopted booking cannot infer the active service code");
+    assert.equal(adopted.dateSource, "order");
     const verify = await call(shipPath(id) + "/verify", "POST", { ifVersion: 1, trackingNumber: number, confirmed: true });
     assert.equal(verify.status, 200);
     assert.equal((await dispatch(id, 1)).status, 200);
@@ -600,6 +633,8 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     assert.equal((await staff(paid)).status, 403);
     assert.equal((await staff(paid, "GET", undefined, "/label")).status, 403);
     assert.equal((await grant(true, 0)).status, 200);
+    assert.equal((await staff(paid, "GET", undefined, "/label?preview=1")).status, 403);
+    assert.equal((await call(shipPath(paid) + "/label?preview=1", "GET", undefined, host, staffCookie)).status, 403);
     assert.equal((await call(staffPath(paid))).status, 404);
     assert.equal((await call(shipPath(paid), "POST", packageDetails, host, staffCookie)).status, 403);
     assert.equal((await call(settingsPath, "GET", undefined, host, staffCookie)).status, 403);

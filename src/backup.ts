@@ -60,7 +60,7 @@ export async function makeBackup(env: Env, by: string): Promise<BackupInfo> {
     { key: "royalMailSettings", sql: "SELECT enabled, version, updated_at FROM wholesale_royal_mail_settings WHERE id = 1" },
     { key: "royalMailShipments", sql: `SELECT order_id,state,operation,order_version,provider_id,tracking_number,carrier_status,
       carrier_event_at,weight_grams,updated_at,shipping_fingerprint,review_required,problem,requested_at,checked_at,
-      refresh_after,destination_address,destination_postcode,recovery_attempts,recovery_due_at,label_downloaded_at
+      refresh_after,destination_address,destination_postcode,recovery_attempts,recovery_due_at,label_downloaded_at,service_code,label_order_created_at
       FROM wholesale_royal_mail_shipments ORDER BY order_id` },
     { key: "announcement", sql: "SELECT * FROM wholesale_announcement" },
     { key: "tabs", sql: "SELECT * FROM wholesale_tabs ORDER BY cleared_at" },
