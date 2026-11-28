@@ -38,6 +38,7 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     ` },
     format: "esm", platform: "browser", target: "es2022", external: ["cloudflare:*"], write: false });
   const records = new Map();
+  const missingLookupReplies = new Map();
   const requests = [];
   const emails = [];
   const lostReplies = new Set();
@@ -110,6 +111,9 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
       }
       const reference = decodeURIComponent(url.pathname.split("/").at(-1)).replaceAll('"', "");
       await interceptLookup?.(reference);
+      if (!records.has(reference) && missingLookupReplies.has(reference)) {
+        return RuntimeResponse.json(missingLookupReplies.get(reference), { status: 400 });
+      }
       return RuntimeResponse.json(records.has(reference) ? [records.get(reference)] : []);
     } } },
   }] });
@@ -215,10 +219,18 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     }
   });
 
-  await t.test("concurrent booking and handover, safe reprints and exact-once dispatch email", async () => {
+  await t.test("retrying a blocked lookup purchases one label across concurrent requests, reprints and handover", async () => {
     const id = orderRef(1);
     await seed(id, { locationSnapshot: { address: "16 Example Lane\nNorwich", postcode: "NR1 5AB" } });
     assert.equal((await call(shipPath(id), "GET", undefined, "https://preview.staffstrangerscoffee.com")).status, 404);
+    missingLookupReplies.set(id, [{ message: "Shipping account not found" }]);
+    const blocked = await create(id);
+    assert.equal(blocked.status, 200);
+    const stopped = (await blocked.json()).shipment;
+    assert.equal(stopped.state, "failed");
+    assert.equal(stopped.requestedAt, null);
+    assert.equal(posts(), 0, "an ambiguous lookup never purchases postage");
+    missingLookupReplies.set(id, [{ code: "OrderNotFound", message: "Order not found", orderReference: id }]);
     let enter, release;
     const entered = new Promise(resolve => { enter = resolve; });
     const held = new Promise(resolve => { release = resolve; });
@@ -390,6 +402,7 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     assert.equal((await create(id)).status, 202);
     const carrier = records.get(id);
     records.delete(id); // Click & Drop accepted the POST but its lookup has not indexed the reference yet.
+    missingLookupReplies.set(id, [{ code: "OrderNotFound", message: "Order not found", orderReference: id }]);
     const recover = async () => {
       const response = await worker.dispatchFetch("https://recovery.fixture/run");
       assert.equal(response.status, 200);

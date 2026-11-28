@@ -373,40 +373,65 @@ async function rejectedBooking(response: Response, reference?: string, serviceCo
   }
 }
 
-// Click & Drop may answer a reference with no order as a 400 listing "not found" errors, not only as a 404
-// (a first wholesale booking's lookup was refused with a 400 on 28 Nov 2026). Only an explicit not-found for every entry counts as missing; anything else is reported with
-// Royal Mail's own code and short wording (a lookup sends no recipient details, so none can be echoed back).
-const LOOKUP_NOT_FOUND = /\b(?:not\s*found|no\s+(?:such\s+)?orders?|does\s+not\s+exist|could\s+not\s+(?:be\s+)?f(?:ou|i)nd|unknown\s+order)\b|^OrderNotFound$|^NotFound$/i;
+// A false miss here can cause a second postage purchase. A 400 is documented as a
+// validation failure, so allow only a complete, order-specific absence diagnostic.
+const lookupMessageFields = new Set(["message", "errorMessage", "detail", "title", "description", "details"]);
+const lookupCodeFields = new Set(["code", "errorCode"]);
+const lookupReferenceFields = new Set(["orderReference", "channelOrderReference"]);
 
-async function lookupRefusal(response: Response, reference?: string): Promise<typeof MISSING_ORDER> {
+function namesMissingOrder(message: string, reference: string): boolean {
+  if (/^(?:(?:the )?order(?: reference)? (?:was not found|not found|does not exist|could not be found)|unknown order|no (?:matching )?orders? (?:were |was )?found)\.?$/i.test(message)) return true;
+  const after = /^no (?:matching )?orders? (?:were |was )?found (?:for|with) (?:the )?(?:(?:order )?reference[: ]+)?(["']?)([a-z0-9_-]{1,40})\1\.?$/i.exec(message);
+  const before = /^(?:the )?order (?:with (?:the )?(?:order )?reference |reference )(["']?)([a-z0-9_-]{1,40})\1 (?:was not found|not found|does not exist|could not be found)\.?$/i.exec(message);
+  return (after || before)?.[2] === reference;
+}
+
+function missingLookupEntry(value: unknown, reference: string): boolean {
+  const entry = record(value);
+  if (!entry) return false;
+  let scoped = false, missing = false;
+  for (const [key, value] of Object.entries(entry)) {
+    if (lookupReferenceFields.has(key)) {
+      if (value !== reference) return false;
+      scoped = true;
+    } else if (key === "accountOrderNumber") {
+      // This is the provider's numeric order ID. A positive ID needs reconciliation.
+      if (value !== null && value !== 0) return false;
+    } else if (lookupMessageFields.has(key) || lookupCodeFields.has(key)) {
+      if (typeof value !== "string" || !value.trim()) return false;
+      const text = value.trim();
+      if (lookupCodeFields.has(key) ? /^(?:OrderNotFound|OrderReferenceNotFound)$/i.test(text) : namesMissingOrder(text, reference)) scoped = true;
+      else if (!/^not ?found\.?$/i.test(text)) return false;
+      missing = true;
+    } else return false;
+  }
+  return scoped && missing;
+}
+
+async function lookupRefusal(response: Response, reference: string): Promise<typeof MISSING_ORDER> {
   const status = response.status;
-  let value: unknown = null;
+  let value: unknown;
   try {
     const bytes = await readBytes(response, 16 * 1024, "Royal Mail lookup reply exceeded its limit.");
     value = JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes));
   } catch {
     void response.body?.cancel().catch(() => {});
   }
-  const top = record(value);
-  const list = Array.isArray(value) ? value : Array.isArray(top?.errors) ? top.errors : top ? [top] : [];
-  const entries = list.slice(0, 12).map(record).filter((entry): entry is Record<string, unknown> => !!entry);
-  const words = (entry: Record<string, unknown>) => [...diagnosticText(entry), entry.code, entry.errorCode]
-    .filter((text): text is string => typeof text === "string" && text.length <= 300);
-  if (entries.length && entries.length === list.length && entries.every(entry => words(entry).some(text => LOOKUP_NOT_FOUND.test(text.trim())))) {
-    return MISSING_ORDER;
-  }
-  const said = new Set<string>();
-  for (const entry of entries) {
-    const code = entry.code ?? entry.errorCode;
-    const shownCode = typeof code === "number" && Number.isSafeInteger(code) ? String(code) :
-      typeof code === "string" && /^[A-Za-z][A-Za-z0-9_]{0,39}$/.test(code) ? code : "";
-    const message = diagnosticText(entry).map(text => (reference ? text.split(reference).join("the order reference") : text).trim())
-      .find(text => text.length <= 160 && /^[A-Za-z0-9 .,'"()\/:;-]+$/.test(text) && !/\d|@/.test(text)) || "";
-    const shown = [message, shownCode && "code " + shownCode].filter(Boolean).join(", ");
-    if (shown) said.add(shown);
-  }
-  const detail = said.size ? " Royal Mail said: " + [...said].slice(0, 3).join("; ") + "." : "";
-  throw new RoyalMailError("royal_mail_rejected", "Royal Mail rejected the order-reference lookup. Check the reference in Click & Drop." + detail, status);
+  const wrapper = record(value);
+  const wrapped = Array.isArray(wrapper?.errors);
+  const entries = wrapped ? wrapper!.errors as unknown[] : Array.isArray(value) ? value : [value];
+  // Do not discard a contradictory identifier, message or result beside the errors array.
+  const pureWrapper = !wrapped || Object.keys(wrapper!).every(key => key === "errors" || key === "status" && wrapper!.status === status);
+  if (pureWrapper && entries.length > 0 && entries.length <= 12 && entries.every(entry => missingLookupEntry(entry, reference))) return MISSING_ORDER;
+
+  // Durable diagnostics must never echo arbitrary carrier text, identifiers or credentials.
+  const invalidIdentifier = entries.slice(0, 12).some(value => {
+    const entry = record(value);
+    return entry && (entry.code === "InvalidOrderIdentifier" || entry.errorCode === "InvalidOrderIdentifier" ||
+      diagnosticText(entry).some(message => /^order identifiers? (?:is|are) invalid\.?$/i.test(message.trim())));
+  });
+  const reason = invalidIdentifier ? " Click & Drop reports an invalid order identifier." : "";
+  throw new RoyalMailError("royal_mail_rejected", "Royal Mail rejected the order-reference lookup." + reason + " Check the order reference in Click & Drop.", status);
 }
 
 function responseError(status: number, posting: boolean, label = false): RoyalMailError {
@@ -444,7 +469,7 @@ async function clickDrop(
   }
   if (!response.ok) {
     if (posting && (response.status === 400 || response.status === 422)) throw await rejectedBooking(response, reference, serviceCode);
-    if (missingOkay && (response.status === 400 || response.status === 422)) return lookupRefusal(response, reference);
+    if (missingOkay && reference && (response.status === 400 || response.status === 422)) return lookupRefusal(response, reference);
     void response.body?.cancel().catch(() => {});
     if (response.status === 404 && missingOkay) return MISSING_ORDER;
     throw responseError(response.status, posting, label);
