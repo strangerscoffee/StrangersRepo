@@ -3,6 +3,11 @@ import { SQL_NOW_MS } from "./http";
 // Only the booking adapter, after a definite refusal of this operation, may write
 // this marker. Earlier Workers classified some ambiguous carrier replies as failed.
 export const DECLINED_POSTAGE = "Postage request declined. ";
+// The archive belongs to one purchase attempt. New carrier evidence must surface even if the
+// marker is still present. This only affects active work lists, never permission to buy postage.
+export const RETIRED_POSTAGE_TEST = `(retired_operation IS NOT NULL AND retired_operation=operation AND state='review' AND review_required=0
+  AND provider_id IS NULL AND candidate_provider_id IS NULL AND tracking_number IS NULL
+  AND label_downloaded_at IS NULL AND carrier_status IS NULL AND carrier_event_at IS NULL AND booking_account_scope IS NULL)`;
 const explicitConflicts = ["named another order in", "indicated an existing or ambiguous booking", "may already have this booking"];
 const deniedRequests = ["Royal Mail did not accept the Click & Drop key.", "This Click & Drop account does not have access to this operation."];
 

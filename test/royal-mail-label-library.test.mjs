@@ -57,6 +57,9 @@ test('generated label archive pages genuine shipments, keeps historical holds an
     insert(16),ship(16,{state:'created'}),insert(17),ship(17,{state:'review',provider:null}),
     insert(18),ship(18,{state:'failed'}),insert(19),ship(19,{provider:0}),
     insert(20,{status:'Cancelled'}),ship(20),ship(21),insert(22),
+    insert(23),ship(23,{state:'review',provider:null}),
+    db.prepare('UPDATE wholesale_royal_mail_shipments SET retired_operation=operation WHERE order_id IN (?,?)').bind(id(1),id(23)),
+    db.prepare('UPDATE wholesale_royal_mail_shipments SET retired_operation=? WHERE order_id=?').bind('earlier-operation',id(17)),
   ]);
   const requestPage = await archive('?view=requests&limit=2');
   assert.equal(requestPage.total,3);
@@ -71,6 +74,8 @@ test('generated label archive pages genuine shipments, keeps historical holds an
   const pendingMatch=await archive('?search='+id(17));
   assert.equal(pendingMatch.total,0);
   assert.equal(pendingMatch.outstandingCount,1);
+  assert.equal((await archive('?search='+id(23))).outstandingCount,0);
+  assert.deepEqual(await archive('?view=requests&search='+id(23)),{requests:[],total:0,nextCursor:null});
   // Re-run migration 56 against pre-feature shipment rows: request time wins, then actual order time, otherwise unknown.
   await db.prepare('DELETE FROM schema_migrations WHERE id=56').run();
   assert.equal((await worker.dispatchFetch('https://fixture.test/schema')).status,200);
@@ -134,4 +139,7 @@ test('generated label archive pages genuine shipments, keeps historical holds an
   assert.equal((await archive("?search="+parent+"-B1")).labels[0].canPreview,false,"changed goods values require review even when destination and weight agree");
   await db.prepare("UPDATE wholesale_royal_mail_settings SET booking_config='unreadable-override' WHERE id=1").run();
   const disconnected=await archive('?search=ab987');assert.equal(disconnected.total,1);assert.equal(disconnected.labels[0].canPreview,false);
+  await db.prepare('UPDATE wholesale_royal_mail_shipments SET candidate_provider_id=230 WHERE order_id=?').bind(id(23)).run();
+  const resurfaced = await archive('?view=requests&search='+id(23));
+  assert.deepEqual(resurfaced.requests.map(row=>row.id),[id(23)],'new carrier evidence restores an archived operation to the requests list');
 });

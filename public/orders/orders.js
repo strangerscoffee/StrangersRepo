@@ -378,6 +378,7 @@
  function shippingSummaryText(row,result){
   const shipment=result?.shipment,notice=(!shipment||unsentReferenceCheck(shipment))&&bookingNotice(result);
   if(result?.multiBox)return ['Multiple boxes',`${result.boxesReadyForHandover} of ${result.boxCount} boxes ready for handover`,result.readyForHandover?'ready':'notice'];
+  if(shipment?.retiredTest)return ['Test postage request archived','','reference'];
   if(notice)return [...notice,'notice'];
   if(!result?.enabled)return ['Royal Mail unavailable','Use a courier tracking link at dispatch.','notice'];
   if(shipment?.recovery&&!shipment.orderChanged&&!shipment.reviewRequired)return [shipment.requestedAt?'Postage request unconfirmed':'Postage request pending',recoveryMessage(shipment),'warning'];
@@ -402,7 +403,9 @@
   const [title,detail,tone]=result?.orderVersion===row.version?shippingSummaryText(row,result):
    ['Order details changed','Reload the order before dispatch.','warning'];
   card.dataset.tone=tone;
-  card.querySelector('[data-shipping-summary-copy]').replaceChildren(el('b',{},title),detail?el('span',{},detail):null);
+  const copy=card.querySelector('[data-shipping-summary-copy]');
+  copy.replaceChildren(el('b',{},title));
+  if(detail)copy.append(el('span',{},detail));
  }
  function rememberShipping(row,result){
   if(result.orderVersion!==row.version)return;
@@ -583,6 +586,12 @@
   const {business,locationName,reference}=review.row;
   const orderMeta=[locationName===business?'':locationName,reference].filter(Boolean).join(' · ');
   const stale=!!result&&(result.orderVersion!==review.row.version||findOrder(review.row.id)?.version!==review.row.version);
+  if(shipment?.retiredTest&&!stale){
+   body.replaceChildren(el('div',{class:'royal-mail-panel'},
+    review.embedded?null:el('div',{class:'royal-mail-heading'},el('h3',{},business),orderMeta?el('p',{class:'desk-meta'},orderMeta):null),
+    el('p',{class:'royal-mail-carrier',role:'status'},'Test postage request archived')));
+   return;
+  }
   const unsentLookup=unsentReferenceCheck(shipment);
   const labelNeedsReview=shipment?.orderChanged&&!unsentLookup||shipment?.reviewRequired;
   const onHold=shippingOnHold(result)||unsentLookup&&!!financialHold(result);
@@ -801,13 +810,14 @@
     (bookingOnHold()||manualOnHold())&&!otherCourier?financialHold(carrier):
     carrier?.multiBox&&!carrier.readyForHandover?`Review all ${carrier.boxCount} boxes before handover. ${carrier.boxesReadyForHandover} ready.`:
     queueBlocked?(carrier?'Review the Royal Mail label before handover.':review.carrierUnavailable?'The shipment could not be verified. Check again before handover.':'Checking the Royal Mail shipment…'):
+    carrier?.shipment?.retiredTest?(otherCourier?'This dispatch will use the other courier’s link.':'To record a handover with another courier, enter its tracking link.'):
     blocked&&otherCourier?'This dispatch will use the other courier’s link. The Royal Mail booking still needs attention.':
     needsReview?'The Royal Mail booking needs review. Check it before handover, or enter the tracking link for a different courier.':
     labelPending?'The Royal Mail label is pending. Ask an admin to finish it in Click & Drop, or enter the tracking link for a different courier.':
     wrongNumber?'The tracking link differs from the Royal Mail booking. Use the booking number or a different courier’s tracking link.':'';
    issue.textContent=warning;issue.hidden=!warning;handover.hidden=!warning;
    if(warning&&review.shippingError){$('deskDispatchError').hidden=true;review.shippingError=false;}
-   details.hidden=(!blocked&&!queueBlocked)||!carrier||orderChanged;
+   details.hidden=(!blocked&&!queueBlocked)||!carrier||orderChanged||!!carrier.shipment?.retiredTest;
    retry.hidden=!(review.queueHandover&&review.carrierUnavailable);
    useBooked.hidden=!wrongNumber||orderChanged;
    $('confirmDeskDispatch').disabled=review.saving||checkingRequest||!!orderChanged||queueBlocked||carrier?.multiBox&&!carrier.readyForHandover||(blocked&&!otherCourier)||wrongNumber;
@@ -829,7 +839,7 @@
    input.setCustomValidity(input.value.trim()&&!number&&(!courier||isRoyalMailUrl(courier))?'Enter a valid Royal Mail tracking number.':'');
    tracking.setCustomValidity(courier===null?'Use a full http or https tracking link without a username or password.':'');
    use.hidden=blocked||!link||tracking.value===link;
-   const nextHint=blocked?'Royal Mail tracking is unavailable until the booking is checked.':
+   const nextHint=carrier?.shipment?.retiredTest?'The archived test has no confirmed Royal Mail tracking.':blocked?'Royal Mail tracking is unavailable until the booking is checked.':
     use.hidden?(link?'Royal Mail tracking will be included with this dispatch.':'Enter a Royal Mail number to add the customer’s tracking link.')
     :tracking.value?'The current courier link will be kept unless you use the Royal Mail link.':'Use the Royal Mail link to attach this number.';
    if(hint.textContent!==nextHint)hint.textContent=nextHint;

@@ -32,6 +32,7 @@ test('backup reads one transaction: concurrent leave and invoice commits cannot 
  const shipments=[
   {order_id:'synthetic-booked-order',state:'labelled',operation:'booked-operation',provider_id:351,tracking_number:'AB123456789GB'},
   {order_id:'synthetic-pending-order',state:'booking',operation:'pending-operation',provider_id:null,tracking_number:null},
+  {order_id:'synthetic-retired-order',state:'review',operation:'historical-operation',retired_operation:'historical-operation',provider_id:null,tracking_number:null},
  ];
  const shippingSettings={enabled:0,version:3,updated_at:1};
  const boxPlans=[{order_id:'WS-TEST',revision:'sealed',weights:'[18000,18000]',contents:'{"quantities":[[18],[18]],"goodsPence":[32400,32400]}',shipping_fingerprint:'recorded'}];
@@ -42,7 +43,7 @@ test('backup reads one transaction: concurrent leave and invoice commits cannot 
   if(/FROM rota_leave_days\b/.test(sql))return snapshot.days;
   if(/FROM sqlite_sequence\b/.test(sql))return[{seq:snapshot.sequence}];
   if(/FROM wholesale_invoices\b/.test(sql))return snapshot.invoices;
-  if(/FROM wholesale_royal_mail_shipments\b/.test(sql))return shipments;
+  if(/FROM wholesale_royal_mail_shipments\b/.test(sql)){assert.match(sql,/\bretired_operation\b/);return shipments;}
   if(/FROM wholesale_royal_mail_box_plans\b/.test(sql))return boxPlans;
   if(/FROM wholesale_royal_mail_settings\b/.test(sql))return [shippingSettings];
   if(/FROM meta\b/.test(sql))return[{v:10}];

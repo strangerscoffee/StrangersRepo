@@ -3,7 +3,7 @@ import { loadRoyalMailConnections, readRoyalMailPolicy } from "../royalMailAppSe
 import { packingBasis } from "../royalMailBoxContents";
 import { royalMailOrderChanged } from "../wholesaleRoyalMail";
 import { belongsToOrder, boxNumberSql, matchesPlannedBox, shipmentOrderJoin } from "../royalMailShipmentOrder";
-import { HELD_FAILED_SHIPMENT } from "../royalMailBookingState";
+import { HELD_FAILED_SHIPMENT, RETIRED_POSTAGE_TEST } from "../royalMailBookingState";
 import { decode, type Row } from "../wholesaleStore";
 
 type Status = "ready" | "downloaded" | "dispatched";
@@ -31,7 +31,8 @@ function boxDetails(row: {parentId:string;boxNumber:number;boxCount:number|null}
 const orders = `FROM wholesale_royal_mail_shipments s INDEXED BY wholesale_royal_mail_label_history
   ${shipmentOrderJoin} WHERE ${generated} AND ${belongsToOrder} AND ${eligibleOrder}`;
 const outstanding = `FROM wholesale_royal_mail_shipments s ${shipmentOrderJoin}
-  WHERE (s.state IN ('booking','review','created') OR ${HELD_FAILED_SHIPMENT}) AND ${belongsToOrder} AND ${eligibleOrder}`;
+  WHERE (s.state IN ('booking','review','created') OR ${HELD_FAILED_SHIPMENT})
+    AND NOT ${RETIRED_POSTAGE_TEST} AND ${belongsToOrder} AND ${eligibleOrder}`;
 const requestStage = `CASE WHEN s.state='created' AND COALESCE(s.problem,'')='' THEN 'awaiting_label'
   WHEN s.state IN ('created','failed') OR s.recovery_due_at=0 THEN 'needs_attention'
   WHEN s.state='booking' AND s.requested_at=0 THEN 'preparing' ELSE 'unconfirmed' END`;

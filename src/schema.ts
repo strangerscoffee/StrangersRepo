@@ -10,6 +10,7 @@ import { migrateInsights } from "./insights";
 import { migrateReporting } from "./reporting";
 import { migrateQuickBooks } from "./quickbooks/schema";
 import { migrateQuickBooksRuntime } from "./quickbooks/runtimeSchema";
+import { digest as sha256 } from "./quickbooks/crypto";
 
 import {migrateQuickBooksAppSettings} from "./quickbooks/appSettings";
 
@@ -690,6 +691,31 @@ const MIGRATIONS: Migration[] = [
       env.DB.prepare(`CREATE INDEX IF NOT EXISTS wholesale_royal_mail_scan_dispatch ON wholesale_preview(json_extract(data,'$.dispatchedAt'),id)
         WHERE kind='order' AND json_extract(data,'$.status')='Dispatched'`),
     ]);
+  } },
+  { id: 61, name: "Retire a historical wholesale test postage request", run: async env => {
+    const table = "wholesale_royal_mail_shipments";
+    if (!(await columns(env, table)).has("retired_operation")) {
+      try { await env.DB.prepare("ALTER TABLE wholesale_royal_mail_shipments ADD COLUMN retired_operation TEXT").run(); }
+      catch (error) { if (!(await columns(env, table)).has("retired_operation")) throw error; }
+    }
+    // Match the reported request without publishing its order reference. Recheck the operation
+    // and all carrier evidence at the write so a recovered booking is left alone.
+    const minute = Date.parse("2026-11-28T12:48:00Z");
+    const expected = "cf195670643b261fdc5d09f2d1a9bcd321812a7c39e3c73f30ccfad087013495";
+    const unresolved = `state='review' AND recovery_due_at=0 AND retired_operation IS NULL
+      AND provider_id IS NULL AND candidate_provider_id IS NULL AND review_required=0
+      AND label_downloaded_at IS NULL AND tracking_number IS NULL AND carrier_status IS NULL
+      AND carrier_event_at IS NULL AND booking_account_scope IS NULL`;
+    const { results } = await env.DB.prepare(`SELECT order_id,operation,requested_at FROM wholesale_royal_mail_shipments
+      WHERE requested_at>=? AND requested_at<? AND ${unresolved}`).bind(minute, minute + 60_000)
+      .all<{ order_id: string; operation: string; requested_at: number }>();
+    for (const row of results) {
+      if (await sha256(row.order_id) !== expected) continue;
+      await env.DB.prepare(`UPDATE wholesale_royal_mail_shipments SET retired_operation=operation
+        WHERE order_id=? AND operation=? AND requested_at=? AND ${unresolved}`)
+        .bind(row.order_id, row.operation, row.requested_at).run();
+      break;
+    }
   } },
 ];
 

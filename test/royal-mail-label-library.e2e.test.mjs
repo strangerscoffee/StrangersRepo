@@ -227,6 +227,18 @@ test("Admin labels supports desktop search and reprints, then a mobile sheet wit
     assert.equal(carrier.length,seen,"filtering and reviewing a pending delivery issue uses saved evidence");
     await nav.getByRole("button",{name:"Labels",exact:true}).click();
   }
+  // An entry already visible in another tab may have been archived before it is opened.
+  await phone.getByRole("searchbox").fill("PENDING-REQUEST");
+  await request.waitFor();
+  await db.prepare("UPDATE wholesale_royal_mail_shipments SET retired_operation=operation,recovery_due_at=0 WHERE order_id=?").bind(pending).run();
+  await request.click();
+  const archived = phone.locator("#wRoyalMailForm");
+  await archived.getByText("Test postage request archived", { exact: true }).waitFor();
+  assert.equal(await archived.getByRole("button", { name: /Check label request|Request Royal Mail label/ }).count(), 0);
+  await archived.getByRole("button", { name: "Link existing booking" }).click();
+  await archived.getByRole("button", { name: "Check and link booking" }).waitFor();
+  await archived.getByRole("button", { name: "Back to labels" }).click();
+  await request.waitFor({ state: "detached" });
   const group = reference(160);
   const boxContents = JSON.stringify({ basis: JSON.stringify([7200,0,null,[]]), quantities: [[],[]], goodsPence: [3600, 3600] });
   const fingerprint = createHash("sha256").update(JSON.stringify([customerId,null,"Multi-box café","Delivery",null,null,null,2000,[]])).digest("base64");
