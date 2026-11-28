@@ -6,7 +6,7 @@
 // Private views are cleared or hidden when the session can't be verified.
 (()=>{
  'use strict';
- const {el,svgi}=SC,{grindFor,decafLine,iconPaths,coffeeStyle,parcelEstimate,tooHeavyForOneParcel,OVER_LIMIT_STEPS}=SCWholesalePreparation,packing=SCWholesalePacking;
+ const {el,svgi}=SC,{grindFor,decafLine,iconPaths,coffeeStyle,parcelEstimate,tooHeavyForOneParcel}=SCWholesalePreparation,packing=SCWholesalePacking;
  const $=id=>document.getElementById(id);
  const wideDesk=matchMedia('(min-width: 1240px)');
  const packProblems=new Map(),shippingSummaries=new Map(),labelRequests=new Map();
@@ -340,7 +340,6 @@
  // The carrier record is separate from the order. Only explicit dispatch uses the existing order save.
  const shippingPath=row=>'orders/'+encodeURIComponent(row.id)+'/shipping';
  const royalMailMaxWeight=30000;
- const overweightShipping=OVER_LIMIT_STEPS;
  const isFinancialShippingError=code=>/^royal_mail_(?:account_on_hold|account_overdue|payment_required|payment_review)$/.test(code||'');
  function verifyShippingResult(result){
   if(!result||typeof result.enabled!=='boolean'||!Number.isSafeInteger(result.orderVersion)||
@@ -378,6 +377,7 @@
  }
  function shippingSummaryText(row,result){
   const shipment=result?.shipment,notice=(!shipment||unsentReferenceCheck(shipment))&&bookingNotice(result);
+  if(result?.multiBox)return ['Multiple boxes',`${result.boxesReadyForHandover} of ${result.boxCount} boxes ready for handover`,result.readyForHandover?'ready':'notice'];
   if(notice)return [...notice,'notice'];
   if(!result?.enabled)return ['Royal Mail unavailable','Use a courier tracking link at dispatch.','notice'];
   if(shipment?.recovery&&!shipment.orderChanged&&!shipment.reviewRequired)return [shipment.requestedAt?'Postage request unconfirmed':'Postage request pending',recoveryMessage(shipment),'warning'];
@@ -385,7 +385,7 @@
   if(shippingOnHold(result)||unsentReferenceCheck(shipment)&&financialHold(result))return ['Royal Mail label on hold',financialHold(result),'warning'];
   if(bookedLabelProblem(shipment))return ['Label needs attention','Review the existing booking in Click & Drop.','warning'];
   if(shipment?.referenceLookupFailure==='unconfirmed'&&!shippingBlocker(result))return ['Check the earlier postage request','Check the saved request before continuing.','warning'];
-  if(shippingCanCreate(result))return tooHeavyForOneParcel(row)?['Over 30 kg: book in Click & Drop',overweightShipping,'warning']:
+  if(shippingCanCreate(result))return tooHeavyForOneParcel(row)?['Multiple boxes needed','Weigh each sealed box and request its label.','notice']:
    [shipment&&!unsentReferenceCheck(shipment)?'Royal Mail label request failed':'Ready for a Royal Mail label','Review the packed parcel and request a label.','notice'];
   const blocker=shippingBlocker(result);
   if(blocker)return ['Label booking unavailable',blocker,'warning'];
@@ -455,6 +455,7 @@
  function shippingGuidance(review){
   const {result,row,busy}=review,shipment=result?.shipment;
   if(busy==='load')return 'Loading this order’s Royal Mail details…';
+  if(busy==='preflight')return 'Checking billing, delivery and packed weight…';
   if(busy==='create')return 'Sending this label request to Royal Mail…';
   if(!result)return '';
   const notice=(!shipment||unsentReferenceCheck(shipment))&&bookingNotice(result);
@@ -463,7 +464,8 @@
   if(shippingOnHold(result))return financialHold(result);
   if(shipment?.referenceLookupFailure==='unconfirmed')return financialHold(result);
   if(!shipment||shipment.state==='failed'){
-   if(shippingCanCreate(result))return tooHeavyForOneParcel(row)?overweightShipping:'';
+   if(result.multiBox)return '';
+   if(shippingCanCreate(result))return tooHeavyForOneParcel(row)?'Use multiple boxes for this order. Each sealed box can weigh up to 30 kg.':'';
    return shippingBlocker(result)||(row.status==='Ready'?'Ask an admin to review this order before requesting a label.':
     row.status==='Dispatched'?'Dispatch is already recorded.':'Pack this order and mark it Ready before requesting a label.');
   }
@@ -479,13 +481,48 @@
  const shippingCanCreate=result=>result?.canCreate===true&&result.eligibility?.eligible===true&&
   (!result.shipment||result.shipment.state==='failed'&&!result.shipment.orderId&&!result.shipment.reviewRequired&&result.shipment.referenceLookupFailure!=='unconfirmed')&&!!result.bookingService&&
   Number.isSafeInteger(result.bookingVersion)&&!!result.recipient;
+ function shippingBody(review){
+  return {ifVersion:review.row.version,bookingVersion:review.result.bookingVersion,bookingService:review.result.bookingService,weightGrams:Number(review.weight)};
+ }
+ async function checkSingleLabel(review){
+  if(review.busy || !shippingIsOpen(review))return;
+  const payload=shippingBody(review);
+  review.busy='preflight';review.error='';review.preflight=null;review.reviewedBooking=null;renderShipping(review);
+  try{
+   const reply=SCWholesaleBoxes.checkReview(await staffJson('POST',shippingPath(review.row)+'/preflight',payload,{signal:AbortSignal.timeout(15000)}));
+   if(!shippingIsOpen(review))return;
+   review.preflight=reply;review.confirming=reply.ready;
+   if(reply.ready)review.reviewedBooking={...payload,billingRevision:reply.billingRevision};
+  }catch(error){if(shippingIsOpen(review)&&!error.quiet)review.error=error.message||'The booking details could not be checked.';}
+  finally{if(shippingIsOpen(review)){
+   review.busy=null;renderShipping(review);$('royalMailBookingTitle')?.focus({preventScroll:true});
+  }}
+ }
+ function openShippingBoxes(review){
+  if(review.busy||!shippingIsOpen(review))return;
+  const host=el('section',{class:'box-desk','aria-label':'Box plan'});
+  review.body.replaceChildren(host);review.boxesHost=host;review.confirming=false;review.preflight=null;
+  const path=shippingPath(review.row);
+  SCWholesaleBoxes.mount(host,{row:review.row,shipping:review.result,admin:false,recipient:review.result.recipient,
+   request:(method,subpath,body)=>staffJson(method,path+subpath,body,{signal:AbortSignal.timeout(subpath.endsWith('/book')?65000:35000)}),
+   pdfUrl:subpath=>'/api/staff-orders/'+path+subpath,denied:()=>{lock(true);message('You no longer have access to wholesale orders.',{denied:true});},current:()=>shippingIsOpen(review),
+   changed:plan=>{
+    if(!plan.boxes.length && !review.result.multiBox)return;
+    const ready = plan.boxes.filter(box=>box.canDownloadLabel && box.shipment?.labelDownloadedAt).length;
+    review.result={...review.result,multiBox:!!plan.boxes.length,boxCount:plan.boxes.length,boxesReadyForHandover:ready,
+     readyForHandover:!!plan.boxes.length && ready===plan.boxes.length && !plan.planChanged,canCreate:false};
+    rememberShipping(review.row,review.result);review.onResult?.(review.result);
+   },
+   exit:()=>{review.boxesHost=null;return readShipping(review);}
+  });
+ }
  function shippingBookingForm(review){
   const {recipient,bookingService}=review.result;
   const minimum=Math.max(1,review.row.grams);
   const action=(key,label,onclick)=>el('button',{type:'button',class:'btn soft','data-royal-mail-action':key,onclick},label);
-  const submit=(key,label)=>el('button',{type:'submit',class:'btn','data-royal-mail-action':key},label);
+  const submit=(key,label)=>el('button',{type:'submit',class:'btn','data-royal-mail-action':key,disabled:!!review.busy},label);
   const address=el('p',{class:'royal-mail-address'},[recipient.name,review.row.business?.slice(0,100),recipient.line1,recipient.line2,recipient.city,recipient.county,recipient.postcode].filter(Boolean).join('\n'));
-  const input=el('input',{id:'royalMailWeight',type:'number',min:minimum,max:royalMailMaxWeight,step:1,inputmode:'numeric',value:review.weight,required:true,'aria-describedby':'royalMailWeightHint'});
+  const input=el('input',{id:'royalMailWeight',type:'number',disabled:!!review.busy,min:minimum,max:royalMailMaxWeight,step:1,inputmode:'numeric',value:review.weight,required:true,'aria-describedby':'royalMailWeightHint'});
   const summary=el('dl',{class:'royal-mail-parcel'},el('div',{},el('dt',{},'Delivery address'),el('dd',{},address)),
    el('div',{},el('dt',{},'Royal Mail service'),el('dd',{},bookingService)),
    review.confirming?el('div',{},el('dt',{},'Packed parcel weight'),el('dd',{},`${Number(review.weight).toLocaleString('en-GB')} g`)):null);
@@ -494,14 +531,15 @@
    if(review.busy||!shippingIsOpen(review)||(review.embedded&&dispatchReview?.saving))return;
    if(review.confirming){void createShippingLabel(review);return;}
    if(!Number.isSafeInteger(input.valueAsNumber)||!event.currentTarget.reportValidity())return;
-   review.weight=input.value;review.confirming=true;review.error='';
-   renderShipping(review);$('royalMailBookingTitle').focus({preventScroll:true});
+   review.weight=input.value;void checkSingleLabel(review);
   }},el('h3',{id:'royalMailBookingTitle',tabindex:'-1'},review.confirming?'Confirm label request':'Prepare a label'),summary,
   review.confirming?el('p',{class:'hint'},'Requesting this label books postage. Confirm dispatch separately after handover.'):
    el('label',{class:'field',for:'royalMailWeight'},el('span',{},'Packed parcel weight (grams)'),input,
-    el('small',{id:'royalMailWeightHint'},`${review.estimated?'Filled in with an estimate: the coffee with a little overfill, its bags and about 500 g of box and packing. ':''}Weigh the sealed parcel and change it if needed. The coffee weighs ${weight(review.row.grams)}. One parcel, up to 30 kg; anything heavier is split into boxes in Click & Drop.`)),
+    el('small',{id:'royalMailWeightHint'},`${review.estimated?'Filled in with an estimate: the coffee with a little overfill, its bags and about 500 g of box and packing. ':''}Weigh the sealed parcel and change it if needed. The coffee weighs ${weight(review.row.grams)}. One parcel, up to 30 kg. Use multiple boxes for a heavier order.`)),
+  review.preflight?SCWholesaleBoxes.issues(review.preflight,false):null,
+  review.confirming?SCWholesaleBoxes.preflightSummary(review.preflight,false):null,
   el('div',{class:'royal-mail-actions'},review.confirming?action('edit','Edit weight',()=>{
-   review.confirming=false;review.error='';renderShipping(review);$('royalMailWeight').focus({preventScroll:true});
+   review.confirming=false;review.preflight=null;review.error='';renderShipping(review);$('royalMailWeight').focus({preventScroll:true});
   }):null,review.confirming?submit('create','Request Royal Mail label'):submit('review','Review label request')));
  }
  function shippingReference(review,value,orderReference=false){
@@ -539,6 +577,7 @@
    hasScan?el('time',{dateTime:new Date(eventAt).toISOString()},date(eventAt)+' UK time'):null);
  }
  function renderShipping(review){
+  if(review.boxesHost?.isConnected)return;
   const body=review.body,result=review.result,shipment=result?.shipment;
   if(review.embedded)review.onResult?.(result);
   const {business,locationName,reference}=review.row;
@@ -560,7 +599,7 @@
   const lookupFailure=shipment?.state==='failed'&&shipment.referenceLookupFailure;
   const recoveryOnly=lookupFailure==='unconfirmed';
   const labelProblem=!labelNeedsReview&&!onHold&&bookedLabelProblem(shipment);
-  const headline=labelNeedsReview?'Label needs review':onHold?'Label on hold':recoveryHeadline||(recoveryOnly?'Check the earlier postage request':labelProblem?'Label needs attention':unsentLookup&&shippingCanCreate(result)?'Ready for a Royal Mail label':shipmentHeadline);
+  const headline=review.busy==='preflight'?'Checking booking details…':result?.multiBox?`Multiple boxes · ${result.boxesReadyForHandover} of ${result.boxCount} ready for handover`:labelNeedsReview?'Label needs review':onHold?'Label on hold':recoveryHeadline||(recoveryOnly?'Check the earlier postage request':labelProblem?'Label needs attention':unsentLookup&&shippingCanCreate(result)?'Ready for a Royal Mail label':shipmentHeadline);
   const labelReady=result?.canDownloadLabel??(shipment?.orderId&&!labelNeedsReview&&['labelled','dispatched'].includes(shipment.state));
   const canRefresh=result?.enabled&&shipment&&(shipment.state!=='failed'||recoveryOnly);
   const refreshLabel=recoveryOnly||recovery?'Check label request':pending?'Check request':['labelled','dispatched'].includes(shipment?.state)&&royalMailTrackingV2Number(number)&&result.trackingEnabled?'Refresh tracking':'Check shipment';
@@ -568,7 +607,7 @@
   const guidance=stale||needsCheck||labelNeedsReview&&!onHold||recovery&&!onHold?'':shippingGuidance(review);
   const retry=!result&&review.error;
   const recheck=!canRefresh&&review.row.status==='Ready'&&!!shippingBlocker(result);
-  const canBook=!review.busy&&!request&&!stale&&!tooHeavyForOneParcel(review.row)&&shippingCanCreate(result);
+  const canBook=(!review.busy||review.busy==='preflight')&&!request&&!stale&&!tooHeavyForOneParcel(review.row)&&shippingCanCreate(result);
   body.replaceChildren(el('div',{class:'royal-mail-panel','aria-busy':String(Boolean(review.busy))},
    review.embedded?el('h3',{class:'royal-mail-step'},'Royal Mail label'):el('div',{class:'royal-mail-heading'},el('h3',{},business),orderMeta?el('p',{class:'desk-meta'},orderMeta):null),
    result?el('div',{class:'royal-mail-carrier'},
@@ -602,6 +641,8 @@
    review.error?el('p',{class:'edit-error',role:'alert'},review.error):null,
    review.feedback?el('p',{class:'hint',role:'status'},review.feedback):null,
    canBook?shippingBookingForm(review):null,
+   !stale && !review.confirming && !review.busy && !needsCheck && (result?.multiBox || !request && review.row.packs>1 && shippingCanCreate(result)) ?
+    el('button',{type:'button',class:'btn soft','data-royal-mail-action':'boxes',onclick:()=>openShippingBoxes(review)},result.multiBox?'Manage boxes':'Pack in multiple boxes'):null,
    stale||retry||needsCheck||recheck||canRefresh||labelReady&&result?.enabled||tracking?el('div',{class:'royal-mail-actions'},
     stale?el('button',{type:'button',class:'btn soft','data-royal-mail-action':'reload',disabled:!!review.busy,onclick:()=>reloadShippingOrder(review)},'Reload order'):null,
     !stale&&(retry||needsCheck||recheck)?el('button',{type:'button',class:'btn soft','data-royal-mail-action':'retry',disabled:!!review.busy||!!request?.pending,onclick:()=>readShipping(review,needsCheck&&!!shipment)},needsCheck?'Check label request':recheck?'Recheck eligibility':'Try again'):null,
@@ -656,7 +697,7 @@
  }
  async function createShippingLabel(review){
   const {row,result}=review;
-  if(!shippingIsOpen(review)||review.busy||!review.confirming||!shippingCanCreate(result)||labelRequests.has(row.id))return;
+  if(!shippingIsOpen(review)||review.busy||!review.confirming||!review.reviewedBooking||!review.preflight?.ready||!shippingCanCreate(result)||labelRequests.has(row.id))return;
   if(result.orderVersion!==row.version||findOrder(row.id)?.version!==row.version){renderShipping(review);return;}
   const grams=Number(review.weight);
   if(!Number.isSafeInteger(grams)||grams<Math.max(1,row.grams)||grams>royalMailMaxWeight)return;
@@ -665,9 +706,7 @@
   review.busy='create';review.confirming=false;review.error='';review.feedback='';renderShipping(review);
   try{
    // Allow time for the reference search, postage request and a separate booking-ID confirmation.
-   const booked=verifyShippingResult(await staffJson('POST',shippingPath(row),{
-    ifVersion:row.version,bookingVersion:result.bookingVersion,bookingService:result.bookingService,weightGrams:grams
-   },{signal:AbortSignal.timeout(65000)}));
+   const booked=verifyShippingResult(await staffJson('POST',shippingPath(row),review.reviewedBooking,{signal:AbortSignal.timeout(65000)}));
    if(!booked.shipment)throw new Error('The label request could not be verified.');
    if(labelRequests.get(row.id)!==request)return;
    labelRequests.delete(row.id);
@@ -748,7 +787,7 @@
   const manualOnHold=()=>!!financialHold(carrier)&&(isRoyalMailUrl(courierTrackingUrl(tracking.value))||!!royalMailTrackingNumber(input.value));
   const bookingNumber=()=>!bookingOnHold()&&!shippingNeedsReview(carrier?.shipment)&&['labelled','dispatched'].includes(carrier?.shipment?.state)
    ?royalMailTrackingNumber(carrier.shipment.trackingNumber):'';
-  const bookingBlocked=()=>bookingOnHold()||manualOnHold()||shippingNeedsReview(carrier?.shipment)||carrier?.shipment?.state==='created';
+  const bookingBlocked=()=>carrier?.multiBox&&!carrier.readyForHandover||bookingOnHold()||manualOnHold()||shippingNeedsReview(carrier?.shipment)||carrier?.shipment?.state==='created';
   function changeGuard(){
    const currentLink=courierTrackingUrl(tracking.value);
    const otherCourier=!!currentLink&&!isRoyalMailUrl(currentLink);
@@ -757,9 +796,10 @@
    const needsReview=shippingNeedsReview(carrier?.shipment),labelPending=carrier?.shipment?.state==='created';
    const blocked=bookingBlocked();
    const checkingRequest=labelRequests.has(review.row.id);
-   const queueBlocked=review.queueHandover&&(!carrier?.eligibility?.eligible||!carrier?.shipment?.labelDownloadedAt||blocked||!['labelled','dispatched'].includes(carrier?.shipment?.state));
+   const queueBlocked=review.queueHandover&&(carrier?.multiBox ? !carrier.readyForHandover : !carrier?.eligibility?.eligible||!carrier?.shipment?.labelDownloadedAt||blocked||!['labelled','dispatched'].includes(carrier?.shipment?.state));
    const warning=checkingRequest?'Check the outstanding Royal Mail label request before confirming dispatch.':orderChanged?'The order changed while you were reviewing it. Reload the order before confirming.':
     (bookingOnHold()||manualOnHold())&&!otherCourier?financialHold(carrier):
+    carrier?.multiBox&&!carrier.readyForHandover?`Review all ${carrier.boxCount} boxes before handover. ${carrier.boxesReadyForHandover} ready.`:
     queueBlocked?(carrier?'Review the Royal Mail label before handover.':review.carrierUnavailable?'The shipment could not be verified. Check again before handover.':'Checking the Royal Mail shipment…'):
     blocked&&otherCourier?'This dispatch will use the other courier’s link. The Royal Mail booking still needs attention.':
     needsReview?'The Royal Mail booking needs review. Check it before handover, or enter the tracking link for a different courier.':
@@ -770,12 +810,12 @@
    details.hidden=(!blocked&&!queueBlocked)||!carrier||orderChanged;
    retry.hidden=!(review.queueHandover&&review.carrierUnavailable);
    useBooked.hidden=!wrongNumber||orderChanged;
-   $('confirmDeskDispatch').disabled=review.saving||checkingRequest||!!orderChanged||queueBlocked||(blocked&&!otherCourier)||wrongNumber;
+   $('confirmDeskDispatch').disabled=review.saving||checkingRequest||!!orderChanged||queueBlocked||carrier?.multiBox&&!carrier.readyForHandover||(blocked&&!otherCourier)||wrongNumber;
    const bookingAddress=!otherCourier&&!needsReview&&labelDestination(carrier?.shipment);
    review.destination.textContent=bookingAddress?'Label destination\n'+bookingAddress:review.orderAddress;
    const number=review.queueHandover&&!orderChanged&&bookingNumber();
-   bookedReference.hidden=!number;
-   bookedReference.textContent=number?'Royal Mail tracking number '+number:'';
+   bookedReference.hidden=!number&&!carrier?.multiBox;
+   bookedReference.textContent=carrier?.multiBox?`Each of the ${carrier.boxCount} boxes has its own tracking. Confirm when all boxes have been handed over.`:number?'Royal Mail tracking number '+number:'';
    return !$('confirmDeskDispatch').disabled;
   }
   function sync(force=false){
@@ -799,6 +839,10 @@
   review.applyCarrier=result=>{
    if(dispatchReview!==review||!$('dispatchDialog').open||!input.isConnected)return;
    carrier=result;
+   review.multiBox=!!result.multiBox;
+   if(result.multiBox){tracking.value='';input.value='';}
+   if(input.closest('.dispatch-royal-mail')) input.closest('.dispatch-royal-mail').hidden=!!review.queueHandover || !!result.multiBox;
+   if(tracking.closest('label'))tracking.closest('label').hidden=!!review.queueHandover || !!result.multiBox;
    if(result.orderVersion===review.row.version&&!numberEdited&&bookingNumber())input.value=bookingNumber();
    sync();
   };
@@ -1578,13 +1622,13 @@
   }};
   const {row,changes}=review;
   if(review.saving||review.updateCarrierControls?.()===false)return;
-  const trackingUrl=$('deskTracking')?.value.trim()||'';
+  const trackingUrl=review.multiBox?'':$('deskTracking')?.value.trim()||'';
   if(courierTrackingUrl(trackingUrl)===null){report('Use a full http or https tracking link without a username or password.');return;}
   if(findOrder(row.id)?.version!==row.version||packProblems.has(row.id)){
    report('Close this review and reload the order before confirming.');return;
   }
   error.hidden=true;review.saving=true;button.disabled=true;
-  const saved=await saveDeskProgress(row,{...changes,status:'Dispatched',trackingUrl,...(review.queueHandover?{queueHandover:true}:{})},report);
+  const saved=await saveDeskProgress(row,{...changes,status:'Dispatched',trackingUrl,...(review.queueHandover||review.multiBox?{queueHandover:true}:{})},report);
   if(dispatchReview!==review)return;
   if(saved){$('dispatchDialog').close();if($('orderDialog').open)$('orderDialog').close();}
   else{review.saving=false;button.disabled=false;review.updateCarrierControls?.();}

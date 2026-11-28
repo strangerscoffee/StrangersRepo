@@ -3,6 +3,7 @@
 // is saved, so it never slows or blocks checkout. Staff previews, retries of an order already placed and orders
 // with no RESEND_API_KEY send nothing.
 import { audit } from "../audit";
+import "../../public/shared/wholesale-preparation.js";
 import { isWholesaleDelivery } from "../../public/wholesale/shipping.js";
 import { ApiError, Env, invalid, json, readJson } from "../http";
 import { object, get } from "../wholesaleStore";
@@ -31,6 +32,7 @@ interface MailOrder {
   customerSnapshot?: { name?: string; contact?: string; email?: string; phone?: string; address?: string; postcode?: string; deliveryNotes?: string } | null;
   paymentTerms?: { label?: string; note?: string } | null;
   trackingUrl?: string;
+  deliveryParcels?: Array<{ number: number; count: number; trackingNumber: string | null }>;
   locationSnapshot?: { name?: string; contact?: string; phone?: string; address?: string; postcode?: string; deliveryNotes?: string } | null;
   shippingDestination?: { address: string; postcode: string };
 }
@@ -163,14 +165,20 @@ export function buildDispatchEmail(order: MailOrder, ordersUrl: string) {
   const destination = order.shippingDestination;
   const where = (destination ? [destination.address, destination.postcode]
     : [place.name && place.name !== "Main location" ? place.name : "", place.address, place.postcode]).filter(Boolean).join(", ") || "your saved address";
-  const tracking = shipped && typeof order.trackingUrl === "string" && /^https?:\/\//i.test(order.trackingUrl) ? order.trackingUrl : "";
+  const boxes = shipped ? (order.deliveryParcels || []).map(box => ({
+    label: `Box ${box.number} of ${box.count}`,
+    url: globalThis.SCWholesalePreparation.royalMailTrackingUrl(box.trackingNumber),
+  })) : [];
+  const tracking = shipped && !boxes.length && typeof order.trackingUrl === "string" && /^https?:\/\//i.test(order.trackingUrl) ? order.trackingUrl : "";
   const ref = order.id.slice(0, 11);
   const headline = shipped ? "Your order has been shipped" : "Your order has been collected from the Roastery";
   const subject = shipped ? `Shipped: your Strangers Coffee order (${ref})` : `Collected: your Strangers Coffee order (${ref})`;
   const lead = shipped ? `Your order of ${bags} ${bags === 1 ? "bag" : "bags"} is on its way to ${where}.` : `Your order of ${bags} ${bags === 1 ? "bag" : "bags"} has been collected from the Strangers Roastery, 10 Dove Street, Norwich.`;
   const lineText = (l: Line) => `${l.quantity} × ${l.title}, ${packName[l.pack] || l.packLabel || l.pack}, ${l.grindLabel || ""}${l.decaf ? ", decaf" : ""}`;
   const text = [
-    hello ? `Hi ${hello},` : "Hello,", "", `${shipped ? "SHIPPED" : "COLLECTED FROM THE ROASTERY"}`, lead, ...(tracking ? ["", `Track your delivery: ${tracking}`] : []), "",
+    hello ? `Hi ${hello},` : "Hello,", "", `${shipped ? "SHIPPED" : "COLLECTED FROM THE ROASTERY"}`, lead, ...(tracking ? ["", `Track your delivery: ${tracking}`] : []),
+    ...(boxes.length ? ["", `Your order is travelling in ${boxes.length} boxes.`, ...boxes.map(box =>
+      box.url ? `${box.label}: ${box.url}` : `${box.label}: tracking unavailable`)] : []), "",
     `Order ${order.id}${order.reference ? ` · your reference ${order.reference}` : ""}`, ...order.lines.map(lineText), "",
     shipped ? "If anything's missing or damaged when it arrives, just reply to this email." : "If anything's missing or not right, just reply to this email.", "",
     `See your orders: ${ordersUrl}`, "", "Strangers Coffee",
@@ -184,6 +192,9 @@ export function buildDispatchEmail(order: MailOrder, ordersUrl: string) {
 <div style="display:inline-block;margin:12px 0 4px;padding:6px 12px;border-radius:999px;background:${tone.bg};color:${tone.fg};font-size:13px;font-weight:700;letter-spacing:.02em;">${shipped ? "&#128666;" : "&#9749;"} ${esc(tone.label)}</div>
 <h1 style="margin:6px 0 6px;font-size:22px;line-height:1.25;">${esc(headline)}</h1>
 <p style="margin:0;font-size:15px;line-height:1.5;">${hello ? `Hi ${esc(hello)}, ` : ""}${esc(lead)}</p></td></tr>
+${boxes.length ? `<tr><td style="padding:14px 24px 0;"><strong>Your order is travelling in ${boxes.length} boxes.</strong><ul style="padding-left:20px;">${boxes.map(box => box.url
+  ? `<li style="padding:5px 0;"><a href="${esc(box.url)}">Track ${box.label.toLowerCase()}</a></li>`
+  : `<li style="padding:5px 0;">${box.label} · tracking unavailable</li>`).join("")}</ul></td></tr>` : ""}
 ${tracking ? `<tr><td style="padding:14px 24px 0;"><a href="${esc(tracking)}" style="display:inline-block;background:#0062cc;color:#fff;text-decoration:none;font-weight:600;padding:11px 18px;border-radius:10px;">Track your delivery</a></td></tr>` : ""}
 <tr><td style="padding:16px 24px 0;font-size:13px;color:#5d6675;">Order ${esc(order.id)}${order.reference ? ` · your reference ${esc(order.reference)}` : ""}</td></tr>
 <tr><td style="padding:6px 24px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">

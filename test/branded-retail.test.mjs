@@ -74,6 +74,13 @@ describe("branded retail routes on the Worker", () => {
     }
   });
 
+  test("wholesale delivery issues stay off the consumer and trade hosts", async () => {
+    for (const base of [branded.base, wholesale.base]) {
+      const response = await request(base, "/api/admin/wholesale/royal-mail/attention");
+      assert.equal(response.status, 404, base);
+    }
+  });
+
   test("retail product links and write routes stay confined to the branded host", async () => {
     const redirect = await request(branded.base, "/coffee/p/ethiopia-rocko-mountain-natural?grind=filter");
     assert.equal(redirect.status, 308);

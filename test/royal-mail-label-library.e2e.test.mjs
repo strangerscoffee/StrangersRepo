@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
@@ -41,9 +42,9 @@ async function fixture(pdf, calls) {
       const match = /^\/api\/v1\/orders\/(\d+)(\/label)?$/.exec(url.pathname);
       assert.ok(match, "unexpected carrier path " + url.pathname);
       const providerId = Number(match[1]), index = providerId - 8000;
-      assert.ok(Number.isSafeInteger(index) && index >= 0 && index < 105, "unexpected saved booking");
+      assert.ok(Number.isSafeInteger(index) && index >= 0 && (index < 105 || index === 161 || index === 162), "unexpected saved booking");
       if (match[2]) return new WorkerResponse(pdf, { headers: { "Content-Type": "application/pdf" } });
-      return WorkerResponse.json([{ orderReference: reference(index), orderIdentifier: providerId,
+      return WorkerResponse.json([{ orderReference: index > 160 ? reference(160) + "-B" + (index - 160) : reference(index), orderIdentifier: providerId,
         trackingNumber: tracking(index), printedOn: "2026-11-24T08:30:00Z" }]);
     } } },
   }] });
@@ -209,6 +210,47 @@ test("Admin labels supports desktop search and reprints, then a mobile sheet wit
   await request.waitFor();
   assert.equal(await phone.getByRole("searchbox").inputValue(),"PENDING-REQUEST");
   assert.equal(carrier.length,before,"browsing outstanding requests or opening their details contacts no carrier");
+  for (const display of [desktop,phone]) {
+    const nav = display.getByRole("navigation",{name:"Royal Mail workspace"});
+    await nav.getByRole("button",{name:"Delivery issues",exact:true}).click();
+    assert.equal(new URL(display.url()).hash,"#wholesale/royal-mail/attention");
+    const issues=display.locator("#wDeliveryIssues");
+    await issues.getByText("Pending Coffee",{exact:true}).waitFor();
+    const seen=carrier.length;
+    await issues.getByRole("combobox").selectOption("exception");
+    await issues.getByText("No delivery issues match this view.").waitFor();
+    await issues.getByRole("combobox").selectOption("booking");
+    await issues.getByRole("button",{name:"Review booking"}).click();
+    await display.locator("#wRoyalMailForm").getByRole("button",{name:"Back to delivery issues"}).click();
+    await issues.getByText("Pending Coffee",{exact:true}).waitFor();
+    assert.ok(await display.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth+1));
+    assert.equal(carrier.length,seen,"filtering and reviewing a pending delivery issue uses saved evidence");
+    await nav.getByRole("button",{name:"Labels",exact:true}).click();
+  }
+  const group = reference(160);
+  const boxContents = JSON.stringify({ basis: JSON.stringify([7200,0,null,[]]), quantities: [[],[]], goodsPence: [3600, 3600] });
+  const fingerprint = createHash("sha256").update(JSON.stringify([customerId,null,"Multi-box café","Delivery",null,null,null,2000,[]])).digest("base64");
+  const boxes = [1,2].map(n => db.prepare(`INSERT INTO wholesale_royal_mail_shipments
+    (order_id,state,operation,order_version,provider_id,tracking_number,weight_grams,requested_at,updated_at,shipping_fingerprint)
+    VALUES(?,'labelled',?,1,?,?,1250,?,?,?)`).bind(group+"-B"+n,"piece-"+n,8160+n,tracking(160+n),now,now,fingerprint));
+  await db.batch([db.prepare("INSERT INTO wholesale_preview(kind,id,data,version,updated_at) VALUES('order',?,?,1,?)")
+    .bind(group,JSON.stringify({customerId,business:"Multi-box café",delivery:"Delivery",status:"Ready",preview:false,
+      grams:2000,pence:7200,packs:2,lines:[],createdAt:now}),now),
+    db.prepare("INSERT INTO wholesale_royal_mail_box_plans(order_id,revision,weights,shipping_fingerprint,contents) VALUES(?,?,?,?,?)").bind(group,"plan","[1250,1250]",fingerprint,boxContents),...boxes]);
+  await phone.getByRole("searchbox").fill("Multi-box café");
+  const box2 = phone.locator('.lp-row[data-preview="'+group+'-B2"]');
+  await box2.getByText(/Box 2 of 2/).waitFor();
+  const boxUrl = "/api/admin/wholesale/orders/"+group+"/shipping/boxes/2/label";
+  const previewBox = phone.waitForResponse(r=>new URL(r.url()).pathname===boxUrl && new URL(r.url()).searchParams.get("preview")==="1");
+  await box2.click();
+  assert.equal((await previewBox).status(),200);
+  await waitForLabel(phone,"dialog.lp-sheet");
+  assert.equal(await downloadedAt(group+"-B2"),null);
+  const downloadBox = phone.waitForEvent("download");
+  await dialog.getByRole("button",{name:"Download PDF"}).click();
+  assert.equal((await downloadBox).suggestedFilename(),"Royal-Mail-"+group+"-B2.pdf");
+  assert.ok(await downloadedAt(group+"-B2"));
+  assert.equal(await downloadedAt(group+"-B1"),null,"the sibling label stays ready to print");
   assert.ok(carrier.every(c => c.method === "GET"), "no reprint, download, or preview made a postage purchase");
   assert.deepEqual(errors, []);
 });

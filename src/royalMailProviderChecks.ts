@@ -1,3 +1,5 @@
+import { belongsToOrder, matchesPlannedBox, shipmentOrderJoin } from "./royalMailShipmentOrder";
+import { packingBasis } from "./royalMailBoxContents";
 import type { Env } from "./http";
 import {
   fetchRoyalMailLabel, fetchRoyalMailTracking, findRoyalMailOrderById, listRoyalMailParcelServices, listRoyalMailShippingAccounts,
@@ -23,7 +25,7 @@ type Connections = Awaited<ReturnType<typeof loadRoyalMailConnections>>;
 type Parcel = { postcode: string; weightGrams: number };
 type Shipment = {
   order_id: string; provider_id: number; tracking_number: string | null; destination_postcode: string | null;
-  weight_grams: number; order_version: number; shipping_fingerprint: string | null; data: string; version: number;
+  weight_grams: number; packing_basis: string | null; order_version: number; shipping_fingerprint: string | null; data: string; version: number;
 };
 
 function check(id: CheckId, status: ProviderCheck["status"], detail: string): ProviderCheck {
@@ -55,9 +57,9 @@ function validatedParcel(postcode: unknown, grams: number): Parcel | null {
 
 async function sampleShipment(env: Env, key: string, accountName: string, singleAccount: boolean): Promise<Shipment | null> {
   const { results } = await env.DB.prepare(`SELECT s.order_id, s.provider_id, s.tracking_number, s.destination_postcode,
-    s.weight_grams, s.order_version, s.shipping_fingerprint, o.data, o.version
-    FROM wholesale_royal_mail_shipments s JOIN wholesale_preview o ON o.kind = 'order' AND o.id = s.order_id
-    WHERE s.booking_connection = ? AND s.provider_id > 0 AND s.review_required = 0 AND s.state IN ('labelled', 'dispatched')
+    s.weight_grams, json_extract(p.contents,'$.basis') AS packing_basis, s.order_version, s.shipping_fingerprint, o.data, o.version
+    FROM wholesale_royal_mail_shipments s ${shipmentOrderJoin}
+    WHERE ${belongsToOrder} AND ${matchesPlannedBox} AND s.booking_connection = ? AND s.provider_id > 0 AND s.review_required = 0 AND s.state IN ('labelled', 'dispatched')
       AND (s.booking_account_scope = ? OR (? = 1 AND s.booking_account_scope IS NULL))
       AND json_type(o.data, '$.preview') = 'false' AND json_extract(o.data, '$.deletedAt') IS NULL
       AND json_extract(o.data, '$.status') IN ('Ready', 'Dispatched')
@@ -65,9 +67,9 @@ async function sampleShipment(env: Env, key: string, accountName: string, single
     ORDER BY s.tracking_number IS NULL, s.updated_at DESC, s.order_id LIMIT 12`).bind(await bookingConnection(key), await bookingAccountScope(key, accountName), Number(singleAccount)).all<Shipment>();
   let fallback: Shipment | null = null;
   for (const row of results) {
-    if (!/^WS-[A-F0-9]{32}$/.test(row.order_id) || !Number.isSafeInteger(row.provider_id)) continue;
+    if (!/^WS-[A-F0-9]{32}(?:-B(?:[1-9]|[1-4]\d|50))?$/.test(row.order_id) || !Number.isSafeInteger(row.provider_id)) continue;
     const order = { ...JSON.parse(row.data), version: row.version };
-    if (await royalMailOrderChanged(row, order)) continue;
+    if ((row.order_id.length > 35 && row.packing_basis !== packingBasis(order)) || await royalMailOrderChanged(row, order)) continue;
     if (royalMailTrackingV2Number(row.tracking_number)) return row;
     fallback ??= row;
   }

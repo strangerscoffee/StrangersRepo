@@ -331,3 +331,20 @@
 .lp-request-row .lp-status { max-width: 40%; white-space: normal; text-align: center; }
 .lp-outstanding summary:focus-visible, .lp-request-row:focus-visible { outline-offset: -3px; }
 .lp-request-feedback, .lp-outstanding > button { margin: 6px 12px 12px; }
+
+.rm-delivery-issues .w-rm-card-head { justify-content:space-between; }
+.rm-issues-filter { margin-block: .8rem; }
+.rm-issues-filter select { max-width:100%; min-height:44px; }
+.rm-issues-list { padding:0; margin:0; list-style:none; }
+.rm-issues-list li { display:grid; grid-template-columns:1fr auto; gap:.35rem .9rem; padding:1rem 0; border-top:1px solid var(--line); }
+.rm-issues-list li > :not(.btn) { grid-column:1; min-width:0; overflow-wrap:anywhere; }
+.rm-issues-list li > .btn { grid-column:2; grid-row:1 / span 4; align-self:center; min-height:44px; }
+.rm-issues-list small { display:block; }
+.rm-issues-list p { margin:0; }
+.rm-issue-kind { font-weight:650; }
+@media (max-width:650px) {
+  .w-rm-nav:has([data-id="attention"]) { display:flex; flex-wrap:nowrap; width:100%; overflow-x:auto; }
+  .w-rm-nav:has([data-id="attention"]) button { flex:0 0 auto; padding-inline:10px; }
+  .rm-issues-list li { grid-template-columns:1fr; }
+  .rm-issues-list li > .btn { grid-column:1; grid-row:auto; justify-self:start; }
+}

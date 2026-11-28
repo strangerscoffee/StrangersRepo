@@ -1,3 +1,4 @@
+import { bookingPlanGuard, type RoyalMailBox } from "./royalMailBoxes";
 import { audit } from "./audit";
 import type { User } from "./auth";
 import { ApiError, invalid, readJson, type Env } from "./http";
@@ -31,11 +32,13 @@ function wrongOrder() {
 /** Attach an independently verified existing order. All carrier traffic here is a single, authenticated GET. */
 export async function linkRoyalMailOrder(req: Request, env: Env, id: string, orderVersion: number, bookingVersion: number,
   shipment: UnlinkedShipment | null, key: string, accountName: string | undefined, actor: User,
-  fresh?: { fingerprint: string; createdAt: number }) {
+  fresh?: { fingerprint: string; createdAt: number; destination?: string; postcode?: string }, orderId = id, box: RoyalMailBox | null = null) {
+  const plan = bookingPlanGuard(orderId,box);
   const body = object(await readJson(req, 1024));
-  if (Object.keys(body).some(field => !["ifVersion", "bookingVersion", "operation", "orderNumber"].includes(field))) {
+  if (Object.keys(body).some(field => !["ifVersion", "bookingVersion", "operation", "orderNumber", ...(box ? ["planVersion"] : [])].includes(field))) {
     throw invalid("Enter the Click & Drop order number shown in Orders.");
   }
+  if (box && body.planVersion !== box.planVersion) throw changed();
   if (version(body.ifVersion) !== orderVersion || version(body.bookingVersion) !== bookingVersion || body.operation !== (shipment?.operation ?? "new")) throw changed();
   const raw = typeof body.orderNumber === "string" ? body.orderNumber.trim() : body.orderNumber;
   const number = typeof raw === "string" && /^[1-9]\d{0,15}$/.test(raw) ? Number(raw) : raw;
@@ -49,15 +52,15 @@ export async function linkRoyalMailOrder(req: Request, env: Env, id: string, ord
     // read-only verification so a concurrent Staff or Admin request cannot buy a second label.
     const claimed = await env.DB.prepare(`INSERT INTO wholesale_royal_mail_shipments
       (order_id,state,operation,order_version,weight_grams,updated_at,requested_at,booking_connection,
-       shipping_fingerprint,review_required,label_order_created_at,problem)
-      SELECT ?, 'failed', ?, ?, 0, ?, NULL, ?, ?, 1, ?, 'Postage was reported in Click & Drop. Link the existing booking.'
+       shipping_fingerprint,review_required,label_order_created_at,destination_address,destination_postcode,problem)
+      SELECT ?, 'failed', ?, ?, ?, ?, NULL, ?, ?, 1, ?, ?, ?, 'Postage was reported in Click & Drop. Link the existing booking.'
       WHERE EXISTS (SELECT 1 FROM wholesale_preview WHERE kind='order' AND id=? AND version=?)
       AND EXISTS (SELECT 1 FROM wholesale_royal_mail_settings WHERE id=1 AND version=?)
-      AND EXISTS (SELECT 1 FROM users WHERE id=? AND role='admin' AND active=1 AND must_change=0)
+      AND EXISTS (SELECT 1 FROM users WHERE id=? AND role='admin' AND active=1 AND must_change=0)${plan.sql}
       ON CONFLICT(order_id) DO NOTHING
       RETURNING state,operation,provider_id,candidate_provider_id,requested_at,booking_connection,booking_account_scope`)
-      .bind(id, crypto.randomUUID(), orderVersion, Date.now(), connection, fresh.fingerprint, fresh.createdAt,
-        id, orderVersion, bookingVersion, actor.id).first<UnlinkedShipment>();
+      .bind(id, crypto.randomUUID(), orderVersion, box?.weightGrams ?? 0, Date.now(), connection, fresh.fingerprint, fresh.createdAt, fresh.destination ?? null, fresh.postcode ?? null,
+        orderId, orderVersion, bookingVersion, actor.id, ...plan.args).first<UnlinkedShipment>();
     if (!claimed) throw changed();
     shipment = claimed;
   }
@@ -69,8 +72,8 @@ export async function linkRoyalMailOrder(req: Request, env: Env, id: string, ord
       WHERE order_id=? AND operation=? AND state='failed' AND requested_at=0 AND booking_connection=? AND NOT ${HELD_FAILED_SHIPMENT}
       AND COALESCE(refresh_after,0)<=? AND EXISTS (SELECT 1 FROM wholesale_preview WHERE kind='order' AND id=? AND version=?)
       AND EXISTS (SELECT 1 FROM wholesale_royal_mail_settings WHERE id=1 AND version=?)
-      AND EXISTS (SELECT 1 FROM users WHERE id=? AND role='admin' AND active=1 AND must_change=0)`)
-      .bind(connection,id,shipment.operation,shipment.booking_connection,Date.now(),id,orderVersion,bookingVersion,actor.id).run();
+      AND EXISTS (SELECT 1 FROM users WHERE id=? AND role='admin' AND active=1 AND must_change=0)${plan.sql}`)
+      .bind(connection,id,shipment.operation,shipment.booking_connection,Date.now(),orderId,orderVersion,bookingVersion,actor.id,...plan.args).run();
     if (rebound.meta.changes) shipment = { ...shipment, booking_connection: connection };
   }
   const pinnedConnection = shipment.booking_connection !== null || shipment.candidate_provider_id !== null;
@@ -84,9 +87,9 @@ export async function linkRoyalMailOrder(req: Request, env: Env, id: string, ord
     AND candidate_provider_id IS ? AND booking_connection IS ? AND booking_account_scope IS ?
     AND EXISTS (SELECT 1 FROM wholesale_preview WHERE kind = 'order' AND id = ? AND version = ?)
     AND EXISTS (SELECT 1 FROM wholesale_royal_mail_settings WHERE id = 1 AND version = ?)
-    AND EXISTS (SELECT 1 FROM users WHERE id = ? AND role = 'admin' AND active = 1 AND must_change = 0)`;
+    AND EXISTS (SELECT 1 FROM users WHERE id = ? AND role = 'admin' AND active = 1 AND must_change = 0)${plan.sql}`;
   const args = [id, shipment.operation, shipment.state, shipment.requested_at, shipment.candidate_provider_id,
-    shipment.booking_connection, shipment.booking_account_scope, id, orderVersion, bookingVersion, actor.id];
+    shipment.booking_connection, shipment.booking_account_scope, orderId, orderVersion, bookingVersion, actor.id, ...plan.args];
   // The purchase reservation and automatic reconciliation respect this lease. A stopped Worker cannot strand it.
   const claimed = await env.DB.prepare(`UPDATE wholesale_royal_mail_shipments SET refresh_after = ?,
     review_required = CASE WHEN state='failed' THEN 1 ELSE review_required END

@@ -74,11 +74,10 @@
 // and about 500 g for the double-walled box, paper and tape. A starting value
 // only: staff weigh the sealed parcel and change it, and the server still checks it covers the coffee and is under 30 kg.
 const BAG_GRAMS=Object.freeze({quarter:18,kilo:40}),OVERFILL_GRAMS=15,BOX_GRAMS=500;
-// Royal Mail takes up to 30 kg in one parcel. A heavier order (by its estimate) is booked in Click & Drop by hand and
-// split into boxes there (Manage order), so the pages say how instead of offering a single label.
+// The carrier limit applies to each sealed box. A heavier estimate opens the multi-box packing flow.
 const PARCEL_LIMIT_GRAMS=30000;
 const tooHeavyForOneParcel=row=>packedEstimate(row)>PARCEL_LIMIT_GRAMS;
-const OVER_LIMIT_STEPS='This order is over Royal Mail’s 30 kg limit for one parcel, so book it in Click & Drop instead: create the order there, use Manage order to split it into boxes of up to 30 kg to the same address, and print the labels. Then paste a tracking link when you mark it dispatched.';
+const OVER_LIMIT_STEPS='This order needs several boxes. When it is ready to ship and bookings are enabled, use Pack in multiple boxes to assign the bags and enter each sealed weight. Each box can weigh up to 30 kg.';
 function parcelEstimate(row){return Math.min(PARCEL_LIMIT_GRAMS,packedEstimate(row));}
 function packedEstimate(row){
   const lines=Array.isArray(row?.lines)?row.lines:[];

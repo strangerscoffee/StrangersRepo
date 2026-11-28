@@ -1,3 +1,5 @@
+import { SQL_NOW_MS } from "./http";
+
 // Only the booking adapter, after a definite refusal of this operation, may write
 // this marker. Earlier Workers classified some ambiguous carrier replies as failed.
 export const DECLINED_POSTAGE = "Postage request declined. ";
@@ -38,3 +40,8 @@ export const HELD_FAILED_SHIPMENT = "(state='failed' AND (provider_id IS NOT NUL
   "OR tracking_number IS NOT NULL OR carrier_status IS NOT NULL OR carrier_event_at IS NOT NULL OR booking_account_scope IS NOT NULL " +
   "OR label_downloaded_at IS NOT NULL OR " + contrary + " OR requested_at IS NULL OR requested_at<0 " +
   "OR (requested_at>0 AND NOT " + declined + ")))";
+
+
+// Shared by plan edits and changes to the coffee in the order. An in-flight
+// lookup can still attach carrier evidence to an apparently failed reservation.
+export const HELD_ROYAL_MAIL_OPERATION = `(state<>'failed' OR ${HELD_FAILED_SHIPMENT} OR COALESCE(refresh_after,0)>${SQL_NOW_MS})`;

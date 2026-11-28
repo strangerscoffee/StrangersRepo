@@ -1050,14 +1050,31 @@ function historyStatus(order) {
   if (status === "Cancelled") return `${badge}<p class="history-cancelled">This order was cancelled. No further preparation updates are expected.</p>`;
   return `<div class="history-status">${badge}<p>${descriptions[status] || "Contact Strangers for an update."}</p></div>${current >= 0 ? `<ol class="history-progress" aria-label="Order progress">${states.map((step, i) => `<li ${i < current ? 'class="done"' : ""} ${i === current ? 'aria-current="step"' : ""}><span class="progress-marker" aria-hidden="true">${i < current ? "✓" : i + 1}</span><span>${step === "New" ? "Received" : step}<span class="sr-only">${i < current ? ", completed" : i === current ? ", current stage" : ", not reached"}</span></span></li>`).join("")}</ol>` : ""}`;
 }
-function historyTrackingUrl(order) {
+function historyTrackingUrl(order, link = order.trackingUrl) {
   if (!session?.customer || order.preview || order.status !== "Dispatched" || !isWholesaleDelivery(order.delivery)) return "";
-  const value = typeof order.trackingUrl === "string" ? order.trackingUrl.trim() : "";
+  const value = typeof link === "string" ? link.trim() : "";
   if (!value || value.length > 2000 || !/^https?:\/\//i.test(value) || /[\u0000-\u001f\u007f]/.test(value)) return "";
   try {
     const url = new URL(value);
     return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password ? url.href : "";
   } catch { return ""; }
+}
+function historyParcelTracking(order) {
+  const boxes = order.deliveryParcels;
+  if (!session?.customer || order.preview || order.status !== "Dispatched" || !isWholesaleDelivery(order.delivery) ||
+      !Array.isArray(boxes) || boxes.length < 2) return "";
+  const delivered = boxes.filter(box => box.status === "delivered").length;
+  const heading = delivered ? `${delivered} of ${boxes.length} boxes delivered` : `Your ${boxes.length} boxes`;
+  const statuses = { handed_over: "Handed to Royal Mail", awaiting_scan: "Awaiting first carrier scan", in_transit: "In transit", exception: "Check delivery with Royal Mail",
+    delivered: "Delivered", unknown: "Tracking update unavailable" };
+  const rows = boxes.map(box => {
+    const tracking = historyTrackingUrl(order, box.trackingUrl ?? "");
+    const label = `Box ${box.number} of ${boxes.length}`;
+    const status = Object.hasOwn(statuses, box.status) ? statuses[box.status] : statuses.unknown;
+    return `<li><div><strong>${escape(label)}</strong><small>${status}</small></div>${tracking
+      ? `<a class="button button-outline" href="${escape(tracking)}" target="_blank" rel="noopener noreferrer" aria-label="Track ${escape(label.toLowerCase())} (opens in a new tab)">Track box</a>` : ""}</li>`;
+  }).join("");
+  return `<section class="history-parcels" aria-label="Parcel tracking"><h4>${heading}</h4><ul>${rows}</ul></section>`;
 }
 // The delivery line in the review: worked out exactly as the server will charge it (shipping.js).
 function renderReviewDelivery(coffeePence = totals(basket).pence) {
@@ -1076,12 +1093,14 @@ function historyCard(order, expanded) {
   const date = new Date(order.createdAt).toLocaleDateString("en-GB", { timeZone: "Europe/London", day: "numeric", month: "short", year: "numeric" });
   const snapshot = order.locationSnapshot || order.customerSnapshot;
   const isDelivery = isWholesaleDelivery(order.delivery);
-  const trackingUrl = historyTrackingUrl(order);
+  const parcels = historyParcelTracking(order);
+  const trackingUrl = parcels ? "" : historyTrackingUrl(order);
   const deliveryReason = order.deliveryPence ? "Including VAT"
     : !isDelivery ? "No delivery charge"
     : order.freeDelivery ? "Free delivery for this account"
     : `Free on orders of ${money(FREE_SHIPPING_FROM_PENCE)} or more`;
   return `<article class="history-card" data-history-order="${escape(order.id)}"><div class="history-card-head"><h3>${date}</h3>${pricesShown() ? `<strong>${money(orderTotal(order))}</strong>` : ""}</div><p class="history-summary">${bagCount(order.packs)} · ${escape(order.delivery)}</p>${order.reference ? `<p class="history-summary">Reference: ${escape(order.reference)}</p>` : ""}${historySchedule(order)}${historyStatus(order)}${order.standingIssue ? `<p class="standing-hint">Your next standing delivery needs a check from Strangers. Please contact us before expecting the next delivery.</p>` : ""}
+    ${parcels}
     ${trackingUrl ? `<a class="button button-outline history-tracking" data-order-tracking="${escape(order.id)}" href="${escape(trackingUrl)}" target="_blank" rel="noopener noreferrer">Track delivery <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg><span class="sr-only">(opens in a new tab)</span></a>` : ""}
     <details class="history-details" ${expanded.has(order.id) ? "open" : ""}><summary>Order details · ${bagCount(order.packs)}</summary><p class="history-id">${escape(order.id)}</p><ul class="history-lines">${order.lines.map(line => `<li><span>${line.quantity} × ${escape(line.title)}</span><small>${escape(line.packLabel)} · ${escape(line.grindLabel)}</small>${pricesShown() ? `<strong>${money(line.price * line.quantity)}</strong>` : ""}</li>`).join("")}${Number.isSafeInteger(order.deliveryPence) && pricesShown() ? `<li><span>${isDelivery ? "Delivery" : "Roastery collection"}</span><small>${deliveryReason}</small><strong>${order.deliveryPence ? money(order.deliveryPence) : "Free"}</strong></li>` : ""}</ul>${order.customerNote ? `<p class="history-address"><b>Your comments</b><br>${escape(order.customerNote)}</p>` : ""}${order.locationSnapshot ? `<p class="history-address"><b>Location at order</b><br>${escape(order.locationSnapshot.name)}</p>` : ""}${snapshot?.address && isDelivery ? `<p class="history-address"><b>Delivery address at order</b><br>${escape(snapshot.address)}<br>${escape(snapshot.postcode || "")}</p>` : ""}${order.deliveryNotes ? `<p class="history-address">${escape(order.deliveryNotes)}</p>` : ""}${order.paymentTerms ? `<p class="payment-terms">Payment terms: ${escape(order.paymentTerms.label)}${order.paymentTerms.note ? `<br>${escape(order.paymentTerms.note)}` : ""}</p>` : ""}</details>
     ${standingChangeable(order) ? `<div class="standing-actions"><button class="button button-dark" type="button" data-standing-change="${escape(order.id)}">Change bags</button><button class="button button-outline" type="button" data-standing-skip="${escape(order.id)}">Skip this delivery</button></div><p class="standing-hint">You can change or skip this delivery until it's dispatched.</p>` : ""}

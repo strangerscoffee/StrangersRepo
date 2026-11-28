@@ -65,6 +65,13 @@ const labelled = (state) => ({
   shipment: { state: "labelled", orderId: "10001", weightGrams: 1200, trackingNumber: "AB123456789GB" },
 });
 
+// These cases simulate a booking/recovery stage. Preflight is a separate local request.
+async function mockReadyPreflight(page) {
+  await page.route("**/shipping/preflight", route => {
+    assert.equal(route.request().method(), "POST");
+    return route.fulfill({ json: { ready: true, issues: [], billingSource: "delivery", billingRevision: 0 } });
+  });
+}
 async function staffPage(t, options, shipping) {
   const context = await browser.newContext(options);
   t.after(() => context.close());
@@ -72,6 +79,7 @@ async function staffPage(t, options, shipping) {
   await context.addCookies([{ name, value, url: server.base }]);
   const page = await context.newPage();
   await page.route("**/api/staff-orders/orders/" + order.id + "/shipping**", shipping);
+  await mockReadyPreflight(page);
   await page.goto(server.base + "/orders");
   await page.locator('[data-order-id="' + order.id + '"]').click();
   const host = options.isMobile ? "#orderDialog" : "#packingDesk";
@@ -89,7 +97,7 @@ for (const [device, options] of [["desktop packing desk", desktop], ["phone orde
       }
       if (route.request().method() === "POST") {
         posts++;
-        assert.deepEqual(route.request().postDataJSON(), { ifVersion: order.version, bookingVersion: 2, bookingService: "TPS48", weightGrams: 1200 });
+        assert.deepEqual(route.request().postDataJSON(), { ifVersion: order.version, bookingVersion: 2, bookingService: "TPS48", weightGrams: 1200, billingRevision: 0 });
         state = labelled(state);
       }
       return route.fulfill({ json: state });
@@ -104,6 +112,7 @@ for (const [device, options] of [["desktop packing desk", desktop], ["phone orde
     assert.equal(posts, 0);
     await grams.fill("1200");
     await dialog.getByRole("button", { name: "Review label request" }).click();
+    await dialog.getByRole("button", { name: "Request Royal Mail label" }).waitFor();
     assert.equal(await page.locator(":focus").innerText(), "Confirm label request");
     assert.match(await dialog.innerText(), /10 Example Road\s+Norwich\s+Norfolk\s+NR1 1AA/);
     assert.match(await dialog.innerText(), /TPS48/);
@@ -237,6 +246,7 @@ for (const [name, options] of [["phone", phone], ["ipad", { viewport: { width: 8
       if (route.request().method() === "POST") postageRequests++;
       return route.fulfill({ json: eligible() });
     });
+    await mockReadyPreflight(page);
     await page.goto(server.base + "/admin#wholesale");
     await page.locator(`[data-act="wh-order"][data-id="${order.id}"]`).locator("visible=true").first().click();
     await page.getByRole("button", { name: "Royal Mail shipping" }).locator("visible=true").first().click();
@@ -270,19 +280,22 @@ for (const [name, options] of [["phone", phone], ["ipad", { viewport: { width: 8
   });
 }
 
-// The owner's note, 27 Nov 2026: orders over 30 kg are split into boxes under Manage order in Click & Drop.
-test("an order over 30 kg packed says to book and split it in Click & Drop", async (t) => {
+test("an order over 30 kg offers a box plan in admin and on the staff packing desk", async (t) => {
   const context = await browser.newContext(desktop);
   t.after(() => context.close());
   const [name, value] = staffCookie.split("=");
   await context.addCookies([{ name, value, url: server.base }]);
   const page = await context.newPage();
-  await page.route("**/api/staff-orders/orders/" + heavy.id + "/shipping**", (route) => route.fulfill({ json: { ...eligible(), orderVersion: heavy.version } }));
+  const emptyPlan = { ...eligible(), orderVersion: heavy.version, planVersion: null, boxes: [], canChangePlan: true };
+  const shipping = route => route.fulfill({ json: new URL(route.request().url()).pathname.endsWith("/boxes")
+    ? emptyPlan : { ...eligible(), orderVersion: heavy.version } });
+  await page.route("**/api/staff-orders/orders/" + heavy.id + "/shipping**", shipping);
   await page.goto(server.base + "/orders");
   await page.locator('[data-order-id="' + heavy.id + '"]').click();
   await page.locator("#packingDesk").getByRole("button", { name: "Royal Mail", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Royal Mail" });
-  await dialog.getByText(/Manage order to split it into boxes/).first().waitFor();
+  await dialog.getByRole("button", { name: "Pack in multiple boxes" }).click();
+  await dialog.getByLabel("Box 1 packed weight (g)", { exact: true }).waitFor();
   assert.equal(await dialog.getByRole("button", { name: "Review label request" }).count(), 0);
 
   const admin = await browser.newContext({ viewport: { width: 820, height: 1180 }, isMobile: true, hasTouch: true, colorScheme: "dark" });
@@ -290,14 +303,13 @@ test("an order over 30 kg packed says to book and split it in Click & Drop", asy
   const [an, av] = adminCookie.split("=");
   await admin.addCookies([{ name: an, value: av, url: server.base }]);
   const ap = await admin.newPage();
-  await ap.route("**/api/admin/wholesale/orders/" + heavy.id + "/shipping**", (route) => route.fulfill({ json: { ...eligible(), orderVersion: heavy.version } }));
+  await ap.route("**/api/admin/wholesale/orders/" + heavy.id + "/shipping**", shipping);
   await ap.goto(server.base + "/admin#wholesale");
   await ap.locator(`[data-act="wh-order"][data-id="${heavy.id}"]`).locator("visible=true").first().click();
   await ap.getByRole("button", { name: "Royal Mail shipping" }).locator("visible=true").first().click();
-  await ap.getByText("Over 30 kg: book in Click & Drop").waitFor();
-  assert.equal(await ap.locator('#sheet button[type="submit"]').count(), 0);
-  assert.notEqual(await ap.locator("#wShippingFields").getAttribute("disabled"), null);
-  assert.ok(await ap.locator('input[name="weightGrams"]').isDisabled());
+  await ap.getByRole("button", { name: "Pack in multiple boxes" }).click();
+  await ap.getByLabel("Box 1 packed weight (g)", { exact: true }).waitFor();
+  assert.equal(await ap.getByRole("button", { name: "Request Royal Mail label", exact: true }).count(), 0);
   await ap.screenshot({ path: `${process.env.SHOT_DIR || "/tmp"}/royal-mail-over-30kg-ipad-dark.png` });
 });
 
@@ -380,6 +392,7 @@ async function adminDispatchPage(t, options, task, details) {
       counts: { weigh: 0, print: 0, handover: 0, checking: 0, attention: 0, [row.stage]: 1 } } });
   });
   await page.route("**/api/admin/wholesale/orders/" + order.id + "/shipping", details);
+  await mockReadyPreflight(page);
   await page.goto(server.base + "/admin#wholesale/royal-mail");
   return { page, action: page.locator(`[data-queue-order="${order.id}"] button`) };
 }
@@ -467,6 +480,7 @@ for (const [failure, viewport] of [["before_postage", phone], ["unconfirmed", de
     const admin = await adminDispatchPage(t, viewport, { stage: beforePostage ? "weigh" : "attention",
       stageLabel: beforePostage ? "Weigh parcel" : "Needs attention", action: "shipping", actionLabel: "Review parcel" }, details);
     await admin.page.route("**/api/admin/wholesale/orders/" + order.id + "/shipping/**", details);
+    await mockReadyPreflight(admin.page);
     await admin.action.click();
     for (const panel of [staff.dialog, admin.page.locator("#wRoyalMailForm")]) {
       const review = panel.getByRole("button", { name: "Review label request", exact: true });
@@ -747,6 +761,7 @@ for (const [name, options] of [["phone", phone], ["ipad", { viewport: { width: 8
       }
       return route.fulfill({ json: state });
     });
+    await mockReadyPreflight(page);
     await page.goto(server.base + "/orders");
     await page.locator('[data-order-id="' + order.id + '"]').click();
     if (options.isMobile) await page.locator("#orderDialogAction").getByRole("button", { name: "Process dispatch" }).click();

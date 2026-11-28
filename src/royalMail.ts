@@ -74,6 +74,7 @@ export interface RoyalMailOrderInput {
     phoneNumber?: string;
     emailAddress?: string;
   };
+  billing?: RoyalMailOrderInput["recipient"];
   parcel: {
     weightInGrams: number;
     format: "parcel" | "smallParcel" | "mediumParcel";
@@ -160,14 +161,28 @@ function contactFor(recipient: RoyalMailOrderInput["recipient"]) {
   };
 }
 
-function orderBody(input: RoyalMailOrderInput) {
+function carrierContact(contact: RoyalMailOrderInput["recipient"], billing = false) {
+  const postcode = addressPart(contact.postcode, 20, true)!.toUpperCase().replace(/ /g, "");
+  if (!UK_POSTCODE.test(postcode) || /^(?:GY|JE|IM)/.test(postcode) || (!billing && postcode.startsWith("BT"))) {
+    invalidShipment(billing ? "Enter a valid UK billing postcode." : "Enter a valid Great Britain postcode for this Royal Mail shipment.");
+  }
+  return { address: {
+    fullName: addressPart(contact.name, 210, true),
+    companyName: addressPart(contact.companyName, 100),
+    addressLine1: addressPart(contact.addressLine1, 100, true),
+    addressLine2: addressPart(contact.addressLine2, 100),
+    addressLine3: addressPart(contact.addressLine3, 100),
+    city: addressPart(contact.city, 100, true),
+    county: addressPart(contact.county, 100),
+    postcode: postcode.slice(0, -3) + " " + postcode.slice(-3),
+    countryCode: "GBR",
+  }, ...contactFor(contact) };
+}
+
+export function royalMailOrderBody(input: RoyalMailOrderInput) {
   const { reference, orderDate, recipient, parcel, serviceCode, serviceRegisterCode, shippingAccountName } = input;
   const orderRef = orderReference(reference);
   if (!dateValue(orderDate)) invalidShipment("Use a valid Royal Mail order date.");
-  const postcode = addressPart(recipient.postcode, 20, true)!.toUpperCase().replace(/ /g, "");
-  if (!UK_POSTCODE.test(postcode) || /^(?:BT|GY|JE|IM)/.test(postcode)) {
-    invalidShipment("Enter a valid Great Britain postcode for this Royal Mail shipment.");
-  }
   const { format, weightInGrams } = parcel;
   if (!["parcel", "smallParcel", "mediumParcel"].includes(format) ||
       !Number.isSafeInteger(weightInGrams) || weightInGrams < 1 || weightInGrams > 30000) {
@@ -185,25 +200,12 @@ function orderBody(input: RoyalMailOrderInput) {
     invalidShipment("Check the order totals before creating the Royal Mail shipment.");
   }
 
-  const address = {
-    fullName: addressPart(recipient.name, 210, true),
-    companyName: addressPart(recipient.companyName, 100),
-    addressLine1: addressPart(recipient.addressLine1, 100, true),
-    addressLine2: addressPart(recipient.addressLine2, 100),
-    addressLine3: addressPart(recipient.addressLine3, 100),
-    city: addressPart(recipient.city, 100, true),
-    county: addressPart(recipient.county, 100),
-    postcode: postcode.slice(0, -3) + " " + postcode.slice(-3),
-    countryCode: "GBR",
-  };
   return { items: [{
     orderReference: orderRef,
     orderDate: new Date(orderDate).toISOString(),
     isRecipientABusiness: true,
-    recipient: { address, ...contactFor(recipient) },
-    // Click & Drop refuses API orders without a billing address on this account (28 Nov 2026: codes 95, 71
-    // and 15 on Billing.Address.FullName, AddressLine1 and City). The business being delivered to is the one billed.
-    billing: { address: { ...address }, ...contactFor(recipient) },
+    recipient: carrierContact(recipient),
+    billing: carrierContact(input.billing ?? recipient, true),
     packages: [{ weightInGrams, packageFormatIdentifier: format }],
     currencyCode: "GBP",
     subtotal: subtotalPence / 100,
@@ -724,7 +726,7 @@ function responseError(status: number, posting: boolean, label = false): RoyalMa
 async function clickDrop(
   key: string,
   path: string,
-  { body, reference, serviceCode, label = false, missingOkay = false, listing = false, signal }: { body?: ReturnType<typeof orderBody>; reference?: string; serviceCode?: string; label?: boolean; missingOkay?: boolean; listing?: boolean; signal?: AbortSignal },
+  { body, reference, serviceCode, label = false, missingOkay = false, listing = false, signal }: { body?: ReturnType<typeof royalMailOrderBody>; reference?: string; serviceCode?: string; label?: boolean; missingOkay?: boolean; listing?: boolean; signal?: AbortSignal },
   fetcher: typeof fetch,
 ): Promise<unknown> {
   const token = typeof key === "string" ? key.trim() : "";
@@ -916,7 +918,7 @@ function inconclusiveCreateReceipt(value: unknown, reference: string): RoyalMail
 
 /** Create once. An uncertain result must be reconciled by reference by the caller. */
 export async function createRoyalMailOrder(key: string, input: RoyalMailOrderInput, fetcher = fetch): Promise<RoyalMailOrder> {
-  const body = orderBody(input);
+  const body = royalMailOrderBody(input);
   const receipt = await clickDrop(key, "/orders", { body, reference: input.reference, serviceCode: input.serviceCode }, fetcher);
   const result = record(receipt);
   const failures = result && exactRejection(result, input.reference, body.items[0]);

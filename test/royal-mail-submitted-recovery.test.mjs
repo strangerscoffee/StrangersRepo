@@ -111,3 +111,20 @@ test('use bounded separate date ranges for an old order, compare all matching id
     ids => Response.json([item(ids[0],ref)]), old);
   await assert.rejects(conflict.run());
 });
+
+test('a box recovery reads only its original booking and cannot take its sibling’s label', async () => {
+  const box = ref + '-B2';
+  const get = (reference, events) => async (url, init) => {
+    assert.equal(init.method, 'GET');
+    assert.equal(init.body, undefined);
+    assert.equal(new URL(url).pathname, '/api/v1/orders/%22' + box + '%22');
+    events.push(url);
+    return Response.json([{ ...label, orderReference: reference }]);
+  };
+  const calls = [];
+  const found = await findSubmittedRoyalMailOrder(key, box, sent, placed, get(box, calls));
+  assert.equal(found.reference, box);
+  assert.equal(found.orderId, label.orderIdentifier);
+  await assert.rejects(findSubmittedRoyalMailOrder(key, box, sent, placed, get(ref+'-B1', calls)));
+  assert.equal(calls.length, 2);
+});

@@ -1,0 +1,19 @@
+.box-desk,.box-list,.box-group,.box-card,.box-review,.box-address-editor,.box-billing-summary{display:grid;gap:.7rem;min-width:0}
+.box-desk{gap:1rem;align-content:start}
+.box-desk :is(h3,h4,p),.box-billing-summary p,.box-check-issues p{margin:0}
+.box-header h3{font-size:1.12rem}
+.box-header p,.box-billing-summary small,.box-state,.box-packed-total{color:var(--muted,currentColor)}
+.box-card,.box-group,.box-billing-summary,.box-review,.box-check-issues{border:1px solid var(--line, #858b943e);border-radius:.9rem;padding:.9rem;overflow-wrap:anywhere}
+.box-card-head,.box-weight-row,.box-actions{display:flex;gap:.65rem;align-items:center;justify-content:space-between}
+.box-actions{flex-wrap:wrap;justify-content:flex-start}
+.box-weight-row .field{flex:1 1 9rem;min-width:0}
+.box-weight-row button{align-self:flex-end}
+.box-billing-summary,.box-check-issues,.box-address-editor{margin-block:.65rem}
+.box-check-issues{background:var(--warn-bg,rgba(205,145,30,.12))}
+.box-check-issues ul{margin:.45rem 0;padding-inline-start:1.15rem}
+.box-address-editor{border:0;padding:0}.box-address-editor legend{font-weight:700}
+.box-review:focus,.box-card:focus{outline:2px solid var(--accent,#2675ce);outline-offset:2px}
+@media (max-width:450px){.box-actions .btn{flex:1 1 auto}.box-weight-row{align-items:flex-end}.box-desk{gap:.75rem}}
+.box-line-qty{display:grid;grid-template-columns:minmax(0,1fr) minmax(3.5rem,5rem);align-items:center;gap:.75rem}
+.box-line-qty input{width:100%;min-width:0}.box-line-qty span{overflow-wrap:anywhere}
+.box-allocation-summary{display:grid;gap:.25rem}.box-content-list{padding-inline-start:1.2rem;margin:0}

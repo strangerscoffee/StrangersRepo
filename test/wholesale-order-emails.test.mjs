@@ -204,6 +204,81 @@ test("when an order is marked dispatched the customer is told, once: shipped (wi
   assert.equal(await settle(1, 1500), 0);
 });
 
+test("two sealed boxes are handed over once, with their own email links and carrier delivery states", async () => {
+  await customerEmails(true);
+  const { order } = await place();
+  await settle(1); take();
+  const ready = await orderStatus(order, "Ready");
+  const path = `/api/admin/wholesale/orders/${order.id}`;
+  const weights = [4100, 4200], numbers = ["AB123456789GB", "AB123456780GB"];
+  const half = ready.lines.map(line => line.quantity / 2);
+  const plan = await call("PUT", path + "/shipping/boxes", { ifVersion: ready.version, planVersion: null, weights, contents: [half,half] });
+  assert.equal(plan.status, 200, plan.text);
+  function confirmBox(index) {
+    srv.sql(`INSERT INTO wholesale_royal_mail_shipments(order_id,operation,state,order_version,provider_id,weight_grams,updated_at,
+        label_downloaded_at,shipping_fingerprint,tracking_number,carrier_status,carrier_event_at)
+      SELECT order_id||'-B${index+1}','operation-${index}','labelled',${ready.version},${8000+index},${weights[index]},1,
+        1,shipping_fingerprint,'${numbers[index]}',NULL,NULL FROM wholesale_royal_mail_box_plans WHERE order_id='${order.id}'`);
+  }
+  confirmBox(0);
+  const original = ready.lines.map(({productId, pack, grind, quantity}) => ({productId,pack,grind,quantity}));
+  const amended = original.map((line, i) => i ? line : {...line,quantity:line.quantity+1});
+  const changed = await call("PUT", path + "/lines", { ifVersion:ready.version, lines:amended });
+  assert.equal(changed.status, 409, changed.text);
+  assert.equal(changed.body.code, "royal_mail_boxes_committed");
+  assert.equal((await call("GET", "/api/wholesale/orders/" + order.id, undefined, A)).body.order.version, ready.version);
+  const dispatchBody = { ifVersion: ready.version, status: "Dispatched", customerId: order.customerId };
+  const blocked = await call("PATCH", path, dispatchBody);
+  assert.equal(blocked.status, 409, blocked.text);
+  const before = await call("GET", "/api/wholesale/orders/" + order.id, undefined, A);
+  assert.equal(before.body.order.deliveryParcels, undefined);
+  assert.equal(srv.sql(`SELECT COUNT(*) AS n FROM wholesale_email_outbox WHERE order_id='${order.id}'`)[0].n, 0);
+  confirmBox(1);
+  const handover = await call("PATCH", path, dispatchBody);
+  assert.equal(handover.status, 200, handover.text);
+  assert.equal((await call("PATCH", path, dispatchBody)).status, 409);
+  assert.equal(await settle(1), 1);
+  const [mail] = take();
+  assert.deepEqual(mail.to, ["buyer@lune.example"]);
+  assert.match(mail.text, /travelling in 2 boxes/);
+  for (const [i, number] of numbers.entries()) {
+    assert.ok(mail.text.includes(`Box ${i+1} of 2: https://www.royalmail.com/track-your-item#/tracking-results/${number}`));
+    assert.ok(mail.html.includes(`Track box ${i+1} of 2</a>`));
+  }
+  assert.equal(srv.sql(`SELECT COUNT(*) AS n FROM wholesale_email_outbox WHERE order_id='${order.id}'`)[0].n, 1);
+  srv.sql(`UPDATE wholesale_royal_mail_shipments SET carrier_status=CASE WHEN order_id='${order.id}-B1' THEN 'Delivered' ELSE 'Item received' END,
+    carrier_event_at='2026-11-28T10:00:00Z' WHERE order_id IN ('${order.id}-B1','${order.id}-B2')`);
+  // An older booking for this box number cannot supply a scan to the current booking.
+  srv.sql(`INSERT INTO wholesale_royal_mail_scan_checks(shipment_id,booking_operation,number,connection_scope,lease,next_at,checked_at,outcome,event_at)
+    VALUES('${order.id}-B2','previous-booking','${numbers[1]}','test','','0',1,'delivered','2026-11-28T12:00:00Z')`);
+  const detail = await call("GET", "/api/wholesale/orders/" + order.id, undefined, A);
+  assert.equal(detail.status, 200, detail.text);
+  const expected = numbers.map((number, i) => ({ number: i+1, count: 2,
+    trackingUrl: "https://www.royalmail.com/track-your-item#/tracking-results/" + number, status: i ? "in_transit" : "delivered" }));
+  assert.deepEqual(detail.body.order.deliveryParcels, expected);
+  const list = await call("GET", "/api/wholesale/orders", undefined, A);
+  assert.deepEqual(list.body.orders.find(item => item.id === order.id).deliveryParcels, expected);
+  const otherCustomer = (await call("POST", "/api/admin/wholesale/customers", { business: "Other parcel buyer", contact: "Buyer", email: "other@example.test", status: "Active" })).body.customer;
+  const otherAccount = (await call("POST", `/api/admin/wholesale/customers/${otherCustomer.id}/account`, { username: "other.parcel.buyer" })).body;
+  const other = (await call("POST", "/api/wholesale/auth/change-password", {
+    username: "other.parcel.buyer", password: otherAccount.temporaryPassword, newPassword: "other-parcel-password",
+  }, null)).cookie;
+  assert.equal((await call("GET", "/api/wholesale/orders/" + order.id, undefined, other)).status, 404);
+  const otherList = await call("GET", "/api/wholesale/orders", undefined, other);
+  assert.deepEqual(otherList.body.orders, []);
+  srv.sql(`UPDATE wholesale_royal_mail_shipments SET review_required=1 WHERE order_id='${order.id}-B2'`);
+  const held = await call("GET", "/api/wholesale/orders/" + order.id, undefined, A);
+  assert.equal(held.body.order.deliveryParcels[1].trackingUrl, null);
+  assert.equal(held.body.order.deliveryParcels[1].status, "unknown");
+  assert.doesNotMatch(JSON.stringify(held.body.order.deliveryParcels), /operation-|provider_id|carrier_status/);
+  const alternate = await call("PATCH", path, {ifVersion:handover.body.order.version,customerId:order.customerId,
+    status:"Dispatched",trackingUrl:"https://other-carrier.example/parcel"});
+  assert.equal(alternate.status, 200, alternate.text);
+  const external = await call("GET", "/api/wholesale/orders/" + order.id, undefined, A);
+  assert.equal(external.body.order.trackingUrl, "https://other-carrier.example/parcel");
+  assert.equal(external.body.order.deliveryParcels, undefined);
+});
+
 test("staff-channel Royal Mail dispatch requires confirmed terms and sends shipped mail for legacy delivery labels", async () => {
   await customerEmails(true);
   const link = "https://www.royalmail.com/track-your-item#/tracking-results/AB123456789GB";
