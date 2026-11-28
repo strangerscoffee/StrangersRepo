@@ -412,6 +412,40 @@ function addBookingGuidance(guidance: Set<string>, fields: string[], message: st
   }
 }
 
+// When Click & Drop's receipt fits neither a booking nor a confirmed refusal (28 Nov 2026: every wholesale
+// label request ended here), describe its outline so the reason can be found: field names, counts, error
+// codes that look like codes, the fields it named and the fixed guidance for them. Never values or free text.
+const OUTLINE_KEY = /^[A-Za-z][A-Za-z0-9_]{0,39}$/;
+function receiptOutline(result: Record<string, unknown> | null): string {
+  if (!result) return " (Reply outline: not a JSON object.)";
+  const keys = (value: Record<string, unknown> | null) => value ? Object.keys(value).filter(key => OUTLINE_KEY.test(key)).slice(0, 12) : [];
+  const count = (value: unknown) => Array.isArray(value) ? String(value.length) : value === undefined ? "none" : "not a list";
+  const number = (value: unknown) => typeof value === "number" && Number.isSafeInteger(value) ? String(value) : value === undefined ? "none" : "?";
+  const parts = ["fields " + (keys(result).join(", ") || "none"), "successCount " + number(result.successCount),
+    "errorsCount " + number(result.errorsCount), "createdOrders " + count(result.createdOrders), "failedOrders " + count(result.failedOrders)];
+  const failures = Array.isArray(result.failedOrders) ? result.failedOrders.slice(0, 3).map(record) : [];
+  const created = Array.isArray(result.createdOrders) ? result.createdOrders.slice(0, 3).map(record) : [];
+  const codes = new Set<string>(), named = new Set<string>(), guidance = new Set<string>();
+  const errorLists = [...failures.map(failure => failure?.errors), result.errors];
+  for (const list of errorLists) {
+    for (const raw of Array.isArray(list) ? list.slice(0, 12) : []) {
+      const error = record(raw);
+      if (!error) continue;
+      for (const code of [error.errorCode, error.code]) {
+        if ((typeof code === "string" && OUTLINE_KEY.test(code)) || (typeof code === "number" && Number.isSafeInteger(code))) codes.add(String(code));
+      }
+      const fields = diagnosticFields(error).filter(safeFieldPath);
+      fields.forEach(field => named.add(field));
+      addBookingGuidance(guidance, fields, diagnosticText(error).join(" "));
+    }
+  }
+  if (failures.length) parts.push("failed order fields " + (keys(failures[0]).join(", ") || "none"));
+  if (created.length) parts.push("created order fields " + (keys(created[0]).join(", ") || "none"));
+  if (codes.size) parts.push("error codes " + [...codes].slice(0, 5).join(", "));
+  if (named.size) parts.push("named fields " + [...named].slice(0, 5).join(", "));
+  return " (Reply outline: " + parts.join("; ") + ".)" + (guidance.size ? " " + [...guidance].slice(0, 3).join(" ") : "");
+}
+
 function bookingRejection(errors: unknown[], status: number, serviceCode?: string, correlated = false): RoyalMailError {
   const reasons = new Set<string>();
   const guidance = new Set<string>();
@@ -826,7 +860,7 @@ export async function createRoyalMailOrder(key: string, input: RoyalMailOrderInp
   const failures = result && exactRejection(result, input.reference, body.items[0]);
   if (failures) {
     const refusal = bookingRejection([result, ...failures], 400, input.serviceCode, true);
-    if (refusal.code === "royal_mail_invalid_response") throw unconfirmedReceipt("Click & Drop reported an order error without confirming the postage outcome.");
+    if (refusal.code === "royal_mail_invalid_response") throw unconfirmedReceipt("Click & Drop reported an order error without confirming the postage outcome." + receiptOutline(result));
     throw refusal;
   }
   const completeCounts = result?.successCount === 1 && result.errorsCount === 0;
@@ -836,7 +870,7 @@ export async function createRoyalMailOrder(key: string, input: RoyalMailOrderInp
       (result.errorsCount !== undefined && result.errorsCount !== 0) ||
       (!completeCounts && Object.keys(result).some(field => !["successCount", "errorsCount", "createdOrders", "failedOrders"].includes(field))) ||
       (result.failedOrders !== undefined && !(Array.isArray(result.failedOrders) && !result.failedOrders.length)) || !Array.isArray(result.createdOrders) || result.createdOrders.length !== 1) {
-    throw unconfirmedReceipt("Click & Drop's receipt did not identify one successful booking or one confirmed refusal.");
+    throw unconfirmedReceipt("Click & Drop's receipt did not identify one successful booking or one confirmed refusal." + receiptOutline(result));
   }
   const created = record(result.createdOrders[0]);
   if (!created) throw unconfirmedReceipt("Click & Drop's receipt did not include readable booking details.");

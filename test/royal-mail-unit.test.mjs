@@ -849,3 +849,26 @@ test('service discovery scopes the existing service to the weighed parcel and di
     assert.equal(uncertain.available, null); assert.doesNotMatch(uncertain.message, /private customer/);
   }
 });
+
+test('an unrecognised create receipt is described by its outline only: fields, counts, codes, named fields and fixed guidance (28 Nov 2026)', async () => {
+  // No counts, and an echo that isn't the order as sent: not a confirmed refusal.
+  const reply = {
+    createdOrders: [],
+    failedOrders: [{
+      order: { orderReference: input.reference, recipient: { address: { fullName: 'Sample Person', postcode: 'NR2 3HX' } } },
+      errors: [{ errorCode: 'InvalidPostcode', errorMessage: 'Postcode NR2 3HX for Sample Person is not valid', fields: [{ fieldName: 'recipient.address.postcode', value: 'NR2 3HX' }] }],
+    }],
+  };
+  await assert.rejects(createRoyalMailOrder(key, input, async () => Response.json(reply)), error => {
+    assert.equal(error.uncertain, true, 'still unconfirmed: nothing is unlocked or retried');
+    assert.match(error.message, /did not identify one successful booking|without confirming the postage outcome/);
+    assert.match(error.message, /Reply outline: fields createdOrders, failedOrders; successCount none; errorsCount none; createdOrders 0; failedOrders 1; failed order fields order, errors; error codes InvalidPostcode; named fields recipient\.address\.postcode\./);
+    assert.match(error.message, /Check the delivery postcode\./);
+    assert.doesNotMatch(error.message, /NR2|Sample Person|fixture-private/);
+    return true;
+  });
+  await assert.rejects(createRoyalMailOrder(key, input, async () => Response.json({ surprise: { secret: 'x' }, 'not a key!': 1 })), error => {
+    assert.match(error.message, /Reply outline: fields surprise; successCount none; errorsCount none; createdOrders none; failedOrders none\./);
+    return true;
+  });
+});
