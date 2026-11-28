@@ -373,6 +373,42 @@ async function rejectedBooking(response: Response, reference?: string, serviceCo
   }
 }
 
+// Click & Drop may answer a reference with no order as a 400 listing "not found" errors, not only as a 404
+// (a first wholesale booking's lookup was refused with a 400 on 28 Nov 2026). Only an explicit not-found for every entry counts as missing; anything else is reported with
+// Royal Mail's own code and short wording (a lookup sends no recipient details, so none can be echoed back).
+const LOOKUP_NOT_FOUND = /\b(?:not\s*found|no\s+(?:such\s+)?orders?|does\s+not\s+exist|could\s+not\s+(?:be\s+)?f(?:ou|i)nd|unknown\s+order)\b|^OrderNotFound$|^NotFound$/i;
+
+async function lookupRefusal(response: Response, reference?: string): Promise<typeof MISSING_ORDER> {
+  const status = response.status;
+  let value: unknown = null;
+  try {
+    const bytes = await readBytes(response, 16 * 1024, "Royal Mail lookup reply exceeded its limit.");
+    value = JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes));
+  } catch {
+    void response.body?.cancel().catch(() => {});
+  }
+  const top = record(value);
+  const list = Array.isArray(value) ? value : Array.isArray(top?.errors) ? top.errors : top ? [top] : [];
+  const entries = list.slice(0, 12).map(record).filter((entry): entry is Record<string, unknown> => !!entry);
+  const words = (entry: Record<string, unknown>) => [...diagnosticText(entry), entry.code, entry.errorCode]
+    .filter((text): text is string => typeof text === "string" && text.length <= 300);
+  if (entries.length && entries.length === list.length && entries.every(entry => words(entry).some(text => LOOKUP_NOT_FOUND.test(text.trim())))) {
+    return MISSING_ORDER;
+  }
+  const said = new Set<string>();
+  for (const entry of entries) {
+    const code = entry.code ?? entry.errorCode;
+    const shownCode = typeof code === "number" && Number.isSafeInteger(code) ? String(code) :
+      typeof code === "string" && /^[A-Za-z][A-Za-z0-9_]{0,39}$/.test(code) ? code : "";
+    const message = diagnosticText(entry).map(text => (reference ? text.split(reference).join("the order reference") : text).trim())
+      .find(text => text.length <= 160 && /^[A-Za-z0-9 .,'"()\/:;-]+$/.test(text) && !/\d|@/.test(text)) || "";
+    const shown = [message, shownCode && "code " + shownCode].filter(Boolean).join(", ");
+    if (shown) said.add(shown);
+  }
+  const detail = said.size ? " Royal Mail said: " + [...said].slice(0, 3).join("; ") + "." : "";
+  throw new RoyalMailError("royal_mail_rejected", "Royal Mail rejected the order-reference lookup. Check the reference in Click & Drop." + detail, status);
+}
+
 function responseError(status: number, posting: boolean, label = false): RoyalMailError {
   if (status === 401) return new RoyalMailError("royal_mail_auth", "Royal Mail did not accept the Click & Drop key.", status);
   if (status === 403) return new RoyalMailError("royal_mail_denied", label
@@ -408,11 +444,9 @@ async function clickDrop(
   }
   if (!response.ok) {
     if (posting && (response.status === 400 || response.status === 422)) throw await rejectedBooking(response, reference, serviceCode);
+    if (missingOkay && (response.status === 400 || response.status === 422)) return lookupRefusal(response, reference);
     void response.body?.cancel().catch(() => {});
     if (response.status === 404 && missingOkay) return MISSING_ORDER;
-    if (missingOkay && (response.status === 400 || response.status === 422)) {
-      throw new RoyalMailError("royal_mail_rejected", "Royal Mail rejected the order-reference lookup. Check the reference in Click & Drop.", response.status);
-    }
     throw responseError(response.status, posting, label);
   }
 
@@ -500,7 +534,7 @@ export async function createRoyalMailOrder(key: string, input: RoyalMailOrderInp
 export async function findRoyalMailOrder(key: string, reference: string, fetcher = fetch): Promise<RoyalMailOrder | null> {
   const knownReference = orderReference(reference);
   const path = "/orders/" + encodeURIComponent('"' + knownReference + '"');
-  const result = await clickDrop(key, path, { missingOkay: true }, fetcher);
+  const result = await clickDrop(key, path, { missingOkay: true, reference: knownReference }, fetcher);
   if (result === MISSING_ORDER || (Array.isArray(result) && result.length === 0)) return null;
   if (!Array.isArray(result) || result.length !== 1) throw invalidResponse();
   return publicOrder(result[0], knownReference);

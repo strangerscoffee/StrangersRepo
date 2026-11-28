@@ -419,6 +419,29 @@ test('booking refusals identify carrier fields and codes without exposing order 
   });
 });
 
+test('a 400 reference lookup that only says not found means no order yet; other refusals give Royal Mail\'s reason', async () => {
+  for (const body of [
+    [{code: 'OrderNotFound', message: 'Order not found'}],
+    {errors: [{message: 'No orders found for "' + input.reference + '"'}]},
+    {code: 'NotFound'},
+  ]) assert.equal(await findRoyalMailOrder(key, input.reference, async () => Response.json(body, {status:400})), null);
+  await assert.rejects(findRoyalMailOrder(key, input.reference, async () => Response.json(
+    [{code: 'InvalidOrderIdentifier', message: 'Order identifiers are invalid'}], {status:400})), error => {
+    assert.match(error.message, /order-reference lookup/);
+    assert.match(error.message, /Royal Mail said: Order identifiers are invalid, code InvalidOrderIdentifier/);
+    return true;
+  });
+  // Mixed or unreadable replies are never treated as missing, and long or address-like text is not quoted.
+  await assert.rejects(findRoyalMailOrder(key, input.reference, async () => Response.json(
+    [{message: 'Order not found'}, {message: 'Rate limited'}], {status:400})), /order-reference lookup/);
+  await assert.rejects(findRoyalMailOrder(key, input.reference, async () => new Response('not found', {status:400})), /order-reference lookup/);
+  await assert.rejects(findRoyalMailOrder(key, input.reference, async () => Response.json(
+    [{message: 'Bad value at 24 Example Street NR2 3HX'}], {status:400})), error => {
+    assert.doesNotMatch(error.message, /Example Street|NR2/);
+    return true;
+  });
+});
+
 test('a reference lookup refusal is distinct from a purchase refusal and duplicate evidence requires recovery', async () => {
   await assert.rejects(findRoyalMailOrder(key, input.reference, async () => Response.json({}, {status:400})), error => {
     assert.match(error.message, /order-reference lookup/);
