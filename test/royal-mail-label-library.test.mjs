@@ -104,6 +104,34 @@ test('generated label archive pages genuine shipments, keeps historical holds an
   for(const q of ['?status=paid','?cursor=1','?limit=0','?limit=101','?search='+'x'.repeat(121),'?search=%00','?cursor='+encodeURIComponent(first.nextCursor)+'&status=downloaded']) {
     assert.equal((await request(q)).status,400,q);
   }
+  // The carrier ID identifies one PDF; the parent ID opens the underlying wholesale order.
+  const parent = id(80);
+  const boxContents = JSON.stringify({ basis: JSON.stringify([5004,0,null,[]]), quantities: [[],[],[]], goodsPence: [1668, 1668, 1668] });
+  const piece = (suffix, state, provider) => db.prepare(`INSERT INTO wholesale_royal_mail_shipments
+    (order_id,state,operation,order_version,provider_id,weight_grams,updated_at,requested_at,shipping_fingerprint)
+    VALUES(?,?,'box',1,?,1400,2000,2000,?)`).bind(parent+suffix,state,provider,fingerprint);
+  await db.batch([insert(80,{pence:5004}), db.prepare("INSERT INTO wholesale_royal_mail_box_plans(order_id,revision,weights,shipping_fingerprint,contents) VALUES(?,?,?,?,?)")
+    .bind(parent,"plan","[1400,1400,1400]",fingerprint,boxContents),
+    piece("-B1","labelled",801),piece("-B2","labelled",802),piece("-B3","review",null),
+    piece("-B9","labelled",809),piece("-B01","labelled",810),piece("-X1","labelled",811)]);
+  const boxes = await archive("?search="+parent+"&limit=1");
+  assert.equal(boxes.total,2);
+  assert.equal(boxes.outstandingCount,1);
+  assert.equal(boxes.labels[0].canPreview,true);
+  assert.deepEqual(boxes.labels.map(({id,parentId,boxNumber,boxCount})=>[id,parentId,boxNumber,boxCount]),
+    [[parent+"-B2",parent,2,3]]);
+  const nextBox = await archive("?search="+parent+"&cursor="+encodeURIComponent(boxes.nextCursor));
+  assert.equal(nextBox.labels[0].id,parent+"-B1");
+  assert.equal(nextBox.nextCursor,null);
+  const waiting = await archive("?search="+parent+"&view=requests");
+  assert.equal(waiting.total,1);
+  assert.equal(waiting.requests[0].id,parent+"-B3");
+  assert.equal(waiting.requests[0].parentId,parent);
+  assert.equal(waiting.requests[0].boxNumber,3);
+  await db.prepare("UPDATE wholesale_royal_mail_shipments SET weight_grams=2800 WHERE order_id=?").bind(parent+"-B2").run();
+  assert.equal((await archive("?search="+parent+"-B2")).labels[0].canPreview,false);
+  await db.prepare("UPDATE wholesale_preview SET data=json_set(data,'$.pence',5400),version=2 WHERE id=?").bind(parent).run();
+  assert.equal((await archive("?search="+parent+"-B1")).labels[0].canPreview,false,"changed goods values require review even when destination and weight agree");
   await db.prepare("UPDATE wholesale_royal_mail_settings SET booking_config='unreadable-override' WHERE id=1").run();
   const disconnected=await archive('?search=ab987');assert.equal(disconnected.total,1);assert.equal(disconnected.labels[0].canPreview,false);
 });

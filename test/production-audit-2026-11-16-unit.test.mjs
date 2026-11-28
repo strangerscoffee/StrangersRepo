@@ -34,6 +34,7 @@ test('backup reads one transaction: concurrent leave and invoice commits cannot 
   {order_id:'synthetic-pending-order',state:'booking',operation:'pending-operation',provider_id:null,tracking_number:null},
  ];
  const shippingSettings={enabled:0,version:3,updated_at:1};
+ const boxPlans=[{order_id:'WS-TEST',revision:'sealed',weights:'[18000,18000]',contents:'{"quantities":[[18],[18]],"goodsPence":[32400,32400]}',shipping_fingerprint:'recorded'}];
  const before={sequence:7,timeOff:[],days:[],invoices:[]},committed={sequence:8,timeOff:[{id:'synthetic-leave',user_id:'synthetic-person',status:'approved',kind:'annual'}],days:[{time_off_id:'synthetic-leave',day:'2026-11-16',units:100,unit:'days'}],invoices:[{seq:8,order_id:'synthetic-order',data:'{}'}]};
  let state=structuredClone(before),gz,batches=0;
  const rows=(sql,snapshot)=>{
@@ -42,6 +43,7 @@ test('backup reads one transaction: concurrent leave and invoice commits cannot 
   if(/FROM sqlite_sequence\b/.test(sql))return[{seq:snapshot.sequence}];
   if(/FROM wholesale_invoices\b/.test(sql))return snapshot.invoices;
   if(/FROM wholesale_royal_mail_shipments\b/.test(sql))return shipments;
+  if(/FROM wholesale_royal_mail_box_plans\b/.test(sql))return boxPlans;
   if(/FROM wholesale_royal_mail_settings\b/.test(sql))return [shippingSettings];
   if(/FROM meta\b/.test(sql))return[{v:10}];
   if(/FROM docs\b/.test(sql))return[{path:'sites/cafe/staff/owned',data:'{"ownerUserId":"stable-owner"}',seq:10,employee_privacy_version:1,updated_at:1,updated_by:'Synthetic'}];
@@ -52,6 +54,7 @@ test('backup reads one transaction: concurrent leave and invoice commits cannot 
  await makeBackup({DB,FILES},'Synthetic Audit');const saved=await new Response(new Blob([gz]).stream().pipeThrough(new DecompressionStream('gzip'))).json();
  assert.equal(batches,1);assert.equal(saved.rota.rota_time_off.length,saved.rota.rota_leave_days.length);assert.ok(saved.wholesaleInvoices.sequence>=Math.max(0,...saved.wholesaleInvoices.invoices.map(i=>i.seq)));
  assert.deepEqual(saved.royalMailShipments,shipments);
+ assert.deepEqual(saved.royalMailBoxPlans,boxPlans);
  assert.deepEqual(saved.royalMailSettings,shippingSettings);
  assert.equal(state.invoices.length,1,'concurrent commit happened');assert.equal(saved.docs[0].employee_privacy_version,1);assert.equal(saved.docs[0].data.ownerUserId,'stable-owner');assert.ok(saved.documentSequence>=saved.docs[0].seq);
 });

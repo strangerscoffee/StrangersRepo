@@ -52,6 +52,15 @@ async function connectionScope(scopeKey: string, policy: Policy, connections: Co
   return Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, "0")).join("");
 }
 
+// A collection cutoff applies only to the connection for which it was confirmed.
+export async function royalMailCollectionCutoff(env: Env, policy: Policy, connections: Connections): Promise<string | null> {
+  const stored = await env.DB.prepare("SELECT scope_key,scope,manual FROM wholesale_royal_mail_setup_checks WHERE id=1")
+    .first<Pick<StoredChecklist,"scope_key"|"scope"|"manual">>();
+  if (!stored?.scope || stored.scope !== await connectionScope(stored.scope_key, policy, connections)) return null;
+  const cutoff = JSON.parse(stored.manual).collection?.evidence?.cutoff;
+  return typeof cutoff === "string" && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(cutoff) ? cutoff : null;
+}
+
 function fields(value: Record<string, unknown>, allowed: string[]) {
   if (Object.keys(value).some(key => !allowed.includes(key))) throw invalid("Send only the requested checklist fields.");
 }

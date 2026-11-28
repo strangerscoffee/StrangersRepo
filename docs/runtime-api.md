@@ -358,6 +358,12 @@ A provider acknowledgement remains distinct from delivery. A delivered callback 
 
 ## Wholesale Royal Mail labels
 
+On the existing Admin and Staff order shipping routes, `POST /shipping/preflight` checks the reviewed booking details locally. The response contains field issues, the billing source and revision. Only Admin receives editable billing details. Purchases recheck the latest order, billing revision, carrier configuration and applicable payment rules.
+
+`GET /shipping/boxes` reads one order’s packing plan. `PUT /shipping/boxes` saves the reviewed plan against its order and plan revisions. Each box has a stable number and its own shipping routes under `/shipping/boxes/<number>`, including `preflight`, `book`, `refresh` and `label`. Each confirmed purchase has a separate reservation. Recovery and label downloads reuse that reservation. Handover and the dispatch email are order-wide.
+
+`GET /api/admin/wholesale/royal-mail/attention` accepts an issue category, limit and continuation cursor. Returned entries identify the wholesale order, box where applicable, evidence and next action. The scheduled scan check reads supported tracking references for handed-over shipments.
+
 The Admin Labels tab at `#wholesale/royal-mail/labels` reads `GET /api/admin/wholesale/royal-mail/labels`. The optional `search`, `status`, `limit` and `cursor` parameters scope an ordered page of recorded bookings. Following `nextCursor` preserves the current search and status. The list response contains order and tracking metadata. Carrier PDFs are fetched only for individual orders.
 
 An admin can preview the original document through `GET /api/admin/wholesale/orders/:id/shipping/label?preview=1`. A successful preview is served inline with `no-store` and leaves the first download time unchanged. Print and Download use the existing label route without the preview flag. Both paths verify the booking identity in the active Click & Drop account and recheck the order before releasing the PDF. None creates a shipment.

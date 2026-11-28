@@ -669,6 +669,28 @@ const MIGRATIONS: Migration[] = [
     try { await env.DB.prepare("ALTER TABLE wholesale_royal_mail_shipments ADD COLUMN request_problem TEXT").run(); }
     catch (error) { if (!(await columns(env, table)).has("request_problem")) throw error; }
   } },
+  { id: 59, name: "Sealed boxes for wholesale Royal Mail consignments", run: async env => {
+    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS wholesale_royal_mail_box_plans (
+      order_id TEXT PRIMARY KEY, revision TEXT NOT NULL, weights TEXT NOT NULL, shipping_fingerprint TEXT NOT NULL, contents TEXT
+    )`).run();
+    const table = "wholesale_royal_mail_box_plans";
+    if (!(await columns(env, table)).has("contents")) {
+      try { await env.DB.prepare("ALTER TABLE wholesale_royal_mail_box_plans ADD COLUMN contents TEXT").run(); }
+      catch (error) { if (!(await columns(env, table)).has("contents")) throw error; }
+    }
+  } },
+  { id: 60, name: "Carrier scan evidence for wholesale delivery issues", run: async env => {
+    await env.DB.batch([
+      env.DB.prepare(`CREATE TABLE IF NOT EXISTS wholesale_royal_mail_scan_checks (
+        shipment_id TEXT PRIMARY KEY, booking_operation TEXT NOT NULL, number TEXT NOT NULL, connection_scope TEXT NOT NULL,
+        lease TEXT NOT NULL, next_at INTEGER NOT NULL, checked_at INTEGER, outcome TEXT, description TEXT, event_at TEXT
+      )`),
+      env.DB.prepare(`CREATE INDEX IF NOT EXISTS wholesale_royal_mail_scan_parent ON wholesale_royal_mail_shipments(substr(order_id,1,35))
+        WHERE provider_id>0 AND review_required=0 AND state IN ('labelled','dispatched')`),
+      env.DB.prepare(`CREATE INDEX IF NOT EXISTS wholesale_royal_mail_scan_dispatch ON wholesale_preview(json_extract(data,'$.dispatchedAt'),id)
+        WHERE kind='order' AND json_extract(data,'$.status')='Dispatched'`),
+    ]);
+  } },
 ];
 
 async function migrate(env: Env): Promise<void> {

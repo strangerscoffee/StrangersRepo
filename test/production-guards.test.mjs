@@ -1,6 +1,5 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {readFile} from 'node:fs/promises';
 import {DatabaseSync} from 'node:sqlite';
 import {createRequire} from 'node:module';
 import {fileURLToPath} from 'node:url';
@@ -9,11 +8,12 @@ test('shared CSV formatter prevents formulas after whitespace while preserving r
  for(const text of ['=1+1','+1','-2','@SUM(A1)','\t=1','\r=1',' \t+1','\ufeff=1'])assert.ok(csvCell(text).startsWith("'")||csvCell(text).startsWith('"\''),JSON.stringify(text));
  assert.equal(csvCell(-2),'-2');assert.equal(csvCell(0), '0');assert.equal(csvCell(null),'');assert.equal(csvCell('Cafe, Norwich'),'"Cafe, Norwich"');assert.equal(csvCell('a"b'),'"a""b"');assert.equal(csvCell('normal',true),'"normal"');
 });
-async function invoiceModule() {
+async function guardModule(name) {
  const {build}=createRequire(import.meta.url)('esbuild');
- const source=await build({entryPoints:[fileURLToPath(new URL('../src/wholesaleInvoices.ts',import.meta.url))],bundle:true,write:false,format:'esm',platform:'node'});
- return import('data:text/javascript;base64,'+Buffer.from(source.outputFiles[0].text+'\n//# sourceURL=invoice-test-module.js').toString('base64'));
+ const source=await build({entryPoints:[fileURLToPath(new URL('../src/'+name+'.ts',import.meta.url))],bundle:true,write:false,format:'esm',platform:'node'});
+ return import('data:text/javascript;base64,'+Buffer.from(source.outputFiles[0].text+'\n//# sourceURL='+name+'-test-module.js').toString('base64'));
 }
+const invoiceModule=()=>guardModule('wholesaleInvoices');
 function invoiceFixture() {
  const db=new DatabaseSync(':memory:');
  db.exec(`
@@ -45,12 +45,15 @@ function invoiceFixture() {
  const order={preview:false,status:'New',customerId:'synthetic',business:'Synthetic buyer',createdAt:1,customerSnapshot:{address:'Test Street'},
    lines:[{title:'Coffee',packLabel:'1 kg',grindLabel:'Whole bean',quantity:6,price:2000}]};
  let beforeWrite;
+ async function interleave(sql){
+   if(beforeWrite && /^(INSERT INTO wholesale_invoices|UPDATE wholesale_invoices SET paid|UPDATE wholesale_preview SET data)/.test(sql)){
+     const next=beforeWrite;beforeWrite=null;await next();
+   }
+ }
  const env={DB:{prepare(sql){const bind=(...args)=>({
-   async first(){if(beforeWrite && /^(INSERT INTO wholesale_invoices|UPDATE wholesale_invoices SET paid)/.test(sql)){
-     const race=beforeWrite;beforeWrite=null;await race();
-   }return db.prepare(sql).get(...args)??null;},
+   async first(){await interleave(sql);return db.prepare(sql).get(...args)??null;},
    async all(){return{results:db.prepare(sql).all(...args)};},
-   async run(){return{meta:db.prepare(sql).run(...args)};},
+   async run(){await interleave(sql);return{meta:db.prepare(sql).run(...args)};},
  });return {...bind(),bind};}}};
  const request=body=>new Request('http://localhost/invoice',{method:'POST',body:JSON.stringify(body),headers:{'content-type':'application/json'}});
  const review={orderVersion:1,settingsVersion:1,invoiceDate:'2026-11-23',supplyDate:'2026-11-23'};
@@ -58,18 +61,30 @@ function invoiceFixture() {
  return {db,env,order,addOrder,request,review,race(fn){beforeWrite=fn;}};
 }
 test('production issuance and amendment cannot both win either invoice/order race',async()=>{
- const {handleInvoiceAdmin}=await invoiceModule();
- const changeSource=await readFile(new URL('../src/wholesaleStanding.ts',import.meta.url),'utf8');
- const amend=changeSource.match(/prepare\("(UPDATE wholesale_preview SET data=\?,version=version\+1,updated_at=\? WHERE kind='order' AND id=\? AND version=\? AND json_extract[^"\n]+)"\)/)[1];
- const {db,env,order,addOrder,request,review}=invoiceFixture();
+ const [{handleInvoiceAdmin},{amendLines}]=await Promise.all([invoiceModule(),guardModule('wholesaleStanding')]);
+ const {db,env,order,addOrder,request,review,race}=invoiceFixture();
  try{
-  const changed={...order,lines:[{...order.lines[0],quantity:8}]};
+  db.exec(`CREATE TABLE wholesale_royal_mail_shipments(order_id TEXT PRIMARY KEY,state TEXT,
+    provider_id INTEGER,candidate_provider_id INTEGER,review_required INTEGER,tracking_number TEXT,carrier_status TEXT,
+    carrier_event_at TEXT,booking_account_scope TEXT,label_downloaded_at INTEGER,problem TEXT,requested_at INTEGER,refresh_after INTEGER)`);
+  const line={...order.lines[0],productId:'brazil',pack:'kilo',grind:'beans',grams:1000};
   for(const [index,invoiceFirst] of [true,false].entries()){
-   const id='WS-'+String(index).repeat(32);addOrder(id);
+   const id='WS-'+String(index).repeat(32);
+   addOrder(id,{...order,lines:[line]});
    const insert=()=>handleInvoiceAdmin(request(review),env,'orders/'+id+'/invoice','Audit');
-   const update=()=>db.prepare(amend).run(JSON.stringify(changed),3,id,1,null,null,id).changes;
-   if(invoiceFirst){assert.equal((await insert()).status,201);assert.equal(update(),0);}
-   else{assert.equal(update(),1);await assert.rejects(insert(),error=>error.status===409);}
+   const update=()=>amendLines(env,id,{ifVersion:1,lines:[{...line,quantity:8}]},'Audit');
+   // The competing operation commits after the outer operation reviewed version one.
+   if(invoiceFirst){
+    race(async()=>assert.equal((await insert()).status,201));
+    await assert.rejects(update(),error=>error.status===409&&error.code==='conflict');
+   }else{
+    race(async()=>assert.equal((await update()).version,2));
+    await assert.rejects(insert(),error=>error.status===409);
+   }
+   const saved=db.prepare("SELECT data,version FROM wholesale_preview WHERE kind='order' AND id=?").get(id);
+   assert.equal(saved.version,invoiceFirst?1:2);
+   assert.equal(JSON.parse(saved.data).lines[0].quantity,invoiceFirst?6:8);
+   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM wholesale_invoices WHERE order_id=?').get(id).n,invoiceFirst?1:0);
   }
  }finally{db.close();}
 });

@@ -96,9 +96,10 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
       if (url.pathname === "/api/v1/carriers") return RuntimeResponse.json([{ shippingAccountName: "Local fulfilment" }]);
       if (request.method === "POST") {
         const { items: [item] } = await request.json();
-        assert.equal(item.packages[0].weightInGrams, 2140);
         const reference = item.orderReference;
-        const result = { orderIdentifier: nextProviderId++, orderReference: reference, trackingNumber: number };
+        const box = /-B(\d+)$/.exec(reference);
+        if (!box) assert.equal(item.packages[0].weightInGrams, 2140);
+        const result = { orderIdentifier: nextProviderId++, orderReference: reference, trackingNumber: box ? "AB" + box[1].padStart(9,"0") + "GB" : number };
         if (!unlabelled.has(reference)) {
           result.label = Buffer.from(pdf).toString("base64");
           result.printedOn = "2026-11-26T09:00:00Z";
@@ -536,6 +537,59 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     assert.equal((await call(shipPath(id), "POST", corrected)).status, 200);
     assert.equal((await read(id)).state, "labelled");
     assert.equal(posts() - beforePosts, 2, "one definitive rejection and one reviewed purchase");
+  });
+
+  await t.test("preflight checks the actual Click & Drop billing payload and a changed review cannot buy postage", async () => {
+    const id = orderRef(301), buyer = "separate-billing-customer";
+    await seed(id, { customerId: buyer });
+    const check = (details = packageDetails) => call(shipPath(id) + "/preflight", "POST", details);
+    const before = requests.length;
+    const initial = await (await check()).json();
+    assert.equal(initial.ready, true);
+    assert.equal(initial.billingSource, "delivery");
+    assert.equal(initial.billingRevision, 0);
+    assert.equal(initial.billingDraft.postcode, packageDetails.recipient.postcode);
+    const invoice = await db.prepare(`INSERT INTO wholesale_invoices(invoice_number,order_id,customer_id,request_key,data,issued_at,issued_by)
+      VALUES ('BILLING-301',?,?,'billing-301','{}',1,'Test Admin') RETURNING seq`).bind(id, buyer).first();
+    const exp = await db.prepare(`INSERT INTO quickbooks_exports(environment,realm_id,company_name,company_vat,invoice_id,request_id,fingerprint,
+      payload,payload_hash,source_hash,created_by,preview,profiles,connection_generation,mapping_version,state,created_at,updated_at)
+      VALUES ('production','billing-301','','',?,'billing-301','','{}','','','','','','',0,'linked',1,1) RETURNING id`).bind(invoice.seq).first();
+    const review = await db.prepare(`INSERT INTO wholesale_invoice_billing_reviews
+      (review_key,invoice_id,export_id,customer_id,environment,remote_id,remote_address_hash,choice,address,postcode,actor,created_at)
+      VALUES ('billing-301',?,?,?,'production','x','x','quickbooks','10 Accounts Lane, London','SW1A 1AA','Test Admin',1) RETURNING id`)
+      .bind(invoice.seq, exp.id, buyer).first();
+    const stale = await call(shipPath(id), "POST", { ...packageDetails, billingRevision: initial.billingRevision });
+    assert.equal(stale.status, 409);
+    const checked = await (await check()).json();
+    assert.equal(checked.ready, true);
+    assert.equal(checked.billingSource, "confirmed");
+    assert.equal(checked.billingRevision, review.id);
+    assert.equal(checked.billingDraft.city, "London");
+    const bad = { ...packageDetails, billing: { ...checked.billingDraft, city: "", postcode: "??" } };
+    const invalid = await (await check(bad)).json();
+    assert.equal(invalid.ready, false);
+    assert.deepEqual(invalid.issues.map(issue => issue.field), ["billing.city", "billing.postcode"]);
+    assert.equal((await call(shipPath(id), "POST", bad)).status, 400);
+    assert.equal(await read(id), null, "invalid payload never claimed a booking");
+    assert.equal(requests.length, before, "local preflight never contacts the carrier");
+
+    let booking;
+    interceptCreate = (ref, item) => {
+      booking = item;
+      if (!item.billing?.address?.fullName || !item.billing?.address?.city || !item.billing?.address?.addressLine1) {
+        return RuntimeResponse.json({ successCount: 0, errorsCount: 1, failedOrders: [{ order: item, errors: [{ errorCode: 15,
+          errorMessage: "Missing billing city", fields: [{ fieldName: "Billing.Address.City" }] }] }] });
+      }
+    };
+    try {
+      assert.equal((await call(shipPath(id), "POST", { ...packageDetails, billingRevision: checked.billingRevision })).status, 201);
+      assert.equal(booking.billing.address.city, "London");
+      assert.equal(booking.billing.address.addressLine1, "10 Accounts Lane");
+      assert.equal(booking.billing.address.postcode, "SW1A 1AA");
+      assert.equal(booking.recipient.address.city, packageDetails.recipient.city);
+      assert.equal((await check()).status, 409);
+      assert.equal(requests.slice(before).filter(row => row.method === "POST").length, 1);
+    } finally { interceptCreate = undefined; }
   });
 
   await t.test("a conflicting HTTP 200 receipt stays in review with a redacted receipt diagnostic", async () => {
@@ -983,6 +1037,26 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     assert.equal((await staff(collection)).status, 404);
     const ready = await (await staff(paid)).json();
     const payload = { ifVersion: ready.orderVersion, bookingVersion: ready.bookingVersion, bookingService: ready.bookingService, weightGrams: 2140 };
+    const staffPlanId = orderRef(320);
+    await seed(staffPlanId,{...net30,grams:2000,pence:4100,lines:[
+      {...order.lines[0],quantity:1}, {...order.lines[0],productId:"special",quantity:1},
+    ]});
+    const planBody = {ifVersion:1,planVersion:null,weights:[1050,1050],contents:[[1,0],[0,1]]};
+    const manual = await call(shipPath(staffPlanId)+"/boxes","PUT",{...planBody,goodsPence:[1800,2300]});
+    assert.equal(manual.status,200);
+    const staffBoxes = await (await staff(staffPlanId,"GET",undefined,"/boxes")).json();
+    assert.equal(staffBoxes.manualGoodsValuesRequired,true);
+    assert.equal(staffBoxes.orderGoodsPence,undefined);
+    assert.deepEqual(staffBoxes.boxes.map(box=>box.contents),planBody.contents);
+    assert.doesNotMatch(JSON.stringify(staffBoxes),/goodsPence|"price"|totalPence|subtotalPence/i);
+    assert.equal((await staff(staffPlanId,"PUT",{...planBody,planVersion:staffBoxes.planVersion,goodsPence:[1800,2300]},"/boxes")).status,400);
+
+    const staffBefore = requests.length;
+    const check = await staff(paid, "POST", payload, "/preflight");
+    assert.equal(check.status, 200);
+    assert.deepEqual(await check.json(), { ready: true, issues: [], billingSource: "delivery", billingRevision: 0 });
+    assert.equal((await staff(paid, "POST", { ...payload, billing: packageDetails.recipient }, "/preflight")).status, 400);
+    assert.equal(requests.length, staffBefore);
     assert.equal(ready.canCreate, true);
     assert.deepEqual(ready.eligibility, { eligible: true });
     assert.equal(ready.bookingService, "TPS48");
@@ -1114,4 +1188,159 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
       interceptLabel = undefined;
     }
   });
+  await t.test("sealed boxes book independently, allocate one order value, and hand over once every label is downloaded", async () => {
+    const id = orderRef(315), base = shipPath(id), path = base + "/boxes";
+    await seed(id, { grams:36_000, pence:38016, deliveryPence:745, totalPence:38784, packs:36,
+      lines:[{...order.lines[0], quantity:18, price:1001},
+        {...order.lines[0], productId:"ethiopia",title:"Ethiopia",quantity:18,price:1111}] });
+    const save = (weights,planVersion=null) => call(path,"PUT",{ifVersion:1,planVersion,weights,contents:[[18,0],[0,18]]});
+    assert.equal((await save([17000,17000])).status,400);
+    assert.equal((await save([35000,1000])).status,400);
+    const saved = await save([18000,19000]);
+    assert.equal(saved.status,200,await saved.clone().text());
+    const plan = await saved.json();
+    assert.equal(plan.boxCount,2);
+    assert.equal((await save([18500,19000])).status,409);
+    assert.equal((await call(base,"POST",packageDetails)).status,409);
+    const start = posts();
+    const body = index => ({...packageDetails,planVersion:plan.planVersion,weightGrams:plan.boxes[index-1].weightGrams,
+      bookingVersion:plan.bookingVersion,bookingService:plan.bookingService});
+    const payloads = [];
+    interceptCreate = (_id,item) => {payloads.push(item);};
+    try {
+      const check = await call(path+"/1/preflight","POST",body(1));
+      assert.equal(check.status,200,await check.clone().text());
+      assert.equal((await check.json()).ready,true);
+      assert.equal(posts(),start);
+      assert.equal((await call(path+"/1","POST",body(1))).status,405);
+      assert.equal((await call(path+"/1/book")).status,405);
+      assert.equal((await call(path+"/1/book","POST",{...body(1),planVersion:"stale"})).status,409);
+      const first = await Promise.all([call(path+"/1/book","POST",body(1)),call(path+"/1/book","POST",body(1))]);
+      assert.ok(first.some(r=>r.status===201),await Promise.all(first.map(r=>r.clone().text())));
+      assert.equal(posts(),start+1);
+      assert.equal((await save([19000,19000],plan.planVersion)).status,409);
+      const earlier = await dispatch(id,1);
+      assert.equal(earlier.status,409);
+      const different = {...body(2),recipient:{...packageDetails.recipient,postcode:"NR1 1AA"}};
+      const checkedAddress = await (await call(path+"/2/preflight","POST",different)).json();
+      assert.equal(checkedAddress.ready, false);
+      assert.match(checkedAddress.issues[0].message, /same delivery address as the other booked boxes/);
+      const rejectedAddress = await call(path+"/2/book","POST",different);
+      assert.ok([400,409].includes(rejectedAddress.status));
+      assert.equal(posts(),start+1);
+      const second = await call(path+"/2/book","POST",{...body(2),recipient:{...packageDetails.recipient,line1:packageDetails.recipient.line1.toUpperCase()}});
+      // Both boxes have the same physical address, entered with different case.
+      assert.equal(second.status,201,await second.clone().text());
+      assert.equal(posts(),start+2);
+      assert.deepEqual(payloads.map(item=>item.orderReference),[id+"-B1",id+"-B2"]);
+      assert.deepEqual(payloads.map(p=>Math.round(p.subtotal*100)),[18018,19998], "the goods in each box determine its declared value");
+      for (const [field,pence] of [["subtotal",38016],["shippingCostCharged",745],["orderTax",23],["total",38784]]) {
+        assert.equal(payloads.reduce((n,p)=>n+Math.round(p[field]*100),0),pence);
+      }
+      assert.deepEqual(payloads.map(item=>item.packages[0].weightInGrams),[18000,19000]);
+      assert.equal((await call(path+"/1/label?preview=1")).status,200);
+      assert.equal((await call(path+"/2/label")).status,200);
+      assert.equal((await (await call(base)).json()).readyForHandover,false);
+      assert.equal((await dispatch(id,1)).status,409);
+      assert.equal((await call(path+"/1/label")).status,200);
+      assert.equal((await (await call(base)).json()).readyForHandover,true);
+      const handed = await dispatch(id,1);
+      assert.equal(handed.status,200,await handed.clone().text());
+      assert.equal(posts(),start+2);
+      const payload = await db.prepare("SELECT data FROM wholesale_preview WHERE kind='order' AND id=?").bind(id).first();
+      assert.equal(JSON.parse(payload.data).status,"Dispatched");
+      assert.ok(!JSON.parse(payload.data).trackingUrl);
+    } finally {interceptCreate=undefined;}
+  });
+
+  await t.test("each box has the physical bag quantities and legacy goods values must reconcile", async () => {
+    const id = orderRef(318), path = shipPath(id) + "/boxes";
+    await seed(id, { grams:4000, pence:7100, lines:[{ ...order.lines[0], quantity:2 },
+      { ...order.lines[0], productId:"ethiopia", title:"Ethiopia", quantity:2 }] });
+    const initial = await (await call(path)).json();
+    assert.equal(initial.manualGoodsValuesRequired, true);
+    assert.equal(initial.orderGoodsPence, 7100);
+    const put = (contents, goodsPence, weights=[2500,2500]) =>
+      call(path,"PUT",{ifVersion:1,planVersion:null,weights,contents,goodsPence});
+    for (const invalid of [
+      [[[2,0],[0,2]], undefined],                        // Ambiguous legacy prices require Admin confirmation.
+      [[[2,0],[0,2]], [2500,4601]],                      // The declared value cannot exceed the original sale.
+      [[[1,0],[0,2]], [2500,4600]],                      // A missing bag cannot be shipped.
+      [[[3,0],[0,1]], [2500,4600]],                      // Nor can a surplus bag.
+      [[[2,0],[0,2]], [2500,4600],[3100,1900]],           // The two bags won't fit the second box by weight.
+    ]) assert.equal((await put(...invalid)).status,400);
+    const saved = await put([[2,0],[0,2]], [2500,4600]);
+    assert.equal(saved.status,200,await saved.clone().text());
+    const plan = await saved.json();
+    assert.deepEqual(plan.boxes.map(box=>box.contents),[[2,0],[0,2]]);
+    assert.deepEqual(plan.boxes.map(box=>box.goodsPence),[2500,4600]);
+    await amend(id, "$.lines[0].price", 1700);
+    const changed = await (await call(path)).json();
+    assert.equal(changed.planChanged, true);
+    const stale = await call(path+"/1/preflight","POST",{...packageDetails,ifVersion:2,planVersion:plan.planVersion,weightGrams:2500});
+    assert.equal(stale.status,409);
+
+    const uniform = orderRef(319), uniformPath = shipPath(uniform) + "/boxes";
+    await seed(uniform,{pence:8000,grams:4000,lines:[{...order.lines[0],quantity:4,price:2000}]});
+    assert.equal((await call(uniformPath, "PUT",{ifVersion:1,planVersion:null,weights:[3200,3200]})).status,400);
+    const exact = await call(uniformPath,"PUT",{ifVersion:1,planVersion:null,weights:[1200,3200]});
+    assert.equal(exact.status, 200);
+    assert.deepEqual((await exact.json()).boxes.map(box=>box.goodsPence),[2000,6000]);
+  });
+
+  await t.test("a settings change during a PDF download fences release until the current connection is reviewed", async () => {
+    const id = orderRef(422);
+    await seed(id);
+    assert.equal((await create(id)).status,201);
+    interceptLabel = async () => { await setBookings(false); };
+    try {
+      const blocked = await call(shipPath(id)+"/label");
+      assert.equal(blocked.status,409,await blocked.clone().text());
+      assert.equal((await read(id)).labelDownloadedAt,null);
+    } finally {
+      interceptLabel = undefined;
+    }
+    // Pausing money operations still permits an existing PDF under the freshly read policy.
+    const pdfResponse = await call(shipPath(id)+"/label");
+    assert.equal(pdfResponse.status,200,await pdfResponse.clone().text());
+    assert.equal(await pdfResponse.text(),pdf);
+    await setBookings(true);
+  });
+
+  await t.test("Admin can record an amended split's actual alternative courier after in-flight postage is settled", async () => {
+    const id = orderRef(421);
+    await seed(id);
+    const path = shipPath(id)+"/boxes";
+    const response = await call(path,"PUT",{ifVersion:1,planVersion:null,weights:[1100,1200],contents:[[1],[1]]});
+    assert.equal(response.status,200,await response.clone().text());
+    const plan = await response.json();
+    const createBox = await call(path+"/1/book","POST",{...packageDetails,weightGrams:1100,
+      bookingVersion:plan.bookingVersion,bookingService:plan.bookingService,planVersion:plan.planVersion});
+    assert.equal(createBox.status,201,await createBox.clone().text());
+    await amend(id,"$.locationSnapshot.postcode","NR1 1AA");
+    assert.equal((await call(path+"/1/label")).status,409);
+    const view = await (await call(shipPath(id))).json();
+    assert.equal(view.canDispatchWithOtherCourier,true);
+    assert.equal((await dispatch(id,2)).status,409);
+    assert.equal((await dispatch(id,2,"https://www.royalmail.com/track-your-item#/tracking-results/AB123456789GB")).status,409);
+    const external="https://example.test/actual-shipment";
+    await db.prepare("UPDATE wholesale_royal_mail_shipments SET state='booking' WHERE order_id=?").bind(id+"-B1").run();
+    assert.equal((await dispatch(id,2,external)).status,409);
+    await db.prepare("UPDATE wholesale_royal_mail_shipments SET state='labelled' WHERE order_id=?").bind(id+"-B1").run();
+    const handed=await dispatch(id,2,external);
+    assert.equal(handed.status,200,await handed.clone().text());
+    const saved=await db.prepare("SELECT data FROM wholesale_preview WHERE kind='order' AND id=?").bind(id).first();
+    assert.equal(JSON.parse(saved.data).trackingUrl,external);
+  });
+
+  await t.test("a plan and a concurrent single-box booking cannot both acquire the order", async () => {
+    const id = orderRef(316);
+    await seed(id);
+    const start = posts();
+    const [book,plan] = await Promise.all([create(id),call(shipPath(id)+"/boxes","PUT",{ifVersion:1,planVersion:null,weights:[1100,1200],contents:[[1],[1]]})]);
+    assert.ok(book.status===201 && plan.status===409 || book.status===409 && plan.status===200,
+      JSON.stringify({book:book.status,plan:plan.status}));
+    assert.equal(posts()-start,book.status===201?1:0);
+  });
+
 });

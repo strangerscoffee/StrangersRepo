@@ -19,6 +19,7 @@ import { INVOICED_SQL } from "./wholesaleInvoices";
 import { notifyNewOrder } from "./email/orders";
 import { notifySlackNewOrder } from "./slackOrders";
 import { isDay } from "./rota/util";
+import { HELD_ROYAL_MAIL_OPERATION } from "./royalMailBookingState";
 
 // Weeks between deliveries, or "month": the same date each calendar month (the owner's request, 26 Nov 2026).
 export const STANDING_EVERY = [1, 2, 4, "month"] as const;
@@ -160,12 +161,22 @@ export async function repairStandingRuns(env: Env, limit = 3) {
 /** Who is changing an order: Strangers (admins, staff with wholesale orders access) or the customer themselves, who
  *  may change and skip only their own standing deliveries, and until it's dispatched (New, Preparing or Ready). */
 export interface Changer { customerId?: string; minimumGrams?: number }
-async function saveChange(env: Env, order: AnyOrder, data: Record<string, any>, expected: number, by: Changer) {
+async function saveChange(env: Env, order: AnyOrder, data: Record<string, any>, expected: number, by: Changer, packingChanged = false) {
   if (expected !== order.version) throw new ApiError(409, "conflict", "This order changed. Reload it before saving.");
   const at = Date.now();
-  const result = await env.DB.prepare("UPDATE wholesale_preview SET data=?,version=version+1,updated_at=? WHERE kind='order' AND id=? AND version=? AND json_extract(data,'$.deletedAt') IS NULL AND json_extract(data,'$.preview')=0 AND json_extract(data,'$.status') IN ('New','Preparing','Ready') AND (? IS NULL OR json_extract(data,'$.customerId')=?) AND NOT EXISTS(SELECT 1 FROM wholesale_billed_orders WHERE order_id=?)")
-    .bind(JSON.stringify(data), at, order.id, expected, by.customerId || null, by.customerId || null, order.id).run();
-  if (!result.meta.changes) throw new ApiError(409, "conflict", "The order changed or was invoiced. Reload it before saving.");
+  const heldBox = "SELECT 1 FROM wholesale_royal_mail_shipments WHERE order_id GLOB ? AND " + HELD_ROYAL_MAIL_OPERATION;
+  const boxRefs = order.id + "-B*";
+  const result = await env.DB.prepare(`UPDATE wholesale_preview SET data=?,version=version+1,updated_at=? WHERE kind='order' AND id=? AND version=? AND json_extract(data,'$.deletedAt') IS NULL AND json_extract(data,'$.preview')=0 AND json_extract(data,'$.status') IN ('New','Preparing','Ready') AND (? IS NULL OR json_extract(data,'$.customerId')=?) AND NOT EXISTS(SELECT 1 FROM wholesale_billed_orders WHERE order_id=?)
+    ${packingChanged ? " AND NOT EXISTS (" + heldBox + ")" : ""}`)
+    .bind(JSON.stringify(data), at, order.id, expected, by.customerId || null, by.customerId || null, order.id, ...(packingChanged ? [boxRefs] : [])).run();
+  if (!result.meta.changes) {
+    if (packingChanged && await env.DB.prepare(heldBox).bind(boxRefs).first()) {
+      throw new ApiError(409, "royal_mail_boxes_committed", by.customerId
+        ? "Postage is already being arranged for the boxes on this delivery. Contact Strangers to change the bags."
+        : "A box already has a postage request. Check its booking in Royal Mail shipping before arranging changes to this delivery.");
+    }
+    throw new ApiError(409, "conflict", "The order changed or was invoiced. Reload it before saving.");
+  }
   return { ...data, id: order.id, version: expected + 1, updatedAt: at } as AnyOrder;
 }
 async function changeable(env: Env, id: string, by: Changer) {
@@ -234,17 +245,18 @@ export async function amendLines(env: Env, id: string, value: unknown, actor: st
   const sum = totals(lines, order.delivery, !!order.freeDelivery);
   if (by.minimumGrams && sum.grams < by.minimumGrams) throw new ApiError(409, "below_minimum", `The minimum order is ${by.minimumGrams / 1000} kg of coffee. Add ${(by.minimumGrams - sum.grams) / 1000} kg more.`);
   const { repeatLines, packedLines, ...current } = strip(order as AnyOrder);
-  const packingChanged = lines.length !== order.lines.length || lines.some((line, i) => {
-    const before = order.lines[i];
-    return line.productId !== before.productId || line.pack !== before.pack || line.grind !== before.grind || line.quantity !== before.quantity;
-  });
+  const packingChanged = lines.length !== order.lines.length || lines.some(line =>
+    !order.lines.some((before: any) => before.productId === line.productId && before.pack === line.pack &&
+      before.grind === line.grind && before.quantity === line.quantity && before.grams === line.grams));
+  const shipmentChanged = packingChanged || order.pence !== sum.pence || (order.deliveryPence ?? 0) !== sum.deliveryPence ||
+    order.totalPence !== sum.totalPence;
   const updated = await saveChange(env, order, {
-    ...current, lines, ...sum, originalLines: order.originalLines || order.lines, amendedAt: Date.now(),
+    ...current, lines: packingChanged ? lines : order.lines, ...sum, originalLines: order.originalLines || order.lines, amendedAt: Date.now(),
     ...(packingChanged && order.status === "Ready" ? { status: "Preparing" } : {}),
     ...(!packingChanged && packedLines ? { packedLines } : {}),
     amendedBy: by.customerId ? order.business || "The customer" : actor, ...(by.customerId ? { amendedByCustomer: true } : { amendedByCustomer: false }),
     ...(once ? { repeatLines: repeatLines || order.lines } : {}),
-  }, version(body.ifVersion), by);
+  }, version(body.ifVersion), by, shipmentChanged);
   await audit(env, "wholesale_order_amended", actor, `${actor} amended the bags on wholesale order ${id}${order.standing ? (once ? " (this delivery only)" : " (every delivery from now on)") : ""}.`);
   return updated as AnyOrder;
 }

@@ -153,6 +153,7 @@ test("Staff and Admin share the destination and queue as an uncertain purchase i
   const shipping = staff.getByRole("dialog", { name: "Royal Mail" });
   await shipping.getByRole("spinbutton", {name: "Packed parcel weight (grams)"}).fill("1600");
   await shipping.getByRole("button", {name: "Review label request"}).click();
+  await shipping.getByRole("button", {name: "Request Royal Mail label"}).waitFor();
   assert.match(await shipping.innerText(), /10 Dove Street\s+Norwich\s+Norfolk\s+NR2 1DE/);
   await shipping.getByRole("button", {name: "Request Royal Mail label"}).click();
   await staff.waitForFunction(() => document.querySelector("#shippingBody")?.innerText.includes("Postage request unconfirmed"));
@@ -234,7 +235,7 @@ test("Admin books a previously blocked pre-postage order directly on a small pho
   assert.deepEqual(carrier, [["POST", "/api/v1/orders"]]);
 });
 
-test("an order placed by a wholesale customer books without reading the carrier order history", async t => {
+test("a wholesale order passes local review and books with a carrier that requires billing details", async t => {
   const carrierCalls = [];
   let nativeOrderId;
   const { api, open, adminCookie, customerId } = await shippingWorkspace(t, async req => {
@@ -246,6 +247,14 @@ test("an order placed by a wholesale customer books without reading the carrier 
     assert.equal(req.method, "POST");
     const { items } = await req.json();
     assert.equal(items[0].orderReference, nativeOrderId);
+    const address = items[0].billing?.address;
+    const errors = [["fullName", 95], ["addressLine1", 71], ["city", 15]]
+      .filter(([field]) => !address?.[field])
+      .map(([field, errorCode]) => ({ errorCode, errorMessage: "Field is required", fields: [{ fieldName: "Billing.Address." + field }] }));
+    if (errors.length) return WorkerResponse.json({
+      successCount: 0, errorsCount: 1, createdOrders: [], failedOrders: [{ order: items[0], errors }],
+    });
+    assert.deepEqual(address, items[0].recipient.address);
     const createdOn = new Date().toISOString();
     return WorkerResponse.json({ successCount: 1, errorsCount: 0, createdOrders: [{
       orderIdentifier: 8103, orderReference: nativeOrderId, trackingNumber: tracking, createdOn, printedOn: createdOn,
@@ -267,7 +276,12 @@ test("an order placed by a wholesale customer books without reading the carrier 
   const page = await open("/admin#wholesale/royal-mail", adminCookie, { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
   await page.locator('[data-queue-order="' + placed.id + '"] button').click();
   const panel = page.locator("#wRoyalMailForm");
+  const reviewed = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith("/shipping/preflight"));
   await panel.getByRole("button", { name: "Review label request", exact: true }).click();
+  const preflight = await (await reviewed).json();
+  assert.equal(preflight.ready, true);
+  assert.equal(preflight.billingSource, "delivery");
+  if (process.env.SHOT_DIR) await page.screenshot({ path: process.env.SHOT_DIR + "/booking-review.png" });
   assert.equal(carrierCalls.length, 0, "reviewing the parcel does not request postage");
   const purchase = page.waitForResponse(r => r.request().method() === "POST" && r.url().endsWith("/shipping"));
   await panel.getByRole("button", { name: "Request Royal Mail label", exact: true }).click();
@@ -280,4 +294,65 @@ test("an order placed by a wholesale customer books without reading the carrier 
   assert.deepEqual(carrierCalls, [
     ["POST", "/api/v1/orders"],
   ]);
+});
+
+test("a two-box order can be weighed in Admin and booked from the staff packing desk", async t => {
+  const purchased = new Map();
+  const createdOn = new Date().toISOString();
+  const { api, db, open, adminCookie, staffCookie } = await shippingWorkspace(t, async request => {
+    const url = new URL(request.url);
+    assert.equal(url.hostname, "api.parcel.royalmail.com");
+    if (request.method === "POST") {
+      const { items: [item] } = await request.json();
+      assert.match(item.orderReference, /-B[12]$/);
+      assert.ok(!purchased.has(item.orderReference), "a box can only buy postage once");
+      assert.equal(item.billing.address.city, "Norwich");
+      const number = Number(item.orderReference.slice(-1));
+      const receipt = { orderIdentifier: 9300 + number, orderReference: item.orderReference, createdOn, printedOn: createdOn,
+        trackingNumber: number === 1 ? "AB123456789GB" : "CD123456789GB" };
+      purchased.set(item.orderReference, { item, receipt });
+      return WorkerResponse.json({ successCount: 1, errorsCount: 0, createdOrders: [receipt] });
+    }
+    assert.equal(request.method, "GET");
+    if (/\/label$/.test(url.pathname)) return new WorkerResponse(pdf, { headers: { "content-type": "application/pdf" } });
+    const selector = decodeURIComponent(url.pathname.split("/").at(-1)).replaceAll('"', "");
+    const match = [...purchased.values()].find(({ receipt }) => String(receipt.orderIdentifier) === selector || receipt.orderReference === selector);
+    return WorkerResponse.json(match ? [match.receipt] : []);
+  });
+
+  await db.prepare(`UPDATE wholesale_preview SET data=json_set(data,
+    '$.grams',36000,'$.packs',36,'$.lines[0].quantity',36,'$.lines[0].grams',1000,'$.lines[0].price',1800,
+    '$.pence',64800,'$.totalPence',64800) WHERE kind='order' AND id=?`).bind(id).run();
+  const admin = await open("/admin#wholesale/royal-mail", adminCookie, { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const row = page => page.locator('[data-queue-order="' + id + '"] button');
+  await row(admin).click();
+  await admin.getByRole("button", { name: "Pack in multiple boxes" }).click();
+  await admin.getByLabel("Box 1 packed weight (g)", { exact: true }).fill("18500");
+  await admin.getByLabel("Box 2 packed weight (g)", { exact: true }).fill("18100");
+  await admin.locator('[data-box-allocation="1:0"]').fill("18");
+  await admin.locator('[data-box-allocation="2:0"]').fill("18");
+  await admin.getByRole("button", { name: "Save box plan" }).click();
+  await admin.locator('[data-box-number="1"]').waitFor();
+  assert.equal(purchased.size, 0, "weighing and saving boxes is local");
+  if (process.env.SHOT_DIR) await admin.screenshot({ path: process.env.SHOT_DIR + "/packed-boxes.png" });
+
+  const staff = await open("/orders#dispatch", staffCookie, { viewport: { width: 1280, height: 800 } });
+  await row(staff).click();
+  const firstBox = staff.locator('[data-box-number="1"]');
+  const manage = staff.getByRole("button", { name: "Manage boxes" });
+  await firstBox.or(manage).first().waitFor();
+  if (!(await firstBox.isVisible())) await manage.click();
+  for (const number of [1, 2]) {
+    await staff.getByRole("button", { name: "Review box " + number, exact: true }).click();
+    const buy = staff.getByRole("button", { name: "Request label for box " + number, exact: true });
+    await buy.waitFor();
+    assert.equal(purchased.size, number - 1, "reviewing a box does not buy postage");
+    await buy.click();
+    await staff.getByRole("button", { name: "Download label for box " + number, exact: true }).waitFor();
+  }
+  const plan = await (await api("/api/admin/wholesale/orders/" + id + "/shipping/boxes")).json();
+  assert.equal(plan.boxes.length, 2);
+  assert.deepEqual(plan.boxes.map(box => box.shipment.trackingNumber), ["AB123456789GB", "CD123456789GB"]);
+  assert.deepEqual([...purchased.values()].map(({ item }) => item.packages[0].weightInGrams), [18500, 18100]);
+  assert.equal([...purchased.values()].reduce((sum, { item }) => sum + Math.round(item.total * 100), 0), 64800);
 });

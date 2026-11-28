@@ -22,6 +22,7 @@ function harness(t, overrides = {}) {
   const db = new DatabaseSync(":memory:");
   t.after(() => db.close());
   db.exec(`CREATE TABLE wholesale_preview (kind TEXT, id TEXT, data TEXT, version INTEGER);
+    CREATE TABLE wholesale_royal_mail_box_plans (order_id TEXT PRIMARY KEY, weights TEXT, shipping_fingerprint TEXT, contents TEXT);
     CREATE TABLE wholesale_royal_mail_shipments (order_id TEXT, state TEXT, booking_connection TEXT, provider_id INTEGER, tracking_number TEXT,
       review_required INTEGER, destination_postcode TEXT, weight_grams INTEGER, order_version INTEGER, shipping_fingerprint TEXT, updated_at INTEGER,
       label_downloaded_at INTEGER, booking_account_scope TEXT);`);

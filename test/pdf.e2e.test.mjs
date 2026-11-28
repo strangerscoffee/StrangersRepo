@@ -100,12 +100,15 @@ test("PDFs: long content wraps and carries over onto the next page, never off it
   await page.goto(srv.base + "/#inspect");
   await page.reload();
   await page.locator("#inChips button", { hasText: "Last 3 months" }).click();
-  await page.locator("#in-daily table").waitFor();
-  await page.locator("#in-daily").evaluate(section => section.scrollIntoView({ block: "start", behavior: "instant" }));
-  // The inspection panel can still be animating when the first results table appears.
+  await page.locator("#in-plan-h1").waitFor();
+  // Incoming diary snapshots replace report sections. Scroll the current daily table into place for the hit test.
   await page.waitForFunction(() => {
-    const button = document.querySelector("#inJump button");
-    if (!button || window.scrollY === 0) return false;
+    const section = document.querySelector("#in-daily"), jump = document.querySelector("#inJump");
+    const button = jump?.querySelector("button");
+    if (!section?.querySelector("table") || !button) return false;
+    section.scrollIntoView({ block: "start", behavior: "instant" });
+    const sticky = getComputedStyle(jump);
+    if (!window.scrollY || sticky.position !== "sticky" || !(Math.abs(jump.getBoundingClientRect().top - parseFloat(sticky.top)) <= 1)) return false;
     const bounds = button.getBoundingClientRect();
     return button.contains(document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2));
   }, undefined, { timeout: 5000 });

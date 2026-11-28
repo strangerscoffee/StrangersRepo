@@ -17,10 +17,10 @@ function field(value: unknown, name: string, limit: number, required = true) {
   return cleaned;
 }
 
-export function royalMailPostcode(value: unknown) {
+export function royalMailPostcode(value: unknown, billing = false) {
   const code = field(value, "the UK postcode", 12).toUpperCase().replace(/ /g, "");
-  if (!/^(?:GIR0AA|[A-Z]{1,2}[0-9][0-9A-Z]?[0-9][A-Z]{2})$/.test(code) || /^(?:BT|GY|JE|IM)/.test(code)) {
-    throw invalid("Enter a valid Great Britain postcode.");
+  if (!/^(?:GIR0AA|[A-Z]{1,2}[0-9][0-9A-Z]?[0-9][A-Z]{2})$/.test(code) || /^(?:GY|JE|IM)/.test(code) || (!billing && code.startsWith("BT"))) {
+    throw invalid(billing ? "Enter a valid UK billing postcode." : "Enter a valid Great Britain postcode.");
   }
   return code.slice(0, -3) + " " + code.slice(-3);
 }
@@ -29,31 +29,49 @@ const embeddedPostcode = /\b(?:GIR\s*0AA|[A-Z]{1,2}[0-9][0-9A-Z]?\s*[0-9][A-Z]{2
 const countyLine = /(?:shire$|^(?:(?:East|West|North|South) )?(?:Norfolk|Suffolk|Essex|Kent|Surrey|Sussex|Somerset|Dorset|Devon|Cornwall|Cumbria|Rutland|Middlesex|Durham|Hampshire|Isle of Wight|West Midlands|Greater London|Greater Manchester|Merseyside|Glamorgan|Gwent|Powys|Clwyd|Gwynedd|Dyfed|Antrim|Down|Armagh|Tyrone|Fermanagh|Londonderry)$)/i;
 const streetLine = /\s(?:road|street|lane|close|drive|avenue|way|terrace|court|place|crescent)$/i;
 
-// The label preview and the carrier payload use the same field boundaries and postcode formatting.
-export function checkedRoyalMailRecipient(recipient: Record<string, unknown>) {
-  const county = field(recipient.county, "county", 100, false);
-  return {
-    name: field(recipient.name, "recipient name", 100),
-    line1: field(recipient.line1, "address line 1", 100),
-    line2: field(recipient.line2, "address line 2", 100, false),
-    city: field(recipient.city, "town or city", 100),
-    postcode: royalMailPostcode(recipient.postcode),
-    ...(county ? { county } : {}),
-  };
+// Shipping review and carrier creation use these same input boundaries.
+export function royalMailAddressReview(recipient: Record<string, unknown>, scope: "recipient" | "billing") {
+  const issues: Array<{ field: string; message: string }> = [];
+  const billing = scope === "billing";
+  const prefix = billing ? "Billing" : "Delivery";
+  function part(key: string, label: string, required = true) {
+    const raw = recipient[key];
+    try {
+      if (key === "postcode") return royalMailPostcode(raw, billing);
+      return field(raw, label, 100, required);
+    } catch (error) {
+      if (!(error instanceof ApiError)) throw error;
+      const missing = raw == null || typeof raw === "string" && !raw.trim();
+      const message = missing ? prefix + " " + label + " is missing."
+        : key === "postcode" ? (billing ? "Enter a valid UK billing postcode." : "Enter a valid Great Britain delivery postcode.")
+        : "Check the " + prefix.toLowerCase() + " " + label + " (maximum 100 characters).";
+      issues.push({ field: scope + "." + key, message });
+      return "";
+    }
+  }
+  const name = part("name", "name"), line1 = part("line1", "address line 1"), line2 = part("line2", "address line 2", false);
+  const city = part("city", "town or city"), postcode = part("postcode", "postcode"), county = part("county", "county", false);
+  return { address: { name, line1, line2, city, postcode, ...(county ? { county } : {}) }, issues };
 }
 
-export function royalMailRecipientDraft(order: OrderDestination) {
+export function checkedRoyalMailRecipient(recipient: Record<string, unknown>) {
+  const { address, issues } = royalMailAddressReview(recipient, "recipient");
+  if (issues.length) throw invalid(issues[0].message);
+  return address;
+}
+
+export function royalMailRecipientDraft(order: OrderDestination, billing = false) {
   const saved = order.locationSnapshot ?? order.customerSnapshot;
   const name = (typeof saved?.contact === "string" && saved.contact.trim()) || order.business;
   const parts = (typeof saved?.address === "string" ? saved.address : "").split(/[,\r\n]+/).map(line => line.trim()).filter(Boolean);
   const removeCountry = () => {
-    if (/^(?:UK|United Kingdom|Great Britain|England|Scotland|Wales)$/i.test(parts.at(-1) || "")) parts.pop();
+    if (/^(?:UK|United Kingdom|GBR?|Great Britain|England|Scotland|Wales|Northern Ireland)$/i.test(parts.at(-1) || "")) parts.pop();
   };
   removeCountry();
   let postcode = typeof saved?.postcode === "string" ? saved.postcode.trim() : "";
   if (!postcode) postcode = parts.at(-1)?.match(embeddedPostcode)?.[0] || "";
   try {
-    postcode = royalMailPostcode(postcode);
+    postcode = royalMailPostcode(postcode, billing);
     const [outward, inward] = postcode.split(" ");
     const suffix = new RegExp(`(?:^|\\s+)${outward}\\s*${inward}$`, "i");
     if (parts.length && suffix.test(parts.at(-1)!)) {

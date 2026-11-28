@@ -104,3 +104,29 @@ for (const [device, viewport] of [['phone', {width:393,height:852}], ['ipad', {w
     } finally { release(); await context.close(); }
   });
 }
+
+test('customer order history shows partial delivery and a separate tracking link per box on a phone', async () => {
+  const context = await browser.newContext({ viewport: {width: 360, height: 740} });
+  try {
+    const [name,value] = cookie.split('=');
+    await context.addCookies([{name,value,url:srv.base}]);
+    const page = await context.newPage();
+    const links = ['AB123456789GB', 'AB123456780GB'].map(ref => 'https://www.royalmail.com/track-your-item#/tracking-results/' + ref);
+    await page.route('**/api/wholesale/orders', r => r.fulfill({json:{count:1, nextCursor:null, orders:[{
+      id:'WS-00000000000000000000000000000A01', status:'Dispatched', preview:false, delivery:'Delivery', createdAt:1,
+      packs:2, pence:5000, grams:2000, lines:[], version:3,
+      deliveryParcels:links.map((trackingUrl,i) => ({number:i+1,count:2,status:i ? 'in_transit' : 'delivered',trackingUrl})),
+    }]}}));
+    await page.goto(srv.base+'/wholesale/');
+    await openWholesaleOrders(page);
+    const panel=page.getByRole('region',{name:'Parcel tracking'});
+    await panel.getByRole('heading',{name:'1 of 2 boxes delivered'}).waitFor();
+    assert.deepEqual(await panel.locator('small').allTextContents(), ['Delivered','In transit']);
+    for (const [i,url] of links.entries()) {
+      const link=panel.getByRole('link',{name:`Track box ${i+1} of 2 (opens in a new tab)`});
+      assert.equal(await link.getAttribute('href'),url);
+      assert.ok((await link.boundingBox()).height >=44);
+    }
+    assert.ok(await panel.evaluate(el => el.scrollWidth === el.clientWidth));
+  } finally { await context.close(); }
+});

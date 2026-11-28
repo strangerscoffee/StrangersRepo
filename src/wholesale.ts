@@ -34,6 +34,8 @@ import { handleQuickBooksMatches } from "./invoicing/quickbooksMatches";
 import { handleRoyalMailSetupChecks } from "./royalMailSetupChecks";
 import { handleRoyalMailSettings } from "./royalMailAppSettings";
 import { dispatchQueue } from "./wholesale/dispatchQueue";
+import { customerParcelDeliveries } from "./wholesale/customerParcels";
+import { listDeliveryAttention } from "./wholesale/deliveryAttention";
 import { listRoyalMailLabels } from "./wholesale/labelLibrary";
 import { handleWholesaleRoyalMail, requireStaffLabelEligibility, resolveWholesaleHandover, ROYAL_MAIL_ORDER_ROUTE } from "./wholesaleRoyalMail";
 
@@ -350,9 +352,17 @@ export async function handleWholesale(req: Request, env: Env, route: string, use
     const last = page.at(-1);
     // Invoice links are found from the full orders (an order invoiced with its tab links to the tab's invoice), then
     // only the link is kept with what the customer sees.
-    const decoded = page.map((row) => decode<Order>(row) as Order & { id: string; tabClearedId?: string });
-    const linked = !customer?.hidePrices && await customersSeeInvoices(env) ? await invoiceLinks(env, decoded) : decoded;
-    const visible = linked.map((order) => { const shown = visibleOrder(order as Order & Versioned); const invoice = (order as { invoice?: unknown }).invoice; return invoice ? { ...shown, invoice } : shown; });
+    const decoded = page.map(row => decode<Order>(row));
+    const [linked, parcels] = await Promise.all([
+      !customer?.hidePrices && await customersSeeInvoices(env) ? invoiceLinks(env, decoded) : decoded,
+      user.role === "wholesale" ? customerParcelDeliveries(env, user.customerId, decoded) : undefined,
+    ]);
+    const visible = linked.map(order => {
+      const shown = visibleOrder(order as Order & Versioned);
+      const invoice = (order as { invoice?: unknown }).invoice;
+      const deliveryParcels = parcels?.get(order.id);
+      return { ...shown, ...(invoice ? { invoice } : {}), ...(deliveryParcels ? { trackingUrl: "", deliveryParcels } : {}) };
+    });
     return json({ orders: visible, count: total?.n || 0, nextCursor: rows.results.length > 200 && last ? `${last.updated_at}:${last.id}` : null });
   }
   if (/^images\/[a-f0-9]{32}$/.test(route) && req.method === "GET") return serveCatalogueImage(env, route.slice("images/".length), user.role === "wholesale" ? user.customerId : null);
@@ -380,7 +390,9 @@ export async function handleWholesale(req: Request, env: Env, route: string, use
     const order = await get<Order>(env, "order", match[1]);
     const permitted = order && (user.role === "wholesale" ? order.customerId === user.customerId && order.preview === false : order.createdBy === user.id || user.role === "admin");
     if (!order || order.deletedAt != null || !permitted) throw new ApiError(404, "not_found", "Order not found.");
-    return json({ order: visibleOrder(order, user.role === "admin"), preview: order.preview !== false });
+    const shown = visibleOrder(order, user.role === "admin");
+    const parcels = user.role === "wholesale" ? (await customerParcelDeliveries(env, user.customerId, [order])).get(order.id) : undefined;
+    return json({ order: parcels ? { ...shown, trackingUrl: "", deliveryParcels: parcels } : shown, preview: order.preview !== false });
   }
   throw new ApiError(404, "not_found", "Unknown wholesale ordering route.");
 }
@@ -469,7 +481,7 @@ export async function updateOrderStatus(env: Env, id: string, body: Record<strin
   if (!data.standing) { delete data.standingIssue; delete data.standingRetryAt; }
   const emailKind = firstDispatch ? "dispatch" : firstReady ? "ready" : null;
   const outgoing = emailKind && notify ? await (emailKind === "ready" ? prepareReadyEmail : prepareDispatchEmail)(
-    env, { ...data, id, shippingDestination: handover?.destination }, notify.ordersUrl,
+    env, { ...data, id, shippingDestination: handover?.destination, deliveryParcels: handover?.deliveryParcels }, notify.ordersUrl,
   ) : null;
   let updated: Order & Versioned;
   let emailQueued = false;
@@ -510,6 +522,7 @@ export async function handleWholesaleAdmin(req: Request, env: Env, route: string
   const quickbooks = await handleQuickBooks(req, env, route, user, ctx); if (quickbooks) return quickbooks;
   if (user.role !== "admin") throw denied();
   if (route === "dispatch-queue") return dispatchQueue(req, env, "admin");
+  if (route === "royal-mail/attention") return listDeliveryAttention(req, env);
   if (route === "royal-mail/labels") return listRoyalMailLabels(req, env);
   if (route === "royal-mail/checks") return handleRoyalMailSetupChecks(req, env, user.name);
   if (route === "royal-mail" || route === "royal-mail/credentials") {

@@ -31,10 +31,10 @@ async function customer(username, business) {
   await ok("PUT", `/api/admin/wholesale/customers/${account.customerId}/account`, { username, ifVersion: account.version, active: true, approvalStatus: "approved" });
   return (await ok("POST", "/api/wholesale/auth/login", credentials, null)).cookie;
 }
-async function standing(cookie = A, lines = usual) {
+async function standing(cookie = A, lines = usual, delivery = "Roastery collection") {
   const session = (await ok("GET", "/api/wholesale/session", undefined, cookie)).body;
   const prices = Object.fromEntries((await ok("GET", "/api/wholesale/catalogue", undefined, cookie)).body.products.map((p) => [p.id, p.prices]));
-  const r = await ok("POST", "/api/wholesale/orders", { requestId: crypto.randomUUID(), lines: lines.map((l) => ({ ...l, price: prices[l.productId][l.pack] })), delivery: "Roastery collection", customerVersion: session.customer.version }, cookie);
+  const r = await ok("POST", "/api/wholesale/orders", { requestId: crypto.randomUUID(), lines: lines.map((l) => ({ ...l, price: prices[l.productId][l.pack] })), delivery, customerVersion: session.customer.version }, cookie);
   const o = await adminOrder(r.body.order.id);
   return (await ok("PATCH", `/api/admin/wholesale/orders/${o.id}`, { ifVersion: o.version, status: "New", customerId: o.customerId, note: "", trackingUrl: "", schedule: { dispatchDate: addDays(today, 3), every: 1 } })).body.order;
 }
@@ -239,4 +239,36 @@ test("the next delivery of a standing order, made when the last one goes out, is
   await wait(500);
   assert.equal(srv.sql("SELECT COUNT(*) AS n FROM slack_order_posts WHERE order_id NOT LIKE '%:%' AND payload LIKE '%Next standing order%'")[0].n >= 1, true);
   assert.equal(sent.filter((m) => /^Next standing order delivery/.test(m.subject || "")).length, 1);
+});
+
+test("sealed-box reservations protect the saved bags while unbooked plans and harmless edits remain editable", async () => {
+  const account = (await ok("GET", "/api/wholesale/session", undefined, A)).body.customer;
+  await ok("PUT", "/api/wholesale/account", { ifVersion:account.version, address:"1 Market Street, Norwich", postcode:"NR1 1AB" }, A);
+  const run = await standing(A, usual, "Delivery");
+  let ready = await setStatus(run.id, "Ready");
+  const path = "/api/admin/wholesale/orders/" + run.id;
+  const plan = (await ok("PUT", path + "/shipping/boxes", { ifVersion:ready.version, planVersion:null,
+    weights:[4000,4000], contents:[[3],[3]] })).body;
+  const eight = [{...usual[0],quantity:8}];
+  const amend = (id, v, lines) => call("PUT", "/api/wholesale/orders/" + id + "/lines", {ifVersion:v,lines,scope:"ongoing"}, A);
+  const open = await amend(run.id, ready.version, eight);
+  assert.equal(open.status, 200, open.text);
+  assert.equal(open.body.order.status, "Preparing");
+  ready = await setStatus(run.id, "Ready");
+  await ok("PUT", path + "/shipping/boxes", { ifVersion:ready.version, planVersion:plan.planVersion,
+    weights:[4300,4300], contents:[[4],[4]] });
+  srv.sql(`INSERT INTO wholesale_royal_mail_shipments(order_id,state,operation,order_version,weight_grams,requested_at,updated_at)
+    VALUES('${run.id}-B1','review','test-hold',${ready.version},4300,1,1)`);
+  const held = await amend(run.id, ready.version, usual);
+  assert.equal(held.status, 409); assert.equal(held.body.code, "royal_mail_boxes_committed");
+  assert.equal((await mine(run.id)).lines[0].quantity, 8);
+  const staffHeld = await call("PUT", "/api/staff-orders/orders/" + run.id + "/lines", {ifVersion:ready.version,lines:usual}, STAFF);
+  assert.equal(staffHeld.status, 409); assert.equal(staffHeld.body.code, held.body.code);
+  const unchanged = await amend(run.id, ready.version, eight);
+  assert.equal(unchanged.status, 200, unchanged.text); assert.equal(unchanged.body.order.status, "Ready");
+  ready = (await ok("PATCH", path, {ifVersion:unchanged.body.order.version,status:"Ready",note:"Use the side door",customerId:ready.customerId})).body.order;
+  // A definitive refusal carries no booking and releases the packing hold.
+  srv.sql(`UPDATE wholesale_royal_mail_shipments SET state='failed',problem='Postage request declined. Test refusal' WHERE order_id='${run.id}-B1'`);
+  const released = await amend(run.id, ready.version, usual);
+  assert.equal(released.status, 200, released.text);
 });

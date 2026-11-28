@@ -26,8 +26,20 @@
     return image;
   }
 
+  function validLabelId(row) {
+    if (!row || typeof row.id !== 'string') return false;
+    if (row.boxNumber == null) return /^WS-[A-F0-9]{32}$/i.test(row.id) && row.parentId == null;
+    return /^WS-[A-F0-9]{32}$/.test(row.parentId) && Number.isInteger(row.boxNumber) && row.boxNumber >= 1 &&
+      Number.isInteger(row.boxCount) && row.boxNumber <= row.boxCount && row.boxCount <= 50 &&
+      row.id === row.parentId + '-B' + row.boxNumber;
+  }
+  function boxCaption(row) {
+    return row.boxNumber ? 'Box ' + row.boxNumber + ' of ' + row.boxCount : '';
+  }
+
   async function labelFile(row, preview, signal) {
-    const path = '/api/admin/wholesale/orders/' + encodeURIComponent(row.id) + '/shipping/label';
+    const path = '/api/admin/wholesale/orders/' + encodeURIComponent(row.parentId || row.id) + '/shipping/' +
+      (row.boxNumber ? 'boxes/' + row.boxNumber + '/' : '') + 'label';
     const response = await fetch(path + (preview ? '?preview=1' : ''), {signal, cache:'no-store', credentials:'same-origin'});
     if (!response.ok) {
       const problem = await response.json().catch(() => ({}));
@@ -156,7 +168,7 @@
         const result=await load(params,work.signal);
         if(work.signal.aborted || !details.isConnected)return;
         if(!Array.isArray(result?.requests) || !Number.isSafeInteger(result.total) || result.total<0 ||
-           result.requests.some(row=>!row || !/^WS-[A-F0-9]{32}$/.test(row.id) || !Number.isSafeInteger(row.version) || !Object.hasOwn(stages,row.status)) ||
+           result.requests.some(row=>!validLabelId(row) || !Number.isSafeInteger(row.version) || !Object.hasOwn(stages,row.status)) ||
            (result.nextCursor!=null && (typeof result.nextCursor!=='string' || !result.requests.length || result.nextCursor===params.get('cursor')))){
           throw new Error('The outstanding requests could not be read.');
         }
@@ -168,8 +180,8 @@
           const customer=row.business || 'Wholesale order';
           const requested=row.requestedAt>0 ? ukDate.format(row.requestedAt)+' at '+ukTime.format(row.requestedAt)+' (UK)' : '';
           const button=el('button',{type:'button',class:'lp-request-row','data-request-id':row.id,
-            'aria-label':'Open shipping for '+customer+', '+row.id,onclick:e=>open(row,e.currentTarget)},
-            el('span',{class:'lp-row-text'},el('b',{},customer),el('span',{},row.reference || row.id),
+            'aria-label':['Open shipping for '+customer,boxCaption(row),row.id].filter(Boolean).join(', '),onclick:e=>open(row,e.currentTarget)},
+            el('span',{class:'lp-row-text'},el('b',{},customer),el('span',{},[row.reference || row.parentId || row.id,boxCaption(row)].filter(Boolean).join(' · ')),
               requested ? el('time',{datetime:new Date(row.requestedAt).toISOString()},'Requested '+requested) : null),
             el('span',{class:'lp-status review'},stages[row.status]),icon('right'));
           first ||= button;
@@ -248,10 +260,10 @@
         const day = row.createdAt ? ukDate.format(row.createdAt) : 'Date unavailable';
         if (lastDay !== day) { rows.push(el('h3',{class:'lp-day'},day)); lastDay=day; }
         const customer = row.business || 'Wholesale order';
-        const btn = el('button',{type:'button',class:'lp-row','data-preview':row.id,'aria-label':'Preview label for '+customer+', '+row.id,
+        const btn = el('button',{type:'button',class:'lp-row','data-preview':row.id,'aria-label':['Preview label for '+customer,boxCaption(row),row.id].filter(Boolean).join(', '),
           'aria-current':row.id===selected?'true':null,onclick:e=>choose(row,e.currentTarget)},
           el('span',{class:'lp-file'},icon('file')),
-          el('span',{class:'lp-row-text'},el('b',{},customer),el('span',{},row.reference || row.id, row.serviceCode ? ' · '+row.serviceCode : '')),
+          el('span',{class:'lp-row-text'},el('b',{},customer),el('span',{},[row.reference || row.parentId || row.id,boxCaption(row),row.serviceCode].filter(Boolean).join(' · '))),
           el('span',{class:'lp-row-extra'},badge(row),row.createdAt ? el('time',{datetime:new Date(row.createdAt).toISOString(),title:row.dateSource==='order'?'Order time':'Booking time'},ukTime.format(row.createdAt)) : null),
           el('span',{class:'lp-chevron'},icon('right')));
         rows.push(btn);
@@ -304,7 +316,7 @@
       const title = el('header',{class:'lp-detail-head'},
         el('div',{class:'lp-detail-eyebrow'},icon('file'),'Label preview'),
         el('div',{class:'lp-title-line'},el('h3',{},row.business || 'Wholesale order'),badge(row)),
-        el('p',{},[row.id,row.serviceCode,row.weightGrams ? Number((row.weightGrams/1000).toFixed(3))+' kg':null].filter(Boolean).join(' · ')),
+        el('p',{},[boxCaption(row),row.id,row.serviceCode,row.weightGrams ? Number((row.weightGrams/1000).toFixed(3))+' kg':null].filter(Boolean).join(' · ')),
         row.dateSource==='order' && row.createdAt ? el('p',{},'Order date '+ukDate.format(row.createdAt)) : null,
         small.matches?el('button',{type:'button',class:'lp-x','aria-label':'Close label preview',onclick:()=>sheet.close()},icon('close')):null);
       dest.replaceChildren(title,stage,pages,metadata,actions,actionStatus);
@@ -384,7 +396,7 @@
           const view=page.getViewport({scale:1});
           const canvas=await paintPage(page,Math.min(2.5,1000/Math.max(view.width,view.height)),signal);
           if (!valid() || ticket!==pageRequest) return;
-          canvas.setAttribute('role','img');canvas.setAttribute('aria-label','Shipping label for '+(row.business||row.id)+', page '+number+' of '+pdf.numPages);
+          canvas.setAttribute('role','img');canvas.setAttribute('aria-label',['Shipping label for '+(row.business||row.id),boxCaption(row),'page '+number+' of '+pdf.numPages].filter(Boolean).join(', '));
           sizeText.textContent=Number((view.width/72).toFixed(2))+' × '+Number((view.height/72).toFixed(2))+' in';
           if(!viewSize.isConnected)metadata.append(viewSize);
           paper.replaceChildren(canvas);stage.replaceChildren(paper);
@@ -433,7 +445,7 @@
         const result=await load(params,controller.signal);
         if(!live() || ticket!==fetchGeneration)return;
         if(!Array.isArray(result?.labels) || !Number.isSafeInteger(result.total) || result.total<0 ||
-            result.labels.some(row=>!row || !/^WS-[A-Fa-f0-9]{32}$/.test(row.id) || !Object.hasOwn(statuses,row.status)) ||
+            result.labels.some(row=>!validLabelId(row) || !Object.hasOwn(statuses,row.status)) ||
             (result.nextCursor!=null && (typeof result.nextCursor!=='string' || !result.labels.length || result.nextCursor===params.get('cursor')))) {
           throw new Error('The label list could not be read. Try again.');
         }

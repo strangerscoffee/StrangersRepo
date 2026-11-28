@@ -35,6 +35,7 @@ import { handleWholesaleAuth, wholesaleSession } from "./wholesaleAccounts";
 import {handleWebhook} from "./quickbooks/webhooks";
 import {processEvents,runQuickBooksJobs} from "./quickbooks/jobs";
 import { QB_ROOT } from "./quickbooks/connection";
+import { refreshDeliveryScans } from "./wholesale/deliveryAttention";
 import { recoverRoyalMailBookings } from "./royalMailRecovery";
 import { runAutoInvoicing } from "./autoInvoice";
 import { runInvoiceBatches } from "./invoicing/batches";
@@ -130,6 +131,7 @@ export default {
         await Promise.all([
           run("Standing-order recovery", () => repairStandingRuns(env)),
           run("Wholesale Slack notifications", () => deliverSlackPosts(env)),
+          run("Royal Mail delivery scans", () => refreshDeliveryScans(env)),
           run("Royal Mail booking checks", () => recoverRoyalMailBookings(env)),
           run("Dispatch emails", () => deliverDispatchEmails(env)),
           run("Automatic invoicing", () => runAutoInvoicing(env)),

@@ -262,6 +262,14 @@ dialog::backdrop { background: rgba(0,0,0,.3); -webkit-backdrop-filter: blur(6px
 .history-lines li small { grid-column: 1; color: var(--muted); font-size: 12px; }
 .history-lines li strong { grid-column: 2; grid-row: 1; font-size: 13px; white-space: nowrap; }
 .history-address { white-space: pre-line; overflow-wrap: anywhere; }
+.history-parcels { margin-block: 14px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; }
+.history-parcels h4 { margin: 0 0 4px; font-size: 15px; }
+.history-parcels ul { list-style: none; padding: 0; margin: 0; }
+.history-parcels li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-block: 8px; }
+.history-parcels li + li { border-top: 1px solid var(--line); }
+.history-parcels li div { display: grid; gap: 2px; }
+.history-parcels small { color: var(--muted); }
+.history-parcels a { flex: none; min-height: 44px; }
 .history-card .history-tracking { display: flex; width: 100%; margin-block: 0 14px; }
 .history-card .history-reorder { display: flex; width: 100%; margin-top: 14px; }
 .reorder-skipped { padding: 14px 16px; margin-top: 18px; border-radius: 14px; background: var(--warn-bg); color: var(--warn); }

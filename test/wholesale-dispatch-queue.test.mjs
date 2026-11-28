@@ -150,9 +150,29 @@ test("Staff and Admin dispatch queue share accurate role-limited stages, paging 
   await db.batch([seed(280,kilos(28)),seed(270,kilos(27)),seed(290,{grams:29500}),seed(291,{grams:29501}),
     seed(292,kilos(28)),shipment(292,"labelled",292,123)]);
   const attention=await queue("admin","?stage=attention");
-  for(const n of [280,291]) assert.match(attention.orders.find(o=>o.id===id(n)).reason,/exceeds 30 kg.*Click & Drop/);
+  for(const n of [280,291]) assert.match(attention.orders.find(o=>o.id===id(n)).reason,/exceeds 30 kg.*each sealed box/);
   assert.equal(attention.orders.some(o=>o.id===id(270)||o.id===id(290)),false);
   assert.equal((await queue("staff","?stage=handover")).orders.some(o=>o.id===id(292)),true);
+
+  // A whole order reaches handover only after every planned box has a downloaded label.
+  const parent = id(707);
+  const boxContents = JSON.stringify({ basis: JSON.stringify([98765,0,null,[]]), quantities: [[],[]], goodsPence: [49382, 49383] });
+  await db.batch([seed(707), query("INSERT INTO wholesale_royal_mail_box_plans(order_id,revision,weights,shipping_fingerprint,contents) VALUES(?,?,?,?,?)",parent,"plan","[1200,1300]",fingerprint,boxContents)]);
+  const nextBoxAction = async () => (await queue("admin","?limit=100&stage=print")).orders.find(row => row.id === parent);
+  await query(`INSERT INTO wholesale_royal_mail_shipments
+    (order_id,state,operation,order_version,provider_id,weight_grams,updated_at,label_downloaded_at,requested_at,shipping_fingerprint)
+    VALUES(?,'labelled','first',1,7071,1200,1,20,10,?)`, parent+"-B1",fingerprint).run();
+  await query(`INSERT INTO wholesale_royal_mail_shipments
+    (order_id,state,operation,order_version,weight_grams,updated_at,requested_at,shipping_fingerprint)
+    VALUES(?,'review','second',1,1300,1,10,?)`,parent+"-B2",fingerprint).run();
+  assert.ok((await queue("staff","?stage=checking")).orders.find(row=>row.id===parent));
+  await query("UPDATE wholesale_royal_mail_shipments SET state='labelled',provider_id=7072 WHERE order_id=?",parent+"-B2").run();
+  assert.match((await nextBoxAction()).reason,/1 of 2 box labels/);
+  await query("UPDATE wholesale_royal_mail_shipments SET label_downloaded_at=30 WHERE order_id=?",parent+"-B2").run();
+  const handover=(await queue("staff","?stage=handover")).orders.find(row=>row.id===parent);
+  assert.match(handover.reason,/All 2 box labels/);
+  await query("UPDATE wholesale_preview SET version=2,data=json_set(data,'$.pence',87654) WHERE id=?",parent).run();
+  assert.match((await queue("admin","?stage=attention")).orders.find(row=>row.id===parent).reason,/order changed/i);
 
   // A previously loaded handover row loses its authority when payment eligibility, label or delivery changes.
   const confirm=(n,space,extra={})=>req(space,space,"orders/"+id(n),"PATCH",{ifVersion:1,status:"Dispatched",customerId:"account",queueHandover:true,...extra});
@@ -169,4 +189,5 @@ test("Staff and Admin dispatch queue share accurate role-limited stages, paging 
   assert.equal(await query("SELECT json_extract(data,'$.status') AS status FROM wholesale_preview WHERE id=?",id(3)).first("status"),"Ready");
   await query("UPDATE staff_order_access SET enabled=0 WHERE user_id='tester'").run();
   assert.equal((await req("staff")).status,403);
+
 });
