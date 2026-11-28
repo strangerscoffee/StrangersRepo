@@ -184,6 +184,56 @@ test('an accepted create without a reference echo requires independent ID and re
   }
 });
 
+test('a single create receipt without optional counters must be verified by its numeric order and reference', async () => {
+  const created = {...providerOrder, createdOn:'2026-11-28T12:07:00.1234567'};
+  for (const counters of [{}, {successCount:1}, {errorsCount:0}]) {
+    const calls = [];
+    const order = await createRoyalMailOrder(key, input, async (url, init) => {
+      calls.push([init.method, url]);
+      return init.method === 'POST' ? Response.json({...counters, createdOrders:[created]})
+        : Response.json([{...created, printedOn:'2026-11-28T12:07:02.1234567'}]);
+    });
+    assert.deepEqual(calls, [['POST',origin+'/orders'], ['GET',origin+'/orders/892']]);
+    assert.deepEqual(order, {...expected, providerState:'labelled'});
+  }
+  for (const inconsistent of [
+    {createdOrders:[created], errorsCount:1}, {createdOrders:[created], successCount:0},
+    {createdOrders:[created], errors:[{message:'receipt truncated'}]}, {createdOrders:[created,created]},
+    {createdOrders:[created], failedOrders:[{order:{orderReference:input.reference}}]},
+    {createdOrders:[{...created,orderReference:'ANOTHER'}]}, {createdOrders:[{...created, createdOn:'2026-02-30T12:07:00'}]},
+  ]) {
+    await assert.rejects(createRoyalMailOrder(key, input, async (_url,init) => {
+      assert.equal(init.method, 'POST'); return Response.json(inconsistent);
+    }), outcome('royal_mail_invalid_response', true));
+  }
+  await assert.rejects(createRoyalMailOrder(key,input,async (_url,init) => init.method === 'POST'
+    ? Response.json({createdOrders:[created]}) : Response.json([{...created, orderReference:'ANOTHER'}])), error => {
+    assert.equal(error.uncertain,true); assert.equal(error.candidateId,undefined); return true;
+  });
+  await assert.rejects(createRoyalMailOrder(key,input,async (_url,init) => init.method === 'POST'
+    ? Response.json({createdOrders:[created]}) : Response.json([])), error => {
+    assert.equal(error.uncertain,true); assert.equal(error.candidateId,892); return true;
+  });
+});
+
+test('an unconfirmed purchase identifies the failed stage without echoing carrier or customer data', async () => {
+  for (const [reply, expectedMessage] of [
+    [() => { throw new DOMException('private@example.test', 'TimeoutError'); }, /timed out/],
+    [() => { throw new Error('private@example.test'); }, /connection ended/i],
+    [() => new Response('private@example.test',{status:503}), /HTTP 503/],
+    [() => Response.json({message:'private@example.test'},{status:400}), /HTTP 400/],
+    [() => new Response('private@example.test',{headers:{'content-type':'text/html'}}), /JSON format/],
+    [() => new Response('{"email":"private@example.test"',{headers:{'content-type':'application/json'}}), /read completely/],
+    [() => Response.json({successCount:2,createdOrders:[]}), /one successful booking/],
+  ]) {
+    await assert.rejects(createRoyalMailOrder(key,input,reply), error => {
+      assert.equal(error.uncertain,true); assert.match(error.message,expectedMessage);
+      assert.doesNotMatch(error.message,/private@|Sample Company|fixture-private/);
+      return true;
+    });
+  }
+});
+
 test('a pinned booking verifies both identifiers with one numeric GET', async () => {
   const lookup = async (result, status=200) => {
     let count=0;
@@ -257,6 +307,67 @@ test('reports definitive rejections without echoing the API body', async () => {
     successCount: 0, errorsCount: 1, createdOrders: [],
     failedOrders: [{ order: { orderReference: input.reference }, errors: [{ message: 'Example Street' }] }],
   })), outcome('royal_mail_rejected', false, 400));
+});
+
+test('a failure can echo the entire submitted order including its label generation options', async () => {
+  for (const status of [200, 400, 422]) {
+    const simulate = (changeOrder = () => {}) => createRoyalMailOrder(key, input, async (_url, init) => {
+      assert.equal(init.method, 'POST');
+      const [order] = JSON.parse(init.body).items;
+      assert.deepEqual(order.label, {includeLabelInResponse:true, includeReturnsLabel:false, includeCN:false});
+      changeOrder(order);
+      return Response.json({successCount:0, errorsCount:1, createdOrders:[], failedOrders:[{
+        order, errors:[{errorCode:61, errorMessage:'Invalid service register code', fields:[{
+          fieldName:'postageDetails.serviceRegisterCode', value:order.postageDetails.serviceRegisterCode,
+        }]}],
+      }]}, {status});
+    });
+    await assert.rejects(simulate(), error => {
+      assert.equal(error.uncertain, false);
+      assert.match(error.message, /service register code/i);
+      assert.match(error.message, /61/);
+      assert.doesNotMatch(error.message, /Sample Person|Sample Company|Example Street/);
+      return true;
+    });
+    await assert.rejects(simulate(order => { order.packages[0].trackingNumber = 'AB123456789GB'; }), outcome('royal_mail_invalid_response', true));
+    await assert.rejects(simulate(order => { order.receipt = {createdOrders:[{orderIdentifier:42}]}; }), outcome('royal_mail_invalid_response', true));
+    for (const mutated of ['JVBERi0private', {includeLabelInResponse:true, trackingNumber:'AB123456789GB'},
+      {includeLabelInResponse:1}, {includeLabelInResponse:true, includeCN:true}]) {
+      await assert.rejects(simulate(order => { order.label = mutated; }), outcome('royal_mail_invalid_response', true));
+    }
+  }
+});
+
+test('a sparse failure requires an empty created list, matching full request and explicit field validation', async () => {
+  for (const status of [200, 400, 422]) {
+    const fail = (counters, mutate = () => {}) => createRoyalMailOrder(key, input, async (_url,init) => {
+      assert.equal(init.method,'POST');
+      const [order] = JSON.parse(init.body).items;
+      const receipt = {...counters, createdOrders:[], failedOrders:[{order, errors:[{
+        errorCode:61, errorMessage:'Invalid service register code', fields:[{fieldName:'postageDetails.serviceRegisterCode'}]
+      }]}]};
+      mutate(receipt);
+      return Response.json(receipt,{status});
+    });
+    for (const counters of [{}, {successCount:0}, {errorsCount:1}]) {
+      await assert.rejects(fail(counters), error => {
+        assert.equal(error.uncertain,false);
+        assert.match(error.message,/service register code/i);
+        assert.doesNotMatch(error.message,/Sample Person|Example Street/);
+        return true;
+      });
+    }
+    for (const mutate of [
+      result => { delete result.createdOrders; }, result => { result.createdOrders.push(providerOrder); },
+      result => { result.successCount = 1; }, result => { result.errorsCount = 2; },
+      result => { result.failedOrders[0].errors = []; }, result => { delete result.failedOrders[0].errors[0].fields; },
+      result => { delete result.failedOrders[0].order.recipient; }, result => { result.failedOrders[0].order.recipient.address.city='Other'; },
+      result => { result.failedOrders[0].order.orderReference='OTHER'; },
+      result => { result.failedOrders[0].errors.push({message:'Postage already purchased'}); },
+    ]) {
+      await assert.rejects(fail({},mutate), error => error instanceof RoyalMailError && error.uncertain);
+    }
+  }
 });
 
 test('only a completed, uncontradicted create refusal can release a local postage reservation', async () => {

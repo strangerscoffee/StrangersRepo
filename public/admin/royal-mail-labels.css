@@ -296,3 +296,38 @@
 @media (max-width: 819px) and (min-height: 620px) {
   .lp-sheet .lp-preview-actions { position: sticky; bottom: 0; z-index: 1; background: var(--surface); }
 }
+
+.lp-outstanding {
+  margin: 0 16px 14px;
+  overflow: hidden;
+  background: var(--sunk);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.lp-outstanding[hidden], .lp-outstanding summary::-webkit-details-marker { display: none; }
+.lp-outstanding summary, .lp-request-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 10px 12px;
+  color: var(--fg);
+  font: inherit;
+}
+.lp-outstanding summary { list-style: none; cursor: pointer; font-weight: 650; }
+.lp-outstanding summary .lp-ico:last-child { margin-inline-start: auto; }
+.lp-outstanding[open] summary .lp-ico:last-child { transform: rotate(180deg); }
+.lp-request-rows { list-style: none; padding: 0; margin: 0; }
+.lp-request-row {
+  width: 100%;
+  text-align: start;
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--line);
+  cursor: pointer;
+}
+.lp-request-row .lp-row-text { flex: 1; }
+.lp-request-row time { color: var(--muted); font-size: .75rem; }
+.lp-request-row .lp-status { max-width: 40%; white-space: normal; text-align: center; }
+.lp-outstanding summary:focus-visible, .lp-request-row:focus-visible { outline-offset: -3px; }
+.lp-request-feedback, .lp-outstanding > button { margin: 6px 12px 12px; }

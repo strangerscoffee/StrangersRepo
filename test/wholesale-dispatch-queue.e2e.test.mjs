@@ -155,7 +155,7 @@ test("Staff and Admin share the destination and queue as an uncertain purchase i
   await shipping.getByRole("button", {name: "Review label request"}).click();
   assert.match(await shipping.innerText(), /10 Dove Street\s+Norwich\s+Norfolk\s+NR2 1DE/);
   await shipping.getByRole("button", {name: "Request Royal Mail label"}).click();
-  await staff.waitForFunction(() => document.querySelector("#shippingBody")?.innerText.includes("Checking with Royal Mail"));
+  await staff.waitForFunction(() => document.querySelector("#shippingBody")?.innerText.includes("Postage request unconfirmed"));
   assert.equal(record.purchases.length, 1);
   assert.equal(record.purchases[0].recipient.address.city, "Norwich");
   assert.equal(record.purchases[0].recipient.address.postcode, "NR2 1DE");

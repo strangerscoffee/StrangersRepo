@@ -124,7 +124,82 @@
     }
   }
 
-  function mount(host, {load,initialState = {}}) {
+  function outstandingRequests(el,load,onOpen) {
+    const stages = {unconfirmed:'Postage unconfirmed', preparing:'Preparing request',
+      awaiting_label:'Awaiting label', needs_attention:'Needs attention'};
+    let controller, cursor, term = '', loading = false, ids = new Set(), opening = false;
+    const title = el('span',{});
+    const summary = el('summary',{},icon('clock'),title,icon('down'));
+    const list = el('ul',{class:'lp-request-rows','aria-label':'Outstanding postage requests'});
+    const feedback = el('p',{class:'lp-request-feedback',role:'status',hidden:true});
+    const more = el('button',{type:'button',class:'btn soft sm',hidden:true,onclick:()=>loadPage(!!cursor)},'Show more requests');
+    const details = el('details',{class:'lp-outstanding',hidden:true},summary,list,feedback,more);
+    function tell(text) { feedback.textContent=text; feedback.hidden=!text; }
+    function reset() {
+      controller?.abort();controller=null;loading=false;cursor=null;ids.clear();
+      more.hidden=true;list.replaceChildren();tell('');
+    }
+    async function open(row,button) {
+      if (opening) return;
+      opening=true;button.setAttribute('aria-busy','true');
+      try { await onOpen(row,button); }
+      catch(error) { if (button.isConnected) tell(error.message || 'Could not open this shipment.'); }
+      finally { opening=false;button.removeAttribute('aria-busy'); }
+    }
+    async function loadPage(append) {
+      if (loading || details.hidden || !details.open) return;
+      const work=new AbortController();controller=work;loading=true;more.disabled=true;tell('Loading requests…');
+      const params=new URLSearchParams({view:'requests',limit:'8'});
+      if(term)params.set('search',term);
+      if(append)params.set('cursor',cursor);
+      try{
+        const result=await load(params,work.signal);
+        if(work.signal.aborted || !details.isConnected)return;
+        if(!Array.isArray(result?.requests) || !Number.isSafeInteger(result.total) || result.total<0 ||
+           result.requests.some(row=>!row || !/^WS-[A-F0-9]{32}$/.test(row.id) || !Number.isSafeInteger(row.version) || !Object.hasOwn(stages,row.status)) ||
+           (result.nextCursor!=null && (typeof result.nextCursor!=='string' || !result.requests.length || result.nextCursor===params.get('cursor')))){
+          throw new Error('The outstanding requests could not be read.');
+        }
+        title.textContent='Outstanding postage requests ('+result.total+')';
+        let first;
+        for(const row of result.requests){
+          if(ids.has(row.id))continue;
+          ids.add(row.id);
+          const customer=row.business || 'Wholesale order';
+          const requested=row.requestedAt>0 ? ukDate.format(row.requestedAt)+' at '+ukTime.format(row.requestedAt)+' (UK)' : '';
+          const button=el('button',{type:'button',class:'lp-request-row','data-request-id':row.id,
+            'aria-label':'Open shipping for '+customer+', '+row.id,onclick:e=>open(row,e.currentTarget)},
+            el('span',{class:'lp-row-text'},el('b',{},customer),el('span',{},row.reference || row.id),
+              requested ? el('time',{datetime:new Date(row.requestedAt).toISOString()},'Requested '+requested) : null),
+            el('span',{class:'lp-status review'},stages[row.status]),icon('right'));
+          first ||= button;
+          list.append(el('li',{},button));
+        }
+        if(append && first && document.activeElement===more)first.focus({preventScroll:true});
+        cursor=result.nextCursor;more.hidden=!cursor;more.textContent='Show more requests';
+        tell(ids.size ? '' : 'No outstanding requests.');
+      }catch(error){
+        if(work.signal.aborted || !details.isConnected)return;
+        tell(error.message || 'Could not load outstanding requests.');
+        more.textContent='Try again';more.hidden=false;
+      }finally{
+        if(controller===work){loading=false;more.disabled=false;}
+      }
+    }
+    details.addEventListener('toggle',()=>{
+      if(details.open && !details.hidden && !ids.size)loadPage(false);
+      else if(!details.open)reset();
+    });
+    return {details, clear(){reset();details.hidden=true;}, show(count,search,expand){
+      reset();term=search;details.hidden=!(count>0);
+      if(details.hidden)return;
+      title.textContent='Outstanding postage requests ('+count+')';
+      if(expand)details.open=true;
+      if(details.open)loadPage(false);
+    }};
+  }
+
+  function mount(host, {load,onOpenShipping,initialState = {}}) {
     const {el} = window.SC;
     const small = matchMedia('(max-width:819px)');
     let active = true, next = null, items = [], count = 0, timer, listing, viewing, selected = initialState?.selected || null;
@@ -140,6 +215,7 @@
     const message = el('p',{class:'lp-message',role:'status',hidden:true});
     const retry = el('button',{type:'button',class:'btn soft lp-retry',hidden:true,onclick:()=>request(false)},'Try again');
     const more = el('button',{type:'button',class:'btn soft lp-more',hidden:true,onclick:()=>request(true)},'Show more labels');
+    const outstanding=outstandingRequests(el,load,onOpenShipping);
     const desktop = el('aside',{class:'lp-card lp-preview','aria-label':'Selected label'});
     const sheet = el('dialog',{class:'lp-sheet','aria-label':'Label preview'});
     const heading = el('div',{class:'lp-list-head'},
@@ -147,7 +223,7 @@
       el('label',{class:'lp-search'},icon('search'),search),
       el('div',{class:'lp-filter-row'},el('label',{class:'lp-filter'},'Status',status,icon('down')),
         el('span',{class:'lp-sort'},icon('clock'),'Newest first')));
-    region.append(el('div',{class:'lp-layout'},el('section',{class:'lp-card lp-list'},heading,list,message,retry,more),desktop));
+    region.append(el('div',{class:'lp-layout'},el('section',{class:'lp-card lp-list'},heading,outstanding.details,list,message,retry,more),desktop));
     host.replaceChildren(region);
     document.body.append(sheet);
 
@@ -345,6 +421,7 @@
       const advanceFocus=append && document.activeElement===more;
       const restoreRow=!append && list.contains(document.activeElement) ? document.activeElement.closest('.lp-row')?.dataset.preview : null;
       if(!append) {
+        outstanding.clear();
         clearPreview();opener=null;if(sheet.open)sheet.close();
         items=[];count=0;next=null;renderRows();more.hidden=true;
       }
@@ -362,9 +439,12 @@
         }
         items=[...new Map([...(append?items:[]),...result.labels].map(row=>[row.id,row])).values()];
         count=result.total;next=result.nextCursor;
+        if(!append && status.value==='all')outstanding.show(result.outstandingCount,search.value.trim(),!count);
         const row=items.find(r=>r.id===selected)||items[0];
         selected=row?.id || null;
-        renderRows();notice(items.length?'':(search.value.trim()||status.value!=='all'?'No labels match your search or status.':'No generated Royal Mail labels yet.'));
+        renderRows();
+        notice(items.length ? '' : result.outstandingCount>0 ? 'Confirmed labels will appear here when they are ready to print.' :
+          search.value.trim() || status.value!=='all' ? 'No labels match your search or status.' : 'No generated Royal Mail labels yet.');
         if(!small.matches && row && (!append || current?.id!==row.id))show(row);
         if(!row)desktop.replaceChildren(info('Select a generated label to preview it.'));
         if(advanceFocus)list.querySelectorAll('.lp-row')[oldLength]?.focus({preventScroll:true});
@@ -377,6 +457,7 @@
       }
     }
     search.addEventListener('input',()=>{
+      outstanding.clear();
       clearTimeout(timer);++fetchGeneration;listing?.abort();listing=null;
       clearPreview();items=[];count=0;next=null;renderRows();more.hidden=retry.hidden=true;notice('Searching labels…');
       timer=setTimeout(()=>request(false),220);
@@ -396,6 +477,7 @@
       if(!small.matches && row)show(row);else clearPreview();
     }
     function suspend(){
+      outstanding.clear();
       ++fetchGeneration;listing?.abort();listing=null;clearTimeout(timer);clearPreview();
       items=[];next=null;count=0;selected=null;opener=null;
       if(sheet.open)sheet.close();
