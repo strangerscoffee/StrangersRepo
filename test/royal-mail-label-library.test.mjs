@@ -34,7 +34,7 @@ test('generated label archive pages genuine shipments, keeps historical holds an
   const request=(search='',role='admin',method='GET')=>worker.dispatchFetch('https://fixture.test/labels'+search,{method,headers:{role}});
   const archive=async search=>{const res=await request(search);assert.equal(res.status,200,await res.clone().text());
     assert.match(res.headers.get('cache-control'),/no-store/);return res.json();};
-  assert.deepEqual(await archive(),{labels:[],nextCursor:null,total:0});
+  assert.deepEqual(await archive(),{labels:[],nextCursor:null,total:0,outstandingCount:0});
   for(const role of ['staff','manager','wholesale']) assert.equal((await request('',role)).status,403);
   const post=await request('','admin','POST');assert.equal(post.status,405);assert.equal(post.headers.get('allow'),'GET');
 
@@ -58,6 +58,19 @@ test('generated label archive pages genuine shipments, keeps historical holds an
     insert(18),ship(18,{state:'failed'}),insert(19),ship(19,{provider:0}),
     insert(20,{status:'Cancelled'}),ship(20),ship(21),insert(22),
   ]);
+  const requestPage = await archive('?view=requests&limit=2');
+  assert.equal(requestPage.total,3);
+  assert.deepEqual(requestPage.requests.map(row=>[row.id,row.status]),[[id(18),'needs_attention'],[id(17),'unconfirmed']]);
+  const remaining = await archive('?view=requests&cursor='+encodeURIComponent(requestPage.nextCursor));
+  assert.deepEqual(remaining.requests.map(row=>[row.id,row.status]),[[id(16),'awaiting_label']]);
+  assert.equal(remaining.nextCursor,null);
+  assert.equal((await request('?cursor='+encodeURIComponent(requestPage.nextCursor))).status,400);
+  assert.equal((await request('?view=requests&status=downloaded')).status,400);
+  for (const role of ['manager','staff','wholesale']) assert.equal((await request('?view=requests',role)).status,403);
+  assert.doesNotMatch(JSON.stringify(requestPage),/private-operation|private@example|Private street|canPreview|provider_id|recipient/i);
+  const pendingMatch=await archive('?search='+id(17));
+  assert.equal(pendingMatch.total,0);
+  assert.equal(pendingMatch.outstandingCount,1);
   // Re-run migration 56 against pre-feature shipment rows: request time wins, then actual order time, otherwise unknown.
   await db.prepare('DELETE FROM schema_migrations WHERE id=56').run();
   assert.equal((await worker.dispatchFetch('https://fixture.test/schema')).status,200);
@@ -67,7 +80,7 @@ test('generated label archive pages genuine shipments, keeps historical holds an
   await db.prepare('UPDATE wholesale_royal_mail_shipments SET shipping_fingerprint=? WHERE order_id=?').bind(fingerprint,id(6)).run();
   await db.prepare("UPDATE wholesale_preview SET version=2,data=json_set(data,'$.note','Another private note') WHERE id=?").bind(id(6)).run();
   const all=await archive();
-  assert.equal(all.total,6);
+  assert.equal(all.total,6);assert.equal(all.outstandingCount,3);
   assert.deepEqual(all.labels.map(row=>row.id), [2,1,3,6,4,5].map(id));assert.equal(all.nextCursor,null);
   assert.doesNotMatch(JSON.stringify(all),/Private street|private@example|Private recipient|private-operation|private note|CURRENT-SERVICE|customerSnapshot|fingerprint|destination_address/i);
   assert.deepEqual(all.labels[1],{id:id(1),business:sample.business,reference:'Buyer-77%',trackingNumber:'AB987654321GB',

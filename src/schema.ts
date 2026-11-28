@@ -663,6 +663,12 @@ const MIGRATIONS: Migration[] = [
     try { await env.DB.prepare("ALTER TABLE wholesale_royal_mail_shipments ADD COLUMN candidate_provider_id INTEGER").run(); }
     catch (error) { if (!(await columns(env, table)).has("candidate_provider_id")) throw error; }
   } },
+  { id: 58, name: "Retain the original Royal Mail postage response separately from recovery checks", run: async env => {
+    const table = "wholesale_royal_mail_shipments";
+    if ((await columns(env, table)).has("request_problem")) return;
+    try { await env.DB.prepare("ALTER TABLE wholesale_royal_mail_shipments ADD COLUMN request_problem TEXT").run(); }
+    catch (error) { if (!(await columns(env, table)).has("request_problem")) throw error; }
+  } },
 ];
 
 async function migrate(env: Env): Promise<void> {

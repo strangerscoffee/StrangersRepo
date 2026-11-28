@@ -38,6 +38,7 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     ` },
     format: "esm", platform: "browser", target: "es2022", external: ["cloudflare:*"], write: false });
   const records = new Map();
+  const listedOnly = new Map();
   let nextProviderId = 900;
   const missingLookupReplies = new Map();
   const requests = [];
@@ -103,10 +104,17 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
           result.printedOn = "2026-11-26T09:00:00Z";
         }
         if (labelErrors.has(reference)) result.labelErrors = labelErrors.get(reference);
-        await interceptCreate?.(reference, item);
+        const intercepted = await interceptCreate?.(reference, item);
+        if (intercepted instanceof RuntimeResponse) return intercepted;
         records.set(reference, result);
         return lostReplies.has(reference) ? new RuntimeResponse("carrier response lost", { status: 502 })
           : RuntimeResponse.json({ createdOrders: [result], successCount: 1, errorsCount: 0 });
+      }
+      if (url.pathname === "/api/v1/orders" && request.method === "GET") {
+        const start = Date.parse(url.searchParams.get("startDateTime") ?? "");
+        const end = Date.parse(url.searchParams.get("endDateTime") ?? "");
+        const orders = [...listedOnly.values()].filter(row => Date.parse(row.createdOn) >= start && Date.parse(row.createdOn) <= end);
+        return RuntimeResponse.json({ orders });
       }
       if (url.pathname.endsWith("/label")) {
         await interceptLabel?.();
@@ -115,7 +123,7 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
       const selector = decodeURIComponent(url.pathname.split("/").at(-1));
       if (/^\d+$/.test(selector)) {
         await interceptNumeric?.(selector);
-        const pinned = [...records.values()].find(row => row.orderIdentifier === Number(selector));
+        const pinned = [...records.values(), ...listedOnly.values()].find(row => row.orderIdentifier === Number(selector));
         return RuntimeResponse.json(pinned ? [pinned] : []);
       }
       const reference = selector.replaceAll('"', "");
@@ -495,6 +503,41 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     assert.equal(posts() - purchasesBefore, 1);
   });
 
+  await t.test("a rejected creation can echo the entire submitted order including its label options", async () => {
+    const id = orderRef(210);
+    await seed(id);
+    const before = requests.length;
+    const beforePosts = posts();
+    interceptCreate = (reference, item) => {
+      assert.equal(reference, id);
+      assert.deepEqual(item.label, { includeLabelInResponse: true, includeReturnsLabel: false, includeCN: false });
+      return RuntimeResponse.json({
+        successCount: 0, errorsCount: 1, createdOrders: [],
+        failedOrders: [{ order: item, errors: [{ errorCode: 61,
+          errorMessage: "Invalid postcode", fields: [{ fieldName: "recipient.address.postcode", value: item.recipient.address.postcode }] }] }],
+      });
+    };
+    try {
+      const result = await create(id);
+      assert.equal(result.status, 200);
+      const view = await result.json();
+      assert.equal(view.canCreate, true);
+      assert.equal(view.shipment.state, "failed");
+      assert.equal(view.shipment.orderId, null);
+      assert.equal(view.shipment.recovery, null);
+      assert.match(view.shipment.problem, /postcode/i);
+      assert.doesNotMatch(view.shipment.problem, /NR1 5AB|Example Coffee Bar|Example Lane|includeLabelInResponse/);
+      assert.deepEqual(requests.slice(before).map(row => row.method), ["POST"]);
+    } finally {
+      interceptCreate = undefined;
+    }
+    const corrected = { ...packageDetails, recipient: { ...packageDetails.recipient, postcode: "NR1 1AA" } };
+    assert.equal((await call(shipPath(id), "POST", corrected)).status, 201);
+    assert.equal((await call(shipPath(id), "POST", corrected)).status, 200);
+    assert.equal((await read(id)).state, "labelled");
+    assert.equal(posts() - beforePosts, 2, "one definitive rejection and one reviewed purchase");
+  });
+
   await t.test("lost replies reconcile without a second create and pre-send reservations can recover", async () => {
     const id = orderRef(5);
     await seed(id);
@@ -523,6 +566,9 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     const before = posts();
     assert.equal((await create(id)).status, 202);
     const carrier = records.get(id);
+    const originalProblem = (await read(id)).requestProblem;
+    assert.match(originalProblem, /502/, "retain the status of the unconfirmed purchase");
+    assert.doesNotMatch(originalProblem, /carrier response lost|Example Lane|NR1 5AB/);
     records.delete(id); // Click & Drop accepted the POST but its lookup has not indexed the reference yet.
     missingLookupReplies.set(id, [{ code: "OrderNotFound", message: "Order not found", orderReference: id }]);
     const recover = async () => {
@@ -533,6 +579,8 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     const expire = () => db.prepare("UPDATE wholesale_royal_mail_shipments SET recovery_due_at=1,refresh_after=0 WHERE order_id=?").bind(id).run();
     const lookups = () => requests.filter(req => req.method === "GET" && decodeURIComponent(req.path).endsWith('"' + id + '"')).length;
     await setBookings(false);
+    assert.equal((await refresh(id)).status, 200);
+    assert.equal((await read(id)).requestProblem, originalProblem, "a manual lookup leaves the original purchase diagnostic visible");
     await recover();
     assert.equal((await read(id)).recovery.attempts, 0, "a new booking has a grace period");
     for (let attempt = 1; attempt <= 4; attempt++) {
@@ -540,7 +588,8 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
       const prior = lookups();
       await Promise.all([recover(), recover()]);
       assert.equal(lookups() - prior, 1, "concurrent recovery runs use one lookup");
-      const { recovery } = await read(id);
+      const { recovery, requestProblem } = await read(id);
+      assert.equal(requestProblem, originalProblem, "scheduled checks retain the original purchase diagnostic");
       assert.equal(recovery.attempts, attempt);
       assert.equal(recovery.status, attempt === 4 ? "needs_admin" : "checking");
       assert.ok(recovery.lastCheckedAt);
@@ -564,6 +613,66 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
       `Royal Mail booking for ${id} needs Admin review in Click & Drop.`, `Royal Mail booking recovered for ${id}.`,
     ]);
     await setBookings(true);
+  });
+
+  await t.test("a historic submitted order with no stored response is recovered from a verified numeric match without buying postage", async () => {
+    const id = orderRef(211), at = Date.now() - 11 * 60_000;
+    await seed(id, { createdAt: at - 2 * 60 * 60_000 });
+    const connection = Buffer.from(await crypto.subtle.digest("SHA-256", new TextEncoder().encode("fixture-click-drop"))).toString("base64");
+    await db.prepare(`INSERT INTO wholesale_royal_mail_shipments
+      (order_id,state,operation,order_version,weight_grams,requested_at,updated_at,booking_connection,label_order_created_at,recovery_due_at)
+      VALUES (?,'review','submitted',1,2140,?,?,?,?,0)`)
+      .bind(id, at, at, connection, at - 2 * 60 * 60_000).run();
+    missingLookupReplies.set(id, [{ code: "InvalidOrderIdentifier" }]);
+    assert.equal((await read(id)).requestProblem, null, "an old booking has no saved response to diagnose");
+    const start = requests.length;
+    assert.equal((await refresh(id)).status, 200);
+    assert.equal((await read(id)).state, "review");
+    assert.equal((await create(id)).status, 202);
+    const carrier = { orderIdentifier: 2211, orderReference: id, createdOn: new Date(at).toISOString(),
+      printedOn: new Date(at).toISOString(), trackingNumber: number };
+    listedOnly.set(id, carrier);
+    try {
+      await releaseRefresh(id);
+      assert.equal((await refresh(id)).status, 200);
+      const stored = await read(id);
+      assert.equal(stored.orderId, carrier.orderIdentifier);
+      assert.equal(stored.state, "labelled");
+      assert.equal(stored.recovery, null);
+      assert.equal((await create(id)).status, 200);
+      assert.ok(requests.slice(start).some(row => row.path === "/api/v1/orders/" + carrier.orderIdentifier));
+      assert.ok(requests.slice(start).every(row => row.method === "GET"), "confirmation and retries never repurchase a submitted order");
+    } finally {
+      listedOnly.delete(id);
+      missingLookupReplies.delete(id);
+    }
+  });
+
+  await t.test("recovery cannot attach a carrier order number already linked to another wholesale shipment", async () => {
+    const booked = orderRef(212), unresolved = orderRef(213);
+    await seed(booked);
+    await seed(unresolved);
+    assert.equal((await create(booked)).status, 201);
+    const original = await read(booked);
+    const sentAt = Date.now() - 10 * 60_000;
+    await db.prepare(`INSERT INTO wholesale_royal_mail_shipments
+      (order_id,state,operation,order_version,weight_grams,requested_at,updated_at,booking_connection)
+      SELECT ?,'review','submitted',1,2140,?,?,booking_connection FROM wholesale_royal_mail_shipments WHERE order_id=?`)
+      .bind(unresolved, sentAt, sentAt, booked).run();
+    records.set(unresolved, { ...records.get(booked), orderReference: unresolved });
+    const firstRead = requests.length;
+    assert.equal((await refresh(unresolved)).status, 200);
+    const held = await read(unresolved);
+    assert.equal(held.state, "review");
+    assert.equal(held.orderId, null);
+    assert.equal(held.recovery.status, "needs_admin");
+    assert.match(held.problem, /another wholesale|different wholesale/i);
+    assert.equal((await create(unresolved)).status, 202);
+    assert.equal((await read(booked)).orderId, original.orderId);
+    const owners = await db.prepare("SELECT order_id FROM wholesale_royal_mail_shipments WHERE provider_id=?")
+      .bind(original.orderId).all();
+    assert.deepEqual(owners.results, [{ order_id: booked }]);
+    assert.ok(requests.slice(firstRead).every(row => row.method === "GET"));
   });
 
   await t.test("old uncertain requests remain blocked and recovered unpinned labels require verification", async () => {

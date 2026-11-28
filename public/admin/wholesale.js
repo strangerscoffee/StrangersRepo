@@ -104,6 +104,7 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
         labelsHost = libraryHost;
         labelsLibrary = window.SCRoyalMailLabels.mount(libraryHost, {
           initialState: labelsState,
+          onOpenShipping: openLabelRequest,
           load: (params, signal) => api("GET", "/api/admin/wholesale/royal-mail/labels?" + params, undefined, signal),
         });
       }
@@ -316,6 +317,28 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
     const target = dispatchHost.querySelector(`[data-queue-order="${CSS.escape(id)}"] button`) || dispatchHost.querySelector("button");
     target?.focus({ preventScroll: true });
   }
+  async function openLabelRequest(entry) {
+    const host = labelsHost, session = packingSession, library = labelsLibrary;
+    const active = () => host?.isConnected && labelsHost === host && library === labelsLibrary && session === packingSession;
+    const result = await api("GET", "/api/admin/wholesale/orders?q=" + encodeURIComponent(entry.id));
+    if (!active()) return;
+    const order = result.orders?.find(row => row.id === entry.id);
+    if (!order || order.version !== entry.version || !canShipRoyalMail(order)) {
+      await library.refresh();
+      toast("The order changed. Review the updated requests.");
+      return;
+    }
+    await royalMailShipping(order, async () => {
+      closeSheet();
+      if (!active()) return;
+      await library.refresh();
+      if (active()) {
+        const button = host.querySelector(`[data-request-id="${CSS.escape(entry.id)}"]`);
+        (button || host.querySelector('.lp-outstanding:not([hidden]) summary') || host.querySelector('input[type=search]'))?.focus({preventScroll:true});
+      }
+    }, "Back to labels");
+  }
+
   async function openDispatchTask(entry) {
     if (entry.action === "settings") return onShippingViewChange("settings");
     const host = dispatchHost, session = packingSession;
@@ -969,29 +992,32 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
       const refreshText = shipment?.orderId && safeShipment ? labelReady && !publicLinkOnly && shipping?.trackingEnabled !== false ? "Refresh tracking" : "Check shipment" : "Check label request";
       const needsLabelReview = recorded && !safeShipment;
       const recovery = !stale ? shipment?.recovery : null;
-      const recoveryStatus = recovery?.status === "checking" ? "Checking with Royal Mail" : recovery?.status === "needs_admin" ? "Booking needs admin review" : "";
+      const recoveryStatus = recovery ? (shipment.requestedAt ? "Postage request unconfirmed" : "Postage request pending") : "";
+      const lastCheck = shipment?.checkedAt || recovery?.lastCheckedAt;
+      const checkMessage = shipping?.trackingWarning || (recovery && shipment.problem);
+      const trackingAvailable = !!(safeShipment && shipment?.orderId && labelReady && shipment.trackingNumber);
       const failed = shipment?.state === "failed";
       const lookupFailure = failed && shipment.referenceLookupFailure;
       const recoveryOnly = lookupFailure === "unconfirmed";
-      const canBook = shipping?.canCreate && !recoveryOnly && !shipment?.orderId && !shipment?.reviewRequired;
+      const canBook = shipping?.canCreate && !recorded && !recoveryOnly && !shipment?.orderId && !shipment?.reviewRequired;
       const canLink = !stale && !uncertain && shipping?.canLinkOrder === true && typeof shipping.linkOperation === "string" && !!shipping.linkOperation;
       const unsentLookup = lookupFailure === "before_postage";
       const labelProblem = safeShipment && shipment?.state === "created" && shipment.orderId && shipment.problem;
-      const resolutionVisible = !reviewing && !stale && !uncertain && (recoveryOnly || labelProblem || linkOpen || canLink && !canBook);
+      const resolutionVisible = !reviewing && !stale && !uncertain && (recovery || recoveryOnly || labelProblem || linkOpen || canLink && !canBook);
       const failureStatus = recoveryOnly ? "Check the earlier postage request" : failed && !unsentLookup ? (shipment.requestedAt ? "Label request rejected" : "Booking needs attention") : "";
       const status = uncertain ? "Check booking status" : recoveryStatus || failureStatus || (labelProblem ? "Label needs attention" : needsLabelReview ? "Label needs review" : reviewing && !recorded ? "Ready to request a label" : unsentLookup ? "Review parcel details" : stateText(shipment));
       const tone = failureStatus && !recoveryOnly ? "bad" : recoveryOnly || labelProblem || needsLabelReview || ["booking", "review"].includes(shipment?.state) || uncertain ? "warn" : labelReady ? "ok" : "";
       openSheet(html`<form id="wRoyalMailForm" class="w-sheet w-editor w-shipping-sheet">${editorHead("Royal Mail shipping")}<div class="w-editor-body"><div class="w-shipping-heading"><h3>${row.business || row.createdName}</h3><p class="w-id" title="${row.id}">${row.reference ? "Reference " + row.reference + " · " : ""}${shortId(row.id)}…</p><p class="hint">Order placed ${carrierDate(row.createdAt)}</p></div>
-        <div id="wShippingState" class="w-shipping-status" role="status"><span class="pill ${tone}">${shipping ? status : "Checking Royal Mail shipping…"}</span><span>${uncertain ? "Check the original request before continuing." : recovery?.status === "needs_admin" ? "Check the original booking in Click & Drop." : recoveryStatus ? "An automatic lookup is scheduled." : recoveryOnly ? "The outcome of earlier postage is unconfirmed. Check the saved request before continuing." : labelProblem ? "Postage has already been requested for this order." : failed && !unsentLookup ? "Review the parcel and the booking service before requesting postage again." : recorded ? "Confirm dispatch separately when the parcel leaves." : reviewing ? "Check this parcel summary before requesting postage." : "Review the saved address and enter the sealed parcel weight."}</span>${shipment?.requestedAt ? html`<small>Requested ${carrierDate(shipment.requestedAt)}</small>` : ""}${shipment?.checkedAt ? html`<small>Last checked ${carrierDate(shipment.checkedAt)}</small>` : ""}</div>
+        <div id="wShippingState" class="w-shipping-status" role="status"><span class="pill ${tone}">${shipping ? status : "Checking Royal Mail shipping…"}</span><span>${uncertain ? "Check the original request before continuing." : recoveryStatus ? "Another postage purchase is blocked while this request is unresolved." : recoveryOnly ? "The outcome of earlier postage is unconfirmed. Check the saved request before continuing." : labelProblem ? "Postage has already been requested for this order." : failed && !unsentLookup ? "Review the parcel and the booking service before requesting postage again." : recorded ? "Confirm dispatch separately when the parcel leaves." : reviewing ? "Check this parcel summary before requesting postage." : "Review the saved address and enter the sealed parcel weight."}</span>${shipment?.requestedAt ? html`<small>Requested ${carrierDate(shipment.requestedAt)}</small>` : ""}${lastCheck ? html`<small>Last checked ${carrierDate(lastCheck)}</small>` : ""}${recovery?.status === "checking" && recovery.nextCheckAt ? html`<small>Next automatic check due ${carrierDate(recovery.nextCheckAt)}</small>` : recovery?.status === "needs_admin" ? html`<small>Automatic checks have stopped. Admin review is needed.</small>` : ""}</div>
         ${shipping && (shipping.enabled === false || shipping.bookingConfigured === false) ? html`<p class="w-shipping-notice">New Royal Mail booking setup is incomplete. Check Wholesale → Royal Mail. You can still add a tracking link and dispatch the order as usual.</p>` : shipping?.bookingEnabled === false ? html`<p class="w-shipping-notice">New Royal Mail bookings are paused in Wholesale → Royal Mail. Existing shipments, label downloads and tracking remain available.</p>` : shipping?.enabled && !canBook && !recorded && row.status !== "Ready" ? html`<p class="w-shipping-notice">Pack the order and mark it Ready before requesting postage.</p>` : ""}
-        ${shipping?.trackingWarning ? html`<p class="w-shipping-notice" role="status">${shipping.trackingWarning}</p>` : ""}
-        ${recorded && !publicLinkOnly && shipping?.trackingEnabled === false ? html`<p class="w-shipping-notice">Carrier scans are not connected. You can check the label request and follow the tracking link on Royal Mail.</p>` : ""}
-        ${shipment?.problem && !unsentLookup && !uncertain && shipment.problem !== error ? html`<p class="w-shipping-notice" role="status">${shipment.problem}</p>` : ""}
-        ${resolutionVisible ? html`<section class="w-shipping-recovery" aria-label="Find the order in Click &amp; Drop"><h3>Find the order in Click &amp; Drop</h3>
-          <p>${labelProblem ? "Find the existing booking using this wholesale order reference." : recoveryOnly ? "Use Check label request to check the saved attempt. An existing Click & Drop booking can be matched by its Royal Mail order number." : "Use the full wholesale reference and the numeric Royal Mail order number from the booking you already made."}</p>
+        ${recovery && shipment.requestProblem ? html`<p class="w-shipping-notice" role="status"><strong>Postage request</strong><br>${shipment.requestProblem}</p>` : ""}
+        ${checkMessage && checkMessage !== error && (!recovery || checkMessage !== shipment.requestProblem) ? html`<p class="w-shipping-notice" role="status">${recovery ? html`<strong>Latest check</strong><br>` : ""}${checkMessage}</p>` : ""}
+        ${!recovery && shipment?.problem && !unsentLookup && !uncertain && shipment.problem !== error && shipment.problem !== checkMessage ? html`<p class="w-shipping-notice" role="status">${shipment.problem}</p>` : ""}
+        ${resolutionVisible ? html`<section class="w-shipping-recovery" aria-label="${recovery ? "Check in Click & Drop" : "Find the order in Click & Drop"}"><h3>${recovery ? "Check in Click & Drop" : "Find the order in Click & Drop"}</h3>
+          <p>${labelProblem ? "Find the existing booking using this wholesale order reference." : recoveryOnly ? "Use Check label request to check the saved attempt. An existing Click & Drop booking can be matched by its Royal Mail order number." : recovery ? canLink ? "Search Orders across all statuses using this reference. If you find a matching parcel, link its numeric Royal Mail order number." : "Search Orders across all statuses using this reference and compare the recipient and postcode." : "Enter the numeric Royal Mail order number if this parcel is already booked in Click & Drop."}</p>
           <code id="wLookupReference">${row.id}</code><div class="w-recovery-actions"><button type="button" class="btn sm soft" data-sheet="shipping-copy-reference" aria-label="Copy order reference">${svg("copy")}Copy reference</button><a class="btn sm soft" href="https://business.parcel.royalmail.com/" target="_blank" rel="noopener noreferrer">Open Click &amp; Drop</a></div>
           ${canLink && !linkOpen ? html`<button type="button" class="btn sm soft" data-sheet="shipping-link-open">Link existing booking</button>` : ""}
-          ${canLink && linkOpen ? html`<div class="w-recovery-entry"><h3>Link an existing booking</h3><p>Use this if postage was already bought in Click &amp; Drop. Enter the numeric Royal Mail order number from the matching booking. Submitting it reserves this wholesale order for linking and blocks another postage purchase.</p>
+          ${canLink && linkOpen ? html`<div class="w-recovery-entry"><h3>Link an existing booking</h3><p>${recovery || recoveryOnly ? "Compare the recipient, postcode and parcel weight before entering the matching Royal Mail order number." : "Use this if postage was already bought in Click & Drop. Enter the numeric Royal Mail order number from the matching booking. Submitting it reserves this wholesale order for linking and blocks another postage purchase."}</p>
             ${field("Royal Mail order number", html`<input id="wCarrierOrderNumber" value="${linkNumber}" inputmode="numeric" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="20" aria-describedby="wCarrierNumberHint">`)}
             <p id="wCarrierNumberHint" class="hint">Enter the digits from the order details. Tracking numbers and WS references belong to different fields.</p>
             <div class="w-recovery-actions"><button type="button" class="btn soft" data-sheet="shipping-link-confirm">Check and link booking</button><button type="button" class="btn sm soft" data-sheet="shipping-link-cancel">Cancel</button></div>
@@ -999,13 +1025,12 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
         </section>` : ""}
         ${failed && !lookupFailure && !heavy && shipping?.bookingService && !stale && !uncertain ? html`<section class="w-shipping-review" aria-label="Check parcel service"><div class="kv"><span>Configured service</span><strong>${shipping.bookingService}</strong></div><button class="btn soft" type="button" data-sheet="shipping-service-check">Check service for this parcel</button><p class="hint">Checks the service for this postcode and packed weight without buying postage.</p><p role="status" id="wServiceAdvice" ${serviceAdvice ? "" : raw("hidden")}>${serviceAdvice}</p><p class="hint">To change the booking service, open Shipping settings in Royal Mail and edit the Click &amp; Drop connection.</p></section>` : ""}
         ${uncertain && !recoveryStatus ? html`<p class="w-shipping-notice">The label request could not be confirmed. Check the existing request before trying anything else.</p>` : ""}
-        ${recoveryStatus ? html`<section class="w-shipping-review" aria-label="Booking recovery"><h3>${recovery.status === "checking" ? "Finding the original booking" : "Review the original booking"}</h3><p>${recovery.status === "checking" ? "The original order reference is being checked automatically." : "Check this order reference, destination and parcel in Click & Drop, then check the label request here."}</p><div class="kv"><span>Order reference</span><strong class="w-id">${row.id}</strong></div>${recovery.lastCheckedAt ? html`<small>Last booking check ${carrierDate(recovery.lastCheckedAt)}</small>` : ""}${recovery.status === "checking" && recovery.nextCheckAt ? html`<p class="hint">Next scheduled check ${carrierDate(recovery.nextCheckAt)}</p>` : ""}</section>` : ""}
         ${shipment?.orderChanged && !unsentLookup ? html`<p class="w-shipping-notice">The order changed after this label request. Check the saved destination, bags and label before handing over the parcel.</p>` : ""}
         ${shipment?.reviewRequired ? html`<p class="w-shipping-notice">This Royal Mail record needs verification in Click &amp; Drop before using its label or tracking link.</p>` : ""}
         ${stale ? html`<p class="w-shipping-notice">This order changed since you opened it. Return to the latest order before requesting a label or confirming dispatch.</p>` : ""}
         ${recorded ? html`
-          ${shipment.destination ? html`<section class="w-shipping-review"><h3>Booked delivery address</h3><p class="w-address">${[shipment.destination.address, shipment.destination.postcode].join("\n")}</p></section>` : ""}
-          <section class="w-shipping-scan" aria-label="Latest Royal Mail scan"><h3>Latest Royal Mail scan</h3><strong>${shipment.carrierStatus || (publicLinkOnly ? "Public tracking link" : shipping?.trackingEnabled === false ? "Carrier scans not connected" : "No carrier scan yet")}</strong><p>${shipment.carrierEventAt ? carrierDate(shipment.carrierEventAt) : publicLinkOnly || shipping?.trackingEnabled === false ? "Use the Royal Mail tracking page for updates." : "Tracking updates appear after Royal Mail scans the parcel."}</p></section>
+          ${shipment.destination ? html`<section class="w-shipping-review"><h3>${recovery ? "Requested delivery address" : "Booked delivery address"}</h3><p class="w-address">${[shipment.destination.address, shipment.destination.postcode].join("\n")}</p></section>` : ""}
+          ${trackingAvailable ? html`<section class="w-shipping-scan" aria-label="Latest Royal Mail scan"><h3>Latest Royal Mail scan</h3><strong>${shipment.carrierStatus || (publicLinkOnly ? "Public tracking link" : shipping?.trackingEnabled === false ? "Carrier scans not connected" : "No carrier scan yet")}</strong><p>${shipment.carrierEventAt ? carrierDate(shipment.carrierEventAt) : publicLinkOnly || shipping?.trackingEnabled === false ? "Use the Royal Mail tracking page for updates." : "Tracking updates appear after Royal Mail scans the parcel."}</p></section>` : ""}
           ${shipment.trackingNumber ? html`<div class="w-shipping-tracking"><span><b>Tracking number</b><code>${shipment.trackingNumber}</code></span>${safeShipment ? html`<button class="btn sm soft" type="button" data-sheet="shipping-copy" aria-label="Copy tracking number">${svg("copy")}Copy</button>` : ""}</div>` : ""}
           ${safeShipment ? html`<div class="w-shipping-tools">${shipment.orderId && labelReady ? html`<button type="button" class="btn w-shipping-label" data-sheet="shipping-label">${svg("dl")}Download label PDF</button>` : ""}${trackingUrl ? html`<a class="btn soft" href="${trackingUrl}" target="_blank" rel="noopener noreferrer">Track on Royal Mail</a>` : ""}</div>` : ""}
           ${recoveryStatus ? "" : html`<section class="w-shipping-next"><h3>Next step</h3><b>${stale ? "Return to the latest order" : !safeShipment ? "Review the shipment in Click & Drop" : row.status === "Dispatched" ? "Dispatch is recorded" : labelProblem ? "Correct the label in Click & Drop" : shipment.orderId && !labelReady ? "Finish postage in Click & Drop" : shipment.orderId ? "Print, attach, then dispatch" : "Check the label request"}</b><p>${stale ? "The order has changed. Return to the order to review its latest status before continuing." : !safeShipment ? "Verify the destination and parcel details before using this shipment. Label download and automatic tracking reuse are paused." : row.status === "Dispatched" ? (publicLinkOnly ? "Follow the parcel on Royal Mail Track & Trace." : "Follow the parcel using its tracking number. Refresh tracking to check for a newer carrier scan.") : labelProblem ? "Resolve the reported problem on the existing booking, generate the label and then choose Check shipment here." : shipment.orderId && !labelReady ? "Finish postage and generate the label in Click & Drop, then use Check shipment. This order stays Ready until you confirm dispatch." : shipment.orderId ? "Attach the label to your sealed parcel. Return to the order and confirm dispatch when it leaves the roastery." : "Use Check label request to recover the existing request. A new postage request will not be sent."}</p></section>`}

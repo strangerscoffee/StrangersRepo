@@ -185,6 +185,30 @@ test("Admin labels supports desktop search and reprints, then a mobile sheet wit
   await dialog.waitFor({ state: "hidden" });
   await target.getByText("Downloaded", { exact: true }).waitFor();
   await phone.waitForFunction(id => document.activeElement?.dataset.preview === id, newest);
+  // A submitted order with an unconfirmed carrier reply is discoverable even if the search has zero labels.
+  const pending = reference(150), now = Date.now();
+  await db.batch([
+    db.prepare("INSERT INTO wholesale_preview(kind,id,data,version,updated_at) VALUES('order',?,?,1,?)")
+      .bind(pending, JSON.stringify({ customerId, business:"Pending Coffee", delivery:"Delivery", status:"Ready",
+        preview:false, reference:"PENDING-REQUEST", grams:1000, packs:1, lines:[], createdAt:now }), now),
+    db.prepare(`INSERT INTO wholesale_royal_mail_shipments
+      (order_id,state,operation,order_version,weight_grams,requested_at,updated_at)
+      VALUES(?,'review','pending-fixture',1,1250,?,?)`).bind(pending,now,now),
+  ]);
+  const before = carrier.length;
+  await phone.getByRole("searchbox").fill("PENDING-REQUEST");
+  const request = phone.getByRole("button", { name: "Open shipping for Pending Coffee, "+pending });
+  await request.waitFor();
+  assert.equal(await phone.locator("#lpCount").textContent(),"0 labels");
+  assert.equal(await phone.locator(".lp-outstanding summary").textContent(),"Outstanding postage requests (1)");
+  assert.equal(await phone.locator(".lp-row").count(),0);
+  await request.click();
+  await phone.locator("#wRoyalMailForm").getByRole("button",{name:"Check label request"}).waitFor();
+  assert.equal(await phone.getByRole("button",{name:"Download PDF",exact:true}).count(),0);
+  await phone.locator("#wRoyalMailForm").getByRole("button",{name:"Back to labels"}).click();
+  await request.waitFor();
+  assert.equal(await phone.getByRole("searchbox").inputValue(),"PENDING-REQUEST");
+  assert.equal(carrier.length,before,"browsing outstanding requests or opening their details contacts no carrier");
   assert.ok(carrier.every(c => c.method === "GET"), "no reprint, download, or preview made a postage purchase");
   assert.deepEqual(errors, []);
 });

@@ -50,6 +50,7 @@ interface Shipment {
   shipping_fingerprint: string | null;
   review_required: number;
   problem: string | null;
+  request_problem: string | null;
   requested_at: number | null;
   checked_at: number | null;
   recovery_due_at: number | null;
@@ -140,13 +141,14 @@ async function shipmentView(row: Shipment | null, order: ShippingOrder) {
     reviewRequired,
     destination: row.requested_at && row.destination_address && row.destination_postcode
       ? { address: row.destination_address, postcode: row.destination_postcode } : null,
+    requestProblem: row.request_problem,
     problem: row.problem?.startsWith(DECLINED_POSTAGE) ? row.problem.slice(DECLINED_POSTAGE.length) : row.problem,
   };
 }
 
 async function getShipment(env: Env, id: string) {
   return env.DB.prepare(`SELECT state, operation, order_version, provider_id, candidate_provider_id, booking_connection, booking_account_scope, tracking_number, carrier_status, carrier_event_at,
-    label_downloaded_at, weight_grams, updated_at, shipping_fingerprint, review_required, problem, requested_at, checked_at,
+    label_downloaded_at, weight_grams, updated_at, shipping_fingerprint, review_required, problem, request_problem, requested_at, checked_at,
     recovery_due_at, recovery_attempts, destination_address, destination_postcode
     FROM wholesale_royal_mail_shipments WHERE order_id = ?`).bind(id).first<Shipment>();
 }
@@ -560,7 +562,7 @@ export async function handleWholesaleRoyalMail(req: Request, env: Env, id: strin
       ${existing ? "AND EXISTS (SELECT 1 FROM wholesale_royal_mail_shipments WHERE order_id=? AND operation=?)" : ""}
     ON CONFLICT(order_id) DO UPDATE SET state=excluded.state, operation=excluded.operation,
       order_version=excluded.order_version, shipping_fingerprint=excluded.shipping_fingerprint,
-      weight_grams=excluded.weight_grams, updated_at=excluded.updated_at, requested_at=0, checked_at=NULL, refresh_after=NULL, problem=NULL,
+      weight_grams=excluded.weight_grams, updated_at=excluded.updated_at, requested_at=0, checked_at=NULL, refresh_after=NULL, problem=NULL, request_problem=NULL,
       recovery_attempts=0, recovery_due_at=NULL, label_downloaded_at=NULL, candidate_provider_id=NULL, booking_connection=excluded.booking_connection, booking_account_scope=NULL,
       service_code=NULL, label_order_created_at=excluded.label_order_created_at,
       destination_address=excluded.destination_address, destination_postcode=excluded.destination_postcode
@@ -579,6 +581,7 @@ export async function handleWholesaleRoyalMail(req: Request, env: Env, id: strin
   }
 
   let outcome: "reserved" | "requested" | "known" = "reserved";
+  let acceptedOrderId: number | null = null;
   try {
     // All callers share one reservation. Commit the send marker only while this
     // operation still owns the eligible parcel and service.
@@ -602,11 +605,13 @@ export async function handleWholesaleRoyalMail(req: Request, env: Env, id: strin
       subtotalPence: order.pence, shippingPence: order.deliveryPence ?? 0, totalPence: order.totalPence ?? order.pence + (order.deliveryPence ?? 0),
     });
     outcome = "known";
+    acceptedOrderId = carrier.orderId;
     const latest = await get<Order>(env, "order", id);
     const latestChanged = !latest || !canUseShipment(latest) || await shippingFingerprint(latest) !== fingerprint;
     // Only a confirmed create with an explicitly named account proves which account owns this shipment.
     const accountScope = shippingAccountName ? await bookingAccountScope(key, shippingAccountName) : null;
-    await recordCarrier(env, id, operation, carrier, latestChanged, false, accountScope);
+    const saved = await recordCarrier(env, id, operation, carrier, latestChanged, false, accountScope);
+    if (!saved) throw new Error("The recorded shipment changed while saving the confirmed booking.");
   } catch (error) {
     const carrierError = error instanceof RoyalMailError ? error : null;
     const noSend = outcome === "reserved" || outcome === "requested" && carrierError &&
@@ -615,12 +620,18 @@ export async function handleWholesaleRoyalMail(req: Request, env: Env, id: strin
       ["royal_mail_rejected", "royal_mail_auth", "royal_mail_denied"].includes(carrierError.code);
     const state = noSend || declined ? "failed" : "review";
     const message = error instanceof RoyalMailError || error instanceof ApiError ? error.message : "The postage request could not be confirmed.";
-    const candidate = outcome === "requested" && carrierError?.uncertain ? carrierError.candidateId ?? null : null;
-    await env.DB.prepare(`UPDATE wholesale_royal_mail_shipments SET state=?, problem=?, updated_at=?,
+    const candidate = acceptedOrderId ?? (outcome === "requested" && carrierError?.uncertain ? carrierError.candidateId ?? null : null);
+    // Retain only adapter-authored diagnostics. An upstream body can contain the customer's address or credentials.
+    const status = carrierError?.status;
+    const requestProblem = state !== "review" ? null : outcome === "known"
+      ? "Click & Drop returned an order number. The dashboard could not finish saving its booking details."
+      : carrierError ? carrierError.message + (status && !carrierError.message.includes("HTTP " + status) ? " (HTTP " + status + ")" : "")
+      : "The dashboard did not receive a usable confirmation for the postage request.";
+    await env.DB.prepare(`UPDATE wholesale_royal_mail_shipments SET state=?, problem=?, request_problem=?, updated_at=?,
       requested_at=CASE WHEN ? THEN 0 ELSE requested_at END, candidate_provider_id=COALESCE(candidate_provider_id,?)
       WHERE order_id=? AND operation=? AND state='booking' AND provider_id IS NULL
       AND (? IS NULL OR (requested_at>0 AND booking_connection=?))`)
-      .bind(state, declined ? DECLINED_POSTAGE + message : state === "failed" ? message : null, Date.now(), Number(!!noSend),
+      .bind(state, declined ? DECLINED_POSTAGE + message : state === "failed" ? message : null, requestProblem, Date.now(), Number(!!noSend),
         candidate, id, operation, candidate, connection).run();
     if (error instanceof ApiError) throw error;
     return getView(state === "review" ? 202 : 200);
