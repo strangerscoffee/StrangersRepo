@@ -1,7 +1,7 @@
 import { type Env, invalid, json } from "../http";
 import { addDays, ukDay } from "../insightsMath";
 import { loadRoyalMailConnections, readRoyalMailPolicy } from "../royalMailAppSettings";
-import { DECLINED_POSTAGE, HELD_FAILED_SHIPMENT } from "../royalMailBookingState";
+import { DECLINED_POSTAGE, HELD_FAILED_SHIPMENT, RETIRED_POSTAGE_TEST } from "../royalMailBookingState";
 import { bookingConnection } from "../royalMailRecovery";
 import { royalMailCollectionCutoff } from "../royalMailSetupChecks";
 import { fetchRoyalMailTracking } from "../royalMail";
@@ -84,7 +84,7 @@ export async function listDeliveryAttention(req: Request, env: Env) {
         AND c.checked_at>=${handover}+? AND (s.carrier_status IS NULL OR s.carrier_status=c.description)
         AND (s.carrier_event_at IS NULL OR s.carrier_event_at<=c.event_at) THEN 'no_scan' END kind
     FROM wholesale_royal_mail_shipments s ${joinOrder} ${joinChecks}
-    WHERE s.order_id>? AND ${realDelivery} AND ${status} IN ('Ready','Dispatched'))
+    WHERE s.order_id>? AND ${realDelivery} AND ${status} IN ('Ready','Dispatched') AND NOT ${RETIRED_POSTAGE_TEST})
     SELECT *,CASE kind WHEN 'booking' THEN coalesce(nullif(requested_at,0),updated_at)
       WHEN 'collection' THEN label_downloaded_at WHEN 'exception' THEN coalesce(unixepoch(event_at)*1000,scan_checked)
       ELSE handover END at, CASE WHEN kind='booking' THEN booking_checked ELSE scan_checked END checked FROM issues WHERE kind IS NOT NULL AND (?='all' OR kind=?) ORDER BY shipment_id LIMIT ?`)

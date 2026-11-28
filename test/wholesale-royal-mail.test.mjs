@@ -312,6 +312,27 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     await setBookings(true);
   });
 
+  await t.test("an archived test stays in order history and a subsequent carrier match becomes visible", async () => {
+    const id = orderRef(9011);
+    await seed(id);
+    await db.prepare(`INSERT INTO wholesale_royal_mail_shipments
+      (order_id,state,operation,retired_operation,order_version,weight_grams,updated_at,requested_at,recovery_due_at)
+      VALUES (?,'review','historical-test','historical-test',1,2140,100,100,0)`).bind(id).run();
+    const archived = await (await call(shipPath(id))).json();
+    assert.equal(archived.shipment.retiredTest, true);
+    assert.equal(archived.shipment.recovery, null);
+    assert.equal(archived.canCreate, false);
+    assert.equal(archived.canLinkOrder, true);
+    const before = requests.length;
+    assert.equal((await refresh(id)).status, 200);
+    assert.equal((await create(id)).status, 202);
+    assert.equal(requests.length, before);
+    await db.prepare("UPDATE wholesale_royal_mail_shipments SET candidate_provider_id=123 WHERE order_id=?").bind(id).run();
+    const candidate = await read(id);
+    assert.equal(Object.hasOwn(candidate, "retiredTest"), false);
+    assert.ok(candidate.recovery);
+  });
+
   await t.test("historical reference failures are read-only across a changed connection and concurrent attempts", async () => {
     const id = orderRef(106);
     await seed(id);

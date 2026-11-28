@@ -11,7 +11,7 @@ import { requireStaffOrders } from "./staffOrdersAccess";
 import { canLinkRoyalMailOrder, linkRoyalMailOrder } from "./royalMailLinkOrder";
 import { staffLabelEligibility, staffLabelEligibilityGuard } from "./wholesale/staffLabelEligibility";
 import type { User } from "./auth";
-import { canRequestRoyalMailPostage, DECLINED_POSTAGE, HELD_FAILED_SHIPMENT } from "./royalMailBookingState";
+import { canRequestRoyalMailPostage, DECLINED_POSTAGE, HELD_FAILED_SHIPMENT, RETIRED_POSTAGE_TEST } from "./royalMailBookingState";
 import { get, object, version, type Versioned } from "./wholesaleStore";
 import { royalMailAddressBook, royalMailPostcode, royalMailRecipientDraft, savedRoyalMailRecipient } from "./royalMailDestination";
 export { savedRoyalMailRecipient } from "./royalMailDestination";
@@ -37,6 +37,7 @@ interface Order {
 }
 
 interface Shipment {
+  retired_test: number;
   state: "booking" | "review" | "created" | "labelled" | "dispatched" | "failed";
   operation: string;
   candidate_provider_id: number | null;
@@ -146,7 +147,8 @@ async function shipmentView(row: Shipment | null, order: ShippingOrder, fingerpr
     // Older failures have the carrier message but no durable outbound-request marker.
     referenceLookupFailure: referenceLookupFailure(row),
     checkedAt: row.checked_at,
-    recovery: bookingRecovery(row),
+    recovery: row.retired_test === 1 ? null : bookingRecovery(row),
+    ...(row.retired_test === 1 ? { retiredTest: true } : {}),
     orderChanged: changed,
     reviewRequired,
     destination: row.requested_at && row.destination_address && row.destination_postcode
@@ -159,12 +161,12 @@ async function shipmentView(row: Shipment | null, order: ShippingOrder, fingerpr
 async function getShipment(env: Env, id: string) {
   return env.DB.prepare(`SELECT state, operation, order_version, provider_id, candidate_provider_id, booking_connection, booking_account_scope, tracking_number, carrier_status, carrier_event_at,
     label_downloaded_at, weight_grams, updated_at, shipping_fingerprint, review_required, problem, request_problem, requested_at, checked_at,
-    recovery_due_at, recovery_attempts, destination_address, destination_postcode
+    recovery_due_at, recovery_attempts, destination_address, destination_postcode, ${RETIRED_POSTAGE_TEST} AS retired_test
     FROM wholesale_royal_mail_shipments WHERE order_id = ?`).bind(id).first<Shipment>();
 }
 
 async function boxShipments(env: Env, orderId: string) {
-  const {results} = await env.DB.prepare("SELECT * FROM wholesale_royal_mail_shipments WHERE order_id GLOB ?")
+  const {results} = await env.DB.prepare(`SELECT *, ${RETIRED_POSTAGE_TEST} AS retired_test FROM wholesale_royal_mail_shipments WHERE order_id GLOB ?`)
     .bind(orderId + "-B*").all<Shipment & {order_id:string}>();
   return new Map(results.map(row => [row.order_id, row]));
 }
@@ -590,7 +592,7 @@ export async function handleWholesaleRoyalMail(req: Request, env: Env, orderId: 
     return getView();
   }
   if (action === "refresh") {
-    if (!existing || existing.state === "failed" && !existing.provider_id) return getView();
+    if (!existing || existing.retired_test === 1 || existing.state === "failed" && !existing.provider_id) return getView();
     if (!existing.provider_id && (existing.state === "booking" || existing.state === "review")) {
       await checkStaffAccess();
       const warning = await checkUnconfirmedBooking(env, id, existing.operation, settings.key, false);

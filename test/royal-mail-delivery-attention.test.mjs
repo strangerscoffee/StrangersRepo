@@ -60,6 +60,7 @@ test('delivery issues follow verified booking, cutoff and tracking evidence per 
     [1,'review','Ready'],[2,'labelled','Ready'],[3,'labelled','Dispatched'],[4,'dispatched','Dispatched',{},'-B2'],
     [5,'labelled','Dispatched',{dispatchedAt:now-60_000}],[6,'review','Ready',{preview:true}],
     [7,'labelled','Ready',{dispatchDate:'2099-01-01'}],[8,'labelled','Dispatched'],[9,'labelled','Dispatched'],[10,'labelled','Dispatched',{trackingUrl:'https://other-courier.example/parcel'}],[11,'failed','Ready'],
+    [12,'review','Ready'],
   ]){
     const order={business:'Café '+n,customerId:'customer',status,dispatchedAt:status==='Dispatched'?ago:null,delivery:'Delivery',
       trackingUrl:box ? '' : 'https://www.royalmail.com/track-your-item#/tracking-results/'+num(n),preview:false,customerNote:'Private recipient',...extra};
@@ -72,6 +73,11 @@ test('delivery issues follow verified booking, cutoff and tracking evidence per 
   await db.prepare('UPDATE wholesale_royal_mail_shipments SET shipping_fingerprint=? WHERE order_id=?').bind('parcel-fingerprint',id(4)+'-B2').run();
   await db.prepare("UPDATE wholesale_royal_mail_shipments SET provider_id=NULL,tracking_number=NULL,label_downloaded_at=NULL,problem=? WHERE order_id=?")
     .bind('Postage request declined. Royal Mail rejected the label request. Check the delivery postcode.',id(11)).run();
+  await db.batch([
+    db.prepare('UPDATE wholesale_royal_mail_shipments SET retired_operation=operation,tracking_number=NULL WHERE order_id=?').bind(id(12)),
+    db.prepare('UPDATE wholesale_royal_mail_shipments SET retired_operation=?,tracking_number=NULL WHERE order_id=?').bind('earlier-operation',id(1)),
+    db.prepare('UPDATE wholesale_royal_mail_shipments SET retired_operation=operation WHERE order_id=?').bind(id(2)),
+  ]);
   const read=()=>data('/attention');
   assert.deepEqual((await read()).orders.map(r=>r.kind),['booking','collection','booking']);
   assert.equal(calls.length,0);
@@ -103,6 +109,9 @@ test('delivery issues follow verified booking, cutoff and tracking evidence per 
   await db.prepare("UPDATE wholesale_royal_mail_setup_checks SET scope='retired'").run();
   assert.equal((await read()).cutoff,null);
   assert.deepEqual((await read()).orders.map(r=>r.kind),['booking','booking']);
+  await db.prepare('UPDATE wholesale_royal_mail_shipments SET candidate_provider_id=120 WHERE order_id=?').bind(id(12)).run();
+  assert.deepEqual((await data('/attention?kind=booking')).orders.map(row=>row.id),[1,11,12].map(id),
+    'new carrier evidence restores an archived operation to delivery issues');
 });
 
 test('physical delivery, sender advice and delivery attempts have independent meanings',()=>{

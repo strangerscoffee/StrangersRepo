@@ -141,6 +141,17 @@ for (const [device, options] of [["desktop packing desk", desktop], ["phone orde
   });
 }
 
+test("staff see the archived test as order history without a postage action", async t => {
+  const state = { ...eligible(), canCreate: false, shipment: { state: "review", retiredTest: true, recovery: null } };
+  const { page, dialog } = await staffPage(t, phone, route => {
+    assert.equal(route.request().method(), "GET");
+    return route.fulfill({ json: state });
+  });
+  await dialog.getByText("Test postage request archived", { exact: true }).waitFor();
+  assert.equal(await dialog.getByRole("button", { name: /Check request|Check label request|Review label request/ }).count(), 0);
+  await page.locator("#orderDialog [data-shipping-summary-copy]").getByText("Test postage request archived", { exact: true }).waitFor({ state: "attached" });
+});
+
 test("an overdue account explains the hold on both booking and reprinting before handover", async (t) => {
   let state = financeBlock(eligible()), posts = 0, downloads = 0;
   const { page, dialog } = await staffPage(t, phone, async (route) => {

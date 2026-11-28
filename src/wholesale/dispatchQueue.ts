@@ -1,7 +1,7 @@
 import "../../public/shared/wholesale-preparation.js";
 import { type Env, invalid, json } from "../http";
 import { loadRoyalMailConnections, readRoyalMailPolicy } from "../royalMailAppSettings";
-import { HELD_FAILED_SHIPMENT } from "../royalMailBookingState";
+import { HELD_FAILED_SHIPMENT, RETIRED_POSTAGE_TEST } from "../royalMailBookingState";
 import { packingBasis, type PackingOrder } from "../royalMailBoxContents";
 import { savedRoyalMailRecipient } from "../royalMailDestination";
 import { shippingFingerprint } from "../wholesaleRoyalMail";
@@ -19,7 +19,7 @@ type Next = { stage: Stage; action: Action; actionLabel: string; reason: string 
 type Candidate = {
   id: string; version: number; sort_day: string; reference: string; destination: string; block_code: string | null;
   state: string | null; requested_at: number | null; provider_id: number | null; review_required: number | null; label_downloaded_at: number | null;
-  held_failed: number | null; has_problem: number | null;
+  held_failed: number | null; has_problem: number | null; retired_test: number;
   box_stages: string | null; plan_fingerprint: string | null; packing_basis: string | null;
   recovery_due_at: number | null; order_version: number | null; shipping_fingerprint: string | null;
 };
@@ -63,7 +63,7 @@ function candidates(env: Env, after: string, clock: (string | number)[]) {
         'lines',CASE WHEN p.order_id IS NOT NULL OR s.state IS NULL OR s.state='failed' OR (s.shipping_fingerprint IS NOT NULL AND s.order_version<>b.version)
           THEN json_extract(b.data,'$.lines') END) AS destination,
       s.state,s.requested_at,s.provider_id,s.review_required,s.label_downloaded_at,s.recovery_due_at,s.order_version,s.shipping_fingerprint,
-      ${HELD_FAILED_SHIPMENT} AS held_failed,
+      ${HELD_FAILED_SHIPMENT} AS held_failed, ${RETIRED_POSTAGE_TEST} AS retired_test,
       length(s.problem)>0 AS has_problem, p.shipping_fingerprint AS plan_fingerprint,json_extract(p.contents,'$.basis') AS packing_basis,
       CASE WHEN p.order_id IS NOT NULL THEN (
         SELECT json_group_array(CASE
@@ -161,6 +161,7 @@ export async function dispatchQueue(req: Request, env: Env, role: Role) {
   for (;;) {
     const { results } = await candidates(env, sliceEnd, clock);
     for (const row of results) {
+      if (row.retired_test && !row.box_stages) continue;
       const order: Destination = JSON.parse(row.destination);
       const next = await nextAction(row, order, role, booking);
       counts[next.stage]++;

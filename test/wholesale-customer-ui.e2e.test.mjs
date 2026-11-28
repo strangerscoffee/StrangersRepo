@@ -122,6 +122,9 @@ test('customer order history shows partial delivery and a separate tracking link
     const panel=page.getByRole('region',{name:'Parcel tracking'});
     await panel.getByRole('heading',{name:'1 of 2 boxes delivered'}).waitFor();
     assert.deepEqual(await panel.locator('small').allTextContents(), ['Delivered','In transit']);
+    // Measure the touch targets once the dialog and its history panel have settled.
+    await page.locator('#orders-dialog, #orders-panel').evaluateAll(elements =>
+      Promise.all(elements.flatMap(element => element.getAnimations().map(animation => animation.finished))));
     for (const [i,url] of links.entries()) {
       const link=panel.getByRole('link',{name:`Track box ${i+1} of 2 (opens in a new tab)`});
       assert.equal(await link.getAttribute('href'),url);

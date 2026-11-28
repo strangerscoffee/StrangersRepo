@@ -85,6 +85,18 @@ test("Staff and Admin dispatch queue share accurate role-limited stages, paging 
   assert.equal(staff.orders.find(o=>o.id===id(9)).stage,"attention");
   assert.equal(staff.orders.find(o=>o.id===id(10)).stage,"weigh");
 
+  await db.batch([seed(17),shipment(17,"review",null,null,0),
+    query("UPDATE wholesale_royal_mail_shipments SET retired_operation=operation WHERE order_id=?",id(17))]);
+  for (const role of ["admin","staff"]) {
+    const result=await queue(role);
+    assert.deepEqual(result.counts,expected);
+    assert.ok(result.orders.every(order=>order.id!==id(17)));
+  }
+  assert.equal(await query("SELECT json_extract(data,'$.status') AS status FROM wholesale_preview WHERE kind='order' AND id=?",id(17)).first("status"),"Ready");
+  await query("UPDATE wholesale_royal_mail_shipments SET candidate_provider_id=17 WHERE order_id=?",id(17)).run();
+  assert.ok((await queue("admin","?stage=attention")).orders.some(order=>order.id===id(17)));
+  await query("UPDATE wholesale_royal_mail_shipments SET candidate_provider_id=NULL WHERE order_id=?",id(17)).run();
+
   await query("UPDATE wholesale_royal_mail_shipments SET problem=? WHERE order_id=?",
     "Royal Mail rejected the order-reference lookup. The order list could not confirm this reference because it contained unreadable or conflicting booking details.",id(10)).run();
   for(const role of ["staff","admin"]){
