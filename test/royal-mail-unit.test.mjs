@@ -435,18 +435,24 @@ test('only an unambiguous order-specific lookup miss permits a first booking', a
       {code: 'OrderReferenceNotFound'}, {orderReference: reference, code: 'NotFound'},
     ]) assert.equal(await lookup(body, status), null);
 
+    // Refusals that point at an order (another reference, a provider order number, an order list) stay
+    // blocked without a scan; any other refusal is settled only by a complete read of the order list,
+    // which here can't be read (it gets the same refusal), so booking stays blocked either way.
+    const pointing = [
+      {code: 'NotFound', orderReference: 'OTHER'}, {code: 'NotFound', accountOrderNumber: 123},
+      {message: 'Order not found', orderReference: 'OTHER'}, {channelOrderReference: 'OTHER', code: 'OrderNotFound'},
+      {message: 'Order not found', accountOrderNumber: 1024}, {message: 'Order not found', orderIdentifier: 1024},
+      {orderReference: 'OTHER', errors: [{code: 'OrderNotFound'}]}, {orders: [providerOrder], errors: [{message: 'Order not found'}]},
+    ];
     for (const body of [
+      ...pointing,
       [{code: 'NotFound'}, {message: 'Order not found'}], [{code: 'InvalidOrderIdentifier'}, {code: 'NotFound'}],
-      {code: 'NotFound', orderReference: 'OTHER'}, {code: 'NotFound', message: 'Shipping account not found'},
-      {code: 'NotFound', accountOrderNumber: 123}, {code: 'NotFound', errors: [{code: 'NotFound'}]},
+      {code: 'NotFound', message: 'Shipping account not found'}, {code: 'NotFound', errors: [{code: 'NotFound'}]},
       {message: 'Order "OTHER" not found'}, {message: 'No order with reference "OTHER" was found'},
       {message: 'Shipping account not found'}, {message: 'No order identifier supplied'},
       {code: 'OrderNotFound', detail: 'Permission denied'}, {code: 'Forbidden', message: 'Order not found'},
-      {message: 'Order not found', orderReference: 'OTHER'}, {channelOrderReference: 'OTHER', code: 'OrderNotFound'},
       {message: 'No orders found for "OTHER"'}, {message: 'Order reference "' + reference.toLowerCase() + '" not found'},
-      {message: 'Order not found', accountOrderNumber: 1024}, {message: 'Order not found', orderIdentifier: 1024},
-      {title: 'Access denied', errors: [{message: 'Order not found'}]}, {orderReference: 'OTHER', errors: [{code: 'OrderNotFound'}]},
-      {orders: [providerOrder], errors: [{message: 'Order not found'}]}, {errors: [{message: 'Order not found'}], status: 200},
+      {title: 'Access denied', errors: [{message: 'Order not found'}]}, {errors: [{message: 'Order not found'}], status: 200},
       [{message: 'Order not found'}, {message: 'Rate limited'}], [{message: 'Order not found'}, null],
       Array(13).fill({message: 'Order not found'}), {errors: []}, {}, null,
     ]) {
@@ -455,7 +461,7 @@ test('only an unambiguous order-specific lookup miss permits a first booking', a
         calls++;
         return Response.json(body, { status });
       }), outcome('royal_mail_rejected', false, status));
-      assert.equal(calls, 1, 'conflicting or incomplete evidence cannot start the order-list fallback');
+      assert.equal(calls, pointing.includes(body) ? 1 : 2, 'only a refusal pointing at an order skips the order-list check');
     }
   }
 });
@@ -467,8 +473,13 @@ test('lookup refusals report recognised reasons without copying carrier text or 
   await assert.rejects(findRoyalMailOrder(key, input.reference, () => {
     calls++;
     return Response.json(mixed, {status: 400});
-  }), outcome('royal_mail_rejected', false, 400));
-  assert.equal(calls, 1, 'a contradictory selector error cannot start an alternative lookup');
+  }), error => {
+    outcome('royal_mail_rejected', false, 400)(error);
+    assert.match(error.message, /Royal Mail's code: InvalidOrderIdentifier\)/, 'a recognisable code is shown, never the free text');
+    assert.doesNotMatch(error.message, /Access denied/);
+    return true;
+  });
+  assert.equal(calls, 2, 'an unrecognised refusal is settled by the read-only order list');
   for (const body of [
     [{message: 'Bad value at 24 Example Street NR2 3HX'}], {code: 'PrivateSecret', message: 'Customer Alice Smith'},
     {message: 'Permission denied', errors: [{message: 'Private Street'}]}, {title: key},
