@@ -1,5 +1,5 @@
 // Native Admin → Wholesale view. Uses the admin shell, escaped templates and shared D1 wholesale APIs.
-window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, openSheet, closeSheet, reload, toast, onNavigationChange = () => {}, onSectionChange = () => {} }) {
+window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, openSheet, closeSheet, reload, toast, onNavigationChange = () => {}, onSectionChange = () => {}, onShippingViewChange = () => {} }) {
   const $ = (selector) => document.querySelector(selector);
   const wideOrders = matchMedia("(min-width:1340px)");
   const packing = window.SCWholesalePacking, preparation = window.SCWholesalePreparation;
@@ -53,6 +53,8 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
   let orderPages = 1, customerPages = 1, loadingMore = false;
   let royalMailConfig = null, royalMailBusy = false, royalMailNeedsReload = false, royalMailIssue = "", royalMailFeedback = "", royalMailGeneration = 0;
   let dispatchQueue = null, dispatchHost = null, dispatchStage = "all", shippingView = "queue";
+  let labelsLibrary = null, labelsHost = null, labelsState = null;
+  const shippingViews = { queue: "Dispatch queue", labels: "Labels", settings: "Shipping settings", checks: "Setup checks" };
   const sectionGroups = [
     ["Order management", [["orders", "Orders", "doc"], ["customers", "Customers", "people"], ["tabs", "Tabs", "db"], ["royal-mail", "Royal Mail", "tune"]]],
     ["Catalogue and reporting", [["catalogue", "Coffee catalogue", "coffee"], ["custom", "Custom coffees", "pen"], ["invoices", "Invoicing", "doc"], ["insights", "Insights", "pulse"]]],
@@ -79,7 +81,7 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
     }, opener);
   }
   function syncNavigation(desktop, active = true) {
-    if (!active) { releaseDispatchQueue(); setupChecks?.unmount(); return; }
+    if (!active) { releaseDispatchQueue(); releaseLabels(); setupChecks?.unmount(); return; }
     const checksHost = tab === "royal-mail" && shippingView === "checks" ? $("#wRoyalMailChecks") : null;
     if (checksHost) setupChecks?.mount(checksHost);
     else setupChecks?.unmount();
@@ -92,6 +94,17 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
           initialStage: dispatchStage,
           load: params => api("GET", "/api/admin/wholesale/dispatch-queue?" + params),
           onAction: openDispatchTask,
+        });
+      }
+    }
+    const libraryHost = tab === "royal-mail" && shippingView === "labels" ? $("#wLabelLibrary") : null;
+    if (libraryHost !== labelsHost) {
+      releaseLabels();
+      if (libraryHost && window.SCRoyalMailLabels) {
+        labelsHost = libraryHost;
+        labelsLibrary = window.SCRoyalMailLabels.mount(libraryHost, {
+          initialState: labelsState,
+          load: (params, signal) => api("GET", "/api/admin/wholesale/royal-mail/labels?" + params, undefined, signal),
         });
       }
     }
@@ -115,19 +128,19 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
       </div>`);
   }
   function workspaceState() {
-    return { tab, status, approval, query, orderQueue, orderPages, customerPages, previewOrder, packingOrder, hideOrderPreview, dispatchScope, orderSort, sortChosen, shippingView, dispatchStage: dispatchQueue?.stage ?? dispatchStage, invoices: invoiceUI?.state(), insights: insightsUI?.state() };
+    return { tab, status, approval, query, orderQueue, orderPages, customerPages, previewOrder, packingOrder, hideOrderPreview, dispatchScope, orderSort, sortChosen, shippingView, labels: labelsLibrary?.state ?? labelsState, dispatchStage: dispatchQueue?.stage ?? dispatchStage, invoices: invoiceUI?.state(), insights: insightsUI?.state() };
   }
   function restoreWorkspace(saved) {
     if (!saved || !sections.some(([id]) => id === saved.tab)) return;
     clearTimeout(timer);
     ({ tab, status, approval, query, orderQueue, orderPages, customerPages, previewOrder, packingOrder, hideOrderPreview, dispatchScope, orderSort, sortChosen = false } = saved);
-    releaseDispatchQueue(); shippingView = ["settings", "checks"].includes(saved.shippingView) ? saved.shippingView : saved.shippingSettingsOpen ? "settings" : "queue"; dispatchStage = saved.dispatchStage || "all";
+    releaseDispatchQueue(); releaseLabels(); labelsState = saved.labels || null; shippingView = Object.hasOwn(shippingViews, saved.shippingView) ? saved.shippingView : saved.shippingSettingsOpen ? "settings" : "queue"; dispatchStage = saved.dispatchStage || "all";
     invoiceUI?.restore(saved.invoices); insightsUI?.restore(saved.insights);
   }
 
   function selectSection(id, { pending = false, queue = "", resetStatus = false } = {}) {
     if (!sections.some(([value]) => value === id)) return false;
-    if (tab !== id) { releaseDispatchQueue(); shippingView = "queue"; dispatchStage = "all"; }
+    if (tab !== id) { releaseDispatchQueue(); releaseLabels(); labelsState = null; shippingView = "queue"; dispatchStage = "all"; }
     clearTimeout(timer); tab = id; query = ""; previewOrder = packingOrder = ""; dispatchScope = "all"; invoiceUI?.resetList(); approval = pending && id === "customers" ? "pending" : "all"; orderPages = customerPages = 1;
     orderQueue = id === "orders" && ["prepare", "ready", "due-prepare", "due-ready"].includes(queue) ? queue : "";
     if (orderQueue || resetStatus) status = "all";
@@ -259,7 +272,7 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
       orders: "Review packing, postage and dispatch.",
       customers: "Manage ordering access, terms and saved delivery locations.",
       tabs: "Review accumulated bags and clear customer tabs.",
-      "royal-mail": shippingView === "checks" ? "Verify the carrier connection and record dispatch checks." : shippingView === "settings" ? "Manage postage bookings and tracking." : "Prepare labels, review exceptions and confirm handover.",
+      "royal-mail": shippingView === "labels" ? "Find, preview and reprint wholesale shipping labels." : shippingView === "checks" ? "Verify the carrier connection and record dispatch checks." : shippingView === "settings" ? "Manage postage bookings and tracking." : "Prepare labels, review exceptions and confirm handover.",
       catalogue: "Manage coffees, bag sizes and availability.",
       custom: "Manage coffees reserved for selected wholesale customers.",
       insights: "Review wholesale sales and plan upcoming roasts.",
@@ -267,7 +280,7 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
     const heading = section === "orders" ? "Wholesale orders" : sections.find(([id]) => id === section)[1];
     const action = sensitive ? privacyToggle() : section === "orders" ? html`<button class="btn soft w-royal-mail-link" type="button" data-act="wh-tab" data-id="royal-mail">Royal Mail</button>`
       : undefined;
-    const shippingNav = section === "royal-mail" ? html`<nav class="w-rm-nav" aria-label="Royal Mail workspace">${[["queue", "Dispatch queue"], ["settings", "Shipping settings"], ["checks", "Setup checks"]].map(([id, label]) => html`<button type="button" data-act="wh-royal-mail-view" data-id="${id}" aria-current="${shippingView === id ? "page" : "false"}">${label}</button>`)}</nav>` : "";
+    const shippingNav = section === "royal-mail" ? html`<nav class="w-rm-nav" aria-label="Royal Mail workspace">${Object.entries(shippingViews).map(([id, label]) => html`<button type="button" data-act="wh-royal-mail-view" data-id="${id}" aria-current="${shippingView === id ? "page" : "false"}">${label}</button>`)}</nav>` : "";
     return html`<div class="w-workspace w-operations${section === "invoices" ? " w-invoicing" : ""}">${head(heading, captions[section], action)}
       <div id="wSectionsHost" class="w-sections-host" hidden></div>
       <div class="w-content${sensitive ? " w-sensitive" : ""}">${shippingNav}${content}</div></div>`;
@@ -280,12 +293,19 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
     }
     dispatchQueue = dispatchHost = null;
   }
-  async function showShippingView(view) {
-    if (tab !== "royal-mail" || royalMailBusy || shippingView === view || !["queue", "settings", "checks"].includes(view)) return;
+  function releaseLabels() {
+    if (labelsLibrary) {
+      labelsState = labelsLibrary.state;
+      labelsLibrary.destroy();
+    }
+    labelsHost = labelsLibrary = null;
+  }
+  function selectShippingView(view) {
+    if (tab !== "royal-mail" || royalMailBusy || shippingView === view || !Object.hasOwn(shippingViews, view)) return false;
     releaseDispatchQueue();
+    releaseLabels();
     shippingView = view;
-    await reload();
-    $('[data-act="wh-royal-mail-view"][aria-current="page"]')?.focus({ preventScroll: true });
+    return true;
   }
   async function returnToDispatchQueue(id) {
     closeSheet();
@@ -297,7 +317,7 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
     target?.focus({ preventScroll: true });
   }
   async function openDispatchTask(entry) {
-    if (entry.action === "settings") return showShippingView("settings");
+    if (entry.action === "settings") return onShippingViewChange("settings");
     const host = dispatchHost, session = packingSession;
     const back = () => returnToDispatchQueue(entry.id);
     if (entry.action === "account") {
@@ -340,6 +360,7 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
     return value;
   }
   function shippingPanel() {
+    if (shippingView === "labels") return window.SCRoyalMailLabels ? html`<div id="wLabelLibrary"></div>` : unavailable("Generated labels");
     if (shippingView === "checks") return setupChecks ? html`<div id="wRoyalMailChecks"></div>` : unavailable("Royal Mail setup checks");
     if (shippingView === "settings") return royalMailSettings();
     return window.SCDispatchQueue ? html`<div id="wDispatchQueue"></div>` : unavailable("Dispatch queue");
@@ -1980,13 +2001,15 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
     drawPhotos();
   }
   return {
-    clear() { setupChecks?.unmount(); releaseDispatchQueue(); dispatchStage = "all"; shippingView = "queue"; invoiceUI?.clear(); insightsUI?.clear(); sequence++; emailHealthToken++; packingSession++; royalMailGeneration++; royalMailConfig = null; royalMailBusy = royalMailNeedsReload = false; royalMailIssue = royalMailFeedback = ""; data = null; previewOrder = packingOrder = ""; hideOrderPreview = false; quickBusy.clear(); orderErrors.clear(); emailDraft = null; batch = null; picked.clear(); picking = false; clearTimeout(timer); },
+    clear() { setupChecks?.unmount(); releaseDispatchQueue(); releaseLabels(); labelsState = null; dispatchStage = "all"; shippingView = "queue"; invoiceUI?.clear(); insightsUI?.clear(); sequence++; emailHealthToken++; packingSession++; royalMailGeneration++; royalMailConfig = null; royalMailBusy = royalMailNeedsReload = false; royalMailIssue = royalMailFeedback = ""; data = null; previewOrder = packingOrder = ""; hideOrderPreview = false; quickBusy.clear(); orderErrors.clear(); emailDraft = null; batch = null; picked.clear(); picking = false; clearTimeout(timer); },
     view,
     navigation,
     syncNavigation,
     openNavigation,
     selectSection,
     currentSection: () => tab,
+    selectShippingView,
+    currentShippingView: () => shippingView,
     workspaceState, restoreWorkspace,
     openInvoiceQueue: queue => invoiceUI?.setFilter(queue),
     openRoastPlan: insightsUI?.openRoastPlan,
@@ -1994,7 +2017,6 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
     searchBillingAccounts: invoiceUI?.accountsSearch,
     invoicingChange: invoiceUI?.workspaceChange,
     async act(name, id) {
-      if (name === "wh-royal-mail-view") { await showShippingView(id); return; }
       if (name === "wh-royal-mail-credentials") { await openRoyalMailCredentials(id); return; }
       if (name === "wh-royal-mail-toggle" || name === "wh-royal-mail-reload") { await changeRoyalMailSettings(name === "wh-royal-mail-reload"); return; }
       if (name.startsWith("wh-invoice-")) { await invoiceUI?.act(name, id); return; }

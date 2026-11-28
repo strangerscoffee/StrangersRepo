@@ -355,3 +355,11 @@ Each deployment retains up to 16 distinct browser releases from recent main hist
 `POST /api/email/resend-webhook` is available on Admin's host (local dev: the local host). It requires RESEND_WEBHOOK_SECRET and validates the exact raw body, svix-id, svix-timestamp and v1 signatures before touching D1. Unknown event types and unrelated senders are ignored. Valid events are recorded idempotently with minimal recipient metadata; their own timestamps govern suppression state. Duplicate event IDs cannot mutate state through altered payloads. Non-POST returns 405; invalid signatures/freshness return 400; unconfigured feedback returns 503; an oversized body returns 413. No browser session substitutes for a webhook signature.
 
 A provider acknowledgement remains distinct from delivery. A delivered callback means acceptance by the recipient mail server, not proof of inbox placement. Newly recorded hard bounces/complaints/suppression block further sends and stop automatic dispatch retries, while existing provider suppression remains in force. No automatic real-world test messages are sent.
+
+## Wholesale Royal Mail labels
+
+The Admin Labels tab at `#wholesale/royal-mail/labels` reads `GET /api/admin/wholesale/royal-mail/labels`. The optional `search`, `status`, `limit` and `cursor` parameters scope an ordered page of recorded bookings. Following `nextCursor` preserves the current search and status. The list response contains order and tracking metadata. Carrier PDFs are fetched only for individual orders.
+
+An admin can preview the original document through `GET /api/admin/wholesale/orders/:id/shipping/label?preview=1`. A successful preview is served inline with `no-store` and leaves the first download time unchanged. Print and Download use the existing label route without the preview flag. Both paths verify the booking identity in the active Click & Drop account and recheck the order before releasing the PDF. None creates a shipment.
+
+The browser loads Mozilla PDF.js 6.5.438 from same-origin release assets when a label is opened. The browser and worker files are the legacy minified builds from `pdfjs-dist`, accompanied by its JBIG2 and OpenJPEG JavaScript fallbacks. Distribution notices are in `docs/licenses/royal-mail-label-pdf.txt`.

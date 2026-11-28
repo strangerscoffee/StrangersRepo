@@ -638,6 +638,25 @@ const MIGRATIONS: Migration[] = [
       env.DB.prepare("INSERT OR IGNORE INTO wholesale_royal_mail_setup_checks (id, scope_key) VALUES (1, hex(randomblob(32)))"),
     ]);
   } },
+  { id: 56, name: "Wholesale Royal Mail generated label history", run: async env => {
+    const table = "wholesale_royal_mail_shipments";
+    for (const [column, definition] of [["service_code", "TEXT"], ["label_order_created_at", "INTEGER"]]) {
+      if ((await columns(env, table)).has(column)) continue;
+      try { await env.DB.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`).run(); }
+      catch (error) { if (!(await columns(env, table)).has(column)) throw error; }
+    }
+    await env.DB.batch([
+      // A legacy/adopted booking can have no outbound timestamp. Keep its original order date as an explicit fallback.
+      env.DB.prepare(`UPDATE wholesale_royal_mail_shipments SET label_order_created_at=(
+        SELECT json_extract(o.data,'$.createdAt') FROM wholesale_preview o
+        WHERE o.kind='order' AND o.id=wholesale_royal_mail_shipments.order_id AND json_type(o.data,'$.createdAt')='integer'
+          AND json_extract(o.data,'$.createdAt') BETWEEN 1 AND 8640000000000000)
+        WHERE label_order_created_at IS NULL AND COALESCE(requested_at,0)=0`),
+      env.DB.prepare(`CREATE INDEX IF NOT EXISTS wholesale_royal_mail_label_history
+        ON wholesale_royal_mail_shipments(COALESCE(NULLIF(requested_at,0), label_order_created_at, 0) DESC,order_id DESC)
+        WHERE provider_id > 0 AND state IN ('labelled','dispatched')`),
+    ]);
+  } },
 ];
 
 async function migrate(env: Env): Promise<void> {

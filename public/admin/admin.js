@@ -51,10 +51,10 @@
   document.querySelectorAll("[data-icon]").forEach((e) => { e.innerHTML = svg(e.dataset.icon)[RAW]; });
 
   /* ---------- data ---------- */
-  async function api(method, path, body) {
+  async function api(method, path, body, signal) {
     let r;
     try {
-      r = await fetch(path, { method, headers: body ? { "content-type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined });
+      r = await fetch(path, { method, signal, headers: body ? { "content-type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined });
     } catch (e) { throw new Error("Couldn't reach the site. Check your connection."); }
     if (r.status === 401) { goSignIn(location.pathname + location.hash); throw new Error("Signed out."); }
     const j = await r.json().catch(() => ({}));
@@ -251,7 +251,13 @@
     consumerTool = "";
   }
   const routeSnapshots = new Map();
-  const routeHash = () => consumerTool ? "#consumer/" + consumerTool : S.page === "wholesale" ? "#wholesale/" + (wholesale?.currentSection() || parseRoute().section || "orders") : "#" + S.page;
+  function routeHash() {
+    if (consumerTool) return "#consumer/" + consumerTool;
+    if (S.page !== "wholesale") return "#" + S.page;
+    const section = wholesale?.currentSection() || parseRoute().section || "orders";
+    const view = section === "royal-mail" && wholesale?.currentShippingView();
+    return "#wholesale/" + section + (view && view !== "queue" ? "/" + view : "");
+  }
   function saveRoute() {
     if (!history.state?.adminEntry) return;
     routeSnapshots.set(history.state.adminEntry, {
@@ -261,18 +267,19 @@
     if (routeSnapshots.size > 60) routeSnapshots.delete(routeSnapshots.keys().next().value);
   }
   function parseRoute() {
-    const [page, section] = location.hash.slice(1).split("/");
-    return { page: PAGE_LABELS.has(page) ? page : "overview", section };
+    const [page, section, view] = location.hash.slice(1).split("/");
+    return { page: PAGE_LABELS.has(page) ? page : "overview", section, view };
   }
   async function restoreRoute() {
     if (!S.me) return;
-    const { page, section } = parseRoute();
+    const { page, section, view } = parseRoute();
     const saved = routeSnapshots.get(history.state?.adminEntry);
     if (saved) {
       wholesale?.restoreWorkspace(saved.wholesale);
       Object.assign(S, { open: saved.open, filter: saved.filter, q: saved.q, feed: saved.feed, fq: saved.fq, activityFrom: saved.from, activityTo: saved.to });
     } else if (page === "wholesale") wholesale?.selectSection(section || "orders");
     if (page === "wholesale" && section && wholesale?.currentSection() !== section) wholesale?.selectSection(section);
+    if (page === "wholesale" && section === "royal-mail") wholesale?.selectShippingView(view || "queue");
     closeSheet();
     await show(page, { fromHistory: true, scroll: saved?.scroll, consumerSection: page === "consumer" ? section || saved?.consumerSection : undefined });
   }
@@ -363,7 +370,7 @@
   const unavailable = (page) => () => {
     throw Object.assign(new Error(PAGE_LABELS.get(page) + " couldn’t start. Reload Admin to try again."), { reloadAdmin: true });
   };
-  const wholesale = install(window.WholesaleAdmin, { install, api, html, raw, svg, put, head, openSheet, closeSheet, reload, toast, onNavigationChange: () => { if (S.me) renderNav(); }, onSectionChange: id => act("wh-tab", id) });
+  const wholesale = install(window.WholesaleAdmin, { install, api, html, raw, svg, put, head, openSheet, closeSheet, reload, toast, onNavigationChange: () => { if (S.me) renderNav(); }, onSectionChange: id => act("wh-tab", id), onShippingViewChange: id => act("wh-royal-mail-view", id) });
   VIEWS.wholesale = wholesale?.view || unavailable("wholesale");
   const sickness = install(window.AdminSickness, { api, html, raw, svg, put, head, openSheet, closeSheet, reload, toast, links: () => S.links || {} });
   VIEWS.sickness = sickness?.view || unavailable("sickness");
@@ -876,6 +883,14 @@
       return;
     }
     if (name === "wh-sections") { wholesale?.openNavigation(el, (id) => act("wh-tab", id, el)); return; }
+    if (name === "wh-royal-mail-view") {
+      saveRoute();
+      if (wholesale?.selectShippingView(id)) {
+        await show("wholesale");
+        $('#main [data-act="wh-royal-mail-view"][aria-current="page"]')?.focus({ preventScroll: true });
+      }
+      return;
+    }
     if (name === "wh-tab" || name === "wh-pending") {
       if (name === "wh-tab" && S.page === "wholesale" && id === wholesale?.currentSection()) return;
       const fromPicker = el?.closest("#wSectionsHost,.more-grid") || document.activeElement?.id === "wSection";
@@ -1152,7 +1167,10 @@
       $("#whoInit").textContent = ini(S.me.name); $("#whoName").textContent = S.me.name;
       const route = parseRoute(), quickbooksReview = new URLSearchParams(location.search).get("quickbooks") === "review";
       if (quickbooksReview) { wholesale?.selectSection("invoices"); const clean = new URL(location.href); for (const key of ["quickbooks","qbEnvironment","quickbooksError"]) clean.searchParams.delete(key); history.replaceState(null,"",clean); }
-      else if (route.page === "wholesale") wholesale?.selectSection(route.section || "orders");
+      else if (route.page === "wholesale") {
+        wholesale?.selectSection(route.section || "orders");
+        if (route.section === "royal-mail") wholesale?.selectShippingView(route.view || "queue");
+      }
       history.scrollRestoration = "manual";
       await show(quickbooksReview ? "wholesale" : route.page, { fromHistory: true, consumerSection: route.page === "consumer" ? route.section : undefined });
       if (quickbooksReview) await wholesale?.act("wh-invoice-quickbooks");
