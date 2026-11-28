@@ -73,12 +73,14 @@ test("rota tables from before day-by-day hours, amended shifts and contract rang
 test("migrations run once each, in order, and are recorded; the list indexes are used", async () => {
   await post("/api/auth/login", { username: "nobody", password: "x" }); // any API call sets the schema up
   const done = srv.sql("SELECT id, name FROM schema_migrations ORDER BY id");
-  assert.deepEqual(done.map((r) => r.id), Array.from({ length: 56 }, (_, index) => index + 1));
+  assert.deepEqual(done.map((r) => r.id), Array.from({ length: 57 }, (_, index) => index + 1));
   assert.deepEqual(srv.sql("SELECT enabled, version, booking_config, tracking_config FROM wholesale_royal_mail_settings"),
     [{ enabled: 0, version: 0, booking_config: null, tracking_config: null }]);
   assert.deepEqual(srv.sql("SELECT version, scope, automated, manual, length(scope_key) AS keyLength FROM wholesale_royal_mail_setup_checks"),
     [{ version: 0, scope: null, automated: null, manual: "{}", keyLength: 64 }], "setup checks start unconfirmed");
   const shipmentCols = srv.sql("SELECT name FROM pragma_table_info('wholesale_royal_mail_shipments')").map(row => row.name);
+  assert.deepEqual(srv.sql("SELECT type,dflt_value FROM pragma_table_info('wholesale_royal_mail_shipments') WHERE name='candidate_provider_id'"),
+    [{ type: "INTEGER", dflt_value: null }]);
   for (const column of ["requested_at", "checked_at", "refresh_after", "shipping_fingerprint", "destination_address", "destination_postcode", "recovery_attempts", "recovery_due_at", "booking_connection", "booking_account_scope", "label_downloaded_at", "service_code", "label_order_created_at"]) {
     assert.ok(shipmentCols.includes(column), column);
   }

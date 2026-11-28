@@ -85,6 +85,33 @@ test("Staff and Admin dispatch queue share accurate role-limited stages, paging 
   assert.equal(staff.orders.find(o=>o.id===id(9)).stage,"attention");
   assert.equal(staff.orders.find(o=>o.id===id(10)).stage,"weigh");
 
+  // Pre-postage and legacy reference-check refusals need the original reference, not another weigh-in.
+  const setProblem=(n,problem)=>query("UPDATE wholesale_royal_mail_shipments SET problem=? WHERE order_id=?",problem,id(n));
+  await db.batch([
+    setProblem(8,"Royal Mail accepted this order but could not generate its label. Private recipient"),
+    setProblem(10,"Royal Mail rejected the order-reference lookup. (Royal Mail's reply named another order in channelOrderReference.)"),
+  ]);
+  for(const role of ["staff","admin"]){
+    const result=await queue(role,"?stage=attention");
+    assert.equal(result.counts.weigh,expected.weigh-1);
+    assert.equal(result.counts.attention,expected.attention+1);
+    for(const [n,label,reason] of [[8,"Review label",/label problem/],[10,"Review booking",/order-reference check/]]){
+      const item=result.orders.find(o=>o.id===id(n));
+      assert.equal(item.action,"shipping");
+      assert.equal(item.actionLabel,role==="admin"?label:"View details");
+      assert.match(item.reason,reason);
+    }
+    assert.doesNotMatch(JSON.stringify(result),/Private recipient|channelOrderReference/);
+  }
+  await query("UPDATE wholesale_royal_mail_shipments SET requested_at=NULL WHERE order_id=?",id(10)).run();
+  for(const role of ["staff","admin"]){
+    const legacy=(await queue(role,"?stage=attention")).orders.find(o=>o.id===id(10));
+    assert.equal(legacy.action,"shipping");
+    assert.equal(legacy.actionLabel,"Check label request");
+    assert.match(legacy.reason,/postage outcome is unconfirmed/);
+  }
+  await db.batch([setProblem(8,null),query("UPDATE wholesale_royal_mail_shipments SET requested_at=0,problem=NULL WHERE order_id=?",id(10))]);
+
   // Keyset pages cross DB slices and keep global filtered counts even when the next action changes.
   const many=Array.from({length:110},(_,i)=>seed(100+i,{dispatchDate:i<2?"2026-11-01":null}));
   for(let i=0;i<many.length;i+=40) await db.batch(many.slice(i,i+40));

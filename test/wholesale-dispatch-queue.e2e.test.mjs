@@ -49,9 +49,14 @@ async function startFixture(record) {
         // Royal Mail accepted the purchase, but the response never reached Strangers.
         return new WorkerResponse("temporary gateway error", { status: 502 });
       }
-      if (url.pathname.endsWith("/label")) return new WorkerResponse(pdf, { headers: { "content-type": "application/pdf" } });
-      const ref = decodeURIComponent(url.pathname.split("/").at(-1)).replaceAll('"', "");
-      assert.equal(ref, id);
+      assert.equal(req.method, "GET");
+      record.reads.push(url.pathname);
+      if (url.pathname === "/api/v1/orders/8101/label") {
+        assert.equal(record.purchases.length, 1);
+        return new WorkerResponse(pdf, { headers: { "content-type": "application/pdf" } });
+      }
+      if (url.pathname === "/api/v1/orders/8101") assert.equal(record.purchases.length, 1);
+      else assert.equal(decodeURIComponent(url.pathname), '/api/v1/orders/"' + id + '"');
       return WorkerResponse.json(record.purchases.length ? [{
         orderReference: id, orderIdentifier: 8101, trackingNumber: tracking, printedOn: "2026-11-26T10:00:00Z",
       }] : []);
@@ -60,7 +65,7 @@ async function startFixture(record) {
 }
 
 test("Staff and Admin share the destination and queue as an uncertain purchase is recovered and its label downloaded", async t => {
-  const record = { purchases: [] };
+  const record = { purchases: [], reads: [] };
   const runtime = await startFixture(record);
   t.after(() => runtime.dispose());
   const origin = (await runtime.ready).origin;
@@ -160,8 +165,11 @@ test("Staff and Admin share the destination and queue as an uncertain purchase i
   await rowAt(staff, "print");
   await admin.reload();
   await rowAt(admin, "print");
+  const readsBeforeDownload = record.reads.length;
   const download = await api(staffShipping + "/label", "GET", undefined, staffCookie);
   assert.equal(await download.text(), pdf);
+  assert.deepEqual(record.reads.slice(readsBeforeDownload), ["/api/v1/orders/8101", "/api/v1/orders/8101/label"],
+    "the recovered provider ID is verified before retrieving its label");
   await staff.reload();
   const handoverRow = await rowAt(staff, "handover");
   await admin.reload();

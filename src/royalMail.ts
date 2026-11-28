@@ -22,10 +22,11 @@ type RoyalMailCode =
   | "royal_mail_rate_limited"
   | "royal_mail_unavailable"
   | "royal_mail_invalid_response"
+  | "royal_mail_order_mismatch"
   | "royal_mail_label_unavailable";
 
 export class RoyalMailError extends Error {
-  constructor(public code: RoyalMailCode, message: string, public status?: number, public uncertain = false) {
+  constructor(public code: RoyalMailCode, message: string, public status?: number, public uncertain = false, readonly candidateId?: number) {
     super(message);
     this.name = "RoyalMailError";
   }
@@ -65,6 +66,7 @@ export interface RoyalMailOrder {
   reference: string;
   trackingNumber: string | null;
   providerState: "created" | "labelled" | "dispatched";
+  labelProblem?: string;
 }
 
 export function validRoyalMailCredential(value: unknown): value is string {
@@ -82,8 +84,8 @@ function invalidShipment(message: string): never {
   throw new RoyalMailError("royal_mail_invalid_shipment", message);
 }
 
-function invalidResponse(uncertain = false): RoyalMailError {
-  return new RoyalMailError("royal_mail_invalid_response", "Royal Mail returned an unexpected response.", undefined, uncertain);
+function invalidResponse(uncertain = false, candidateId?: number): RoyalMailError {
+  return new RoyalMailError("royal_mail_invalid_response", "Royal Mail returned an unexpected response.", undefined, uncertain, candidateId);
 }
 
 function orderReference(reference: string): string {
@@ -307,6 +309,27 @@ function messagesIndicateSuccess(error: Record<string, unknown>) {
     /\b(?:accepted|created|booked|processed) (?:the |this |your )?(?:order|shipment|booking)\b/i.test(text));
 }
 
+// This helper can return only the fixed guidance from bookingFields, never provider-supplied text.
+function addBookingGuidance(guidance: Set<string>, fields: string[], message: string) {
+  for (const path of fields) {
+    const name = path.match(/[a-zA-Z][a-zA-Z0-9]*$/)?.[0].toLowerCase();
+    if (name && Object.hasOwn(bookingFields,name)) guidance.add(bookingFields[name]);
+  }
+  // Some responses contain only a message. Report the area the carrier named,
+  // without exposing free text or inferring a specific corrected value.
+  if (!fields.length) {
+    if (/shipping account|shippingAccountName/i.test(message)) guidance.add(bookingFields.shippingaccountname);
+    if (/service register|serviceRegisterCode/i.test(message)) guidance.add(bookingFields.serviceregistercode);
+    else if (/service code|serviceCode|service (?:is )?(?:unavailable|not available|not valid)/i.test(message)) guidance.add(bookingFields.servicecode);
+    if (/phone number|phoneNumber|telephone number/i.test(message)) guidance.add(bookingFields.phonenumber);
+    if (/e-?mail address|emailAddress/i.test(message)) guidance.add(bookingFields.emailaddress);
+    if (/post\s?code/i.test(message)) guidance.add(bookingFields.postcode);
+    if (/parcel weight|package weight|weightInGrams/i.test(message)) guidance.add(bookingFields.weightingrams);
+    if (/package format|packageFormatIdentifier/i.test(message)) guidance.add(bookingFields.packageformatidentifier);
+    if (/OBA (?:customers|accounts) only|Online Business Account/i.test(message)) guidance.add(bookingFields.includelabelinresponse);
+  }
+}
+
 function bookingRejection(errors: unknown[], status: number, serviceCode?: string): RoyalMailError {
   const reasons = new Set<string>();
   const guidance = new Set<string>();
@@ -331,23 +354,7 @@ function bookingRejection(errors: unknown[], status: number, serviceCode?: strin
     }
     const reason = carrierReason(error, serviceCode);
     if (reason) reasons.add(reason);
-    for (const path of fields) {
-      const name = path.match(/[a-zA-Z][a-zA-Z0-9]*$/)?.[0].toLowerCase();
-      if (name && Object.hasOwn(bookingFields,name)) guidance.add(bookingFields[name]);
-    }
-    // Some responses contain only a message. Report the area the carrier named,
-    // without exposing free text or inferring a specific corrected value.
-    if (!fields.length) {
-      if (/shipping account|shippingAccountName/i.test(message)) guidance.add(bookingFields.shippingaccountname);
-      if (/service register|serviceRegisterCode/i.test(message)) guidance.add(bookingFields.serviceregistercode);
-      else if (/service code|serviceCode|service (?:is )?(?:unavailable|not available|not valid)/i.test(message)) guidance.add(bookingFields.servicecode);
-      if (/phone number|phoneNumber|telephone number/i.test(message)) guidance.add(bookingFields.phonenumber);
-      if (/e-?mail address|emailAddress/i.test(message)) guidance.add(bookingFields.emailaddress);
-      if (/post\s?code/i.test(message)) guidance.add(bookingFields.postcode);
-      if (/parcel weight|package weight|weightInGrams/i.test(message)) guidance.add(bookingFields.weightingrams);
-      if (/package format|packageFormatIdentifier/i.test(message)) guidance.add(bookingFields.packageformatidentifier);
-      if (/OBA (?:customers|accounts) only|Online Business Account/i.test(message)) guidance.add(bookingFields.includelabelinresponse);
-    }
+    addBookingGuidance(guidance, fields, message);
   }
   const instruction = [...guidance].slice(0, 3).join(" ") || "Check the order and configured service in Click & Drop.";
   const identifier = codes.size ? " Carrier code " + [...codes].slice(0, 3).join(", ") + "." : "";
@@ -422,18 +429,19 @@ function pointsAtAnOrder(value: unknown, reference: string): string {
   return "";
 }
 
-// Royal Mail's own error codes, when they look like codes (CamelCase words naming a kind of fault).
-// Free text is never shown: it can carry names and addresses.
+// Error codes are free text in the carrier schema. Only these known, public values may reach operators.
+const publicLookupCodes = new Set([
+  "InvalidOrderIdentifier", "InvalidOrderIdentifiers", "OrderNotFound", "OrderReferenceNotFound", "NotFound",
+  "BadRequest", "Unauthorized", "Unauthorised", "Forbidden", "AccessDenied", "PermissionDenied", "AccountUnavailable",
+]);
+
 function lookupCodes(values: unknown[]): string {
   const codes = new Set<string>();
   for (const value of values) {
     const entry = record(value);
     for (const field of lookupCodeFields) {
       const code = entry?.[field];
-      if (typeof code === "string" && /^[A-Z][A-Za-z]{2,39}$/.test(code) &&
-          /(?:Invalid|NotFound|Missing|Required|Unauthori[sz]ed|Forbidden|Format|Error|Denied|Limit|Exceeded|Bad|Malformed|Unsupported)/.test(code)) {
-        codes.add(code);
-      }
+      if (typeof code === "string" && publicLookupCodes.has(code)) codes.add(code);
     }
   }
   return [...codes].slice(0, 3).join(", ");
@@ -478,15 +486,42 @@ function lookupFinding(value: unknown, reference: string): LookupFinding | null 
   return !orderScoped && finding === "missing" ? "unscoped-miss" : finding;
 }
 
+function unreadableLookupRefusal(status: number): RoyalMailError {
+  return new RoyalMailError("royal_mail_rejected", "Royal Mail rejected the order-reference lookup. The reply could not be checked safely. Check the original order in Click & Drop.", status);
+}
+
+function checkLookupRefusalPointers(value: unknown, reference: string, status: number): void {
+  let remaining = 256;
+  function inspect(node: unknown, depth: number): void {
+    if (--remaining < 0 || depth > 12) throw unreadableLookupRefusal(status);
+    if (!node || typeof node !== "object") return;
+    const pointer = pointsAtAnOrder(node, reference);
+    if (pointer) {
+      // Only the known field name is safe to expose, never the field value or its parent key.
+      throw new RoyalMailError("royal_mail_rejected", "Royal Mail rejected the order-reference lookup. Check the order reference in Click & Drop." +
+        " (Royal Mail's reply named another order in " + pointer + ".)", status);
+    }
+    for (const child of Object.values(node)) inspect(child, depth + 1);
+  }
+  inspect(value, 0);
+}
+
 async function lookupRefusal(response: Response, reference: string): Promise<typeof MISSING_ORDER> {
   const status = response.status;
-  let value: unknown;
+  let bytes: Uint8Array;
   try {
-    const bytes = await readBytes(response, 16 * 1024, "Royal Mail lookup reply exceeded its limit.");
-    value = JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes));
+    bytes = await readBytes(response, 16 * 1024, "Royal Mail lookup reply exceeded its limit.");
   } catch {
     void response.body?.cancel().catch(() => {});
+    throw unreadableLookupRefusal(status);
   }
+  let value: unknown;
+  try {
+    value = JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes));
+  } catch {
+    // A short non-JSON refusal can only be settled through a separate account list check.
+  }
+  checkLookupRefusalPointers(value, reference, status);
   const wrapper = record(value);
   let entries = Array.isArray(value) ? value : [value];
   if (wrapper && Array.isArray(wrapper.errors)) {
@@ -499,13 +534,6 @@ async function lookupRefusal(response: Response, reference: string): Promise<typ
     if (findings.every(finding => finding === "missing")) return MISSING_ORDER;
   }
   const all = Array.isArray(value) ? value : [value, ...(Array.isArray(wrapper?.errors) ? wrapper.errors : [])];
-  const pointer = all.map(entry => pointsAtAnOrder(entry, reference)).find(Boolean);
-  if (pointer) {
-    // The carrier can include names, addresses and credentials even in a read-only lookup error:
-    // only the name of the field that pointed elsewhere is shown, never its value.
-    throw new RoyalMailError("royal_mail_rejected", "Royal Mail rejected the order-reference lookup. Check the order reference in Click & Drop." +
-      " (Royal Mail's reply named another order in " + pointer + ".)", status);
-  }
   // Any other refusal says nothing either way about whether postage exists (28 Nov 2026: Click & Drop
   // refused the lookup for a first booking in a way none of the patterns above recognised). Only a
   // separate, complete, read-only scan of the order list can settle it; if that can't, booking stays blocked.
@@ -600,6 +628,22 @@ function inlineLabel(value: unknown): boolean {
   }
 }
 
+// Click & Drop can accept the order and separately return labelErrors when generating
+// its documents. Preserve the accepted booking and display only recognised field guidance.
+function labelGenerationProblem(value: unknown): string | undefined {
+  if (!Array.isArray(value) || !value.length) return undefined;
+  const guidance = new Set<string>();
+  for (const raw of value.slice(0, 12)) {
+    const error = record(raw);
+    if (!error) continue;
+    const message = typeof error.message === "string" ? error.message.slice(0, 4096) : "";
+    const code = typeof error.code === "string" ? error.code.slice(0, 100).replace(/([a-z])([A-Z])/g, "$1 $2") : "";
+    addBookingGuidance(guidance, [], message + " " + code);
+  }
+  return "Royal Mail accepted this order but could not generate its label. " +
+    ([...guidance].slice(0, 3).join(" ") || "Check the existing order in Click & Drop.");
+}
+
 function publicOrder(value: unknown, reference: string, posting = false): RoyalMailOrder {
   const item = record(value);
   if (!item || item.orderReference !== reference || typeof item.orderIdentifier !== "number" ||
@@ -616,11 +660,14 @@ function publicOrder(value: unknown, reference: string, posting = false): RoyalM
     throw invalidResponse(posting);
   }
   const labelled = dateValue(item.printedOn) || dateValue(item.manifestedOn) || (posting && inlineLabel(item.label));
+  const providerState = dateValue(item.shippedOn) ? "dispatched" : labelled ? "labelled" : "created";
+  const labelProblem = posting && providerState === "created" ? labelGenerationProblem(item.labelErrors) : undefined;
   return {
     orderId: item.orderIdentifier,
     reference,
     trackingNumber: orderTracking ?? packageTracking,
-    providerState: dateValue(item.shippedOn) ? "dispatched" : labelled ? "labelled" : "created",
+    providerState,
+    ...(labelProblem ? { labelProblem } : {}),
   };
 }
 
@@ -633,7 +680,37 @@ export async function createRoyalMailOrder(key: string, input: RoyalMailOrderInp
       (result.failedOrders !== undefined && !(Array.isArray(result.failedOrders) && !result.failedOrders.length)) || !Array.isArray(result.createdOrders) || result.createdOrders.length !== 1) {
     throw invalidResponse(true);
   }
-  return publicOrder(result.createdOrders[0], input.reference, true);
+  const created = record(result.createdOrders[0]);
+  if (!created) throw invalidResponse(true);
+  const reference = created.orderReference;
+  if (reference === input.reference) return publicOrder(created, input.reference, true);
+  if (reference != null && (typeof reference !== "string" || reference.trim() !== "")) throw invalidResponse(true);
+  const id = created.orderIdentifier;
+  if (typeof id !== "number" || !Number.isSafeInteger(id) || id < 1) throw invalidResponse(true);
+  const accepted = publicOrder({ ...created, orderReference: input.reference }, input.reference, true);
+  const candidateId = dateValue(created.createdOn) ? id : undefined;
+
+  // The reference echo on a successful POST is optional. Only use its label or
+  // tracking after an independent numeric read proves the original reference.
+  let confirmed: RoyalMailOrder | null;
+  try {
+    confirmed = await findRoyalMailOrderById(key, id, input.reference, fetcher);
+  } catch (error) {
+    // A transport interruption can be retried by ID under this credential. Never
+    // retain a candidate from a conflicting, ambiguous or malformed identity check.
+    const transient = error instanceof RoyalMailError && (error.code === "royal_mail_rate_limited" ||
+      (error.code === "royal_mail_unavailable" && (error.status === undefined || error.status === 408 || error.status >= 500)));
+    throw invalidResponse(true, transient ? candidateId : undefined);
+  }
+  if (!confirmed) throw invalidResponse(true, candidateId);
+  if (confirmed.trackingNumber && accepted.trackingNumber && confirmed.trackingNumber !== accepted.trackingNumber) {
+    throw invalidResponse(true);
+  }
+  const trackingNumber = confirmed.trackingNumber ?? accepted.trackingNumber;
+  if (confirmed.providerState === "dispatched" || (confirmed.providerState === "labelled" && accepted.providerState !== "dispatched")) {
+    return { ...confirmed, trackingNumber };
+  }
+  return { ...accepted, trackingNumber };
 }
 
 /** The provider accepts a quoted, encoded order reference. Ambiguous matches are unsafe. */
@@ -661,6 +738,25 @@ export async function findRoyalMailOrder(key: string, reference: string, fetcher
   return publicOrder(result[0], knownReference);
 }
 
+/** Read an already pinned booking by its numeric identifier. Never scan the account or create an order. */
+export async function findRoyalMailOrderById(key: string, orderId: number, reference: string, fetcher = fetch): Promise<RoyalMailOrder | null> {
+  if (!Number.isSafeInteger(orderId) || orderId <= 0) invalidShipment("Use a valid Royal Mail order identifier.");
+  const expected = orderReference(reference);
+  const result = await clickDrop(key, "/orders/" + orderId, { missingOkay: true }, fetcher);
+  if (result === MISSING_ORDER || (Array.isArray(result) && !result.length)) return null;
+  if (!Array.isArray(result) || result.length !== 1) throw invalidResponse();
+  const item = record(result[0]);
+  if (!item) throw invalidResponse();
+  if ((typeof item.orderIdentifier === "number" && Number.isSafeInteger(item.orderIdentifier) && item.orderIdentifier > 0 && item.orderIdentifier !== orderId) ||
+      (typeof item.orderReference === "string" && item.orderReference.trim() && item.orderReference !== expected)) {
+    throw new RoyalMailError("royal_mail_order_mismatch", "Royal Mail returned a different booking for the saved order.");
+  }
+  if (item.orderIdentifier !== orderId || item.orderReference !== expected ||
+      (item.createdOn !== undefined && !dateValue(item.createdOn)) ||
+      (item.packages != null && !Array.isArray(item.packages))) throw invalidResponse();
+  return publicOrder(item, expected);
+}
+
 // An inconclusive identifier response says nothing about whether postage already exists.
 // Read the entire order list before reporting an absence or accepting a unique match.
 async function findInOrderList(key: string, reference: string, fetcher: typeof fetch): Promise<RoyalMailOrder | null> {
@@ -668,6 +764,7 @@ async function findInOrderList(key: string, reference: string, fetcher: typeof f
   const tokens = new Set<string>(), identifiers = new Set<number>();
   const signal = AbortSignal.timeout(TIMEOUT_MS);
   let match: RoyalMailOrder | null = null;
+  let unreferenced = false;
   for (let index = 0; index < 3; index++) {
     const page = record(await clickDrop(key, "/orders?" + query, { signal }, fetcher));
     if (!page || Object.keys(page).some(field => field !== "orders" && field !== "continuationToken") ||
@@ -675,15 +772,24 @@ async function findInOrderList(key: string, reference: string, fetcher: typeof f
     for (const value of page.orders) {
       const row = record(value);
       if (!row || typeof row.orderIdentifier !== "number" || !Number.isSafeInteger(row.orderIdentifier) ||
-          row.orderIdentifier < 1 || identifiers.has(row.orderIdentifier) || !dateValue(row.createdOn) ||
-          typeof row.orderReference !== "string" || !row.orderReference.trim()) throw invalidResponse();
+          row.orderIdentifier < 1 || identifiers.has(row.orderIdentifier) || !dateValue(row.createdOn)) throw invalidResponse();
       identifiers.add(row.orderIdentifier);
+      // Manually imported orders can omit the optional reference. They cannot hide a
+      // verified positive match, but this list cannot establish absence for a purchase.
+      if (row.orderReference == null || row.orderReference === "") {
+        unreferenced = true;
+        continue;
+      }
+      if (typeof row.orderReference !== "string" || !row.orderReference.trim()) throw invalidResponse();
       if (row.orderReference.trim().toUpperCase() !== reference.toUpperCase()) continue;
       if (row.orderReference !== reference || match) throw invalidResponse();
       match = publicOrder(row, reference);
     }
     const next = page.continuationToken;
-    if (next == null || next === "") return match;
+    if (next == null || next === "") {
+      if (!match && unreferenced) throw invalidResponse();
+      return match;
+    }
     if (!page.orders.length || typeof next !== "string" || !next.trim() || next.length > 2048 ||
         /[\u0000-\u001f\u007f]/.test(next) || tokens.has(next)) throw invalidResponse();
     tokens.add(next);

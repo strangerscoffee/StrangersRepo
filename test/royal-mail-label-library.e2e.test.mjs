@@ -38,13 +38,12 @@ async function fixture(pdf, calls) {
       calls.push({ method: req.method, url });
       assert.equal(url.origin, "https://api.parcel.royalmail.com");
       assert.equal(req.method, "GET", "the library must only read existing carrier records");
-      if (/^\/api\/v1\/orders\/\d+\/label$/.test(url.pathname)) {
-        return new WorkerResponse(pdf, { headers: { "Content-Type": "application/pdf" } });
-      }
-      const match = /^\/api\/v1\/orders\/"(WS-([A-F0-9]{32}))"$/.exec(decodeURIComponent(url.pathname));
+      const match = /^\/api\/v1\/orders\/(\d+)(\/label)?$/.exec(url.pathname);
       assert.ok(match, "unexpected carrier path " + url.pathname);
-      const index = Number.parseInt(match[2], 16);
-      return WorkerResponse.json([{ orderReference: match[1], orderIdentifier: 8000 + index,
+      const providerId = Number(match[1]), index = providerId - 8000;
+      assert.ok(Number.isSafeInteger(index) && index >= 0 && index < 105, "unexpected saved booking");
+      if (match[2]) return new WorkerResponse(pdf, { headers: { "Content-Type": "application/pdf" } });
+      return WorkerResponse.json([{ orderReference: reference(index), orderIdentifier: providerId,
         trackingNumber: tracking(index), printedOn: "2026-11-24T08:30:00Z" }]);
     } } },
   }] });

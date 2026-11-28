@@ -657,6 +657,12 @@ const MIGRATIONS: Migration[] = [
         WHERE provider_id > 0 AND state IN ('labelled','dispatched')`),
     ]);
   } },
+  { id: 57, name: "Retain unconfirmed Royal Mail booking identifiers for recovery", run: async env => {
+    const table = "wholesale_royal_mail_shipments";
+    if ((await columns(env, table)).has("candidate_provider_id")) return;
+    try { await env.DB.prepare("ALTER TABLE wholesale_royal_mail_shipments ADD COLUMN candidate_provider_id INTEGER").run(); }
+    catch (error) { if (!(await columns(env, table)).has("candidate_provider_id")) throw error; }
+  } },
 ];
 
 async function migrate(env: Env): Promise<void> {

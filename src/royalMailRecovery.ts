@@ -1,6 +1,6 @@
 import { audit } from "./audit";
 import type { Env } from "./http";
-import { findRoyalMailOrder, type RoyalMailOrder } from "./royalMail";
+import { findRoyalMailOrder, findRoyalMailOrderById, type RoyalMailOrder } from "./royalMail";
 import { loadRoyalMailConnections, readRoyalMailPolicy } from "./royalMailAppSettings";
 
 export const REFRESH_INTERVAL = 30_000;
@@ -8,14 +8,19 @@ const BOOKING_GRACE = 60_000;
 // The five-minute job rounds these delays up to its next tick.
 const RETRY_DELAYS = [5, 15, 60].map(minutes => minutes * 60_000);
 const MAX_ATTEMPTS = RETRY_DELAYS.length + 1;
+export const REFERENCE_REFUSAL = "Royal Mail rejected the order-reference lookup.";
+export const LEGACY_REFERENCE_HOLD = `(state = 'failed' AND provider_id IS NULL AND requested_at IS NULL
+  AND instr(COALESCE(problem,''), '${REFERENCE_REFUSAL}') = 1)`;
 const UNCONFIRMED = "provider_id IS NULL AND state IN ('booking','review')";
 const DUE_AT = "COALESCE(recovery_due_at, updated_at + 60000)";
 
 interface PendingBooking {
+  state: string;
   order_id: string;
   operation: string;
   requested_at: number | null;
   booking_connection: string | null;
+  candidate_provider_id: number | null;
   updated_at: number;
   recovery_attempts: number;
   recovery_due_at: number | null;
@@ -51,12 +56,13 @@ export async function checkUnconfirmedBooking(env: Env, id: string, operation: s
   const lease = now + REFRESH_INTERVAL;
   const due = automatic ? ` AND recovery_due_at IS NOT 0 AND ${DUE_AT} <= ?` : "";
   const args = [id, operation, now, now - BOOKING_GRACE, ...(automatic ? [now] : [])];
-  const claimable = `order_id = ? AND operation = ? AND ${UNCONFIRMED}
-    AND COALESCE(refresh_after, 0) <= ? AND (state = 'review' OR updated_at <= ?)${due}`;
+  const unresolved = automatic ? UNCONFIRMED : `(${UNCONFIRMED} OR ${LEGACY_REFERENCE_HOLD})`;
+  const claimable = `order_id = ? AND operation = ? AND ${unresolved}
+    AND COALESCE(refresh_after, 0) <= ? AND (state <> 'booking' OR updated_at <= ?)${due}`;
   const claimed = await env.DB.prepare(`UPDATE wholesale_royal_mail_shipments SET refresh_after = ?,
     recovery_attempts = recovery_attempts + ?, recovery_due_at = CASE WHEN ? THEN ? ELSE recovery_due_at END
     WHERE ${claimable}${automatic ? " AND recovery_attempts < ?" : ""}
-    RETURNING order_id, operation, requested_at, booking_connection, updated_at, recovery_attempts, recovery_due_at`)
+    RETURNING state, order_id, operation, requested_at, booking_connection, candidate_provider_id, updated_at, recovery_attempts, recovery_due_at`)
     .bind(lease, Number(automatic), Number(automatic), lease, ...args, ...(automatic ? [MAX_ATTEMPTS] : [])).first<PendingBooking>();
   if (!claimed) {
     // A final lookup can be interrupted after it claimed its last attempt. Escalate when that lease expires.
@@ -68,24 +74,39 @@ export async function checkUnconfirmedBooking(env: Env, id: string, operation: s
     }
     return;
   }
-  const owned = `order_id = ? AND operation = ? AND refresh_after = ? AND requested_at IS ? AND ${UNCONFIRMED}`;
-  const owner = [id, operation, lease, claimed.requested_at];
+  const held = claimed.state === "failed";
+  const owned = `order_id = ? AND operation = ? AND refresh_after = ? AND requested_at IS ? AND candidate_provider_id IS ?
+    AND booking_connection IS ? AND ${held ? LEGACY_REFERENCE_HOLD : UNCONFIRMED}`;
+  const owner = [id, operation, lease, claimed.requested_at, claimed.candidate_provider_id, claimed.booking_connection];
   let carrier: RoyalMailOrder | null = null;
   let warning: string | undefined;
-  if (key) {
-    try { carrier = await findRoyalMailOrder(key, id); }
-    catch { warning = "Royal Mail could not confirm this booking. Check the original order reference in Click & Drop."; }
-  } else {
+  const sameConnection = !!key && claimed.booking_connection === await bookingConnection(key);
+  if (!key) {
     warning = "Restore the Click & Drop connection to check the original booking.";
+  } else if (claimed.candidate_provider_id !== null && (!sameConnection || !claimed.requested_at)) {
+    warning = "Check the original booking in the Click & Drop account that received the postage request.";
+  } else {
+    try {
+      if (claimed.candidate_provider_id !== null) {
+        carrier = await findRoyalMailOrderById(key, claimed.candidate_provider_id, id);
+        if (!carrier) warning = "Royal Mail has not yet confirmed this booking. Check the existing order in Click & Drop.";
+      } else {
+        carrier = await findRoyalMailOrder(key, id);
+      }
+    } catch { warning = "Royal Mail could not confirm this booking. Check the original order reference in Click & Drop."; }
   }
   const checkedAt = Date.now();
   if (carrier && key) {
     // A match on a different account, an old unpinned connection or an unsubmitted draft needs an admin.
-    const needsReview = !claimed.requested_at || claimed.booking_connection !== await bookingConnection(key);
-    const recorded = await env.DB.prepare(`UPDATE wholesale_royal_mail_shipments SET state = ?, provider_id = ?, tracking_number = ?,
-      review_required = MAX(review_required, ?), checked_at = ?, updated_at = ?, recovery_due_at = NULL, problem = NULL
-      WHERE ${owned}`).bind(carrier.providerState, carrier.orderId, carrier.trackingNumber, Number(needsReview), checkedAt, checkedAt, ...owner).run();
+    const needsReview = !claimed.requested_at || !sameConnection;
+    const recorded = await env.DB.prepare(`UPDATE wholesale_royal_mail_shipments SET state = ?, provider_id = ?, candidate_provider_id = NULL, tracking_number = ?,
+      review_required = MAX(review_required, ?), checked_at = ?, updated_at = ?, recovery_due_at = NULL, problem = ?
+      WHERE ${owned}`).bind(carrier.providerState, carrier.orderId, carrier.trackingNumber, Number(needsReview), checkedAt, checkedAt, carrier.labelProblem ?? null, ...owner).run();
     if (recorded.meta.changes) await audit(env, "wholesale_royal_mail", null, `Royal Mail booking recovered for ${id}.${needsReview ? " Verify the existing label in Click & Drop." : ""}`);
+  } else if (held) {
+    // A different key or a missing carrier result cannot prove that this older order was never submitted.
+    await env.DB.prepare(`UPDATE wholesale_royal_mail_shipments SET checked_at = ? WHERE ${owned}`).bind(checkedAt, ...owner).run();
+    warning ??= "Royal Mail did not find the original booking. The earlier postage request remains unconfirmed.";
   } else if (!warning && claimed.requested_at === 0) {
     // The outbound marker is committed before POST; the ownership check also fences an in-flight sender.
     await env.DB.prepare(`UPDATE wholesale_royal_mail_shipments SET state = 'failed', checked_at = ?, updated_at = ?,
