@@ -504,9 +504,12 @@ button.cleared-row:hover{background:var(--sunk)}
   .heading h1 { font-size: clamp(21px, 5.6vw, 27px); }
   .heading:has(#sectionNewOrder[hidden]) h1 { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); }
   .heading .btn { padding-inline: 12px; }
-  .view-tabs { grid-column: 1 / -1; grid-row: 1; min-width: 0; margin-left: 0; }
-  .view-tabs button { min-width: 0; padding-inline: 6px; }
+  .view-tabs { grid-column: 1 / -1; grid-row: 1; min-width: 0; margin-left: 0; flex-wrap: wrap; }
+  .view-tabs button { flex: 1 0 auto; max-width: 100%; padding-inline: 6px; white-space: normal; overflow-wrap: anywhere; }
   .staff-wholesale .toast { bottom: calc(84px + env(safe-area-inset-bottom, 0px)); }
+}
+@media (max-width: 400px) {
+  .view-tabs button { padding-inline: 4px; }
 }
 @media (prefers-reduced-motion: no-preference) {
   .view-tabs button { transition: background-color var(--motion-content), color var(--motion-content), scale var(--motion-press) var(--motion-spring); }

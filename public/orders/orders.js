@@ -380,6 +380,7 @@
   if(shipment?.recovery&&!shipment.orderChanged&&!shipment.reviewRequired)return [shipment.recovery.status==='checking'?'Checking with Royal Mail':'Needs attention',recoveryMessage(shipment),'notice'];
   if(shippingNeedsReview(shipment))return ['Royal Mail needs review','Check the shipment before handing over the parcel.','warning'];
   if(shippingOnHold(result))return ['Royal Mail label on hold',financialHold(result),'warning'];
+  if(shipment?.referenceLookupFailure&&!shippingBlocker(result))return ['Order lookup needs attention','Find the order reference in Click & Drop.','warning'];
   if(shippingCanCreate(result))return tooHeavyForOneParcel(row)?['Over 30 kg: book in Click & Drop',overweightShipping,'warning']:
    [shipment?'Royal Mail label request failed':'Ready for a Royal Mail label','Review the packed parcel and request a label.','notice'];
   const blocker=shippingBlocker(result);
@@ -497,21 +498,27 @@
    review.confirming=false;review.error='';renderShipping(review);$('royalMailWeight').focus({preventScroll:true});
   }):null,review.confirming?submit('create','Request Royal Mail label'):submit('review','Review label request')));
  }
- function shippingReference(review,number){
-  const input=el('input',{type:'text',id:'royalMailReference',readonly:true,spellcheck:'false',value:number});
+ function shippingReference(review,value,orderReference=false){
+  const label=orderReference?'Order reference':'Tracking number';
+  const id=orderReference?'royalMailOrderReference':'royalMailReference';
+  const field=orderReference?el('code',{id},value):el('input',{type:'text',id,readonly:true,spellcheck:'false',value});
   const feedback=el('small',{role:'status',class:'royal-mail-copy-status'});
-  const copy=el('button',{type:'button',class:'btn sm soft','aria-label':'Copy tracking number',onclick:async()=>{
+  const copy=el('button',{type:'button',class:'btn sm soft','aria-label':'Copy '+label.toLowerCase(),onclick:async()=>{
    try{
-    await navigator.clipboard.writeText(number);
-    if(shippingIsOpen(review)&&feedback.isConnected)feedback.textContent='Tracking number copied.';
+    await navigator.clipboard.writeText(value);
+    if(shippingIsOpen(review)&&feedback.isConnected)feedback.textContent=label+' copied.';
    }catch{
-    if(!shippingIsOpen(review)||!input.isConnected)return;
-    input.focus({preventScroll:true});input.select();
-    feedback.textContent='Tracking number selected for copying.';
+    if(!shippingIsOpen(review)||!field.isConnected)return;
+    if(orderReference){
+     const range=document.createRange();range.selectNodeContents(field);
+     const selection=document.getSelection();selection?.removeAllRanges();selection?.addRange(range);
+    }else{field.focus({preventScroll:true});field.select();}
+    feedback.textContent=label+' selected for copying.';
    }
   }},'Copy');
-  return el('div',{class:'royal-mail-reference'},el('label',{for:'royalMailReference'},'Tracking number'),
-   el('div',{class:'royal-mail-reference-row'},input,copy),feedback);
+  return el('div',{class:'royal-mail-reference'},
+   orderReference?el('span',{class:'royal-mail-label'},label):el('label',{for:id},label),
+   el('div',{class:'royal-mail-reference-row'},field,copy),feedback);
  }
  function shippingScan(result,number){
   const shipment=result?.shipment;
@@ -540,7 +547,8 @@
   const recoveryHeadline=shipment?.recovery?.status==='checking'?'Checking with Royal Mail':shipment?.recovery?.status==='needs_admin'?'Needs attention':'';
   const shipmentHeadline=shipment?(Object.hasOwn(stateLabels,shipment.state)?stateLabels[shipment.state]:'Shipment linked'):
    result?(bookingNotice(result)?.[0]||'No Royal Mail shipment'):'Shipment';
-  const headline=labelNeedsReview?'Label needs review':onHold?'Label on hold':recoveryHeadline||shipmentHeadline;
+  const lookupFailure=shipment?.state==='failed'&&shipment.referenceLookupFailure;
+  const headline=labelNeedsReview?'Label needs review':onHold?'Label on hold':recoveryHeadline||(lookupFailure?'Order lookup needs attention':shipmentHeadline);
   const labelReady=result?.canDownloadLabel??(shipment?.orderId&&!labelNeedsReview&&['labelled','dispatched'].includes(shipment.state));
   const canRefresh=result?.enabled&&shipment&&shipment.state!=='failed';
   const refreshLabel=pending?'Check request':royalMailTrackingV2Number(number)&&result.trackingEnabled?'Refresh tracking':'Check shipment';
@@ -554,6 +562,7 @@
    result?el('div',{class:'royal-mail-carrier'},
     el('span',{class:'royal-mail-label'},'Shipment'),
     el('b',{},headline),
+    lookupFailure?el('span',{},lookupFailure==='before_postage'?'This attempt stopped before postage was requested.':'The postage outcome of this earlier attempt is unconfirmed.'):null,
     Number.isSafeInteger(shipment?.weightGrams)&&shipment.weightGrams>0?el('span',{},'Parcel weight '+weight(shipment.weightGrams)):null,
     labelDestination(shipment)?el('div',{class:'royal-mail-address'},el('b',{},'Label destination'),el('p',{},labelDestination(shipment))):null,
     number?shippingReference(review,number):null):null,
@@ -564,6 +573,10 @@
     ?'The order changed after booking. Ask an admin to review the label in Click & Drop before dispatch.'
     :'The carrier record needs review. Ask an admin to check the label in Click & Drop.'):null,
    typeof shipment?.problem==='string'&&shipment.problem?el('p',{class:'edit-error',role:'status'},shipment.problem):null,
+   lookupFailure&&!stale&&!needsCheck?el('section',{class:'royal-mail-carrier','aria-label':'Find the order in Click & Drop'},
+    el('b',{},'Find the order in Click & Drop'),
+    el('p',{},'Search for this full order reference, or ask an admin to check. If you find a booking, check its recipient, destination and parcel weight. If there is no match, review the label request again here.'),
+    shippingReference(review,review.row.id,true)):null,
    guidance?el('p',{class:'hint',role:'status'},guidance):null,
    result?.trackingWarning?el('p',{class:'edit-error',role:'status'},result.trackingWarning):null,
    review.error?el('p',{class:'edit-error',role:'alert'},review.error):null,

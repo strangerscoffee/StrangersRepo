@@ -419,6 +419,68 @@ test('booking refusals identify carrier fields and codes without exposing order 
   });
 });
 
+test('only an unambiguous order-specific lookup miss permits a first booking', async () => {
+  const reference = input.reference;
+  const lookup = (body, status) => findRoyalMailOrder(key, reference, () => Response.json(body, { status }));
+  for (const status of [400, 422]) {
+    for (const body of [
+      [{code: 'OrderNotFound', message: 'Order not found'}],
+      {errors: [{message: 'No orders found for "' + reference + '"'}]},
+      {errors: [{message: "Order with reference '" + reference + "' could not be found."}], status},
+      {message: 'Order with reference "' + reference + '" was not found'},
+      {message: 'Order "' + reference + '" not found'}, {message: 'No order with reference "' + reference + '" was found'},
+      {message: 'Order with reference "' + reference + '" does not exist'},
+      {channelOrderReference: null, accountOrderNumber: 0, code: null, message: 'Order not found'},
+      [{accountOrderNumber: null, channelOrderReference: reference, code: 'NotFound', message: 'Not found.'}],
+      {code: 'OrderReferenceNotFound'}, {orderReference: reference, code: 'NotFound'},
+    ]) assert.equal(await lookup(body, status), null);
+
+    for (const body of [
+      [{code: 'NotFound'}, {message: 'Order not found'}], [{code: 'InvalidOrderIdentifier'}, {code: 'NotFound'}],
+      {code: 'NotFound', orderReference: 'OTHER'}, {code: 'NotFound', message: 'Shipping account not found'},
+      {code: 'NotFound', accountOrderNumber: 123}, {code: 'NotFound', errors: [{code: 'NotFound'}]},
+      {message: 'Order "OTHER" not found'}, {message: 'No order with reference "OTHER" was found'},
+      {message: 'Shipping account not found'}, {message: 'No order identifier supplied'},
+      {code: 'OrderNotFound', detail: 'Permission denied'}, {code: 'Forbidden', message: 'Order not found'},
+      {message: 'Order not found', orderReference: 'OTHER'}, {channelOrderReference: 'OTHER', code: 'OrderNotFound'},
+      {message: 'No orders found for "OTHER"'}, {message: 'Order reference "' + reference.toLowerCase() + '" not found'},
+      {message: 'Order not found', accountOrderNumber: 1024}, {message: 'Order not found', orderIdentifier: 1024},
+      {title: 'Access denied', errors: [{message: 'Order not found'}]}, {orderReference: 'OTHER', errors: [{code: 'OrderNotFound'}]},
+      {orders: [providerOrder], errors: [{message: 'Order not found'}]}, {errors: [{message: 'Order not found'}], status: 200},
+      [{message: 'Order not found'}, {message: 'Rate limited'}], [{message: 'Order not found'}, null],
+      Array(13).fill({message: 'Order not found'}), {errors: []}, {}, null,
+    ]) {
+      let calls = 0;
+      await assert.rejects(findRoyalMailOrder(key, reference, () => {
+        calls++;
+        return Response.json(body, { status });
+      }), outcome('royal_mail_rejected', false, status));
+      assert.equal(calls, 1, 'conflicting or incomplete evidence cannot start the order-list fallback');
+    }
+  }
+});
+
+test('lookup refusals report recognised reasons without copying carrier text or credentials', async () => {
+  const lookup = body => findRoyalMailOrder(key, input.reference, () => Response.json(body, {status: 400}));
+  const mixed = [{code: 'InvalidOrderIdentifier', message: 'Access denied'}];
+  let calls = 0;
+  await assert.rejects(findRoyalMailOrder(key, input.reference, () => {
+    calls++;
+    return Response.json(mixed, {status: 400});
+  }), outcome('royal_mail_rejected', false, 400));
+  assert.equal(calls, 1, 'a contradictory selector error cannot start an alternative lookup');
+  for (const body of [
+    [{message: 'Bad value at 24 Example Street NR2 3HX'}], {code: 'PrivateSecret', message: 'Customer Alice Smith'},
+    {message: 'Permission denied', errors: [{message: 'Private Street'}]}, {title: key},
+  ]) await assert.rejects(lookup(body), error => {
+    assert.doesNotMatch(error.message, /Example Street|NR2|Customer Alice|Private|fixture-private/);
+    assert.match(error.message, /order-reference lookup/);
+    return true;
+  });
+  for (const body of ['not found', '{', 'x'.repeat(17000)]) await assert.rejects(findRoyalMailOrder(key, input.reference,
+    () => new Response(body, {status: 400})), outcome('royal_mail_rejected', false, 400));
+});
+
 test('a reference lookup refusal is distinct from a purchase refusal and duplicate evidence requires recovery', async () => {
   await assert.rejects(findRoyalMailOrder(key, input.reference, async () => Response.json({}, {status:400})), error => {
     assert.match(error.message, /order-reference lookup/);

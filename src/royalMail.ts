@@ -373,6 +373,92 @@ async function rejectedBooking(response: Response, reference?: string, serviceCo
   }
 }
 
+// A false miss here can cause a second postage purchase. A 400 is documented as a
+// validation failure, so allow only a complete, order-specific absence diagnostic.
+const lookupMessageFields = new Set(["message", "errorMessage", "detail", "title", "description", "details"]);
+const lookupCodeFields = new Set(["code", "errorCode"]);
+const lookupReferenceFields = new Set(["orderReference", "channelOrderReference"]);
+
+function namesMissingOrder(message: string, reference: string): boolean {
+  if (/^(?:(?:the )?order(?: reference)? (?:was not found|not found|does not exist|could not be found)|unknown order|no (?:matching )?orders? (?:were |was )?found)\.?$/i.test(message)) return true;
+  const after = /^no (?:matching )?orders? (?:were |was )?found (?:for|with) (?:the )?(?:(?:order )?reference[: ]+)?(["']?)([a-z0-9_-]{1,40})\1\.?$/i.exec(message);
+  const before = /^(?:the )?order (?:(?:with (?:the )?(?:order )?)?reference )?(["']?)([a-z0-9_-]{1,40})\1 (?:was not found|not found|does not exist|could not be found)\.?$/i.exec(message);
+  const noOrder = /^no order with (?:the )?reference (["']?)([a-z0-9_-]{1,40})\1 was found\.?$/i.exec(message);
+  return (after || before || noOrder)?.[2] === reference;
+}
+
+type LookupFinding = "missing" | "unscoped-miss" | "invalid-selector";
+class RoyalMailLookupSelectorError extends RoyalMailError {}
+
+function lookupFinding(value: unknown, reference: string): LookupFinding | null {
+  const entry = record(value);
+  if (!entry) return null;
+  let orderScoped = false;
+  let finding: LookupFinding | null = null;
+  for (const [key, value] of Object.entries(entry)) {
+    if (lookupReferenceFields.has(key)) {
+      if (value === null || value === "") continue;
+      if (value !== reference) return null;
+      orderScoped = true;
+      continue;
+    }
+    if (key === "accountOrderNumber") {
+      // This is the provider's numeric order ID. A positive ID needs reconciliation.
+      if (value !== null && value !== 0) return null;
+      continue;
+    }
+    const isCode = lookupCodeFields.has(key);
+    if (!(isCode || lookupMessageFields.has(key))) return null;
+    if (value === null || value === "") continue;
+    if (typeof value !== "string" || !value.trim()) return null;
+    const text = value.trim();
+    let current: LookupFinding;
+    if (isCode ? /^(?:OrderNotFound|OrderReferenceNotFound)$/i.test(text) : namesMissingOrder(text, reference)) {
+      orderScoped = true;
+      current = "missing";
+    } else if (/^not ?found\.?$/i.test(text)) {
+      current = "missing";
+    } else if (isCode ? /^InvalidOrderIdentifiers?$/i.test(text) :
+      /^(?:order identifiers? (?:is|are) invalid|invalid order identifiers?)\.?$/i.test(text)) {
+      orderScoped = true;
+      current = "invalid-selector";
+    } else return null;
+    if (finding && finding !== current) return null;
+    finding = current;
+  }
+  return !orderScoped && finding === "missing" ? "unscoped-miss" : finding;
+}
+
+async function lookupRefusal(response: Response, reference: string): Promise<typeof MISSING_ORDER> {
+  const status = response.status;
+  let value: unknown;
+  try {
+    const bytes = await readBytes(response, 16 * 1024, "Royal Mail lookup reply exceeded its limit.");
+    value = JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes));
+  } catch {
+    void response.body?.cancel().catch(() => {});
+  }
+  const wrapper = record(value);
+  let entries = Array.isArray(value) ? value : [value];
+  if (wrapper && Array.isArray(wrapper.errors)) {
+    // A sibling identifier, diagnostic or result must never be silently dropped.
+    const pure = Object.keys(wrapper).every(key => key === "errors" || key === "status" && wrapper.status === status);
+    entries = pure ? wrapper.errors : [];
+  }
+  if (entries.length > 0 && entries.length <= 12) {
+    const findings = entries.map(entry => lookupFinding(entry, reference));
+    if (findings.every(finding => finding === "missing")) return MISSING_ORDER;
+    // Generic NotFound describes no particular resource. Only a separate, complete list
+    // read can resolve it. Conflicting diagnostics never start that fallback.
+    if (findings.every(finding => finding === "invalid-selector") || findings.every(finding => finding === "unscoped-miss")) {
+      throw new RoyalMailLookupSelectorError("royal_mail_rejected",
+        "Royal Mail rejected the order-reference lookup. Click & Drop could not resolve the reference.", status);
+    }
+  }
+  // The carrier can include names, addresses and credentials even in a read-only lookup error.
+  throw new RoyalMailError("royal_mail_rejected", "Royal Mail rejected the order-reference lookup. Check the order reference in Click & Drop.", status);
+}
+
 function responseError(status: number, posting: boolean, label = false): RoyalMailError {
   if (status === 401) return new RoyalMailError("royal_mail_auth", "Royal Mail did not accept the Click & Drop key.", status);
   if (status === 403) return new RoyalMailError("royal_mail_denied", label
@@ -389,7 +475,7 @@ function responseError(status: number, posting: boolean, label = false): RoyalMa
 async function clickDrop(
   key: string,
   path: string,
-  { body, reference, serviceCode, label = false, missingOkay = false }: { body?: unknown; reference?: string; serviceCode?: string; label?: boolean; missingOkay?: boolean },
+  { body, reference, serviceCode, label = false, missingOkay = false, signal }: { body?: unknown; reference?: string; serviceCode?: string; label?: boolean; missingOkay?: boolean; signal?: AbortSignal },
   fetcher: typeof fetch,
 ): Promise<unknown> {
   const token = typeof key === "string" ? key.trim() : "";
@@ -401,18 +487,16 @@ async function clickDrop(
   try {
     response = await fetcher(CLICK_DROP + path, {
       method: posting ? "POST" : "GET", body: posting ? JSON.stringify(body) : undefined, headers,
-      redirect: "manual", signal: AbortSignal.timeout(TIMEOUT_MS),
+      redirect: "manual", signal: signal ?? AbortSignal.timeout(TIMEOUT_MS),
     });
   } catch {
     throw new RoyalMailError("royal_mail_unavailable", "Royal Mail did not confirm this request.", undefined, posting);
   }
   if (!response.ok) {
     if (posting && (response.status === 400 || response.status === 422)) throw await rejectedBooking(response, reference, serviceCode);
+    if (missingOkay && reference && (response.status === 400 || response.status === 422)) return lookupRefusal(response, reference);
     void response.body?.cancel().catch(() => {});
     if (response.status === 404 && missingOkay) return MISSING_ORDER;
-    if (missingOkay && (response.status === 400 || response.status === 422)) {
-      throw new RoyalMailError("royal_mail_rejected", "Royal Mail rejected the order-reference lookup. Check the reference in Click & Drop.", response.status);
-    }
     throw responseError(response.status, posting, label);
   }
 
@@ -500,10 +584,54 @@ export async function createRoyalMailOrder(key: string, input: RoyalMailOrderInp
 export async function findRoyalMailOrder(key: string, reference: string, fetcher = fetch): Promise<RoyalMailOrder | null> {
   const knownReference = orderReference(reference);
   const path = "/orders/" + encodeURIComponent('"' + knownReference + '"');
-  const result = await clickDrop(key, path, { missingOkay: true }, fetcher);
+  let result: unknown;
+  try {
+    result = await clickDrop(key, path, { missingOkay: true, reference: knownReference }, fetcher);
+  } catch (error) {
+    if (!(error instanceof RoyalMailLookupSelectorError)) throw error;
+    try {
+      return await findInOrderList(key, knownReference, fetcher);
+    } catch (listError) {
+      if (!(listError instanceof RoyalMailError)) throw listError;
+      const detail = listError.code === "royal_mail_rate_limited" ? "Royal Mail is rate limiting order checks. Try again later."
+        : "The order list could not confirm this reference. Check the original order in Click & Drop.";
+      throw new RoyalMailError(listError.code, "Royal Mail rejected the order-reference lookup. " + detail, listError.status);
+    }
+  }
   if (result === MISSING_ORDER || (Array.isArray(result) && result.length === 0)) return null;
   if (!Array.isArray(result) || result.length !== 1) throw invalidResponse();
   return publicOrder(result[0], knownReference);
+}
+
+// An inconclusive identifier response says nothing about whether postage already exists.
+// Read the entire order list before reporting an absence or accepting a unique match.
+async function findInOrderList(key: string, reference: string, fetcher: typeof fetch): Promise<RoyalMailOrder | null> {
+  const query = new URLSearchParams({ pageSize: "100" });
+  const tokens = new Set<string>(), identifiers = new Set<number>();
+  const signal = AbortSignal.timeout(TIMEOUT_MS);
+  let match: RoyalMailOrder | null = null;
+  for (let index = 0; index < 3; index++) {
+    const page = record(await clickDrop(key, "/orders?" + query, { signal }, fetcher));
+    if (!page || Object.keys(page).some(field => field !== "orders" && field !== "continuationToken") ||
+        !Array.isArray(page.orders) || page.orders.length > 100) throw invalidResponse();
+    for (const value of page.orders) {
+      const row = record(value);
+      if (!row || typeof row.orderIdentifier !== "number" || !Number.isSafeInteger(row.orderIdentifier) ||
+          row.orderIdentifier < 1 || identifiers.has(row.orderIdentifier) || !dateValue(row.createdOn) ||
+          typeof row.orderReference !== "string" || !row.orderReference.trim()) throw invalidResponse();
+      identifiers.add(row.orderIdentifier);
+      if (row.orderReference.trim().toUpperCase() !== reference.toUpperCase()) continue;
+      if (row.orderReference !== reference || match) throw invalidResponse();
+      match = publicOrder(row, reference);
+    }
+    const next = page.continuationToken;
+    if (next == null || next === "") return match;
+    if (!page.orders.length || typeof next !== "string" || !next.trim() || next.length > 2048 ||
+        /[\u0000-\u001f\u007f]/.test(next) || tokens.has(next)) throw invalidResponse();
+    tokens.add(next);
+    query.set("continuationToken", next);
+  }
+  throw invalidResponse();
 }
 
 /** Retrieve the label for an existing order. Never make another shipment to reprint. */

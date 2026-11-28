@@ -121,6 +121,11 @@ async function shipmentView(row: Shipment | null, order: ShippingOrder) {
     updatedAt: row.updated_at,
     labelDownloadedAt: row.label_downloaded_at,
     requestedAt: row.requested_at || null,
+    // Older failures have the carrier message but no durable outbound-request marker.
+    referenceLookupFailure: row.state === "failed" && row.provider_id === null &&
+      row.problem?.startsWith("Royal Mail rejected the order-reference lookup.") &&
+      (row.requested_at === 0 || row.requested_at === null)
+      ? (row.requested_at === 0 ? "before_postage" : "unconfirmed") : null,
     checkedAt: row.checked_at,
     recovery: bookingRecovery(row),
     orderChanged: changed,
