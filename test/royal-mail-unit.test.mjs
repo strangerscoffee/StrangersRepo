@@ -77,6 +77,16 @@ test('sends one GB parcel with the documented contract and returns only safe ord
         postcode: 'NR2 1DE',
         countryCode: 'GBR',
       } },
+      // Click & Drop requires a billing address on API orders (28 Nov 2026): the business delivered to.
+      billing: { address: {
+        fullName: 'Sample Person',
+        companyName: 'Sample Company',
+        addressLine1: '1 Example Street',
+        addressLine2: 'Suite 4',
+        city: 'Norwich',
+        postcode: 'NR2 1DE',
+        countryCode: 'GBR',
+      } },
       packages: [{ weightInGrams: 7500, packageFormatIdentifier: 'mediumParcel' }],
       currencyCode: 'GBP',
       subtotal: 35,
@@ -97,6 +107,9 @@ test("sends the recipient's phone and email for delivery updates, only when vali
     let body;
     await createRoyalMailOrder(key, { ...input, recipient: { ...input.recipient, ...recipient } }, async (url, init) => { body = JSON.parse(init.body); return success(); });
     const { address, ...contact } = body.items[0].recipient;
+    const { address: billed, ...billingContact } = body.items[0].billing;
+    assert.deepEqual(billed, address, 'billing copies the delivery address');
+    assert.deepEqual(billingContact, contact, 'and the same contact details');
     return contact;
   };
   assert.deepEqual(await sent({ phoneNumber: '01603 (123) 456', emailAddress: ' orders@example.test ' }), { phoneNumber: '01603 123 456', emailAddress: 'orders@example.test' });
