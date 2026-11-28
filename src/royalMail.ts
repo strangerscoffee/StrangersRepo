@@ -650,7 +650,8 @@ export async function findRoyalMailOrder(key: string, reference: string, fetcher
     } catch (listError) {
       if (!(listError instanceof RoyalMailError)) throw listError;
       const detail = listError.code === "royal_mail_rate_limited" ? "Royal Mail is rate limiting order checks. Try again later."
-        : "The order list could not confirm this reference. Check the original order in Click & Drop.";
+        : "The order list could not confirm this reference" + (listError instanceof OrderListError ? " (" + listError.message + ")" : listError.status ? " (Royal Mail answered " + listError.status + ")" : "") +
+          ". Check the original order in Click & Drop.";
       const said = error.said ? " (Royal Mail's code: " + error.said + ")" : "";
       const code = listError.code === "royal_mail_invalid_response" ? "royal_mail_rejected" : listError.code;
       throw new RoyalMailError(code, "Royal Mail rejected the order-reference lookup. " + detail + said, listError.status ?? error.status);
@@ -663,33 +664,47 @@ export async function findRoyalMailOrder(key: string, reference: string, fetcher
 
 // An inconclusive identifier response says nothing about whether postage already exists.
 // Read the entire order list before reporting an absence or accepting a unique match.
+class OrderListError extends RoyalMailError {}
+const LIST_PAGES = 20;
+
+function listProblem(why: string): OrderListError {
+  return new OrderListError("royal_mail_invalid_response", why);
+}
+
 async function findInOrderList(key: string, reference: string, fetcher: typeof fetch): Promise<RoyalMailOrder | null> {
   const query = new URLSearchParams({ pageSize: "100" });
   const tokens = new Set<string>(), identifiers = new Set<number>();
-  const signal = AbortSignal.timeout(TIMEOUT_MS);
+  const signal = AbortSignal.timeout(TIMEOUT_MS * 2);
   let match: RoyalMailOrder | null = null;
-  for (let index = 0; index < 3; index++) {
+  for (let index = 0; index < LIST_PAGES; index++) {
     const page = record(await clickDrop(key, "/orders?" + query, { signal }, fetcher));
-    if (!page || Object.keys(page).some(field => field !== "orders" && field !== "continuationToken") ||
-        !Array.isArray(page.orders) || page.orders.length > 100) throw invalidResponse();
+    if (!page || !Array.isArray(page.orders) || page.orders.length > 100) throw listProblem("page " + (index + 1) + " wasn't a list of orders");
     for (const value of page.orders) {
+      // Orders made in Click & Drop itself can have no reference: those can't be ours, so they're skipped.
+      // Only a row carrying our reference has to be complete and unique.
       const row = record(value);
-      if (!row || typeof row.orderIdentifier !== "number" || !Number.isSafeInteger(row.orderIdentifier) ||
-          row.orderIdentifier < 1 || identifiers.has(row.orderIdentifier) || !dateValue(row.createdOn) ||
-          typeof row.orderReference !== "string" || !row.orderReference.trim()) throw invalidResponse();
-      identifiers.add(row.orderIdentifier);
+      const id = row?.orderIdentifier;
+      if (typeof id === "number" && Number.isSafeInteger(id) && id > 0) {
+        // The same order twice means the pages overlap, so some may have been missed.
+        if (identifiers.has(id)) throw listProblem("the list repeated an order");
+        identifiers.add(id);
+      }
+      if (!row || typeof row.orderReference !== "string") continue;
       if (row.orderReference.trim().toUpperCase() !== reference.toUpperCase()) continue;
-      if (row.orderReference !== reference || match) throw invalidResponse();
+      if (row.orderReference !== reference) throw listProblem("an order's reference differs from ours only in spacing or case");
+      if (match) throw listProblem("two orders carry this reference");
+      if (typeof row.orderIdentifier !== "number" || !Number.isSafeInteger(row.orderIdentifier) || row.orderIdentifier < 1 ||
+          !dateValue(row.createdOn)) throw listProblem("the order with this reference is incomplete");
       match = publicOrder(row, reference);
     }
     const next = page.continuationToken;
     if (next == null || next === "") return match;
     if (!page.orders.length || typeof next !== "string" || !next.trim() || next.length > 2048 ||
-        /[\u0000-\u001f\u007f]/.test(next) || tokens.has(next)) throw invalidResponse();
+        /[\u0000-\u001f\u007f]/.test(next) || tokens.has(next)) throw listProblem("page " + (index + 1) + " couldn't be followed to the next");
     tokens.add(next);
     query.set("continuationToken", next);
   }
-  throw invalidResponse();
+  throw listProblem("the list is longer than " + LIST_PAGES * 100 + " orders");
 }
 
 /** Retrieve the label for an existing order. Never make another shipment to reprint. */

@@ -80,13 +80,11 @@ test('incomplete, ambiguous and malformed listings cannot confirm either absence
     [{orders: [anotherOrder], continuationToken: '2'}, {orders: [anotherOrder]}],
     [{orders: [row(9, reference.toLowerCase())]}],
     [{orders: [row(9, ' ' + reference)]}],
-    [{orders: [row(9, null)]}], [{orders: [{...anotherOrder, createdOn: 'invalid'}]}],
-    [{orders: [{...anotherOrder, orderIdentifier: -2}]}],
-    [{orders: Array(101).fill(order)}], [{orders: null}], [{orders: [], hasMore: true}],
+    [{orders: [{...order, createdOn: 'invalid'}]}], [{orders: [{...order, orderIdentifier: -2}]}],
+    [{orders: Array(101).fill(order)}], [{orders: null}],
     [{orders: [order], continuationToken: false}], [{orders: [order], continuationToken: ' '.repeat(2)}],
     [{orders: [], continuationToken: '1'}],
     [{orders: [order], continuationToken: '2'}, {orders: [anotherOrder], continuationToken: '2'}],
-    [{orders: [order], continuationToken: '2'}, {orders: [anotherOrder], continuationToken: '3'}, {orders: [row(9, 'next')], continuationToken: '4'}],
     [{orders: [order], continuationToken: '2'}, new Response('private carrier failure', {status: 500})],
     [new Response(null, {status: 404})], [new Response(null, {status: 429})],
     [new Response('x'.repeat(131073), {headers: {'content-type': 'application/json'}})],
@@ -100,6 +98,20 @@ test('incomplete, ambiguous and malformed listings cannot confirm either absence
     });
     assert.ok(lookup.urls.length <= 4);
   }
+});
+
+test('orders without a reference, other orders\' odd fields and extra page fields are not ours and are skipped (28 Nov 2026)', async () => {
+  const noise = [row(9, null), {orderIdentifier: 10}, {...anotherOrder, createdOn: 'invalid'}, {...row(11, ''), orderIdentifier: -2}, null];
+  assert.equal(await carrier([{orders: noise, totalCount: 5}]).run(), null);
+  assert.equal((await carrier([{orders: [...noise, order], somethingNew: true}]).run()).orderId, order.orderIdentifier);
+  // A long account is read in full, up to 2,000 orders.
+  const pages = Array.from({length: 12}, (_, i) => ({orders: [row(100 + i, 'other-' + i)], continuationToken: 't' + i}));
+  pages.push({orders: [order]});
+  const long = carrier(pages);
+  assert.equal((await long.run()).orderId, order.orderIdentifier);
+  assert.equal(long.urls.length, 14);
+  const endless = carrier(Array.from({length: 21}, (_, i) => ({orders: [row(200 + i, 'x' + i)], continuationToken: 'n' + i})));
+  await assert.rejects(endless.run(), /longer than 2000 orders/);
 });
 
 test('a refusal that echoes our own reference in quotes or percent-encoded is about this order, not another', async () => {
