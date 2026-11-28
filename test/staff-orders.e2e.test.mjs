@@ -103,7 +103,14 @@ for(const viewport of [{width:320,height:650},{width:1512,height:900}]){
    const active=workspace(page,name).and(page.locator('[aria-current="page"]'));
    await active.waitFor();
    assert.equal(await workspaces(page).locator('[aria-current="page"]').count(),1);
-   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+   const overflow=await page.evaluate(()=>{
+    const width=document.documentElement.scrollWidth;
+    if(width<=innerWidth)return null;
+    const elements=Array.from(document.body.querySelectorAll('*')).filter(el=>
+     el.getBoundingClientRect().right>innerWidth||(el.matches('button')&&el.scrollWidth>el.clientWidth+1));
+    return {viewport:innerWidth,width,elements:elements.slice(0,12).map(el=>el.id||el.tagName+'.'+el.classList.value)};
+   });
+   assert.equal(overflow,null,`${name} overflows the viewport: ${JSON.stringify(overflow)}`);
   }
   try{
    await page.goto(srv.base+'/#week');await current('Kitchen Diary');
@@ -111,6 +118,16 @@ for(const viewport of [{width:320,height:650},{width:1512,height:900}]){
    await page.getByRole('link',{name:'Holidays',exact:true}).or(page.getByRole('button',{name:'Holidays',exact:true})).filter({visible:true}).click();
    await page.locator('body[data-page="leave"] #page[aria-busy=false]').waitFor();
    await workspace(page,'Wholesale').click();await current('Wholesale');
+   if(viewport.width===320){
+    await page.locator('#viewTabs').waitFor();
+    await page.addStyleTag({content:'#viewTabs button { font-family: "DejaVu Sans", sans-serif; }'});
+    const clipped=await page.locator('#viewTabs button').evaluateAll(buttons=>buttons.filter(button=>{
+     const range=document.createRange();range.selectNodeContents(button);
+     const label=range.getBoundingClientRect(),box=button.getBoundingClientRect();
+     return label.left<box.left-1||label.right>box.right+1||box.height<44;
+    }).map(button=>button.textContent));
+    assert.deepEqual(clipped,[],'Every wholesale tab label fits inside its touch target');
+   }
    await page.locator('#orderDispatchScope').selectOption('upcoming');
    await page.getByRole('button',{name:'Tabs',exact:true}).click();
    await page.locator('#tabsView').waitFor();

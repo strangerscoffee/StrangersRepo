@@ -508,6 +508,10 @@ button.cleared-row:hover{background:var(--sunk)}
   .view-tabs button { min-width: 0; padding-inline: 6px; }
   .staff-wholesale .toast { bottom: calc(84px + env(safe-area-inset-bottom, 0px)); }
 }
+@media (max-width: 400px) {
+  .view-tabs { flex-wrap: wrap; }
+  .view-tabs button { flex: 1 0 auto; max-width: 100%; padding-inline: 4px; white-space: normal; overflow-wrap: anywhere; }
+}
 @media (prefers-reduced-motion: no-preference) {
   .view-tabs button { transition: background-color var(--motion-content), color var(--motion-content), scale var(--motion-press) var(--motion-spring); }
   .view-tabs button:active { scale: .97; }
