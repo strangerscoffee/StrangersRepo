@@ -356,8 +356,9 @@
  function shippingButton(row){
   return canViewShipping(row)?el('button',{type:'button',class:'btn sm soft','data-royal-mail':'',onclick:()=>openShipping(row.id)},'Royal Mail'):null;
  }
+ const unsentReferenceCheck=shipment=>shipment?.state==='failed'&&shipment.referenceLookupFailure==='before_postage';
  function shippingNeedsReview(shipment){
-  return !!(shipment?.orderChanged||shipment?.reviewRequired||['booking','review'].includes(shipment?.state));
+  return !!(shipment?.orderChanged&&!unsentReferenceCheck(shipment)||shipment?.reviewRequired||['booking','review'].includes(shipment?.state));
  }
  function recoveryMessage(shipment){
   if(shipment?.recovery?.status==='checking')return 'We’re checking the original label request automatically.';
@@ -377,17 +378,16 @@
   return shipment?.state==='created'&&shipment.orderId&&shipment.problem;
  }
  function shippingSummaryText(row,result){
-  const shipment=result?.shipment,notice=!shipment&&bookingNotice(result);
+  const shipment=result?.shipment,notice=(!shipment||unsentReferenceCheck(shipment))&&bookingNotice(result);
   if(notice)return [...notice,'notice'];
   if(!result?.enabled)return ['Royal Mail unavailable','Use a courier tracking link at dispatch.','notice'];
   if(shipment?.recovery&&!shipment.orderChanged&&!shipment.reviewRequired)return [shipment.recovery.status==='checking'?'Checking with Royal Mail':'Needs attention',recoveryMessage(shipment),'notice'];
   if(shippingNeedsReview(shipment))return ['Royal Mail needs review','Check the shipment before handing over the parcel.','warning'];
-  if(shippingOnHold(result))return ['Royal Mail label on hold',financialHold(result),'warning'];
+  if(shippingOnHold(result)||unsentReferenceCheck(shipment)&&financialHold(result))return ['Royal Mail label on hold',financialHold(result),'warning'];
   if(bookedLabelProblem(shipment))return ['Label needs attention','Review the existing booking in Click & Drop.','warning'];
-  if(shipment?.referenceLookupFailure&&!shippingBlocker(result))return ['Order lookup needs attention',
-   shipment.referenceLookupFailure==='unconfirmed'?'Check the original label request.':'Find the order reference in Click & Drop.','warning'];
+  if(shipment?.referenceLookupFailure==='unconfirmed'&&!shippingBlocker(result))return ['Check the earlier postage request','Check the saved request before continuing.','warning'];
   if(shippingCanCreate(result))return tooHeavyForOneParcel(row)?['Over 30 kg: book in Click & Drop',overweightShipping,'warning']:
-   [shipment?'Royal Mail label request failed':'Ready for a Royal Mail label','Review the packed parcel and request a label.','notice'];
+   [shipment&&!unsentReferenceCheck(shipment)?'Royal Mail label request failed':'Ready for a Royal Mail label','Review the packed parcel and request a label.','notice'];
   const blocker=shippingBlocker(result);
   if(blocker)return ['Label booking unavailable',blocker,'warning'];
   if(shipment?.state==='failed')return ['Booking needs attention','Ask an admin to check the booking.','warning'];
@@ -458,7 +458,7 @@
   if(busy==='load')return 'Loading this order’s Royal Mail details…';
   if(busy==='create')return 'Sending this label request to Royal Mail…';
   if(!result)return '';
-  const notice=!shipment&&bookingNotice(result);
+  const notice=(!shipment||unsentReferenceCheck(shipment))&&bookingNotice(result);
   if(notice)return notice[1];
   if(!result.enabled)return 'Royal Mail is unavailable. You can add any courier’s tracking link when you confirm dispatch.';
   if(shippingOnHold(result))return financialHold(result);
@@ -478,7 +478,7 @@
  const shippingBlocker=result=>!result?.shipment||result.shipment.state==='failed'?financialHold(result)||result?.recipientWarning||'':'';
  const shippingOnHold=result=>!!result?.shipment&&result.shipment.state!=='failed'&&!!financialHold(result);
  const shippingCanCreate=result=>result?.canCreate===true&&result.eligibility?.eligible===true&&
-  (!result.shipment||result.shipment.state==='failed'&&result.shipment.referenceLookupFailure!=='unconfirmed')&&!!result.bookingService&&
+  (!result.shipment||result.shipment.state==='failed'&&!result.shipment.orderId&&!result.shipment.reviewRequired&&result.shipment.referenceLookupFailure!=='unconfirmed')&&!!result.bookingService&&
   Number.isSafeInteger(result.bookingVersion)&&!!result.recipient;
  function shippingBookingForm(review){
   const {recipient,bookingService}=review.result;
@@ -545,19 +545,20 @@
   const {business,locationName,reference}=review.row;
   const orderMeta=[locationName===business?'':locationName,reference].filter(Boolean).join(' · ');
   const stale=!!result&&(result.orderVersion!==review.row.version||findOrder(review.row.id)?.version!==review.row.version);
-  const labelNeedsReview=shipment?.orderChanged||shipment?.reviewRequired;
-  const onHold=shippingOnHold(result);
+  const unsentLookup=unsentReferenceCheck(shipment);
+  const labelNeedsReview=shipment?.orderChanged&&!unsentLookup||shipment?.reviewRequired;
+  const onHold=shippingOnHold(result)||unsentLookup&&!!financialHold(result);
   const number=labelNeedsReview||onHold?'':royalMailTrackingNumber(shipment?.trackingNumber);
   if(body.contains(document.activeElement)&&document.activeElement.dataset.royalMailAction)review.focusedAction=document.activeElement.dataset.royalMailAction;
   const tracking=['labelled','dispatched'].includes(shipment?.state)?royalMailLink(number):null,pending=shipment?.state==='booking'||shipment?.state==='review'||shipment?.reviewRequired;
   const stateLabels={booking:'Awaiting carrier confirmation',review:'Carrier confirmation pending',created:'Shipment booked',labelled:'Label ready',dispatched:'Marked dispatched in Royal Mail',failed:'Booking needs attention'};
   const recoveryHeadline=shipment?.recovery?.status==='checking'?'Checking with Royal Mail':shipment?.recovery?.status==='needs_admin'?'Needs attention':'';
-  const shipmentHeadline=shipment?(Object.hasOwn(stateLabels,shipment.state)?stateLabels[shipment.state]:'Shipment linked'):
+  const shipmentHeadline=shipment&&!unsentLookup?(Object.hasOwn(stateLabels,shipment.state)?stateLabels[shipment.state]:'Shipment linked'):
    result?(bookingNotice(result)?.[0]||'No Royal Mail shipment'):'Shipment';
   const lookupFailure=shipment?.state==='failed'&&shipment.referenceLookupFailure;
   const recoveryOnly=lookupFailure==='unconfirmed';
   const labelProblem=!labelNeedsReview&&!onHold&&bookedLabelProblem(shipment);
-  const headline=labelNeedsReview?'Label needs review':onHold?'Label on hold':recoveryHeadline||(lookupFailure?'Order lookup needs attention':labelProblem?'Label needs attention':shipmentHeadline);
+  const headline=labelNeedsReview?'Label needs review':onHold?'Label on hold':recoveryHeadline||(recoveryOnly?'Check the earlier postage request':labelProblem?'Label needs attention':unsentLookup&&shippingCanCreate(result)?'Ready for a Royal Mail label':shipmentHeadline);
   const labelReady=result?.canDownloadLabel??(shipment?.orderId&&!labelNeedsReview&&['labelled','dispatched'].includes(shipment.state));
   const canRefresh=result?.enabled&&shipment&&(shipment.state!=='failed'||recoveryOnly);
   const refreshLabel=recoveryOnly?'Check label request':pending?'Check request':['labelled','dispatched'].includes(shipment?.state)&&royalMailTrackingV2Number(number)&&result.trackingEnabled?'Refresh tracking':'Check shipment';
@@ -571,7 +572,7 @@
    result?el('div',{class:'royal-mail-carrier'},
     el('span',{class:'royal-mail-label'},'Shipment'),
     el('b',{},headline),
-    lookupFailure?el('span',{},lookupFailure==='before_postage'?'This attempt stopped before postage was requested.':'The postage outcome of this earlier attempt is unconfirmed.'):null,
+    recoveryOnly?el('span',{},'The outcome of earlier postage is unconfirmed. Check the saved request before continuing.'):null,
     labelProblem?el('span',{},'Postage has already been requested for this order.'):null,
     Number.isSafeInteger(shipment?.weightGrams)&&shipment.weightGrams>0?el('span',{},'Parcel weight '+weight(shipment.weightGrams)):null,
     labelDestination(shipment)?el('div',{class:'royal-mail-address'},el('b',{},'Label destination'),el('p',{},labelDestination(shipment))):null,
@@ -582,11 +583,11 @@
    labelNeedsReview?el('p',{class:'edit-error',role:'status'},shipment.orderChanged
     ?'The order changed after booking. Ask an admin to review the label in Click & Drop before dispatch.'
     :'The carrier record needs review. Ask an admin to check the label in Click & Drop.'):null,
-   typeof shipment?.problem==='string'&&shipment.problem?el('p',{class:'edit-error',role:'status'},shipment.problem):null,
-   (lookupFailure||labelProblem)&&!stale&&!needsCheck?el('section',{class:'royal-mail-carrier','aria-label':'Find the order in Click & Drop'},
+   !unsentLookup&&typeof shipment?.problem==='string'&&shipment.problem?el('p',{class:'edit-error',role:'status'},shipment.problem):null,
+   (recoveryOnly||labelProblem)&&!stale&&!needsCheck?el('section',{class:'royal-mail-carrier','aria-label':'Find the order in Click & Drop'},
     el('b',{},'Find the order in Click & Drop'),
     labelProblem?el('p',{},'Royal Mail order '+shipment.orderId):null,
-    el('p',{},labelProblem?'Find the existing booking using this full order reference.':recoveryOnly?'Use Check label request to recover the original booking. If the outcome stays unclear, ask an admin to check this reference in Click & Drop.':'Search for this full order reference, or ask an admin to check. If you find a booking, check its recipient, destination and parcel weight. If there is no match, review the label request again here.'),
+    el('p',{},labelProblem?'Find the existing booking using this full order reference.':'Use Check label request to check the saved attempt. An admin can link an existing Click & Drop booking.'),
     shippingReference(review,review.row.id,true)):null,
    guidance?el('p',{class:'hint',role:'status'},guidance):null,
    result?.trackingWarning?el('p',{class:'edit-error',role:'status'},result.trackingWarning):null,

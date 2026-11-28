@@ -94,7 +94,7 @@ window.WholesaleRoyalMailChecks = function ({ api, html, raw, svg, put, openShee
         </form>
         <div class="rm-check-messages"><p role="status">${notice}</p><p class="err" role="alert">${issue}</p>${needsReload ? html`<button type="button" class="btn soft" data-check-action="reload">Reload checks</button>` : ""}</div>
         <p class="rm-check-stamp">${run ? `${verified} of 3 account and service checks verified · ${date(run.checkedAt)} (UK) · ${run.checkedBy}` : "No carrier checks recorded for this setup."}</p>
-        ${verified === accountChecks.length ? html`<p class="hint">Each order has its own reference check before postage. If an order stops there, open its Royal Mail shipping panel and choose <strong>Check order reference</strong>.</p>` : ""}
+        ${verified === accountChecks.length ? html`<p class="hint">Admin and Staff share one postage record per order. If you bought a label directly in Click &amp; Drop, choose <strong>Link existing booking</strong> on the order.</p>` : ""}
         <ul class="rm-check-list">${rows}</ul>
       </section>
       </div>

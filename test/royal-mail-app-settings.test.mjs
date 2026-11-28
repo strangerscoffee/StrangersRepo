@@ -174,7 +174,7 @@ async function fixture(t, secret = encryptionKey, workerBookingKey = existing.bo
 }
 
 test("Royal Mail credential settings protect booking and tracking secrets", async t => {
-  const { call, db, interceptLookup, policy, requests, save, seedOrder, sessionCookie, settings } = await fixture(t);
+  const { call, db, policy, requests, save, seedOrder, sessionCookie, settings } = await fixture(t);
 
   await t.test("admin-only writes guard origin, identity and the unchanged Worker setup", async () => {
     const first = await call(settingsPath);
@@ -258,8 +258,8 @@ test("Royal Mail credential settings protect booking and tracking secrets", asyn
     assert.equal(view.shipment.carrierStatus, "Accepted at a Post Office");
     const fresh = requests.slice(start);
     assert.ok(fresh.filter(r => r.carrier === "booking").every(r => r.authorization === "Bearer " + savedBooking.key));
-    assert.deepEqual(fresh.filter(r => r.carrier === "booking" && r.method === "GET").map(r => r.path),
-      [`/api/v1/orders/"${id}"`, "/api/v1/orders/901"]);
+    assert.deepEqual(fresh.filter(r => r.carrier === "booking").map(r => [r.method, r.path]),
+      [["POST", undefined], ["GET", "/api/v1/orders/901"]]);
     assert.deepEqual(fresh.find(r => r.carrier === "booking" && r.method === "POST")?.postage, {
       serviceCode: "TPS48", serviceRegisterCode: "02", shippingAccountName: "Fixture account",
     });
@@ -281,26 +281,33 @@ test("Royal Mail credential settings protect booking and tracking secrets", asyn
     assert.equal((await expectJson(await call(settingsPath, "PUT", { ifVersion: version, enabled: false }), 409)).code, "conflict");
   });
 
-  await t.test("credential rotation during carrier lookup prevents a booking with stale credentials", async () => {
+  await t.test("credential rotation after local reservation prevents sending with the old key", async () => {
     const { id, path } = await seedOrder(6);
+    await save({ ...savedBooking, key: replacements[0] });
+    const rotated = (await policy()).booking_config;
+    const before = await save(savedBooking);
     const start = requests.length;
-    let enter, release;
-    const entered = new Promise(resolve => { enter = resolve; });
-    const held = new Promise(resolve => { release = resolve; });
-    interceptLookup(async () => { enter(); await held; });
-    const first = call(path, "POST", packageDetails);
+    // Rotate to a genuinely encrypted alternate configuration exactly between the
+    // two committed local writes, before any request can reach the carrier.
+    await db.prepare("CREATE TABLE test_credential_rotation (order_id TEXT PRIMARY KEY, booking_config TEXT NOT NULL)").run();
+    await db.prepare("INSERT INTO test_credential_rotation VALUES (?,?)").bind(id, rotated).run();
+    await db.prepare(`CREATE TRIGGER rotate_after_reservation AFTER INSERT ON wholesale_royal_mail_shipments
+      WHEN EXISTS (SELECT 1 FROM test_credential_rotation WHERE order_id=NEW.order_id)
+      BEGIN UPDATE wholesale_royal_mail_settings SET version=version+1,
+        booking_config=(SELECT booking_config FROM test_credential_rotation WHERE order_id=NEW.order_id) WHERE id=1; END`).run();
     try {
-      const early = await Promise.race([entered.then(() => null), first]);
-      if (early) assert.fail(await early.text());
-      await save(savedBooking);
+      assert.equal((await expectJson(await call(path, "POST", packageDetails), 409)).code, "royal_mail_booking_policy_changed");
     } finally {
-      release();
-      interceptLookup(undefined);
+      await db.prepare("DROP TRIGGER rotate_after_reservation").run();
+      await db.prepare("DROP TABLE test_credential_rotation").run();
     }
-    assert.equal((await expectJson(await first, 409)).code, "royal_mail_booking_policy_changed");
-    assert.equal(requests.slice(start).some(r => r.method === "POST"), false);
-    const row = await db.prepare("SELECT requested_at FROM wholesale_royal_mail_shipments WHERE order_id = ?").bind(id).first();
-    assert.equal(row.requested_at, 0);
+    assert.equal(requests.length, start, "a settings change before send must cause zero carrier traffic");
+    const row = await db.prepare("SELECT state,requested_at FROM wholesale_royal_mail_shipments WHERE order_id=?").bind(id).first();
+    assert.deepEqual(row, { state: "failed", requested_at: 0 });
+    const updated = await settings();
+    assert.equal(updated.version, before.version+1);
+    await expectJson(await call(path, "POST", { ...packageDetails, bookingVersion: updated.version, bookingService: updated.serviceCode }), 201);
+    assert.deepEqual(requests.slice(start).map(r => [r.method, r.authorization]), [["POST", "Bearer " + replacements[0]]]);
   });
 
   await t.test("unreadable Admin overrides block only their own carrier calls and require a full replacement", async () => {
@@ -377,7 +384,7 @@ test("a timed-out confirmation of an accepted order recovers only its exact nume
   interceptLookup(lookup => lookup === numericPath ? new RuntimeResponse(null, { status: 504 }) : undefined);
   await assertHeld(await expectJson(await call(path, "POST", packageDetails), 202));
   assert.deepEqual(requests.map(r => [r.method, r.path]), [
-    ["GET", `/api/v1/orders/"${id}"`], ["POST", undefined], ["GET", numericPath],
+    ["POST", undefined], ["GET", numericPath],
   ]);
 
   await save({ ...savedBooking, key: replacements[0] });

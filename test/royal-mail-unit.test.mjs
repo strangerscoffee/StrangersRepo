@@ -259,6 +259,49 @@ test('reports definitive rejections without echoing the API body', async () => {
   })), outcome('royal_mail_rejected', false, 400));
 });
 
+test('only a completed, uncontradicted create refusal can release a local postage reservation', async () => {
+  const failed = {
+    successCount:0, errorsCount:1, createdOrders:[],
+    failedOrders:[{order:{orderReference:input.reference}, errors:[{message:'Invalid postcode'}]}],
+  };
+  const uncertainReplies = [
+    ...[202,206].map(status => Response.json(failed,{status})),
+    Response.json(failed,{status:400,headers:{'Content-Range':'bytes 0-99/120'}}),
+    new Response(JSON.stringify(failed), {status:400,headers:{'Content-Type':'text/html'}}),
+    ...[408,409,429,500,502,503,504].map(status => Response.json(failed,{status})),
+    ...[
+      {message:'Request outcome is not available'}, {code:'UnexpectedCarrierReply'},
+      {message:'Invalid postcode', details:{orderIdentifier:22}},
+      {message:'Invalid postcode', outcome:{receivedOrder:22}},
+      {errorCode:18,code:'DuplicateOrderReference',message:'Invalid postcode'},
+      {errorCode:18,message:'Gateway timed out processing the booking'},
+      {errorCode:18,message:'The resource already exists.'}, {code:'ValidationError',message:'Outcome unknown.'},
+      {message:'Invalid postcode',statusCode:503},
+      {fields:[{fieldName:'recipient.address.postcode',orderIdentifier:22}]},
+      {...failed,failedOrders:[{order:{orderReference:input.reference,orderIdentifier:22},errors:[{message:'Invalid postcode'}]}]},
+    ].map(body => Response.json(body,{status:422})),
+  ];
+  for (const reply of uncertainReplies) {
+    let count = 0;
+    await assert.rejects(createRoyalMailOrder(key,input,async (_url,init) => {
+      count++;
+      assert.equal(init.method,'POST');
+      return reply;
+    }), error => error instanceof RoyalMailError && error.uncertain);
+    assert.equal(count,1);
+  }
+  for (const status of [200,400,422]) {
+    await assert.rejects(createRoyalMailOrder(key,input,async () => Response.json(failed,{status})),
+      error => error instanceof RoyalMailError && !error.uncertain && error.code === 'royal_mail_rejected');
+    for (const message of ['This label has already been generated.', 'Postage already purchased.', 'Payment taken.']) {
+      const errors = [{message:'Invalid postcode'}, {message:message + ' Private customer data.'}];
+      const response = { ...failed, failedOrders:[{order:{orderReference:input.reference},errors}] };
+      await assert.rejects(createRoyalMailOrder(key,input,async () => Response.json(response,{status})),
+        error => error instanceof RoyalMailError && error.uncertain && !error.message.includes('Private customer'));
+    }
+  }
+});
+
 test("keeps Royal Mail's own reason for a refusal, without the recipient's details", async () => {
   const reason = async (reply) => { try { await createRoyalMailOrder(key, input, async () => reply()); } catch (error) { return error; } };
   let error = await reason(() => Response.json({

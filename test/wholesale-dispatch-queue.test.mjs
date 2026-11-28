@@ -85,7 +85,13 @@ test("Staff and Admin dispatch queue share accurate role-limited stages, paging 
   assert.equal(staff.orders.find(o=>o.id===id(9)).stage,"attention");
   assert.equal(staff.orders.find(o=>o.id===id(10)).stage,"weigh");
 
-  // Pre-postage and legacy reference-check refusals need the original reference, not another weigh-in.
+  await query("UPDATE wholesale_royal_mail_shipments SET problem=? WHERE order_id=?",
+    "Royal Mail rejected the order-reference lookup. The order list could not confirm this reference because it contained unreadable or conflicting booking details.",id(10)).run();
+  for(const role of ["staff","admin"]){
+    assert.equal((await queue(role,"?stage=weigh")).orders.find(o=>o.id===id(10)).stage,"weigh");
+  }
+
+  // Actual conflict evidence and a missing outbound marker keep the parcel on hold.
   const setProblem=(n,problem)=>query("UPDATE wholesale_royal_mail_shipments SET problem=? WHERE order_id=?",problem,id(n));
   await db.batch([
     setProblem(8,"Royal Mail accepted this order but could not generate its label. Private recipient"),
@@ -95,7 +101,7 @@ test("Staff and Admin dispatch queue share accurate role-limited stages, paging 
     const result=await queue(role,"?stage=attention");
     assert.equal(result.counts.weigh,expected.weigh-1);
     assert.equal(result.counts.attention,expected.attention+1);
-    for(const [n,label,reason] of [[8,"Review label",/label problem/],[10,"Review booking",/order-reference check/]]){
+    for(const [n,label,reason] of [[8,"Review label",/label problem/],[10,"Review booking",/existing booking/]]){
       const item=result.orders.find(o=>o.id===id(n));
       assert.equal(item.action,"shipping");
       assert.equal(item.actionLabel,role==="admin"?label:"View details");
