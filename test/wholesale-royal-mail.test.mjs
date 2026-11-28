@@ -538,6 +538,73 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     assert.equal(posts() - beforePosts, 2, "one definitive rejection and one reviewed purchase");
   });
 
+  await t.test("a conflicting HTTP 200 receipt stays in review with a redacted receipt diagnostic", async () => {
+    const id = orderRef(214);
+    await seed(id);
+    const before = requests.length;
+    interceptCreate = (reference, item) => {
+      assert.equal(reference, id);
+      return RuntimeResponse.json({
+        successCount: 0, errorsCount: 1,
+        createdOrders: [{ orderReference: id, orderIdentifier: 24680 }],
+        failedOrders: [{ order: item, errors: [{ errorCode: 61,
+          errorMessage: "Private receipt message", fields: [{ fieldName: "recipient.address.postcode", value: item.recipient.address.postcode }] }] }],
+        "private@example.test": "Private receipt metadata",
+      });
+    };
+    try {
+      const response = await create(id);
+      assert.equal(response.status, 202);
+      const { canCreate, shipment } = await response.json();
+      assert.equal(canCreate, false);
+      assert.equal(shipment.state, "review");
+      assert.equal(shipment.orderId, null);
+      assert.match(shipment.requestProblem, /HTTP 200/);
+      assert.match(shipment.requestProblem, /success count 0, error count 1, created entries 1, failed entries 1/);
+      assert.match(shipment.requestProblem, /matches this reference/);
+      assert.match(shipment.requestProblem, /Carrier code 61/);
+      assert.match(shipment.requestProblem, /Reported field recipient\.address\.postcode/);
+      assert.doesNotMatch(shipment.requestProblem, /private@example\.test|Private receipt|NR1 5AB|Example Lane|24680/);
+      assert.ok(!shipment.requestProblem.includes(id));
+      assert.deepEqual(requests.slice(before).map(row => row.method), ["POST"]);
+
+      assert.equal((await refresh(id)).status, 200);
+      const checked = await read(id);
+      assert.equal(checked.state, "review");
+      assert.equal(checked.requestProblem, shipment.requestProblem);
+      assert.equal((await create(id)).status, 202);
+      assert.ok(requests.slice(before + 1).some(row => row.method === "GET"));
+      assert.equal(requests.slice(before).filter(row => row.method === "POST").length, 1);
+    } finally {
+      interceptCreate = undefined;
+    }
+  });
+
+  await t.test("a null failed-order collection needs numeric confirmation and purchases once", async () => {
+    const id = orderRef(215), orderIdentifier = 24681;
+    await seed(id);
+    const before = requests.length;
+    interceptCreate = reference => {
+      assert.equal(reference, id);
+      const created = { orderReference: id, orderIdentifier, trackingNumber: number, printedOn: "2026-11-26T09:00:00Z" };
+      records.set(id, created);
+      return RuntimeResponse.json({ successCount: 1, errorsCount: 0, createdOrders: [created], failedOrders: null });
+    };
+    try {
+      const first = await create(id);
+      assert.equal(first.status, 201);
+      assert.equal((await first.json()).shipment.orderId, orderIdentifier);
+      const repeated = await create(id);
+      assert.equal(repeated.status, 200);
+      assert.equal((await repeated.json()).shipment.orderId, orderIdentifier);
+      assert.deepEqual(requests.slice(before).map(row => [row.method, row.path]), [
+        ["POST", "/api/v1/orders"], ["GET", "/api/v1/orders/" + orderIdentifier],
+      ]);
+    } finally {
+      interceptCreate = undefined;
+    }
+  });
+
   await t.test("lost replies reconcile without a second create and pre-send reservations can recover", async () => {
     const id = orderRef(5);
     await seed(id);
@@ -583,6 +650,11 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     assert.equal((await read(id)).requestProblem, originalProblem, "a manual lookup leaves the original purchase diagnostic visible");
     await recover();
     assert.equal((await read(id)).recovery.attempts, 0, "a new booking has a grace period");
+    await expire();
+    assert.equal((await refresh(id)).status, 200);
+    const afterManual = (await read(id)).recovery;
+    assert.equal(afterManual.nextCheckAt, 1, "a manual check keeps the original queue eligibility");
+    assert.equal(afterManual.attempts, 0, "it does not consume a scheduled attempt");
     for (let attempt = 1; attempt <= 4; attempt++) {
       await expire();
       const prior = lookups();

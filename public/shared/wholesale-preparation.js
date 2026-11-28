@@ -128,8 +128,17 @@ function numberFromRoyalMailLink(value) {
   } catch { /* An unrecognised courier link has no verified parcel reference. */ }
   return null;
 }
+// The recovery timestamp is the earliest time the five-minute queue may pick up the request.
+function royalMailRecoverySchedule(recovery, formatDate) {
+  const eligibleAt = recovery?.nextCheckAt;
+  if (recovery?.status !== 'checking' || !Number.isFinite(eligibleAt) || eligibleAt <= 0) return '';
+  if (eligibleAt <= Math.max(Date.now(), recovery.lastCheckedAt || 0)) {
+    return 'Queued for an automatic check. The queue runs every five minutes.';
+  }
+  return 'Eligible for an automatic check from ' + formatDate(eligibleAt) + '. The queue runs every five minutes.';
+}
 function isRoyalMailTrackingHost(hostname) {
   return typeof hostname === 'string' && /(?:^|\.)(?:royalmail\.(?:com|net)|parcelforce\.com)\.?$/i.test(hostname);
 }
-globalThis.SCWholesalePreparation=Object.freeze({royalMailTrackingNumber,royalMailTrackingV2Number,royalMailTrackingUrl,numberFromRoyalMailLink,isRoyalMailTrackingHost,grindFor,parcelEstimate,tooHeavyForOneParcel,OVER_LIMIT_STEPS,decafLine,coffeeColour,coffeeFill,coffeeStyle,packagingColours:Object.freeze(packaging.map(e=>Object.freeze({...e}))),iconPaths:Object.freeze({"grind-beans": "<path d=\"M18 4c-4-3-11 1-13 6s0 10 4 11 10-3 12-8 1-7-3-9Z\"/><path d=\"M17 5c-6 3-2 8-10 14\"/>", "grind-fine": "<path d=\"M5 4h14v5H5zM7 9v4h10V9M9 13v3h6v-3M5 21h14M10 18v3M14 18v3\"/>", "grind-medium": "<path d=\"m3 4 9 12 9-12H3ZM12 16v4M8 21h8M7 4l5 8 5-8\"/>", "grind-coarse": "<path d=\"M6 8h11v11H6zM4 21h15M4 4h15M11 2v6M17 10h2a3 3 0 0 1 0 6h-2\"/>"})});
+globalThis.SCWholesalePreparation=Object.freeze({royalMailRecoverySchedule,royalMailTrackingNumber,royalMailTrackingV2Number,royalMailTrackingUrl,numberFromRoyalMailLink,isRoyalMailTrackingHost,grindFor,parcelEstimate,tooHeavyForOneParcel,OVER_LIMIT_STEPS,decafLine,coffeeColour,coffeeFill,coffeeStyle,packagingColours:Object.freeze(packaging.map(e=>Object.freeze({...e}))),iconPaths:Object.freeze({"grind-beans": "<path d=\"M18 4c-4-3-11 1-13 6s0 10 4 11 10-3 12-8 1-7-3-9Z\"/><path d=\"M17 5c-6 3-2 8-10 14\"/>", "grind-fine": "<path d=\"M5 4h14v5H5zM7 9v4h10V9M9 13v3h6v-3M5 21h14M10 18v3M14 18v3\"/>", "grind-medium": "<path d=\"m3 4 9 12 9-12H3ZM12 16v4M8 21h8M7 4l5 8 5-8\"/>", "grind-coarse": "<path d=\"M6 8h11v11H6zM4 21h15M4 4h15M11 2v6M17 10h2a3 3 0 0 1 0 6h-2\"/>"})});
 })();

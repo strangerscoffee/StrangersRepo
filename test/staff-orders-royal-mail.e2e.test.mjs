@@ -671,19 +671,21 @@ test("a lost label response is recovered in the staff dialog without a second pu
 });
 
 test("an unconfirmed purchase shows its evidence and next check without tracking noise or another purchase", async t => {
-  let refreshes = 0;
-  const at = Date.UTC(2026, 10, 28, 12, 7);
+  const refreshes = new Map();
+  const at = Date.UTC(2025, 10, 28, 12, 7);
   const requestProblem = "The connection closed before the postage request could be confirmed.";
   const latestProblem = "Click & Drop has not confirmed an order number.";
   const details = route => {
-    const checking = route.request().method() === "POST";
-    if (checking) {
-      assert.ok(route.request().url().endsWith("/refresh"), "only recovery may contact the server");
-      refreshes++;
+    const url = route.request().url();
+    if (route.request().method() === "POST") {
+      assert.ok(url.endsWith("/refresh"), "only recovery may contact the server");
+      refreshes.set(url, (refreshes.get(url) || 0) + 1);
     }
+    const reads = refreshes.get(url) || 0;
     return route.fulfill({ json: { ...eligible(), canCreate: false, canLinkOrder: true, linkOperation: "held", trackingWarning: latestProblem,
       shipment: { state: "review", requestedAt: at, checkedAt: at + 600000, requestProblem, problem: latestProblem,
-        recovery: { status: checking ? "needs_admin" : "checking", attempts: checking ? 4 : 2, nextCheckAt: checking ? null : at + 1200000 } } } });
+        recovery: { status: reads === 2 ? "needs_admin" : "checking", attempts: 2 + reads,
+          nextCheckAt: [at + 60000, Date.now() + 15 * 60000, null][reads] } } } });
   };
   const staff = await staffPage(t, desktop, details);
   const admin = await adminDispatchPage(t, phone,
@@ -692,18 +694,21 @@ test("an unconfirmed purchase shows its evidence and next check without tracking
   await admin.action.click();
   for (const panel of [admin.page.locator("#wRoyalMailForm"), staff.dialog]) {
     await panel.getByText("Postage request unconfirmed", { exact: true }).waitFor();
-    await panel.getByText(/Next automatic check due.*12:27/).waitFor();
+    await panel.getByText("Queued for an automatic check. The queue runs every five minutes.", { exact: true }).waitFor();
     await panel.getByText(/Requested .*12:07/).waitFor();
     await panel.getByText(/Last checked .*12:17/).waitFor();
     assert.equal(await panel.getByText(latestProblem, { exact: false }).count(), 1, "one copy of the latest check");
     await panel.getByText(requestProblem, { exact: false }).waitFor();
     assert.doesNotMatch(await panel.innerText(), /carrier scans|latest Royal Mail scan|booking you already made/i);
     assert.equal(await panel.getByRole("button", { name: /Request Royal Mail label|Review label request|Download label PDF/ }).count(), 0);
-    await panel.getByRole("button", { name: "Check label request", exact: true }).click();
+    const check = panel.getByRole("button", { name: "Check label request", exact: true });
+    await check.click();
+    await panel.getByText(/Eligible for an automatic check from .*\(UK time\)\. The queue runs every five minutes/).waitFor();
+    await check.click();
     await panel.getByText(/Automatic checks have stopped/).waitFor();
-    assert.equal(await panel.getByText(/Next automatic check due/).count(), 0);
+    assert.equal(await panel.getByText(/The queue runs every five minutes/).count(), 0);
   }
-  assert.equal(refreshes, 2);
+  assert.deepEqual([...refreshes.values()], [2, 2]);
   const recovery = admin.page.getByRole("region", { name: "Check in Click & Drop" });
   await recovery.getByText(order.id, { exact: true }).waitFor();
   await recovery.getByRole("button", { name: "Link existing booking" }).waitFor();
