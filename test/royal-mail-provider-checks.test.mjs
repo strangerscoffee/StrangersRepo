@@ -59,8 +59,8 @@ function harness(t, overrides = {}) {
     }
     assert.equal(init.headers.get("Authorization"), "Bearer " + key);
     if (url.pathname.endsWith("/123/label")) return state.pdfResponse?.() ?? new Response(pdf, { headers: { "content-type": "application/pdf" } });
-    assert.equal(decodeURIComponent(url.pathname), '/api/v1/orders/"' + orderId + '"');
-    return Response.json([{ orderIdentifier: state.providerId, orderReference: orderId, trackingNumber: state.providerTracking,
+    assert.equal(url.pathname, "/api/v1/orders/123");
+    return Response.json([{ orderIdentifier: state.providerId, orderReference: state.providerReference ?? orderId, trackingNumber: state.providerTracking,
       ...(state.providerState === "labelled" ? { printedOn: "2026-11-27T15:20:22Z" } : {}) }]);
   }
   async function run(parcel) {
@@ -117,7 +117,7 @@ test("previews, collections, skipped, stale and held shipments and shipments on 
 });
 
 test("a reset or reassigned order cannot prove label or tracking permissions", async t => {
-  for (const mismatch of [{ providerId: 124 }, { providerTracking: "AC123456789GB" }, { providerState: "created" }]) {
+  for (const mismatch of [{ providerId: 124 }, { providerReference: "WS-" + "C".repeat(32) }, { providerTracking: "AC123456789GB" }, { providerState: "created" }]) {
     const { state, insert, run } = harness(t, { state: mismatch });
     insert();
     const rows = await run(null);

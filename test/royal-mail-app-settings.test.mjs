@@ -66,6 +66,7 @@ const bundle = await build({
 async function fixture(t, secret = encryptionKey, workerBookingKey = existing.booking.key) {
   const requests = [];
   const records = new Map();
+  let onCreate;
   let onLookup;
   const worker = new Miniflare({
     host: "127.0.0.1", port: 0, telemetry: { enabled: false }, cf: false,
@@ -110,13 +111,19 @@ async function fixture(t, secret = encryptionKey, workerBookingKey = existing.bo
             printedOn: "2026-11-26T09:00:00Z",
           };
           records.set(item.orderReference, order);
-          return RuntimeResponse.json({ createdOrders: [order], successCount: 1, errorsCount: 0 });
+          return RuntimeResponse.json({ createdOrders: [onCreate?.(order) ?? order], successCount: 1, errorsCount: 0 });
         }
         assert.equal(request.method, "GET");
-        requests.push({ method: request.method, carrier: "booking", authorization });
-        await onLookup?.();
-        const reference = decodeURIComponent(url.pathname.split("/").at(-1)).replaceAll('"', "");
-        return RuntimeResponse.json(records.has(reference) ? [records.get(reference)] : []);
+        const path = decodeURIComponent(url.pathname);
+        requests.push({ method: request.method, carrier: "booking", authorization, path });
+        const numeric = path.match(/^\/api\/v1\/orders\/(\d+)$/);
+        const quoted = path.match(/^\/api\/v1\/orders\/"(WS-[0-9A-F]{32})"$/);
+        const order = numeric
+          ? [...records.values()].find(row => row.orderIdentifier === Number(numeric[1]))
+          : records.get(quoted?.[1]);
+        const reply = await onLookup?.(path, order);
+        if (reply instanceof RuntimeResponse) return reply;
+        return RuntimeResponse.json(order ? [order] : []);
       } } },
     }],
   });
@@ -160,7 +167,10 @@ async function fixture(t, secret = encryptionKey, workerBookingKey = existing.bo
   function interceptLookup(handler) {
     onLookup = handler;
   }
-  return { call, db, interceptLookup, policy, requests, save, seedOrder, sessionCookie, settings };
+  function interceptCreate(handler) {
+    onCreate = handler;
+  }
+  return { call, db, interceptLookup, interceptCreate, policy, requests, save, seedOrder, sessionCookie, settings };
 }
 
 test("Royal Mail credential settings protect booking and tracking secrets", async t => {
@@ -248,6 +258,8 @@ test("Royal Mail credential settings protect booking and tracking secrets", asyn
     assert.equal(view.shipment.carrierStatus, "Accepted at a Post Office");
     const fresh = requests.slice(start);
     assert.ok(fresh.filter(r => r.carrier === "booking").every(r => r.authorization === "Bearer " + savedBooking.key));
+    assert.deepEqual(fresh.filter(r => r.carrier === "booking" && r.method === "GET").map(r => r.path),
+      [`/api/v1/orders/"${id}"`, "/api/v1/orders/901"]);
     assert.deepEqual(fresh.find(r => r.carrier === "booking" && r.method === "POST")?.postage, {
       serviceCode: "TPS48", serviceRegisterCode: "02", shippingAccountName: "Fixture account",
     });
@@ -339,6 +351,57 @@ test("Royal Mail credential settings protect booking and tracking secrets", asyn
       assert.equal(text.includes(JSON.parse(JSON.parse(encrypted).data).cipher), false);
     }
   });
+});
+
+test("a timed-out confirmation of an accepted order recovers only its exact numeric ID under the original credential", async t => {
+  const { call, db, interceptCreate, interceptLookup, requests, save, seedOrder } = await fixture(t);
+  const original = await save(savedBooking);
+  await expectJson(await call(settingsPath, "PUT", { ifVersion: original.version, enabled: true }));
+  const { id, path } = await seedOrder(10);
+  const numericPath = "/api/v1/orders/900";
+  const stored = () => db.prepare("SELECT provider_id,candidate_provider_id FROM wholesale_royal_mail_shipments WHERE order_id=?").bind(id).first();
+  const retry = async () => {
+    await db.prepare("UPDATE wholesale_royal_mail_shipments SET refresh_after=0 WHERE order_id=?").bind(id).run();
+    return expectJson(await call(path + "/refresh", "POST", {}));
+  };
+  const assertHeld = async view => {
+    assert.equal(view.shipment.state, "review");
+    assert.equal(view.shipment.orderId, null);
+    assert.equal(view.shipment.trackingNumber, null);
+    assert.equal(view.canCreate, false);
+    assert.doesNotMatch(JSON.stringify(view), /candidate/i);
+    assert.deepEqual(await stored(), { provider_id: null, candidate_provider_id: 900 });
+    assert.equal((await call(path + "/label")).status, 409);
+  };
+  interceptCreate(order => ({ orderIdentifier: order.orderIdentifier, createdOn: "2026-11-28T13:40:00Z" }));
+  interceptLookup(lookup => lookup === numericPath ? new RuntimeResponse(null, { status: 504 }) : undefined);
+  await assertHeld(await expectJson(await call(path, "POST", packageDetails), 202));
+  assert.deepEqual(requests.map(r => [r.method, r.path]), [
+    ["GET", `/api/v1/orders/"${id}"`], ["POST", undefined], ["GET", numericPath],
+  ]);
+
+  await save({ ...savedBooking, key: replacements[0] });
+  const beforeRotationCheck = requests.length;
+  await assertHeld(await retry());
+  await assertHeld(await expectJson(await call(path, "POST", packageDetails), 202));
+  assert.equal(requests.length, beforeRotationCheck, "the new key cannot query the candidate or buy postage");
+
+  await save(savedBooking);
+  for (const results of [[], [{ orderIdentifier: 901, orderReference: id }],
+    [{ orderIdentifier: 900, orderReference: shipPath(11).id }],
+    [{ orderIdentifier: 900, orderReference: id }, { orderIdentifier: 900, orderReference: id }]]) {
+    interceptLookup(() => RuntimeResponse.json(results));
+    const start = requests.length;
+    await assertHeld(await retry());
+    assert.deepEqual(requests.slice(start).map(r => [r.path, r.authorization]), [[numericPath, "Bearer " + savedBooking.key]]);
+  }
+  interceptLookup(undefined);
+  const recovered = await retry();
+  assert.equal(recovered.shipment.state, "labelled");
+  assert.deepEqual(await stored(), { provider_id: 900, candidate_provider_id: null });
+  assert.equal(recovered.shipment.orderId, 900);
+  assert.equal((await expectJson(await call(path, "POST", packageDetails))).shipment.orderId, 900);
+  assert.equal(requests.filter(r => r.method === "POST").length, 1, "recovery never sends another purchase");
 });
 
 test("a missing encryption key prevents saves and never activates Worker credentials over an Admin override", async t => {

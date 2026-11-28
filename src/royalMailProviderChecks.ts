@@ -1,6 +1,6 @@
 import type { Env } from "./http";
 import {
-  fetchRoyalMailLabel, fetchRoyalMailTracking, findRoyalMailOrder, listRoyalMailParcelServices, listRoyalMailShippingAccounts,
+  fetchRoyalMailLabel, fetchRoyalMailTracking, findRoyalMailOrderById, listRoyalMailParcelServices, listRoyalMailShippingAccounts,
   RoyalMailError, royalMailTrackingV2Number, type RoyalMailTrackingCredentials,
 } from "./royalMail";
 import type { loadRoyalMailConnections } from "./royalMailAppSettings";
@@ -39,6 +39,7 @@ function providerFailure(id: CheckId, error: unknown): ProviderCheck {
       : "Click & Drop refused the request. Check the saved API key and its permissions.";
     return check(id, "attention", detail);
   }
+  if (error.code === "royal_mail_order_mismatch") return check(id, "unverified", "The returned order does not match the saved wholesale booking. Review the original shipment in Click & Drop.");
   if (error.code === "royal_mail_rate_limited") return check(id, "unverified", "Royal Mail reached its request limit. Run the check again later.");
   if (error.code === "royal_mail_invalid_response") return check(id, "unverified", "Royal Mail returned an unexpected response. Run the check again later.");
   if (error.code === "royal_mail_label_unavailable") return check(id, "unverified", "The existing shipment’s label is unavailable. Check it in Click & Drop.");
@@ -107,13 +108,13 @@ async function existingTracking(credentials: RoyalMailTrackingCredentials, refer
 
 async function shipmentChecks(key: string, row: Shipment, credentials: Connections["tracking"], fetcher: typeof fetch, tracking: ProviderCheck) {
   let carrier;
-  try { carrier = await findRoyalMailOrder(key, row.order_id, fetcher); }
+  try { carrier = await findRoyalMailOrderById(key, row.provider_id, row.order_id, fetcher); }
   catch (error) {
     const failure = providerFailure("authentication", error);
     const detail = "The existing shipment could not be verified in Click & Drop. " + failure.detail;
     return [check("labelPdf", failure.status, detail), credentials ? check("tracking", "unverified", detail) : tracking];
   }
-  if (!carrier || carrier.orderId !== row.provider_id || carrier.providerState === "created" ||
+  if (!carrier || carrier.providerState === "created" ||
       row.tracking_number && row.tracking_number !== carrier.trackingNumber) {
     const detail = "Click & Drop could not confirm the same labelled shipment. Review the existing shipment and run the check again.";
     return [check("labelPdf", "unverified", detail), credentials ? check("tracking", "unverified", detail) : tracking];

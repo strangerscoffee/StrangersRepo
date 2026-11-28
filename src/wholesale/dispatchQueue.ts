@@ -17,6 +17,7 @@ type Next = { stage: Stage; action: Action; actionLabel: string; reason: string 
 type Candidate = {
   id: string; version: number; sort_day: string; reference: string; destination: string; block_code: string | null;
   state: string | null; requested_at: number | null; provider_id: number | null; review_required: number | null; label_downloaded_at: number | null;
+  lookup_refused: number | null; has_problem: number | null;
   recovery_due_at: number | null; order_version: number | null; shipping_fingerprint: string | null;
 };
 
@@ -57,7 +58,9 @@ function candidates(env: Env, after: string, clock: (string | number)[]) {
         'customerSnapshot',json_extract(b.data,'$.customerSnapshot'),
         'lines',CASE WHEN s.state IS NULL OR s.state='failed' OR (s.shipping_fingerprint IS NOT NULL AND s.order_version<>b.version)
           THEN json_extract(b.data,'$.lines') END) AS destination,
-      s.state,s.requested_at,s.provider_id,s.review_required,s.label_downloaded_at,s.recovery_due_at,s.order_version,s.shipping_fingerprint
+      s.state,s.requested_at,s.provider_id,s.review_required,s.label_downloaded_at,s.recovery_due_at,s.order_version,s.shipping_fingerprint,
+      instr(s.problem,'Royal Mail rejected the order-reference lookup.')=1 AS lookup_refused,
+      length(s.problem)>0 AS has_problem
     FROM batch b JOIN eligibility e ON e.order_id=b.id
     LEFT JOIN wholesale_royal_mail_shipments s ON s.order_id=b.id
     ORDER BY b.sort_day,b.id`).bind(after, readSize, ...clock).all<Candidate>();
@@ -82,10 +85,17 @@ async function nextAction(
     if (row.order_version !== row.version && (!row.shipping_fingerprint || await shippingFingerprint(order) !== row.shipping_fingerprint)) {
       return attention("The order changed after booking. Check the label before handover.");
     }
+    if (row.state === "created" && row.has_problem) return attention("Royal Mail booked the order. Review the label problem in Click & Drop.", "shipping", "Review label");
     if (row.state !== "labelled" && row.state !== "dispatched") return attention("Royal Mail has the booking. Complete or check the label in Click & Drop.");
     if (row.label_downloaded_at) return { stage: "handover", action: "handover", actionLabel: "Review handover", reason: "Label downloaded. Confirm once the parcel has been handed over." };
     if (!booking.hasKey) return attention("The Click & Drop connection is unavailable.", "settings", "Review settings");
     return { stage: "print", action: "shipping", actionLabel: "Open label", reason: "The label is ready to download and print." };
+  }
+  if (row.state === "failed" && !row.provider_id && !row.requested_at && row.lookup_refused) {
+    if (row.requested_at === null) {
+      return { stage: "attention", action: "shipping", actionLabel: "Check label request", reason: "The original postage outcome is unconfirmed. Check the earlier label request." };
+    }
+    return attention("The order-reference check failed. Find the original reference in Click & Drop.", "shipping", "Review booking");
   }
   if (row.state === "failed" && row.requested_at) return attention("Royal Mail declined this booking. Review the parcel details before retrying.");
   if (!savedRoyalMailRecipient(order)) return attention("The saved delivery address needs review.", "shipping", "Review address");

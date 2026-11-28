@@ -52,6 +52,18 @@ test('a format refusal can recover one exact reference after exhausting the orde
   assert.equal(lookup.signals[1], lookup.signals[2], 'all list pages share one timeout budget');
 });
 
+test('optional references on unrelated imports allow a unique positive match but never prove absence', async () => {
+  for (const optional of [{}, {orderReference:null}, {orderReference:''}]) {
+    const imported = {orderIdentifier:15,createdOn,...optional};
+    const page = {orders:[imported],continuationToken:'next'};
+    assert.equal((await carrier([page,{orders:[order]}]).run()).orderId,order.orderIdentifier);
+    await assert.rejects(carrier([page,{orders:[anotherOrder]}]).run(), /could not confirm this reference/);
+    await assert.rejects(carrier([page,{orders:[order,{...order,orderIdentifier:16}]}]).run(), /could not confirm this reference/);
+    await assert.rejects(carrier([{orders:[imported,order],continuationToken:'next'},new Response(null,{status:503})]).run());
+  }
+  for (const invalid of [false, 0, {}, '   ']) await assert.rejects(carrier([{orders:[order,row(11,invalid)]}]).run());
+});
+
 test('a complete unfiltered listing can establish absence, including a valid empty account', async () => {
   for (const pages of [[{orders: []}], [{orders: [anotherOrder], continuationToken: 'last'}, {orders: [], continuationToken: null}]]) {
     const lookup = carrier(pages);
@@ -128,6 +140,42 @@ test('a refusal pointing at another order never scans the account', async () => 
   ]) {
     const lookup = carrier([], {denial});
     await assert.rejects(lookup.run());
+    assert.equal(lookup.urls.length, 1);
+  }
+});
+
+test('nested carrier identities block even if the account list would be empty', async () => {
+  const conflict = {orderIdentifier:91, orderReference:'WS-OTHER'};
+  for (const denial of [
+    {errors:[{message:'Cannot resolve', details:conflict}]},
+    {errors:[{code:'OrderNotFound', orderReference:reference, details:[{privateCustomer:conflict}]}]},
+    {errors:[{code:'OrderNotFound'}], privateCustomer:{nested:[{accountOrderNumber:91}]}},
+  ]) {
+    const lookup = carrier([{orders:[]}], {denial});
+    await assert.rejects(lookup.run(), e => {
+      assert.match(e.message, /another order in (orderReference|accountOrderNumber)\./);
+      assert.doesNotMatch(e.message, /WS-OTHER|privateCustomer|91/);
+      return true;
+    });
+    assert.equal(lookup.urls.length, 1);
+  }
+});
+
+test('nested echoes of our own selector permit a complete account list check', async () => {
+  for (const echo of [reference, '"' + reference + '"', '%2522' + reference + '%2522']) {
+    const denial = {errors:[{message:'Cannot resolve', details:[{orderReference:echo, accountOrderNumber:0}]}]};
+    const lookup = carrier([{orders:[]}], {denial});
+    assert.equal(await lookup.run(), null);
+    assert.equal(lookup.urls.length, 2);
+  }
+});
+
+test('excessive depth, fields and byte length block a lookup refusal without a list fallback', async () => {
+  let deep = {orderReference:'WS-OTHER'};
+  for (let i = 0; i < 15; i++) deep = {details:deep};
+  for (const denial of [deep, {errors:Array(300).fill('')}, {details:'x'.repeat(16385)}]) {
+    const lookup = carrier([{orders:[]}], {denial});
+    await assert.rejects(lookup.run(), /reply could not be checked safely/);
     assert.equal(lookup.urls.length, 1);
   }
 });

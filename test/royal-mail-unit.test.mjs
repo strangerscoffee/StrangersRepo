@@ -9,7 +9,7 @@ const { outputFiles } = await build({
   bundle: true, write: false, format: 'esm', platform: 'browser',
 });
 const {
-  RoyalMailError, checkRoyalMailParcelService, createRoyalMailOrder, findRoyalMailOrder, fetchRoyalMailLabel, royalMailTrackingNumber, royalMailTrackingV2Number, fetchRoyalMailTracking,
+  RoyalMailError, checkRoyalMailParcelService, createRoyalMailOrder, findRoyalMailOrder, findRoyalMailOrderById, fetchRoyalMailLabel, royalMailTrackingNumber, royalMailTrackingV2Number, fetchRoyalMailTracking,
 } = await import('data:text/javascript;base64,' + Buffer.from(outputFiles[0].contents).toString('base64'));
 
 const key = 'fixture-private-click-and-drop-key';
@@ -112,6 +112,105 @@ test('recognises an inline OBA label without returning it in the order DTO', asy
   assert.deepEqual(await createRoyalMailOrder(key, input, async () => Response.json({
     successCount: 1, errorsCount: 0, createdOrders: [{ ...providerOrder, label: Buffer.from('%PDF-1.7\ntruncated').toString('base64') }],
   })), expected);
+});
+
+test('an accepted order keeps its ID and safe label guidance when document generation fails', async () => {
+  const labelErrors = [{code:'MissingEmailAddress',message:'The recipient email address is required for this service: private@example.test.'},
+    {code:'CustomerPrivateName',message:'Private customer and tracking details must stay private.'}];
+  const create = (order) => createRoyalMailOrder(key, input, async (url, init) => {
+    assert.equal(init.method, 'POST');
+    return Response.json({successCount:1, errorsCount:0, createdOrders:[{...providerOrder, ...order}]});
+  });
+  assert.deepEqual(await create({labelErrors}), {...expected,
+    labelProblem:'Royal Mail accepted this order but could not generate its label. Check the business order email address.'});
+  assert.deepEqual(await create({labelErrors:[labelErrors[1]]}), {...expected,
+    labelProblem:'Royal Mail accepted this order but could not generate its label. Check the existing order in Click & Drop.'});
+  assert.deepEqual(await create({labelErrors:[]}), expected);
+  assert.deepEqual(await create({labelErrors,label:Buffer.from(pdf).toString('base64')}), {...expected,providerState:'labelled'});
+  assert.deepEqual(await create({labelErrors,shippedOn:input.orderDate}), {...expected,providerState:'dispatched'});
+});
+
+test('an accepted create without a reference echo requires independent ID and reference confirmation', async () => {
+  async function create(candidate, lookup, expectedCalls) {
+    const calls = [];
+    try {
+      return await createRoyalMailOrder(key, input, async (url, init) => {
+        calls.push([init.method, url]);
+        if (calls.length === 1) return Response.json({successCount:1, errorsCount:0, createdOrders:[candidate]});
+        return lookup instanceof Response ? lookup : Response.json(lookup);
+      });
+    } finally {
+      assert.deepEqual(calls, expectedCalls);
+    }
+  }
+  const post = [['POST', origin + '/orders']];
+  const postAndRead = [...post, ['GET', origin + '/orders/892']];
+  const candidate = {orderIdentifier:892};
+  const labelErrors = [{code:'MissingEmailAddress', message:'The email address is required: private@example.test.'}];
+  const problem = 'Royal Mail accepted this order but could not generate its label. Check the business order email address.';
+  for (const orderReference of [undefined, null, '', '  ']) {
+    assert.deepEqual(await create({...candidate, orderReference, labelErrors}, [providerOrder], postAndRead), {...expected, labelProblem:problem});
+  }
+  const label = Buffer.from(pdf).toString('base64');
+  assert.deepEqual(await create({...candidate, label}, [providerOrder], postAndRead), {...expected, providerState:'labelled'});
+  assert.deepEqual(await create({...candidate, labelErrors}, [{...providerOrder, printedOn:input.orderDate}], postAndRead),
+    {...expected, providerState:'labelled'});
+  assert.deepEqual(await create({...candidate, label}, [{...providerOrder, shippedOn:input.orderDate}], postAndRead),
+    {...expected, providerState:'dispatched'});
+  for (const reply of [[], new Response(null, {status:404}), new Response(null, {status:503}), [candidate],
+    [{...providerOrder, orderReference:'OTHER'}], [{...providerOrder, orderIdentifier:893}], [providerOrder, providerOrder]]) {
+    await assert.rejects(create({...candidate, label}, reply, postAndRead), outcome('royal_mail_invalid_response', true));
+  }
+  for (const [createdOn, reply, candidateId] of [
+    [input.orderDate, [], 892], [input.orderDate, new Response(null, {status:503}), 892],
+    [input.orderDate, new Response(null, {status:429}), 892],
+    [undefined, [], undefined], ['bad date', [], undefined],
+    [input.orderDate, [{...providerOrder, orderReference:'OTHER'}], undefined],
+    [input.orderDate, [providerOrder, providerOrder], undefined],
+    [input.orderDate, new Response(null, {status:403}), undefined],
+  ]) {
+    await assert.rejects(create({...candidate, createdOn}, reply, postAndRead), error => {
+      assert.equal(error.code, 'royal_mail_invalid_response');
+      assert.equal(error.uncertain, true);
+      assert.equal(error.candidateId, candidateId);
+      return true;
+    });
+  }
+  await assert.rejects(create({...candidate, trackingNumber:'ZZ123456789GB'}, [providerOrder], postAndRead),
+    outcome('royal_mail_invalid_response', true));
+  for (const invalid of [{...candidate, orderReference:'OTHER'}, {...candidate, orderReference:' ' + input.reference},
+    {...candidate, orderReference:0}, {orderIdentifier:'892'}, {orderIdentifier:0}]) {
+    await assert.rejects(create(invalid, [], post), outcome('royal_mail_invalid_response', true));
+  }
+});
+
+test('a pinned booking verifies both identifiers with one numeric GET', async () => {
+  const lookup = async (result, status=200) => {
+    let count=0;
+    try {
+      return await findRoyalMailOrderById(key,892,input.reference,async (url,init)=>{
+        count++;
+        assert.equal(init.method,'GET'); assert.equal(init.body,undefined);
+        assert.equal(url,origin+'/orders/892');
+        return Response.json(result,{status});
+      });
+    } finally { assert.equal(count,1); }
+  };
+  assert.deepEqual(await lookup([{...providerOrder,createdOn:input.orderDate}]), expected);
+  assert.equal(await lookup([]),null);
+  assert.equal(await lookup({message:'Order not found'},404),null);
+  await assert.rejects(lookup({message:'Order not found'},400),outcome('royal_mail_rejected',false,400));
+  for (const entry of [{...providerOrder,orderIdentifier:893},{...providerOrder,orderReference:'other-order-identifier'}]) {
+    await assert.rejects(lookup([entry]),outcome('royal_mail_order_mismatch',false));
+  }
+  for (const value of [[{orderIdentifier:892}], [{orderIdentifier:892,orderReference:''}], [{orderReference:input.reference}],
+      [providerOrder,providerOrder], {}, [{...providerOrder,packages:{}}], [{...providerOrder,createdOn:'bad date'}]]) {
+    await assert.rejects(lookup(value),outcome('royal_mail_invalid_response',false));
+  }
+  for (const id of [0, -1, '892', 2.1, Number.MAX_SAFE_INTEGER + 1]) {
+    await assert.rejects(findRoyalMailOrderById(key,id,input.reference,async()=>assert.fail('invalid ID reached provider')),
+      outcome('royal_mail_invalid_shipment',false));
+  }
 });
 
 test('checks service, parcel, dates, totals and GB address before sending', async () => {
@@ -480,6 +579,16 @@ test('lookup refusals report recognised reasons without copying carrier text or 
     return true;
   });
   assert.equal(calls, 2, 'an unrecognised refusal is settled by the read-only order list');
+  const privateCode = 'InvalidPrivateCustomerName';
+  await assert.rejects(lookup({code:privateCode, errorCode:'PermissionDenied'}), error => {
+    assert.match(error.message, /Royal Mail's code: PermissionDenied\)/);
+    assert.doesNotMatch(error.message, /PrivateCustomer/);
+    return true;
+  });
+  await assert.rejects(lookup({errors:[{errorCode:privateCode}]}), error => {
+    assert.equal(error.message, 'Royal Mail rejected the order-reference lookup. The order list could not confirm this reference. Check the original order in Click & Drop.');
+    return true;
+  });
   for (const body of [
     [{message: 'Bad value at 24 Example Street NR2 3HX'}], {code: 'PrivateSecret', message: 'Customer Alice Smith'},
     {message: 'Permission denied', errors: [{message: 'Private Street'}]}, {title: key},

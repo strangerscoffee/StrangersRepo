@@ -404,21 +404,76 @@ test("staff and Admin open public-only Parcelforce tracking without offering an 
   await page.getByRole("button", { name: "Check shipment" }).waitFor();
 });
 
+test("Admin and staff can resolve a label generation problem on the existing booking", async t => {
+  const problem = "Royal Mail accepted this order but could not generate its label. Check the recipient postcode.";
+  const state = { ...eligible(), canCreate: false, trackingEnabled: true, shipment: {
+    state: "created", orderId: 10001, trackingNumber: "AB123456789GB", weightGrams: 1200, problem,
+  } };
+  let bookings = 0, checks = 0;
+  const details = route => {
+    if (route.request().url().endsWith("/refresh")) {
+      assert.equal(route.request().method(), "POST");
+      checks++;
+      return route.fulfill({ json: labelled(state) });
+    }
+    if (route.request().method() === "POST") bookings++;
+    return route.fulfill({ json: state });
+  };
+  const staff = await staffPage(t, phone, details);
+  const admin = await adminDispatchPage(t, desktop,
+    { stage: "attention", stageLabel: "Needs attention", action: "shipping", actionLabel: "Review label" }, details);
+  await admin.page.route("**/api/admin/wholesale/orders/" + order.id + "/shipping/refresh", details);
+  await admin.action.click();
+  for (const panel of [staff.dialog, admin.page.locator("#wRoyalMailForm")]) {
+    await panel.getByText("Label needs attention", { exact: true }).waitFor();
+    await panel.getByText(problem, { exact: true }).waitFor();
+    const recovery = panel.getByRole("region", { name: "Find the order in Click & Drop" });
+    await recovery.getByText(order.id, { exact: true }).waitFor();
+    await recovery.getByRole("button", { name: "Copy order reference" }).waitFor();
+    assert.equal(await panel.getByRole("button", { name: /Review label request|Request Royal Mail label|Download label PDF|Refresh tracking/ }).count(), 0);
+    await panel.getByRole("button", { name: "Check shipment" }).click();
+    await panel.getByRole("button", { name: "Download label PDF" }).waitFor();
+    assert.equal(await panel.getByText(problem, { exact: true }).count(), 0);
+  }
+  assert.equal(checks, 2);
+  assert.equal(bookings, 0);
+});
+
 for (const [failure, options] of [["before_postage", phone], ["unconfirmed", desktop]]) {
   test(`Admin and staff can copy the full reference after a ${failure} lookup failure`, async t => {
-    const state = { ...eligible(), shipment: { state: "failed", requestedAt: null, referenceLookupFailure: failure,
-      problem: "Royal Mail rejected the order-reference lookup. Check the reference in Click & Drop." } };
-    let posts = 0;
+    const problem = failure === "before_postage"
+      ? "Royal Mail rejected the order-reference lookup. Check the order reference in Click & Drop. (Royal Mail's reply named another order in channelOrderReference.)"
+      : "Royal Mail rejected the order-reference lookup. Check the reference in Click & Drop.";
+    const state = { ...eligible(), canCreate: failure === "before_postage",
+      shipment: { state: "failed", requestedAt: null, referenceLookupFailure: failure, problem } };
+    let posts = 0, refreshes = 0;
     const details = route => {
+      if (route.request().url().endsWith("/refresh")) {
+        assert.equal(route.request().method(), "POST");
+        assert.deepEqual(route.request().postDataJSON(), {});
+        refreshes++;
+        return route.fulfill({ json: { ...state, canCreate: false, shipment: { state: "created", orderId: 1234, reviewRequired: true } } });
+      }
       if (route.request().method() === "POST") posts++;
-      return route.fulfill({ json: state });
+      // An older Worker can report canCreate=true on a legacy attempt. Either shape must remain recovery-only.
+      const canCreate = state.canCreate || route.request().url().includes("/api/admin/");
+      return route.fulfill({ json: { ...state, canCreate } });
     };
     const staff = await staffPage(t, options, details);
     const admin = await adminDispatchPage(t, options,
       { stage: "attention", stageLabel: "Needs attention", action: "shipping", actionLabel: "Review booking" }, details);
+    await admin.page.route("**/api/admin/wholesale/orders/" + order.id + "/shipping/refresh", details);
+    let referenceChecks = 0;
+    await admin.page.route("**/shipping/reference-check", route => {
+      assert.equal(route.request().method(), "POST");
+      assert.deepEqual(route.request().postDataJSON(), { ifVersion: state.orderVersion, bookingVersion: state.bookingVersion });
+      referenceChecks++;
+      return route.fulfill({ json: { outcome: "missing", message: "Click & Drop found no booking for this reference." } });
+    });
     await admin.action.click();
     for (const [page, panel] of [[staff.page, staff.dialog], [admin.page, admin.page.locator("#wRoyalMailForm")]]) {
       await panel.getByText("Order lookup needs attention", { exact: true }).waitFor();
+      await panel.getByText(problem, { exact: true }).waitFor();
       const guidance = failure === "before_postage" ? "This attempt stopped before postage was requested." : "The postage outcome of this earlier attempt is unconfirmed.";
       await panel.getByText(guidance, { exact: true }).waitFor();
       const recovery = panel.getByRole("region", { name: "Find the order in Click & Drop" });
@@ -431,6 +486,24 @@ for (const [failure, options] of [["before_postage", phone], ["unconfirmed", des
       assert.equal(await page.evaluate(() => window.copiedOrderReference), order.id);
       assert.equal(await panel.getByRole("button", { name: "Check service for this parcel" }).count(), 0);
     }
+    assert.equal(await staff.dialog.getByRole("button", { name: "Check order reference" }).count(), 0);
+    await admin.page.getByRole("button", { name: "Check order reference" }).click();
+    await admin.page.getByText("Click & Drop found no booking for this reference.", { exact: true }).waitFor();
+    assert.equal(referenceChecks, 1);
+    for (const panel of [staff.dialog, admin.page.locator("#wRoyalMailForm")]) {
+      const check = panel.getByRole("button", { name: "Check label request", exact: true });
+      const review = panel.getByRole("button", { name: "Review label request", exact: true });
+      if (failure === "before_postage") {
+        await review.waitFor();
+        assert.equal(await check.count(), 0);
+      } else {
+        assert.equal(await review.count(), 0);
+        assert.equal(await panel.getByRole("button", { name: "Request Royal Mail label" }).count(), 0);
+        await check.click();
+        await panel.getByText("Label needs review", { exact: true }).waitFor();
+      }
+    }
+    assert.equal(refreshes, failure === "unconfirmed" ? 2 : 0);
     assert.equal(posts, 0);
   });
 }

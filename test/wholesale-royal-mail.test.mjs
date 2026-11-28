@@ -38,11 +38,13 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     ` },
     format: "esm", platform: "browser", target: "es2022", external: ["cloudflare:*"], write: false });
   const records = new Map();
+  let nextProviderId = 900;
   const missingLookupReplies = new Map();
   const requests = [];
   const emails = [];
   const lostReplies = new Set();
   const unlabelled = new Set();
+  const labelErrors = new Map();
   let interceptCreate;
   let interceptLabel;
   let interceptLookup;
@@ -95,11 +97,12 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
         const { items: [item] } = await request.json();
         assert.equal(item.packages[0].weightInGrams, 2140);
         const reference = item.orderReference;
-        const result = { orderIdentifier: 900 + records.size, orderReference: reference, trackingNumber: number };
+        const result = { orderIdentifier: nextProviderId++, orderReference: reference, trackingNumber: number };
         if (!unlabelled.has(reference)) {
           result.label = Buffer.from(pdf).toString("base64");
           result.printedOn = "2026-11-26T09:00:00Z";
         }
+        if (labelErrors.has(reference)) result.labelErrors = labelErrors.get(reference);
         await interceptCreate?.(reference, item);
         records.set(reference, result);
         return lostReplies.has(reference) ? new RuntimeResponse("carrier response lost", { status: 502 })
@@ -109,7 +112,12 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
         await interceptLabel?.();
         return new RuntimeResponse(pdf, { headers: { "content-type": "application/pdf" } });
       }
-      const reference = decodeURIComponent(url.pathname.split("/").at(-1)).replaceAll('"', "");
+      const selector = decodeURIComponent(url.pathname.split("/").at(-1));
+      if (/^\d+$/.test(selector)) {
+        const pinned = [...records.values()].find(row => row.orderIdentifier === Number(selector));
+        return RuntimeResponse.json(pinned ? [pinned] : []);
+      }
+      const reference = selector.replaceAll('"', "");
       await interceptLookup?.(reference);
       if (!records.has(reference) && missingLookupReplies.has(reference)) {
         return RuntimeResponse.json(missingLookupReplies.get(reference), { status: 400 });
@@ -148,6 +156,10 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
   const create = id => call(shipPath(id), "POST", packageDetails);
   const dispatch = (id, ifVersion, trackingUrl = "") => call(orderPath(id), "PATCH", { ifVersion, status: "Dispatched", customerId, trackingUrl });
   const refresh = id => call(shipPath(id) + "/refresh", "POST", {});
+  const historicalFailure = (id, marker = null) => db.prepare(`INSERT INTO wholesale_royal_mail_shipments
+    (order_id,state,operation,order_version,weight_grams,updated_at,requested_at,booking_connection,problem)
+    VALUES (?,'failed','old-operation',1,2140,1,?,'previous-connection','Royal Mail rejected the order-reference lookup. Check the reference in Click & Drop.')`)
+    .bind(id, marker).run();
   const releaseRefresh = id => db.prepare("UPDATE wholesale_royal_mail_shipments SET refresh_after=0 WHERE order_id=?").bind(id).run();
   const posts = () => requests.filter(row => row.host === "api.parcel.royalmail.com" && row.method === "POST").length;
   const settings = async () => (await call(settingsPath)).json();
@@ -232,9 +244,30 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     assert.equal(stopped.state, "failed");
     assert.equal(stopped.requestedAt, null);
     assert.equal(stopped.referenceLookupFailure, "before_postage");
+    const checkPath = shipPath(id) + "/reference-check";
+    const checkBody = { ifVersion: 1, bookingVersion: (await settings()).version };
+    const beforeChecks = await db.prepare("SELECT * FROM wholesale_royal_mail_shipments WHERE order_id=?").bind(id).first();
+    assert.equal((await call(checkPath)).status, 405);
+    assert.equal((await call(checkPath, "POST", { ...checkBody, ifVersion: 99 })).status, 409);
+    let checked = await (await call(checkPath, "POST", checkBody)).json();
+    assert.equal(checked.outcome, "inconclusive");
+    missingLookupReplies.set(id, [{ code: "OrderNotFound", orderReference: id }]);
+    checked = await (await call(checkPath, "POST", checkBody)).json();
+    assert.equal(checked.outcome, "missing");
+    assert.match(checked.message, /review the parcel/);
+    records.set(id, { orderIdentifier: 8341, orderReference: id });
+    checked = await (await call(checkPath, "POST", checkBody)).json();
+    assert.equal(checked.outcome, "found");
+    assert.match(checked.message, /existing booking/);
+    records.delete(id);
+    assert.deepEqual(await db.prepare("SELECT * FROM wholesale_royal_mail_shipments WHERE order_id=?").bind(id).first(), beforeChecks);
+    assert.equal(posts(), 0, "reference checks never buy postage");
     await db.prepare("UPDATE wholesale_royal_mail_shipments SET requested_at=NULL WHERE order_id=?").bind(id).run();
     assert.equal((await read(id)).referenceLookupFailure, "unconfirmed");
+    assert.match((await (await call(checkPath, "POST", checkBody)).json()).message, /earlier postage request is unconfirmed/);
     assert.equal(posts(), 0, "an ambiguous lookup never purchases postage");
+    // Restore the separate, proven pre-POST scenario for the concurrency test.
+    await db.prepare("UPDATE wholesale_royal_mail_shipments SET requested_at=0 WHERE order_id=?").bind(id).run();
     missingLookupReplies.set(id, [{ code: "OrderNotFound", message: "Order not found", orderReference: id }]);
     let enter, release;
     const entered = new Promise(resolve => { enter = resolve; });
@@ -275,11 +308,15 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     assert.equal(preview.headers.get("cache-control"), "no-store");
     assert.equal((await read(id)).labelDownloadedAt, null, "a preview must not unlock handover");
     assert.ok(requests.slice(beforePreview).every(request => request.method === "GET"));
+    const beforeDownload = requests.length;
     const download = await call(shipPath(id) + "/label");
     assert.equal(download.headers.get("content-disposition"), `attachment; filename="Royal-Mail-${id}.pdf"`);
     assert.equal(await download.text(), pdf);
     const firstDownload = (await read(id)).labelDownloadedAt;
     assert.ok(firstDownload > 0);
+    assert.deepEqual(requests.slice(beforeDownload).map(row => row.path), [
+      "/api/v1/orders/" + booked.orderId, "/api/v1/orders/" + booked.orderId + "/label",
+    ]);
     const before = requests.length;
     const replies = await Promise.all(Array.from({ length: 5 }, () => refresh(id)));
     assert.ok(replies.every(response => response.status === 200));
@@ -306,6 +343,58 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     assert.equal((await call(shipPath(id) + "/label")).status, 200);
     assert.equal((await settings()).enabled, false, "old labels, scans and dispatch work while paused");
     await setBookings(true);
+  });
+
+  await t.test("historical reference failures are read-only across a changed connection and concurrent attempts", async () => {
+    const id = orderRef(106);
+    await seed(id);
+    await historicalFailure(id);
+    const before = posts();
+    const seen = requests.length;
+    assert.equal((await (await call(shipPath(id))).json()).canCreate, false);
+    const results = await Promise.all([create(id), refresh(id), create(id), refresh(id)]);
+    assert.ok(results.every(reply => reply.status === 200));
+    assert.equal(requests.length - seen, 1, "a single read-only reconciliation lease");
+    assert.equal((await read(id)).referenceLookupFailure, "unconfirmed");
+    assert.equal((await dispatch(id, 1)).status, 409);
+    assert.equal((await call(shipPath(id) + "/label")).status, 409);
+    const marker = () => db.prepare("SELECT operation,requested_at,booking_connection FROM wholesale_royal_mail_shipments WHERE order_id=?").bind(id).first();
+    const original = { operation: "old-operation", requested_at: null, booking_connection: "previous-connection" };
+    assert.deepEqual(await marker(), original);
+
+    missingLookupReplies.set(id, [{ orderReference: orderRef(107), code: "OrderNotFound" }]);
+    await releaseRefresh(id);
+    assert.equal((await create(id)).status, 200);
+    assert.equal((await read(id)).referenceLookupFailure, "unconfirmed");
+    assert.deepEqual(await marker(), original);
+
+    records.set(id, { orderIdentifier: 8801, orderReference: id, trackingNumber: number, printedOn: "2026-11-28T12:00:00Z" });
+    await releaseRefresh(id);
+    assert.equal((await refresh(id)).status, 200);
+    const found = await read(id);
+    assert.equal(found.orderId, 8801);
+    assert.equal(found.reviewRequired, true);
+    assert.equal((await call(shipPath(id) + "/label")).status, 409);
+    assert.equal((await create(id)).status, 200);
+    assert.deepEqual(await marker(), original);
+    assert.equal(posts(), before);
+  });
+
+  await t.test("the database cannot reserve a replacement if an unknown marker appears during a permitted retry", async () => {
+    const id = orderRef(108);
+    await seed(id);
+    await historicalFailure(id, 0);
+    assert.equal((await (await call(shipPath(id))).json()).canCreate, true);
+    await db.prepare(`CREATE TRIGGER simulate_legacy_marker BEFORE INSERT ON wholesale_royal_mail_shipments
+      WHEN NEW.order_id='${id}' BEGIN UPDATE wholesale_royal_mail_shipments SET requested_at=NULL WHERE order_id=NEW.order_id; END`).run();
+    const before = requests.length;
+    try {
+      assert.equal((await create(id)).status, 202);
+      assert.equal((await read(id)).referenceLookupFailure, "unconfirmed");
+      assert.equal(requests.length, before);
+    } finally {
+      await db.prepare("DROP TRIGGER simulate_legacy_marker").run();
+    }
   });
 
   await t.test("Parcelforce references stay pinned through verification, PDF, handover and customer email", async () => {
@@ -377,6 +466,20 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     assert.equal((await other.json()).order.trackingUrl, override);
   });
 
+  await t.test("a pinned provider ID reassigned to another wholesale reference blocks PDF and handover", async () => {
+    const id = orderRef(103);
+    await seed(id);
+    assert.equal((await create(id)).status, 201);
+    const saved = records.get(id);
+    saved.orderReference = orderRef(104);
+    const before = requests.length;
+    assert.equal((await call(shipPath(id) + "/label")).status, 409);
+    assert.equal((await read(id)).reviewRequired, true);
+    assert.deepEqual(requests.slice(before).map(row => row.path), ["/api/v1/orders/" + saved.orderIdentifier]);
+    assert.equal((await dispatch(id, 1)).status, 409);
+    assert.equal((await call(shipPath(id) + "/verify", "POST", { ifVersion: 1, trackingNumber: number, confirmed: true })).status, 409);
+  });
+
   await t.test("amendment, cancellation during download and labelled-state guards", async () => {
     const id = orderRef(3);
     await seed(id);
@@ -397,13 +500,32 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     assert.equal((await dispatch(id, 4)).status, 409);
     const unfinished = orderRef(4);
     await seed(unfinished);
+    const purchasesBefore = posts();
+    labelErrors.set(unfinished, [{ code: "LabelFailed", message: "Invalid service code, private@example.test" }]);
     unlabelled.add(unfinished);
     assert.equal((await create(unfinished)).status, 201);
-    assert.equal((await read(unfinished)).state, "created");
+    const incomplete = await read(unfinished);
+    assert.equal(incomplete.state, "created");
+    assert.ok(incomplete.orderId);
+    assert.ok(incomplete.problem);
+    assert.doesNotMatch(incomplete.problem, /private@example/);
     const before = requests.length;
     assert.equal((await previewLabel(unfinished)).status, 409);
     assert.equal((await call(shipPath(unfinished) + "/label")).status, 409);
     assert.equal(requests.length, before, "a staff label download cannot generate unconfirmed postage");
+    assert.equal((await create(unfinished)).status, 200);
+    const pending = records.get(unfinished);
+    delete pending.labelErrors; // GET /orders normally has no label generation diagnostics.
+    await refresh(unfinished);
+    assert.equal((await read(unfinished)).problem, incomplete.problem);
+    pending.printedOn = "2026-11-28T12:00:00Z";
+    await releaseRefresh(unfinished);
+    await refresh(unfinished);
+    const ready = await read(unfinished);
+    assert.equal(ready.state, "labelled");
+    assert.equal(ready.problem, null);
+    assert.equal(await (await call(shipPath(unfinished) + "/label")).text(), pdf);
+    assert.equal(posts() - purchasesBefore, 1);
   });
 
   await t.test("lost replies reconcile without a second create and pre-send reservations can recover", async () => {
@@ -648,6 +770,7 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     assert.equal((await staff(paid, "GET", undefined, "/location")).status, 403);
     assert.equal((await staff(paid, "PUT", {}, "/location")).status, 403);
     assert.equal((await staff(paid, "POST", {}, "/service-check")).status, 403);
+    assert.equal((await staff(paid, "POST", {}, "/reference-check")).status, 403);
     const ambiguous = await (await call(shipPath(incomplete))).json();
     assert.equal(ambiguous.recipient, null);
     assert.deepEqual(ambiguous.recipientDraft, { name: business, line1: "18 Example Lane", line2: "", city: "", county: "Norfolk", postcode: "NR1 5AB" });
@@ -676,6 +799,16 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     assert.doesNotMatch(JSON.stringify(overdue), /PRIVATE-6501|1234/);
     assert.equal((await (await staff(paid, "POST", payload)).json()).code, "royal_mail_account_overdue");
     assert.equal(requests.length, initialRequests, "refused operations make no carrier requests");
+    const historic = orderRef(109);
+    await seed(historic);
+    await historicalFailure(historic);
+    const originalPosts = posts();
+    assert.equal((await (await staff(historic)).json()).canCreate, false);
+    assert.equal((await staff(historic, "POST", {})).status, 200);
+    await releaseRefresh(historic);
+    assert.equal((await staff(historic, "POST", {}, "/refresh")).status, 200);
+    assert.equal((await read(historic)).referenceLookupFailure, "unconfirmed");
+    assert.equal(posts(), originalPosts);
     await db.prepare("UPDATE wholesale_invoices SET paid=1 WHERE seq=6501").run();
     assert.equal((await (await staff(billed)).json()).canCreate, true);
 
