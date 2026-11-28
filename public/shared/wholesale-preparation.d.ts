@@ -2,6 +2,7 @@
 export {};
 declare global {
   var SCWholesalePreparation: Readonly<{
+    royalMailRecoverySchedule(recovery: { status: string; nextCheckAt?: number | null; lastCheckedAt?: number | null } | null, formatDate: (time: number) => string): string;
     royalMailTrackingNumber(value: unknown): string | null;
     royalMailTrackingV2Number(value: unknown): string | null;
     royalMailTrackingUrl(value: unknown): string | null;

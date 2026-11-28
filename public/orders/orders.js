@@ -362,8 +362,7 @@
  }
  function recoveryMessage(shipment){
   if(shipment?.recovery?.status==='needs_admin')return 'Automatic checks have stopped. Ask Admin to check this order in Click & Drop.';
-  if(shipment?.recovery?.status==='checking')return shipment.recovery.nextCheckAt?'Next automatic check due '+date(shipment.recovery.nextCheckAt)+' (UK time)':'';
-  return '';
+  return SCWholesalePreparation.royalMailRecoverySchedule(shipment?.recovery,at=>date(at)+' (UK time)');
  }
  function labelDestination(shipment){
   const destination=shipment?.destination;

@@ -230,6 +230,21 @@ const bookingFields: Record<string, string> = {
   orderdate: "Check the order date.", orderreference: "Check the order reference in Click & Drop.",
 };
 
+const billingFields: Record<string, string> = {
+  address: "Check the billing address in Click & Drop.",
+  fullname: "Check the billing name in Click & Drop.", companyname: "Check the billing company name in Click & Drop.",
+  addressline1: "Check billing address line 1 in Click & Drop.", addressline2: "Check billing address line 2 in Click & Drop.",
+  addressline3: "Check billing address line 3 in Click & Drop.", city: "Check the billing town or city in Click & Drop.",
+  postcode: "Check the billing postcode in Click & Drop.", county: "Check the billing county in Click & Drop.",
+  countrycode: "Check the billing country in Click & Drop.",
+  phonenumber: "Check the billing phone number in Click & Drop.", emailaddress: "Check the billing email address in Click & Drop.",
+};
+
+const senderFields: Record<string, string> = {
+  tradingname: "Check the sender trading name in Click & Drop.",
+  phonenumber: "Check the sender phone number in Click & Drop.", emailaddress: "Check the sender email address in Click & Drop.",
+};
+
 // Carrier error text can contain partial addresses, credentials or other customers' details, even when the
 // documented field value is omitted. Quote only recognised diagnostic wording and safe field paths.
 function diagnosticText(error: Record<string, unknown>) {
@@ -237,14 +252,25 @@ function diagnosticText(error: Record<string, unknown>) {
     .filter((value): value is string => typeof value === "string" && !!value.trim());
 }
 
-function diagnosticFields(error: Record<string, unknown>) {
-  const fields = Array.isArray(error.fields) ? error.fields.map(field => record(field)?.fieldName) : [];
+function diagnosticFields(error: Record<string, unknown>, limit?: number) {
+  const raw = Array.isArray(error.fields) ? error.fields : [];
+  const fields = (limit === undefined ? raw : raw.slice(0, limit)).map(field => record(field)?.fieldName);
   return [...fields, error.field, error.fieldName, error.propertyName].filter((field): field is string => typeof field === "string" && !!field.trim());
 }
 
+function bookingFieldGuidance(path: string): string | undefined {
+  if (path.length > 80) return undefined;
+  const parts = /^(?:items\[0\]\.)?(?:(recipient(?:\.address)?|billing(?:\.address)?|sender|postageDetails|packages\[0\]|label)\.)?([a-z0-9]+)$/i.exec(path);
+  if (!parts) return undefined;
+  const [, scope, name] = parts;
+  const section = scope?.toLowerCase().split(".")[0];
+  const fields = section === "billing" ? billingFields : section === "sender" ? senderFields : bookingFields;
+  const field = name.toLowerCase();
+  return Object.hasOwn(fields, field) ? fields[field] : undefined;
+}
+
 function safeFieldPath(path: string) {
-  if (path.length > 80 || !/^(?:items\[0\]\.)?(?:(?:recipient(?:\.address)?|postageDetails|packages\[0\]|label)\.)?[a-z0-9]+$/i.test(path)) return false;
-  return Object.hasOwn(bookingFields, path.slice(path.lastIndexOf(".") + 1).toLowerCase());
+  return bookingFieldGuidance(path) !== undefined;
 }
 
 function safeCode(value: unknown): string {
@@ -357,12 +383,22 @@ function containsSubmittedOrder(echo: unknown, sent: unknown): boolean {
   return !!actual && Object.entries(expected).every(([field, value]) => value === undefined || containsSubmittedOrder(actual[field], value));
 }
 
+function emptyReceiptCollection(value: unknown): boolean {
+  return value == null || Array.isArray(value) && value.length === 0;
+}
+
+const receiptCorrelationFields = new Set(["traceId", "requestId", "correlationId"]);
+
+function isReceiptCorrelationId(value: unknown): boolean {
+  return value == null || typeof value === "string" && /^[A-Za-z0-9_.:-]{1,128}$/.test(value);
+}
+
 /** Only one explicitly failed order can explain the outcome of a one-order purchase. */
 function exactRejection(result: Record<string, unknown>, reference: string | undefined, submitted: unknown) {
   const bothCounts = result.successCount === 0 && result.errorsCount === 1;
   if (!reference || (result.successCount !== undefined && result.successCount !== 0) ||
       (result.errorsCount !== undefined && result.errorsCount !== 1) || (!bothCounts && !Array.isArray(result.createdOrders)) ||
-      (result.createdOrders !== undefined && !(Array.isArray(result.createdOrders) && !result.createdOrders.length)) ||
+      !emptyReceiptCollection(result.createdOrders) ||
       !Array.isArray(result.failedOrders) || result.failedOrders.length !== 1) return null;
   const failure = record(result.failedOrders[0]);
   const echo = record(failure?.order);
@@ -375,9 +411,10 @@ function exactRejection(result: Record<string, unknown>, reference: string | und
   }
   if (!failure || !echo || echo.orderReference !== reference || !Array.isArray(failure.errors) || hasBookingResultInEcho(echo)) return null;
   // Validate envelope metadata separately from its expected echoed order and documented counts.
-  const { successCount, errorsCount, createdOrders, failedOrders, ...metadata } = result;
+  const { successCount, errorsCount, createdOrders, failedOrders, traceId, requestId, correlationId, errors: envelopeErrors, ...metadata } = result;
   const { order, errors, ...failureMetadata } = failure;
-  if (Object.hasOwn(metadata, "errors") || conflictingPurchaseEvidence(metadata, reference) ||
+  if (![traceId, requestId, correlationId].every(isReceiptCorrelationId) || !emptyReceiptCollection(envelopeErrors) ||
+      conflictingPurchaseEvidence(metadata, reference) ||
       conflictingPurchaseEvidence(failureMetadata, reference)) return null;
   const entries = refusalEntries(errors, reference);
   if (!bothCounts && (!submitted || !containsSubmittedOrder(echo, submitted) ||
@@ -391,11 +428,11 @@ function messagesIndicateSuccess(error: Record<string, unknown>) {
     /\b(?:accepted|created|booked|processed) (?:the |this |your )?(?:order|shipment|booking)\b/i.test(text));
 }
 
-// This helper can return only the fixed guidance from bookingFields, never provider-supplied text.
+// Only fixed guidance can be shown, even when the carrier echoes field values.
 function addBookingGuidance(guidance: Set<string>, fields: string[], message: string) {
   for (const path of fields) {
-    const name = path.match(/[a-zA-Z][a-zA-Z0-9]*$/)?.[0].toLowerCase();
-    if (name && Object.hasOwn(bookingFields,name)) guidance.add(bookingFields[name]);
+    const instruction = bookingFieldGuidance(path);
+    if (instruction) guidance.add(instruction);
   }
   // Some responses contain only a message. Report the area the carrier named,
   // without exposing free text or inferring a specific corrected value.
@@ -403,9 +440,10 @@ function addBookingGuidance(guidance: Set<string>, fields: string[], message: st
     if (/shipping account|shippingAccountName/i.test(message)) guidance.add(bookingFields.shippingaccountname);
     if (/service register|serviceRegisterCode/i.test(message)) guidance.add(bookingFields.serviceregistercode);
     else if (/service code|serviceCode|service (?:is )?(?:unavailable|not available|not valid)/i.test(message)) guidance.add(bookingFields.servicecode);
-    if (/phone number|phoneNumber|telephone number/i.test(message)) guidance.add(bookingFields.phonenumber);
-    if (/e-?mail address|emailAddress/i.test(message)) guidance.add(bookingFields.emailaddress);
-    if (/post\s?code/i.test(message)) guidance.add(bookingFields.postcode);
+    const addressFields = /\bbilling\b/i.test(message) ? billingFields : /\bsender\b/i.test(message) ? senderFields : bookingFields;
+    if (/phone number|phoneNumber|telephone number/i.test(message)) guidance.add(addressFields.phonenumber);
+    if (/e-?mail address|emailAddress/i.test(message)) guidance.add(addressFields.emailaddress);
+    if (addressFields.postcode && /post\s?code/i.test(message)) guidance.add(addressFields.postcode);
     if (/parcel weight|package weight|weightInGrams/i.test(message)) guidance.add(bookingFields.weightingrams);
     if (/package format|packageFormatIdentifier/i.test(message)) guidance.add(bookingFields.packageformatidentifier);
     if (/OBA (?:customers|accounts) only|Online Business Account/i.test(message)) guidance.add(bookingFields.includelabelinresponse);
@@ -819,29 +857,88 @@ function publicOrder(value: unknown, reference: string, posting = false): RoyalM
   };
 }
 
+// This is saved on the shipment. Only describe the carrier's structure, known fields
+// and codes. Never copy error text, unknown property names, IDs or echoed order values.
+function inconclusiveCreateReceipt(value: unknown, reference: string): RoyalMailError {
+  const result = record(value);
+  function quantity(raw: unknown, list = false): string {
+    if (raw === undefined) return "omitted";
+    if (raw === null) return "null";
+    const count = list ? (Array.isArray(raw) ? raw.length : undefined) : raw;
+    if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0) return "invalid";
+    return count > 99 ? "over 99" : String(count);
+  }
+  function errorDetails(entries: unknown[]): string[] {
+    const codes = new Set<string>();
+    const fields = new Set<string>();
+    for (const raw of entries.slice(0, 12)) {
+      const error = record(raw);
+      if (!error || [error.orderReference, error.channelOrderReference].some(ref => ref != null && ref !== reference)) continue;
+      const code = safeCode(error.errorCode ?? error.code);
+      if (code) codes.add(code);
+      for (const path of diagnosticFields(error, 12).filter(safeFieldPath)) fields.add(path);
+    }
+    const details: string[] = [];
+    if (codes.size) details.push("Carrier code " + [...codes].slice(0, 3).join(", ") + ".");
+    if (fields.size) details.push("Reported field " + [...fields].slice(0, 3).join(", ") + ".");
+    return details;
+  }
+  if (!result) {
+    const shape = Array.isArray(value) ? "a list of " + quantity(value, true) + (value.length === 1 ? " entry" : " entries")
+      : value === null ? "null" : "a single value";
+    const summary = "Click & Drop returned " + shape + " in place of its booking summary.";
+    return unconfirmedReceipt([summary, ...errorDetails(Array.isArray(value) ? value : [])].join(" "), 200);
+  }
+  const summary = "Click & Drop returned an inconclusive receipt (success count " + quantity(result.successCount) +
+    ", error count " + quantity(result.errorsCount) + ", created entries " + quantity(result.createdOrders, true) +
+    ", failed entries " + quantity(result.failedOrders, true) + ").";
+  const details: string[] = [];
+  const failure = Array.isArray(result.failedOrders) && result.failedOrders.length === 1 ? record(result.failedOrders[0]) : null;
+  if (failure) {
+    const ref = record(failure.order)?.orderReference;
+    details.push(ref === reference ? "The failed entry matches this reference." : ref == null || ref === ""
+      ? "The failed entry has no order reference." : "The failed entry has a different or unreadable reference.");
+    if (ref === reference && Array.isArray(failure.errors)) details.push(...errorDetails(failure.errors));
+  }
+  if (Object.hasOwn(result, "errors") && result.errors != null && !(Array.isArray(result.errors) && !result.errors.length)) {
+    details.push("The receipt includes a separate error section.");
+  }
+  details.push(...errorDetails([result, ...(Array.isArray(result.errors) ? result.errors.slice(0, 11) : [])]));
+  if (Object.keys(result).some(key => !["successCount", "errorsCount", "createdOrders", "failedOrders", "errors"].includes(key))) {
+    details.push("The receipt includes additional fields.");
+  }
+  return unconfirmedReceipt([summary, ...new Set(details)].join(" "), 200);
+}
+
 /** Create once. An uncertain result must be reconciled by reference by the caller. */
 export async function createRoyalMailOrder(key: string, input: RoyalMailOrderInput, fetcher = fetch): Promise<RoyalMailOrder> {
   const body = orderBody(input);
-  const result = record(await clickDrop(key, "/orders", { body, reference: input.reference, serviceCode: input.serviceCode }, fetcher));
+  const receipt = await clickDrop(key, "/orders", { body, reference: input.reference, serviceCode: input.serviceCode }, fetcher);
+  const result = record(receipt);
   const failures = result && exactRejection(result, input.reference, body.items[0]);
   if (failures) {
     const refusal = bookingRejection([result, ...failures], 400, input.serviceCode, true);
     if (refusal.code === "royal_mail_invalid_response") throw unconfirmedReceipt("Click & Drop reported an order error without confirming the postage outcome.");
     throw refusal;
   }
-  const completeCounts = result?.successCount === 1 && result.errorsCount === 0;
-  // Both counters are optional in CreateOrdersResponse. If one is omitted, confirm
-  // a single documented receipt by numeric ID before trusting its label or tracking.
-  if (!result || (result.successCount !== undefined && result.successCount !== 1) ||
-      (result.errorsCount !== undefined && result.errorsCount !== 0) ||
-      (!completeCounts && Object.keys(result).some(field => !["successCount", "errorsCount", "createdOrders", "failedOrders"].includes(field))) ||
-      (result.failedOrders !== undefined && !(Array.isArray(result.failedOrders) && !result.failedOrders.length)) || !Array.isArray(result.createdOrders) || result.createdOrders.length !== 1) {
-    throw unconfirmedReceipt("Click & Drop's receipt did not identify one successful booking or one confirmed refusal.");
+  const { successCount, errorsCount, createdOrders, failedOrders, errors, ...metadata } = result ?? {};
+  const completeCounts = successCount === 1 && errorsCount === 0;
+  const metadataEntries = Object.entries(metadata);
+  // Optional counts or extensions require confirming the booking by its numeric ID.
+  // Any competing outcome evidence makes the receipt uncertain without a candidate.
+  if ((successCount != null && successCount !== 1) || (errorsCount != null && errorsCount !== 0) ||
+      !emptyReceiptCollection(failedOrders) || !emptyReceiptCollection(errors) ||
+      metadataEntries.some(([field, value]) => receiptCorrelationFields.has(field)
+        ? !isReceiptCorrelationId(value) : !(completeCounts && value === null)) ||
+      !Array.isArray(createdOrders) || createdOrders.length !== 1) {
+    throw inconclusiveCreateReceipt(receipt, input.reference);
   }
-  const created = record(result.createdOrders[0]);
+  const created = record(createdOrders[0]);
   if (!created) throw unconfirmedReceipt("Click & Drop's receipt did not include readable booking details.");
   const reference = created.orderReference;
-  if (completeCounts && reference === input.reference) return publicOrder(created, input.reference, true);
+  if (completeCounts && failedOrders !== null && errors === undefined && !metadataEntries.length && reference === input.reference) {
+    return publicOrder(created, input.reference, true);
+  }
   if (reference !== input.reference && reference != null && (typeof reference !== "string" || reference.trim() !== "")) {
     throw unconfirmedReceipt("Click & Drop's receipt named a different order reference.");
   }
