@@ -388,7 +388,43 @@ function namesMissingOrder(message: string, reference: string): boolean {
 }
 
 type LookupFinding = "missing" | "unscoped-miss" | "invalid-selector";
-class RoyalMailLookupSelectorError extends RoyalMailError {}
+class RoyalMailLookupSelectorError extends RoyalMailError {
+  said = "";
+}
+
+// Signs in a refusal that some order, ours or another, is being described: those keep booking blocked
+// without a list scan, because a scan can't settle which order Royal Mail meant.
+function pointsAtAnOrder(value: unknown, reference: string): boolean {
+  const entry = record(value);
+  if (!entry) return false;
+  if ("orders" in entry || "createdOrders" in entry) return true;
+  for (const field of ["orderReference", "channelOrderReference"]) {
+    const given = entry[field];
+    if (given !== undefined && given !== null && given !== "" && given !== reference) return true;
+  }
+  for (const field of ["accountOrderNumber", "orderIdentifier"]) {
+    const given = entry[field];
+    if (given !== undefined && given !== null && given !== 0) return true;
+  }
+  return false;
+}
+
+// Royal Mail's own error codes, when they look like codes (CamelCase words naming a kind of fault).
+// Free text is never shown: it can carry names and addresses.
+function lookupCodes(values: unknown[]): string {
+  const codes = new Set<string>();
+  for (const value of values) {
+    const entry = record(value);
+    for (const field of lookupCodeFields) {
+      const code = entry?.[field];
+      if (typeof code === "string" && /^[A-Z][A-Za-z]{2,39}$/.test(code) &&
+          /(?:Invalid|NotFound|Missing|Required|Unauthori[sz]ed|Forbidden|Format|Error|Denied|Limit|Exceeded|Bad|Malformed|Unsupported)/.test(code)) {
+        codes.add(code);
+      }
+    }
+  }
+  return [...codes].slice(0, 3).join(", ");
+}
 
 function lookupFinding(value: unknown, reference: string): LookupFinding | null {
   const entry = record(value);
@@ -448,15 +484,19 @@ async function lookupRefusal(response: Response, reference: string): Promise<typ
   if (entries.length > 0 && entries.length <= 12) {
     const findings = entries.map(entry => lookupFinding(entry, reference));
     if (findings.every(finding => finding === "missing")) return MISSING_ORDER;
-    // Generic NotFound describes no particular resource. Only a separate, complete list
-    // read can resolve it. Conflicting diagnostics never start that fallback.
-    if (findings.every(finding => finding === "invalid-selector") || findings.every(finding => finding === "unscoped-miss")) {
-      throw new RoyalMailLookupSelectorError("royal_mail_rejected",
-        "Royal Mail rejected the order-reference lookup. Click & Drop could not resolve the reference.", status);
-    }
   }
-  // The carrier can include names, addresses and credentials even in a read-only lookup error.
-  throw new RoyalMailError("royal_mail_rejected", "Royal Mail rejected the order-reference lookup. Check the order reference in Click & Drop.", status);
+  const all = Array.isArray(value) ? value : [value, ...(Array.isArray(wrapper?.errors) ? wrapper.errors : [])];
+  if (all.some(entry => pointsAtAnOrder(entry, reference))) {
+    // The carrier can include names, addresses and credentials even in a read-only lookup error.
+    throw new RoyalMailError("royal_mail_rejected", "Royal Mail rejected the order-reference lookup. Check the order reference in Click & Drop.", status);
+  }
+  // Any other refusal says nothing either way about whether postage exists (28 Nov 2026: Click & Drop
+  // refused the lookup for a first booking in a way none of the patterns above recognised). Only a
+  // separate, complete, read-only scan of the order list can settle it; if that can't, booking stays blocked.
+  const selector = new RoyalMailLookupSelectorError("royal_mail_rejected",
+    "Royal Mail rejected the order-reference lookup. Click & Drop could not resolve the reference.", status);
+  selector.said = lookupCodes(all);
+  throw selector;
 }
 
 function responseError(status: number, posting: boolean, label = false): RoyalMailError {
@@ -595,7 +635,9 @@ export async function findRoyalMailOrder(key: string, reference: string, fetcher
       if (!(listError instanceof RoyalMailError)) throw listError;
       const detail = listError.code === "royal_mail_rate_limited" ? "Royal Mail is rate limiting order checks. Try again later."
         : "The order list could not confirm this reference. Check the original order in Click & Drop.";
-      throw new RoyalMailError(listError.code, "Royal Mail rejected the order-reference lookup. " + detail, listError.status);
+      const said = error.said ? " (Royal Mail's code: " + error.said + ")" : "";
+      const code = listError.code === "royal_mail_invalid_response" ? "royal_mail_rejected" : listError.code;
+      throw new RoyalMailError(code, "Royal Mail rejected the order-reference lookup. " + detail + said, listError.status ?? error.status);
     }
   }
   if (result === MISSING_ORDER || (Array.isArray(result) && result.length === 0)) return null;

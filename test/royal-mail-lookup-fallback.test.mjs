@@ -102,14 +102,31 @@ test('incomplete, ambiguous and malformed listings cannot confirm either absence
   }
 });
 
-test('unrelated carrier refusals never scan the account', async () => {
+test('a refusal pointing at another order never scans the account', async () => {
   for (const denial of [
-    [{code: 'AccountUnavailable', message: 'account unavailable'}],
     [{...invalidSelector[0], channelOrderReference: 'unrelated-private-reference'}],
-    [invalidSelector[0], {code: 'PermissionDenied', message: 'cannot access account'}],
+    [{code: 'NotFound', accountOrderNumber: 44}],
   ]) {
     const lookup = carrier([], {denial});
     await assert.rejects(lookup.run());
     assert.equal(lookup.urls.length, 1);
+  }
+});
+
+test('any other refusal is settled by the complete order list, and stays blocked when the list is unreadable', async () => {
+  for (const denial of [
+    [{code: 'AccountUnavailable', message: 'account unavailable'}],
+    [invalidSelector[0], {code: 'PermissionDenied', message: 'cannot access account'}],
+    {message: 'Something unexpected'}, [],
+  ]) {
+    assert.equal(await carrier([{orders: [anotherOrder]}], {denial}).run(), null);
+    assert.equal((await carrier([{orders: [order]}], {denial}).run()).orderId, order.orderIdentifier);
+    const unreadable = carrier([new Response(null, {status: 503})], {denial});
+    await assert.rejects(unreadable.run(), e => {
+      assert.match(e.message, /^Royal Mail rejected the order-reference lookup\. The order list could not confirm/);
+      assert.doesNotMatch(e.message, /account unavailable|cannot access|Something unexpected/);
+      return true;
+    });
+    assert.equal(unreadable.urls.length, 2);
   }
 });
