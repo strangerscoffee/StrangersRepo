@@ -26,15 +26,9 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
   const bundle = await build({ absWorkingDir: root, bundle: true,
     stdin: { resolveDir: root, contents: `
       import app from "./src/index.ts";
-      import { readToken, signToken } from "./src/auth.ts";
       import { recoverRoyalMailBookings } from "./src/royalMailRecovery.ts";
       export { LiveHub } from "./src/index.ts";
       export default { ...app, async fetch(request, env, ctx) {
-        if (new URL(request.url).hostname === "expired-proof.fixture") {
-          const purpose = "wholesale.royal-mail.manual-first-booking.";
-          const original = await readToken(env, purpose, await request.text());
-          return new Response(await signToken(env, purpose, { ...original, expiresAt: Date.now() - 1 }));
-        }
         if (new URL(request.url).hostname === "recovery.fixture") {
           await recoverRoyalMailBookings(env);
           return new Response("done");
@@ -51,11 +45,9 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
   const lostReplies = new Set();
   const unlabelled = new Set();
   const labelErrors = new Map();
-  let listReply;
-  const anonymousDetails = new Map();
+  let interceptNumeric;
   let interceptCreate;
   let interceptLabel;
-  let interceptLookup;
   const worker = new Miniflare({ host: "127.0.0.1", port: 0, telemetry: { enabled: false }, cf: false, workers: [{
     config: {
       name: "wholesale-royal-mail",
@@ -116,19 +108,17 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
         return lostReplies.has(reference) ? new RuntimeResponse("carrier response lost", { status: 502 })
           : RuntimeResponse.json({ createdOrders: [result], successCount: 1, errorsCount: 0 });
       }
-      if (url.pathname === "/api/v1/orders" && listReply) return listReply();
       if (url.pathname.endsWith("/label")) {
         await interceptLabel?.();
         return new RuntimeResponse(pdf, { headers: { "content-type": "application/pdf" } });
       }
       const selector = decodeURIComponent(url.pathname.split("/").at(-1));
-      if (anonymousDetails.has(selector)) return RuntimeResponse.json([anonymousDetails.get(selector)]);
       if (/^\d+$/.test(selector)) {
+        await interceptNumeric?.(selector);
         const pinned = [...records.values()].find(row => row.orderIdentifier === Number(selector));
         return RuntimeResponse.json(pinned ? [pinned] : []);
       }
       const reference = selector.replaceAll('"', "");
-      await interceptLookup?.(reference);
       if (!records.has(reference) && missingLookupReplies.has(reference)) {
         return RuntimeResponse.json(missingLookupReplies.get(reference), { status: 400 });
       }
@@ -211,74 +201,31 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     assert.equal((await (await call(shipPath(id))).json()).canCreate, true);
   });
 
-  await t.test("pausing during preflight prevents the carrier POST even if bookings are turned on again", async () => {
-    for (const reenable of [false, true]) {
-      const id = orderRef(reenable ? 10 : 9);
-      await seed(id);
-      const before = posts();
-      let enter, release;
-      const entered = new Promise(resolve => { enter = resolve; });
-      const held = new Promise(resolve => { release = resolve; });
-      interceptLookup = async () => { enter(); await held; };
-      const attempt = create(id);
-      try {
-        const early = await Promise.race([entered.then(() => null), attempt]);
-        if (early) assert.fail(await early.text());
-        await setBookings(false);
-        if (reenable) await setBookings(true);
-      } finally {
-        release();
-        interceptLookup = undefined;
-      }
-      const result = await attempt;
-      assert.equal(result.status, 409);
-      assert.equal((await result.json()).code, reenable ? "royal_mail_booking_policy_changed" : "royal_mail_booking_paused");
-      assert.equal(posts(), before);
-      assert.equal((await read(id)).state, "failed");
-      assert.equal((await read(id)).requestedAt, null);
-      if (!reenable) {
-        assert.equal((await dispatch(id, 1, "https://courier.example/123")).status, 200);
-        await setBookings(true);
-      }
-    }
+  await t.test("an earlier parcel review cannot purchase after pausing and re-enabling bookings", async () => {
+    const id = orderRef(9);
+    await seed(id);
+    const review = await (await call(shipPath(id))).json();
+    await setBookings(false);
+    await setBookings(true);
+    const before = requests.length;
+    const stale = await call(shipPath(id), "POST", { ...packageDetails,
+      bookingVersion: review.bookingVersion, bookingService: review.bookingService });
+    assert.equal(stale.status, 409);
+    assert.equal((await stale.json()).code, "royal_mail_booking_policy_changed");
+    assert.equal(requests.length, before);
   });
 
-  await t.test("retrying a blocked lookup purchases one label across concurrent requests, reprints and handover", async () => {
+  await t.test("a recorded pre-postage reference failure can purchase once across concurrent requests, reprints and handover", async () => {
     const id = orderRef(1);
     await seed(id, { locationSnapshot: { address: "16 Example Lane\nNorwich", postcode: "NR1 5AB" } });
     assert.equal((await call(shipPath(id), "GET", undefined, "https://preview.staffstrangerscoffee.com")).status, 404);
-    missingLookupReplies.set(id, [{ message: "Shipping account not found" }]);
-    const blocked = await create(id);
-    assert.equal(blocked.status, 200);
-    const stopped = (await blocked.json()).shipment;
-    assert.equal(stopped.state, "failed");
-    assert.equal(stopped.requestedAt, null);
-    assert.equal(stopped.referenceLookupFailure, "before_postage");
-    const checkPath = shipPath(id) + "/reference-check";
-    const checkBody = { ifVersion: 1, bookingVersion: (await settings()).version };
-    const beforeChecks = await db.prepare("SELECT * FROM wholesale_royal_mail_shipments WHERE order_id=?").bind(id).first();
-    assert.equal((await call(checkPath)).status, 405);
-    assert.equal((await call(checkPath, "POST", { ...checkBody, ifVersion: 99 })).status, 409);
-    let checked = await (await call(checkPath, "POST", checkBody)).json();
-    assert.equal(checked.outcome, "inconclusive");
-    missingLookupReplies.set(id, [{ code: "OrderNotFound", orderReference: id }]);
-    checked = await (await call(checkPath, "POST", checkBody)).json();
-    assert.equal(checked.outcome, "missing");
-    assert.match(checked.message, /review the parcel/);
-    records.set(id, { orderIdentifier: 8341, orderReference: id });
-    checked = await (await call(checkPath, "POST", checkBody)).json();
-    assert.equal(checked.outcome, "found");
-    assert.match(checked.message, /existing booking/);
-    records.delete(id);
-    assert.deepEqual(await db.prepare("SELECT * FROM wholesale_royal_mail_shipments WHERE order_id=?").bind(id).first(), beforeChecks);
-    assert.equal(posts(), 0, "reference checks never buy postage");
-    await db.prepare("UPDATE wholesale_royal_mail_shipments SET requested_at=NULL WHERE order_id=?").bind(id).run();
-    assert.equal((await read(id)).referenceLookupFailure, "unconfirmed");
-    assert.match((await (await call(checkPath, "POST", checkBody)).json()).message, /earlier postage request is unconfirmed/);
-    assert.equal(posts(), 0, "an ambiguous lookup never purchases postage");
-    // Restore the separate, proven pre-POST scenario for the concurrency test.
-    await db.prepare("UPDATE wholesale_royal_mail_shipments SET requested_at=0 WHERE order_id=?").bind(id).run();
-    missingLookupReplies.set(id, [{ code: "OrderNotFound", message: "Order not found", orderReference: id }]);
+    await historicalFailure(id, 0);
+    const beforeBooking = requests.length;
+    const diagnostic = await call(shipPath(id) + "/reference-check", "POST", {
+      ifVersion: 1, bookingVersion: (await settings()).version,
+    });
+    assert.equal((await diagnostic.json()).outcome, "not_sent");
+    assert.equal(requests.length, beforeBooking);
     let enter, release;
     const entered = new Promise(resolve => { enter = resolve; });
     const held = new Promise(resolve => { release = resolve; });
@@ -291,6 +238,7 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
       const disputed = await dispatch(id, 1);
       assert.equal(disputed.status, 409);
       assert.equal((await disputed.json()).code, "royal_mail_handover_review");
+      assert.deepEqual(requests.slice(beforeBooking).map(r => [r.method, r.path]), [["POST", "/api/v1/orders"]]);
       assert.equal(posts(), 1);
       assert.equal(await db.prepare("SELECT 1 FROM wholesale_email_outbox WHERE order_id=?").bind(id).first(), null);
       await setBookings(false);
@@ -362,9 +310,18 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     const before = posts();
     const seen = requests.length;
     assert.equal((await (await call(shipPath(id))).json()).canCreate, false);
-    const results = await Promise.all([create(id), refresh(id), create(id), refresh(id)]);
+    const blocked = await Promise.all([create(id), create(id)]);
+    assert.deepEqual(blocked.map(reply => reply.status), [202, 202]);
+    assert.equal(requests.length, seen);
+    const diagnostic = await call(shipPath(id) + "/reference-check", "POST", {
+      ifVersion: 1, bookingVersion: (await settings()).version,
+    });
+    assert.equal(diagnostic.status, 200);
+    assert.equal((await diagnostic.json()).outcome, "missing");
+    const refreshStart = requests.length;
+    const results = await Promise.all([refresh(id), refresh(id)]);
     assert.ok(results.every(reply => reply.status === 200));
-    assert.equal(requests.length - seen, 1, "a single read-only reconciliation lease");
+    assert.equal(requests.length - refreshStart, 1, "a single read-only reconciliation lease");
     assert.equal((await read(id)).referenceLookupFailure, "unconfirmed");
     assert.equal((await dispatch(id, 1)).status, 409);
     assert.equal((await call(shipPath(id) + "/label")).status, 409);
@@ -374,7 +331,7 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
 
     missingLookupReplies.set(id, [{ orderReference: orderRef(107), code: "OrderNotFound" }]);
     await releaseRefresh(id);
-    assert.equal((await create(id)).status, 200);
+    assert.equal((await refresh(id)).status, 200);
     assert.equal((await read(id)).referenceLookupFailure, "unconfirmed");
     assert.deepEqual(await marker(), original);
 
@@ -404,166 +361,6 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
       assert.equal(requests.length, before);
     } finally {
       await db.prepare("DROP TRIGGER simulate_legacy_marker").run();
-    }
-  });
-
-  await t.test("the first booking of a native wholesale order can exclude an older anonymous carrier order", async () => {
-    const native = { createdBy: "wholesale:" + crypto.randomUUID(), requestKey: "d".repeat(64) };
-    const before = posts();
-    const omitted = { orderIdentifier: 7001, createdOn: new Date(order.createdAt - 86400000).toISOString() };
-    const denied = [{ code: "InvalidOrderIdentifier" }];
-    const referenceError = "Royal Mail rejected the order-reference lookup. Check the reference in Click & Drop.";
-    const previousFailure = async (id, marker, reason = referenceError) => {
-      await seed(id, native);
-      await historicalFailure(id, marker);
-      const connection = Buffer.from(await crypto.subtle.digest("SHA-256",new TextEncoder().encode("fixture-click-drop"))).toString("base64");
-      await db.prepare("UPDATE wholesale_royal_mail_shipments SET booking_connection=?,problem=? WHERE order_id=?").bind(connection,reason,id).run();
-      missingLookupReplies.set(id, denied);
-    };
-    listReply = () => RuntimeResponse.json({ orders: [omitted] });
-    try {
-      const fresh = orderRef(230);
-      await seed(fresh, native);
-      missingLookupReplies.set(fresh, denied);
-      const parallel = await Promise.all([create(fresh), create(fresh)]);
-      assert.ok(parallel.some(result => result.status === 201));
-      assert.equal((await read(fresh)).state, "labelled");
-      assert.equal(posts() - before, 1);
-      const zero = orderRef(231);
-      await previousFailure(zero, 0);
-      const check = await call(shipPath(zero) + "/reference-check","POST",{ifVersion:1,bookingVersion:(await settings()).version});
-      assert.equal((await check.json()).outcome, "missing");
-      assert.equal(posts() - before, 1, "the diagnostic stays read-only");
-      assert.equal((await create(zero)).status, 201);
-      assert.equal(posts() - before, 2);
-      for (const [seq, marker, reason] of [
-        [232,null,referenceError],
-        [233,Date.now()-10000,referenceError],
-        [234,0,referenceError+" (Royal Mail's reply named another order in orderReference.)"],
-      ]) {
-        const id = orderRef(seq);
-        await previousFailure(id, marker, reason);
-        const result = await create(id);
-        assert.equal((await read(id)).orderId, null);
-        if (seq === 234) {
-          assert.equal(result.status, 409);
-          assert.equal((await (await call(shipPath(id))).json()).canCreate, false);
-          assert.equal((await create(id)).status, 409, "repeated attempts retain explicit contrary evidence");
-        }
-        assert.equal(posts() - before, 2, "uncertain, prior outbound and contrary evidence never authorise an age-based purchase");
-      }
-      const staffTaken = orderRef(235);
-      await seed(staffTaken, { ...native, takenFor: { source:"Phone", at: order.createdAt } });
-      missingLookupReplies.set(staffTaken, denied);
-      anonymousDetails.set(String(omitted.orderIdentifier), omitted);
-      const staffBegin = requests.length;
-      await create(staffTaken);
-      assert.ok(requests.slice(staffBegin).some(request => request.path.endsWith("/7001")));
-      assert.equal((await read(staffTaken)).orderId, null);
-      assert.equal(posts() - before, 2);
-    } finally {
-      listReply = undefined;
-      anonymousDetails.delete(String(omitted.orderIdentifier));
-    }
-  });
-
-  await t.test("a first booking after an inconclusive list needs an expiring admin proof and only one confirmed purchase", async () => {
-    const before = posts();
-    const sample = { orderIdentifier: 998, createdOn: "2026-11-24T10:00:00Z" };
-    listReply = () => RuntimeResponse.json({ orders: [sample] });
-    anonymousDetails.set(String(sample.orderIdentifier), sample);
-    const makeOffer = async n => {
-      const id = orderRef(n);
-      await seed(id);
-      missingLookupReplies.set(id, [{ code: "InvalidOrderIdentifier" }]);
-      assert.equal((await create(id)).status, 200);
-      const { version: bookingVersion, serviceCode: bookingService } = await settings();
-      const request = { ...packageDetails, bookingVersion, bookingService };
-      const check = () => call(shipPath(id) + "/reference-check", "POST", { ifVersion: 1, bookingVersion });
-      const offer = await (await check()).json();
-      assert.equal(offer.outcome, "inconclusive");
-      assert.equal(offer.canResolveInClickDrop, true);
-      assert.equal(typeof offer.firstBookingProof, "string", JSON.stringify(offer));
-      assert.ok(offer.firstBookingExpiresAt > Date.now() && offer.firstBookingExpiresAt <= Date.now() + 300000);
-      assert.deepEqual(Object.keys(JSON.parse(Buffer.from(offer.firstBookingProof.split(".")[0], "base64url"))).sort(), ["expiresAt", "target"]);
-      const payload = { ...request, confirmFirstBooking: true, firstBookingProof: offer.firstBookingProof };
-      return { id, check, payload };
-    };
-    try {
-      const a = await makeOffer(210), b = await makeOffer(211);
-      const send = (id, payload) => call(shipPath(id), "POST", payload);
-      assert.equal((await send(a.id, { ...a.payload, confirmFirstBooking: false })).status, 409);
-      assert.equal((await send(b.id, a.payload)).status, 409);
-      assert.equal((await send(a.id, { ...a.payload, firstBookingProof: "forged" })).status, 409);
-      const expired = await (await worker.dispatchFetch("https://expired-proof.fixture", {method:"POST", body:a.payload.firstBookingProof})).text();
-      assert.equal((await send(a.id, { ...a.payload, firstBookingProof: expired })).status, 409);
-      // The second authorised Admin must run their own reference check.
-      const account = { username: "another.shipping.admin", password: "Temporary shipping password!" };
-      const made = await call("/api/admin/users","POST",{...account,name:"Second Shipping Admin",role:"admin"});
-      assert.equal(made.status,200);
-      const signed = await call("/api/auth/change","POST",{...account,newPassword:"Second Shipping Password!"},host,null);
-      assert.equal(signed.status,200);
-      const secondCookie = signed.headers.getSetCookie().find(v => /^sfbb_session=[^;]/.test(v)).split(";")[0];
-      assert.equal((await call(shipPath(a.id),"POST",a.payload,host,secondCookie)).status,409);
-      assert.equal(posts(), before);
-
-      const auditRow = () => db.prepare("SELECT actor FROM audit_log WHERE instr(text,?) > 0").bind("confirmed no existing shipment for " + a.id).all();
-      let attestationsAtPurchase;
-      interceptCreate = async id => {
-        if (id === a.id) attestationsAtPurchase = (await auditRow()).results.length;
-      };
-      const attempts = await Promise.all([send(a.id,a.payload), send(a.id,a.payload), send(a.id,a.payload)]);
-      const outcomes = await Promise.all(attempts.map(async reply => {
-        const result = await reply.json();
-        return { status: reply.status, code: result.code, state: result.shipment?.state, problem: result.shipment?.problem };
-      }));
-      assert.ok(outcomes.some(result => result.status === 201), JSON.stringify(outcomes));
-      assert.equal(attestationsAtPurchase, 1, "attestation committed before carrier POST");
-      assert.equal(posts(), before + 1);
-      assert.equal((await auditRow()).results.length, 1);
-      await send(a.id,a.payload);
-      assert.equal(posts(), before + 1);
-
-      records.set(b.id, { orderReference:b.id, orderIdentifier:7891, printedOn:"2026-11-28T12:00:00Z", trackingNumber:number });
-      assert.equal((await send(b.id,b.payload)).status,201);
-      assert.equal((await read(b.id)).orderId,7891);
-      assert.equal((await read(b.id)).reviewRequired,true);
-      assert.equal(posts(),before + 1);
-
-      const c = await makeOffer(212);
-      await amend(c.id,"$.business","Different recipient");
-      assert.equal((await send(c.id,{...c.payload,ifVersion:2})).status,409);
-      const d = await makeOffer(213);
-      await db.prepare("UPDATE wholesale_royal_mail_shipments SET booking_connection='different' WHERE order_id=?").bind(d.id).run();
-      assert.equal((await send(d.id,d.payload)).status,409);
-      assert.equal((await (await d.check()).json()).firstBookingProof,undefined);
-      const e = await makeOffer(214);
-      await db.prepare("UPDATE wholesale_royal_mail_shipments SET candidate_provider_id=107 WHERE order_id=?").bind(e.id).run();
-      assert.equal((await send(e.id,e.payload)).status,409);
-      const noAudit = await makeOffer(216);
-      await db.prepare(`CREATE TRIGGER prevent_manual_audit BEFORE INSERT ON audit_log
-        WHEN instr(NEW.text,'confirmed no existing shipment for ${noAudit.id}') > 0
-        BEGIN SELECT RAISE(ABORT,'Audit fixture unavailable'); END`).run();
-      try {
-        await send(noAudit.id, noAudit.payload);
-        const record = await db.prepare("SELECT requested_at,provider_id FROM wholesale_royal_mail_shipments WHERE order_id=?").bind(noAudit.id).first();
-        assert.deepEqual(record, { requested_at: 0, provider_id: null }, "audit failure rolls back the outbound marker");
-        assert.equal(posts(), before + 1);
-      } finally {
-        await db.prepare("DROP TRIGGER prevent_manual_audit").run();
-      }
-      const f = await makeOffer(215);
-      listReply = () => new RuntimeResponse(null,{status:503});
-      await send(f.id,f.payload);
-      assert.equal((await read(f.id)).orderId,null);
-      assert.equal(posts(),before + 1);
-      const unavailable = await (await f.check()).json();
-      assert.equal(unavailable.firstBookingProof, undefined);
-      assert.equal(unavailable.canResolveInClickDrop, undefined);
-    } finally {
-      listReply = undefined;
-      anonymousDetails.delete(String(sample.orderIdentifier));
-      interceptCreate = undefined;
     }
   });
 
@@ -800,13 +597,14 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     await db.prepare(`INSERT INTO wholesale_royal_mail_shipments
       (order_id,state,operation,order_version,weight_grams,updated_at,requested_at)
       VALUES (?,'booking','race',1,2140,0,0)`).bind(racing).run();
-    interceptLookup = async reference => {
-      if (reference === racing) await db.prepare("UPDATE wholesale_royal_mail_shipments SET requested_at=? WHERE order_id=?")
-        .bind(Date.now(), racing).run();
-    };
+    // Simulate the sending Worker setting the durable marker just after recovery read the old zero.
+    await db.prepare(`CREATE TRIGGER mark_outbound_during_recovery AFTER UPDATE OF refresh_after ON wholesale_royal_mail_shipments
+      WHEN NEW.order_id='${racing}' AND NEW.refresh_after>0 AND NEW.requested_at=0
+      BEGIN UPDATE wholesale_royal_mail_shipments SET requested_at=1 WHERE order_id=NEW.order_id; END`).run();
     try { assert.equal((await refresh(racing)).status, 200); }
-    finally { interceptLookup = undefined; }
-    assert.equal((await read(racing)).state, "booking", "a lookup that began before transmission cannot release this reservation");
+    finally { await db.prepare("DROP TRIGGER mark_outbound_during_recovery").run(); }
+    assert.equal((await read(racing)).state, "booking", "recovery cannot release a reservation once transmission starts");
+    assert.equal(requests.length, before, "proven-unsent recovery does not need a carrier lookup");
     assert.equal((await create(racing)).status, 202);
   });
 
@@ -815,7 +613,27 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     await seed(id, { locationSnapshot: { address: "16 Example Lane, Norwich", postcode: "NR1 5AB" } });
     records.set(id, { orderIdentifier: 1907, orderReference: id, trackingNumber: number, printedOn: "2026-11-26T09:00:00Z" });
     const before = posts();
-    assert.equal((await create(id)).status, 201);
+    const view = await (await call(shipPath(id))).json();
+    assert.equal(view.canLinkOrder, true);
+    assert.equal(view.linkOperation, "new");
+    const start = requests.length;
+    let enter, release;
+    const entered = new Promise(resolve => { enter = resolve; });
+    const held = new Promise(resolve => { release = resolve; });
+    interceptNumeric = async () => { enter(); await held; };
+    const linking = call(shipPath(id) + "/link-order", "POST", { ifVersion: 1,
+      bookingVersion: view.bookingVersion, operation: view.linkOperation, orderNumber: 1907 });
+    try {
+      const early = await Promise.race([entered.then(() => null), linking]);
+      if (early) assert.fail(await early.text());
+      await create(id);
+      assert.deepEqual(requests.slice(start).map(r => [r.method, r.path]), [["GET", "/api/v1/orders/1907"]]);
+    } finally {
+      release();
+      interceptNumeric = undefined;
+    }
+    assert.equal((await linking).status, 200);
+    assert.equal((await create(id)).status, 200);
     const shipment = await read(id);
     assert.equal(shipment.reviewRequired, true);
     assert.equal(shipment.requestedAt, null);
@@ -830,6 +648,57 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     const email = JSON.parse(event.payload);
     assert.match(email.mail.text, /16 Example Lane, Norwich, NR1 5AB/);
     assert.doesNotMatch(email.mail.text, /18 Example Lane/);
+  });
+
+  await t.test("only proven-unsent orders can link on a changed connection and reporting external postage fences purchases", async () => {
+    const id = orderRef(201);
+    await seed(id);
+    await historicalFailure(id, 0);
+    const current = await (await call(shipPath(id))).json();
+    assert.equal(current.canCreate, true);
+    assert.equal(current.canLinkOrder, true);
+    const link = (id, view, orderNumber) => call(shipPath(id) + "/link-order", "POST",
+      { ifVersion: view.orderVersion, bookingVersion: view.bookingVersion, operation: view.linkOperation, orderNumber });
+    const start = requests.length;
+    const before = posts();
+    let enter, release;
+    const entered = new Promise(resolve => { enter = resolve; });
+    const held = new Promise(resolve => { release = resolve; });
+    interceptNumeric = async () => { enter(); await held; };
+    const missing = link(id, current, 9200);
+    try {
+      const early = await Promise.race([entered.then(() => null), missing]);
+      if (early) assert.fail(await early.text());
+      assert.equal((await create(id)).status, 202);
+    } finally {
+      release();
+      interceptNumeric = undefined;
+    }
+    assert.equal((await missing).status, 409);
+    const reported = await (await call(shipPath(id))).json();
+    assert.equal(reported.canCreate, false, "a failed link cannot release a reported external purchase");
+    assert.equal((await create(id)).status, 202);
+    records.set(id, { orderIdentifier: 9201, orderReference: id, trackingNumber: number, printedOn: "2026-11-26T09:00:00Z" });
+    assert.equal((await link(id, reported, 9201)).status, 200);
+    const linked = await read(id);
+    assert.equal(linked.orderId, 9201);
+    assert.equal(linked.reviewRequired, true);
+    assert.equal((await create(id)).status, 200);
+    assert.deepEqual(requests.slice(start).map(r => [r.method, r.path]),
+      [["GET", "/api/v1/orders/9200"], ["GET", "/api/v1/orders/9201"]]);
+    for (const [index, marker] of [[202, null], [203, 1]]) {
+      const other = orderRef(index);
+      await seed(other);
+      await historicalFailure(other, marker);
+      const view = await (await call(shipPath(other))).json();
+      const oldStart = requests.length;
+      const refused = await link(other, view, 9201);
+      assert.equal(refused.status, 409);
+      assert.equal((await refused.json()).code, "royal_mail_connection_changed");
+      assert.equal((await create(other)).status, 202);
+      assert.equal(requests.length, oldStart);
+    }
+    assert.equal(posts(), before);
   });
 
   await t.test("admin parcel corrections and selectively saved future locations have separate lifetimes", async () => {
@@ -974,7 +843,7 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     await historicalFailure(historic);
     const originalPosts = posts();
     assert.equal((await (await staff(historic)).json()).canCreate, false);
-    assert.equal((await staff(historic, "POST", {})).status, 200);
+    assert.equal((await staff(historic, "POST", {})).status, 202);
     await releaseRefresh(historic);
     assert.equal((await staff(historic, "POST", {}, "/refresh")).status, 200);
     assert.equal((await read(historic)).referenceLookupFailure, "unconfirmed");
@@ -982,26 +851,43 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     await db.prepare("UPDATE wholesale_invoices SET paid=1 WHERE seq=6501").run();
     assert.equal((await (await staff(billed)).json()).canCreate, true);
 
-    interceptLookup = async reference => { if (reference === racing) await accountStatus("On hold"); };
     const beforePosts = posts();
+    // The account becomes ineligible while the reviewed parcel is being reserved.
+    await db.prepare(`CREATE TRIGGER hold_during_reservation AFTER INSERT ON wholesale_royal_mail_shipments
+      WHEN NEW.order_id='${racing}' BEGIN UPDATE wholesale_preview SET data=json_set(data,'$.status','On hold')
+      WHERE kind='customer' AND id='${customerId}'; END`).run();
+    const beforeHold = requests.length;
     try {
       const held = await staff(racing, "POST", payload);
       assert.equal(held.status, 409);
       assert.equal((await held.json()).code, "royal_mail_account_on_hold");
+      assert.equal(requests.length, beforeHold);
     } finally {
-      interceptLookup = undefined;
+      await db.prepare("DROP TRIGGER hold_during_reservation").run();
       await accountStatus("Active");
     }
-    assert.equal(posts(), beforePosts, "account hold during carrier lookup prevents the purchase");
-    assert.equal((await read(racing)).state, "failed");
-
-    let sent;
-    interceptCreate = (reference, item) => { if (reference === paid) sent = item; };
+    let sent, enter, release;
+    const entered = new Promise(resolve => { enter = resolve; });
+    const held = new Promise(resolve => { release = resolve; });
+    const bookingStart = requests.length;
+    interceptCreate = async (reference, item) => {
+      assert.equal(reference, paid);
+      sent = item;
+      enter();
+      await held;
+    };
+    const purchase = staff(paid, "POST", payload);
     try {
-      assert.equal((await staff(paid, "POST", payload)).status, 201);
+      const early = await Promise.race([entered.then(() => null), purchase]);
+      if (early) assert.fail(await early.text());
+      const contenders = await Promise.all([create(paid), staff(paid, "POST", payload)]);
+      assert.deepEqual(contenders.map(result => result.status), [202, 202]);
+      assert.deepEqual(requests.slice(bookingStart).map(r => [r.method, r.path]), [["POST", "/api/v1/orders"]]);
     } finally {
+      release();
       interceptCreate = undefined;
     }
+    assert.equal((await purchase).status, 201);
     assert.equal(sent.postageDetails.serviceCode, "TPS48");
     assert.equal(sent.label.includeLabelInResponse, true);
     assert.equal(sent.recipient.emailAddress, "delivery@example.test");

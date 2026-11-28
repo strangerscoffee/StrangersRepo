@@ -439,74 +439,101 @@ test("Admin and staff can resolve a label generation problem on the existing boo
   assert.equal(bookings, 0);
 });
 
-for (const [failure, options] of [["before_postage", phone], ["unconfirmed", desktop]]) {
-  test(`Admin and staff can copy the full reference after a ${failure} lookup failure`, async t => {
-    const problem = failure === "before_postage"
-      ? "Royal Mail rejected the order-reference lookup. Check the order reference in Click & Drop. (Royal Mail's reply named another order in channelOrderReference.)"
-      : "Royal Mail rejected the order-reference lookup. Check the reference in Click & Drop.";
-    const state = { ...eligible(), canCreate: failure === "before_postage",
-      shipment: { state: "failed", requestedAt: null, referenceLookupFailure: failure, problem } };
-    let posts = 0, refreshes = 0;
+for (const [failure, viewport] of [["before_postage", phone], ["unconfirmed", desktop]]) {
+  test(`Admin and staff handle the saved ${failure} attempt from its local status`, async t => {
+    const beforePostage = failure === "before_postage";
+    const oldProblem = "Royal Mail rejected the order-reference lookup. Check the reference in Click & Drop.";
+    const state = { ...eligible(), canCreate: beforePostage, shipment: { state: "failed", requestedAt: null, orderChanged: beforePostage, referenceLookupFailure: failure, problem: oldProblem } };
+    let bookings = 0, refreshes = 0, referenceChecks = 0;
     const details = route => {
-      if (route.request().url().endsWith("/refresh")) {
-        assert.equal(route.request().method(), "POST");
-        assert.deepEqual(route.request().postDataJSON(), {});
+      const path = new URL(route.request().url()).pathname;
+      if (path.endsWith("/reference-check")) { referenceChecks++; return route.fulfill({ status: 500 }); }
+      if (path.endsWith("/refresh")) {
         refreshes++;
+        assert.equal(route.request().method(), "POST");
         return route.fulfill({ json: { ...state, canCreate: false, shipment: { state: "created", orderId: 1234, reviewRequired: true } } });
       }
-      if (route.request().method() === "POST") posts++;
-      // An older Worker can report canCreate=true on a legacy attempt. Either shape must remain recovery-only.
-      const canCreate = state.canCreate || route.request().url().includes("/api/admin/");
-      return route.fulfill({ json: { ...state, canCreate } });
+      if (route.request().method() === "POST") {
+        bookings++;
+        const body = route.request().postDataJSON();
+        assert.equal(body.ifVersion, state.orderVersion);
+        assert.ok(body.weightGrams > 0);
+        assert.equal("firstBookingProof" in body || "confirmFirstBooking" in body, false);
+        return route.fulfill({ json: labelled(state) });
+      }
+      return route.fulfill({ json: state });
     };
-    const staff = await staffPage(t, options, details);
-    const admin = await adminDispatchPage(t, options,
-      { stage: "attention", stageLabel: "Needs attention", action: "shipping", actionLabel: "Review booking" }, details);
-    await admin.page.route("**/api/admin/wholesale/orders/" + order.id + "/shipping/refresh", details);
-    let referenceChecks = 0;
-    await admin.page.route("**/shipping/reference-check", route => {
-      assert.equal(route.request().method(), "POST");
-      assert.deepEqual(route.request().postDataJSON(), { ifVersion: state.orderVersion, bookingVersion: state.bookingVersion });
-      referenceChecks++;
-      return route.fulfill({ json: { outcome: "missing", message: "Click & Drop found no booking for this reference." } });
-    });
+    const staff = await staffPage(t, viewport, details);
+    const admin = await adminDispatchPage(t, viewport, { stage: beforePostage ? "weigh" : "attention",
+      stageLabel: beforePostage ? "Weigh parcel" : "Needs attention", action: "shipping", actionLabel: "Review parcel" }, details);
+    await admin.page.route("**/api/admin/wholesale/orders/" + order.id + "/shipping/**", details);
     await admin.action.click();
-    for (const [page, panel] of [[staff.page, staff.dialog], [admin.page, admin.page.locator("#wRoyalMailForm")]]) {
-      await panel.getByText("Order lookup needs attention", { exact: true }).waitFor();
-      await panel.getByText(problem, { exact: true }).waitFor();
-      const guidance = failure === "before_postage" ? "This attempt stopped before postage was requested." : "The postage outcome of this earlier attempt is unconfirmed.";
-      await panel.getByText(guidance, { exact: true }).waitFor();
-      const recovery = panel.getByRole("region", { name: "Find the order in Click & Drop" });
-      await recovery.getByText(order.id, { exact: true }).waitFor();
-      assert.equal(await recovery.evaluate(element => element.scrollWidth <= element.clientWidth), true);
-      await page.evaluate(() => Object.defineProperty(navigator, "clipboard", { value: {
-        writeText: async value => { window.copiedOrderReference = value; }
-      } }));
-      await recovery.getByRole("button", { name: "Copy order reference" }).click();
-      assert.equal(await page.evaluate(() => window.copiedOrderReference), order.id);
-      assert.equal(await panel.getByRole("button", { name: "Check service for this parcel" }).count(), 0);
-    }
-    assert.equal(await staff.dialog.getByRole("button", { name: "Check order reference" }).count(), 0);
-    await admin.page.getByRole("button", { name: "Check order reference" }).click();
-    await admin.page.getByText("Click & Drop found no booking for this reference.", { exact: true }).waitFor();
-    assert.equal(referenceChecks, 1);
     for (const panel of [staff.dialog, admin.page.locator("#wRoyalMailForm")]) {
-      const check = panel.getByRole("button", { name: "Check label request", exact: true });
       const review = panel.getByRole("button", { name: "Review label request", exact: true });
-      if (failure === "before_postage") {
+      if (beforePostage) {
         await review.waitFor();
-        assert.equal(await check.count(), 0);
+        assert.equal(await panel.getByText(oldProblem, { exact: true }).count(), 0);
+        assert.equal(await panel.getByText("Label needs review", { exact: true }).count(), 0);
+        assert.equal(await panel.getByText(/order changed after this label request/i).count(), 0);
+        assert.equal(await panel.getByRole("region", { name: "Find the order in Click & Drop" }).count(), 0);
+        const before = bookings;
+        await review.click();
+        const request = panel.getByRole("button", { name: "Request Royal Mail label", exact: true });
+        await request.waitFor();
+        assert.equal(bookings, before);
+        await request.click();
+        await panel.getByRole("button", { name: "Download label PDF" }).waitFor();
       } else {
+        await panel.getByText("Check the earlier postage request", { exact: true }).waitFor();
         assert.equal(await review.count(), 0);
-        assert.equal(await panel.getByRole("button", { name: "Request Royal Mail label" }).count(), 0);
-        await check.click();
+        await panel.getByRole("button", { name: "Check label request", exact: true }).click();
         await panel.getByText("Label needs review", { exact: true }).waitFor();
       }
+      assert.equal(await panel.getByRole("button", { name: "Check order reference", exact: true }).count(), 0);
     }
-    assert.equal(refreshes, failure === "unconfirmed" ? 2 : 0);
-    assert.equal(posts, 0);
+    assert.equal(referenceChecks, 0);
+    assert.equal(bookings, beforePostage ? 2 : 0);
+    assert.equal(refreshes, beforePostage ? 0 : 2);
   });
 }
+
+test("Admin can correct the number of an external booking after the first link reserves an order", async t => {
+  const initial = { ...eligible(), canLinkOrder: true, linkOperation: "new" };
+  const held = { ...initial, canCreate: false, linkOperation: "saved-operation", shipment: {
+    state: "review", reviewRequired: true, orderId: null, weightGrams: 0 } };
+  let state = initial, purchases = 0;
+  const links = [];
+  const { page, action } = await adminDispatchPage(t, phone, { stage: "weigh", stageLabel: "Weigh parcel", action: "shipping", actionLabel: "Review parcel" },
+    route => {
+      if (route.request().method() === "POST") purchases++;
+      return route.fulfill({ json: state });
+    });
+  await page.route("**/shipping/link-order", route => {
+    const { operation, orderNumber } = route.request().postDataJSON();
+    links.push([operation, orderNumber]);
+    if (orderNumber === "1235") {
+      state = held;
+      return route.fulfill({ status: 409, json: { message: "Check the order number in Click & Drop." } });
+    }
+    state = { ...held, canLinkOrder: false, shipment: { state: "created", orderId: 1234, reviewRequired: true, weightGrams: 0 } };
+    return route.fulfill({ json: state });
+  });
+  await action.click();
+  const panel = page.locator("#wRoyalMailForm");
+  await panel.getByRole("button", { name: "Link existing booking" }).click();
+  await panel.getByText(/Submitting it reserves this wholesale order for linking/).waitFor();
+  const number = panel.getByLabel("Royal Mail order number");
+  const submit = panel.getByRole("button", { name: "Check and link booking" });
+  await number.fill("1235"); await submit.click();
+  await panel.locator("#wLinkError").getByText("Check the order number in Click & Drop.", { exact: true }).waitFor();
+  assert.equal(await number.inputValue(), "1235");
+  assert.equal(await panel.getByRole("button", { name: "Review label request" }).count(), 0);
+  await number.fill("1234"); await submit.click();
+  await panel.getByText("Label needs review", { exact: true }).waitFor();
+  assert.equal(await panel.getByText(/packed weight 0 g/i).count(), 0);
+  assert.equal(purchases, 0);
+  assert.deepEqual(links, [["new", "1235"], ["saved-operation", "1234"]]);
+});
 
 for (const [name, options] of [["desktop", desktop], ["phone", phone]]) {
   test(`Admin dispatch queue opens settings and returns to a rejected booking on ${name}`, async t => {
