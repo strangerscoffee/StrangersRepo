@@ -379,6 +379,18 @@ const lookupMessageFields = new Set(["message", "errorMessage", "detail", "title
 const lookupCodeFields = new Set(["code", "errorCode"]);
 const lookupReferenceFields = new Set(["orderReference", "channelOrderReference"]);
 
+// Click & Drop may echo the selector it was sent, quotes and percent-encoding included
+// ("%22WS-…%22" or "\"WS-…\""), when it describes the order a lookup failed for.
+function sameReference(given: unknown, reference: string): boolean {
+  if (typeof given !== "string") return false;
+  let text = given.trim();
+  for (let i = 0; i < 2 && /%[0-9a-f]{2}/i.test(text); i++) {
+    try { text = decodeURIComponent(text).trim(); } catch { break; }
+  }
+  const quoted = /^(["'])(.*)\1$/.exec(text);
+  return (quoted ? quoted[2].trim() : text) === reference;
+}
+
 function namesMissingOrder(message: string, reference: string): boolean {
   if (/^(?:(?:the )?order(?: reference)? (?:was not found|not found|does not exist|could not be found)|unknown order|no (?:matching )?orders? (?:were |was )?found)\.?$/i.test(message)) return true;
   const after = /^no (?:matching )?orders? (?:were |was )?found (?:for|with) (?:the )?(?:(?:order )?reference[: ]+)?(["']?)([a-z0-9_-]{1,40})\1\.?$/i.exec(message);
@@ -394,19 +406,20 @@ class RoyalMailLookupSelectorError extends RoyalMailError {
 
 // Signs in a refusal that some order, ours or another, is being described: those keep booking blocked
 // without a list scan, because a scan can't settle which order Royal Mail meant.
-function pointsAtAnOrder(value: unknown, reference: string): boolean {
+// Returns the field that did it (a field name, never its value), or "".
+function pointsAtAnOrder(value: unknown, reference: string): string {
   const entry = record(value);
-  if (!entry) return false;
-  if ("orders" in entry || "createdOrders" in entry) return true;
+  if (!entry) return "";
+  for (const field of ["orders", "createdOrders"]) if (field in entry) return field;
   for (const field of ["orderReference", "channelOrderReference"]) {
     const given = entry[field];
-    if (given !== undefined && given !== null && given !== "" && given !== reference) return true;
+    if (given !== undefined && given !== null && given !== "" && !sameReference(given, reference)) return field;
   }
   for (const field of ["accountOrderNumber", "orderIdentifier"]) {
     const given = entry[field];
-    if (given !== undefined && given !== null && given !== 0) return true;
+    if (given !== undefined && given !== null && given !== 0) return field;
   }
-  return false;
+  return "";
 }
 
 // Royal Mail's own error codes, when they look like codes (CamelCase words naming a kind of fault).
@@ -434,7 +447,7 @@ function lookupFinding(value: unknown, reference: string): LookupFinding | null 
   for (const [key, value] of Object.entries(entry)) {
     if (lookupReferenceFields.has(key)) {
       if (value === null || value === "") continue;
-      if (value !== reference) return null;
+      if (!sameReference(value, reference)) return null;
       orderScoped = true;
       continue;
     }
@@ -486,9 +499,12 @@ async function lookupRefusal(response: Response, reference: string): Promise<typ
     if (findings.every(finding => finding === "missing")) return MISSING_ORDER;
   }
   const all = Array.isArray(value) ? value : [value, ...(Array.isArray(wrapper?.errors) ? wrapper.errors : [])];
-  if (all.some(entry => pointsAtAnOrder(entry, reference))) {
-    // The carrier can include names, addresses and credentials even in a read-only lookup error.
-    throw new RoyalMailError("royal_mail_rejected", "Royal Mail rejected the order-reference lookup. Check the order reference in Click & Drop.", status);
+  const pointer = all.map(entry => pointsAtAnOrder(entry, reference)).find(Boolean);
+  if (pointer) {
+    // The carrier can include names, addresses and credentials even in a read-only lookup error:
+    // only the name of the field that pointed elsewhere is shown, never its value.
+    throw new RoyalMailError("royal_mail_rejected", "Royal Mail rejected the order-reference lookup. Check the order reference in Click & Drop." +
+      " (Royal Mail's reply named another order in " + pointer + ".)", status);
   }
   // Any other refusal says nothing either way about whether postage exists (28 Nov 2026: Click & Drop
   // refused the lookup for a first booking in a way none of the patterns above recognised). Only a

@@ -102,6 +102,25 @@ test('incomplete, ambiguous and malformed listings cannot confirm either absence
   }
 });
 
+test('a refusal that echoes our own reference in quotes or percent-encoded is about this order, not another', async () => {
+  for (const echoed of ['"' + reference + '"', '%22' + reference + '%22', "'" + reference + "'", ' "' + reference + '" ']) {
+    // Recognised not-found wording: no order yet, no scan needed.
+    for (const field of ['channelOrderReference', 'orderReference']) {
+      const missing = carrier([], {denial: [{accountOrderNumber: 0, [field]: echoed, code: 'OrderNotFound', message: 'Order not found'}]});
+      assert.equal(await missing.run(), null);
+      assert.equal(missing.urls.length, 1);
+    }
+    // Anything else about our own reference is settled by the order list.
+    const other = carrier([{orders: [anotherOrder]}], {denial: [{accountOrderNumber: null, channelOrderReference: echoed, code: 'SomethingElse', message: 'Unexpected'}]});
+    assert.equal(await other.run(), null);
+    assert.equal(other.urls.length, 2);
+  }
+  // A different reference, however it's quoted, still points at another order.
+  const elsewhere = carrier([], {denial: [{channelOrderReference: '"' + reference + 'X"', code: 'OrderNotFound'}]});
+  await assert.rejects(elsewhere.run());
+  assert.equal(elsewhere.urls.length, 1);
+});
+
 test('a refusal pointing at another order never scans the account', async () => {
   for (const denial of [
     [{...invalidSelector[0], channelOrderReference: 'unrelated-private-reference'}],
