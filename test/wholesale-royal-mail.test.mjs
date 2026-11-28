@@ -26,9 +26,15 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
   const bundle = await build({ absWorkingDir: root, bundle: true,
     stdin: { resolveDir: root, contents: `
       import app from "./src/index.ts";
+      import { readToken, signToken } from "./src/auth.ts";
       import { recoverRoyalMailBookings } from "./src/royalMailRecovery.ts";
       export { LiveHub } from "./src/index.ts";
       export default { ...app, async fetch(request, env, ctx) {
+        if (new URL(request.url).hostname === "expired-proof.fixture") {
+          const purpose = "wholesale.royal-mail.manual-first-booking.";
+          const original = await readToken(env, purpose, await request.text());
+          return new Response(await signToken(env, purpose, { ...original, expiresAt: Date.now() - 1 }));
+        }
         if (new URL(request.url).hostname === "recovery.fixture") {
           await recoverRoyalMailBookings(env);
           return new Response("done");
@@ -45,6 +51,7 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
   const lostReplies = new Set();
   const unlabelled = new Set();
   const labelErrors = new Map();
+  let listReply;
   let interceptCreate;
   let interceptLabel;
   let interceptLookup;
@@ -108,6 +115,7 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
         return lostReplies.has(reference) ? new RuntimeResponse("carrier response lost", { status: 502 })
           : RuntimeResponse.json({ createdOrders: [result], successCount: 1, errorsCount: 0 });
       }
+      if (url.pathname === "/api/v1/orders" && listReply) return listReply();
       if (url.pathname.endsWith("/label")) {
         await interceptLabel?.();
         return new RuntimeResponse(pdf, { headers: { "content-type": "application/pdf" } });
@@ -394,6 +402,104 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
       assert.equal(requests.length, before);
     } finally {
       await db.prepare("DROP TRIGGER simulate_legacy_marker").run();
+    }
+  });
+
+  await t.test("a first booking after an inconclusive list needs an expiring admin proof and only one confirmed purchase", async () => {
+    const before = posts();
+    const sample = { orderIdentifier: 998, createdOn: "2026-11-24T10:00:00Z" };
+    listReply = () => RuntimeResponse.json({ orders: [sample] });
+    const makeOffer = async n => {
+      const id = orderRef(n);
+      await seed(id);
+      missingLookupReplies.set(id, [{ code: "InvalidOrderIdentifier" }]);
+      assert.equal((await create(id)).status, 200);
+      const { version: bookingVersion, serviceCode: bookingService } = await settings();
+      const request = { ...packageDetails, bookingVersion, bookingService };
+      const check = () => call(shipPath(id) + "/reference-check", "POST", { ifVersion: 1, bookingVersion });
+      const offer = await (await check()).json();
+      assert.equal(offer.outcome, "inconclusive");
+      assert.equal(offer.canResolveInClickDrop, true);
+      assert.equal(typeof offer.firstBookingProof, "string", JSON.stringify(offer));
+      assert.ok(offer.firstBookingExpiresAt > Date.now() && offer.firstBookingExpiresAt <= Date.now() + 300000);
+      assert.deepEqual(Object.keys(JSON.parse(Buffer.from(offer.firstBookingProof.split(".")[0], "base64url"))).sort(), ["expiresAt", "target"]);
+      const payload = { ...request, confirmFirstBooking: true, firstBookingProof: offer.firstBookingProof };
+      return { id, check, payload };
+    };
+    try {
+      const a = await makeOffer(210), b = await makeOffer(211);
+      const send = (id, payload) => call(shipPath(id), "POST", payload);
+      assert.equal((await send(a.id, { ...a.payload, confirmFirstBooking: false })).status, 409);
+      assert.equal((await send(b.id, a.payload)).status, 409);
+      assert.equal((await send(a.id, { ...a.payload, firstBookingProof: "forged" })).status, 409);
+      const expired = await (await worker.dispatchFetch("https://expired-proof.fixture", {method:"POST", body:a.payload.firstBookingProof})).text();
+      assert.equal((await send(a.id, { ...a.payload, firstBookingProof: expired })).status, 409);
+      // The second authorised Admin must run their own reference check.
+      const account = { username: "another.shipping.admin", password: "Temporary shipping password!" };
+      const made = await call("/api/admin/users","POST",{...account,name:"Second Shipping Admin",role:"admin"});
+      assert.equal(made.status,200);
+      const signed = await call("/api/auth/change","POST",{...account,newPassword:"Second Shipping Password!"},host,null);
+      assert.equal(signed.status,200);
+      const secondCookie = signed.headers.getSetCookie().find(v => /^sfbb_session=[^;]/.test(v)).split(";")[0];
+      assert.equal((await call(shipPath(a.id),"POST",a.payload,host,secondCookie)).status,409);
+      assert.equal(posts(), before);
+
+      const auditRow = () => db.prepare("SELECT actor FROM audit_log WHERE instr(text,?) > 0").bind("confirmed no existing shipment for " + a.id).all();
+      let attestationsAtPurchase;
+      interceptCreate = async id => {
+        if (id === a.id) attestationsAtPurchase = (await auditRow()).results.length;
+      };
+      const attempts = await Promise.all([send(a.id,a.payload), send(a.id,a.payload), send(a.id,a.payload)]);
+      const outcomes = await Promise.all(attempts.map(async reply => {
+        const result = await reply.json();
+        return { status: reply.status, code: result.code, state: result.shipment?.state, problem: result.shipment?.problem };
+      }));
+      assert.ok(outcomes.some(result => result.status === 201), JSON.stringify(outcomes));
+      assert.equal(attestationsAtPurchase, 1, "attestation committed before carrier POST");
+      assert.equal(posts(), before + 1);
+      assert.equal((await auditRow()).results.length, 1);
+      await send(a.id,a.payload);
+      assert.equal(posts(), before + 1);
+
+      records.set(b.id, { orderReference:b.id, orderIdentifier:7891, printedOn:"2026-11-28T12:00:00Z", trackingNumber:number });
+      assert.equal((await send(b.id,b.payload)).status,201);
+      assert.equal((await read(b.id)).orderId,7891);
+      assert.equal((await read(b.id)).reviewRequired,true);
+      assert.equal(posts(),before + 1);
+
+      const c = await makeOffer(212);
+      await amend(c.id,"$.business","Different recipient");
+      assert.equal((await send(c.id,{...c.payload,ifVersion:2})).status,409);
+      const d = await makeOffer(213);
+      await db.prepare("UPDATE wholesale_royal_mail_shipments SET booking_connection='different' WHERE order_id=?").bind(d.id).run();
+      assert.equal((await send(d.id,d.payload)).status,409);
+      assert.equal((await (await d.check()).json()).firstBookingProof,undefined);
+      const e = await makeOffer(214);
+      await db.prepare("UPDATE wholesale_royal_mail_shipments SET candidate_provider_id=107 WHERE order_id=?").bind(e.id).run();
+      assert.equal((await send(e.id,e.payload)).status,409);
+      const noAudit = await makeOffer(216);
+      await db.prepare(`CREATE TRIGGER prevent_manual_audit BEFORE INSERT ON audit_log
+        WHEN instr(NEW.text,'confirmed no existing shipment for ${noAudit.id}') > 0
+        BEGIN SELECT RAISE(ABORT,'Audit fixture unavailable'); END`).run();
+      try {
+        await send(noAudit.id, noAudit.payload);
+        const record = await db.prepare("SELECT requested_at,provider_id FROM wholesale_royal_mail_shipments WHERE order_id=?").bind(noAudit.id).first();
+        assert.deepEqual(record, { requested_at: 0, provider_id: null }, "audit failure rolls back the outbound marker");
+        assert.equal(posts(), before + 1);
+      } finally {
+        await db.prepare("DROP TRIGGER prevent_manual_audit").run();
+      }
+      const f = await makeOffer(215);
+      listReply = () => new RuntimeResponse(null,{status:503});
+      await send(f.id,f.payload);
+      assert.equal((await read(f.id)).orderId,null);
+      assert.equal(posts(),before + 1);
+      const unavailable = await (await f.check()).json();
+      assert.equal(unavailable.firstBookingProof, undefined);
+      assert.equal(unavailable.canResolveInClickDrop, undefined);
+    } finally {
+      listReply = undefined;
+      interceptCreate = undefined;
     }
   });
 

@@ -7,7 +7,7 @@ const { outputFiles } = await build({
   entryPoints: [new URL('../src/royalMail.ts', import.meta.url).pathname],
   bundle: true, write: false, format: 'esm', platform: 'browser',
 });
-const { findRoyalMailOrder } = await import('data:text/javascript;base64,' + Buffer.from(outputFiles[0].contents).toString('base64'));
+const { findRoyalMailOrder, RoyalMailManualLookupError } = await import('data:text/javascript;base64,' + Buffer.from(outputFiles[0].contents).toString('base64'));
 
 const key = 'fixture-private-key';
 const reference = 'WS-' + 'ABC12345'.repeat(4);
@@ -32,7 +32,7 @@ function carrier(pages, { denial = invalidSelector, status = 400 } = {}) {
       return Response.json(denial, { status });
     }
     assert.equal(url.pathname, '/api/v1/orders');
-    assert.equal(url.searchParams.get('pageSize'), '100');
+    assert.equal(url.searchParams.get('pageSize'), '50');
     assert.ok([...url.searchParams.keys()].every(name => ['pageSize', 'continuationToken'].includes(name)));
     assert.ok(pages.length >= urls.length - 1, 'unexpected carrier GET');
     const page = pages[urls.length - 2];
@@ -46,22 +46,22 @@ test('a format refusal can recover one exact reference after exhausting the orde
   const lookup = carrier([{orders: [anotherOrder], continuationToken: token}, {orders: [order]}], {status: 422});
   assert.deepEqual(await lookup.run(), {orderId: 7, reference, trackingNumber: 'AB123456789GB', providerState: 'labelled'});
   assert.equal(lookup.urls.length, 3);
-  assert.equal(lookup.urls[1].search, '?pageSize=100');
+  assert.equal(lookup.urls[1].search, '?pageSize=50');
   assert.equal(lookup.urls[2].searchParams.get('continuationToken'), token);
   assert.ok(lookup.signals[1] instanceof AbortSignal);
   assert.equal(lookup.signals[1], lookup.signals[2], 'all list pages share one timeout budget');
 });
 
 test('optional references on unrelated imports allow a unique positive match but never prove absence', async () => {
-  for (const optional of [{}, {orderReference:null}, {orderReference:''}]) {
+  for (const optional of [{}, {orderReference:null}, {orderReference:''}, {orderReference:'   '}]) {
     const imported = {orderIdentifier:15,createdOn,...optional};
     const page = {orders:[imported],continuationToken:'next'};
     assert.equal((await carrier([page,{orders:[order]}]).run()).orderId,order.orderIdentifier);
-    await assert.rejects(carrier([page,{orders:[anotherOrder]}]).run(), /could not confirm this reference/);
+    await assert.rejects(carrier([page,{orders:[anotherOrder]}]).run(), RoyalMailManualLookupError);
     await assert.rejects(carrier([page,{orders:[order,{...order,orderIdentifier:16}]}]).run(), /could not confirm this reference/);
     await assert.rejects(carrier([{orders:[imported,order],continuationToken:'next'},new Response(null,{status:503})]).run());
   }
-  for (const invalid of [false, 0, {}, '   ']) await assert.rejects(carrier([{orders:[order,row(11,invalid)]}]).run());
+  for (const invalid of [false, 0, {}]) await assert.rejects(carrier([{orders:[order,row(11,invalid)]}]).run());
 });
 
 test('a complete unfiltered listing can establish absence, including a valid empty account', async () => {
@@ -72,13 +72,94 @@ test('a complete unfiltered listing can establish absence, including a valid emp
   }
 });
 
+test('larger parcel histories and harmless envelope metadata can be checked through to the final page', async () => {
+  const pages = Array.from({length:8}, (_, page) => ({
+    orders:Array.from({length:50}, (_, i) => {
+      const id = 1000 + 50 * page + i;
+      return {...row(id, 'previous-' + id), packages:[{packageNumber:1, extra:'x'.repeat(3000)}]};
+    }),
+    count:50, totalCount:400, pageSize:50, hasMore:page < 7,
+    requestId:'private-carrier-request', metadata:{apiVersion:'1'},
+    continuationToken:page < 7 ? 'next+' + page : null,
+  }));
+  assert.ok(Buffer.byteLength(JSON.stringify(pages[0])) > 128 * 1024);
+  pages.at(-1).orders[49] = order;
+  const lookup = carrier(pages);
+  assert.equal((await lookup.run()).orderId, order.orderIdentifier);
+  assert.equal(lookup.urls.length, 9);
+  assert.equal((await carrier([{orders:[], continuationToken:'more'}, {orders:[order]}]).run()).orderId, order.orderIdentifier);
+});
+
+test('manual first-booking review has explicit limited causes and never implies an empty account', async () => {
+  const overflow = () => new Response('x'.repeat(512 * 1024 + 1), {headers:{'Content-Type':'application/json'}});
+  for (const [page, cause] of [
+    [{orders:[{orderIdentifier:32, createdOn}]}, /no order reference/],
+    [{metadata:{requestId:'private-request'}}, /without its order list/],
+    [{orders:[], hasMore:true}, /did not supply a usable next page/],
+    [overflow(), /safe size limit/],
+  ]) {
+    await assert.rejects(carrier([page]).run(), e => e instanceof RoyalMailManualLookupError && cause.test(e.message));
+  }
+  const pages = Array.from({length:20}, (_, i) => ({orders:[row(i + 100, 'other-' + i)], continuationToken:'more' + i}));
+  await assert.rejects(carrier(pages).run(), e => e instanceof RoyalMailManualLookupError && /more order history/.test(e.message));
+  for (const bad of [
+    [{orders:[order],continuationToken:'next'},overflow()],
+    [{orders:[order], hasMore:true}],
+    [{orders:[order, {...order,orderIdentifier:800}]}],
+    [{orders:[{...row(23, 'previous'),channelOrderReference:reference}]}],
+    [{orders:[{...row(23, reference),accountOrderNumber:43}]}],
+    [{orders:[], metadata:{orders:[order]}}],
+    [{orders:[row(52, '%22' + reference + '%22')]}],
+  ]) await assert.rejects(carrier(bad).run(), e => !(e instanceof RoyalMailManualLookupError));
+});
+
+test('only a recognised neutral selector refusal can enter manual verification', async () => {
+  const anonymous = {orders:[{orderIdentifier:32, createdOn}]};
+  for (const denial of [{}, [], {message:'unrecognised carrier text'}, {message:'Access denied'},
+    {errors:[{code:'InvalidOrderIdentifier'}, {code:'UnknownReason'}]}]) {
+    await assert.rejects(carrier([anonymous], {denial}).run(), e => !(e instanceof RoyalMailManualLookupError));
+  }
+  for (const denial of [
+    {code:'DuplicateOrderReference'}, {code:'OrderAlreadyExists',message:'An order with this reference already exists'},
+    {code:'InvalidOrderIdentifier',details:{message:'Several orders match'}}, {errors:[{details:{code:'OrderSuccessfullyCreated'}}]},
+    {errors:[{details:{success:true}}]}, {errors:[{details:{successCount:1}}]}, {errors:[{message:'Created'}]},
+  ]) {
+    for (const listing of [{orders:[]}, anonymous]) {
+      const lookup = carrier([listing], {denial});
+      await assert.rejects(lookup.run(), e => !(e instanceof RoyalMailManualLookupError) && /existing or ambiguous/.test(e.message));
+      assert.equal(lookup.urls.length, 1);
+    }
+  }
+  await assert.rejects(carrier([{orders:[]}], {denial:{details:{httpStatus:403}}}).run(),
+    e => !(e instanceof RoyalMailManualLookupError) && /account or service problem/.test(e.message));
+  for (const message of ['Order with reference "' + reference + '" was not found', "Order reference '" + reference + "' not found"]) {
+    const lookup = carrier([], {denial:{orderReference:reference, code:'order_not_found', message}});
+    assert.equal(await lookup.run(), null);
+    assert.equal(lookup.urls.length, 1);
+  }
+});
+
+test('list authentication, access, throttling, missing list and outages stay blocked with safe status-specific guidance', async () => {
+  for (const [status, wording] of [[400,/rejected the read-only/], [401,/did not authenticate/], [403,/denied access/],
+    [404,/did not return its order list/], [422,/rejected the read-only/], [429,/rate limiting/], [503,/unavailable/]]) {
+    const failure = new Response('private account at private address', {status});
+    await assert.rejects(carrier([failure]).run(), e => {
+      assert.ok(!(e instanceof RoyalMailManualLookupError));
+      assert.match(e.message, wording);
+      assert.ok(e.message.includes('HTTP ' + status));
+      assert.doesNotMatch(e.message, /private/);
+      return true;
+    });
+  }
+});
+
 test('a bare not-found refusal requires an independent complete check of the original reference', async () => {
   for (const primary of [{denial: {code: 'NotFound'}, status: 400}, {denial: {message: 'Not found'}, status: 422}]) {
     const found = carrier([{orders: [order]}], primary);
     assert.equal((await found.run()).orderId, order.orderIdentifier);
     const absent = carrier([{orders: []}], primary);
     assert.equal(await absent.run(), null);
-    for (const page of [{orders: [], continuationToken: 'more'}, new Response(null, {status: 503})]) {
+    for (const page of [{orders:[], hasMore:true}, new Response(null, {status:503})]) {
       const unavailable = carrier([page], primary);
       await assert.rejects(unavailable.run(), /Royal Mail rejected the order-reference lookup/);
       assert.equal(unavailable.urls.length, 2);
@@ -96,9 +177,7 @@ test('incomplete, ambiguous and malformed listings cannot confirm either absence
     [{orders: [{...anotherOrder, orderIdentifier: -2}]}],
     [{orders: Array(101).fill(order)}], [{orders: null}], [{orders: [], hasMore: true}],
     [{orders: [order], continuationToken: false}], [{orders: [order], continuationToken: ' '.repeat(2)}],
-    [{orders: [], continuationToken: '1'}],
     [{orders: [order], continuationToken: '2'}, {orders: [anotherOrder], continuationToken: '2'}],
-    [{orders: [order], continuationToken: '2'}, {orders: [anotherOrder], continuationToken: '3'}, {orders: [row(9, 'next')], continuationToken: '4'}],
     [{orders: [order], continuationToken: '2'}, new Response('private carrier failure', {status: 500})],
     [new Response(null, {status: 404})], [new Response(null, {status: 429})],
     [new Response('x'.repeat(131073), {headers: {'content-type': 'application/json'}})],
@@ -186,11 +265,13 @@ test('any other refusal is settled by the complete order list, and stays blocked
     [invalidSelector[0], {code: 'PermissionDenied', message: 'cannot access account'}],
     {message: 'Something unexpected'}, [],
   ]) {
-    assert.equal(await carrier([{orders: [anotherOrder]}], {denial}).run(), null);
+    const absent = carrier([{orders:[anotherOrder]}], {denial});
+    if (Array.isArray(denial) && denial.length) await assert.rejects(absent.run(), /account or service problem/);
+    else assert.equal(await absent.run(), null);
     assert.equal((await carrier([{orders: [order]}], {denial}).run()).orderId, order.orderIdentifier);
     const unreadable = carrier([new Response(null, {status: 503})], {denial});
     await assert.rejects(unreadable.run(), e => {
-      assert.match(e.message, /^Royal Mail rejected the order-reference lookup\. The order list could not confirm/);
+      assert.match(e.message, /order list is unavailable \(HTTP 503\)/);
       assert.doesNotMatch(e.message, /account unavailable|cannot access|Something unexpected/);
       return true;
     });

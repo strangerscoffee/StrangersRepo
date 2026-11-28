@@ -129,9 +129,9 @@ async function fixture(t, secret = encryptionKey, workerBookingKey = existing.bo
   });
   t.after(() => worker.dispose());
   let cookie;
-  const call = (path, method = "GET", body, options = {}) => worker.dispatchFetch(host + path, {
+  const call = (path, method = "GET", body, options = {}) => worker.dispatchFetch((options.host ?? host) + path, {
     method, redirect: "manual", headers: {
-      "content-type": "application/json", origin: host,
+      "content-type": "application/json", origin: options.host ?? host,
       ...((options.cookie ?? cookie) ? { cookie: options.cookie ?? cookie } : {}),
       ...options.headers,
     },
@@ -402,6 +402,120 @@ test("a timed-out confirmation of an accepted order recovers only its exact nume
   assert.equal(recovered.shipment.orderId, 900);
   assert.equal((await expectJson(await call(path, "POST", packageDetails))).shipment.orderId, 900);
   assert.equal(requests.filter(r => r.method === "POST").length, 1, "recovery never sends another purchase");
+});
+
+test("Admin links only a verified Click & Drop order, fenced against purchases, settings changes and duplicate attachments", async t => {
+  const { call, db, interceptLookup, requests, save, seedOrder, sessionCookie, settings } = await fixture(t);
+  await save(savedBooking);
+  async function hold(index, state = "failed", requestedAt = 0) {
+    const { id, path } = await seedOrder(index);
+    await db.prepare(`INSERT INTO wholesale_royal_mail_shipments
+      (order_id,state,operation,order_version,weight_grams,updated_at,requested_at,problem)
+      VALUES (?, ?, ?, 1, 2140, 1, ?, 'Royal Mail rejected the order-reference lookup.')`)
+      .bind(id, state, "existing-" + index, requestedAt).run();
+    const initial = await expectJson(await call(path));
+    assert.equal(initial.canLinkOrder, true);
+    return { id, path, data: { ifVersion: initial.orderVersion, bookingVersion: initial.bookingVersion,
+      operation: initial.linkOperation, orderNumber: String(8000 + index) } };
+  }
+  const link = (order, overrides = {}, options = {}) => call(order.path + "/link-order", "POST", { ...order.data, ...overrides }, options);
+  const carrierOrder = order => ({ orderReference: order.id, orderIdentifier: Number(order.data.orderNumber),
+    trackingNumber, printedOn: "2026-11-28T09:00:00Z" });
+  const keyFingerprint = async value => Buffer.from(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))).toString("base64");
+  const row = order => db.prepare("SELECT state,provider_id,review_required,refresh_after FROM wholesale_royal_mail_shipments WHERE order_id=?")
+    .bind(order.id).first();
+
+  const legacy = await hold(50, "failed", null);
+  assert.equal((await call(legacy.path + "/link-order")).status, 405);
+  assert.equal((await link(legacy, {}, { cookie: "" })).status, 401);
+  const staff = { username: "link.staff", password: "Temporary Linker 123!" };
+  await expectJson(await call("/api/admin/users", "POST", { ...staff, name: "Packing staff", role: "staff" }));
+  const signedIn = await call("/api/auth/change", "POST", { ...staff, newPassword: "Own packing password 123!" }, { cookie: "" });
+  assert.equal((await link(legacy, {}, { cookie: sessionCookie(signedIn) })).status, 403);
+  assert.equal((await call(legacy.path.replace("/api/admin/wholesale/", "/api/staff-orders/") + "/link-order", "POST", legacy.data,
+    { host: "https://staffstrangerscoffee.com" })).status, 403, "even an Admin using the staff workspace cannot link");
+  assert.equal((await link(legacy, { orderNumber: trackingNumber })).status, 400);
+  assert.equal((await link(legacy, { operation: "obsolete" })).status, 409);
+  assert.equal((await link(legacy, { ifVersion: 0 })).status, 409);
+  assert.equal((await link(legacy, { bookingVersion: 0 })).status, 409);
+  assert.equal(requests.length, 0);
+
+  const foreign = { ...carrierOrder(legacy), orderReference: "WS-PRIVATE-OTHER", trackingNumber: "ZZ123456789GB" };
+  for (const reply of [[], [foreign], [{ ...carrierOrder(legacy), orderIdentifier: 99 }], [carrierOrder(legacy), carrierOrder(legacy)]]) {
+    interceptLookup(() => RuntimeResponse.json(reply));
+    const error = await expectJson(await link(legacy), 409);
+    assert.doesNotMatch(JSON.stringify(error), /PRIVATE-OTHER|ZZ123456789GB/);
+    assert.equal((await row(legacy)).provider_id, null);
+    assert.equal((await row(legacy)).refresh_after, null, "a rejected check releases its lease");
+  }
+  interceptLookup(() => new RuntimeResponse(null, { status: 502 }));
+  await expectJson(await link(legacy), 503);
+  assert.equal((await row(legacy)).state, "failed");
+  interceptLookup(() => RuntimeResponse.json([carrierOrder(legacy)]));
+  const linked = await expectJson(await link(legacy));
+  assert.equal(linked.bookingEnabled, false, "a read-only link works when new bookings are paused");
+  assert.equal(linked.shipment.orderId, 8050);
+  assert.equal(linked.shipment.state, "labelled");
+  assert.equal(linked.shipment.reviewRequired, true);
+  assert.equal(linked.shipment.trackingUrl, null);
+  assert.equal(linked.shipment.requestedAt, null, "linking retains the historical unknown marker");
+  assert.equal((await call(legacy.path + "/label")).status, 409);
+  assert.equal((await link(legacy)).status, 409);
+  assert.ok(requests.every(request => request.method === "GET" && request.path === "/api/v1/orders/8050"));
+
+  const scope = await hold(51, "review", 1000);
+  await db.prepare("UPDATE wholesale_royal_mail_shipments SET candidate_provider_id=?, booking_connection=?, booking_account_scope=? WHERE order_id=?")
+    .bind(8051, await keyFingerprint(savedBooking.key), await keyFingerprint(savedBooking.key + "\0" + savedBooking.shippingAccountName), scope.id).run();
+  const before = requests.length;
+  await expectJson(await link(scope, { orderNumber: "8151" }), 409);
+  scope.data.bookingVersion = (await save({ ...savedBooking, key: replacements[0] })).version;
+  await expectJson(await link(scope), 409);
+  scope.data.bookingVersion = (await save({ ...savedBooking, shippingAccountName: "Different fixture account" })).version;
+  await expectJson(await link(scope), 409);
+  assert.equal(requests.length, before);
+  scope.data.bookingVersion = (await save(savedBooking)).version;
+  interceptLookup(() => RuntimeResponse.json([carrierOrder(scope)]));
+  assert.equal((await expectJson(await link(scope))).shipment.reviewRequired, true);
+  const duplicate = await hold(52);
+  duplicate.data.orderNumber = scope.data.orderNumber;
+  interceptLookup(() => RuntimeResponse.json([carrierOrder(duplicate)]));
+  await expectJson(await link(duplicate), 409);
+  assert.equal((await row(duplicate)).provider_id, null);
+
+  await expectJson(await call(settingsPath, "PUT", { ifVersion: (await settings()).version, enabled: true }));
+  const racing = await hold(53);
+  let enter, release;
+  const entered = new Promise(resolve => { enter = resolve; });
+  const delayed = new Promise(resolve => { release = resolve; });
+  interceptLookup(async () => { enter(); await delayed; return RuntimeResponse.json([carrierOrder(racing)]); });
+  const inFlight = link(racing);
+  try {
+    await entered;
+    assert.equal((await call(racing.path, "POST", packageDetails)).status, 202, "new postage waits for the existing-order check");
+    assert.equal((await link(racing)).status, 409);
+    await db.prepare("UPDATE wholesale_preview SET version=version+1 WHERE kind='order' AND id=?").bind(racing.id).run();
+  } finally { release(); }
+  await expectJson(await inFlight, 409);
+  assert.equal((await row(racing)).provider_id, null, "a stale carrier result cannot attach after an order edit");
+  const changedCandidate = await hold(54, "review", 2000);
+  interceptLookup(async () => {
+    await db.prepare("UPDATE wholesale_royal_mail_shipments SET candidate_provider_id=? WHERE order_id=?")
+      .bind(8154, changedCandidate.id).run();
+    return RuntimeResponse.json([carrierOrder(changedCandidate)]);
+  });
+  await expectJson(await link(changedCandidate), 409);
+  assert.equal((await row(changedCandidate)).provider_id, null);
+  const beforeUnpinned = requests.length;
+  await expectJson(await link(changedCandidate, { orderNumber: 8154 }), 409);
+  assert.equal(requests.length, beforeUnpinned, "a candidate without an original connection cannot be queried by number");
+  const revoked = await hold(55);
+  interceptLookup(async () => {
+    await db.prepare("UPDATE users SET role='staff' WHERE username='settings.admin'").run();
+    return RuntimeResponse.json([carrierOrder(revoked)]);
+  });
+  await expectJson(await link(revoked), 409);
+  assert.equal((await row(revoked)).provider_id, null, "losing Admin rights during the carrier read prevents linking");
+  assert.equal(requests.filter(r => r.method === "POST").length, 0);
 });
 
 test("a missing encryption key prevents saves and never activates Worker credentials over an Admin override", async t => {

@@ -909,17 +909,35 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
     const heavy = preparation.tooHeavyForOneParcel(row); // over 30 kg: booked and split into boxes in Click & Drop
     const draft = { name: "", line1: "", line2: "", city: "", county: "", postcode: "", weightGrams: estimate ? String(estimate) : "" };
     let locationReview = null, locationSaved = false, serviceAdvice = "";
+    let referenceMessage = "", firstBooking = null, checkedManually = false, checkRequired = false, linkOpen = false;
+    let connectionRevision = 0, resolutionHint = "", nativeAdviceExpiresAt = 0;
+    function discardCheck(message = "") {
+      if (firstBooking || checkedManually || resolutionHint === "native") {
+        checkRequired = true;
+        reviewing = false;
+        if (message) referenceMessage = message;
+      }
+      firstBooking = null;
+      checkedManually = false;
+      resolutionHint = "";
+      nativeAdviceExpiresAt = 0;
+    }
     const recipientForLabel = () => {
       const postcode = draft.postcode.trim().toUpperCase().replace(/ /g, "");
       return { name: draft.name.trim(), line1: draft.line1.trim(), line2: draft.line2.trim(), city: draft.city.trim(),
         county: draft.county.trim(), postcode: postcode.length > 3 ? postcode.slice(0, -3) + " " + postcode.slice(-3) : postcode };
     };
+    const parcelForCheck = () => JSON.stringify([recipientForLabel(), draft.weightGrams]);
     const destinationChanged = () => {
       const original = shipping?.recipient;
       const next = recipientForLabel();
       return !original || ["line1", "line2", "city", "county", "postcode"].some(key => next[key] !== (original[key] || ""));
     };
     function receive(result) {
+      discardCheck();
+      checkRequired = false;
+      referenceMessage = "";
+      linkOpen = false;
       if (result.bookingVersion !== shipping?.bookingVersion || result.bookingService !== shipping?.bookingService) serviceAdvice = "";
       if (!shipping) {
         const recipient = result.recipient || result.recipientDraft;
@@ -972,19 +990,39 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
       const lookupFailure = failed && shipment.referenceLookupFailure;
       const recoveryOnly = lookupFailure === "unconfirmed";
       const canBook = shipping?.canCreate && !recoveryOnly;
+      const canLink = !stale && !uncertain && shipping?.canLinkOrder === true && typeof shipping.linkOperation === "string" && !!shipping.linkOperation;
+      const manualReview = checkedManually && firstBooking && reviewing;
       const labelProblem = safeShipment && shipment?.state === "created" && shipment.orderId && shipment.problem;
+      const resolutionVisible = !reviewing && !stale && !uncertain && (lookupFailure || canLink || labelProblem);
       const lookupGuidance = lookupFailure === "before_postage" ? "This attempt stopped before postage was requested." : "The postage outcome of this earlier attempt is unconfirmed.";
       const failureStatus = lookupFailure ? "Order lookup needs attention" : failed ? (shipment.requestedAt ? "Label request rejected" : "Booking needs attention") : "";
-      const status = uncertain ? "Check booking status" : recoveryStatus || failureStatus || (labelProblem ? "Label needs attention" : needsLabelReview ? "Label needs review" : reviewing && !recorded ? "Ready to request a label" : stateText(shipment));
-      const tone = shipment?.state === "failed" ? "bad" : labelProblem || needsLabelReview || ["booking", "review"].includes(shipment?.state) || uncertain ? "warn" : labelReady ? "ok" : "";
+      const status = manualReview ? "Ready to request first label" : uncertain ? "Check booking status" : recoveryStatus || failureStatus || (labelProblem ? "Label needs attention" : needsLabelReview ? "Label needs review" : reviewing && !recorded ? "Ready to request a label" : stateText(shipment));
+      const tone = manualReview ? "warn" : shipment?.state === "failed" ? "bad" : labelProblem || needsLabelReview || ["booking", "review"].includes(shipment?.state) || uncertain ? "warn" : labelReady ? "ok" : "";
       openSheet(html`<form id="wRoyalMailForm" class="w-sheet w-editor w-shipping-sheet">${editorHead("Royal Mail shipping")}<div class="w-editor-body"><div class="w-shipping-heading"><h3>${row.business || row.createdName}</h3><p class="w-id" title="${row.id}">${row.reference ? "Reference " + row.reference + " · " : ""}${shortId(row.id)}…</p><p class="hint">Order placed ${carrierDate(row.createdAt)}</p></div>
-        <div id="wShippingState" class="w-shipping-status" role="status"><span class="pill ${tone}">${shipping ? status : "Checking Royal Mail shipping…"}</span><span>${uncertain ? "Check the original request before continuing." : recovery?.status === "needs_admin" ? "Check the original booking in Click & Drop." : recoveryStatus ? "An automatic lookup is scheduled." : lookupFailure ? lookupGuidance : labelProblem ? "Postage has already been requested for this order." : failed ? "Review the parcel and the booking service before requesting postage again." : recorded ? "Confirm dispatch separately when the parcel leaves." : reviewing ? "Check this parcel summary before requesting postage." : "Review the saved address and enter the sealed parcel weight."}</span>${shipment?.requestedAt ? html`<small>Requested ${carrierDate(shipment.requestedAt)}</small>` : ""}${shipment?.checkedAt ? html`<small>Last checked ${carrierDate(shipment.checkedAt)}</small>` : ""}</div>
+        <div id="wShippingState" class="w-shipping-status" role="status"><span class="pill ${tone}">${shipping ? status : "Checking Royal Mail shipping…"}</span><span>${manualReview ? "Check the address, service and packed weight before requesting postage." : uncertain ? "Check the original request before continuing." : recovery?.status === "needs_admin" ? "Check the original booking in Click & Drop." : recoveryStatus ? "An automatic lookup is scheduled." : lookupFailure ? lookupGuidance : labelProblem ? "Postage has already been requested for this order." : failed ? "Review the parcel and the booking service before requesting postage again." : recorded ? "Confirm dispatch separately when the parcel leaves." : reviewing ? "Check this parcel summary before requesting postage." : "Review the saved address and enter the sealed parcel weight."}</span>${shipment?.requestedAt ? html`<small>Requested ${carrierDate(shipment.requestedAt)}</small>` : ""}${shipment?.checkedAt ? html`<small>Last checked ${carrierDate(shipment.checkedAt)}</small>` : ""}</div>
         ${shipping && (shipping.enabled === false || shipping.bookingConfigured === false) ? html`<p class="w-shipping-notice">New Royal Mail booking setup is incomplete. Check Wholesale → Royal Mail. You can still add a tracking link and dispatch the order as usual.</p>` : shipping?.bookingEnabled === false ? html`<p class="w-shipping-notice">New Royal Mail bookings are paused in Wholesale → Royal Mail. Existing shipments, label downloads and tracking remain available.</p>` : shipping?.enabled && !canBook && !recorded && !recoveryOnly ? html`<p class="w-shipping-notice">Pack the order and mark it Ready before requesting postage.</p>` : ""}
         ${shipping?.trackingWarning ? html`<p class="w-shipping-notice" role="status">${shipping.trackingWarning}</p>` : ""}
         ${recorded && !publicLinkOnly && shipping?.trackingEnabled === false ? html`<p class="w-shipping-notice">Carrier scans are not connected. You can check the label request and follow the tracking link on Royal Mail.</p>` : ""}
-        ${shipment?.problem && !uncertain && shipment.problem !== error ? html`<p class="w-shipping-notice" role="status">${shipment.problem}</p>` : ""}
-        ${(lookupFailure || labelProblem) && !stale && !uncertain ? html`<section class="w-shipping-recovery" aria-label="Find the order in Click &amp; Drop"><h3>Find the order in Click &amp; Drop</h3><p>${labelProblem ? "Find the existing booking using this full order reference." : recoveryOnly ? "Use Check label request to recover the original booking. If the outcome stays unclear, check this reference in Click & Drop." : "Search for this full order reference. If you find a booking, check its recipient, destination and parcel weight. If there is no match, review the label request again here."}</p><code id="wLookupReference">${row.id}</code><button type="button" class="btn sm soft" data-sheet="shipping-copy-reference" aria-label="Copy order reference">${svg("copy")}Copy reference</button>
-          ${lookupFailure ? html`<button type="button" class="btn sm soft" data-sheet="shipping-reference-check">Check order reference</button><p class="hint">Looks for an existing booking without requesting postage.</p><p id="wReferenceResult" role="status" hidden></p>` : ""}</section>` : ""}
+        ${shipment?.problem && !manualReview && !uncertain && shipment.problem !== error ? html`<p class="w-shipping-notice" role="status">${shipment.problem}</p>` : ""}
+        ${resolutionVisible ? html`<section class="w-shipping-recovery" aria-label="Find the order in Click &amp; Drop"><h3>Find the order in Click &amp; Drop</h3>
+          <p>${labelProblem ? "Find the existing booking using this wholesale order reference." : recoveryOnly ? "Check the original label request or search for its wholesale reference in Click & Drop." : "Search all order statuses and channels in Click & Drop for this wholesale reference."}</p>
+          <code id="wLookupReference">${row.id}</code><div class="w-recovery-actions"><button type="button" class="btn sm soft" data-sheet="shipping-copy-reference" aria-label="Copy order reference">${svg("copy")}Copy reference</button><a class="btn sm soft" href="https://business.parcel.royalmail.com/" target="_blank" rel="noopener noreferrer">Open Click &amp; Drop</a></div>
+          ${lookupFailure ? html`<button type="button" class="btn sm soft" data-sheet="shipping-reference-check">Check order reference</button><p class="hint">Checks Royal Mail for this reference without requesting postage.</p>` : ""}
+          <p id="wReferenceResult" role="status" tabindex="-1" ${referenceMessage ? "" : raw("hidden")}>${referenceMessage}</p>
+          ${resolutionHint === "native" && !linkOpen ? html`<div class="w-recovery-entry"><h3>Book once in Click &amp; Drop</h3><p>If you use Click &amp; Drop to buy postage, first search all channels and order statuses by the full wholesale reference, recipient and postcode. If there is an existing booking, link it below. If your search confirms there is none, create one order using the full wholesale reference above, then link its Royal Mail order number here.</p></div>` : ""}
+          ${resolutionHint === "locate" && !linkOpen ? html`<p>Find the original booking in Click &amp; Drop and link its Royal Mail order number here. Keep postage on hold while the booking is unresolved.</p>` : ""}
+          ${canLink && !linkOpen ? html`<button type="button" class="btn sm soft" data-sheet="shipping-link-open">Link existing booking</button>` : ""}
+          ${canLink && linkOpen ? html`<div class="w-recovery-entry"><h3>Link an existing booking</h3><p>Open the matching order in Click &amp; Drop and find its numeric order number. Its wholesale reference must match the one above.</p>
+            ${field("Royal Mail order number", html`<input id="wCarrierOrderNumber" inputmode="numeric" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="20" aria-describedby="wCarrierNumberHint">`)}
+            <p id="wCarrierNumberHint" class="hint">Enter the digits from the order details. Tracking numbers and WS references belong to different fields.</p>
+            <div class="w-recovery-actions"><button type="button" class="btn soft" data-sheet="shipping-link-confirm">Check and link booking</button><button type="button" class="btn sm soft" data-sheet="shipping-link-cancel">Cancel</button></div>
+            <p id="wLinkError" class="err" role="alert"></p></div>` : ""}
+          ${firstBooking && !checkedManually && !linkOpen ? html`<div class="w-recovery-entry" aria-label="Confirm the first booking"><h3>Confirm a first booking</h3><p>Search by the full reference above and by the recipient and postcode in every Click &amp; Drop channel, including dispatched orders.</p>
+            <p class="w-address">${[recipient.name, row.business, recipient.postcode].filter(Boolean).join(" · ")}</p>
+            <label class="w-shipping-confirm"><input id="wFirstBookingAttestation" type="checkbox"><span>I checked all Click &amp; Drop orders and channels by reference, recipient and postcode. No booking exists for this parcel.</span></label>
+            <button type="button" class="btn soft" data-sheet="shipping-first-review">Continue to parcel review</button><p class="hint">Postage is requested in the next step only if you confirm the parcel.</p></div>` : ""}
+        </section>` : ""}
+        ${manualReview ? html`<section class="w-shipping-review" aria-label="Manual booking check"><h3>Manual booking check</h3><p>You confirmed that no booking exists for this parcel. Requesting the label will send one new postage request to Royal Mail.</p></section>` : ""}
         ${failed && !lookupFailure && !heavy && shipping?.bookingService && !stale && !uncertain ? html`<section class="w-shipping-review" aria-label="Check parcel service"><div class="kv"><span>Configured service</span><strong>${shipping.bookingService}</strong></div><button class="btn soft" type="button" data-sheet="shipping-service-check">Check service for this parcel</button><p class="hint">Checks the service for this postcode and packed weight without buying postage.</p><p role="status" id="wServiceAdvice" ${serviceAdvice ? "" : raw("hidden")}>${serviceAdvice}</p><p class="hint">To change the booking service, open Shipping settings in Royal Mail and edit the Click &amp; Drop connection.</p></section>` : ""}
         ${uncertain && !recoveryStatus ? html`<p class="w-shipping-notice">The label request could not be confirmed. Check the existing request before trying anything else.</p>` : ""}
         ${recoveryStatus ? html`<section class="w-shipping-review" aria-label="Booking recovery"><h3>${recovery.status === "checking" ? "Finding the original booking" : "Review the original booking"}</h3><p>${recovery.status === "checking" ? "The original order reference is being checked automatically." : "Check this order reference, destination and parcel in Click & Drop, then check the label request here."}</p><div class="kv"><span>Order reference</span><strong class="w-id">${row.id}</strong></div>${recovery.lastCheckedAt ? html`<small>Last booking check ${carrierDate(recovery.lastCheckedAt)}</small>` : ""}${recovery.status === "checking" && recovery.nextCheckAt ? html`<p class="hint">Next scheduled check ${carrierDate(recovery.nextCheckAt)}</p>` : ""}</section>` : ""}
@@ -1023,11 +1061,11 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
           ${field("UK postcode", html`<input name="postcode" maxlength="12" autocomplete="shipping postal-code" required value="${draft.postcode}">`)}
           ${field("Packed weight (grams)", html`<input name="weightGrams" type="number" inputmode="numeric" min="${Math.max(1,row.grams)}" max="30000" step="1" required value="${draft.weightGrams}">`)}
           <p class="hint">${estimate ? "Filled in with an estimate: the coffee with a little overfill, its bags and about 500 g of box and packing. Weigh the sealed parcel and change it if needed. " : "Include the box and packaging. "}Coffee alone: ${weight(row.grams)}. Up to 30 kg. Split heavier shipments into boxes in Click &amp; Drop.</p></fieldset>` : ""}
-        </div><footer class="w-editor-footer"><p id="wErr" class="err" role="alert">${error}</p><div class="row w-actions"><button type="button" class="btn soft" data-sheet="shipping-back">${backLabel}</button>${recorded || uncertain || !shipping || (recoveryOnly && !stale && shipping.enabled) ? html`<button type="button" class="btn soft" data-sheet="shipping-refresh">${refreshText}</button>` : stale ? html`<button type="button" class="btn" data-sheet="shipping-back">Reload latest order</button>` : canBook && !heavy && !locationReview ? html`<button type="submit" class="btn" ${reviewing && performance.now() < reviewReadyAt ? raw("disabled") : ""}>${reviewing ? "Request Royal Mail label" : "Review label request"}</button>` : ""}</div></footer></form>`, async (action, element) => {
+        </div><footer class="w-editor-footer"><p id="wErr" class="err" role="alert">${error}</p><div class="row w-actions"><button type="button" class="btn soft" data-sheet="shipping-back">${backLabel}</button>${recorded || uncertain || !shipping || (recoveryOnly && !stale && shipping.enabled) ? html`<button type="button" class="btn soft" data-sheet="shipping-refresh">${refreshText}</button>` : stale ? html`<button type="button" class="btn" data-sheet="shipping-back">Reload latest order</button>` : canBook && !heavy && !locationReview && !linkOpen && !checkRequired && (!firstBooking || manualReview) ? html`<button type="submit" class="btn" ${reviewing && performance.now() < reviewReadyAt ? raw("disabled") : ""}>${reviewing ? "Request Royal Mail label" : "Review label request"}</button>` : ""}</div></footer></form>`, async (action, element) => {
         const form = element.closest("form");
         if (!form || form.dataset.whBusy) return;
         if (action === "shipping-back") { await back(); return; }
-        if (action === "shipping-edit") { reviewing = false; locationReview = null; locationSaved = false; draw(); return; }
+        if (action === "shipping-edit") { discardCheck("Parcel review was cancelled. Check the order reference again before confirming a first booking."); reviewing = false; locationReview = null; locationSaved = false; draw(); return; }
         if (action === "shipping-location-cancel") { locationReview = null; draw(); $("#wShippingReviewTitle")?.focus(); return; }
         if (action === "shipping-location-review" || action === "shipping-location-save") {
           if (!reviewing || recorded || uncertain || stale || !canBook || !destinationChanged()) return;
@@ -1066,7 +1104,42 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
           });
           return;
         }
+        if (action === "shipping-link-open" && canLink) {
+          capture(form);
+          discardCheck();
+          referenceMessage = "";
+          linkOpen = true; draw(); $("#wCarrierOrderNumber")?.focus();
+          return;
+        }
+        if (action === "shipping-link-cancel") {
+          linkOpen = false; draw(); $("#wRoyalMailForm [data-sheet='shipping-link-open']")?.focus();
+          return;
+        }
+        if (action === "shipping-link-confirm" && canLink && linkOpen) {
+          const input = form.querySelector("#wCarrierOrderNumber"), errorBox = form.querySelector("#wLinkError");
+          const orderNumber = input.value.trim();
+          if (!/^[1-9][0-9]{0,15}$/.test(orderNumber) || !Number.isSafeInteger(Number(orderNumber))) {
+            errorBox.textContent = "Enter the positive numeric order number shown in Click & Drop."; input.focus(); return;
+          }
+          await saveForm(form, async () => {
+            errorBox.textContent = "";
+            try {
+              const result = await api("POST", path + "/link-order", { ifVersion: shipping.orderVersion, bookingVersion: shipping.bookingVersion, operation: shipping.linkOperation, orderNumber });
+              if (session !== packingSession || !form.isConnected) return;
+              if (result?.orderVersion !== row.version || Number(result.shipment?.orderId) !== Number(orderNumber) || !result.shipment?.reviewRequired) throw new Error("The match could not be confirmed. Reopen the order to check the linked shipment.");
+              receive(result); changed = true; draw(); toast("Existing Royal Mail booking linked. Check its details before using the label.");
+            } catch (error) {
+              if (session !== packingSession || !form.isConnected) return;
+              discardCheck();
+              errorBox.textContent = error.status ? error.message : "The link could not be confirmed. Reopen this order to check its shipment.";
+              errorBox.scrollIntoView({ block: "nearest" });
+            }
+          });
+          return;
+        }
         if (action === "shipping-reference-check" && lookupFailure && !stale && !uncertain) {
+          capture(form); discardCheck(); checkRequired = true; linkOpen = false;
+          const checkedConnection = connectionRevision;
           await saveForm(form, async () => {
             const status = form.querySelector("#wReferenceResult");
             status.hidden = false;
@@ -1075,10 +1148,24 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
               const result = await api("POST", path + "/reference-check", { ifVersion: shipping.orderVersion, bookingVersion: shipping.bookingVersion });
               if (session !== packingSession || !form.isConnected) return;
               if (!["found", "missing", "inconclusive"].includes(result.outcome) || typeof result.message !== "string") throw new Error("The reference check could not be confirmed.");
-              status.textContent = result.message;
+              if (checkedConnection !== connectionRevision || !navigator.onLine) throw new Error("The connection changed. Check the order reference again when online.");
+              referenceMessage = result.message;
+              checkRequired = result.outcome !== "missing";
+              if (result.outcome === "inconclusive" && lookupFailure === "before_postage" && canBook && !heavy && navigator.onLine &&
+                  typeof result.firstBookingProof === "string" && result.firstBookingProof && Number.isSafeInteger(result.firstBookingExpiresAt) && result.firstBookingExpiresAt > Date.now()) {
+                firstBooking = { proof: result.firstBookingProof, expiresAt: result.firstBookingExpiresAt, parcel: parcelForCheck() };
+              } else if (result.outcome !== "found" && result.canResolveInClickDrop === true && lookupFailure === "before_postage" && canBook && canLink && !heavy) {
+                resolutionHint = "native";
+                nativeAdviceExpiresAt = Date.now() + 5 * 60 * 1000;
+              } else if (canLink && (result.outcome !== "missing" || recoveryOnly)) {
+                resolutionHint = "locate";
+              }
             } catch (error) {
-              if (session === packingSession && form.isConnected) status.textContent = error.message || "The reference check could not be completed.";
+              if (session !== packingSession || !form.isConnected) return;
+              referenceMessage = error.message || "The reference check could not be completed.";
+              if (error.status === 409) needsReload = true;
             }
+            draw(); $("#wReferenceResult")?.focus();
           });
           return;
         }
@@ -1161,24 +1248,43 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
           });
           return;
         }
-        if (!["submit", "shipping-refresh"].includes(action)) return;
+        if (!["submit", "shipping-refresh", "shipping-first-review"].includes(action)) return;
         capture(form);
-        if (action === "submit" && (locationReview || !canBook || (shipping.shipment && shipping.shipment.state !== "failed") || uncertain || shipping.orderVersion !== row.version)) return;
-        if (action === "submit" && !reviewing) {
+        const attest = action === "shipping-first-review";
+        if (attest && (!firstBooking || reviewing || !form.querySelector("#wFirstBookingAttestation")?.checked)) {
+          const control = form.querySelector("#wFirstBookingAttestation");
+          if (control) { control.setCustomValidity("Confirm the checks in Click & Drop before continuing."); control.reportValidity(); control.onchange = () => control.setCustomValidity(""); }
+          return;
+        }
+        if ((attest || checkedManually) && (!navigator.onLine || !firstBooking || firstBooking.expiresAt <= Date.now())) {
+          discardCheck("The manual check expired or the connection changed. Check the order reference again."); draw(); $("#wReferenceResult")?.focus(); return;
+        }
+        if ((attest || checkedManually) && firstBooking.parcel !== parcelForCheck()) {
+          discardCheck("The parcel details changed. Check the order reference again."); draw(); $("#wReferenceResult")?.focus(); return;
+        }
+        if (action === "submit" && (checkRequired || firstBooking && !manualReview || linkOpen)) return;
+        if ((action === "submit" || attest) && (locationReview || !canBook || (shipping.shipment && shipping.shipment.state !== "failed") || uncertain || shipping.orderVersion !== row.version)) return;
+        if ((action === "submit" || attest) && !reviewing) {
           const input = form.elements.namedItem("postcode"), normal = recipientForLabel().postcode;
           input.setCustomValidity(/^(?:GIR 0AA|[A-Z]{1,2}[0-9][0-9A-Z]? [0-9][A-Z]{2})$/.test(normal) && !/^(?:BT|GY|JE|IM)/.test(normal) ? "" : "Enter a Great Britain postcode.");
           input.oninput = () => input.setCustomValidity("");
         }
-        if (action === "submit" && (!form.reportValidity() || !Number.isSafeInteger(Number(draft.weightGrams)) || Number(draft.weightGrams) < 1)) return;
-        if (action === "submit" && !reviewing) { reviewing = true; reviewReadyAt = performance.now() + 450; draw(); return; }
+        if ((action === "submit" || attest) && (!form.reportValidity() || !Number.isSafeInteger(Number(draft.weightGrams)) || Number(draft.weightGrams) < 1)) return;
+        if ((action === "submit" || attest) && !reviewing) {
+          if (attest) { checkedManually = true; checkRequired = false; }
+          reviewing = true; reviewReadyAt = performance.now() + 450; draw(); $("#wShippingReviewTitle")?.focus(); return;
+        }
         if (action === "submit" && performance.now() < reviewReadyAt) return;
         await saveForm(form, async () => {
           try {
             const button = form.querySelector(action === "submit" ? 'button[type="submit"]' : '[data-sheet="shipping-refresh"]');
             if (button) button.textContent = action === "submit" ? "Requesting label…" : shipment?.orderId ? "Refreshing tracking…" : "Checking request…";
             // Lock before a request leaves: a lost response is recovered, never automatically rebooked.
+            const proof = action === "submit" && manualReview ? firstBooking.proof : null;
+            discardCheck();
             if (action === "submit") { uncertain = true; serviceAdvice = ""; }
             const result = await api(action === "submit" || shipping ? "POST" : "GET", path + (action === "shipping-refresh" && shipping ? "/refresh" : ""), action === "submit" ? { ifVersion: row.version, recipient: recipientForLabel(), weightGrams: Number(draft.weightGrams),
+              ...(proof ? { confirmFirstBooking: true, firstBookingProof: proof } : {}),
               ...(Number.isSafeInteger(shipping.bookingVersion) ? { bookingVersion: shipping.bookingVersion, bookingService: shipping.bookingService } : {}) } : action === "shipping-refresh" && shipping ? {} : undefined);
             if (session !== packingSession || !form.isConnected) return;
             if (!Number.isSafeInteger(result.orderVersion) || typeof result.enabled !== "boolean" || !Object.hasOwn(result, "shipment")) throw new Error("The shipping result could not be confirmed. Check the existing request.");
@@ -1204,6 +1310,26 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
         });
       });
       const form = $("#wRoyalMailForm"), controller = new AbortController(), scrim = $("#scrim");
+      const invalidate = (message) => {
+        if (!form.isConnected || (!firstBooking && resolutionHint !== "native")) return;
+        capture(form); discardCheck(message); draw(); $("#wReferenceResult")?.focus();
+      };
+      window.addEventListener("offline", () => {
+        connectionRevision++;
+        invalidate("The connection changed. Check the order reference again when online.");
+      }, { signal: controller.signal });
+      let expiryTimer = 0;
+      if (firstBooking || nativeAdviceExpiresAt) {
+        const expiresAt = firstBooking?.expiresAt || nativeAdviceExpiresAt;
+        expiryTimer = setTimeout(() => invalidate("This check expired. Check the order reference again."), Math.max(0, expiresAt - Date.now()));
+        window.addEventListener("pagehide", () => invalidate("Check the order reference again before requesting first postage."), { signal: controller.signal });
+        form.addEventListener("change", event => {
+          if (event.target.closest("#wShippingFields")) invalidate("The parcel details changed. Check the order reference again.");
+        }, { signal: controller.signal });
+      }
+      form.querySelector("#wCarrierOrderNumber")?.addEventListener("keydown", event => {
+        if (event.key === "Enter") { event.preventDefault(); form.querySelector('[data-sheet="shipping-link-confirm"]')?.click(); }
+      }, { signal: controller.signal });
       const advice = form.querySelector("#wServiceAdvice");
       if (advice) form.addEventListener("input", () => {
         serviceAdvice = ""; advice.textContent = ""; advice.hidden = true;
@@ -1212,7 +1338,7 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
         if (form.isConnected && !form.dataset.whBusy) form.querySelector('button[type="submit"]')?.removeAttribute("disabled");
       }, reviewReadyAt - performance.now());
       const observer = new MutationObserver(() => { if (!form.isConnected) cleanup(); });
-      cleanup = () => { controller.abort(); observer.disconnect(); };
+      cleanup = () => { clearTimeout(expiryTimer); controller.abort(); observer.disconnect(); };
       observer.observe($("#sheet"), { childList: true });
       document.addEventListener("keydown", event => { if (event.key !== "Escape" || !form.isConnected) return; event.preventDefault(); event.stopImmediatePropagation(); back(); }, { capture: true, signal: controller.signal });
       scrim.addEventListener("click", event => { if (event.target !== scrim || !form.isConnected) return; event.preventDefault(); event.stopImmediatePropagation(); back(); }, { capture: true, signal: controller.signal });

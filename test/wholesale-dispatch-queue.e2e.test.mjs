@@ -11,7 +11,7 @@ const tracking = "AB123456789GB";
 const pdf = "%PDF-1.7\nLocally generated test label\n%%EOF\n";
 
 // Run the production Worker, D1, assets and scheduled handler. Only the carrier is a stand-in.
-async function startFixture(record) {
+async function startFixture(carrier) {
   const bundled = await build({
     absWorkingDir: ROOT, bundle: true, write: false, platform: "browser", format: "esm",
     external: ["cloudflare:*"],
@@ -40,33 +40,12 @@ async function startFixture(record) {
         WHOLESALE_ROYAL_MAIL_CLICK_DROP_KEY: text("fixture-booking-key"), WHOLESALE_ROYAL_MAIL_SERVICE_CODE: text("TPS48"),
       },
     },
-    dev: { outboundService: { type: "fetcher", handler: async req => {
-      const url = new URL(req.url);
-      assert.equal(url.hostname, "api.parcel.royalmail.com", "only the carrier fixture is reachable");
-      if (req.method === "POST") {
-        const { items: [item] } = await req.json();
-        record.purchases.push(item);
-        // Royal Mail accepted the purchase, but the response never reached Strangers.
-        return new WorkerResponse("temporary gateway error", { status: 502 });
-      }
-      assert.equal(req.method, "GET");
-      record.reads.push(url.pathname);
-      if (url.pathname === "/api/v1/orders/8101/label") {
-        assert.equal(record.purchases.length, 1);
-        return new WorkerResponse(pdf, { headers: { "content-type": "application/pdf" } });
-      }
-      if (url.pathname === "/api/v1/orders/8101") assert.equal(record.purchases.length, 1);
-      else assert.equal(decodeURIComponent(url.pathname), '/api/v1/orders/"' + id + '"');
-      return WorkerResponse.json(record.purchases.length ? [{
-        orderReference: id, orderIdentifier: 8101, trackingNumber: tracking, printedOn: "2026-11-26T10:00:00Z",
-      }] : []);
-    } } },
+    dev: { outboundService: { type: "fetcher", handler: carrier } },
   }] });
 }
 
-test("Staff and Admin share the destination and queue as an uncertain purchase is recovered and its label downloaded", async t => {
-  const record = { purchases: [], reads: [] };
-  const runtime = await startFixture(record);
+async function shippingWorkspace(t, carrier) {
+  const runtime = await startFixture(carrier);
   t.after(() => runtime.dispose());
   const origin = (await runtime.ready).origin;
   const browser = await chromium.launch(process.env.CHROMIUM_PATH ? {executablePath: process.env.CHROMIUM_PATH} : {});
@@ -112,6 +91,32 @@ test("Staff and Admin share the destination and queue as an uncertain purchase i
     await page.goto(origin + path);
     return page;
   }
+  return { origin, api, db, order, seed, open, customerId, adminCookie, staffCookie };
+}
+
+test("Staff and Admin share the destination and queue as an uncertain purchase is recovered and its label downloaded", async t => {
+  const record = { purchases: [], reads: [] };
+  const { origin, api, db, open, customerId, adminCookie, staffCookie } = await shippingWorkspace(t, async req => {
+    const url = new URL(req.url);
+    assert.equal(url.hostname, "api.parcel.royalmail.com", "only the carrier fixture is reachable");
+    if (req.method === "POST") {
+      const { items: [item] } = await req.json();
+      record.purchases.push(item);
+      // Royal Mail accepted the purchase, but the response never reached Strangers.
+      return new WorkerResponse("temporary gateway error", { status: 502 });
+    }
+    assert.equal(req.method, "GET");
+    record.reads.push(url.pathname);
+    if (url.pathname === "/api/v1/orders/8101/label") {
+      assert.equal(record.purchases.length, 1);
+      return new WorkerResponse(pdf, { headers: { "content-type": "application/pdf" } });
+    }
+    if (url.pathname === "/api/v1/orders/8101") assert.equal(record.purchases.length, 1);
+    else assert.equal(decodeURIComponent(url.pathname), '/api/v1/orders/"' + id + '"');
+    return WorkerResponse.json(record.purchases.length ? [{
+      orderReference: id, orderIdentifier: 8101, trackingNumber: tracking, printedOn: "2026-11-26T10:00:00Z",
+    }] : []);
+  });
   const staff = await open("/orders#dispatch", staffCookie, { viewport: {width: 375, height: 812}, hasTouch: true, isMobile: true });
   const admin = await open("/admin#wholesale/royal-mail", adminCookie, { viewport: {width: 1280, height: 800} });
   const queue = page => page.getByRole("region", {name: "Dispatch queue"});
@@ -198,4 +203,180 @@ test("Staff and Admin share the destination and queue as an uncertain purchase i
   await adminSheet.getByRole("button", {name: "Back", exact: true}).click();
   await rowAt(admin, "attention");
   assert.equal(record.purchases.length, 1, "no action during recovery or handover purchases a second label");
+});
+
+test("Admin resolves a refused Royal Mail reference on a small phone without buying duplicate postage", async t => {
+  const withExisting = id;
+  const toBook = "WS-" + "E".repeat(32);
+  const stale = "WS-" + "F".repeat(32);
+  const createdOn = "2026-11-24T10:15:00Z";
+  const purchases = [];
+  const reads = [];
+  let lookup = "limited";
+  const { open, api, db, seed, order, adminCookie, staffCookie } = await shippingWorkspace(t, async req => {
+    const { hostname, pathname } = new URL(req.url);
+    assert.equal(hostname, "api.parcel.royalmail.com");
+    if (req.method === "GET") {
+      reads.push(decodeURIComponent(pathname));
+      if (pathname === "/api/v1/orders") {
+        // This older Click & Drop order has no searchable reference.
+        return WorkerResponse.json({ orders: [{ orderIdentifier: 991, createdOn }] });
+      }
+      if (pathname === "/api/v1/orders/8101" || pathname === "/api/v1/orders/8102") {
+        return WorkerResponse.json([{ orderIdentifier: Number(pathname.split("/").pop()), createdOn, printedOn: createdOn,
+          orderReference: pathname.endsWith("8101") ? withExisting : toBook, trackingNumber: tracking,
+          recipient: { address: { fullName: "Private fixture recipient" } } }]);
+      }
+      if (lookup === "unavailable") return new WorkerResponse(null, { status: 503 });
+      if (lookup === "missing") return WorkerResponse.json([]);
+      assert.match(decodeURIComponent(pathname), /^\/api\/v1\/orders\/"WS-[A-F0-9]{32}"$/);
+      return WorkerResponse.json([{ code: "InvalidOrderIdentifier" }], { status: 400 });
+    }
+    assert.equal(req.method, "POST");
+    assert.equal(pathname, "/api/v1/orders");
+    const { items } = await req.json();
+    assert.equal(items.length, 1);
+    purchases.push(items[0].orderReference);
+    return WorkerResponse.json({ successCount: 1, errorsCount: 0, createdOrders: [{
+      orderIdentifier: 8102, orderReference: items[0].orderReference, trackingNumber: tracking, createdOn, printedOn: createdOn,
+    }] });
+  });
+  const shipping = orderId => "/api/admin/wholesale/orders/" + orderId + "/shipping";
+  await db.batch([toBook, stale].map(orderId => seed.bind("order", orderId, JSON.stringify(order), Date.now())));
+  for (const orderId of [withExisting, toBook, stale]) {
+    const view = await (await api(shipping(orderId))).json();
+    const failed = await (await api(shipping(orderId), "POST", {
+      ifVersion: view.orderVersion, bookingVersion: view.bookingVersion, bookingService: view.bookingService,
+      weightGrams: 1500, recipient: view.recipient,
+    })).json();
+    assert.equal(failed.shipment.referenceLookupFailure, "before_postage");
+  }
+  assert.deepEqual(purchases, []);
+  const phone = { viewport: { width: 320, height: 720 }, isMobile: true, hasTouch: true, colorScheme: "dark" };
+  const admin = await open("/admin#wholesale/royal-mail", adminCookie, phone);
+  const staff = await open("/orders#dispatch", staffCookie, phone);
+  const panel = admin.locator("#wRoyalMailForm");
+  const action = (root, name) => root.getByRole("button", { name, exact: true });
+  async function parcel(page, orderId) {
+    const queue = page.getByRole("region", { name: "Dispatch queue" });
+    await queue.locator('[data-queue-order="' + orderId + '"] button').click();
+  }
+  async function fitsPhone() {
+    assert.ok(await panel.evaluate(form =>
+      document.documentElement.scrollWidth <= innerWidth + 1 && form.scrollWidth <= form.clientWidth + 1 &&
+      [...form.querySelectorAll("input,button")].filter(el => el.getClientRects().length)
+        .every(el => el.getBoundingClientRect().left >= -1 && el.getBoundingClientRect().right <= innerWidth + 1)),
+      "the order number, consent, and actions fit a 320px phone");
+  }
+  // Staff cannot see either route for resolving a failed check, even with ordinary ordering access.
+  await parcel(staff, toBook);
+  const staffPanel = staff.getByRole("dialog", { name: "Royal Mail" });
+  await staffPanel.getByText("Order lookup needs attention", { exact: true }).waitFor();
+  assert.equal(await action(staffPanel, "Check order reference").count(), 0);
+  assert.equal(await action(staffPanel, "Link existing booking").count(), 0);
+  assert.equal(await staffPanel.getByRole("checkbox").count(), 0);
+
+  await parcel(admin, withExisting);
+  for (const source of ["unavailable", "missing"]) {
+    lookup = source;
+    const response = admin.waitForResponse(r => r.url().endsWith("/shipping/reference-check"));
+    await action(panel, "Check order reference").click();
+    const result = await (await response).json();
+    await panel.locator("#wReferenceResult").getByText(result.message, { exact: true }).waitFor();
+    const native = panel.getByRole("heading", { name: "Book once in Click & Drop" });
+    if (source === "missing") {
+      assert.equal(result.canResolveInClickDrop, true);
+      await native.waitFor();
+    } else {
+      assert.equal(result.canResolveInClickDrop, undefined);
+      assert.equal(await native.count(), 0);
+    }
+    assert.equal(await panel.locator("#wFirstBookingAttestation").count(), 0);
+    assert.equal(purchases.length, 0);
+  }
+  lookup = "limited";
+  await action(panel, "Link existing booking").click();
+  const number = panel.getByLabel("Royal Mail order number");
+  await number.fill("8102");
+  const refusedLink = admin.waitForResponse(r => r.url().endsWith("/shipping/link-order"));
+  await action(panel, "Check and link booking").click();
+  const refusedResponse = await refusedLink;
+  assert.equal(refusedResponse.status(), 409);
+  assert.doesNotMatch(await refusedResponse.text(), new RegExp(toBook + "|Private fixture recipient|" + tracking));
+  await panel.locator("#wLinkError").getByText(/no single click & drop order matched/i).waitFor();
+  assert.equal(purchases.length, 0);
+  await number.fill("8101");
+  await fitsPhone();
+  const carrierBeforeLink = reads.length;
+  await action(panel, "Check and link booking").click();
+  await panel.getByText("Label needs review", { exact: true }).waitFor();
+  assert.deepEqual(reads.slice(carrierBeforeLink), ["/api/v1/orders/8101"]);
+  assert.deepEqual(purchases, []);
+  assert.equal(await action(panel, "Request Royal Mail label").count(), 0);
+  await action(panel, "Back to dispatch queue").click();
+
+  async function attest() {
+    const checked = admin.waitForResponse(r => r.url().endsWith("/shipping/reference-check"));
+    await action(panel, "Check order reference").click();
+    const { outcome, firstBookingProof } = await (await checked).json();
+    assert.equal(outcome, "inconclusive");
+    assert.ok(firstBookingProof);
+    const consent = panel.locator("#wFirstBookingAttestation");
+    const review = action(panel, "Continue to parcel review");
+    if (await review.isEnabled()) await review.click();
+    assert.equal(await action(panel, "Request Royal Mail label").count(), 0, "an unchecked attestation cannot open the final request");
+    await consent.check();
+    await fitsPhone();
+    assert.equal(purchases.length, 0);
+    await review.click();
+    const submit = action(panel, "Request Royal Mail label");
+    await submit.waitFor();
+    assert.equal(purchases.length, 0, "reviewing the parcel does not purchase a label");
+    return submit;
+  }
+
+  // Expiry is tested in the browser while the real Worker still holds a valid proof.
+  await parcel(admin, stale);
+  await admin.clock.install();
+  const expired = await attest();
+  await admin.clock.fastForward(5 * 60_000 + 1500);
+  if (await expired.isVisible() && await expired.isEnabled()) await expired.click();
+  assert.equal(await action(panel, "Request Royal Mail label").count(), 0);
+  assert.deepEqual(purchases, []);
+  await admin.clock.setSystemTime(new Date());
+  await admin.reload();
+  await parcel(admin, stale);
+  const staleSubmit = await attest();
+  await db.prepare("UPDATE wholesale_preview SET version=version+1 WHERE kind='order' AND id=?").bind(stale).run();
+  const refused = admin.waitForResponse(r => r.url().endsWith(shipping(stale)) && r.request().method() === "POST");
+  await staleSubmit.click();
+  assert.equal((await refused).status(), 409);
+  await action(panel, "Request Royal Mail label").waitFor({ state: "hidden" });
+  assert.deepEqual(purchases, []);
+
+  // Drop only the response to the browser after the real Worker has booked the parcel.
+  await admin.reload();
+  await parcel(admin, toBook);
+  const submit = await attest();
+  let finalRequests = 0;
+  const path = shipping(toBook);
+  await admin.route("**" + path, async route => {
+    if (route.request().method() !== "POST") return route.continue();
+    finalRequests++;
+    const body = route.request().postDataJSON();
+    assert.equal(body.confirmFirstBooking, true);
+    assert.ok(body.firstBookingProof);
+    const accepted = await route.fetch();
+    assert.equal(accepted.status(), 201);
+    await route.abort("connectionreset");
+  });
+  await submit.click();
+  await panel.getByText("Check booking status", { exact: true }).waitFor();
+  assert.equal(await action(panel, "Request Royal Mail label").count(), 0);
+  await admin.reload();
+  await parcel(admin, toBook);
+  await panel.getByText("Label ready", { exact: true }).waitFor();
+  assert.equal(await action(panel, "Continue to parcel review").count(), 0);
+  assert.equal(finalRequests, 1);
+  assert.deepEqual(purchases, [toBook]);
 });

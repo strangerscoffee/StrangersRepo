@@ -538,6 +538,8 @@ test('only an unambiguous order-specific lookup miss permits a first booking', a
     // blocked without a scan; any other refusal is settled only by a complete read of the order list,
     // which here can't be read (it gets the same refusal), so booking stays blocked either way.
     const pointing = [
+      {message: 'Order "OTHER" not found'}, {message: 'No order with reference "OTHER" was found'},
+      {message: 'No orders found for "OTHER"'}, {message: 'Order reference "' + reference.toLowerCase() + '" not found'},
       {code: 'NotFound', orderReference: 'OTHER'}, {code: 'NotFound', accountOrderNumber: 123},
       {message: 'Order not found', orderReference: 'OTHER'}, {channelOrderReference: 'OTHER', code: 'OrderNotFound'},
       {message: 'Order not found', accountOrderNumber: 1024}, {message: 'Order not found', orderIdentifier: 1024},
@@ -547,10 +549,8 @@ test('only an unambiguous order-specific lookup miss permits a first booking', a
       ...pointing,
       [{code: 'NotFound'}, {message: 'Order not found'}], [{code: 'InvalidOrderIdentifier'}, {code: 'NotFound'}],
       {code: 'NotFound', message: 'Shipping account not found'}, {code: 'NotFound', errors: [{code: 'NotFound'}]},
-      {message: 'Order "OTHER" not found'}, {message: 'No order with reference "OTHER" was found'},
       {message: 'Shipping account not found'}, {message: 'No order identifier supplied'},
       {code: 'OrderNotFound', detail: 'Permission denied'}, {code: 'Forbidden', message: 'Order not found'},
-      {message: 'No orders found for "OTHER"'}, {message: 'Order reference "' + reference.toLowerCase() + '" not found'},
       {title: 'Access denied', errors: [{message: 'Order not found'}]}, {errors: [{message: 'Order not found'}], status: 200},
       [{message: 'Order not found'}, {message: 'Rate limited'}], [{message: 'Order not found'}, null],
       Array(13).fill({message: 'Order not found'}), {errors: []}, {}, null,
@@ -586,7 +586,7 @@ test('lookup refusals report recognised reasons without copying carrier text or 
     return true;
   });
   await assert.rejects(lookup({errors:[{errorCode:privateCode}]}), error => {
-    assert.equal(error.message, 'Royal Mail rejected the order-reference lookup. The order list could not confirm this reference. Check the original order in Click & Drop.');
+    assert.equal(error.message, 'Royal Mail rejected the order-reference lookup. Click & Drop rejected the read-only order list request (HTTP 400). Check the order in Click & Drop.');
     return true;
   });
   for (const body of [

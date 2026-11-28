@@ -135,9 +135,9 @@ export async function runRoyalMailProviderChecks(env: Env, { booking, tracking }
   let account = check("shippingAccount", "unverified", "Connect to Click & Drop to check the shipping accounts.");
   let service = booking.serviceCode ? check("service", "unverified", "Confirm a shipping account and supply a sample parcel to check its service.")
     : check("service", "attention", "Save a valid booking service code in Royal Mail credentials.");
-  let label = check("labelPdf", "unverified", "An existing, confirmed wholesale label from this Click & Drop connection is needed to test PDF access.");
+  let label = check("labelPdf", "unverified", "Once the first wholesale label is generated, run these checks again to verify PDF access.");
   let track = tracking ? check("tracking", "unverified", "A verified wholesale shipment with a linked tracking reference is needed to test Tracking API access.")
-    : check("tracking", "unverified", "To use Tracking API updates, configure the separate Tracking API credentials and accept the terms.");
+    : check("tracking", "unverified", "Tracking API access is optional for booking postage. Configure it for carrier scan updates.");
   const key = booking.key;
   if (!key) return [auth, account, service, label, track];
   let names;
