@@ -115,10 +115,12 @@ export async function shiftRoutes(r: RotaRequest): Promise<Response | null> {
       // Fairest first: whoever is furthest below their minimum (or maximum) gets offered it first.
       const ratio = p.contractMin ? hours / p.contractMin : p.contractMax ? hours / p.contractMax : hours / 40;
       const overtime = p.contractMax != null ? round2(Math.max(0, hours - p.contractMax)) : 0;
+      // People based at this site come first (the owner's request, 28 Nov 2026), then fairest first.
+      const home = p.primarySite === shift.site;
       return { userId: p.id, name: p.name, role: p.role, hoursIfGiven: hours, contractMin: p.contractMin, contractMax: p.contractMax,
-        contractHours: p.contractMax, overtimeIfGiven: overtime, flags, selectable: !error, tier, ratio };
+        contractHours: p.contractMax, overtimeIfGiven: overtime, flags, selectable: !error, primarySite: home, tier, ratio };
     });
-    list.sort((a, b) => a.tier - b.tier || a.ratio - b.ratio || a.name.localeCompare(b.name));
+    list.sort((a, b) => a.tier - b.tier || Number(b.primarySite) - Number(a.primarySite) || a.ratio - b.ratio || a.name.localeCompare(b.name));
     const best = list.find((c) => c.selectable)?.userId;
     return json({
       shift: { ...shift, siteName: site.name },
