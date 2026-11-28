@@ -185,21 +185,25 @@ function orderBody(input: RoyalMailOrderInput) {
     invalidShipment("Check the order totals before creating the Royal Mail shipment.");
   }
 
+  const address = {
+    fullName: addressPart(recipient.name, 210, true),
+    companyName: addressPart(recipient.companyName, 100),
+    addressLine1: addressPart(recipient.addressLine1, 100, true),
+    addressLine2: addressPart(recipient.addressLine2, 100),
+    addressLine3: addressPart(recipient.addressLine3, 100),
+    city: addressPart(recipient.city, 100, true),
+    county: addressPart(recipient.county, 100),
+    postcode: postcode.slice(0, -3) + " " + postcode.slice(-3),
+    countryCode: "GBR",
+  };
   return { items: [{
     orderReference: orderRef,
     orderDate: new Date(orderDate).toISOString(),
     isRecipientABusiness: true,
-    recipient: { address: {
-      fullName: addressPart(recipient.name, 210, true),
-      companyName: addressPart(recipient.companyName, 100),
-      addressLine1: addressPart(recipient.addressLine1, 100, true),
-      addressLine2: addressPart(recipient.addressLine2, 100),
-      addressLine3: addressPart(recipient.addressLine3, 100),
-      city: addressPart(recipient.city, 100, true),
-      county: addressPart(recipient.county, 100),
-      postcode: postcode.slice(0, -3) + " " + postcode.slice(-3),
-      countryCode: "GBR",
-    }, ...contactFor(recipient) },
+    recipient: { address, ...contactFor(recipient) },
+    // Click & Drop refuses API orders without a billing address on this account (28 Nov 2026: codes 95, 71
+    // and 15 on Billing.Address.FullName, AddressLine1 and City). The business being delivered to is the one billed.
+    billing: { address: { ...address }, ...contactFor(recipient) },
     packages: [{ weightInGrams, packageFormatIdentifier: format }],
     currencyCode: "GBP",
     subtotal: subtotalPence / 100,
