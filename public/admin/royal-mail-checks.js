@@ -73,6 +73,8 @@ window.WholesaleRoyalMailChecks = function ({ api, html, raw, svg, put, openShee
     const limits = current("parcelLimits")?.evidence;
     const boxContext = JSON.stringify([state.scope, limits]);
     const run = state.automated;
+    const accountChecks = ["authentication", "shippingAccount", "service"];
+    const verified = accountChecks.filter(id => run?.checks.some(check => check.id === id && check.status === "passed")).length;
     const rows = Object.entries(providerTitles).map(([id, title]) => {
       const row = run?.checks.find(item => item.id === id);
       const [label, tone] = states[row?.status] || ["Not checked", ""];
@@ -91,7 +93,8 @@ window.WholesaleRoyalMailChecks = function ({ api, html, raw, svg, put, openShee
           <button type="submit" class="btn" ${pending || needsReload ? raw("disabled") : ""}>${pending === "carrier" ? "Checking…" : "Run carrier checks"}</button>
         </form>
         <div class="rm-check-messages"><p role="status">${notice}</p><p class="err" role="alert">${issue}</p>${needsReload ? html`<button type="button" class="btn soft" data-check-action="reload">Reload checks</button>` : ""}</div>
-        <p class="rm-check-stamp">${run ? `${run.checks.filter(row => row.status === "passed").length} of ${Object.keys(providerTitles).length} verified · ${date(run.checkedAt)} (UK) · ${run.checkedBy}` : "No carrier checks recorded for this setup."}</p>
+        <p class="rm-check-stamp">${run ? `${verified} of 3 account and service checks verified · ${date(run.checkedAt)} (UK) · ${run.checkedBy}` : "No carrier checks recorded for this setup."}</p>
+        ${verified === accountChecks.length ? html`<p class="hint">Each order has its own reference check before postage. If an order stops there, open its Royal Mail shipping panel and choose <strong>Check order reference</strong>.</p>` : ""}
         <ul class="rm-check-list">${rows}</ul>
       </section>
       </div>

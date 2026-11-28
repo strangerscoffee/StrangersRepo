@@ -378,6 +378,10 @@ html:has(#scrim:not([hidden])){overflow:hidden}
 .w-shipping-recovery h3,.w-shipping-verify h3{font-size:14px}
 .w-shipping-recovery p,.w-shipping-verify p{font-size:13.5px;line-height:1.45}
 .w-shipping-recovery code{font-size:12px;overflow-wrap:anywhere;user-select:text}
+.w-recovery-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;max-width:100%}
+.w-recovery-entry{display:grid;gap:10px;border-top:1px solid var(--line);margin-top:4px;padding-top:13px;min-width:0;width:100%}
+.w-recovery-entry>.btn{justify-self:start}.w-recovery-entry .field{min-width:0}.w-recovery-entry input:not([type=checkbox]){width:100%;min-width:0}
+.w-recovery-entry .err:empty{display:none}.w-shipping-recovery .btn{white-space:normal;text-align:center}
 .w-shipping-confirm{display:flex;gap:10px;align-items:flex-start;font-size:13.5px;line-height:1.45;min-height:44px;cursor:pointer}
 .w-shipping-confirm input[type=checkbox]{flex:none;width:22px;height:22px;min-height:22px;margin:0}
 .w-shipping-scan h3,.w-shipping-next h3{font-size:12px;font-weight:650;color:var(--muted)}

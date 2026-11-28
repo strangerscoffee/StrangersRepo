@@ -110,7 +110,7 @@ export async function checkUnconfirmedBooking(env: Env, id: string, operation: s
   } else if (!warning && claimed.requested_at === 0) {
     // The outbound marker is committed before POST; the ownership check also fences an in-flight sender.
     await env.DB.prepare(`UPDATE wholesale_royal_mail_shipments SET state = 'failed', checked_at = ?, updated_at = ?,
-      recovery_due_at = NULL, problem = 'No label request was sent. You can review the parcel and try again.'
+      recovery_due_at = NULL, refresh_after = NULL, problem = 'No label request was sent. You can review the parcel and try again.'
       WHERE ${owned}`).bind(checkedAt, checkedAt, ...owner).run();
   } else {
     const exhausted = !key || claimed.recovery_attempts >= MAX_ATTEMPTS || claimed.recovery_due_at === 0;

@@ -617,7 +617,7 @@
   review.busy=refresh?'refresh':'load';
   if(!background){review.error='';review.feedback='';renderShipping(review);}
   try{
-   const result=verifyShippingResult(await staffJson(refresh?'POST':'GET',shippingPath(review.row)+(refresh?'/refresh':''),refresh?{}:undefined,{signal:AbortSignal.timeout(15000)}));
+   const result=verifyShippingResult(await staffJson(refresh?'POST':'GET',shippingPath(review.row)+(refresh?'/refresh':''),refresh?{}:undefined,{signal:AbortSignal.timeout(refresh ? 35000 : 15000)}));
    if(!shippingIsOpen(review))return;
    if(request&&!request.pending&&labelRequests.get(review.row.id)===request){
     labelRequests.delete(review.row.id);
@@ -655,9 +655,10 @@
   labelRequests.set(row.id,request);
   review.busy='create';review.confirming=false;review.error='';review.feedback='';renderShipping(review);
   try{
+   // Allow time for the reference search, postage request and a separate booking-ID confirmation.
    const booked=verifyShippingResult(await staffJson('POST',shippingPath(row),{
     ifVersion:row.version,bookingVersion:result.bookingVersion,bookingService:result.bookingService,weightGrams:grams
-   },{signal:AbortSignal.timeout(45000)}));
+   },{signal:AbortSignal.timeout(65000)}));
    if(!booked.shipment)throw new Error('The label request could not be verified.');
    if(labelRequests.get(row.id)!==request)return;
    labelRequests.delete(row.id);
