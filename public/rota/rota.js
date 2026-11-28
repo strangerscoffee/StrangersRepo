@@ -1011,7 +1011,7 @@
         const flag = c.flags[0];
         const pill = c.best ? el("span", { class: "pill ok", text: "Best fit" })
           : flag ? el("span", { class: "pill " + (flag.severity === "error" ? "bad" : flag.severity === "warn" ? "warn" : ""), text: { clash: "Clash", time_off: "Time off", overtime: "Overtime", rest: "Short rest", availability: "Availability", break: "Break", seven_days: "7 days", closed: "Closed" }[flag.kind] || "Check" }) : null;
-        const sub = flag ? flag.message : `Free · would be ${hoursText(c.hoursIfGiven, c)}`;
+        const sub = flag ? flag.message : `${c.primarySite ? "Based here · " : ""}Free · would be ${hoursText(c.hoursIfGiven, c)}`;
         const row = el("button", { type: "button", class: "lrow cand" + (c.selectable ? "" : " dim"), disabled: !c.selectable, role: "radio", "aria-checked": "false",
           onclick: () => { pick = c.userId; for (const x of who.querySelectorAll(".cand")) x.setAttribute("aria-checked", String(x === row)); drawFoot(c.name); } },
           avatar(c.name), el("span", { class: "t" }, el("b", { text: c.name }), el("span", { class: "s", text: sub + (c.flags.length > 1 ? ` (+${c.flags.length - 1} more)` : "") })), pill, c.selectable ? el("span", { class: "radio", "aria-hidden": "true" }) : null);

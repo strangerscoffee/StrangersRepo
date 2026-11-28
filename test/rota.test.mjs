@@ -354,6 +354,29 @@ test("suggestions: clashing and on-leave people can't be picked; best fit first;
   assert.ok(r.body.candidates.slice(lastSelectable + 1).every((c) => !c.selectable), "people who can't take it come last");
 });
 
+test("suggestions: people based at the shift's site come before others who can do it, then fairest first", async () => {
+  const W = "2030-06-10";
+  for (const id of [ids.Alex, ids.Sam, ids.Priya, ids.George]) await rota("PUT", "people/" + id, { contractHours: 30, primarySite: null, sites: [] }, ADMIN);
+  // Alex is furthest below contract, but Priya is based at the Cafe.
+  await addShift({ site: "asg", day: "2030-06-11", start: "08:00", end: "16:00", userId: ids.Priya });
+  await addShift({ site: "asg", day: "2030-06-12", start: "08:00", end: "16:00", userId: ids.Priya });
+  const set = await rota("PUT", "people/" + ids.Priya, { primarySite: "cafe", sites: ["asg"] }, ADMIN);
+  assert.equal(set.status, 200, set.text);
+  const s = (await addShift({ site: "cafe", day: W, start: "09:00", end: "13:00" })).shift;
+  const r = await rota("GET", "suggest?shift=" + s.id, undefined, ADMIN);
+  assert.equal(r.status, 200, r.text);
+  const first = r.body.candidates[0];
+  assert.equal(first.name.split(" ")[0], "Priya");
+  assert.equal(first.primarySite, true);
+  assert.equal(first.best, true);
+  assert.ok(r.body.candidates.slice(1).every((c) => !c.primarySite));
+  // At another site she's ranked on fair hours like everyone else.
+  const elsewhere = (await addShift({ site: "roastery", day: W, start: "14:00", end: "17:00" })).shift;
+  const r2 = await rota("GET", "suggest?shift=" + elsewhere.id, undefined, ADMIN);
+  assert.ok(r2.body.candidates.every((c) => !c.primarySite));
+  assert.notEqual(r2.body.candidates[0].name.split(" ")[0], "Priya", "she has the most hours that week");
+});
+
 test("hours and the CSV", async () => {
   const W = "2030-07-01";
   await rota("PUT", "people/" + ids.Alex, { contractHours: 10 }, ADMIN);
