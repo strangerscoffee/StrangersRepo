@@ -948,16 +948,19 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
       const recovery = !stale ? shipment?.recovery : null;
       const recoveryStatus = recovery?.status === "checking" ? "Checking with Royal Mail" : recovery?.status === "needs_admin" ? "Booking needs admin review" : "";
       const failed = shipment?.state === "failed";
-      const failureStatus = failed ? (shipment.requestedAt ? "Label request rejected" : "Booking needs attention") : "";
+      const lookupFailure = failed && shipment.referenceLookupFailure;
+      const lookupGuidance = lookupFailure === "before_postage" ? "This attempt stopped before postage was requested." : "The postage outcome of this earlier attempt is unconfirmed.";
+      const failureStatus = lookupFailure ? "Order lookup needs attention" : failed ? (shipment.requestedAt ? "Label request rejected" : "Booking needs attention") : "";
       const status = uncertain ? "Check booking status" : recoveryStatus || failureStatus || (needsLabelReview ? "Label needs review" : reviewing && !recorded ? "Ready to request a label" : stateText(shipment));
       const tone = shipment?.state === "failed" ? "bad" : needsLabelReview || ["booking", "review"].includes(shipment?.state) || uncertain ? "warn" : labelReady ? "ok" : "";
       openSheet(html`<form id="wRoyalMailForm" class="w-sheet w-editor w-shipping-sheet">${editorHead("Royal Mail shipping")}<div class="w-editor-body"><div class="w-shipping-heading"><h3>${row.business || row.createdName}</h3><p class="w-id" title="${row.id}">${row.reference ? "Reference " + row.reference + " · " : ""}${shortId(row.id)}…</p><p class="hint">Order placed ${carrierDate(row.createdAt)}</p></div>
-        <div id="wShippingState" class="w-shipping-status" role="status"><span class="pill ${tone}">${shipping ? status : "Checking Royal Mail shipping…"}</span><span>${uncertain ? "Check the original request before continuing." : recovery?.status === "needs_admin" ? "Check the original booking in Click & Drop." : recoveryStatus ? "An automatic lookup is scheduled." : failed ? "Review the parcel and the booking service before requesting postage again." : recorded ? "Confirm dispatch separately when the parcel leaves." : reviewing ? "Check this parcel summary before requesting postage." : "Review the saved address and enter the sealed parcel weight."}</span>${shipment?.requestedAt ? html`<small>Requested ${carrierDate(shipment.requestedAt)}</small>` : ""}${shipment?.checkedAt ? html`<small>Last checked ${carrierDate(shipment.checkedAt)}</small>` : ""}</div>
+        <div id="wShippingState" class="w-shipping-status" role="status"><span class="pill ${tone}">${shipping ? status : "Checking Royal Mail shipping…"}</span><span>${uncertain ? "Check the original request before continuing." : recovery?.status === "needs_admin" ? "Check the original booking in Click & Drop." : recoveryStatus ? "An automatic lookup is scheduled." : lookupFailure ? lookupGuidance : failed ? "Review the parcel and the booking service before requesting postage again." : recorded ? "Confirm dispatch separately when the parcel leaves." : reviewing ? "Check this parcel summary before requesting postage." : "Review the saved address and enter the sealed parcel weight."}</span>${shipment?.requestedAt ? html`<small>Requested ${carrierDate(shipment.requestedAt)}</small>` : ""}${shipment?.checkedAt ? html`<small>Last checked ${carrierDate(shipment.checkedAt)}</small>` : ""}</div>
         ${shipping && (shipping.enabled === false || shipping.bookingConfigured === false) ? html`<p class="w-shipping-notice">New Royal Mail booking setup is incomplete. Check Wholesale → Royal Mail. You can still add a tracking link and dispatch the order as usual.</p>` : shipping?.bookingEnabled === false ? html`<p class="w-shipping-notice">New Royal Mail bookings are paused in Wholesale → Royal Mail. Existing shipments, label downloads and tracking remain available.</p>` : shipping?.enabled && !shipping.canCreate && !recorded ? html`<p class="w-shipping-notice">Pack the order and mark it Ready before requesting postage.</p>` : ""}
         ${shipping?.trackingWarning ? html`<p class="w-shipping-notice" role="status">${shipping.trackingWarning}</p>` : ""}
         ${recorded && !publicLinkOnly && shipping?.trackingEnabled === false ? html`<p class="w-shipping-notice">Carrier scans are not connected. You can check the label request and follow the tracking link on Royal Mail.</p>` : ""}
         ${shipment?.problem && !uncertain && shipment.problem !== error ? html`<p class="w-shipping-notice" role="status">${shipment.problem}</p>` : ""}
-        ${failed && !heavy && shipping?.bookingService && !stale && !uncertain ? html`<section class="w-shipping-review" aria-label="Check parcel service"><div class="kv"><span>Configured service</span><strong>${shipping.bookingService}</strong></div><button class="btn soft" type="button" data-sheet="shipping-service-check">Check service for this parcel</button><p class="hint">Checks the service for this postcode and packed weight without buying postage.</p><p role="status" id="wServiceAdvice" ${serviceAdvice ? "" : raw("hidden")}>${serviceAdvice}</p><p class="hint">To change the booking service, open Shipping settings in Royal Mail and edit the Click &amp; Drop connection.</p></section>` : ""}
+        ${lookupFailure && !stale && !uncertain ? html`<section class="w-shipping-recovery" aria-label="Find the order in Click &amp; Drop"><h3>Find the order in Click &amp; Drop</h3><p>Search for this full order reference. If you find a booking, check its recipient, destination and parcel weight. If there is no match, review the label request again here.</p><code id="wLookupReference">${row.id}</code><button type="button" class="btn sm soft" data-sheet="shipping-copy-reference" aria-label="Copy order reference">${svg("copy")}Copy reference</button></section>` : ""}
+        ${failed && !lookupFailure && !heavy && shipping?.bookingService && !stale && !uncertain ? html`<section class="w-shipping-review" aria-label="Check parcel service"><div class="kv"><span>Configured service</span><strong>${shipping.bookingService}</strong></div><button class="btn soft" type="button" data-sheet="shipping-service-check">Check service for this parcel</button><p class="hint">Checks the service for this postcode and packed weight without buying postage.</p><p role="status" id="wServiceAdvice" ${serviceAdvice ? "" : raw("hidden")}>${serviceAdvice}</p><p class="hint">To change the booking service, open Shipping settings in Royal Mail and edit the Click &amp; Drop connection.</p></section>` : ""}
         ${uncertain && !recoveryStatus ? html`<p class="w-shipping-notice">The label request could not be confirmed. Check the existing request before trying anything else.</p>` : ""}
         ${recoveryStatus ? html`<section class="w-shipping-review" aria-label="Booking recovery"><h3>${recovery.status === "checking" ? "Finding the original booking" : "Review the original booking"}</h3><p>${recovery.status === "checking" ? "The original order reference is being checked automatically." : "Check this order reference, destination and parcel in Click & Drop, then check the label request here."}</p><div class="kv"><span>Order reference</span><strong class="w-id">${row.id}</strong></div>${recovery.lastCheckedAt ? html`<small>Last booking check ${carrierDate(recovery.lastCheckedAt)}</small>` : ""}${recovery.status === "checking" && recovery.nextCheckAt ? html`<p class="hint">Next scheduled check ${carrierDate(recovery.nextCheckAt)}</p>` : ""}</section>` : ""}
         ${shipment?.orderChanged ? html`<p class="w-shipping-notice">The order changed after this label request. Check the saved destination, bags and label before handing over the parcel.</p>` : ""}
@@ -1038,6 +1041,22 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
           });
           return;
         }
+        if (action === "shipping-copy-reference") {
+          try {
+            await navigator.clipboard.writeText(row.id);
+            if (form.isConnected) toast("Order reference copied.");
+          } catch {
+            const reference = form.querySelector("#wLookupReference");
+            if (reference?.isConnected) {
+              const range = document.createRange();
+              range.selectNodeContents(reference);
+              document.getSelection()?.removeAllRanges();
+              document.getSelection()?.addRange(range);
+              toast("Order reference selected for copying.");
+            }
+          }
+          return;
+        }
         if (action === "shipping-copy") {
           await saveForm(form, async () => {
             if (!navigator.clipboard?.writeText) throw new Error("Copy is unavailable on this browser. Select the tracking number to copy it.");
@@ -1058,7 +1077,7 @@ window.WholesaleAdmin = function ({ install, api, html, raw, svg, put, head, ope
           return;
         }
         if (action === "shipping-service-check") {
-          if (!failed || !shipping.bookingService || stale || uncertain) return;
+          if (!failed || lookupFailure || !shipping.bookingService || stale || uncertain) return;
           capture(form);
           const posted = { ifVersion: shipping.orderVersion, bookingVersion: shipping.bookingVersion, postcode: recipientForLabel().postcode, weightGrams: Number(draft.weightGrams) };
           const parcel = JSON.stringify(draft);

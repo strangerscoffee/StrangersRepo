@@ -427,12 +427,20 @@ test('only an unambiguous order-specific lookup miss permits a first booking', a
       [{code: 'OrderNotFound', message: 'Order not found'}],
       {errors: [{message: 'No orders found for "' + reference + '"'}]},
       {errors: [{message: "Order with reference '" + reference + "' could not be found."}], status},
+      {message: 'Order with reference "' + reference + '" was not found'},
+      {message: 'Order "' + reference + '" not found'}, {message: 'No order with reference "' + reference + '" was found'},
+      {message: 'Order with reference "' + reference + '" does not exist'},
+      {channelOrderReference: null, accountOrderNumber: 0, code: null, message: 'Order not found'},
       [{accountOrderNumber: null, channelOrderReference: reference, code: 'NotFound', message: 'Not found.'}],
       {code: 'OrderReferenceNotFound'}, {orderReference: reference, code: 'NotFound'},
     ]) assert.equal(await lookup(body, status), null);
 
     for (const body of [
-      {code: 'NotFound'}, {message: 'Shipping account not found'}, {message: 'No order identifier supplied'},
+      [{code: 'NotFound'}, {message: 'Order not found'}], [{code: 'InvalidOrderIdentifier'}, {code: 'NotFound'}],
+      {code: 'NotFound', orderReference: 'OTHER'}, {code: 'NotFound', message: 'Shipping account not found'},
+      {code: 'NotFound', accountOrderNumber: 123}, {code: 'NotFound', errors: [{code: 'NotFound'}]},
+      {message: 'Order "OTHER" not found'}, {message: 'No order with reference "OTHER" was found'},
+      {message: 'Shipping account not found'}, {message: 'No order identifier supplied'},
       {code: 'OrderNotFound', detail: 'Permission denied'}, {code: 'Forbidden', message: 'Order not found'},
       {message: 'Order not found', orderReference: 'OTHER'}, {channelOrderReference: 'OTHER', code: 'OrderNotFound'},
       {message: 'No orders found for "OTHER"'}, {message: 'Order reference "' + reference.toLowerCase() + '" not found'},
@@ -441,13 +449,26 @@ test('only an unambiguous order-specific lookup miss permits a first booking', a
       {orders: [providerOrder], errors: [{message: 'Order not found'}]}, {errors: [{message: 'Order not found'}], status: 200},
       [{message: 'Order not found'}, {message: 'Rate limited'}], [{message: 'Order not found'}, null],
       Array(13).fill({message: 'Order not found'}), {errors: []}, {}, null,
-    ]) await assert.rejects(lookup(body, status), outcome('royal_mail_rejected', false, status));
+    ]) {
+      let calls = 0;
+      await assert.rejects(findRoyalMailOrder(key, reference, () => {
+        calls++;
+        return Response.json(body, { status });
+      }), outcome('royal_mail_rejected', false, status));
+      assert.equal(calls, 1, 'conflicting or incomplete evidence cannot start the order-list fallback');
+    }
   }
 });
 
 test('lookup refusals report recognised reasons without copying carrier text or credentials', async () => {
   const lookup = body => findRoyalMailOrder(key, input.reference, () => Response.json(body, {status: 400}));
-  await assert.rejects(lookup([{code: 'InvalidOrderIdentifier', message: 'Order identifiers are invalid'}]), /invalid order identifier/);
+  const mixed = [{code: 'InvalidOrderIdentifier', message: 'Access denied'}];
+  let calls = 0;
+  await assert.rejects(findRoyalMailOrder(key, input.reference, () => {
+    calls++;
+    return Response.json(mixed, {status: 400});
+  }), outcome('royal_mail_rejected', false, 400));
+  assert.equal(calls, 1, 'a contradictory selector error cannot start an alternative lookup');
   for (const body of [
     [{message: 'Bad value at 24 Example Street NR2 3HX'}], {code: 'PrivateSecret', message: 'Customer Alice Smith'},
     {message: 'Permission denied', errors: [{message: 'Private Street'}]}, {title: key},

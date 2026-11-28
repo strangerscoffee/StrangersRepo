@@ -229,6 +229,9 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     const stopped = (await blocked.json()).shipment;
     assert.equal(stopped.state, "failed");
     assert.equal(stopped.requestedAt, null);
+    assert.equal(stopped.referenceLookupFailure, "before_postage");
+    await db.prepare("UPDATE wholesale_royal_mail_shipments SET requested_at=NULL WHERE order_id=?").bind(id).run();
+    assert.equal((await read(id)).referenceLookupFailure, "unconfirmed");
     assert.equal(posts(), 0, "an ambiguous lookup never purchases postage");
     missingLookupReplies.set(id, [{ code: "OrderNotFound", message: "Order not found", orderReference: id }]);
     let enter, release;

@@ -404,6 +404,37 @@ test("staff and Admin open public-only Parcelforce tracking without offering an 
   await page.getByRole("button", { name: "Check shipment" }).waitFor();
 });
 
+for (const [failure, options] of [["before_postage", phone], ["unconfirmed", desktop]]) {
+  test(`Admin and staff can copy the full reference after a ${failure} lookup failure`, async t => {
+    const state = { ...eligible(), shipment: { state: "failed", requestedAt: null, referenceLookupFailure: failure,
+      problem: "Royal Mail rejected the order-reference lookup. Check the reference in Click & Drop." } };
+    let posts = 0;
+    const details = route => {
+      if (route.request().method() === "POST") posts++;
+      return route.fulfill({ json: state });
+    };
+    const staff = await staffPage(t, options, details);
+    const admin = await adminDispatchPage(t, options,
+      { stage: "attention", stageLabel: "Needs attention", action: "shipping", actionLabel: "Review booking" }, details);
+    await admin.action.click();
+    for (const [page, panel] of [[staff.page, staff.dialog], [admin.page, admin.page.locator("#wRoyalMailForm")]]) {
+      await panel.getByText("Order lookup needs attention", { exact: true }).waitFor();
+      const guidance = failure === "before_postage" ? "This attempt stopped before postage was requested." : "The postage outcome of this earlier attempt is unconfirmed.";
+      await panel.getByText(guidance, { exact: true }).waitFor();
+      const recovery = panel.getByRole("region", { name: "Find the order in Click & Drop" });
+      await recovery.getByText(order.id, { exact: true }).waitFor();
+      assert.equal(await recovery.evaluate(element => element.scrollWidth <= element.clientWidth), true);
+      await page.evaluate(() => Object.defineProperty(navigator, "clipboard", { value: {
+        writeText: async value => { window.copiedOrderReference = value; }
+      } }));
+      await recovery.getByRole("button", { name: "Copy order reference" }).click();
+      assert.equal(await page.evaluate(() => window.copiedOrderReference), order.id);
+      assert.equal(await panel.getByRole("button", { name: "Check service for this parcel" }).count(), 0);
+    }
+    assert.equal(posts, 0);
+  });
+}
+
 for (const [name, options] of [["desktop", desktop], ["phone", phone]]) {
   test(`Admin dispatch queue opens settings and returns to a rejected booking on ${name}`, async t => {
     let attempts = 0;
