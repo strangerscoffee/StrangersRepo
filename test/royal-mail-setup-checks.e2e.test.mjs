@@ -108,7 +108,7 @@ test("an admin can check a parcel service on a phone and review the same evidenc
   assert.equal(run.status(), 200);
   const { automated } = await run.json();
   await mobile.panel.getByText(/3 of 3 account and service checks verified/).waitFor();
-  await mobile.panel.getByText(/Each order has its own reference check/).waitFor();
+  await mobile.panel.getByText(/Admin and Staff share one postage record per order/).waitFor();
 
   const statuses = Object.fromEntries(automated.checks.map(check => [check.id, check.status]));
   assert.deepEqual(statuses, { authentication: "passed", shippingAccount: "passed", service: "passed", labelPdf: "unverified", tracking: "unverified" });
