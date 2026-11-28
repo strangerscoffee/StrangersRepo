@@ -17,7 +17,7 @@ const order = { ...row(7, reference), printedOn: createdOn, trackingNumber: 'AB1
 const anotherOrder = row(8, 'unrelated-private-reference');
 const invalidSelector = [{code: 'InvalidOrderIdentifier', message: 'Order identifiers are invalid'}];
 
-function carrier(pages, { denial = invalidSelector, status = 400 } = {}) {
+function carrier(pages, { denial = invalidSelector, status = 400, context, byIds } = {}) {
   const urls = [], signals = [];
   const fetcher = async (raw, init) => {
     assert.equal(init.method, 'GET');
@@ -31,14 +31,21 @@ function carrier(pages, { denial = invalidSelector, status = 400 } = {}) {
       assert.equal(url.pathname, '/api/v1/orders/%22' + reference + '%22');
       return Response.json(denial, { status });
     }
-    assert.equal(url.pathname, '/api/v1/orders');
+    if (url.pathname !== '/api/v1/orders') {
+      assert.match(url.pathname, /^\/api\/v1\/orders\/[1-9]\d*(?:;[1-9]\d*)*$/);
+      assert.equal(url.search, '');
+      const ids = url.pathname.split('/').at(-1).split(';').map(Number);
+      assert.equal(typeof byIds, 'function');
+      const reply = byIds(ids);
+      return reply instanceof Response ? reply : Response.json(reply);
+    }
     assert.equal(url.searchParams.get('pageSize'), '50');
     assert.ok([...url.searchParams.keys()].every(name => ['pageSize', 'continuationToken'].includes(name)));
     assert.ok(pages.length >= urls.length - 1, 'unexpected carrier GET');
     const page = pages[urls.length - 2];
     return page instanceof Response ? page : Response.json(page);
   };
-  return { urls, signals, run: () => findRoyalMailOrder(key, reference, fetcher) };
+  return { urls, signals, run: () => findRoyalMailOrder(key, reference, fetcher, context) };
 }
 
 test('a format refusal can recover one exact reference after exhausting the order list', async () => {
@@ -70,6 +77,82 @@ test('a complete unfiltered listing can establish absence, including a valid emp
     assert.equal(await lookup.run(), null);
     assert.equal(lookup.urls.length, 1 + pages.length);
   }
+});
+
+test('a first native order can dismiss older anonymous imports after reading the entire list', async () => {
+  const context = {firstOrderCreatedAt:Date.parse('2024-03-21T14:00:00Z')};
+  const manual = {orderIdentifier:510, createdOn:'2024-03-21T13:44:59Z', orderDate:'2024-03-22T11:00:00Z'};
+  const first = {orders:[manual], continuationToken:'older'};
+  const clear = carrier([first,{orders:[anotherOrder]}], {context});
+  assert.equal(await clear.run(), null);
+  assert.equal(clear.urls.length, 3);
+  const exact = carrier([first,{orders:[{...order, createdOn:'2024-02-01T10:00:00Z'}]}], {context});
+  assert.equal((await exact.run()).orderId, order.orderIdentifier);
+  const invalid = carrier([{orders:[{...manual, createdOn:'not a date'}]}], {context});
+  await assert.rejects(invalid.run(), e => !(e instanceof RoyalMailManualLookupError));
+  for (const nested of [{details:{orderIdentifier:125,orderReference:reference}}, {order:{orderReference:reference}},
+    {packages:[{orderReference:reference,orderIdentifier:125}]}, {orderId:125}]) {
+    const ambiguous = carrier([{orders:[{...manual, ...nested}]}], {context});
+    await assert.rejects(ambiguous.run(), e => !(e instanceof RoyalMailManualLookupError));
+  }
+});
+
+test('recent anonymous orders require exact numeric identities and stable carrier creation dates', async () => {
+  const context = {firstOrderCreatedAt:Date.parse('2024-03-21T14:00:00Z')};
+  const first = {orderIdentifier:512, createdOn:'2024-03-21T13:45:00Z'};
+  const second = {orderIdentifier:513, createdOn:'2024-03-21T14:03:12.3590Z'};
+  const page = {orders:[first,second]};
+  function check(reply) {
+    return carrier([page], {context, byIds:ids => {
+      assert.deepEqual(ids, [512,513]);
+      return reply;
+    }});
+  }
+  const other = {...second, orderReference:'COFFEE-512'};
+  assert.equal(await check([other,{...first, orderReference:'COFFEE-513'}]).run(), null);
+  assert.equal((await check([other,{...first, orderReference:reference}]).run()).orderId,512);
+  await assert.rejects(check([other,first]).run(), RoyalMailManualLookupError);
+  for (const invalid of [
+    [], [other], [other,other], [other,{...first,orderIdentifier:999}],
+    [other,{...first,createdOn:'2024-03-21T13:44:59Z'}], [other,{...first,orderIdentifier:'512'}],
+    [other,{...first,orderReference:reference,channelOrderReference:'OTHER'}], [other,{...first,packages:{}}],
+    [other,{...first,orderReference:'OTHER',details:[{orderReference:reference}]}],
+    [other,{...first,orderReference:reference.toLowerCase()}], {orders:[first,second]},
+    [{...first,orderReference:reference},{...second,orderReference:reference}],
+    [first,{...second,orderReference:reference}],
+    Response.json([first,second],{status:206}), Response.json([first,second],{headers:{'Content-Range':'items 1-2/3'}}),
+  ]) await assert.rejects(check(invalid).run(), e => !(e instanceof RoyalMailManualLookupError));
+});
+
+test('manual, unknown and future local order times cannot discard an older hand booking', async () => {
+  const manual = {orderIdentifier:515,createdOn:'2024-01-04T11:00:00Z'};
+  for (const created of [null, 0, Date.now() + 86400000]) {
+    const context = {firstOrderCreatedAt:created};
+    const carrierOrder = carrier([{orders:[manual]}], {context,byIds:() => [{...manual,orderReference:reference}]});
+    assert.equal((await carrierOrder.run()).orderId,515);
+    assert.equal(carrierOrder.urls.length,3);
+    await assert.rejects(carrier([{orders:[],hasMore:true}], {context}).run(), e => !(e instanceof RoyalMailManualLookupError));
+  }
+  const confirmed = carrier([{orders:[manual]}], {context:{firstOrderCreatedAt:null}, byIds:() => [manual]});
+  await assert.rejects(confirmed.run(), RoyalMailManualLookupError);
+});
+
+test('anonymous ID rechecks are paced in bounded batches within the original scan budget', async () => {
+  const imports = Array.from({length:51}, (_, i) => ({orderIdentifier:i + 601, createdOn}));
+  const context = {firstOrderCreatedAt:null};
+  const batches = [];
+  const byIds = ids => {
+    batches.push(ids.length);
+    return ids.map(id => ({orderIdentifier:id, createdOn, orderReference:'OTHER-' + id}));
+  };
+  const complete = carrier([{orders:imports.slice(0,26)}], {context,byIds});
+  assert.equal(await complete.run(), null);
+  assert.deepEqual(batches, [25,1]);
+  assert.ok(complete.signals.slice(1).every(signal => signal === complete.signals[1]));
+  batches.length = 0;
+  const capped = carrier([{orders:imports.slice(0,50),continuationToken:'last'}, {orders:imports.slice(50)}], {context,byIds});
+  await assert.rejects(capped.run(), e => !(e instanceof RoyalMailManualLookupError));
+  assert.deepEqual(batches, [25,25]);
 });
 
 test('larger parcel histories and harmless envelope metadata can be checked through to the final page', async () => {

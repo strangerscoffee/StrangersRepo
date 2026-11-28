@@ -74,7 +74,7 @@ async function shippingWorkspace(t, carrier) {
   const db = await runtime.getD1Database("DB");
   const customerId = crypto.randomUUID();
   const location = { address: "10 Dove Street, Norwich, Norfolk", postcode: "nr21de", contact: "Cafe Manager" };
-  const customer = {business, status: "Active", email: "dove@example.test", ...location};
+  const customer = {business, status: "Active", paymentTerms: "net-30", email: "dove@example.test", ...location};
   const order = {
     business, preview: false, customerId, customerSnapshot: customer, locationSnapshot: location, paymentTerms: {id: "net-30"}, status: "Ready", delivery: "Delivery",
     createdAt: Date.now(), grams: 1000, packs: 1, pence: 1800, totalPence: 1800, deliveryPence: 0,
@@ -209,7 +209,7 @@ test("Admin resolves a refused Royal Mail reference on a small phone without buy
   const withExisting = id;
   const toBook = "WS-" + "E".repeat(32);
   const stale = "WS-" + "F".repeat(32);
-  const createdOn = "2026-11-24T10:15:00Z";
+  const createdOn = new Date().toISOString();
   const purchases = [];
   const reads = [];
   let lookup = "limited";
@@ -219,9 +219,10 @@ test("Admin resolves a refused Royal Mail reference on a small phone without buy
     if (req.method === "GET") {
       reads.push(decodeURIComponent(pathname));
       if (pathname === "/api/v1/orders") {
-        // This older Click & Drop order has no searchable reference.
+        // The anonymous parcel is contemporaneous with this order, including on its numeric record.
         return WorkerResponse.json({ orders: [{ orderIdentifier: 991, createdOn }] });
       }
+      if (pathname === "/api/v1/orders/991") return WorkerResponse.json([{ orderIdentifier: 991, createdOn }]);
       if (pathname === "/api/v1/orders/8101" || pathname === "/api/v1/orders/8102") {
         return WorkerResponse.json([{ orderIdentifier: Number(pathname.split("/").pop()), createdOn, printedOn: createdOn,
           orderReference: pathname.endsWith("8101") ? withExisting : toBook, trackingNumber: tracking,
@@ -379,4 +380,59 @@ test("Admin resolves a refused Royal Mail reference on a small phone without buy
   assert.equal(await action(panel, "Continue to parcel review").count(), 0);
   assert.equal(finalRequests, 1);
   assert.deepEqual(purchases, [toBook]);
+});
+
+test("an order placed by a wholesale customer books normally alongside historical Click & Drop orders without references", async t => {
+  const oldCarrierDate = new Date(Date.now() - 30 * 86_400_000).toISOString();
+  const carrierCalls = [];
+  let nativeOrderId;
+  const { api, open, adminCookie, customerId } = await shippingWorkspace(t, async req => {
+    const url = new URL(req.url);
+    assert.equal(url.hostname, "api.parcel.royalmail.com");
+    const path = decodeURIComponent(url.pathname);
+    carrierCalls.push([req.method, path]);
+    if (req.method === "GET" && path === '/api/v1/orders/"' + nativeOrderId + '"') {
+      return WorkerResponse.json([{ code: "InvalidOrderIdentifier" }], { status: 400 });
+    }
+    if (req.method === "GET" && path === "/api/v1/orders") {
+      return WorkerResponse.json({ orders: [{ orderIdentifier: 504, createdOn: oldCarrierDate }] });
+    }
+    assert.equal(path, "/api/v1/orders");
+    assert.equal(req.method, "POST");
+    const { items } = await req.json();
+    assert.equal(items[0].orderReference, nativeOrderId);
+    const createdOn = new Date().toISOString();
+    return WorkerResponse.json({ successCount: 1, errorsCount: 0, createdOrders: [{
+      orderIdentifier: 8103, orderReference: nativeOrderId, trackingNumber: tracking, createdOn, printedOn: createdOn,
+    }] });
+  });
+  const { temporaryPassword } = await (await api("/api/admin/wholesale/customers/" + customerId + "/account", "POST", {
+    username: "native-coffee",
+  })).json();
+  const buyer = await api("/api/wholesale/auth/change-password", "POST", {
+    username: "native-coffee", password: temporaryPassword, newPassword: "local-cafe-password",
+  }, "");
+  const buyerCookie = buyer.headers.getSetCookie().find(cookie => cookie.startsWith("sf_wholesale_session=")).split(";")[0];
+  const { order: placed } = await (await api("/api/wholesale/orders", "POST", {
+    delivery: "Delivery", requestId: crypto.randomUUID(), customerVersion: 1,
+    lines: [{ productId: "brazil", pack: "kilo", grind: "beans", quantity: 6, price: 1800 }],
+  }, buyerCookie)).json();
+  nativeOrderId = placed.id;
+  await api("/api/admin/wholesale/orders/" + placed.id, "PATCH", { ifVersion: placed.version, customerId, status: "Ready" });
+  const page = await open("/admin#wholesale/royal-mail", adminCookie, { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  await page.locator('[data-queue-order="' + placed.id + '"] button').click();
+  const panel = page.locator("#wRoyalMailForm");
+  await panel.getByRole("button", { name: "Review label request", exact: true }).click();
+  assert.equal(carrierCalls.length, 0, "reviewing the parcel does not request postage");
+  const purchase = page.waitForResponse(r => r.request().method() === "POST" && r.url().endsWith("/shipping"));
+  await panel.getByRole("button", { name: "Request Royal Mail label", exact: true }).click();
+  const response = await purchase;
+  const payload = response.request().postDataJSON();
+  assert.equal(Object.hasOwn(payload, "confirmFirstBooking"), false);
+  assert.equal(Object.hasOwn(payload, "firstBookingProof"), false);
+  assert.equal(response.status(), 201);
+  await panel.getByText("Label ready", { exact: true }).waitFor();
+  assert.deepEqual(carrierCalls, [
+    ["GET", '/api/v1/orders/"' + placed.id + '"'], ["GET", "/api/v1/orders"], ["POST", "/api/v1/orders"],
+  ]);
 });

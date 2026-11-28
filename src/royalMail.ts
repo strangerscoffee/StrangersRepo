@@ -10,6 +10,9 @@ const LIST_PAGE_SIZE = 50;
 const LIST_MAX_PAGES = 20;
 const LIST_INTERVAL_MS = 225;
 const LOOKUP_BUDGET_MS = 25_000;
+const FIRST_BOOKING_CLOCK_MARGIN_MS = 15 * 60_000;
+const ORDER_ID_BATCH_SIZE = 25;
+const MAX_ORDER_ID_BATCHES = 2;
 const CREATE_LIMIT = 1024 * 1024;
 const PDF_LIMIT = 4 * 1024 * 1024;
 const MISSING_ORDER = Symbol("missing-order");
@@ -39,7 +42,7 @@ export class RoyalMailError extends Error {
 
 const manualLookupReasons = {
   capacity: "This account has more order history than can be checked in one search.",
-  unreferenced: "Some Click & Drop orders have no order reference.",
+  unreferenced: "Some Click & Drop orders have no order reference. Check for a hand-booked parcel by recipient, postcode and date.",
   oversized: "A Click & Drop order-list page exceeded the safe size limit.",
   pagination: "Click & Drop reported more orders but did not supply a usable next page.",
   envelope: "Click & Drop returned an empty response without its order list.",
@@ -636,6 +639,10 @@ async function clickDrop(
     throw responseError(response.status, posting, label);
   }
 
+  if (listing && (response.status !== 200 || response.headers.has("content-range"))) {
+    void response.body?.cancel().catch(() => {});
+    throw invalidResponse();
+  }
   return readProviderResponse(response, label, posting, listing);
 }
 
@@ -767,7 +774,7 @@ export async function createRoyalMailOrder(key: string, input: RoyalMailOrderInp
 }
 
 /** The provider accepts a quoted, encoded order reference. Ambiguous matches are unsafe. */
-export async function findRoyalMailOrder(key: string, reference: string, fetcher = fetch): Promise<RoyalMailOrder | null> {
+export async function findRoyalMailOrder(key: string, reference: string, fetcher = fetch, context?: { firstOrderCreatedAt: number | null }): Promise<RoyalMailOrder | null> {
   const knownReference = orderReference(reference);
   const started = Date.now();
   const path = "/orders/" + encodeURIComponent('"' + knownReference + '"');
@@ -777,7 +784,10 @@ export async function findRoyalMailOrder(key: string, reference: string, fetcher
   } catch (error) {
     if (!(error instanceof RoyalMailLookupSelectorError)) throw error;
     try {
-      const match = await findInOrderList(key, knownReference, started, fetcher);
+      const created = context?.firstOrderCreatedAt;
+      const cutoff = typeof created === "number" && Number.isSafeInteger(created) && created >= Date.UTC(2000, 0, 1) && created <= started
+        ? created - FIRST_BOOKING_CLOCK_MARGIN_MS : null;
+      const match = await findInOrderList(key, knownReference, started, cutoff, !!context, fetcher);
       if (!match && error.accessProblem) throw new RoyalMailError("royal_mail_denied", "The original order lookup reported an account or service problem.");
       return match;
     } catch (listError) {
@@ -844,33 +854,81 @@ function incompleteList(match: RoyalMailOrder | null, reason: keyof typeof manua
   throw new RoyalMailManualLookupError(reason);
 }
 
+const nestedOrderFields = new Set([
+  "orderIdentifier", "orderId", "orderReference", "accountOrderNumber", "channelOrderReference",
+  "orders", "createdOrders", "failedOrders", "errors",
+]);
+
+function checkNestedOrderFields(row: Record<string, unknown>): void {
+  let remaining = 1024;
+  function inspect(value: unknown, depth: number): void {
+    if (!value || typeof value !== "object") return;
+    if (depth > 12) throw invalidResponse();
+    for (const [field, child] of Object.entries(value)) {
+      if (--remaining < 0 || nestedOrderFields.has(field)) throw invalidResponse();
+      inspect(child, depth + 1);
+    }
+  }
+  for (const value of Object.values(row)) inspect(value, 1);
+}
+
+function listedOrder(value: unknown) {
+  const row = record(value);
+  if (!row || typeof row.orderIdentifier !== "number" || !Number.isSafeInteger(row.orderIdentifier) ||
+      row.orderIdentifier < 1 || !dateValue(row.createdOn) ||
+      (row.orderReference != null && typeof row.orderReference !== "string") ||
+      (row.packages != null && (!Array.isArray(row.packages) || row.packages.some(item => !record(item))))) throw invalidResponse();
+  if (row.orderId != null && row.orderId !== row.orderIdentifier ||
+      row.accountOrderNumber != null && row.accountOrderNumber !== 0 && row.accountOrderNumber !== row.orderIdentifier ||
+      row.channelOrderReference != null && row.channelOrderReference !== "" && row.channelOrderReference !== row.orderReference ||
+      ["orders", "createdOrders", "failedOrders", "errors"].some(field => Object.hasOwn(row, field))) throw invalidResponse();
+  checkNestedOrderFields(row);
+  return {row, id:row.orderIdentifier, createdOn:row.createdOn, ref:row.orderReference};
+}
+
 // Only an exhausted, coherent list can establish absence. Whenever identity or
 // pagination evidence conflicts, keep both automatic and manual purchases blocked.
-async function findInOrderList(key: string, reference: string, started: number, fetcher: typeof fetch): Promise<RoyalMailOrder | null> {
+async function findInOrderList(key: string, reference: string, started: number, oldBefore: number | null, firstBooking: boolean, fetcher: typeof fetch): Promise<RoyalMailOrder | null> {
   const query = new URLSearchParams({ pageSize: String(LIST_PAGE_SIZE) });
   const tokens = new Set<string>(), identifiers = new Set<number>();
   const deadline = started + LOOKUP_BUDGET_MS;
   const signal = AbortSignal.timeout(Math.max(1, deadline - Date.now()));
   let previousRequest = started, total: number | null = null;
   let match: RoyalMailOrder | null = null;
-  let unreferenced = false;
-  for (let index = 0; index < LIST_MAX_PAGES; index++) {
+  const anonymous = new Map<number, string>();
+  function consider(item: ReturnType<typeof listedOrder>) {
+    if (!sameReference(item.ref, reference, true)) return;
+    if (item.ref !== reference || match) throw invalidResponse();
+    match = publicOrder(item.row, reference);
+  }
+  function limited(reason: keyof typeof manualLookupReasons): never {
+    // A staff-entered or imported order might already have been hand booked. Requiring
+    // a complete snapshot also prevents an oversized account list being used as a shortcut.
+    if (firstBooking && oldBefore === null) throw invalidResponse();
+    return incompleteList(match, reason);
+  }
+  async function read(path: string, byId = false) {
     const delay = Math.max(0, LIST_INTERVAL_MS - (Date.now() - previousRequest));
-    if (Date.now() + delay >= deadline) incompleteList(match, "capacity");
+    if (Date.now() + delay >= deadline) {
+      if (byId) throw invalidResponse();
+      limited("capacity");
+    }
     if (delay) await new Promise(resolve => setTimeout(resolve, delay));
     previousRequest = Date.now();
-    let page: Record<string, unknown> | null;
     try {
-      const reply = await clickDrop(key, "/orders?" + query, { signal, listing: true }, fetcher);
-      if (Array.isArray(reply) && !reply.length) incompleteList(match, "envelope");
-      page = record(reply);
+      return await clickDrop(key, path, {signal, listing:true}, fetcher);
     } catch (error) {
-      if (error instanceof RoyalMailManualLookupError && match) throw invalidResponse();
+      if (error instanceof RoyalMailManualLookupError && (match || byId || firstBooking && oldBefore === null)) throw invalidResponse();
       throw error;
     }
+  }
+  for (let index = 0; index < LIST_MAX_PAGES; index++) {
+    const reply = await read("/orders?" + query);
+    if (Array.isArray(reply) && !reply.length) limited("envelope");
+    const page = record(reply);
     if (page && page.orders == null && Object.entries(page).every(([field, value]) =>
       field === "orders" || field === "continuationToken" && (value == null || value === "") || benignListMetadata(field, value))) {
-      incompleteList(match, "envelope");
+      limited("envelope");
     }
     if (!page || !Array.isArray(page.orders) || page.orders.length > LIST_PAGE_SIZE) throw invalidResponse();
     for (const [field, value] of Object.entries(page)) {
@@ -885,27 +943,39 @@ async function findInOrderList(key: string, reference: string, started: number, 
       total = page.totalCount;
     }
     for (const value of page.orders) {
-      const row = record(value);
-      if (!row || typeof row.orderIdentifier !== "number" || !Number.isSafeInteger(row.orderIdentifier) ||
-          row.orderIdentifier < 1 || identifiers.has(row.orderIdentifier) || !dateValue(row.createdOn)) throw invalidResponse();
-      if (row.accountOrderNumber != null && row.accountOrderNumber !== 0 && row.accountOrderNumber !== row.orderIdentifier ||
-          row.channelOrderReference != null && row.channelOrderReference !== "" && row.channelOrderReference !== row.orderReference ||
-          ["orders", "createdOrders", "failedOrders", "errors"].some(field => Object.hasOwn(row, field))) throw invalidResponse();
-      identifiers.add(row.orderIdentifier);
-      if (row.orderReference == null || (typeof row.orderReference === "string" && !row.orderReference.trim())) {
-        unreferenced = true;
-        continue;
-      }
-      if (typeof row.orderReference !== "string") throw invalidResponse();
-      if (!sameReference(row.orderReference, reference, true)) continue;
-      if (row.orderReference !== reference || match) throw invalidResponse();
-      match = publicOrder(row, reference);
+      const item = listedOrder(value);
+      if (identifiers.has(item.id)) throw invalidResponse();
+      identifiers.add(item.id);
+      if (item.ref?.trim()) consider(item);
+      // A provider-generated creation time can only exclude an anonymous order for a
+      // confirmed first booking; an explicit matching reference always takes precedence.
+      else if (oldBefore === null || Date.parse(item.createdOn) >= oldBefore) anonymous.set(item.id, item.createdOn);
     }
     if (total !== null && total < identifiers.size) throw invalidResponse();
     const next = page.continuationToken;
     if (next == null || next === "") {
-      if (page.hasMore === true || total !== null && identifiers.size < total) incompleteList(match, "pagination");
-      if (!match && unreferenced) incompleteList(match, "unreferenced");
+      if (page.hasMore === true || total !== null && identifiers.size < total) limited("pagination");
+      if (!firstBooking) {
+        if (!match && anonymous.size) incompleteList(match, "unreferenced");
+        return match;
+      }
+      // The pageable projection may omit a reference which the numeric endpoint supplies.
+      // Recheck only original IDs, within the same request budget and account credentials.
+      const ids = [...anonymous.keys()];
+      let unresolved = false;
+      for (let pos = 0; pos < ids.length; pos += ORDER_ID_BATCH_SIZE) {
+        if (pos >= ORDER_ID_BATCH_SIZE * MAX_ORDER_ID_BATCHES) throw invalidResponse();
+        const expected = new Set(ids.slice(pos, pos + ORDER_ID_BATCH_SIZE));
+        const records = await read("/orders/" + [...expected].join(";"), true);
+        if (!Array.isArray(records) || records.length !== expected.size) throw invalidResponse();
+        for (const value of records) {
+          const item = listedOrder(value);
+          if (!expected.delete(item.id) || anonymous.get(item.id) !== item.createdOn) throw invalidResponse();
+          if (item.ref?.trim()) consider(item);
+          else unresolved = true;
+        }
+      }
+      if (unresolved) incompleteList(match, "unreferenced");
       return match;
     }
     if (page.hasMore === false || typeof next !== "string" || !next.trim() || next.length > 2048 ||
@@ -913,7 +983,7 @@ async function findInOrderList(key: string, reference: string, started: number, 
     tokens.add(next);
     query.set("continuationToken", next);
   }
-  incompleteList(match, "capacity");
+  limited("capacity");
 }
 
 /** Retrieve the label for an existing order. Never make another shipment to reprint. */

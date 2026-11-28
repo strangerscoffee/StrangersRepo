@@ -22,6 +22,11 @@ interface Order {
   delivery: string;
   business: string;
   createdAt: number;
+  createdBy?: string;
+  requestKey?: string;
+  takenFor?: unknown;
+  previousRunId?: string;
+  standing?: { run?: number };
   grams: number;
   pence: number;
   deliveryPence?: number;
@@ -117,18 +122,41 @@ function referenceLookupFailure(row: Shipment | null) {
   return row.requested_at === null ? "unconfirmed" : null;
 }
 
+type BookingSettings = Awaited<ReturnType<typeof loadRoyalMailConnections>>["booking"];
+
+// A previous carrier identity conflict must never be treated as an ordinary first lookup.
+function priorBookingConflict(row: Shipment | null) {
+  return row?.state === "failed" && row.requested_at === 0 && !!row.problem &&
+    /named another order in|indicated an existing or ambiguous booking|may already have this booking/i.test(row.problem);
+}
+
+async function firstLookupContext(row: Shipment | null, order: ShippingOrder, settings: BookingSettings) {
+  if (!canUseShipment(order) || order.status !== "Ready" || !settings.key) return undefined;
+  if (row && (row.state !== "failed" || row.requested_at !== 0 || row.provider_id !== null ||
+      row.candidate_provider_id !== null || row.review_required || row.order_version !== order.version ||
+      priorBookingConflict(row) || row.problem?.includes("unreadable or conflicting booking details") || await royalMailOrderChanged(row, order) ||
+      row.booking_connection !== await bookingConnection(settings.key) ||
+      (row.booking_account_scope && (!settings.shippingAccountName ||
+        row.booking_account_scope !== await bookingAccountScope(settings.key, settings.shippingAccountName))))) return undefined;
+  // placeOrder stamps native customer orders on the server. rollStanding stamps each
+  // new delivery independently. Staff may enter an order after arranging it elsewhere.
+  const online = !order.takenFor && /^wholesale:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(order.createdBy ?? "") &&
+    /^[a-f0-9]{64}$/.test(order.requestKey ?? "");
+  const standingRun = order.requestKey === "standing:" + order.id && order.previousRunId !== order.id && /^WS-[A-F0-9]{32}$/.test(order.previousRunId ?? "") &&
+    Number.isSafeInteger(order.standing?.run) && (order.standing?.run ?? 0) >= 2;
+  const dated = (online || standingRun) && Number.isSafeInteger(order.createdAt) &&
+    order.createdAt >= Date.UTC(2000, 0, 1) && order.createdAt <= Date.now();
+  return { firstOrderCreatedAt: dated ? order.createdAt : null };
+}
+
 const FIRST_BOOKING_PURPOSE = "wholesale.royal-mail.manual-first-booking.";
 const FIRST_BOOKING_LIFETIME = 5 * 60_000;
 const checkFirstBookingAgain = () => new ApiError(409, "first_booking_check_required", "Run the order-reference check again before confirming a first booking.");
 
 async function firstBookingTarget(row: Shipment | null, order: ShippingOrder, actor: User,
   policy: { enabled: number; version: number }, settings: Awaited<ReturnType<typeof loadRoyalMailConnections>>["booking"]) {
-  if (actor.role !== "admin" || !policy.enabled || !settings.key || !settings.serviceCode || order.status !== "Ready" ||
-      !row || referenceLookupFailure(row) !== "before_postage" || row.candidate_provider_id !== null || row.review_required ||
-      row.order_version !== order.version || await royalMailOrderChanged(row, order) ||
-      row.booking_connection !== await bookingConnection(settings.key)) return null;
-  if (row.booking_account_scope && (!settings.shippingAccountName ||
-      row.booking_account_scope !== await bookingAccountScope(settings.key, settings.shippingAccountName))) return null;
+  if (actor.role !== "admin" || !policy.enabled || !settings.serviceCode || !row ||
+      referenceLookupFailure(row) !== "before_postage" || !await firstLookupContext(row, order, settings)) return null;
   // Only the digest is signed. The token contains no names, recipient details or carrier credentials.
   return bookingConnection(JSON.stringify([actor.id, order.id, order.version, row.operation, row.booking_connection,
     policy.version, settings.serviceCode, settings.serviceRegisterCode, settings.shippingAccountName]));
@@ -309,8 +337,9 @@ export async function handleWholesaleRoyalMail(req: Request, env: Env, id: strin
     // This diagnostic must never progress into the booking or recovery paths.
     let outcome: "found" | "missing" | "inconclusive", message: string;
     let limitedScan = false;
+    const lookupContext = await firstLookupContext(previous, order, settings);
     try {
-      const match = await findRoyalMailOrder(settings.key, id);
+      const match = await findRoyalMailOrder(settings.key, id, undefined, lookupContext);
       outcome = match ? "found" : "missing";
       message = match ? "Click & Drop found an existing booking. Compare its destination and parcel before using its label."
         : failure === "before_postage" ? "Click & Drop found no booking for this reference. You can review the parcel and request a label."
@@ -325,7 +354,7 @@ export async function handleWholesaleRoyalMail(req: Request, env: Env, id: strin
     ]);
     if (!eligibleOrder(latestOrder) || latestOrder.version !== order.version || latestPolicy.version !== policy.version ||
         latestShipment?.operation !== previous.operation || referenceLookupFailure(latestShipment) !== failure) throw changed();
-    if (limitedScan || outcome === "missing") {
+    if (lookupContext && (limitedScan || outcome === "missing")) {
       const target = await firstBookingTarget(latestShipment, latestOrder, actor, latestPolicy, settings);
       if (target) {
         if (!limitedScan) return json({ outcome, message, canResolveInClickDrop: true });
@@ -367,7 +396,7 @@ export async function handleWholesaleRoyalMail(req: Request, env: Env, id: strin
       bookingConfigured: current.bookingConfigured,
       canCreate: current.bookingConfigured && latestPolicy.enabled === 1 &&
         (staff ? !!recipient && eligibility?.eligible === true : actor.role === "admin") &&
-        latest.status === "Ready" && !latest.skipped && (!shipment || shipment.state === "failed" && !shipment.provider_id && view?.referenceLookupFailure !== "unconfirmed"),
+        latest.status === "Ready" && !latest.skipped && (!shipment || shipment.state === "failed" && !shipment.provider_id && !priorBookingConflict(shipment) && view?.referenceLookupFailure !== "unconfirmed"),
       orderVersion: latest.version, shipment: view, trackingEnabled: !!current.tracking,
       ...(canLink ? { canLinkOrder: true, linkOperation: shipment.operation } : {}),
       recipient, bookingService: current.booking.serviceCode, bookingVersion: latestPolicy.version,
@@ -527,6 +556,7 @@ export async function handleWholesaleRoyalMail(req: Request, env: Env, id: strin
     }
   }
 
+  if (priorBookingConflict(existing)) throw new ApiError(409, "royal_mail_handover_review", "The earlier carrier check identified another possible booking. Compare the original order in Click & Drop before linking its label.");
   if (existing && (existing.provider_id || existing.state !== "failed")) return getView(existing.provider_id ? 200 : 202);
   const { key, serviceCode, serviceRegisterCode, shippingAccountName } = settings;
   if (!serviceCode) throw new ApiError(503, "royal_mail_not_configured", "Configure the Royal Mail Click & Drop service before creating postage.");
@@ -578,11 +608,14 @@ export async function handleWholesaleRoyalMail(req: Request, env: Env, id: strin
   const operation = crypto.randomUUID();
   const fingerprint = await shippingFingerprint(order);
   const connection = await bookingConnection(key);
-  const originalAttempt = manual ? {
+  // Derive the privilege from the previous durable row, before a retry resets requested_at.
+  const lookupContext = await firstLookupContext(existing, order, settings);
+  const pinAttempt = manual || lookupContext !== undefined;
+  const originalAttempt = pinAttempt && existing ? {
     sql: ` AND EXISTS (SELECT 1 FROM wholesale_royal_mail_shipments WHERE order_id=? AND operation=? AND state='failed'
       AND requested_at=0 AND provider_id IS NULL AND candidate_provider_id IS NULL AND review_required=0 AND booking_connection=?
-      AND order_version=? AND shipping_fingerprint IS ? AND booking_account_scope IS ? AND instr(problem,?)=1)`,
-    args: [id, existing!.operation, connection, order.version, existing!.shipping_fingerprint, existing!.booking_account_scope, REFERENCE_REFUSAL],
+      AND order_version=? AND shipping_fingerprint IS ? AND booking_account_scope IS ? AND problem IS ?)`,
+    args: [id, existing.operation, connection, order.version, existing.shipping_fingerprint, existing.booking_account_scope, existing.problem],
   } : { sql: "", args: [] };
   const reserved = await env.DB.prepare(`INSERT INTO wholesale_royal_mail_shipments
       (order_id, state, operation, order_version, shipping_fingerprint, weight_grams, updated_at, requested_at,
@@ -596,10 +629,11 @@ export async function handleWholesaleRoyalMail(req: Request, env: Env, id: strin
       service_code=NULL, label_order_created_at=excluded.label_order_created_at,
       destination_address=excluded.destination_address, destination_postcode=excluded.destination_postcode
     WHERE wholesale_royal_mail_shipments.state = 'failed' AND provider_id IS NULL AND candidate_provider_id IS NULL AND NOT ${LEGACY_REFERENCE_HOLD}
-      AND COALESCE(wholesale_royal_mail_shipments.refresh_after,0) <= ${SQL_NOW_MS} RETURNING operation`)
+      AND COALESCE(wholesale_royal_mail_shipments.refresh_after,0) <= ${SQL_NOW_MS}
+      ${pinAttempt && !existing ? "AND 0" : originalAttempt.sql} RETURNING operation`)
     .bind(id, operation, order.version, fingerprint, weight, Date.now(),
       [address.addressLine1, address.addressLine2, address.city, address.county].filter(Boolean).join(", "), address.postcode, connection, order.createdAt || null,
-      id, order.version, policy.version, ...eligibilityGuard.args, ...accessGuard.args, ...originalAttempt.args).first();
+      id, order.version, policy.version, ...eligibilityGuard.args, ...accessGuard.args, ...originalAttempt.args, ...originalAttempt.args).first();
   if (!reserved) {
     if (manual) throw checkFirstBookingAgain();
     await checkStaffAccess();
@@ -614,7 +648,7 @@ export async function handleWholesaleRoyalMail(req: Request, env: Env, id: strin
     await checkStaffAccess();
     await checkEligibility(order);
     let prior;
-    try { prior = await findRoyalMailOrder(key, id); }
+    try { prior = await findRoyalMailOrder(key, id, undefined, lookupContext); }
     catch (error) {
       if (!manual || !(error instanceof RoyalMailManualLookupError)) throw error;
       // This exact lookup limitation was independently checked by the confirming admin.
@@ -632,7 +666,7 @@ export async function handleWholesaleRoyalMail(req: Request, env: Env, id: strin
       const sending = manual ? (await env.DB.batch([markSending, env.DB.prepare(`INSERT INTO audit_log (at,kind,actor,text)
         SELECT ?, 'wholesale_royal_mail', ?, ? FROM wholesale_royal_mail_shipments
         WHERE order_id=? AND operation=? AND requested_at=? AND state='booking'`).bind(at, actor.name,
-          `Admin checked Click & Drop for the original reference and recipient and confirmed no existing shipment for ${id} before requesting first postage.`,
+          `Admin checked Click & Drop across channels by order reference, date, recipient and postcode and confirmed no existing shipment for ${id} before requesting first postage.`,
           id, operation, at)]))[0]
         : await markSending.run();
       if (!sending.meta.changes) {

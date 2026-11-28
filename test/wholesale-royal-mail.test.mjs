@@ -52,6 +52,7 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
   const unlabelled = new Set();
   const labelErrors = new Map();
   let listReply;
+  const anonymousDetails = new Map();
   let interceptCreate;
   let interceptLabel;
   let interceptLookup;
@@ -121,6 +122,7 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
         return new RuntimeResponse(pdf, { headers: { "content-type": "application/pdf" } });
       }
       const selector = decodeURIComponent(url.pathname.split("/").at(-1));
+      if (anonymousDetails.has(selector)) return RuntimeResponse.json([anonymousDetails.get(selector)]);
       if (/^\d+$/.test(selector)) {
         const pinned = [...records.values()].find(row => row.orderIdentifier === Number(selector));
         return RuntimeResponse.json(pinned ? [pinned] : []);
@@ -405,10 +407,71 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
     }
   });
 
+  await t.test("the first booking of a native wholesale order can exclude an older anonymous carrier order", async () => {
+    const native = { createdBy: "wholesale:" + crypto.randomUUID(), requestKey: "d".repeat(64) };
+    const before = posts();
+    const omitted = { orderIdentifier: 7001, createdOn: new Date(order.createdAt - 86400000).toISOString() };
+    const denied = [{ code: "InvalidOrderIdentifier" }];
+    const referenceError = "Royal Mail rejected the order-reference lookup. Check the reference in Click & Drop.";
+    const previousFailure = async (id, marker, reason = referenceError) => {
+      await seed(id, native);
+      await historicalFailure(id, marker);
+      const connection = Buffer.from(await crypto.subtle.digest("SHA-256",new TextEncoder().encode("fixture-click-drop"))).toString("base64");
+      await db.prepare("UPDATE wholesale_royal_mail_shipments SET booking_connection=?,problem=? WHERE order_id=?").bind(connection,reason,id).run();
+      missingLookupReplies.set(id, denied);
+    };
+    listReply = () => RuntimeResponse.json({ orders: [omitted] });
+    try {
+      const fresh = orderRef(230);
+      await seed(fresh, native);
+      missingLookupReplies.set(fresh, denied);
+      const parallel = await Promise.all([create(fresh), create(fresh)]);
+      assert.ok(parallel.some(result => result.status === 201));
+      assert.equal((await read(fresh)).state, "labelled");
+      assert.equal(posts() - before, 1);
+      const zero = orderRef(231);
+      await previousFailure(zero, 0);
+      const check = await call(shipPath(zero) + "/reference-check","POST",{ifVersion:1,bookingVersion:(await settings()).version});
+      assert.equal((await check.json()).outcome, "missing");
+      assert.equal(posts() - before, 1, "the diagnostic stays read-only");
+      assert.equal((await create(zero)).status, 201);
+      assert.equal(posts() - before, 2);
+      for (const [seq, marker, reason] of [
+        [232,null,referenceError],
+        [233,Date.now()-10000,referenceError],
+        [234,0,referenceError+" (Royal Mail's reply named another order in orderReference.)"],
+      ]) {
+        const id = orderRef(seq);
+        await previousFailure(id, marker, reason);
+        const result = await create(id);
+        assert.equal((await read(id)).orderId, null);
+        if (seq === 234) {
+          assert.equal(result.status, 409);
+          assert.equal((await (await call(shipPath(id))).json()).canCreate, false);
+          assert.equal((await create(id)).status, 409, "repeated attempts retain explicit contrary evidence");
+        }
+        assert.equal(posts() - before, 2, "uncertain, prior outbound and contrary evidence never authorise an age-based purchase");
+      }
+      const staffTaken = orderRef(235);
+      await seed(staffTaken, { ...native, takenFor: { source:"Phone", at: order.createdAt } });
+      missingLookupReplies.set(staffTaken, denied);
+      anonymousDetails.set(String(omitted.orderIdentifier), omitted);
+      const staffBegin = requests.length;
+      await create(staffTaken);
+      assert.ok(requests.slice(staffBegin).some(request => request.path.endsWith("/7001")));
+      assert.equal((await read(staffTaken)).orderId, null);
+      assert.equal(posts() - before, 2);
+    } finally {
+      listReply = undefined;
+      anonymousDetails.delete(String(omitted.orderIdentifier));
+    }
+  });
+
   await t.test("a first booking after an inconclusive list needs an expiring admin proof and only one confirmed purchase", async () => {
     const before = posts();
     const sample = { orderIdentifier: 998, createdOn: "2026-11-24T10:00:00Z" };
     listReply = () => RuntimeResponse.json({ orders: [sample] });
+    anonymousDetails.set(String(sample.orderIdentifier), sample);
     const makeOffer = async n => {
       const id = orderRef(n);
       await seed(id);
@@ -499,6 +562,7 @@ test("wholesale shipping keeps booking, label validity and dispatch consistent a
       assert.equal(unavailable.canResolveInClickDrop, undefined);
     } finally {
       listReply = undefined;
+      anonymousDetails.delete(String(sample.orderIdentifier));
       interceptCreate = undefined;
     }
   });
